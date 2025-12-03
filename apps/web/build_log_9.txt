@@ -1,0 +1,32 @@
+
+> web@0.1.0 build
+> next build
+
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+ ⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of /Users/arair/youtick-demo/package-lock.json as the root directory.
+ To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+ Detected additional lockfiles: 
+   * /Users/arair/youtick-demo/apps/web/package-lock.json
+
+   ▲ Next.js 16.0.5 (Turbopack)
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+ ✓ Compiled successfully in 11.0s
+   Running TypeScript ...
+Failed to compile.
+
+./components/MintButton.tsx:21:25
+Type error: Object literal may only specify known properties, and 'type' does not exist in type 'Action'.
+
+[0m [90m 19 |[39m                 actions[33m:[39m [
+ [90m 20 |[39m                     {
+[31m[1m>[22m[39m[90m 21 |[39m                         type[33m:[39m [32m'FunctionCall'[39m[33m,[39m
+ [90m    |[39m                         [31m[1m^[22m[39m
+ [90m 22 |[39m                         params[33m:[39m {
+ [90m 23 |[39m                             methodName[33m:[39m [32m'nft_mint'[39m[33m,[39m
+ [90m 24 |[39m                             args[33m:[39m {[0m
+Next.js build worker exited with code: 1 and signal: null
