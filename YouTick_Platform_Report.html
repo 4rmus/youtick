@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTick — Decentralized Video Streaming Platform</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #1a365d;
+            --primary-light: #2c5282;
+            --accent: #3182ce;
+            --success: #276749;
+            --success-light: #c6f6d5;
+            --danger: #c53030;
+            --danger-light: #fed7d7;
+            --warning: #c05621;
+            --warning-light: #fef3c7;
+            --gray-50: #f7fafc;
+            --gray-100: #edf2f7;
+            --gray-200: #e2e8f0;
+            --gray-300: #cbd5e0;
+            --gray-500: #718096;
+            --gray-600: #4a5568;
+            --gray-800: #2d3748;
+            --gray-900: #1a202c;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            line-height: 1.7;
+            color: var(--gray-800);
+            background: #fff;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Hero Section */
+        .hero {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+            color: white;
+            padding: 100px 0 80px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            opacity: 0.5;
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero h1 {
+            font-family: 'Playfair Display', serif;
+            font-size: 4.5rem;
+            font-weight: 700;
+            margin-bottom: 16px;
+            letter-spacing: -2px;
+        }
+
+        .hero .subtitle {
+            font-size: 1.5rem;
+            opacity: 0.9;
+            font-weight: 400;
+            margin-bottom: 12px;
+        }
+
+        .hero .tagline {
+            font-size: 1.1rem;
+            opacity: 0.7;
+            margin-bottom: 50px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 40px;
+            max-width: 800px;
+            margin: 0 auto 50px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 3rem;
+            font-weight: 800;
+            display: block;
+            line-height: 1.2;
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            opacity: 0.8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .tech-stack {
+            font-size: 0.95rem;
+            opacity: 0.7;
+            margin-top: 30px;
+        }
+
+        /* Section Styles */
+        section {
+            padding: 80px 0;
+        }
+
+        section:nth-child(even) {
+            background: var(--gray-50);
+        }
+
+        h2 {
+            font-family: 'Playfair Display', serif;
+            font-size: 2.5rem;
+            color: var(--primary);
+            margin-bottom: 24px;
+            font-weight: 700;
+        }
+
+        h3 {
+            font-size: 1.4rem;
+            color: var(--primary-light);
+            margin: 32px 0 16px;
+            font-weight: 600;
+        }
+
+        h4 {
+            font-size: 1.15rem;
+            color: var(--gray-800);
+            margin: 24px 0 12px;
+            font-weight: 600;
+        }
+
+        p {
+            margin-bottom: 16px;
+            color: var(--gray-600);
+        }
+
+        .lead {
+            font-size: 1.2rem;
+            color: var(--gray-700);
+            line-height: 1.8;
+        }
+
+        blockquote {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.5rem;
+            color: var(--gray-600);
+            font-style: italic;
+            border-left: 4px solid var(--accent);
+            padding: 20px 30px;
+            margin: 30px 0;
+            background: var(--gray-50);
+            border-radius: 0 8px 8px 0;
+        }
+
+        /* Lists */
+        ul, ol {
+            margin: 16px 0 16px 24px;
+        }
+
+        li {
+            margin-bottom: 10px;
+            color: var(--gray-600);
+        }
+
+        li strong {
+            color: var(--gray-800);
+        }
+
+        .check-list {
+            list-style: none;
+            margin-left: 0;
+        }
+
+        .check-list li {
+            padding-left: 28px;
+            position: relative;
+        }
+
+        .check-list li::before {
+            content: '✓';
+            position: absolute;
+            left: 0;
+            color: var(--success);
+            font-weight: 700;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 24px 0;
+            font-size: 0.95rem;
+        }
+
+        th, td {
+            padding: 14px 16px;
+            text-align: left;
+            border: 1px solid var(--gray-200);
+        }
+
+        th {
+            background: var(--primary);
+            color: white;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 0.5px;
+        }
+
+        tr:nth-child(even) {
+            background: var(--gray-50);
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        .bg-success { background: var(--success-light) !important; }
+        .bg-danger { background: var(--danger-light) !important; }
+        .bg-warning { background: var(--warning-light) !important; }
+        .text-success { color: var(--success); font-weight: 600; }
+        .text-danger { color: var(--danger); }
+
+        /* Cards */
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin: 32px 0;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 28px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04);
+        }
+
+        .card-icon {
+            font-size: 2.5rem;
+            margin-bottom: 16px;
+        }
+
+        .card h4 {
+            margin-top: 0;
+            color: var(--primary);
+        }
+
+        /* Benefits Grid */
+        .benefit-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .benefit-icon {
+            font-size: 1.8rem;
+            flex-shrink: 0;
+            width: 50px;
+            text-align: center;
+        }
+
+        .benefit-content h4 {
+            margin: 0 0 4px;
+            font-size: 1.05rem;
+        }
+
+        .benefit-content p {
+            margin: 0;
+            font-size: 0.95rem;
+        }
+
+        /* Flow Diagram */
+        .flow-diagram {
+            background: var(--gray-800);
+            color: #a0aec0;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.8rem;
+            padding: 24px;
+            border-radius: 12px;
+            overflow-x: auto;
+            line-height: 1.5;
+            margin: 24px 0;
+        }
+
+        /* Market Stats */
+        .market-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 24px;
+            margin: 32px 0;
+        }
+
+        .market-stat {
+            text-align: center;
+            padding: 32px;
+            border-radius: 12px;
+        }
+
+        .market-stat.blue { background: linear-gradient(135deg, #ebf8ff 0%, #bee3f8 100%); }
+        .market-stat.green { background: linear-gradient(135deg, #f0fff4 0%, #c6f6d5 100%); }
+        .market-stat.purple { background: linear-gradient(135deg, #faf5ff 0%, #e9d8fd 100%); }
+        .market-stat.orange { background: linear-gradient(135deg, #fffaf0 0%, #feebc8 100%); }
+
+        .market-stat .value {
+            font-size: 3rem;
+            font-weight: 800;
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        .market-stat.blue .value { color: var(--primary-light); }
+        .market-stat.green .value { color: var(--success); }
+        .market-stat.purple .value { color: #553c9a; }
+        .market-stat.orange .value { color: var(--warning); }
+
+        .market-stat .label {
+            font-size: 0.9rem;
+            color: var(--gray-600);
+        }
+
+        /* Roadmap */
+        .roadmap-phase {
+            position: relative;
+            padding-left: 40px;
+            margin-bottom: 40px;
+        }
+
+        .roadmap-phase::before {
+            content: '';
+            position: absolute;
+            left: 12px;
+            top: 8px;
+            bottom: -40px;
+            width: 2px;
+            background: var(--gray-200);
+        }
+
+        .roadmap-phase:last-child::before {
+            display: none;
+        }
+
+        .roadmap-phase::after {
+            content: '';
+            position: absolute;
+            left: 4px;
+            top: 4px;
+            width: 18px;
+            height: 18px;
+            background: var(--accent);
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 0 0 3px var(--accent);
+        }
+
+        .roadmap-phase h4 {
+            margin-top: 0;
+            color: var(--primary);
+        }
+
+        /* CTA Section */
+        .cta-section {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+            color: white;
+            text-align: center;
+            padding: 80px 0;
+        }
+
+        .cta-section h2 {
+            color: white;
+        }
+
+        .cta-section p {
+            color: rgba(255,255,255,0.9);
+            max-width: 600px;
+            margin: 0 auto 32px;
+            font-size: 1.1rem;
+        }
+
+        .cta-section ul {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 16px;
+        }
+
+        .cta-section li {
+            background: rgba(255,255,255,0.15);
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-size: 0.95rem;
+            color: white;
+            margin: 0;
+        }
+
+        /* Footer */
+        footer {
+            background: var(--gray-900);
+            color: var(--gray-300);
+            text-align: center;
+            padding: 60px 0;
+        }
+
+        footer h3 {
+            font-family: 'Playfair Display', serif;
+            color: white;
+            font-size: 2rem;
+            margin-bottom: 8px;
+        }
+
+        footer .tagline {
+            font-style: italic;
+            margin-bottom: 24px;
+            color: var(--gray-400);
+        }
+
+        footer .built-with {
+            font-size: 0.9rem;
+            color: var(--gray-500);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 3rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+                gap: 24px;
+            }
+
+            .stat-value {
+                font-size: 2.5rem;
+            }
+
+            h2 {
+                font-size: 2rem;
+            }
+
+            .market-stats {
+                grid-template-columns: 1fr;
+            }
+
+            .card-grid {
+                grid-template-columns: 1fr;
+            }
+
+            table {
+                font-size: 0.85rem;
+            }
+
+            th, td {
+                padding: 10px 12px;
+            }
+        }
+
+        /* Print Styles */
+        @media print {
+            .hero {
+                background: var(--primary) !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
+            section {
+                padding: 40px 0;
+                page-break-inside: avoid;
+            }
+
+            .card {
+                box-shadow: none;
+                border: 1px solid var(--gray-200);
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Hero Section -->
+    <header class="hero">
+        <div class="container hero-content">
+            <h1>YouTick</h1>
+            <p class="subtitle">The Future of Premium Video Content</p>
+            <p class="tagline">NFT-Gated Decentralized Video Streaming Platform</p>
+            <p style="opacity: 0.7; margin-bottom: 40px;">Concerts • Cinema • Exclusive Content</p>
+
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <span class="stat-value">$50B+</span>
+                    <span class="stat-label">Global Live Entertainment Market</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value">85%</span>
+                    <span class="stat-label">Cost Reduction vs Traditional</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value">100%</span>
+                    <span class="stat-label">Creator Revenue Ownership</span>
+                </div>
+            </div>
+
+            <p class="tech-stack">Built on NEAR Protocol • Powered by Filecoin & Livepeer</p>
+        </div>
+    </header>
+
+    <!-- Executive Summary -->
+    <section>
+        <div class="container">
+            <h2>Executive Summary</h2>
+            <p class="lead">
+                <strong>YouTick</strong> is a decentralized video streaming platform that enables content creators to monetize premium video content through NFT-based access control. By leveraging blockchain technology, YouTick eliminates intermediaries, ensures true content ownership, and provides a censorship-resistant distribution channel for concerts, cinema, and exclusive events.
+            </p>
+
+            <blockquote>
+                "Own your content. Control your audience. Keep your revenue."
+            </blockquote>
+
+            <h3>The Problem</h3>
+            <p>Traditional video streaming platforms suffer from fundamental issues that harm both creators and consumers:</p>
+            <ul>
+                <li><strong>Revenue Extraction:</strong> Platforms take 30-55% of creator revenue</li>
+                <li><strong>No True Ownership:</strong> Content can be demonetized, removed, or censored at will</li>
+                <li><strong>Piracy Vulnerability:</strong> Premium content is easily copied and redistributed</li>
+                <li><strong>Geographical Restrictions:</strong> Content locked behind regional barriers</li>
+                <li><strong>No Secondary Market:</strong> Viewers cannot resell access they no longer need</li>
+            </ul>
+
+            <h3>The YouTick Solution</h3>
+            <p>YouTick transforms premium video distribution through a Web3-native architecture:</p>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Feature</th>
+                        <th>Benefit</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>NFT Tickets</strong></td>
+                        <td>Verifiable ownership, transferable access, secondary market enabled</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Encrypted Storage</strong></td>
+                        <td>Content protected with threshold encryption, only NFT holders can decrypt</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Decentralized CDN</strong></td>
+                        <td>Global delivery via Livepeer network, no single point of failure</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Creator Control</strong></td>
+                        <td>Set prices, royalties, and access rules directly on-chain</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Perpetual Storage</strong></td>
+                        <td>Content stored on Filecoin with cryptographic proofs of preservation</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- Why Web3 -->
+    <section>
+        <div class="container">
+            <h2>Why Web3 for Video Streaming?</h2>
+            <p class="lead">
+                The convergence of several Web3 technologies has made decentralized premium video streaming not just possible, but <strong>economically superior</strong> to traditional solutions.
+            </p>
+
+            <h3>Cost Comparison</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Cost Category</th>
+                        <th class="text-center" style="background: #c53030;">Traditional</th>
+                        <th class="text-center" style="background: #276749;">YouTick</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Video Encoding (per hour)</td>
+                        <td class="text-center bg-danger">$2.00 - $5.00</td>
+                        <td class="text-center bg-success">$0.005 - $0.02</td>
+                    </tr>
+                    <tr>
+                        <td>Storage (per GB/month)</td>
+                        <td class="text-center bg-danger">$0.023</td>
+                        <td class="text-center bg-success">$0.00001 (perpetual)</td>
+                    </tr>
+                    <tr>
+                        <td>CDN Delivery (per GB)</td>
+                        <td class="text-center bg-danger">$0.085</td>
+                        <td class="text-center bg-success">$0.015</td>
+                    </tr>
+                    <tr>
+                        <td>Platform Commission</td>
+                        <td class="text-center bg-danger">30-55%</td>
+                        <td class="text-center bg-success">2.5% (protocol fee)</td>
+                    </tr>
+                    <tr style="font-weight: 600;">
+                        <td>Creator Revenue Retained</td>
+                        <td class="text-center bg-danger">45-70%</td>
+                        <td class="text-center bg-success text-success">97.5%</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>Technology Stack Advantages</h3>
+            
+            <h4>NEAR Protocol</h4>
+            <ul class="check-list">
+                <li>Sub-second finality (~1.3s) for instant NFT purchases</li>
+                <li>Human-readable account names (artist.near instead of 0x...)</li>
+                <li>$0.001 average transaction cost</li>
+                <li>Carbon-neutral blockchain</li>
+            </ul>
+
+            <h4>Filecoin + Lighthouse</h4>
+            <ul class="check-list">
+                <li>Perpetual storage with cryptographic proofs</li>
+                <li>Threshold encryption (3/5 BLS) for access control</li>
+                <li>No vendor lock-in — content retrievable from any IPFS gateway</li>
+            </ul>
+
+            <h4>Livepeer Network</h4>
+            <ul class="check-list">
+                <li>Decentralized video transcoding at 1/10th the cost</li>
+                <li>99.98% transcoding success rate</li>
+                <li>Global network of 70,000+ GPUs</li>
+            </ul>
+        </div>
+    </section>
+
+    <!-- Use Cases -->
+    <section>
+        <div class="container">
+            <h2>Use Cases</h2>
+
+            <div class="card-grid">
+                <div class="card">
+                    <div class="card-icon">🎵</div>
+                    <h4>Concert Recordings</h4>
+                    <p>Artists release exclusive concert recordings as limited-edition NFT tickets. Fans gain permanent access plus the ability to resell — with royalties on every resale.</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-icon">🎬</div>
+                    <h4>Independent Cinema</h4>
+                    <p>Filmmakers distribute movies directly to audiences without studio intermediaries. No region locks, no platform censorship.</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-icon">🎭</div>
+                    <h4>Live Events & Premieres</h4>
+                    <p>Virtual premieres, live-streamed events, and exclusive Q&A sessions can be token-gated. NFTs serve as both tickets and collectibles.</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-icon">📚</div>
+                    <h4>Educational Content</h4>
+                    <p>Course creators monetize premium video courses with verifiable certificates of completion stored on-chain.</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-icon">🏟️</div>
+                    <h4>Sports & Esports</h4>
+                    <p>Teams offer exclusive behind-the-scenes content, match replays, and fan experiences through NFT access passes.</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-icon">🎤</div>
+                    <h4>Podcasts & Interviews</h4>
+                    <p>Premium podcast episodes and exclusive interviews with limited-edition access NFTs.</p>
+                </div>
+            </div>
+
+            <blockquote>
+                Example: An artist releases 10,000 NFT tickets for a concert recording at $25 each. Primary sale: $250,000. Secondary market royalties (10%): Ongoing passive income.
+            </blockquote>
+        </div>
+    </section>
+
+    <!-- Benefits -->
+    <section>
+        <div class="container">
+            <h2>Benefits for Stakeholders</h2>
+
+            <h3>For Content Creators</h3>
+            <div class="benefit-item">
+                <div class="benefit-icon">💰</div>
+                <div class="benefit-content">
+                    <h4>97.5% Revenue Retention</h4>
+                    <p>Keep almost everything you earn instead of losing 30-55% to platforms</p>
+                </div>
+            </div>
+            <div class="benefit-item">
+                <div class="benefit-icon">🔄</div>
+                <div class="benefit-content">
+                    <h4>Secondary Market Royalties</h4>
+                    <p>Earn 5-10% every time your NFT is resold, forever</p>
+                </div>
+            </div>
+            <div class="benefit-item">
+                <div class="benefit-icon">🌍</div>
+                <div class="benefit-content">
+                    <h4>Global Reach</h4>
+                    <p>No geographical restrictions, anyone with crypto can purchase</p>
+                </div>
+            </div>
+            <div class="benefit-item">
+                <div class="benefit-icon">🔒</div>
+                <div class="benefit-content">
+                    <h4>Censorship Resistance</h4>
+                    <p>Content cannot be removed or demonetized by any platform</p>
+                </div>
+            </div>
+            <div class="benefit-item">
+                <div class="benefit-icon">📊</div>
+                <div class="benefit-content">
+                    <h4>Transparent Analytics</h4>
+                    <p>All sales and royalties verifiable on-chain</p>
+                </div>
+            </div>
+            <div class="benefit-item">
+                <div class="benefit-icon">♾️</div>
+                <div class="benefit-content">
+                    <h4>Perpetual Availability</h4>
+                    <p>Content stored permanently on Filecoin, never lost</p>
+                </div>
+            </div>
+
+            <h3>For Viewers/Collectors</h3>
+            <div class="benefit-item">
+                <div class="benefit-icon">🎫</div>
+                <div class="benefit-content">
+                    <h4>True Ownership</h4>
+                    <p>NFT in your wallet means you own access, not the platform</p>
+                </div>
+            </div>
+            <div class="benefit-item">
+                <div class="benefit-icon">💸</div>
+                <div class="benefit-content">
+                    <h4>Resale Rights</h4>
+                    <p>Sell access you no longer need on secondary markets</p>
+                </div>
+            </div>
+            <div class="benefit-item">
+                <div class="benefit-icon">🏆</div>
+                <div class="benefit-content">
+                    <h4>Collectible Value</h4>
+                    <p>Limited editions can appreciate in value over time</p>
+                </div>
+            </div>
+            <div class="benefit-item">
+                <div class="benefit-icon">🌐</div>
+                <div class="benefit-content">
+                    <h4>No Region Locks</h4>
+                    <p>Access content from anywhere in the world</p>
+                </div>
+            </div>
+            <div class="benefit-item">
+                <div class="benefit-icon">🤝</div>
+                <div class="benefit-content">
+                    <h4>Support Creators Directly</h4>
+                    <p>97.5% of your payment goes to the creator</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works -->
+    <section>
+        <div class="container">
+            <h2>How It Works</h2>
+
+            <h3>For Creators: Upload & Monetize</h3>
+            <ol>
+                <li><strong>Connect NEAR Wallet</strong> — Sign in with your NEAR account (e.g., artist.near)</li>
+                <li><strong>Upload Video</strong> — Content is encrypted and stored on Filecoin via Lighthouse</li>
+                <li><strong>Set Terms</strong> — Define price, supply limit, and royalty percentage</li>
+                <li><strong>Mint NFTs</strong> — Create access tokens on NEAR blockchain</li>
+                <li><strong>Earn</strong> — Receive NEAR directly to your wallet for each sale + ongoing royalties</li>
+            </ol>
+
+            <h3>For Viewers: Purchase & Watch</h3>
+            <ol>
+                <li><strong>Browse</strong> — Discover concerts, films, and exclusive content</li>
+                <li><strong>Purchase NFT</strong> — Buy access with NEAR (sub-second confirmation)</li>
+                <li><strong>Watch</strong> — NFT ownership automatically unlocks streaming access</li>
+                <li><strong>Keep or Sell</strong> — Hold your NFT or resell on secondary markets</li>
+            </ol>
+
+            <h3>Technical Flow</h3>
+            <div class="flow-diagram">
+<pre>┌──────────────┐      ┌──────────────┐      ┌──────────────┐
+│   Creator    │      │   YouTick    │      │    Viewer    │
+└──────┬───────┘      └──────┬───────┘      └──────┬───────┘
+       │                     │                     │
+       │  1. Upload Video    │                     │
+       │────────────────────▶│                     │
+       │                     │                     │
+       │     ┌───────────────┴───────────────┐     │
+       │     │ 2. Encrypt & Store on Filecoin│     │
+       │     │ 3. Transcode via Livepeer     │     │
+       │     │ 4. Mint NFT on NEAR           │     │
+       │     └───────────────┬───────────────┘     │
+       │                     │                     │
+       │                     │  5. Purchase NFT    │
+       │                     │◀────────────────────│
+       │                     │                     │
+       │  6. Receive NEAR    │                     │
+       │◀────────────────────│                     │
+       │                     │                     │
+       │                     │  7. Verify NFT      │
+       │                     │  8. Stream Video    │
+       │                     │────────────────────▶│</pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- Market Opportunity -->
+    <section>
+        <div class="container">
+            <h2>Market Opportunity</h2>
+
+            <div class="market-stats">
+                <div class="market-stat blue">
+                    <span class="value">$50B+</span>
+                    <span class="label">Global Live Entertainment Market (2024)</span>
+                </div>
+                <div class="market-stat green">
+                    <span class="value">$25B</span>
+                    <span class="label">NFT Market Volume (2023)</span>
+                </div>
+                <div class="market-stat purple">
+                    <span class="value">500M+</span>
+                    <span class="label">Crypto Wallet Users Globally</span>
+                </div>
+                <div class="market-stat orange">
+                    <span class="value">15%</span>
+                    <span class="label">Annual Growth in Video Streaming</span>
+                </div>
+            </div>
+
+            <h3>Target Segments</h3>
+            
+            <h4>Initial Focus (MVP)</h4>
+            <ul>
+                <li>Independent musicians with 10K-1M followers</li>
+                <li>Indie filmmakers seeking alternative distribution</li>
+                <li>Web3-native creators already using NFTs</li>
+            </ul>
+
+            <h4>Expansion Phase</h4>
+            <ul>
+                <li>Concert venues and festivals</li>
+                <li>Sports leagues and esports organizations</li>
+                <li>Educational institutions and course creators</li>
+            </ul>
+
+            <h3>Competitive Landscape</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Feature</th>
+                        <th class="text-center">YouTick</th>
+                        <th class="text-center">Vimeo OTT</th>
+                        <th class="text-center">YouTube Premium</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Creator Revenue</td>
+                        <td class="text-center bg-success"><strong>97.5%</strong></td>
+                        <td class="text-center">90%</td>
+                        <td class="text-center bg-danger">55%</td>
+                    </tr>
+                    <tr>
+                        <td>Secondary Sales</td>
+                        <td class="text-center bg-success">✓ + Royalties</td>
+                        <td class="text-center bg-danger">✗</td>
+                        <td class="text-center bg-danger">✗</td>
+                    </tr>
+                    <tr>
+                        <td>Censorship Resistant</td>
+                        <td class="text-center bg-success">✓</td>
+                        <td class="text-center bg-danger">✗</td>
+                        <td class="text-center bg-danger">✗</td>
+                    </tr>
+                    <tr>
+                        <td>True Ownership</td>
+                        <td class="text-center bg-success">✓ (NFT)</td>
+                        <td class="text-center bg-danger">✗ (License)</td>
+                        <td class="text-center bg-danger">✗ (License)</td>
+                    </tr>
+                    <tr>
+                        <td>Global by Default</td>
+                        <td class="text-center bg-success">✓</td>
+                        <td class="text-center">Partial</td>
+                        <td class="text-center bg-danger">✗ (Region locks)</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- Roadmap -->
+    <section>
+        <div class="container">
+            <h2>Roadmap</h2>
+
+            <div class="roadmap-phase">
+                <h4>Phase 1: MVP (Q1 2025)</h4>
+                <ul class="check-list">
+                    <li>NEAR wallet authentication</li>
+                    <li>Video upload with Lighthouse encryption</li>
+                    <li>NFT minting and primary sales</li>
+                    <li>Token-gated video streaming via Livepeer</li>
+                    <li>Basic creator dashboard</li>
+                </ul>
+            </div>
+
+            <div class="roadmap-phase">
+                <h4>Phase 2: Growth (Q2-Q3 2025)</h4>
+                <ul>
+                    <li>Secondary marketplace integration</li>
+                    <li>Royalty distribution system</li>
+                    <li>Mobile app (iOS/Android)</li>
+                    <li>Analytics dashboard for creators</li>
+                    <li>Multi-language support</li>
+                </ul>
+            </div>
+
+            <div class="roadmap-phase">
+                <h4>Phase 3: Scale (Q4 2025+)</h4>
+                <ul>
+                    <li>Live streaming support</li>
+                    <li>Cross-chain payment support (ETH, BTC via bridges)</li>
+                    <li>DAO governance for platform decisions</li>
+                    <li>Creator tokenomics (social tokens)</li>
+                    <li>Enterprise partnerships (venues, labels)</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- Vision -->
+    <section>
+        <div class="container">
+            <h2>Vision</h2>
+
+            <blockquote>
+                We envision a world where creators have complete ownership of their work, direct relationships with their audiences, and fair compensation for their creativity — enabled by blockchain technology.
+            </blockquote>
+
+            <p class="lead">
+                YouTick is building the infrastructure for the next generation of premium content distribution. By removing intermediaries and putting control in the hands of creators and fans, we're creating a more equitable entertainment ecosystem.
+            </p>
+
+            <h3>Why Now?</h3>
+            <ul>
+                <li><strong>Technology Maturity:</strong> NEAR, Filecoin, and Livepeer have proven their reliability at scale</li>
+                <li><strong>Creator Economy Growth:</strong> 50M+ creators worldwide seeking better monetization</li>
+                <li><strong>Web3 Adoption:</strong> 500M+ crypto wallet users ready for utility beyond trading</li>
+                <li><strong>Platform Fatigue:</strong> Creators frustrated with YouTube, Twitch, and Patreon policies</li>
+            </ul>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta-section">
+        <div class="container">
+            <h2>Get Involved</h2>
+            <p>YouTick is actively seeking partnerships, grant funding, and early adopters.</p>
+
+            <ul>
+                <li>🎬 Content Creators</li>
+                <li>💼 Investors</li>
+                <li>🤝 Ecosystem Partners</li>
+                <li>👩‍💻 Developers</li>
+            </ul>
+
+            <h3 style="color: white; margin-top: 40px;">Grant Applications</h3>
+            <p style="max-width: none;">YouTick is applying to ecosystem grants:</p>
+            <ul>
+                <li>Livepeer Microgrants ($500-$2K)</li>
+                <li>FIL Builder Next Step ($5K-$10K)</li>
+                <li>Filecoin Open Grants ($50K+)</li>
+                <li>NEAR Ecosystem Grants</li>
+            </ul>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <h3>YouTick</h3>
+            <p class="tagline">Own Your Content. Control Your Audience. Keep Your Revenue.</p>
+            <p class="built-with">Built with ❤️ on NEAR Protocol</p>
+        </div>
+    </footer>
+</body>
+</html>

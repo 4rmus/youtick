@@ -1,0 +1,1 @@
+{"rustc":5357548097637079788,"features":"[]","declared_features":"[\"global-contracts\"]","target":5686943693139131258,"profile":15992982544946649909,"path":17729415947087442548,"deps":[],"local":[{"CheckDepInfo":{"dep_info":"debug/.fingerprint/near-sys-f73b39adfa1fd839/dep-lib-near_sys","checksum":false}}],"rustflags":["-Awarnings"],"config":2069994364910194474,"compile_kind":0}

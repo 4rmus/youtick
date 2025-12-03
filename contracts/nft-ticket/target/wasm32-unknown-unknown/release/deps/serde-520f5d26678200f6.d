@@ -1,0 +1,14 @@
+/Users/arair/youtick-demo/contracts/nft-ticket/target/wasm32-unknown-unknown/release/deps/libserde-520f5d26678200f6.rmeta: /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/arair/youtick-demo/contracts/nft-ticket/target/wasm32-unknown-unknown/release/build/serde-ced731d46b8fa3d5/out/private.rs
+
+/Users/arair/youtick-demo/contracts/nft-ticket/target/wasm32-unknown-unknown/release/deps/libserde-520f5d26678200f6.rlib: /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/arair/youtick-demo/contracts/nft-ticket/target/wasm32-unknown-unknown/release/build/serde-ced731d46b8fa3d5/out/private.rs
+
+/Users/arair/youtick-demo/contracts/nft-ticket/target/wasm32-unknown-unknown/release/deps/serde-520f5d26678200f6.d: /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/arair/youtick-demo/contracts/nft-ticket/target/wasm32-unknown-unknown/release/build/serde-ced731d46b8fa3d5/out/private.rs
+
+/Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/arair/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/arair/youtick-demo/contracts/nft-ticket/target/wasm32-unknown-unknown/release/build/serde-ced731d46b8fa3d5/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/arair/youtick-demo/contracts/nft-ticket/target/wasm32-unknown-unknown/release/build/serde-ced731d46b8fa3d5/out

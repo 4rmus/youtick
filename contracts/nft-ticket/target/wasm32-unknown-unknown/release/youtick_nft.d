@@ -1,0 +1,1 @@
+/Users/arair/youtick-demo/contracts/nft-ticket/target/wasm32-unknown-unknown/release/youtick_nft.wasm: /Users/arair/youtick-demo/contracts/nft-ticket/src/lib.rs
