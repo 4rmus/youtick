@@ -6,12 +6,13 @@ use near_contract_standards::non_fungible_token::{
 
 use near_sdk::{
     borsh::{BorshDeserialize, BorshSerialize},
-    collections::{LazyOption, UnorderedMap},
+    collections::{LazyOption, UnorderedMap, LookupMap},
     env, near, require,
     json_types::U128,
     AccountId, BorshStorageKey, NearToken, PanicOnDefault, Promise, PromiseOrValue,
 };
 use serde::{Deserialize, Serialize};
+
 
 // SECURITY: Unique storage key prefixes prevent collision attacks
 #[derive(BorshStorageKey, BorshSerialize)]
@@ -23,6 +24,7 @@ pub enum StorageKey {
     Approval,           // Prefix: "a"
     ContractMetadata,   // Prefix: "c"
     VideoMetadata,      // Prefix: "v" - Custom
+    UserDeposits,       // Prefix: "d"
 }
 
 // Custom video metadata for token-gated content
@@ -53,6 +55,7 @@ pub struct Contract {
     tokens: NonFungibleToken,
     metadata: LazyOption<NFTContractMetadata>,
     video_metadata: UnorderedMap<TokenId, VideoMetadata>,
+    user_deposits: LookupMap<AccountId, NearToken>,
     next_token_id: u64,
 }
 
@@ -86,6 +89,7 @@ impl Contract {
                 Some(&metadata),
             ),
             video_metadata: UnorderedMap::new(StorageKey::VideoMetadata),
+            user_deposits: LookupMap::new(StorageKey::UserDeposits),
             next_token_id: 0,
         }
     }
@@ -121,6 +125,105 @@ impl Contract {
             receiver_id,
             Some(token_metadata),
         )
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // PREPAID PROXY FUNCTIONS (Session Key Support)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Deposit funds into the "Gas Tank" for Session Key usage
+    #[payable]
+    pub fn deposit_funds(&mut self) {
+        let amount = env::attached_deposit();
+        let account_id = env::predecessor_account_id();
+        
+        let current_bal = self.user_deposits.get(&account_id).unwrap_or(NearToken::from_yoctonear(0));
+        // NearToken addition
+        let new_bal = current_bal.saturating_add(amount);
+        
+        self.user_deposits.insert(&account_id, &new_bal);
+        
+        env::log_str(&format!("Deposited {} for {}", amount, account_id));
+    }
+
+    /// Check user's internal balance
+    pub fn get_user_balance(&self, account_id: AccountId) -> U128 {
+        let val = self.user_deposits.get(&account_id).unwrap_or(NearToken::from_yoctonear(0));
+        U128(val.as_yoctonear())
+    }
+
+    /// Mint NFT using pre-paid funds (Callable via Session Key)
+    pub fn nft_mint_prepaid(
+        &mut self,
+        receiver_id: AccountId,
+        token_metadata: TokenMetadata,
+        video_metadata: VideoMetadata,
+    ) -> Promise {
+        let account_id = env::predecessor_account_id();
+        
+        // Estimated storage cost for an NFT (approx 0.1 NEAR is safe upper bound, usually less)
+        // We can be more precise, but for now let's use a safe fixed amount.
+        // Standard NFT storage is ~0.01 NEAR. 
+        // Let's charge 0.1 NEAR to be safe and refund the rest? 
+        // Or just charge a fixed fee.
+        // `nft_mint` will refund excess to the *predecessor* (which is the Contract).
+        // So the user loses the excess if we don't handle it.
+        
+        // BETTER: Charge the user exactly what we attach.
+        // If `nft_mint` refunds the Contract, we should ideally credit it back to the user's internal balance.
+        // But that requires a callback.
+        
+        // SIMPLIFICATION: Charge a flat fee of 0.1 NEAR.
+        let charge_amount = NearToken::from_millinear(100); // 0.1 NEAR
+        
+        let current_bal = self.user_deposits.get(&account_id).expect("Insufficient prepaid balance");
+        require!(current_bal.as_yoctonear() >= charge_amount.as_yoctonear(), "Insufficient prepaid balance");
+        
+        // Deduct balance
+        let new_bal = current_bal.saturating_sub(charge_amount);
+        self.user_deposits.insert(&account_id, &new_bal);
+        
+        // Call nft_mint with attached deposit
+        Self::ext(env::current_account_id())
+            .with_attached_deposit(charge_amount)
+            .nft_mint(receiver_id, token_metadata, video_metadata)
+    }
+
+    /// Request MPC signature via Proxy (Callable via Session Key)
+    pub fn sign_with_mpc(&mut self, payload: [u8; 32], path: String, key_version: u32) -> Promise {
+        let account_id = env::predecessor_account_id();
+        // MPC cost is usually around 0.05 NEAR to 0.2 NEAR depending on network congestion
+        // We charge a safe amount.
+        let charge_amount = NearToken::from_millinear(250); // 0.25 NEAR
+        
+        let current_bal = self.user_deposits.get(&account_id).expect("Insufficient prepaid balance for MPC");
+        require!(current_bal.as_yoctonear() >= charge_amount.as_yoctonear(), "Insufficient prepaid balance for MPC");
+        
+        // Deduct balance
+        let new_bal = current_bal.saturating_sub(charge_amount);
+        self.user_deposits.insert(&account_id, &new_bal);
+        
+        // MPC Contract ID
+        let mpc_contract: AccountId = "v1.signer-prod.testnet".parse().unwrap();
+        
+        // Call MPC sign
+        // Args: { payload: [u8; 32], path: String, key_version: u32 }
+        // We need to serialize args.
+        let args = serde_json::json!({
+            "request": {
+                "payload": payload,
+                "path": path,
+                "key_version": key_version
+            }
+        }).to_string().into_bytes();
+
+        Promise::new(mpc_contract)
+            .function_call(
+                "sign".to_string(),
+                args,
+                charge_amount, // Attach the deposit we charged
+                near_sdk::Gas::from_tgas(100) // Attach gas
+            )
     }
 
     // ═══════════════════════════════════════════════════════════════

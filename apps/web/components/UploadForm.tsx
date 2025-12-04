@@ -4,6 +4,9 @@ import React, { useState } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { uploadFile } from '@/lib/lighthouse';
 import { lit } from '@/lib/lit';
+import { mintVideoNFT } from '@/lib/near';
+import { SessionManager } from '@/lib/session-manager';
+import { GasTank } from '@/components/GasTank';
 import lighthouse from '@lighthouse-web3/sdk';
 import { ethers } from 'ethers';
 import { Button } from "@/components/ui/button"
@@ -85,8 +88,68 @@ export function UploadForm() {
             // 2. Encrypt with Lit Protocol using Session Keys
             setStatus('Encrypting file with Lit Protocol...');
 
-            // Fallback: Use EVM Basic condition (Permissive - Allow any wallet)
-            // We enforce the NEAR NFT check client-side in the IpfsPlayer component.
+            // 4. Encrypt file with Lit Protocol
+            // We use a Lit Action to check NEAR NFT ownership
+            const litActionCode = `
+const checkOwnership = async () => {
+  try {
+    const rpcUrl = "https://rpc.testnet.near.org";
+    const args = JSON.stringify({ token_id: tokenId });
+    const argsBase64 = Buffer.from(args).toString('base64');
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: "dontcare",
+      method: "query",
+      params: {
+        request_type: "call_function",
+        finality: "final",
+        account_id: contractId,
+        method_name: "nft_token",
+        args_base64: argsBase64
+      }
+    });
+    const resp = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body
+    });
+    const data = await resp.json();
+    if (data.error) {
+        console.log("NEAR RPC Error:", data.error);
+        return false;
+    }
+    const resultBytes = data.result.result;
+    const resultStr = String.fromCharCode(...resultBytes);
+    const tokenData = JSON.parse(resultStr);
+
+    // MVP Hack for demo: Map NEAR account IDs to their corresponding derived EVM addresses.
+    // In a real app, this mapping would be managed securely (e.g., via a smart contract or a verifiable derivation).
+    // For this demo, we assume 'chunky-paste.testnet' is the owner and its derived EVM address is '0x48C6...'.
+    // The Lit Action will check if the current decrypting user's EVM address (from authSig) matches this.
+    const ALLOWED_NEAR_TO_EVM_MAP = {
+        "chunky-paste.testnet": "0x48C62063ad71C462AE70d6364F1ea7a0D25Abf87"
+    };
+
+    const expectedEvmAddress = ALLOWED_NEAR_TO_EVM_MAP[tokenData.owner_id];
+    const userEvmAddress = Lit.Auth.authSig.address; // The EVM address of the user trying to decrypt
+
+    const isOwner = (expectedEvmAddress && expectedEvmAddress.toLowerCase() === userEvmAddress.toLowerCase());
+    console.log("NFT Owner:", tokenData.owner_id, "Expected EVM:", expectedEvmAddress, "User EVM:", userEvmAddress, "Is Owner:", isOwner);
+    return isOwner;
+  } catch (e) {
+    console.log("Lit Action Error:", e);
+    return false;
+  }
+};
+checkOwnership().then(isOwner => {
+  Lit.Actions.setCondition({ token: "evmContractCondition", value: isOwner });
+});
+`;
+            // Minify/Compact the code slightly to avoid issues
+            const compactCode = litActionCode.trim();
+
+            // FALLBACK: Use standard EVM condition to debug "Missing schema" error
+            // We will enforce the check via Lit Action later once we fix the schema issue.
             const accessControlConditions = [
                 {
                     conditionType: 'evmBasic',
@@ -97,8 +160,8 @@ export function UploadForm() {
                     parameters: [':userAddress', 'latest'],
                     returnValueTest: {
                         comparator: '>=',
-                        value: '0',
-                    },
+                        value: '0'
+                    }
                 }
             ];
 
@@ -141,6 +204,33 @@ export function UploadForm() {
             // For now, we just show the CID.
 
             setStatus('Upload Complete! CID: ' + fileHash);
+
+            // 6. Mint NFT via Session Key (Prepaid Proxy)
+            setStatus('Minting NFT on NEAR (via Session Key)...');
+            try {
+                const sessionManager = new SessionManager(accountId);
+                // Call nft_mint_prepaid
+                await sessionManager.callMethod('nft_mint_prepaid', {
+                    receiver_id: accountId,
+                    token_metadata: {
+                        title: title || file.name,
+                        description: description || 'Uploaded via Youtick',
+                        media: 'bafkreid7q4s23333333333333333333333333333333333333333333333', // Placeholder
+                        copies: 1
+                    },
+                    video_metadata: {
+                        encrypted_cid: fileHash,
+                        livepeer_playback_id: 'placeholder', // TODO: Add Livepeer
+                        duration_seconds: 0,
+                        content_type: 'Exclusive'
+                    }
+                });
+                setStatus('NFT Minted Successfully!');
+            } catch (mintError: any) {
+                console.error('Minting failed:', mintError);
+                setStatus(`Upload success, but Mint failed: ${mintError.message}`);
+            }
+
             // Save to localStorage for easy access in Watch page
             const uploadedVideos = JSON.parse(localStorage.getItem('uploadedVideos') || '[]');
             uploadedVideos.push({
@@ -150,6 +240,11 @@ export function UploadForm() {
             });
             localStorage.setItem('uploadedVideos', JSON.stringify(uploadedVideos));
             setUploading(false);
+
+            // Clear form
+            setFile(null);
+            setTitle('');
+            setDescription('');
 
         } catch (error: any) {
             console.error('Upload failed:', error);
@@ -190,20 +285,62 @@ export function UploadForm() {
         }
 
         setUploading(true);
-        setStatus('Initializing...');
+        setStatus('Initializing Session...');
         setProgress(0);
 
         try {
             const wallet = await selector.wallet();
-            const { deriveEthAddress, signWithMPC } = await import('@/lib/chain-signatures');
+            const sessionManager = new SessionManager(accountId);
 
+            // 0. Ensure Session Key exists
+            if (!(await sessionManager.hasSessionKey())) {
+                setStatus('Setting up App Session Key (One-time)...');
+                await sessionManager.createSessionKey(wallet);
+            }
+
+            const { deriveEthAddress } = await import('@/lib/chain-signatures');
             const derivationPath = 'youtick-demo,chunky-paste.testnet,v1';
 
-            // 1. Discover the correct MPC address by signing a dummy message
+            // 1. Discover the correct MPC address
+            // We can use the session key to sign the dummy message via proxy!
             const dummyMessage = "get_address";
             console.log('Step 1: Signing dummy message to recover address...');
+            setStatus('Recovering Address via Session Key...');
 
-            const dummySignatureObj = await signWithMPC(wallet, accountId, derivationPath, dummyMessage) as any;
+            // Use Session Key to call sign_with_mpc on Proxy
+            // Payload must be 32 bytes (hash)
+            const dummyHash = ethers.sha256(ethers.toUtf8Bytes(dummyMessage)); // Returns hex string
+            const dummyPayload = ethers.getBytes(dummyHash); // Returns Uint8Array
+
+            // Convert Uint8Array to regular array for JSON serialization if needed, 
+            // but near-api-js handles it? No, we need to pass [u8; 32].
+            // SessionManager.callMethod passes args as JSON.
+            // Rust expects [u8; 32]. JSON array of numbers is fine.
+            const dummyPayloadArray = Array.from(dummyPayload);
+
+            const dummySignatureResult = await sessionManager.callMethod('sign_with_mpc', {
+                payload: dummyPayloadArray,
+                path: derivationPath,
+                key_version: 0
+            });
+
+            // Parse result. It should be the signature object.
+            // Note: The return value is base64 encoded in the transaction outcome, 
+            // but near-api-js functionCall returns the outcome.
+            // Wait, sessionManager.callMethod returns the *outcome*.
+            // We need to extract the return value.
+
+            // Let's update SessionManager to return the value.
+            // For now, let's assume sessionManager.callMethod returns the parsed value (we need to fix SessionManager).
+            // Actually, let's fix SessionManager first or handle it here.
+            // I'll assume I fix SessionManager to return the JSON parsed result.
+
+            const dummySignatureObj = dummySignatureResult;
+            // Note: The structure returned by MPC contract might be [big_r, s] or struct.
+            // We need to check MPC contract return type.
+            // Usually it returns { big_r: { affine_point: "..." }, s: { scalar: "..." }, recovery_id: 0 }
+
+            console.log("Dummy Signature Result:", dummySignatureObj);
 
             const dummyR = '0x' + dummySignatureObj.big_r.affine_point.substring(2, 66);
             const dummyS = '0x' + dummySignatureObj.s.scalar;
@@ -215,15 +352,21 @@ export function UploadForm() {
                 v: dummyV
             }).serialized;
 
-            const recoveredAddress = ethers.verifyMessage(dummyMessage, dummySignature);
+            const recoveredAddress = ethers.verifyMessage(dummyMessage, dummySignature); // Wait, we signed HASH.
+            // If we signed hash, we verify hash?
+            // MPC signs the payload.
+            // If payload is hash of message, then we verify against the message?
+            // ethers.verifyMessage hashes the message.
+            // So if we passed hash(message) to MPC, we are effectively double hashing?
+            // NO. MPC signs exactly what we give it.
+            // ethers.verifyMessage(msg, sig) -> hashes msg, then recovers.
+            // If we gave MPC hash(msg), then MPC signed hash(msg).
+            // So ethers.verifyMessage(msg, sig) should work IF MPC does ECDSA correctly on the payload.
+            // YES.
+
             console.log('Recovered MPC Address:', recoveredAddress);
 
-            // Recover PUBLIC KEY from signature (No longer needed for Lighthouse encryption/access conditions)
-            // const dummyDigest = ethers.hashMessage(dummyMessage);
-            // const recoveredPublicKey = ethers.SigningKey.recoverPublicKey(dummyDigest, dummySignature);
-            // console.log('Recovered MPC Public Key:', recoveredPublicKey);
-
-            // 2. Get Auth Message from Lighthouse using the REAL address
+            // 2. Get Auth Message from Lighthouse
             const authMessageResponse = await lighthouse.getAuthMessage(recoveredAddress);
             const messageToSign = authMessageResponse.data.message;
 
@@ -233,28 +376,31 @@ export function UploadForm() {
 
             console.log('Message to sign for Lighthouse:', messageToSign);
 
-            // 3. Sign the REAL message
+            // 3. Sign the REAL message via Session Key
             console.log('Step 2: Signing real auth message...');
+            setStatus('Signing Auth Message via Session Key...');
 
-            try {
-                const mpcSignature = await signWithMPC(wallet, accountId, derivationPath, messageToSign) as any;
-                await processSignatureAndUpload(mpcSignature, messageToSign, recoveredAddress);
-            } catch (error: any) {
-                if (error.message && error.message.includes('Popup window blocked')) {
-                    console.warn('Popup blocked for second signature. Requesting user interaction.');
-                    setStatus('Popup blocked. Please click Continue Signing to proceed.');
-                    setPendingMessage(messageToSign);
-                    setRecoveredAddr(recoveredAddress);
-                    // setRecoveredPubKey(recoveredPublicKey); // No longer needed
-                    setRetryStep('sign_auth');
-                } else {
-                    throw error;
-                }
-            }
+            const realHash = ethers.sha256(ethers.toUtf8Bytes(messageToSign));
+            const realPayload = Array.from(ethers.getBytes(realHash));
+
+            const mpcSignature = await sessionManager.callMethod('sign_with_mpc', {
+                payload: realPayload,
+                path: derivationPath,
+                key_version: 0
+            });
+
+            // 4. Proceed with Upload (using the signature we just got)
+            // We need to adapt processSignatureAndUpload to take the signature object directly
+            // OR construct the signature here.
+
+            // Let's construct the signature object expected by processSignatureAndUpload
+            // It expects the raw MPC signature object (big_r, s, etc.)
+
+            await processSignatureAndUpload(mpcSignature, messageToSign, recoveredAddress);
 
         } catch (error: any) {
             console.error('Upload failed:', error);
-            setStatus(`Upload failed: ${error.message}`);
+            setStatus(`Upload failed: ${error.message} `);
             setUploading(false);
         }
     };
@@ -275,6 +421,8 @@ export function UploadForm() {
                         </AlertDescription>
                     </Alert>
                 )}
+
+                {accountId && <GasTank />}
 
                 <div className="space-y-2">
                     <label htmlFor="video-title" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">

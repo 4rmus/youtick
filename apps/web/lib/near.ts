@@ -1,5 +1,5 @@
 // lib/near.ts
-import { connect, keyStores } from 'near-api-js';
+import { connect, keyStores, transactions } from 'near-api-js';
 
 const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID!;
 
@@ -152,33 +152,43 @@ export async function mintVideoNFT(
     // Note: receiver_id is the minter (self)
     const accountId = (await wallet.getAccounts())[0].accountId;
 
+    // Fix for "Enum key (type) not found in enum schema" error:
+    // We construct the action using near-api-js directly to ensure it matches the Borsh schema.
+
+    const args = {
+        receiver_id: accountId,
+        token_metadata: {
+            title: metadata.title,
+            description: metadata.description,
+            media: `https://gateway.lighthouse.storage/ipfs/${metadata.media_cid}`,
+            copies: 1,
+        },
+        video_metadata: {
+            encrypted_cid: metadata.video_cid,
+            livepeer_playback_id: "placeholder_id",
+            duration_seconds: metadata.duration,
+            event_date: Date.now(),
+            content_type: "Exclusive",
+        },
+    };
+
+    // Serialize args to bytes
+    const argsBytes = Buffer.from(JSON.stringify(args));
+
+    // Create action using near-api-js
+    // We use BigInt for gas and deposit (near-api-js v6+)
+    const gas = BigInt('300000000000000'); // 300 TGas
+    const depositBI = BigInt(deposit);
+
+    const action = transactions.functionCall(
+        'nft_mint',
+        argsBytes,
+        gas,
+        depositBI
+    );
+
     return await wallet.signAndSendTransaction({
         receiverId: NFT_CONTRACT_ID,
-        actions: [
-            {
-                type: 'FunctionCall',
-                params: {
-                    methodName: 'nft_mint',
-                    args: {
-                        receiver_id: accountId,
-                        token_metadata: {
-                            title: metadata.title,
-                            description: metadata.description,
-                            media: `https://gateway.lighthouse.storage/ipfs/${metadata.media_cid}`,
-                            copies: 1,
-                        },
-                        video_metadata: {
-                            encrypted_cid: metadata.video_cid,
-                            livepeer_playback_id: "placeholder_id", // TODO: Integrate Livepeer upload
-                            duration_seconds: metadata.duration,
-                            event_date: Date.now(),
-                            content_type: "Exclusive",
-                        },
-                    },
-                    gas: '300000000000000', // 300 TGas
-                    deposit: deposit,
-                },
-            },
-        ],
+        actions: [action as any], // Cast to any to bypass wallet-selector types if needed
     });
 }
