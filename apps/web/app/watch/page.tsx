@@ -13,12 +13,16 @@ export default function WatchPage() {
     const initialCid = searchParams.get('cid') || '';
     const [cid, setCid] = useState(initialCid);
     const [playCid, setPlayCid] = useState(initialCid);
+    const [uploadedVideos, setUploadedVideos] = useState<any[]>([]);
 
     useEffect(() => {
         if (initialCid) {
             setCid(initialCid);
             setPlayCid(initialCid);
         }
+        // Load uploaded videos from localStorage
+        const videos = JSON.parse(localStorage.getItem('uploadedVideos') || '[]');
+        setUploadedVideos(videos);
     }, [initialCid]);
 
     return (
@@ -43,6 +47,27 @@ export default function WatchPage() {
                         Load Video
                     </Button>
                 </div>
+
+                {/* Uploaded Videos List */}
+                {uploadedVideos.length > 0 && (
+                    <div className="max-w-xl mx-auto space-y-2">
+                        <h3 className="font-semibold">Your Uploads</h3>
+                        <div className="grid gap-2">
+                            {uploadedVideos.map((video: any, index: number) => (
+                                <div key={index} className="flex items-center justify-between p-3 bg-muted rounded-lg cursor-pointer hover:bg-muted/80" onClick={() => {
+                                    setCid(video.cid);
+                                    setPlayCid(video.cid);
+                                }}>
+                                    <div>
+                                        <p className="font-medium">{video.name}</p>
+                                        <p className="text-xs text-muted-foreground">{new Date(video.timestamp).toLocaleString()}</p>
+                                    </div>
+                                    <p className="text-xs font-mono bg-background px-2 py-1 rounded">{video.cid.substring(0, 8)}...</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {playCid ? (
                     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">

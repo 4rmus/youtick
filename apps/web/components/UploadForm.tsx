@@ -59,48 +59,31 @@ export function UploadForm() {
     };
 
     // Helper function to process the signature and continue with upload/access conditions/minting
-    const processSignatureAndUpload = async (mpcSignature: any, messageToSign: string, recoveredAddress: string) => {
+    const processSignatureAndUpload = async (mpcSignature: any, messageToSign: string, lighthouseEthAddress: string) => {
         if (!file || !accountId || !selector) {
             throw new Error("Missing file, accountId, or selector for upload process.");
         }
 
         try {
+            const wallet = await selector.wallet();
 
+            // 0. Recover Ethereum Address (MPC)
+            // We already have the address from the previous step (lighthouseEthAddress)
+            console.log('Using recovered MPC Address for Session Sigs:', lighthouseEthAddress);
+            const { signWithMPC } = await import('@/lib/chain-signatures');
 
-            const r_val = '0x' + mpcSignature.big_r.affine_point.substring(2, 66);
-            const s_val = '0x' + mpcSignature.s.scalar;
-            const v_val = mpcSignature.recovery_id + 27;
+            // 1. Get Session Signatures (One-time signature for session)
+            setStatus('Getting Session Signatures...');
 
+            const sessionSignatures = await lit.getSessionSigs(
+                wallet,
+                accountId,
+                lighthouseEthAddress,
+                signWithMPC
+            );
 
-
-            const signature = ethers.Signature.from({
-                r: r_val,
-                s: s_val,
-                v: v_val
-            }).serialized;
-
-
-
-            // Verify again just to be sure
-            const recoveredReal = ethers.verifyMessage(messageToSign, signature);
-            if (recoveredReal.toLowerCase() !== recoveredAddress.toLowerCase()) {
-                console.error('CRITICAL: Recovered address changed between signatures!');
-            }
-
-            // 4. Encrypt with Lit Protocol
+            // 2. Encrypt with Lit Protocol using Session Keys
             setStatus('Encrypting file with Lit Protocol...');
-            console.log('Using Recovered Address for Encryption:', recoveredAddress);
-
-            // Construct AuthSig
-            const authSig = {
-                sig: signature,
-                derivedVia: "web3.eth.personal.sign",
-                signedMessage: messageToSign,
-                address: recoveredAddress,
-            };
-
-            // Use Lit Action to verify NEAR NFT ownership
-            const { LIT_ACTION_CODE } = await import('@/lib/lit-action');
 
             // Fallback: Use EVM Basic condition (Permissive - Allow any wallet)
             // We enforce the NEAR NFT check client-side in the IpfsPlayer component.
@@ -122,8 +105,9 @@ export function UploadForm() {
             const { ciphertext, dataToEncryptHash } = await lit.encryptFile(
                 file,
                 accessControlConditions,
-                authSig,
-                'ethereum'
+                undefined, // No authSig needed if using sessionSigs
+                'ethereum',
+                sessionSignatures
             );
 
             setStatus('Uploading encrypted file to IPFS...');
@@ -157,6 +141,14 @@ export function UploadForm() {
             // For now, we just show the CID.
 
             setStatus('Upload Complete! CID: ' + fileHash);
+            // Save to localStorage for easy access in Watch page
+            const uploadedVideos = JSON.parse(localStorage.getItem('uploadedVideos') || '[]');
+            uploadedVideos.push({
+                cid: fileHash,
+                name: file.name,
+                timestamp: new Date().toISOString()
+            });
+            localStorage.setItem('uploadedVideos', JSON.stringify(uploadedVideos));
             setUploading(false);
 
         } catch (error: any) {

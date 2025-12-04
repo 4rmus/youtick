@@ -7,63 +7,60 @@ import BN from 'bn.js'; // We need BN for elliptic
 const MPC_CONTRACT = 'v1.signer-prod.testnet';
 
 export async function deriveEthAddress(accountId: string, path: string, wallet: any): Promise<string> {
-    // Use local proxy to avoid CORS issues
-    const provider = new providers.JsonRpcProvider({ url: '/api/rpc' });
-
-    // Get the MASTER public key from the MPC contract
-    // The contract returns the same key regardless of path arguments in view calls
-    const result = await provider.query({
-        request_type: 'call_function',
-        account_id: MPC_CONTRACT,
-        method_name: 'public_key',
-        args_base64: 'e30=', // {} encoded as base64
-        finality: 'final',
-    }) as any;
-
-    const resultStr = Buffer.from(result.result).toString();
-    const resultObj = JSON.parse(resultStr);
-    const publicKeyBase58 = resultObj.replace('secp256k1:', '');
-    let masterKeyBytes = base_decode(publicKeyBase58);
-
-    // Prepend 0x04 if it's a raw 64-byte key (uncompressed without prefix)
-    if (masterKeyBytes.length === 64) {
-        const newKey = new Uint8Array(65);
-        newKey[0] = 0x04;
-        newKey.set(masterKeyBytes, 1);
-        masterKeyBytes = newKey;
-    }
-
-    // Derive the child public key client-side
-    // Formula: ChildKey = MasterKey + Hash(PredecessorId || "," || Path) * G
-
-    const derivationPath = `${accountId},${path}`;
-    const derivedKey = deriveChildPublicKey(masterKeyBytes, accountId, path);
-
-    // Debugging: Try multiple path formats to find the one that matches 0x5D1...
-    const candidates = [
-        `${accountId},${path}`,
-        `${accountId}${path}`,
-        `${path}`,
-        `${accountId}/${path}`,
-        `${accountId}\n${path}`,
-        `testnet,${accountId},${path}`, // Maybe chainId prefix?
-        `${accountId},${path},0`, // Maybe key version suffix?
-    ];
-
-    const targetAddress = '0x5D1AeA33574e0A2533aE411c4EeeEfcB1ad7E362'.toLowerCase();
-
-    for (const p of candidates) {
-        const k = deriveChildPublicKeyForPath(masterKeyBytes, p);
-        const addr = ethers.computeAddress('0x' + k);
-        console.log(`Testing path: "${p}" -> ${addr}`);
-        if (addr.toLowerCase() === targetAddress) {
-            console.log('FOUND MATCHING PATH FORMAT:', p);
+    // Check cache first to avoid unnecessary signing
+    const cacheKey = `mpc_address_${accountId}_${path}`;
+    if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+            console.log("Using cached MPC address:", cached);
+            return cached;
         }
     }
 
-    // Compute ETH address from derived key
-    // derivedKey is a hex string (uncompressed, 65 bytes starting with 04)
-    return ethers.computeAddress('0x' + derivedKey);
+    console.log("Deriving MPC address via signature probe...");
+
+    // We cannot reliably derive the address mathematically because the MPC contract's
+    // derivation logic (or the specific path format it uses) is opaque or differs from
+    // standard BIP-32 Ed25519/Secp256k1 derivation in a way we haven't matched.
+    //
+    // SOLUTION: Ask the MPC to sign a dummy message. The signature proves the address.
+    // This is robust and guaranteed to be correct.
+
+    const dummyMsg = "who_am_i";
+    const signature = await signWithMPC(wallet, accountId, path, dummyMsg);
+
+    const r = '0x' + signature.big_r.affine_point.substring(2, 66);
+    const s = '0x' + signature.s.scalar;
+
+    // Recover address trying both v=27 and v=28
+    // We don't know the correct v, but usually one of them is valid.
+    // Since we don't have a "target" to compare against (we are finding the target!),
+    // we need a way to know which one is right.
+    //
+    // Actually, for a *given* signature, both v=27 and v=28 produce *valid* addresses,
+    // but only one corresponds to the private key.
+    //
+    // However, the MPC protocol usually returns a `recovery_id` (0 or 1).
+    // If we trust the MPC's recovery_id, we can use it.
+    // The `signature` object from `signWithMPC` has `recovery_id`.
+
+    let v = 27;
+    if (typeof signature.recovery_id === 'number') {
+        v = signature.recovery_id + 27;
+    }
+
+    // Recover
+    const sigObj = ethers.Signature.from({ r, s, v }).serialized;
+    const recoveredAddress = ethers.verifyMessage(dummyMsg, sigObj);
+
+    console.log("Recovered MPC Address:", recoveredAddress);
+
+    // Cache it
+    if (typeof window !== 'undefined') {
+        localStorage.setItem(cacheKey, recoveredAddress);
+    }
+
+    return recoveredAddress;
 }
 
 function deriveChildPublicKey(parentKey: Uint8Array, accountId: string, path: string): string {

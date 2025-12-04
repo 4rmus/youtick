@@ -33,7 +33,7 @@ export function IpfsPlayer({ cid, filename }: IpfsPlayerProps) {
 
         try {
             const wallet = await selector.wallet();
-            const { signWithMPC } = await import('@/lib/chain-signatures');
+            const { deriveEthAddress, signWithMPC } = await import('@/lib/chain-signatures');
 
             // 0. Client-Side Access Control Check
             // Fallback: We rely on this client-side check because Lit Action is not currently supported.
@@ -45,139 +45,43 @@ export function IpfsPlayer({ cid, filename }: IpfsPlayerProps) {
 
             // 1. Fetch Encrypted File from IPFS
             setStatus('Fetching video from IPFS...');
-            const response = await fetch(`https://gateway.lighthouse.storage/ipfs/${cid}`);
-            if (!response.ok) {
-                throw new Error(`Failed to fetch from IPFS: ${response.statusText}`);
+            const metadataResponse = await fetch(`https://gateway.lighthouse.storage/ipfs/${cid}`);
+            if (!metadataResponse.ok) {
+                throw new Error(`Failed to fetch from IPFS: ${metadataResponse.statusText}`);
             }
-            const blob = await response.blob();
-            const file = new File([blob], filename || "video.mp4");
+            const metadata = await metadataResponse.json();
+            const { ciphertext, dataToEncryptHash, accessControlConditions: storedConditions } = metadata;
 
-            // 2. Get Auth Message (Challenge)
-            // We must construct a valid SIWE message for Lit to accept the AuthSig.
-            const latestBlockhash = await lit.getLatestBlockhash();
-            const nonce = latestBlockhash;
-
-            // We need the recovered address first to put in the message.
-            // But we need the message to sign to recover the address!
-            // MPC address is deterministic from accountId + path.
-            // So we can sign a dummy message first to get the address, OR use the one we might have stored?
-            // Let's sign a dummy message first to get the address, then sign the real SIWE message.
-            // This is double signing, but necessary if we don't know the ETH address yet.
-
-            setStatus('Recovering ETH address...');
-            const derivationPath = 'youtick-demo,chunky-paste.testnet,v1';
-            const dummyMessage = "get_address";
-            const dummySignatureObj = await signWithMPC(wallet, accountId, derivationPath, dummyMessage) as any;
-
-            const dummyR = '0x' + dummySignatureObj.big_r.affine_point.substring(2, 66);
-            const dummyS = '0x' + dummySignatureObj.s.scalar;
-            const dummyV = dummySignatureObj.recovery_id + 27;
-            const dummySig = ethers.Signature.from({ r: dummyR, s: dummyS, v: dummyV }).serialized;
-            const recoveredAddress = ethers.verifyMessage(dummyMessage, dummySig);
+            // 2. Recover Ethereum Address (MPC)
+            setStatus('Recovering Ethereum address...');
+            const derivationPath = "test"; // Fixed path for demo
+            const recoveredAddress = await deriveEthAddress(accountId, derivationPath, wallet);
             console.log('Recovered MPC Address:', recoveredAddress);
 
-            // Construct SIWE Message
-            const domain = window.location.host;
-            const origin = window.location.origin;
-            const statement = "I am signing this message to prove ownership of this account for Lit Protocol decryption.";
-            const issuedAt = new Date().toISOString();
-            const expirationTime = new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(); // 24 hours from now
+            // 3. Get Session Signatures (Specific to this file)
+            setStatus('Getting Session Signatures...');
+            const sessionSigs = await lit.getSessionSigs(
+                wallet,
+                accountId,
+                recoveredAddress,
+                signWithMPC,
+                storedConditions,
+                dataToEncryptHash
+            );
 
-            const messageToSign = `${domain} wants you to sign in with your Ethereum account:
-${recoveredAddress}
-
-${statement}
-
-URI: ${origin}
-Version: 1
-Chain ID: 1
-Nonce: ${nonce}
-Issued At: ${issuedAt}
-Expiration Time: ${expirationTime}`;
-
-            setStatus('Signing SIWE message...');
-            const mpcSignature = await signWithMPC(wallet, accountId, derivationPath, messageToSign) as any;
-
-            // Construct AuthSig
-            const r_val = '0x' + mpcSignature.big_r.affine_point.substring(2, 66);
-            const s_val = '0x' + mpcSignature.s.scalar;
-            const v_val = mpcSignature.recovery_id + 27;
-
-            const signature = ethers.Signature.from({
-                r: r_val,
-                s: s_val,
-                v: v_val
-            }).serialized;
-
-            const authSig = {
-                sig: signature,
-                derivedVia: "web3.eth.personal.sign",
-                signedMessage: messageToSign,
-                address: recoveredAddress,
-            };
-
-            // 3. Decrypt
+            // 4. Decrypt
             setStatus('Decrypting video...');
+            console.log('Decrypting with ACCs:', JSON.stringify(storedConditions, null, 2));
 
-            // We need to parse the metadata (accessControlConditions) from the file?
-            // Usually `encryptFile` returns a zip with metadata.
-            // BUT in `UploadForm`, we uploaded the *ciphertext* directly as a file.
-            // We LOST the `accessControlConditions` and `dataToEncryptHash` unless we stored them!
-
-            // CRITICAL ISSUE: `encryptFile` returns { ciphertext, dataToEncryptHash }.
-            // We only uploaded `ciphertext`.
-            // We NEED `dataToEncryptHash` and `accessControlConditions` to decrypt.
-
-            // FIX (Temporary for Demo):
-            // We will RECONSTRUCT the accessControlConditions (since they are hardcoded in UploadForm).
-            // We still need `dataToEncryptHash`.
-            // Wait, `encryptFile` (the helper) usually returns a zip if we use `encryptToZip`.
-            // But we used `encryptFile` which returns raw parts.
-
-            // Did we upload the hash?
-            // In `UploadForm.tsx`:
-            // `const blob = await (await fetch(data:application/octet-stream;base64,${ciphertext})).blob();`
-            // We only uploaded ciphertext.
-
-            // WITHOUT `dataToEncryptHash`, WE CANNOT DECRYPT.
-            // Lit needs it to verify integrity.
-
-            // STOPGAP:
-            // We can't decrypt the *previously* uploaded videos.
-            // We need to update `UploadForm` to upload a ZIP or store metadata.
-            // OR, for this specific task, we might be stuck unless we change the upload format.
-
-            // Let's assume for this step we will fix UploadForm to upload a JSON containing everything,
-            // OR we use `encryptToZip` which handles this standardly.
-
-            // Let's check `UploadForm` again.
-            // It uploads `encryptedFile`.
-
-            // I will implement `IpfsPlayer` assuming we have the metadata.
-            // Since I can't change the past, I will update `UploadForm` to upload a ZIP in the next step.
-            // For now, `IpfsPlayer` will fail for old videos.
-
-            // Wait, `encryptFile` in `lib/lit.ts` returns `{ ciphertext, dataToEncryptHash }`.
-            // If I change `UploadForm` to use `zipAndEncryptString` or similar, it's better.
-
-            // Let's stick to the plan:
-            // I will assume the file at `cid` is a JSON containing { ciphertext, dataToEncryptHash, accessControlConditions }.
-            // This is the cleanest way.
-
-            // So, `IpfsPlayer` expects a JSON file.
-            // I will update `UploadForm` later to upload this JSON.
-
-            const metadataResponse = await fetch(`https://gateway.lighthouse.storage/ipfs/${cid}`);
-            const metadata = await metadataResponse.json();
-
-            const { ciphertext, dataToEncryptHash, accessControlConditions: storedConditions } = metadata;
+            console.log('Decrypting with ACCs:', JSON.stringify(storedConditions, null, 2));
 
             const decryptedBytes = await lit.decryptFile(
                 ciphertext,
                 dataToEncryptHash,
                 storedConditions,
-                authSig,
-                'ethereum'
+                undefined, // No authSig
+                'ethereum',
+                sessionSigs
             );
 
             const decryptedBlob = new Blob([decryptedBytes as any], { type: 'video/mp4' });

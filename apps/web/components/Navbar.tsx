@@ -44,7 +44,7 @@ export function Navbar() {
         <nav className="sticky top-0 z-50 w-full backdrop-blur-md bg-white/80 dark:bg-black/80 border-b border-gray-200 dark:border-gray-800 px-4 py-3 transition-colors duration-300">
             <div className="container mx-auto flex justify-between items-center">
                 <Link href="/" className="text-2xl font-bold text-black dark:text-white tracking-tighter flex items-center gap-2">
-                    <span className="bg-black text-white dark:bg-white dark:text-black px-2 py-1 rounded-sm text-lg">YT</span>
+                    <span className="bg-black text-white dark:bg-white dark:text-black px-2 py-1 rounded-sm text-lg"></span>
                     youtick
                 </Link>
 

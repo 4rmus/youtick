@@ -1,0 +1,3 @@
+
+const encoded = "eyJhdHQiOnsibGl0LWFjY2Vzc2NvbnRyb2xjb25kaXRpb246Ly81M2IwMWY4MjBjODJlODZkN2U0Y2Q4MDRiOGE2ZjY4NjgyMjIxZWViN2RmNzZmZDQzZWU3NzdjOGNhYWI1NjI4LzBhYjE4YmU2ZDU4OGNiMTA1YjdjNmRjNjM3YTM2ZDYyZDE4YTg4MzVkYjg4ODczYTZmM2FhYWFiMzQwNTk0NWQiOnsiVGhyZXNob2xkL0RlY3J5cHRpb24iOlt7fV19fSwicHJmIjpbXX0";
+console.log("Decoded:", Buffer.from(encoded, 'base64').toString());
