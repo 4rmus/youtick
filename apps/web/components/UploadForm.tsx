@@ -99,13 +99,11 @@ export function UploadForm() {
                 address: recoveredAddress,
             };
 
+            // Use Lit Action to verify NEAR NFT ownership
+            const { LIT_ACTION_CODE } = await import('@/lib/lit-action');
 
-
-            // Fallback: Use EVM Basic condition (Private - Uploader Only)
-            // Reason: 'litAction' condition type is failing schema validation in current SDK version.
             // Fallback: Use EVM Basic condition (Permissive - Allow any wallet)
-            // Reason: 'litAction' condition type is NOT supported in the installed SDK version (7.3.1).
-            // We will enforce the NEAR NFT check client-side in the IpfsPlayer component.
+            // We enforce the NEAR NFT check client-side in the IpfsPlayer component.
             const accessControlConditions = [
                 {
                     conditionType: 'evmBasic',
@@ -125,7 +123,7 @@ export function UploadForm() {
                 file,
                 accessControlConditions,
                 authSig,
-                'ethereum' // Chain for the AuthSig (EVM address)
+                'ethereum'
             );
 
             setStatus('Uploading encrypted file to IPFS...');

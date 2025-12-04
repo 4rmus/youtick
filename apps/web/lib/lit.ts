@@ -3,7 +3,8 @@ import { LIT_NETWORK } from "@lit-protocol/constants";
 import { encryptFile, decryptToFile } from "@lit-protocol/encryption";
 
 const client = new LitNodeClient({
-    litNetwork: "datil-dev" as any,
+    litNetwork: "datil-dev",
+    debug: true
 });
 
 class Lit {

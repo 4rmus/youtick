@@ -35,7 +35,8 @@ export function IpfsPlayer({ cid, filename }: IpfsPlayerProps) {
             const wallet = await selector.wallet();
             const { signWithMPC } = await import('@/lib/chain-signatures');
 
-            // 0. Client-Side Access Control Check (Since Lit Action is not supported in this SDK version)
+            // 0. Client-Side Access Control Check
+            // Fallback: We rely on this client-side check because Lit Action is not currently supported.
             setStatus('Verifying NFT ownership...');
             const hasAccess = await checkNearNFT(accountId);
             if (!hasAccess) {
