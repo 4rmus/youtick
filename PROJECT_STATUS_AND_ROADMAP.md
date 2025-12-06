@@ -5,25 +5,28 @@
 The **YouTick Demo** is a functional Proof-of-Concept (PoC) for a decentralized Video-on-Demand (VOD) platform on the NEAR blockchain.
 
 ### Core Features
-1.  **Wallet Connection**:
+1.  **Global Dark Theme**:
+    -   Consistent, premium "cinematic" dark mode across the entire application (Landing, Upload, Discover, Watch).
+2.  **Wallet Connection**:
     -   Integrated **NEAR Wallet Selector**.
     -   Supports MyNearWallet and other standard wallets.
-2.  **Video Upload**:
-    -   Secure upload to **IPFS** using **Lighthouse Storage**.
-    -   **Encryption**: Videos are encrypted client-side using **Lit Protocol** before upload.
-3.  **Access Control (NFT Gating)**:
-    -   **Minting**: Users can mint a test NFT directly from the UI (`MintButton`).
-    -   **Verification**: The application verifies if the viewer owns the required NFT on the NEAR testnet.
-    -   **Decryption**: Only NFT holders can generate the valid `AuthSig` (SIWE) required to decrypt and play the video.
-4.  **Playback**:
-    -   Custom `IpfsPlayer` component fetches encrypted chunks, decrypts them in memory, and plays the video.
+3.  **Video Upload & Thumbnails**:
+    -   **Automatic Thumbnails**: Extracts a frame from the video in the browser to use as the NFT Ticket image.
+    -   **Rich Preview**: "Ticket Preview" card shows live metadata (Title, Price, Uploader) and thumbnail before minting.
+    -   **Encryption**: Videos are encrypted client-side using **Lit Protocol** before upload to IPFS (Lighthouse).
+4.  **Access Control (NFT Gating)**:
+    -   **Minting**: Users mint an NFT that embeds the thumbnail CID + Access Key.
+    -   **Verification**: The application verifies ownership on-chain.
+    -   **Decryption**: Only holders can decrypt and play.
+5.  **Playback**:
+    -   Custom `IpfsPlayer` handles encrypted streaming.
 
 ### Technical Stack
--   **Frontend**: Next.js 14 (React), Tailwind CSS.
+-   **Frontend**: Next.js 14 (React), Tailwind CSS, Lucide Icons.
 -   **Blockchain**: NEAR Protocol (Testnet).
 -   **Storage**: IPFS (Lighthouse).
 -   **Encryption**: Lit Protocol (Datil Dev Network).
--   **Auth**: SIWE (Sign-In with Ethereum) adapted for NEAR via MPC (Multi-Party Computation).
+-   **Auth**: SIWE over MPC (Multi-Party Computation).
 
 ---
 

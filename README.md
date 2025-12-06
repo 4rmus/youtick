@@ -61,16 +61,17 @@
 
 1.  **Connect Wallet**: Click the "Connect Wallet" button to sign in with your NEAR Testnet account.
 2.  **Upload Video**:
-    *   Select a video file.
-    *   Enter a title and description.
-    *   Click "Upload". The app will encrypt the file and upload it to IPFS.
-    *   **Copy the CID** (Content Identifier) displayed after upload.
-3.  **Watch Video**:
-    *   Paste the CID into the "Watch Decrypted Video" section.
-    *   Click "Load".
-    *   **If Access Denied**: Click "Mint Test NFT" to receive the required access token.
-    *   **Decrypt**: Click "Load" again. You will be prompted to sign a secure message (SIWE) to prove ownership.
-    *   **Play**: The video will decrypt and start playing.
+    -   Select a video file in the **Upload** tab.
+    -   **Preview**: Watch the "Ticket Preview" card generate a thumbnail instantly.
+    -   Enter a title, description, and ticket price.
+    -   Click "Upload Video".
+    -   *The app encrypts the file, uploads it, and automatically starts the NFT minting process.*
+3.  **Discover & Watch**:
+    -   Go to the **Discover** tab.
+    -   Find your video (or others) with the generated thumbnail.
+    -   Click to watch.
+    -   **If Access Denied**: Purchase/Mint the ticket.
+    -   **Decrypt**: Click "Load" -> Sign the secure message -> Play.
 
 ## 🗺️ Roadmap
 
