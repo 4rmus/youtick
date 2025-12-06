@@ -3,15 +3,16 @@
 import Link from 'next/link';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { Menu, X } from 'lucide-react';
 
+import { Branding } from '@/components/landing/Branding';
+
 export function Navbar() {
     const { modal, accountId, selector } = useWallet();
     const { language, setLanguage, t } = useLanguage();
-    const { setTheme, resolvedTheme } = useTheme();
+    // Theme toggle is removed as we are enforcing dark mode
     const [mounted, setMounted] = useState(false);
     const pathname = usePathname();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -33,18 +34,20 @@ export function Navbar() {
 
     if (!mounted) return null;
 
+    // Do not render Navbar on the landing page (root path)
+    if (pathname === '/') return null;
+
     const navLinks = [
         { href: '/discover', label: 'Discover' },
         { href: '/upload', label: 'Upload' },
-        { href: '/mint', label: 'Get Pass' },
         { href: '/watch', label: 'Watch' },
     ];
 
     return (
-        <nav className="sticky top-0 z-50 w-full backdrop-blur-md bg-white/80 dark:bg-black/80 border-b border-gray-200 dark:border-gray-800 px-4 py-3 transition-colors duration-300">
+        <nav className="sticky top-0 z-50 w-full backdrop-blur-md bg-black/95 border-b border-white/10 px-4 py-3 transition-colors duration-300">
             <div className="container mx-auto flex justify-between items-center">
-                <Link href="/" className="text-2xl font-bold text-black dark:text-white tracking-tighter flex items-center gap-2">
-                    <span className="bg-black text-white dark:bg-white dark:text-black px-2 py-1 rounded-sm text-lg">youtick</span>
+                <Link href="/" className="flex items-center gap-2">
+                    <Branding size="sm" />
                 </Link>
 
                 {/* Desktop Nav */}
@@ -53,7 +56,7 @@ export function Navbar() {
                         <Link
                             key={link.href}
                             href={link.href}
-                            className={`text-sm font-medium transition-colors hover:text-primary ${pathname === link.href ? 'text-primary font-bold' : 'text-muted-foreground'
+                            className={`text-sm font-medium transition-colors hover:text-white ${pathname === link.href ? 'text-white font-bold' : 'text-zinc-400'
                                 }`}
                         >
                             {link.label}
@@ -62,35 +65,27 @@ export function Navbar() {
                 </div>
 
                 <div className="hidden md:flex items-center gap-4">
-                    <div className="flex items-center gap-2 mr-2 border-r border-gray-200 dark:border-gray-800 pr-4">
+                    <div className="flex items-center gap-2 mr-2 border-r border-white/10 pr-4">
                         <button
                             onClick={() => setLanguage('en')}
-                            className={`text-xs font-bold ${language === 'en' ? 'text-black dark:text-white' : 'text-gray-400 hover:text-gray-600'}`}
+                            className={`text-xs font-bold ${language === 'en' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
                         >
                             EN
                         </button>
                         <button
                             onClick={() => setLanguage('tr')}
-                            className={`text-xs font-bold ${language === 'tr' ? 'text-black dark:text-white' : 'text-gray-400 hover:text-gray-600'}`}
+                            className={`text-xs font-bold ${language === 'tr' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
                         >
                             TR
                         </button>
                     </div>
 
-                    <button
-                        onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
-                        className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                        aria-label="Toggle Dark Mode"
-                    >
-                        {resolvedTheme === 'dark' ? '☀️' : '🌙'}
-                    </button>
-
                     {accountId ? (
                         <div className="flex items-center gap-4">
-                            <span className="text-sm font-mono text-gray-600 dark:text-gray-300 truncate max-w-[100px]">{accountId}</span>
+                            <span className="text-sm font-mono text-zinc-400 truncate max-w-[100px]">{accountId}</span>
                             <button
                                 onClick={handleSignOut}
-                                className="px-4 py-2 text-sm font-medium text-black bg-gray-100 rounded-full hover:bg-gray-200 dark:bg-gray-800 dark:text-white dark:hover:bg-gray-700 transition-colors"
+                                className="px-4 py-2 text-sm font-medium text-black bg-white rounded-full hover:bg-gray-200 transition-colors"
                             >
                                 {t.nav.disconnect}
                             </button>
@@ -98,7 +93,7 @@ export function Navbar() {
                     ) : (
                         <button
                             onClick={handleSignIn}
-                            className="px-4 py-2 text-sm font-medium text-white bg-black rounded-full hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200 transition-colors"
+                            className="px-4 py-2 text-sm font-medium text-black bg-white rounded-full hover:bg-gray-200 transition-colors"
                         >
                             {t.nav.connect}
                         </button>
@@ -107,7 +102,7 @@ export function Navbar() {
 
                 {/* Mobile Menu Button */}
                 <button
-                    className="md:hidden p-2"
+                    className="md:hidden p-2 text-white"
                     onClick={() => setIsMenuOpen(!isMenuOpen)}
                 >
                     {isMenuOpen ? <X /> : <Menu />}
@@ -116,23 +111,23 @@ export function Navbar() {
 
             {/* Mobile Menu */}
             {isMenuOpen && (
-                <div className="md:hidden absolute top-full left-0 w-full bg-white dark:bg-black border-b border-gray-200 dark:border-gray-800 p-4 flex flex-col gap-4 shadow-xl">
+                <div className="md:hidden absolute top-full left-0 w-full bg-black border-b border-white/10 p-4 flex flex-col gap-4 shadow-xl">
                     {navLinks.map((link) => (
                         <Link
                             key={link.href}
                             href={link.href}
                             onClick={() => setIsMenuOpen(false)}
-                            className={`text-lg font-medium transition-colors ${pathname === link.href ? 'text-primary' : 'text-muted-foreground'
+                            className={`text-lg font-medium transition-colors ${pathname === link.href ? 'text-white' : 'text-zinc-400'
                                 }`}
                         >
                             {link.label}
                         </Link>
                     ))}
-                    <div className="h-px bg-gray-200 dark:bg-gray-800 my-2" />
+                    <div className="h-px bg-white/10 my-2" />
                     {accountId ? (
                         <button onClick={handleSignOut} className="text-left text-red-500 font-medium">Disconnect</button>
                     ) : (
-                        <button onClick={handleSignIn} className="text-left font-bold">Connect Wallet</button>
+                        <button onClick={handleSignIn} className="text-left font-bold text-white">Connect Wallet</button>
                     )}
                 </div>
             )}

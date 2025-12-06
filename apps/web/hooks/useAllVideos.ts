@@ -4,12 +4,21 @@ import { TokenWithVideo } from './useOwnedTokens';
 
 const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick-demo-v3.testnet';
 
+interface DebugInfo {
+    contractId?: string;
+    rpcUrl?: string;
+    step?: string;
+    rawEventCount?: number;
+    finalCount?: number;
+    error?: string;
+}
+
 export function useAllVideos() {
     const [tokens, setTokens] = useState<TokenWithVideo[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const [debugInfo, setDebugInfo] = useState<any>({});
+    const [debugInfo, setDebugInfo] = useState<DebugInfo>({});
 
     useEffect(() => {
         const fetchVideos = async () => {
@@ -40,16 +49,16 @@ export function useAllVideos() {
 
                 // 1. Fetch list of NFTs
                 console.log("Fetching nft_tokens from index 0...");
-                setDebugInfo((prev: any) => ({ ...prev, step: 'fetching_tokens' }));
+                setDebugInfo((prev) => ({ ...prev, step: 'fetching_tokens' }));
 
-                const events: any[] = await account.viewFunction({
+                const events: unknown[] = await account.viewFunction({
                     contractId: NFT_CONTRACT_ID,
                     methodName: 'get_events',
                     args: { limit: 50 }
                 });
 
                 console.log("Fetched events:", events);
-                setDebugInfo((prev: any) => ({ ...prev, rawEventCount: events?.length, step: 'transforming_events' }));
+                setDebugInfo((prev) => ({ ...prev, rawEventCount: events?.length, step: 'transforming_events' }));
 
                 if (!events || events.length === 0) {
                     setTokens([]);
@@ -58,11 +67,24 @@ export function useAllVideos() {
 
                 // Transform Events into the structure expected by the UI (TokenWithVideo)
                 // effectively treating each Event as a "Virtual Token" for display purposes
-                const eventTokens: TokenWithVideo[] = events.map(([cid, event], index) => {
+                const eventTokens: TokenWithVideo[] = events.map((item, index) => {
+                    const [cid, event] = item as [string, { title: string; creator_id: string; price: string }];
                     // Handle "RealCID:::Title" format
+                    // Handle "RealCID:::Title" or "RealCID:::ThumbnailCID:::Title" format
                     let displayTitle = event.title;
+                    let displayMedia = "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png"; // Default placeholder
+
                     if (displayTitle && displayTitle.includes(':::')) {
-                        displayTitle = displayTitle.split(':::')[1];
+                        const parts = displayTitle.split(':::');
+                        if (parts.length >= 3) {
+                            // Format: RealCID:::ThumbnailCID:::Title
+                            const thumbnailCid = parts[1];
+                            displayTitle = parts.slice(2).join(':::'); // Join rest in case title has :::
+                            displayMedia = `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`;
+                        } else if (parts.length === 2) {
+                            // Format: RealCID:::Title (Legacy)
+                            displayTitle = parts[1];
+                        }
                     }
 
                     return {
@@ -71,7 +93,7 @@ export function useAllVideos() {
                         metadata: {
                             title: displayTitle,
                             description: `Price: ${utils.format.formatNearAmount(event.price)} NEAR`,
-                            media: "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png",
+                            media: displayMedia,
                             copies: 1
                         },
                         video_metadata: {
@@ -84,12 +106,13 @@ export function useAllVideos() {
                 });
 
                 setTokens(eventTokens);
-                setDebugInfo((prev: any) => ({ ...prev, finalCount: eventTokens.length, step: 'complete' }));
+                setDebugInfo((prev) => ({ ...prev, finalCount: eventTokens.length, step: 'complete' }));
 
-            } catch (err: any) {
-                console.error("Error fetching all videos:", err);
-                setError(err.message || "Failed to fetch videos");
-                setDebugInfo((prev: any) => ({ ...prev, error: err.message }));
+            } catch (err) {
+                const error = err as Error;
+                console.error("Error fetching all videos:", error);
+                setError(error.message || "Failed to fetch videos");
+                setDebugInfo((prev) => ({ ...prev, error: error.message }));
             } finally {
                 setLoading(false);
             }

@@ -6,16 +6,18 @@ import { uploadFile } from '@/lib/lighthouse';
 import { lit, LIT_ACTION_CID } from '@/lib/lit';
 import { SessionManager } from '@/lib/session-manager';
 import { GasTank } from '@/components/GasTank';
+import { generateVideoThumbnail } from '@/lib/video-utils';
 import lighthouse from '@lighthouse-web3/sdk';
 import { ethers } from 'ethers';
 import { transactions, utils } from 'near-api-js';
-import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Progress } from "@/components/ui/progress"
+import { Button } from "@/components/ui/button"
 import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
+
 interface UploadResponse {
     data: Array<{ Hash: string }> | { Hash: string };
 }
@@ -29,6 +31,8 @@ interface MPCSignature {
 export function UploadForm() {
     const { selector, accountId } = useWallet();
     const [file, setFile] = useState<File | null>(null);
+    const [thumbnail, setThumbnail] = useState<Blob | null>(null);
+    const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
     const [status, setStatus] = useState('');
     const [title, setTitle] = useState('');
@@ -59,11 +63,35 @@ export function UploadForm() {
             }
         };
         checkConnection();
+
+        // Cleanup thumbnail preview URL on unmount
+        return () => {
+            if (thumbnailPreview) {
+                URL.revokeObjectURL(thumbnailPreview);
+            }
+        };
     }, []);
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
-            setFile(e.target.files[0]);
+            const selectedFile = e.target.files[0];
+            setFile(selectedFile);
+
+            // Generate thumbnail
+            if (selectedFile.type.startsWith('video/')) {
+                try {
+                    setStatus('Generating thumbnail...');
+                    const thumbBlob = await generateVideoThumbnail(selectedFile);
+                    setThumbnail(thumbBlob);
+
+                    const previewUrl = URL.createObjectURL(thumbBlob);
+                    setThumbnailPreview(previewUrl);
+                    setStatus('');
+                } catch (error) {
+                    console.error('Thumbnail generation failed:', error);
+                    setStatus('⚠️ Could not generate thumbnail');
+                }
+            }
         }
     };
 
@@ -75,6 +103,23 @@ export function UploadForm() {
 
         try {
             const wallet = await selector.wallet();
+
+            // 0. Upload Thumbnail first (Public)
+            let thumbnailCid = 'bafkreid7q4s23333333333333333333333333333333333333333333333'; // Default placeholder
+            if (thumbnail) {
+                setStatus('Uploading thumbnail...');
+                const thumbFile = new File([thumbnail], "thumbnail.jpg", { type: "image/jpeg" });
+                const thumbUpload = await uploadFile(thumbFile) as UploadResponse;
+
+                const thumbHash = Array.isArray(thumbUpload.data)
+                    ? thumbUpload.data[0].Hash
+                    : thumbUpload.data.Hash;
+
+                if (thumbHash) {
+                    thumbnailCid = thumbHash;
+                    console.log('Thumbnail uploaded CID:', thumbnailCid);
+                }
+            }
 
             // 0. Recover Ethereum Address (MPC)
             // We already have the address from the previous step (lighthouseEthAddress)
@@ -161,10 +206,14 @@ export function UploadForm() {
             setStatus('Minting Video NFT (via Session Key)...');
             try {
                 // Construct Title with RealCID for Player to parse
-                // Schema: "RealCID:::Title"
-                const eventTitle = `${fileHash}:::${title || file.name}`;
+                // Schema: "RealCID:::ThumbnailCID:::Title"
+                // This allows us to retrieve the thumbnail in get_events lookup without finding the NFT
+                const eventTitle = `${fileHash}:::${thumbnailCid}:::${title || file.name}`;
 
                 const sessionManager = new SessionManager(accountId);
+
+                // Construct full IPFS Gateway URL for media
+                const mediaUrl = `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`;
 
                 // Note: We use the UUID as the encrypted_cid key in the contract
                 // This matches what the Lit Action expects (it checks against this UUID)
@@ -173,7 +222,7 @@ export function UploadForm() {
                     token_metadata: {
                         title: eventTitle,
                         description: description || 'Uploaded via Youtick',
-                        media: 'bafkreid7q4s23333333333333333333333333333333333333333333333', // Placeholder
+                        media: mediaUrl,
                         copies: 1
                     },
                     video_metadata: {
@@ -219,6 +268,8 @@ export function UploadForm() {
             setFile(null);
             setTitle('');
             setDescription('');
+            setThumbnail(null);
+            setThumbnailPreview(null);
 
         } catch (error: any) {
             console.error('Upload failed:', error);
@@ -329,7 +380,7 @@ export function UploadForm() {
             const recoveredAddress = ethers.verifyMessage(dummyMessage, dummySignature); // Wait, we signed HASH.
             // If we signed hash, we verify hash?
             // MPC signs the payload.
-            // If payload is hash of message, then we verify against the message?
+            // If payload is hash of message, then we verify hash?
             // ethers.verifyMessage hashes the message.
             // So if we passed hash(message) to MPC, we are effectively double hashing?
             // NO. MPC signs exactly what we give it.
@@ -458,6 +509,71 @@ export function UploadForm() {
                                 Selected: {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
                             </p>
                         )}
+
+                        {/* Rich Ticket Preview Card */}
+                        <div className="mt-6">
+                            <h3 className="text-sm font-medium mb-3 text-muted-foreground">Ticket Preview</h3>
+                            <div className="relative group overflow-hidden rounded-xl bg-zinc-900 border border-zinc-800 shadow-2xl max-w-sm mx-auto transition-all hover:border-zinc-600">
+                                {/* Image Container */}
+                                <div className="aspect-video relative bg-zinc-950">
+                                    {thumbnailPreview ? (
+                                        <img
+                                            src={thumbnailPreview}
+                                            alt="Ticket Preview"
+                                            className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-500"
+                                        />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-zinc-900 to-black">
+                                            <div className="text-zinc-700 font-mono text-xs">NO MEDIA</div>
+                                        </div>
+                                    )}
+
+                                    {/* Overlay Gradient */}
+                                    <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-transparent to-transparent opacity-90" />
+
+                                    {/* Play Button Icon */}
+                                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+                                        <div className="bg-white/10 backdrop-blur-md p-3 rounded-full border border-white/20">
+                                            <div className="w-0 h-0 border-l-[12px] border-l-white border-y-[8px] border-y-transparent ml-1" />
+                                        </div>
+                                    </div>
+
+                                    {/* Badge */}
+                                    <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full border border-white/10">
+                                        <span className="text-[10px] font-bold text-white tracking-wider uppercase">Exclusive</span>
+                                    </div>
+                                </div>
+
+                                {/* Content Details */}
+                                <div className="p-5 relative">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <h4 className="font-bold text-white text-lg leading-tight line-clamp-1">
+                                            {title || "Untitled Event"}
+                                        </h4>
+                                    </div>
+
+                                    <p className="text-xs text-zinc-400 line-clamp-2 mb-4 min-h-[2.5em]">
+                                        {description || "No description provided."}
+                                    </p>
+
+                                    {/* Footer Info */}
+                                    <div className="flex items-center justify-between pt-4 border-t border-white/5">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-[10px] font-bold text-white">
+                                                {accountId ? accountId.substring(0, 2).toUpperCase() : "??"}
+                                            </div>
+                                            <span className="text-xs text-zinc-400 font-medium truncate max-w-[100px]">
+                                                {accountId || "Connect Wallet"}
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-col items-end">
+                                            <span className="text-[10px] text-zinc-500 uppercase tracking-widest">Price</span>
+                                            <span className="text-sm font-bold text-white">{price} NEAR</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
