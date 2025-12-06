@@ -1,18 +1,35 @@
 /**
- * Lit Action to check if a user owns a specific NFT on NEAR.
- * 
- * Params:
- * - contractId: The NEAR NFT contract ID
- * - tokenId: The ID of the token to check
- * - userId: The NEAR account ID of the viewer (claimer)
+ * Lit Action to check if a user owns a ticket for a specific video CID.
  */
+const checkAccess = async (userAddress, targetCid) => {
+    console.log("Checking access for:", userAddress, targetCid);
 
-const checkOwnership = async () => {
+    // 1. Resolve NEAR Account ID from SIWE
+    let nearAccountId = null;
     try {
-        const rpcUrl = "https://rpc.testnet.near.org";
+        const message = Lit.Auth.authSig.signedMessage;
+        const match = message.match(/NearAccount: ([a-zA-Z0-9._-]+)/);
+        if (match && match[1]) {
+            nearAccountId = match[1];
+        }
+    } catch (e) {
+        console.log("Error parsing SIWE:", e);
+    }
 
-        // Args for nft_token must be base64 encoded
-        const args = JSON.stringify({ token_id: tokenId });
+    if (!nearAccountId) {
+        console.log("Could not find NearAccount in SIWE message.");
+        return false;
+    }
+
+    // 2. Query Smart Contract
+    const rpcUrl = "https://rpc.testnet.near.org";
+    const contractId = "dev-market-v2.testnet";
+
+    try {
+        const args = JSON.stringify({
+            account_id: nearAccountId,
+            limit: 100
+        });
         const argsBase64 = Buffer.from(args).toString('base64');
 
         const body = JSON.stringify({
@@ -23,7 +40,7 @@ const checkOwnership = async () => {
                 request_type: "call_function",
                 finality: "final",
                 account_id: contractId,
-                method_name: "nft_token",
+                method_name: "get_tokens_with_video",
                 args_base64: argsBase64
             }
         });
@@ -35,31 +52,56 @@ const checkOwnership = async () => {
         });
 
         const data = await resp.json();
-
         if (data.error) {
-            console.error("RPC Error:", JSON.stringify(data.error));
+            console.log("RPC Error:", JSON.stringify(data.error));
             return false;
         }
 
-        // data.result.result is an array of bytes (ASCII codes of the JSON string)
-        // We need to decode it.
         const resultBytes = data.result.result;
         const resultStr = String.fromCharCode(...resultBytes);
-        const tokenData = JSON.parse(resultStr);
+        const tokensWithVideo = JSON.parse(resultStr);
 
-        console.log("Token Owner:", tokenData.owner_id);
-        console.log("User ID:", userId);
+        // 3. Filter for target CID
+        // We check if any token's encrypted_cid matches the targetCid (UUID)
+        const hasTicket = tokensWithVideo.some(([token, metadata]) => {
+            // metadata is Option<VideoMetadata>
+            return metadata && metadata.encrypted_cid === targetCid;
+        });
 
-        return tokenData.owner_id === userId;
+        console.log(`User ${nearAccountId} access to ${targetCid}: ${hasTicket}`);
+        return hasTicket;
 
     } catch (e) {
-        console.error("Error checking ownership:", e);
+        console.log("Contract Call Error:", e);
         return false;
     }
 };
 
-// Execute and set the result
-checkOwnership().then(isOwner => {
-    Lit.Actions.setResponse({ response: JSON.stringify({ isOwner }) });
-    Lit.Actions.setCondition({ token: "evmContractCondition", value: isOwner });
-});
+(async () => {
+    let targetCid;
+    // Read from Access Control Conditions global
+    // Structure: parameters: [":userAddress", "UUID"]
+    if (typeof accessControlConditions !== 'undefined' && accessControlConditions.length > 0) {
+        const acc = accessControlConditions[0];
+        // Check `parameters` (litAction type) OR `functionParams` (evmContract type)
+        const params = acc.parameters || acc.functionParams;
+        if (params && params.length > 1) {
+            targetCid = params[1];
+        }
+    }
+
+    // Fallback
+    if (!targetCid && typeof jsParams !== 'undefined' && jsParams.targetCid) {
+        targetCid = jsParams.targetCid;
+    }
+
+    if (!targetCid) {
+        console.log("Error: targetCid not found in ACC parameters or jsParams");
+        // Fail closed
+        LitActions.setCondition({ value: "false", rationale: "Missing targetCid" });
+        return;
+    }
+
+    const isOwner = await checkAccess(null, targetCid);
+    LitActions.setCondition({ value: isOwner.toString(), rationale: "User owns ticket" });
+})();

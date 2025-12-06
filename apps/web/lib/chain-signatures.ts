@@ -8,7 +8,7 @@ const MPC_CONTRACT = 'v1.signer-prod.testnet';
 
 export async function deriveEthAddress(accountId: string, path: string, wallet: any): Promise<string> {
     // Check cache first to avoid unnecessary signing
-    const cacheKey = `mpc_address_${accountId}_${path}`;
+    const cacheKey = `mpc_address_v2_${accountId}_${path}`;
     if (typeof window !== 'undefined') {
         const cached = localStorage.getItem(cacheKey);
         if (cached) {
@@ -107,7 +107,7 @@ export async function signWithMPC(
     accountId: string,
     path: string,
     message: string
-): Promise<{ signature: string, r: string, s: string, v: number }> {
+): Promise<any> {
     // 1. Hash the message (EIP-191)
     const messageHash = ethers.hashMessage(message);
     const payload = Array.from(ethers.getBytes(messageHash));

@@ -21,20 +21,36 @@ export class SessionManager {
             const near = await connect({
                 networkId: NETWORK_ID,
                 keyStore: this.keyStore,
-                nodeUrl: 'https://archival-rpc.testnet.near.org',
+                nodeUrl: 'https://test.rpc.fastnear.com',
                 walletUrl: 'https://wallet.testnet.near.org',
                 helperUrl: 'https://helper.testnet.near.org',
             });
             const account = await near.account(this.accountId);
             const accessKeys = await account.getAccessKeys();
             const publicKey = keyPair.getPublicKey().toString();
-            const keyExists = accessKeys.some(k => k.public_key === publicKey);
+            const accessKeyInfo = accessKeys.find(k => k.public_key === publicKey);
 
-            if (!keyExists) {
+            if (!accessKeyInfo) {
                 console.warn("Session key found locally but not on-chain. Removing.");
                 await this.keyStore.removeKey(NETWORK_ID, this.accountId);
                 return false;
             }
+
+            // Verify the key is for the correct contract
+            const permission = accessKeyInfo.access_key.permission;
+            // Permission can be 'FullAccess' (string) or object with FunctionCall
+            if (typeof permission === 'object' && 'FunctionCall' in permission) {
+                if (permission.FunctionCall.receiver_id !== CONTRACT_ID) {
+                    console.warn(`Session key found but for wrong contract (${permission.FunctionCall.receiver_id} vs ${CONTRACT_ID}). Removing.`);
+                    await this.keyStore.removeKey(NETWORK_ID, this.accountId);
+                    return false;
+                }
+            } else if (permission !== 'FullAccess') {
+                // Should be FullAccess or FunctionCall. If it's something else weird, remove.
+                // But wait, if it IS FullAccess, it's valid for everything.
+                // So we only care if it IS FunctionCall AND wrong receiver.
+            }
+
             return true;
         } catch (e) {
             console.warn("Error checking session key on-chain (network issue?). Assuming local key is valid.", e);
@@ -93,7 +109,7 @@ export class SessionManager {
         const near = await connect({
             networkId: NETWORK_ID,
             keyStore: this.keyStore,
-            nodeUrl: 'https://archival-rpc.testnet.near.org',
+            nodeUrl: 'https://test.rpc.fastnear.com',
             walletUrl: 'https://wallet.testnet.near.org',
             helperUrl: 'https://helper.testnet.near.org',
         });

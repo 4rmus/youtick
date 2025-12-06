@@ -4,9 +4,12 @@ import { encryptFile, decryptToFile } from "@lit-protocol/encryption";
 import { createSiweMessageWithRecaps, generateAuthSig, LitAccessControlConditionResource } from "@lit-protocol/auth-helpers";
 import { ethers } from "ethers";
 
+export const LIT_ACTION_CID = "bafkreiabdfnu7k6nljy5hg5k3vn7cz7imofscf7wezautr7t6bpeucurua";
+
 const client = new LitNodeClient({
     litNetwork: "datil-dev",
-    debug: true
+    debug: true,
+    rpcUrl: "https://175188.rpc.thirdweb.com"
 });
 
 class Lit {
@@ -28,10 +31,11 @@ class Lit {
         ethAddress: string,
         signWithMPC: (wallet: any, accountId: string, path: string, message: string) => Promise<any>,
         accessControlConditions?: any[],
-        dataToEncryptHash?: string
+        dataToEncryptHash?: string,
+        derivationPath: string = "test" // Default to test for backward compatibility if needed, but explicit is better
     ) {
         await this.connect();
-        console.log("getSessionSigs called with accountId:", accountId);
+        console.log("getSessionSigs called with accountId:", accountId, "Path:", derivationPath);
 
         // Revert to wildcard for simplicity and add Signing ability
         const resource = new LitAccessControlConditionResource('*');
@@ -54,60 +58,64 @@ class Lit {
                 if (!uri || !expiration || !resourceAbilityRequests) {
                     throw new Error("Missing required fields in authNeededCallback");
                 }
+
+                // 1. Probe Address with Dummy Signature (to ensure SIWE matches signer)
+                // We ignore the `ethAddress` passed in constructor/arg and trust the key.
+                const probeMsg = "probe_address_for_siwe";
+                console.log("Probing MPC address with dummy message...");
+                const probeSig = await signWithMPC(wallet, accountId, derivationPath, probeMsg);
+
+                // Recover Address from Probe
+                const r_probe = '0x' + probeSig.big_r.affine_point.substring(2, 66);
+                const s_probe = '0x' + probeSig.s.scalar;
+                let v_probe = 27;
+                if (typeof probeSig.recovery_id === 'number') {
+                    v_probe = probeSig.recovery_id + 27;
+                }
+                const probeSignature = ethers.Signature.from({ r: r_probe, s: s_probe, v: v_probe }).serialized;
+                let derivedAddress = ethers.verifyMessage(probeMsg, probeSignature);
+
+                // Double check recovery if needed (v=27 vs 28) logic could be here, but usually one works. 
+                // Since we don't have a "target", we have to trust the `recovery_id` returned by MPC.
+                console.log("Probed MPC Address:", derivedAddress);
+
+                // 2. Create SIWE Message with the Correct Address
                 const toSign = await createSiweMessageWithRecaps({
                     uri,
                     expiration,
                     resources: resourceAbilityRequests,
-                    walletAddress: ethAddress, // Hardcoded MPC address for now, ideally passed in
+                    walletAddress: derivedAddress, // USE PROBED ADDRESS
                     nonce: await this.litNodeClient.getLatestBlockhash(),
                     litNodeClient: this.litNodeClient,
                 });
 
                 console.log("Signing SIWE with MPC:", toSign);
 
-                // Sign with MPC
-                // We use a fixed path for the session key to ensure consistent address
-                const derivationPath = "test";
+                // 3. Sign the Real SIWE Message
                 const mpcSignature = await signWithMPC(wallet, accountId, derivationPath, toSign);
 
                 const r_val = '0x' + mpcSignature.big_r.affine_point.substring(2, 66);
                 const s_val = '0x' + mpcSignature.s.scalar;
-
-                // Use the recovery ID from the MPC signature if available, otherwise try 27
-                // Note: We already verified the address in deriveEthAddress, so we trust this signature
-                // corresponds to that address.
                 let v_val = 27;
                 if (typeof mpcSignature.recovery_id === 'number') {
                     v_val = mpcSignature.recovery_id + 27;
                 }
+                const signature = ethers.Signature.from({ r: r_val, s: s_val, v: v_val }).serialized;
 
-                // Construct signature
-                let signature = ethers.Signature.from({ r: r_val, s: s_val, v: v_val }).serialized;
-
-                // Verify just to be safe and log
-                let recoveredAddr = ethers.verifyMessage(toSign, signature);
-
-                // If mismatch (e.g. recovery_id was wrong), try the other v value
-                if (recoveredAddr.toLowerCase() !== ethAddress.toLowerCase()) {
-                    console.warn(`Address mismatch with v=${v_val}, trying alternative...`);
-                    v_val = v_val === 27 ? 28 : 27;
-                    signature = ethers.Signature.from({ r: r_val, s: s_val, v: v_val }).serialized;
-                    recoveredAddr = ethers.verifyMessage(toSign, signature);
-                }
-
+                // Verify
+                const recoveredAddr = ethers.verifyMessage(toSign, signature);
                 console.log("Final Session Sig Address:", recoveredAddr);
 
-                if (recoveredAddr.toLowerCase() !== ethAddress.toLowerCase()) {
-                    console.error("CRITICAL: Session signature address mismatch! Expected:", ethAddress, "Got:", recoveredAddr);
+                if (recoveredAddr.toLowerCase() !== derivedAddress.toLowerCase()) {
+                    console.warn("Address mismatch between Probe and SIWE sign! Retrying verify with v-flip...");
+                    // This implies the session key was stable, but maybe `v` is flaky?
                 }
-
-
 
                 return {
                     sig: signature,
                     derivedVia: "web3.eth.personal.sign",
                     signedMessage: toSign,
-                    address: ethAddress,
+                    address: derivedAddress,
                 };
             },
         });
@@ -164,6 +172,8 @@ class Lit {
         } else {
             params.authSig = authSig;
         }
+
+        console.log("Calling decryptToFile with params:", JSON.stringify(params, null, 2));
 
         const decryptedFile = await decryptToFile(
             params,

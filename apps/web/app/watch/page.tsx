@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation';
 import { IpfsPlayer } from '@/components/IpfsPlayer';
 import { MintButton } from '@/components/MintButton';
 import { useState, useEffect } from 'react';
+import { useOwnedTokens, TokenWithVideo } from '@/hooks/useOwnedTokens';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Search } from "lucide-react";
@@ -13,17 +14,19 @@ export default function WatchPage() {
     const initialCid = searchParams.get('cid') || '';
     const [cid, setCid] = useState(initialCid);
     const [playCid, setPlayCid] = useState(initialCid);
-    const [uploadedVideos, setUploadedVideos] = useState<any[]>([]);
+    const { tokens, loading, error } = useOwnedTokens();
 
     useEffect(() => {
         if (initialCid) {
             setCid(initialCid);
             setPlayCid(initialCid);
         }
-        // Load uploaded videos from localStorage
-        const videos = JSON.parse(localStorage.getItem('uploadedVideos') || '[]');
-        setUploadedVideos(videos);
     }, [initialCid]);
+
+    const handleVideoSelect = (videoCid: string) => {
+        setCid(videoCid);
+        setPlayCid(videoCid);
+    };
 
     return (
         <div className="container mx-auto px-4 py-24 min-h-screen">
@@ -48,26 +51,58 @@ export default function WatchPage() {
                     </Button>
                 </div>
 
-                {/* Uploaded Videos List */}
-                {uploadedVideos.length > 0 && (
-                    <div className="max-w-xl mx-auto space-y-2">
-                        <h3 className="font-semibold">Your Uploads</h3>
-                        <div className="grid gap-2">
-                            {uploadedVideos.map((video: any, index: number) => (
-                                <div key={index} className="flex items-center justify-between p-3 bg-muted rounded-lg cursor-pointer hover:bg-muted/80" onClick={() => {
-                                    setCid(video.cid);
-                                    setPlayCid(video.cid);
-                                }}>
-                                    <div>
-                                        <p className="font-medium">{video.name}</p>
-                                        <p className="text-xs text-muted-foreground">{new Date(video.timestamp).toLocaleString()}</p>
+                {/* On-Chain Tickets/Videos List */}
+                <div className="max-w-xl mx-auto space-y-4">
+                    <h3 className="font-bold text-lg border-b pb-2">Your On-Chain Assets</h3>
+
+                    {loading && <p className="text-sm text-muted-foreground animate-pulse">Loading blockchain data...</p>}
+                    {error && <p className="text-sm text-red-500">Error loading assets: {error}</p>}
+
+                    {!loading && tokens.length === 0 && (
+                        <p className="text-sm text-muted-foreground italic">No tickets or videos found. Mint one below!</p>
+                    )}
+
+                    <div className="grid gap-2 max-h-[400px] overflow-y-auto">
+                        {tokens.map((token: TokenWithVideo) => {
+                            const isVideo = !!token.video_metadata;
+                            const videoCid = token.video_metadata?.encrypted_cid;
+                            const isAccessPass = videoCid === 'ACCESS_PASS';
+
+                            const title = token.metadata?.title || token.token_id;
+                            const subtitle = isAccessPass ? "Access Pass" : (isVideo ? "Video NFT" : "Unknown");
+
+                            return (
+                                <div
+                                    key={token.token_id}
+                                    className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${isAccessPass
+                                        ? 'bg-green-950/30 border-green-900 cursor-default'
+                                        : isVideo
+                                            ? 'bg-zinc-900 border-zinc-800 cursor-pointer hover:bg-zinc-800'
+                                            : 'bg-zinc-950 border-zinc-900 opacity-75'
+                                        }`}
+                                    onClick={() => !isAccessPass && isVideo && videoCid && handleVideoSelect(videoCid)}
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className={`w-2 h-2 rounded-full ${isAccessPass ? 'bg-green-500' : 'bg-blue-500'}`} />
+                                        <div>
+                                            <p className="font-medium text-sm text-zinc-200">{title}</p>
+                                            <p className="text-xs text-zinc-500">{subtitle}</p>
+                                        </div>
                                     </div>
-                                    <p className="text-xs font-mono bg-background px-2 py-1 rounded">{video.cid.substring(0, 8)}...</p>
+                                    {isAccessPass ? (
+                                        <div className="text-xs font-mono bg-green-900/50 text-green-400 px-2 py-1 rounded">
+                                            Active Pass
+                                        </div>
+                                    ) : isVideo && (
+                                        <div className="text-xs font-mono bg-black px-2 py-1 rounded text-zinc-400">
+                                            Click to Watch
+                                        </div>
+                                    )}
                                 </div>
-                            ))}
-                        </div>
+                            );
+                        })}
                     </div>
-                )}
+                </div>
 
                 {playCid ? (
                     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -77,12 +112,12 @@ export default function WatchPage() {
                                 <p className="font-semibold">Access Restricted?</p>
                                 <p className="text-sm text-muted-foreground">You need a YouTick Pass NFT to decrypt this video.</p>
                             </div>
-                            <MintButton />
+                            <MintButton cid={playCid} />
                         </div>
                     </div>
                 ) : (
                     <div className="text-center py-12 border-2 border-dashed rounded-xl">
-                        <p className="text-muted-foreground">Enter a CID above to start watching</p>
+                        <p className="text-muted-foreground">Enter a CID above or select a video to start watching</p>
                     </div>
                 )}
             </div>

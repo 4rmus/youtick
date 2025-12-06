@@ -3,12 +3,12 @@
 import React, { useState } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { uploadFile } from '@/lib/lighthouse';
-import { lit } from '@/lib/lit';
-import { mintVideoNFT } from '@/lib/near';
+import { lit, LIT_ACTION_CID } from '@/lib/lit';
 import { SessionManager } from '@/lib/session-manager';
 import { GasTank } from '@/components/GasTank';
 import lighthouse from '@lighthouse-web3/sdk';
 import { ethers } from 'ethers';
+import { transactions, utils } from 'near-api-js';
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -16,9 +16,14 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Progress } from "@/components/ui/progress"
 import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
-
 interface UploadResponse {
     data: Array<{ Hash: string }> | { Hash: string };
+}
+
+interface MPCSignature {
+    big_r: { affine_point: string };
+    s: { scalar: string };
+    recovery_id: number;
 }
 
 export function UploadForm() {
@@ -28,6 +33,7 @@ export function UploadForm() {
     const [status, setStatus] = useState('');
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
+    const [price, setPrice] = useState('1'); // Default 1 NEAR
     const [progress, setProgress] = useState(0);
 
     // Retry state for popup blocked scenarios
@@ -62,7 +68,7 @@ export function UploadForm() {
     };
 
     // Helper function to process the signature and continue with upload/access conditions/minting
-    const processSignatureAndUpload = async (mpcSignature: any, messageToSign: string, lighthouseEthAddress: string) => {
+    const processSignatureAndUpload = async (mpcSignature: MPCSignature, messageToSign: string, lighthouseEthAddress: string) => {
         if (!file || !accountId || !selector) {
             throw new Error("Missing file, accountId, or selector for upload process.");
         }
@@ -82,74 +88,23 @@ export function UploadForm() {
                 wallet,
                 accountId,
                 lighthouseEthAddress,
-                signWithMPC
+                signWithMPC,
+                undefined, // ACC (optional)
+                undefined, // hash (optional)
+                'youtick-demo,chunky-paste.testnet,v1' // derivationPath
             );
 
             // 2. Encrypt with Lit Protocol using Session Keys
             setStatus('Encrypting file with Lit Protocol...');
 
             // 4. Encrypt file with Lit Protocol
-            // We use a Lit Action to check NEAR NFT ownership
-            const litActionCode = `
-const checkOwnership = async () => {
-  try {
-    const rpcUrl = "https://rpc.testnet.near.org";
-    const args = JSON.stringify({ token_id: tokenId });
-    const argsBase64 = Buffer.from(args).toString('base64');
-    const body = JSON.stringify({
-      jsonrpc: "2.0",
-      id: "dontcare",
-      method: "query",
-      params: {
-        request_type: "call_function",
-        finality: "final",
-        account_id: contractId,
-        method_name: "nft_token",
-        args_base64: argsBase64
-      }
-    });
-    const resp = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body
-    });
-    const data = await resp.json();
-    if (data.error) {
-        console.log("NEAR RPC Error:", data.error);
-        return false;
-    }
-    const resultBytes = data.result.result;
-    const resultStr = String.fromCharCode(...resultBytes);
-    const tokenData = JSON.parse(resultStr);
+            // Generate a UUID to serve as the Content Identifier for Access Control
+            // This UUID will be stored in the contract's video_metadata.encrypted_cid field (repurposing it as an ID key)
+            // The Real IPFS CID will be stored in the Title for now.
+            const videoUuid = crypto.randomUUID();
+            console.log("Generated Video UUID for Access Control:", videoUuid);
 
-    // MVP Hack for demo: Map NEAR account IDs to their corresponding derived EVM addresses.
-    // In a real app, this mapping would be managed securely (e.g., via a smart contract or a verifiable derivation).
-    // For this demo, we assume 'chunky-paste.testnet' is the owner and its derived EVM address is '0x48C6...'.
-    // The Lit Action will check if the current decrypting user's EVM address (from authSig) matches this.
-    const ALLOWED_NEAR_TO_EVM_MAP = {
-        "chunky-paste.testnet": "0x48C62063ad71C462AE70d6364F1ea7a0D25Abf87"
-    };
-
-    const expectedEvmAddress = ALLOWED_NEAR_TO_EVM_MAP[tokenData.owner_id];
-    const userEvmAddress = Lit.Auth.authSig.address; // The EVM address of the user trying to decrypt
-
-    const isOwner = (expectedEvmAddress && expectedEvmAddress.toLowerCase() === userEvmAddress.toLowerCase());
-    console.log("NFT Owner:", tokenData.owner_id, "Expected EVM:", expectedEvmAddress, "User EVM:", userEvmAddress, "Is Owner:", isOwner);
-    return isOwner;
-  } catch (e) {
-    console.log("Lit Action Error:", e);
-    return false;
-  }
-};
-checkOwnership().then(isOwner => {
-  Lit.Actions.setCondition({ token: "evmContractCondition", value: isOwner });
-});
-`;
-            // Minify/Compact the code slightly to avoid issues
-            const compactCode = litActionCode.trim();
-
-            // FALLBACK: Use standard EVM condition to debug "Missing schema" error
-            // We will enforce the check via Lit Action later once we fix the schema issue.
+            // TEMPORARY PROBE: Use Standard EVM Condition (Balance >= 0) to verify playback flow
             const accessControlConditions = [
                 {
                     conditionType: 'evmBasic',
@@ -169,7 +124,7 @@ checkOwnership().then(isOwner => {
                 file,
                 accessControlConditions,
                 undefined, // No authSig needed if using sessionSigs
-                'ethereum',
+                'ethereum', // Chain for encryption (Lit uses ETH signatures usually)
                 sessionSignatures
             );
 
@@ -200,45 +155,64 @@ checkOwnership().then(isOwner => {
 
             console.log('Encrypted File CID:', fileHash);
 
-            // 6. Upload Metadata (optional but recommended for real app)
-            // For now, we just show the CID.
-
             setStatus('Upload Complete! CID: ' + fileHash);
 
-            // 6. Mint NFT via Session Key (Prepaid Proxy)
-            setStatus('Minting NFT on NEAR (via Session Key)...');
+            // 6. Mint NFT
+            setStatus('Minting Video NFT (via Session Key)...');
             try {
+                // Construct Title with RealCID for Player to parse
+                // Schema: "RealCID:::Title"
+                const eventTitle = `${fileHash}:::${title || file.name}`;
+
                 const sessionManager = new SessionManager(accountId);
-                // Call nft_mint_prepaid
+
+                // Note: We use the UUID as the encrypted_cid key in the contract
+                // This matches what the Lit Action expects (it checks against this UUID)
                 await sessionManager.callMethod('nft_mint_prepaid', {
                     receiver_id: accountId,
                     token_metadata: {
-                        title: title || file.name,
+                        title: eventTitle,
                         description: description || 'Uploaded via Youtick',
                         media: 'bafkreid7q4s23333333333333333333333333333333333333333333333', // Placeholder
                         copies: 1
                     },
                     video_metadata: {
-                        encrypted_cid: fileHash,
-                        livepeer_playback_id: 'placeholder', // TODO: Add Livepeer
+                        encrypted_cid: videoUuid, // The UUID
+                        livepeer_playback_id: 'placeholder',
                         duration_seconds: 0,
                         content_type: 'Exclusive'
                     }
                 });
-                setStatus('NFT Minted Successfully!');
+                setStatus('Video Minted! Initializing Ticket Sales...');
+
+                // 7. Create Event (Ticket Sales)
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'market.utick.testnet';
+                const deposit = utils.format.parseNearAmount('0.1');
+                const priceYocto = utils.format.parseNearAmount(price) || '0';
+
+                const action = transactions.functionCall(
+                    'create_event',
+                    Buffer.from(JSON.stringify({
+                        encrypted_cid: videoUuid, // Key is UUID
+                        title: eventTitle,
+                        price: priceYocto
+                    })),
+                    BigInt('30000000000000'),
+                    BigInt(deposit || '0')
+                );
+
+                await wallet.signAndSendTransaction({
+                    receiverId: contractId,
+                    actions: [action as any]
+                });
+
+                setStatus('Success! Video Uploaded & Ticket Sales Started!');
+
             } catch (mintError: any) {
-                console.error('Minting failed:', mintError);
-                setStatus(`Upload success, but Mint failed: ${mintError.message}`);
+                console.error('Minting/Event failed:', mintError);
+                setStatus(`Upload success, but Blockchain actions failed: ${mintError.message}`);
             }
 
-            // Save to localStorage for easy access in Watch page
-            const uploadedVideos = JSON.parse(localStorage.getItem('uploadedVideos') || '[]');
-            uploadedVideos.push({
-                cid: fileHash,
-                name: file.name,
-                timestamp: new Date().toISOString()
-            });
-            localStorage.setItem('uploadedVideos', JSON.stringify(uploadedVideos));
             setUploading(false);
 
             // Clear form
@@ -449,6 +423,21 @@ checkOwnership().then(isOwner => {
                         onChange={(e) => setDescription(e.target.value)}
                         disabled={uploading || !accountId}
                         className="min-h-[100px]"
+                    />
+                </div>
+
+                <div className="space-y-2">
+                    <label htmlFor="ticket-price" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                        Ticket Price (NEAR)
+                    </label>
+                    <Input
+                        id="ticket-price"
+                        type="number"
+                        step="0.1"
+                        placeholder="1.0"
+                        value={price}
+                        onChange={(e) => setPrice(e.target.value)}
+                        disabled={uploading || !accountId}
                     />
                 </div>
 

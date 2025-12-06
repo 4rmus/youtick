@@ -8,7 +8,7 @@ export async function getNearConnection() {
         networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet',
         nodeUrl: process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
             ? 'https://rpc.mainnet.near.org'
-            : 'https://rpc.testnet.near.org',
+            : 'https://test.rpc.fastnear.com',
         walletUrl: process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
             ? 'https://wallet.near.org'
             : 'https://wallet.testnet.near.org',
@@ -40,7 +40,7 @@ export async function verifyNftOwnership(
             networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet',
             nodeUrl: process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
                 ? 'https://rpc.mainnet.near.org'
-                : 'https://rpc.testnet.near.org',
+                : 'https://test.rpc.fastnear.com',
             keyStore: new keyStores.InMemoryKeyStore(), // Use InMemory for server-side
         });
 
@@ -130,65 +130,4 @@ export async function verifySignature(
     }
 }
 
-/**
- * Mints a new Video NFT
- * 
- * @param wallet - The wallet object from wallet-selector
- * @param metadata - The metadata for the NFT and Video
- */
-export async function mintVideoNFT(
-    wallet: any,
-    metadata: {
-        title: string;
-        description: string;
-        media_cid: string; // Poster image CID
-        video_cid: string; // Encrypted video CID
-        duration: number;
-    }
-) {
-    const deposit = '100000000000000000000000'; // 0.1 NEAR (approx, adjust as needed for storage)
 
-    // Construct the transaction arguments
-    // Note: receiver_id is the minter (self)
-    const accountId = (await wallet.getAccounts())[0].accountId;
-
-    // Fix for "Enum key (type) not found in enum schema" error:
-    // We construct the action using near-api-js directly to ensure it matches the Borsh schema.
-
-    const args = {
-        receiver_id: accountId,
-        token_metadata: {
-            title: metadata.title,
-            description: metadata.description,
-            media: `https://gateway.lighthouse.storage/ipfs/${metadata.media_cid}`,
-            copies: 1,
-        },
-        video_metadata: {
-            encrypted_cid: metadata.video_cid,
-            livepeer_playback_id: "placeholder_id",
-            duration_seconds: metadata.duration,
-            event_date: Date.now(),
-            content_type: "Exclusive",
-        },
-    };
-
-    // Serialize args to bytes
-    const argsBytes = Buffer.from(JSON.stringify(args));
-
-    // Create action using near-api-js
-    // We use BigInt for gas and deposit (near-api-js v6+)
-    const gas = BigInt('300000000000000'); // 300 TGas
-    const depositBI = BigInt(deposit);
-
-    const action = transactions.functionCall(
-        'nft_mint',
-        argsBytes,
-        gas,
-        depositBI
-    );
-
-    return await wallet.signAndSendTransaction({
-        receiverId: NFT_CONTRACT_ID,
-        actions: [action as any], // Cast to any to bypass wallet-selector types if needed
-    });
-}
