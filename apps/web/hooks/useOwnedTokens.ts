@@ -63,10 +63,35 @@ export function useOwnedTokens() {
 
                 // The contract returns Vec<(Token, Option<VideoMetadata>)>
                 // We need to map this to a flatter structure for the UI
-                const mappedTokens: TokenWithVideo[] = result.map(([token, videoMeta]: [any, any]) => ({
-                    ...token,
-                    video_metadata: videoMeta
-                }));
+                const mappedTokens: TokenWithVideo[] = result.map(([token, videoMeta]: [any, any]) => {
+                    let displayTitle = token.metadata?.title || token.token_id;
+                    let displayMedia = token.metadata?.media;
+
+                    // Parse Schema: RealCID:::ThumbnailCID:::Title
+                    if (displayTitle && displayTitle.includes(':::')) {
+                        const parts = displayTitle.split(':::');
+                        if (parts.length >= 3) {
+                            const thumbnailCid = parts[1];
+                            displayTitle = parts.slice(2).join(':::');
+                            // If media is standard placeholder or missing, use the extracted thumbnail
+                            if (!displayMedia || displayMedia.includes('token.png')) {
+                                displayMedia = `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`;
+                            }
+                        } else if (parts.length === 2) {
+                            displayTitle = parts[1];
+                        }
+                    }
+
+                    return {
+                        ...token,
+                        metadata: {
+                            ...token.metadata,
+                            title: displayTitle,
+                            media: displayMedia
+                        },
+                        video_metadata: videoMeta
+                    };
+                });
 
                 setTokens(mappedTokens);
 

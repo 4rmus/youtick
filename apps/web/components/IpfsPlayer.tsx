@@ -7,21 +7,58 @@ import { ethers } from 'ethers';
 import { Loader2, Play, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { MintButton } from '@/components/MintButton';
+import { MintButton } from '@/components/MintButton'; // Keep for legacy/fallback
+import { TicketPurchaseCard } from '@/components/TicketPurchaseCard';
 import { SessionManager } from '@/lib/session-manager';
 
 interface IpfsPlayerProps {
     cid: string;
     filename?: string;
+    thumbnailUrl?: string;
 }
 
-export function IpfsPlayer({ cid, filename }: IpfsPlayerProps) {
+export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
     const { selector, accountId } = useWallet();
     const [videoUrl, setVideoUrl] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [status, setStatus] = useState<string>('');
     const videoRef = useRef<HTMLVideoElement>(null);
+
+    const [checkingAccess, setCheckingAccess] = useState(true);
+    const [hasAccess, setHasAccess] = useState<boolean | null>(null);
+
+    useEffect(() => {
+        let mounted = true;
+
+        const checkAccess = async () => {
+            if (!accountId || !cid) {
+                setCheckingAccess(false);
+                setHasAccess(false); // No account = no access
+                return;
+            }
+
+            setCheckingAccess(true);
+            try {
+                // Check specific access for this video
+                // We pass 'cid' directly because that's what is stored as 'encrypted_cid' in the contract for `buy_ticket`
+                // (Ticket purchases reference the ID used in the URL/listing)
+                const isAllowed = await checkSpecificAccess(accountId, cid);
+                if (mounted) setHasAccess(isAllowed);
+            } catch (e) {
+                console.error("Access check failed:", e);
+                // If check fails, we default to showing the lock screen (safe fail)
+                if (mounted) setHasAccess(false);
+            } finally {
+                if (mounted) setCheckingAccess(false);
+            }
+        };
+
+        checkAccess();
+
+        return () => { mounted = false; };
+    }, [cid, accountId]);
+
 
     const handlePlay = async () => {
         if (!accountId || !selector) {
@@ -191,9 +228,8 @@ export function IpfsPlayer({ cid, filename }: IpfsPlayerProps) {
         }
     };
 
-    const checkNearNFT = async (viewerId: string) => {
+    const checkSpecificAccess = async (viewerId: string, targetCid: string) => {
         const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick-demo-v3.testnet';
-        // Use local proxy to avoid CORS issues
         const rpcUrl = "/api/near-rpc";
         const body = JSON.stringify({
             jsonrpc: "2.0",
@@ -203,8 +239,8 @@ export function IpfsPlayer({ cid, filename }: IpfsPlayerProps) {
                 request_type: "call_function",
                 finality: "final",
                 account_id: contractId,
-                method_name: "nft_supply_for_owner",
-                args_base64: btoa(JSON.stringify({ account_id: viewerId }))
+                method_name: "get_tokens_with_video",
+                args_base64: btoa(JSON.stringify({ account_id: viewerId, limit: 100 })) // Check last 100 tokens
             }
         });
 
@@ -223,11 +259,18 @@ export function IpfsPlayer({ cid, filename }: IpfsPlayerProps) {
 
             const resultBytes = data.result.result;
             const resultString = String.fromCharCode(...resultBytes);
-            const supply = JSON.parse(resultString);
+            // Returns Vec<(Token, Option<VideoMetadata>)>
+            const tokens = JSON.parse(resultString);
 
-            return Number(supply) > 0;
+            // Check if user owns a token for this specific CID or a Global Access Pass
+            const hasAccess = tokens.some(([token, metadata]: [any, any]) => {
+                if (!metadata) return false;
+                return metadata.encrypted_cid === targetCid || metadata.encrypted_cid === 'ACCESS_PASS';
+            });
+
+            return hasAccess;
         } catch (e) {
-            console.error("Check NFT Error:", e);
+            console.error("Check Access Error:", e);
             return false;
         }
     };
@@ -236,36 +279,57 @@ export function IpfsPlayer({ cid, filename }: IpfsPlayerProps) {
         <div className="w-full aspect-video bg-slate-900 rounded-lg overflow-hidden relative group">
             {!videoUrl ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-4">
-                    {loading ? (
+                    {checkingAccess ? (
+                        <div className="text-center">
+                            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-zinc-500" />
+                            <p className="text-xs text-zinc-500">Verifying access...</p>
+                        </div>
+                    ) : loading ? (
                         <div className="text-center">
                             <Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-primary" />
                             <p className="text-sm text-slate-300">{status}</p>
                         </div>
-
-
-                    ) : error ? (
-                        <div className="text-center max-w-md">
-                            <Lock className="h-12 w-12 mx-auto mb-4 text-red-500" />
-                            <p className="text-red-400 font-semibold mb-2">Access Restricted</p>
-                            <p className="text-sm text-slate-400 mb-4">{error}</p>
-                            <div className="flex flex-col gap-3 justify-center items-center">
-                                <MintButton cid={cid} />
-                                <Button onClick={handlePlay} variant="outline" className="border-red-500/50 hover:bg-red-500/10 h-8 text-xs">
-                                    Check Access Again
-                                </Button>
+                    ) : (hasAccess === false || error) ? (
+                        // SHOW TICKET CARD IF NO ACCESS OR ERROR
+                        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 backdrop-blur-md w-full h-full p-4">
+                            <div className="w-full max-w-sm">
+                                <TicketPurchaseCard cid={cid} onPurchaseSuccess={() => window.location.reload()} />
+                                <div className="mt-4 text-center">
+                                    <Button onClick={handlePlay} variant="ghost" className="text-zinc-400 hover:text-white text-xs">
+                                        Already bought? Check Access Again
+                                    </Button>
+                                    {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
+                                </div>
                             </div>
                         </div>
                     ) : (
-                        <div className="text-center">
-                            <Lock className="h-12 w-12 mx-auto mb-4 text-primary" />
-                            <h3 className="text-xl font-bold mb-2">Encrypted Content</h3>
-                            <p className="text-sm text-slate-400 mb-6">
-                                This video is encrypted. You need to sign in and own the NFT to watch.
-                            </p>
-                            <Button onClick={handlePlay} size="lg" className="gap-2">
-                                <Play className="h-5 w-5" />
-                                Decrypt & Play
-                            </Button>
+                        // SHOW PLAY BUTTON IF HAS ACCESS
+                        <div className="relative z-10 text-center w-full h-full flex flex-col items-center justify-center">
+                            {/* Background Thumbnail */}
+                            {
+                                thumbnailUrl && (
+                                    <div className="absolute inset-0 z-0">
+                                        <img
+                                            src={thumbnailUrl}
+                                            alt="Video Thumbnail"
+                                            className="w-full h-full object-cover opacity-50 blur-sm"
+                                        />
+                                        <div className="absolute inset-0 bg-black/40" />
+                                    </div>
+                                )
+                            }
+
+                            <div className="relative z-10 p-6 bg-black/30 backdrop-blur-sm rounded-xl border border-white/10">
+                                <Lock className="h-12 w-12 mx-auto mb-4 text-primary" />
+                                <h3 className="text-xl font-bold mb-2 text-white">Encrypted Content</h3>
+                                <p className="text-sm text-slate-200 mb-6 font-medium">
+                                    Valid ticket found. You can watch this video.
+                                </p>
+                                <Button onClick={handlePlay} size="lg" className="gap-2 shadow-xl shadow-primary/20">
+                                    <Play className="h-5 w-5" />
+                                    Decrypt & Play
+                                </Button>
+                            </div>
                         </div>
                     )}
                 </div>

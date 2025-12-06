@@ -2,10 +2,11 @@
 
 import Link from 'next/link';
 import { useWallet } from '@/components/providers/WalletProvider';
+import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { Menu, X } from 'lucide-react';
+import { Menu, X, User, LogOut } from 'lucide-react';
 
 import { Branding } from '@/components/landing/Branding';
 
@@ -30,6 +31,7 @@ export function Navbar() {
     const handleSignOut = async () => {
         const wallet = await selector?.wallet();
         wallet?.signOut();
+        window.location.reload();
     };
 
     if (!mounted) return null;
@@ -81,14 +83,15 @@ export function Navbar() {
                     </div>
 
                     {accountId ? (
-                        <div className="flex items-center gap-4">
-                            <span className="text-sm font-mono text-zinc-400 truncate max-w-[100px]">{accountId}</span>
-                            <button
+                        <div className="rounded-full bg-zinc-900 border border-zinc-800 flex items-center pl-3 pr-1 py-1 gap-2">
+                            <User className="w-3 h-3 text-zinc-500" />
+                            <span className="text-xs font-mono text-zinc-400 truncate max-w-[100px]">{accountId}</span>
+                            <Button // This uses the generic button which might have different default styles, let's use standard button class instead or ensure Button import
                                 onClick={handleSignOut}
-                                className="px-4 py-2 text-sm font-medium text-black bg-white rounded-full hover:bg-gray-200 transition-colors"
+                                className="h-6 w-6 ml-1 p-0 rounded-full bg-transparent hover:bg-red-500/10 text-zinc-500 hover:text-red-500 flex items-center justify-center transition-colors"
                             >
-                                {t.nav.disconnect}
-                            </button>
+                                <LogOut className="w-3 h-3" />
+                            </Button>
                         </div>
                     ) : (
                         <button

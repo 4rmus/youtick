@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react';
 import { useOwnedTokens, TokenWithVideo } from '@/hooks/useOwnedTokens';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search } from "lucide-react";
+import { Search, Ticket } from "lucide-react";
 
 export default function WatchPage() {
     const searchParams = useSearchParams();
@@ -38,12 +38,12 @@ export default function WatchPage() {
                     </p>
                 </div>
 
-                <div className="flex gap-4 max-w-xl mx-auto">
+                <div className="flex gap-4 max-w-xl mx-auto mb-8">
                     <Input
                         placeholder="Enter IPFS CID..."
                         value={cid}
                         onChange={(e) => setCid(e.target.value)}
-                        className="flex-1"
+                        className="flex-1 bg-zinc-900 border-zinc-800"
                     />
                     <Button onClick={() => setPlayCid(cid)}>
                         <Search className="mr-2 h-4 w-4" />
@@ -51,75 +51,109 @@ export default function WatchPage() {
                     </Button>
                 </div>
 
-                {/* On-Chain Tickets/Videos List */}
-                <div className="max-w-xl mx-auto space-y-4">
-                    <h3 className="font-bold text-lg border-b pb-2">Your On-Chain Assets</h3>
+                {playCid ? (
+                    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 mb-12">
+                        <IpfsPlayer
+                            cid={playCid}
+                            thumbnailUrl={tokens.find(t => t.video_metadata?.encrypted_cid === playCid)?.metadata?.media}
+                        />
+                    </div>
+                ) : (
+                    <div className="text-center py-16 border border-dashed border-zinc-800 rounded-2xl bg-zinc-950/50 mb-12">
+                        <div className="flex justify-center mb-4">
+                            <div className="p-4 bg-zinc-900 rounded-full">
+                                <Search className="w-8 h-8 text-zinc-500" />
+                            </div>
+                        </div>
+                        <h3 className="text-lg font-medium text-white mb-2">Ready to Watch?</h3>
+                        <p className="text-muted-foreground max-w-sm mx-auto">
+                            Enter a CID above or select a video from your library below to start watching securely.
+                        </p>
+                    </div>
+                )}
 
-                    {loading && <p className="text-sm text-muted-foreground animate-pulse">Loading blockchain data...</p>}
-                    {error && <p className="text-sm text-red-500">Error loading assets: {error}</p>}
+                {/* On-Chain Tickets/Videos Library */}
+                <div className="space-y-6 pt-8 border-t border-zinc-900">
+                    <div className="flex items-center justify-between">
+                        <h3 className="font-bold text-xl text-white">Your Library</h3>
+                        <span className="text-xs text-zinc-500 uppercase tracking-widest">{tokens.length} Assets</span>
+                    </div>
+
+                    {loading && <p className="text-sm text-muted-foreground animate-pulse">Loading library...</p>}
+                    {error && <p className="text-sm text-red-500">Error loading library: {error}</p>}
 
                     {!loading && tokens.length === 0 && (
-                        <p className="text-sm text-muted-foreground italic">No tickets or videos found. Mint one below!</p>
+                        <div className="text-center py-12 bg-zinc-900/30 rounded-xl">
+                            <p className="text-sm text-muted-foreground italic mb-4">Your library is empty.</p>
+                            <Button variant="outline" onClick={() => window.location.href = '/discover'}>
+                                Browse Discover
+                            </Button>
+                        </div>
                     )}
 
-                    <div className="grid gap-2 max-h-[400px] overflow-y-auto">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                         {tokens.map((token: TokenWithVideo) => {
                             const isVideo = !!token.video_metadata;
                             const videoCid = token.video_metadata?.encrypted_cid;
                             const isAccessPass = videoCid === 'ACCESS_PASS';
 
                             const title = token.metadata?.title || token.token_id;
-                            const subtitle = isAccessPass ? "Access Pass" : (isVideo ? "Video NFT" : "Unknown");
+                            const subtitle = isAccessPass ? "Global Pass" : (isVideo ? "Video NFT" : "Asset");
+                            const media = token.metadata?.media;
+
+                            // Check if this card is currently active/playing
+                            const isActive = playCid === videoCid;
 
                             return (
                                 <div
                                     key={token.token_id}
-                                    className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${isAccessPass
-                                        ? 'bg-green-950/30 border-green-900 cursor-default'
-                                        : isVideo
-                                            ? 'bg-zinc-900 border-zinc-800 cursor-pointer hover:bg-zinc-800'
-                                            : 'bg-zinc-950 border-zinc-900 opacity-75'
-                                        }`}
                                     onClick={() => !isAccessPass && isVideo && videoCid && handleVideoSelect(videoCid)}
+                                    className={`
+                                        group relative overflow-hidden rounded-xl border transition-all duration-300
+                                        ${isActive ? 'ring-2 ring-primary border-transparent' : 'border-zinc-800 hover:border-zinc-600'}
+                                        ${isAccessPass ? 'bg-green-950/10 cursor-default' : 'bg-zinc-900 cursor-pointer hover:shadow-xl hover:shadow-black/50 hover:-translate-y-1'}
+                                    `}
                                 >
-                                    <div className="flex items-center gap-3">
-                                        <div className={`w-2 h-2 rounded-full ${isAccessPass ? 'bg-green-500' : 'bg-blue-500'}`} />
-                                        <div>
-                                            <p className="font-medium text-sm text-zinc-200">{title}</p>
+                                    {/* Thumbnail Area */}
+                                    <div className="aspect-video bg-zinc-950 relative overflow-hidden">
+                                        {media && !media.includes('token.png') && (
+                                            <img src={media} alt={title} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
+                                        )}
+                                        {isActive && (
+                                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+                                                <span className="text-xs font-bold text-white bg-primary px-2 py-1 rounded-full animate-pulse">Now Playing</span>
+                                            </div>
+                                        )}
+                                        {isAccessPass && (
+                                            <div className="absolute inset-0 flex items-center justify-center bg-green-900/20">
+                                                <Ticket className="w-12 h-12 text-green-500/50" />
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Content Area */}
+                                    <div className="p-4">
+                                        <div className="flex justify-between items-start gap-2 mb-2">
+                                            <h4 className={`font-medium text-sm line-clamp-1 ${isActive ? 'text-primary' : 'text-zinc-200'}`}>
+                                                {title}
+                                            </h4>
+                                            {isAccessPass && <span className="text-[10px] bg-green-500/10 text-green-500 px-1.5 py-0.5 rounded border border-green-500/20">PASS</span>}
+                                        </div>
+
+                                        <div className="flex justify-between items-end">
                                             <p className="text-xs text-zinc-500">{subtitle}</p>
+                                            {isVideo && !isAccessPass && (
+                                                <div className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-bold text-white bg-white/10 px-2 py-1 rounded">
+                                                    PLAY
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
-                                    {isAccessPass ? (
-                                        <div className="text-xs font-mono bg-green-900/50 text-green-400 px-2 py-1 rounded">
-                                            Active Pass
-                                        </div>
-                                    ) : isVideo && (
-                                        <div className="text-xs font-mono bg-black px-2 py-1 rounded text-zinc-400">
-                                            Click to Watch
-                                        </div>
-                                    )}
                                 </div>
                             );
                         })}
                     </div>
                 </div>
-
-                {playCid ? (
-                    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                        <IpfsPlayer cid={playCid} />
-                        <div className="flex justify-between items-center p-4 bg-muted/50 rounded-lg border">
-                            <div>
-                                <p className="font-semibold">Access Restricted?</p>
-                                <p className="text-sm text-muted-foreground">You need a YouTick Pass NFT to decrypt this video.</p>
-                            </div>
-                            <MintButton cid={playCid} />
-                        </div>
-                    </div>
-                ) : (
-                    <div className="text-center py-12 border-2 border-dashed rounded-xl">
-                        <p className="text-muted-foreground">Enter a CID above or select a video to start watching</p>
-                    </div>
-                )}
             </div>
         </div>
     );
