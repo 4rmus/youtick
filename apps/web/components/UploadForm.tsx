@@ -431,216 +431,225 @@ export function UploadForm() {
     };
 
     return (
-        <Card className="w-full max-w-2xl mx-auto">
-            <CardHeader>
-                <CardTitle>Upload Video</CardTitle>
-                <CardDescription>Upload your video securely to IPFS with encryption.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-                {!accountId && (
-                    <Alert variant="destructive">
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertTitle>Wallet Not Connected</AlertTitle>
-                        <AlertDescription>
-                            Please connect your NEAR wallet to upload videos.
-                        </AlertDescription>
-                    </Alert>
-                )}
+        <div className="w-full max-w-7xl mx-auto p-4">
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-8 items-start">
 
-                {accountId && <GasTank />}
-
-                <div className="space-y-2">
-                    <label htmlFor="video-title" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                        Video Title
-                    </label>
-                    <Input
-                        id="video-title"
-                        type="text"
-                        placeholder="Enter video title"
-                        value={title}
-                        onChange={(e) => setTitle(e.target.value)}
-                        disabled={uploading || !accountId}
-                    />
-                </div>
-
-                <div className="space-y-2">
-                    <label htmlFor="video-description" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                        Description
-                    </label>
-                    <Textarea
-                        id="video-description"
-                        placeholder="Enter video description"
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                        disabled={uploading || !accountId}
-                        className="min-h-[100px]"
-                    />
-                </div>
-
-                <div className="space-y-2">
-                    <label htmlFor="ticket-price" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                        Ticket Price (NEAR)
-                    </label>
-                    <Input
-                        id="ticket-price"
-                        type="number"
-                        step="0.1"
-                        placeholder="1.0"
-                        value={price}
-                        onChange={(e) => setPrice(e.target.value)}
-                        disabled={uploading || !accountId}
-                    />
-                </div>
-
-                <div className="space-y-2">
-                    <label htmlFor="video-file" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                        Video File
-                    </label>
-                    <div className="grid w-full max-w-sm items-center gap-1.5">
-                        <Input
-                            id="video-file"
-                            type="file"
-                            accept="video/*"
-                            onChange={handleFileChange}
-                            disabled={uploading || !accountId}
-                        />
-                        {file && (
-                            <p className="mt-2 text-sm text-muted-foreground">
-                                Selected: {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
-                            </p>
+                {/* LEFT COLUMN: FORM INPUTS */}
+                <Card className="lg:col-span-3 order-2 lg:order-1">
+                    <CardHeader>
+                        <CardTitle>Upload Video</CardTitle>
+                        <CardDescription>Upload your video securely to IPFS with encryption.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        {!accountId && (
+                            <Alert variant="destructive">
+                                <AlertCircle className="h-4 w-4" />
+                                <AlertTitle>Wallet Not Connected</AlertTitle>
+                                <AlertDescription>
+                                    Please connect your NEAR wallet to upload videos.
+                                </AlertDescription>
+                            </Alert>
                         )}
 
-                        {/* Rich Ticket Preview Card */}
-                        <div className="mt-6">
-                            <h3 className="text-sm font-medium mb-3 text-muted-foreground">Ticket Preview</h3>
-                            <div className="relative group overflow-hidden rounded-xl bg-zinc-900 border border-zinc-800 shadow-2xl max-w-sm mx-auto transition-all hover:border-zinc-600">
-                                {/* Image Container */}
-                                <div className="aspect-video relative bg-zinc-950">
-                                    {thumbnailPreview ? (
-                                        <img
-                                            src={thumbnailPreview}
-                                            alt="Ticket Preview"
-                                            className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-500"
-                                        />
-                                    ) : (
-                                        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-zinc-900 to-black">
-                                            <div className="text-zinc-700 font-mono text-xs">NO MEDIA</div>
-                                        </div>
-                                    )}
+                        {accountId && <GasTank />}
 
-                                    {/* Overlay Gradient */}
-                                    <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-transparent to-transparent opacity-90" />
+                        <div className="space-y-2">
+                            <label htmlFor="video-title" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                Video Title
+                            </label>
+                            <Input
+                                id="video-title"
+                                type="text"
+                                placeholder="Enter video title"
+                                value={title}
+                                onChange={(e) => setTitle(e.target.value)}
+                                disabled={uploading || !accountId}
+                            />
+                        </div>
 
-                                    {/* Play Button Icon */}
-                                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
-                                        <div className="bg-white/10 backdrop-blur-md p-3 rounded-full border border-white/20">
-                                            <div className="w-0 h-0 border-l-[12px] border-l-white border-y-[8px] border-y-transparent ml-1" />
-                                        </div>
+                        <div className="space-y-2">
+                            <label htmlFor="video-description" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                Description
+                            </label>
+                            <Textarea
+                                id="video-description"
+                                placeholder="Enter video description"
+                                value={description}
+                                onChange={(e) => setDescription(e.target.value)}
+                                disabled={uploading || !accountId}
+                                className="min-h-[100px]"
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <label htmlFor="ticket-price" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                Ticket Price (NEAR)
+                            </label>
+                            <Input
+                                id="ticket-price"
+                                type="number"
+                                step="0.1"
+                                placeholder="1.0"
+                                value={price}
+                                onChange={(e) => setPrice(e.target.value)}
+                                disabled={uploading || !accountId}
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <label htmlFor="video-file" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                Video File
+                            </label>
+                            <div className="grid w-full max-w-sm items-center gap-1.5">
+                                <Input
+                                    id="video-file"
+                                    type="file"
+                                    accept="video/*"
+                                    onChange={handleFileChange}
+                                    disabled={uploading || !accountId}
+                                />
+                                {file && (
+                                    <p className="mt-2 text-sm text-muted-foreground">
+                                        Selected: {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+
+                        {uploading && progress > 0 && (
+                            <div className="space-y-2">
+                                <div className="flex justify-between text-sm text-muted-foreground">
+                                    <span>Uploading...</span>
+                                    <span>{progress}%</span>
+                                </div>
+                                <Progress value={progress} className="w-full" />
+                            </div>
+                        )}
+
+                        {status && (
+                            <Alert variant={status.includes('failed') ? "destructive" : "default"}>
+                                {status.includes('failed') ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+                                <AlertTitle>{status.includes('failed') ? "Error" : "Status"}</AlertTitle>
+                                <AlertDescription>
+                                    {status}
+                                </AlertDescription>
+                            </Alert>
+                        )}
+
+                        {retryStep === 'sign_auth' && (
+                            <Alert className="border-yellow-500/50 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">
+                                <AlertCircle className="h-4 w-4" />
+                                <AlertTitle>Action Required</AlertTitle>
+                                <AlertDescription className="flex flex-col gap-2">
+                                    <p>The browser blocked the second signature popup.</p>
+                                    <Button
+                                        onClick={handleRetrySign}
+                                        variant="outline"
+                                        className="w-full border-yellow-500/50 hover:bg-yellow-500/20"
+                                    >
+                                        Continue Signing & Upload
+                                    </Button>
+                                </AlertDescription>
+                            </Alert>
+                        )}
+                    </CardContent>
+                    <CardFooter>
+                        <Button
+                            onClick={handleUpload}
+                            disabled={uploading || !file || !title || !description || !accountId}
+                            className="w-full"
+                        >
+                            {uploading ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Processing
+                                </>
+                            ) : (
+                                <>
+                                    <Upload className="mr-2 h-4 w-4" />
+                                    Upload Video
+                                </>
+                            )}
+                        </Button>
+                    </CardFooter>
+                </Card>
+
+                {/* RIGHT COLUMN: PREVIEW & INFO */}
+                <div className="lg:col-span-2 space-y-6 sticky top-24 order-1 lg:order-2">
+                    <div>
+                        <h3 className="text-sm font-medium mb-3 text-muted-foreground">Ticket Preview</h3>
+                        <div className="relative group overflow-hidden rounded-xl bg-zinc-900 border border-zinc-800 shadow-2xl transition-all hover:border-zinc-600">
+                            {/* Image Container */}
+                            <div className="aspect-video relative bg-zinc-950">
+                                {thumbnailPreview ? (
+                                    <img
+                                        src={thumbnailPreview}
+                                        alt="Ticket Preview"
+                                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-500"
+                                    />
+                                ) : (
+                                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-zinc-900 to-black">
+                                        <div className="text-zinc-700 font-mono text-xs">NO MEDIA</div>
                                     </div>
+                                )}
 
-                                    {/* Badge */}
-                                    <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full border border-white/10">
-                                        <span className="text-[10px] font-bold text-white tracking-wider uppercase">Exclusive</span>
+                                {/* Overlay Gradient */}
+                                <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-transparent to-transparent opacity-90" />
+
+                                {/* Play Button Icon */}
+                                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+                                    <div className="bg-white/10 backdrop-blur-md p-3 rounded-full border border-white/20">
+                                        <div className="w-0 h-0 border-l-[12px] border-l-white border-y-[8px] border-y-transparent ml-1" />
                                     </div>
                                 </div>
 
-                                {/* Content Details */}
-                                <div className="p-5 relative">
-                                    <div className="flex justify-between items-start mb-2">
-                                        <h4 className="font-bold text-white text-lg leading-tight line-clamp-1">
-                                            {title || "Untitled Event"}
-                                        </h4>
+                                {/* Badge */}
+                                <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full border border-white/10">
+                                    <span className="text-[10px] font-bold text-white tracking-wider uppercase">Exclusive</span>
+                                </div>
+                            </div>
+
+                            {/* Content Details */}
+                            <div className="p-5 relative">
+                                <div className="flex justify-between items-start mb-2">
+                                    <h4 className="font-bold text-white text-lg leading-tight line-clamp-1">
+                                        {title || "Untitled Event"}
+                                    </h4>
+                                </div>
+
+                                <p className="text-xs text-zinc-400 line-clamp-2 mb-4 min-h-[2.5em]">
+                                    {description || "No description provided."}
+                                </p>
+
+                                {/* Footer Info */}
+                                <div className="flex items-center justify-between pt-4 border-t border-white/5">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-[10px] font-bold text-white">
+                                            {accountId ? accountId.substring(0, 2).toUpperCase() : "??"}
+                                        </div>
+                                        <span className="text-xs text-zinc-400 font-medium truncate max-w-[100px]">
+                                            {accountId || "Connect Wallet"}
+                                        </span>
                                     </div>
-
-                                    <p className="text-xs text-zinc-400 line-clamp-2 mb-4 min-h-[2.5em]">
-                                        {description || "No description provided."}
-                                    </p>
-
-                                    {/* Footer Info */}
-                                    <div className="flex items-center justify-between pt-4 border-t border-white/5">
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-[10px] font-bold text-white">
-                                                {accountId ? accountId.substring(0, 2).toUpperCase() : "??"}
-                                            </div>
-                                            <span className="text-xs text-zinc-400 font-medium truncate max-w-[100px]">
-                                                {accountId || "Connect Wallet"}
-                                            </span>
-                                        </div>
-                                        <div className="flex flex-col items-end">
-                                            <span className="text-[10px] text-zinc-500 uppercase tracking-widest">Price</span>
-                                            <span className="text-sm font-bold text-white">{price} NEAR</span>
-                                        </div>
+                                    <div className="flex flex-col items-end">
+                                        <span className="text-[10px] text-zinc-500 uppercase tracking-widest">Price</span>
+                                        <span className="text-sm font-bold text-white">{price} NEAR</span>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
 
-                {uploading && progress > 0 && (
-                    <div className="space-y-2">
-                        <div className="flex justify-between text-sm text-muted-foreground">
-                            <span>Uploading...</span>
-                            <span>{progress}%</span>
-                        </div>
-                        <Progress value={progress} className="w-full" />
+                    <div className="p-6 bg-zinc-900/50 rounded-xl border border-white/5 text-xs text-slate-500 dark:text-slate-400">
+                        <p className="font-semibold mb-2 text-zinc-300">How it works:</p>
+                        <ol className="list-decimal list-inside space-y-1">
+                            <li>Your video is encrypted before upload</li>
+                            <li>Only NFT holders can decrypt and watch</li>
+                            <li>We use MPC to sign the upload securely</li>
+                        </ol>
                     </div>
-                )}
-
-                {status && (
-                    <Alert variant={status.includes('failed') ? "destructive" : "default"}>
-                        {status.includes('failed') ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-                        <AlertTitle>{status.includes('failed') ? "Error" : "Status"}</AlertTitle>
-                        <AlertDescription>
-                            {status}
-                        </AlertDescription>
-                    </Alert>
-                )}
-
-                {retryStep === 'sign_auth' && (
-                    <Alert className="border-yellow-500/50 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertTitle>Action Required</AlertTitle>
-                        <AlertDescription className="flex flex-col gap-2">
-                            <p>The browser blocked the second signature popup.</p>
-                            <Button
-                                onClick={handleRetrySign}
-                                variant="outline"
-                                className="w-full border-yellow-500/50 hover:bg-yellow-500/20"
-                            >
-                                Continue Signing & Upload
-                            </Button>
-                        </AlertDescription>
-                    </Alert>
-                )}
-            </CardContent>
-            <CardFooter>
-                <Button
-                    onClick={handleUpload}
-                    disabled={uploading || !file || !title || !description || !accountId}
-                    className="w-full"
-                >
-                    {uploading ? (
-                        <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Processing
-                        </>
-                    ) : (
-                        <>
-                            <Upload className="mr-2 h-4 w-4" />
-                            Upload Video
-                        </>
-                    )}
-                </Button>
-            </CardFooter>
-            <div className="mt-4 p-6 text-xs text-slate-500 dark:text-slate-400">
-                <p className="font-semibold mb-1">How it works:</p>
-                <ol className="list-decimal list-inside space-y-1">
-                    <li>Your video is encrypted before upload</li>
-                    <li>Only NFT holders can decrypt and watch</li>
-                    <li>We use MPC to sign the upload securely</li>
-                </ol>
+                </div>
             </div>
-        </Card>
+        </div>
     );
 }

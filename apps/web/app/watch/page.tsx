@@ -5,28 +5,21 @@ import { IpfsPlayer } from '@/components/IpfsPlayer';
 import { MintButton } from '@/components/MintButton';
 import { useState, useEffect } from 'react';
 import { useOwnedTokens, TokenWithVideo } from '@/hooks/useOwnedTokens';
-import { Input } from "@/components/ui/input";
+
 import { Button } from "@/components/ui/button";
 import { Search, Ticket } from "lucide-react";
 
 export default function WatchPage() {
     const searchParams = useSearchParams();
     const initialCid = searchParams.get('cid') || '';
-    const [cid, setCid] = useState(initialCid);
     const [playCid, setPlayCid] = useState(initialCid);
     const { tokens, loading, error } = useOwnedTokens();
 
     useEffect(() => {
         if (initialCid) {
-            setCid(initialCid);
             setPlayCid(initialCid);
         }
     }, [initialCid]);
-
-    const handleVideoSelect = (videoCid: string) => {
-        setCid(videoCid);
-        setPlayCid(videoCid);
-    };
 
     return (
         <div className="container mx-auto px-4 py-24 min-h-screen">
@@ -38,25 +31,46 @@ export default function WatchPage() {
                     </p>
                 </div>
 
-                <div className="flex gap-4 max-w-xl mx-auto mb-8">
-                    <Input
-                        placeholder="Enter IPFS CID..."
-                        value={cid}
-                        onChange={(e) => setCid(e.target.value)}
-                        className="flex-1 bg-zinc-900 border-zinc-800"
-                    />
-                    <Button onClick={() => setPlayCid(cid)}>
-                        <Search className="mr-2 h-4 w-4" />
-                        Load Video
-                    </Button>
-                </div>
-
                 {playCid ? (
-                    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 mb-12">
+                    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 mb-12">
+                        {/* 1. The Player */}
                         <IpfsPlayer
                             cid={playCid}
                             thumbnailUrl={tokens.find(t => t.video_metadata?.encrypted_cid === playCid)?.metadata?.media}
                         />
+
+                        {/* 2. Video Details */}
+                        {(() => {
+                            const activeToken = tokens.find(t => t.video_metadata?.encrypted_cid === playCid);
+                            if (!activeToken) return null;
+
+                            return (
+                                <div className="space-y-4">
+                                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                                        <div>
+                                            <h2 className="text-2xl font-bold text-white leading-tight">
+                                                {activeToken.metadata?.title || "Untitled Video"}
+                                            </h2>
+                                            <div className="flex items-center gap-2 mt-2">
+                                                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-[10px] font-bold text-white">
+                                                    {activeToken.owner_id.substring(0, 2).toUpperCase()}
+                                                </div>
+                                                <p className="text-sm text-zinc-400">
+                                                    Uploaded by <span className="text-zinc-200 font-medium">{activeToken.owner_id}</span>
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="p-6 bg-zinc-900/50 rounded-xl border border-white/5">
+                                        <h3 className="text-sm font-semibold text-zinc-300 mb-2">Description</h3>
+                                        <p className="text-sm text-zinc-400 whitespace-pre-wrap leading-relaxed">
+                                            {activeToken.metadata?.description || "No description provided."}
+                                        </p>
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 ) : (
                     <div className="text-center py-16 border border-dashed border-zinc-800 rounded-2xl bg-zinc-950/50 mb-12">
@@ -65,10 +79,15 @@ export default function WatchPage() {
                                 <Search className="w-8 h-8 text-zinc-500" />
                             </div>
                         </div>
-                        <h3 className="text-lg font-medium text-white mb-2">Ready to Watch?</h3>
+                        <h3 className="text-lg font-medium text-white mb-2">Select a Video</h3>
                         <p className="text-muted-foreground max-w-sm mx-auto">
-                            Enter a CID above or select a video from your library below to start watching securely.
+                            Choose a video from your library below to start watching securely.
                         </p>
+                        <div className="mt-6">
+                            <Button variant="outline" onClick={() => window.location.href = '/discover'}>
+                                Browse New Content
+                            </Button>
+                        </div>
                     </div>
                 )}
 
@@ -107,7 +126,7 @@ export default function WatchPage() {
                             return (
                                 <div
                                     key={token.token_id}
-                                    onClick={() => !isAccessPass && isVideo && videoCid && handleVideoSelect(videoCid)}
+                                    onClick={() => !isAccessPass && isVideo && videoCid && setPlayCid(videoCid)}
                                     className={`
                                         group relative overflow-hidden rounded-xl border transition-all duration-300
                                         ${isActive ? 'ring-2 ring-primary border-transparent' : 'border-zinc-800 hover:border-zinc-600'}
