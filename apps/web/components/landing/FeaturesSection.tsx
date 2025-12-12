@@ -1,13 +1,15 @@
 import { memo } from 'react';
-import { Lock, Repeat, Zap, Users } from 'lucide-react';
+import { Lock, DollarSign, Zap, Shield, Clock, Globe } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { COLORS, ANIMATION } from '@/lib/constants';
 
 const features = [
-  { icon: Lock, key: 'fraud_proof' },
-  { icon: Repeat, key: 'secure_transfer' },
-  { icon: Zap, key: 'instant_payment' },
-  { icon: Users, key: 'community_control' },
+  { icon: Lock, key: 'nft_gated' },
+  { icon: DollarSign, key: 'revenue_share' },
+  { icon: Zap, key: 'near_speed' },
+  { icon: Shield, key: 'true_ownership' },
+  { icon: Clock, key: 'instant_payment' },
+  { icon: Globe, key: 'global_access' },
 ] as const;
 
 export const FeaturesSection = memo(() => {
@@ -19,7 +21,7 @@ export const FeaturesSection = memo(() => {
         {/* Header */}
         <div className="max-w-3xl mx-auto text-center mb-20">
           <h2 className="text-4xl md:text-5xl font-black mb-6">
-            {t.landing.features.title.split(' ')[0]} <span className={COLORS.text.accent}>{t.landing.features.title.split(' ')[1]}</span>
+            <span className="text-white">{t.landing.features.title}</span>
           </h2>
           <p className="text-zinc-400 text-lg">
             {t.landing.features.subtitle}
@@ -27,7 +29,7 @@ export const FeaturesSection = memo(() => {
         </div>
 
         {/* Feature Grid */}
-        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
           {features.map(({ icon: Icon, key }) => (
             <div
               key={key}

@@ -1,62 +1,38 @@
-import { memo, useRef, useEffect, useState } from 'react';
-import { useCounter } from '@/hooks/useCounter';
+import { memo } from 'react';
+import { Users, Palette, DollarSign, TrendingUp } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { STATS } from '@/lib/constants';
+import { COLORS, ANIMATION } from '@/lib/constants';
+
+const stats = [
+  { icon: Users, labelKey: 'users', valueKey: 'users_value', color: 'text-blue-400' },
+  { icon: Palette, labelKey: 'creators', valueKey: 'creators_value', color: 'text-purple-400' },
+  { icon: DollarSign, labelKey: 'revenue', valueKey: 'revenue_value', color: 'text-emerald-400' },
+  { icon: TrendingUp, labelKey: 'volume', valueKey: 'volume_value', color: 'text-orange-400' },
+] as const;
 
 export const StatsSection = memo(() => {
   const { t } = useLanguage();
-  const [statsVisible, setStatsVisible] = useState(false);
-  const statsRef = useRef<HTMLDivElement>(null);
-
-  const ticketCount = useCounter(STATS.ticketCapacity, 2500, statsVisible);
-  const eventCount = useCounter(STATS.potentialEvents, 2500, statsVisible);
-  const fraudRate = useCounter(STATS.fraudRate, 2500, statsVisible);
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setStatsVisible(true);
-        }
-      },
-      { threshold: 0.3 }
-    );
-
-    if (statsRef.current) {
-      observer.observe(statsRef.current);
-    }
-
-    return () => observer.disconnect();
-  }, []);
 
   return (
-    <section ref={statsRef} className="py-20 bg-zinc-950 border-y border-white/5">
+    <section id="stats" className="py-20 bg-zinc-950 border-y border-white/5">
       <div className="container mx-auto px-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
-          <div className="space-y-2">
-            <p className="text-5xl md:text-6xl font-black text-white">
-              {ticketCount.toLocaleString()}+
-            </p>
-            <p className="text-zinc-500 text-sm uppercase tracking-widest">
-              {t.landing.stats.ticket_capacity}
-            </p>
-          </div>
-          <div className="space-y-2">
-            <p className="text-5xl md:text-6xl font-black text-white">
-              {eventCount.toLocaleString()}+
-            </p>
-            <p className="text-zinc-500 text-sm uppercase tracking-widest">
-              {t.landing.stats.potential_events}
-            </p>
-          </div>
-          <div className="space-y-2">
-            <p className="text-5xl md:text-6xl font-black text-white">
-              %{fraudRate}
-            </p>
-            <p className="text-zinc-500 text-sm uppercase tracking-widest">
-              {t.landing.stats.fraud_rate}
-            </p>
-          </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-8 max-w-6xl mx-auto">
+          {stats.map(({ icon: Icon, labelKey, valueKey, color }) => (
+            <div
+              key={labelKey}
+              className={`text-center p-6 rounded-2xl ${COLORS.background.card} border ${COLORS.border.default} hover:border-white/20 ${ANIMATION.transition.default} group`}
+            >
+              <div className={`w-14 h-14 mx-auto mb-4 bg-white/5 rounded-xl flex items-center justify-center group-hover:bg-white/10 ${ANIMATION.transition.colors}`}>
+                <Icon className={`w-7 h-7 ${color}`} />
+              </div>
+              <div className={`text-4xl font-black mb-2 ${color}`}>
+                {t.landing.stats[valueKey as keyof typeof t.landing.stats]}
+              </div>
+              <div className="text-sm text-zinc-400 font-medium">
+                {t.landing.stats[labelKey as keyof typeof t.landing.stats]}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </section>

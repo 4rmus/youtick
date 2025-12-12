@@ -1,25 +1,12 @@
 import { memo } from 'react';
-import Image from 'next/image';
-import { Music, Film, Trophy } from 'lucide-react';
+import { Music, Film, BookOpen, ArrowRight } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { ANIMATION } from '@/lib/constants';
+import { COLORS, ANIMATION } from '@/lib/constants';
 
 const useCases = [
-  {
-    key: 'concerts',
-    image: '/concert_crowd.png',
-    icon: Music,
-  },
-  {
-    key: 'cinema',
-    image: '/cinema_scene.png',
-    icon: Film,
-  },
-  {
-    key: 'sports',
-    image: null, // Gradient background
-    icon: Trophy,
-  },
+  { icon: Music, titleKey: 'concerts_title', physicalKey: 'concerts_physical', digitalKey: 'concerts_digital', gradient: 'from-purple-500/10 to-pink-500/10', border: 'border-purple-500/20' },
+  { icon: Film, titleKey: 'cinema_title', physicalKey: 'cinema_physical', digitalKey: 'cinema_digital', gradient: 'from-blue-500/10 to-cyan-500/10', border: 'border-blue-500/20' },
+  { icon: BookOpen, titleKey: 'workshop_title', physicalKey: 'workshop_physical', digitalKey: 'workshop_digital', gradient: 'from-emerald-500/10 to-green-500/10', border: 'border-emerald-500/20' },
 ] as const;
 
 export const UseCasesSection = memo(() => {
@@ -30,7 +17,7 @@ export const UseCasesSection = memo(() => {
       <div className="container mx-auto px-4">
         {/* Header */}
         <div className="max-w-3xl mx-auto text-center mb-20">
-          <h2 className="text-4xl md:text-5xl font-black mb-6">
+          <h2 className="text-4xl md:text-5xl font-black mb-6 text-white">
             {t.landing.use_cases.title}
           </h2>
           <p className="text-zinc-400 text-lg">
@@ -38,44 +25,43 @@ export const UseCasesSection = memo(() => {
           </p>
         </div>
 
-        {/* Use Cases Grid */}
-        <div className="grid md:grid-cols-3 gap-8">
-          {useCases.map(({ key, image, icon: Icon }) => (
+        {/* Use Cases */}
+        <div className="max-w-5xl mx-auto space-y-8">
+          {useCases.map(({ icon: Icon, titleKey, physicalKey, digitalKey, gradient, border }) => (
             <div
-              key={key}
-              className={`group relative overflow-hidden rounded-2xl aspect-[4/5] cursor-pointer ${!image ? 'bg-zinc-900' : ''}`}
+              key={titleKey}
+              className={`p-8 md:p-10 rounded-2xl bg-gradient-to-br ${gradient} border ${border} ${ANIMATION.transition.default} hover:scale-[1.02]`}
             >
-              {image ? (
-                <>
-                  <Image
-                    src={image}
-                    alt={t.landing.use_cases[`${key}_title` as keyof typeof t.landing.use_cases] as string}
-                    fill
-                    className={`object-cover ${ANIMATION.transition.transform} ${ANIMATION.duration.slow} ${ANIMATION.hover.scaleImage}`}
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/30 to-transparent" />
-                </>
-              ) : (
-                <>
-                  <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 to-black" />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <Icon className="w-24 h-24 text-white/10" />
-                  </div>
-                </>
-              )}
-
-              <div className="absolute bottom-0 left-0 right-0 p-8">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-12 h-12 bg-white/10 backdrop-blur rounded-full flex items-center justify-center">
-                    <Icon className="w-6 h-6 text-white" />
-                  </div>
-                  <h3 className="text-2xl font-bold text-white">
-                    {t.landing.use_cases[`${key}_title` as keyof typeof t.landing.use_cases]}
-                  </h3>
+              {/* Title */}
+              <div className="flex items-center gap-4 mb-6">
+                <div className="w-14 h-14 bg-white/10 rounded-xl flex items-center justify-center">
+                  <Icon className="w-7 h-7 text-white" />
                 </div>
-                <p className="text-zinc-400 leading-relaxed">
-                  {t.landing.use_cases[`${key}_desc` as keyof typeof t.landing.use_cases]}
-                </p>
+                <h3 className="text-2xl md:text-3xl font-black text-white">
+                  {t.landing.use_cases[titleKey as keyof typeof t.landing.use_cases]}
+                </h3>
+              </div>
+
+              {/* Comparison */}
+              <div className="grid md:grid-cols-2 gap-6">
+                {/* Physical */}
+                <div className={`p-6 rounded-xl ${COLORS.background.card} border ${COLORS.border.default}`}>
+                  <div className="text-zinc-500 font-semibold text-sm mb-3 uppercase tracking-wider">Physical</div>
+                  <p className="text-zinc-400 text-sm leading-relaxed">
+                    {t.landing.use_cases[physicalKey as keyof typeof t.landing.use_cases]}
+                  </p>
+                </div>
+
+                {/* Digital */}
+                <div className={`p-6 rounded-xl bg-white/5 border border-white/10 relative`}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <ArrowRight className="w-5 h-5 text-emerald-400" />
+                    <div className="text-emerald-400 font-semibold text-sm uppercase tracking-wider">YouTick Digital</div>
+                  </div>
+                  <p className="text-white text-sm leading-relaxed font-medium">
+                    {t.landing.use_cases[digitalKey as keyof typeof t.landing.use_cases]}
+                  </p>
+                </div>
               </div>
             </div>
           ))}

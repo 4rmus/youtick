@@ -143,6 +143,12 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
       <div className="container mx-auto px-4 h-20 flex items-center justify-between">
         <Branding size="md" />
         <div className="hidden md:flex items-center gap-8 text-sm text-zinc-400">
+          <button
+            onClick={onDiscoverClick}
+            className="hover:text-white transition-colors"
+          >
+            {t.landing.nav.discover}
+          </button>
           <a href="#features" className="hover:text-white transition-colors">
             {t.landing.nav.features}
           </a>
@@ -169,14 +175,6 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
               TR
             </button>
           </div>
-
-          <Button
-            variant="ghost"
-            className="text-zinc-400 hover:text-white hidden md:inline-flex"
-            onClick={onDiscoverClick}
-          >
-            {t.landing.nav.discover}
-          </Button>
 
           <Button
             onClick={handleGetStarted}

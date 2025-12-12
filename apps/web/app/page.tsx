@@ -4,9 +4,13 @@ import { useState, useCallback } from 'react';
 import { Navigation } from '@/components/landing/Navigation';
 import { HeroSection } from '@/components/landing/HeroSection';
 import { StatsSection } from '@/components/landing/StatsSection';
+import { ValuePropositionSection } from '@/components/landing/ValuePropositionSection';
+import { DigitalSalonSection } from '@/components/landing/DigitalSalonSection';
 import { FeaturesSection } from '@/components/landing/FeaturesSection';
+import { CompetitiveAdvantagesSection } from '@/components/landing/CompetitiveAdvantagesSection';
 import { ComparisonSection } from '@/components/landing/ComparisonSection';
 import { UseCasesSection } from '@/components/landing/UseCasesSection';
+import { Web3BridgeSection } from '@/components/landing/Web3BridgeSection';
 import { HowItWorksSection } from '@/components/landing/HowItWorksSection';
 import { CTASection } from '@/components/landing/CTASection';
 import { LandingFooter } from '@/components/landing/LandingFooter';
@@ -32,9 +36,13 @@ export default function Home() {
       <Navigation onDiscoverClick={handleDiscoverClick} variant="landing" />
       <HeroSection onDiscoverClick={handleDiscoverClick} />
       <StatsSection />
+      <ValuePropositionSection />
+      <DigitalSalonSection />
       <FeaturesSection />
+      <CompetitiveAdvantagesSection />
       <ComparisonSection />
       <UseCasesSection />
+      <Web3BridgeSection />
       <HowItWorksSection />
       <CTASection onDiscoverClick={handleDiscoverClick} />
       <LandingFooter />
