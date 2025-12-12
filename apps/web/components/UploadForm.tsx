@@ -41,11 +41,28 @@ export function UploadForm() {
     const [price, setPrice] = useState('1'); // Default 1 NEAR
     const [progress, setProgress] = useState(0);
 
+    // Upload steps tracking
+    const [uploadSteps, setUploadSteps] = useState([
+        { id: 'session', label: 'Session Setup', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'address', label: 'Address Recovery', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'thumbnail', label: 'Thumbnail Upload', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'encrypt', label: 'File Encryption', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'upload', label: 'File Upload', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'mint', label: 'Blockchain Transaction', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' }
+    ]);
+
     // Retry state for popup blocked scenarios
     const [retryStep, setRetryStep] = useState<'none' | 'sign_auth'>('none');
     const [pendingMessage, setPendingMessage] = useState<string | null>(null);
     const [recoveredAddr, setRecoveredAddr] = useState<string | null>(null);
     const [recoveredPubKey, setRecoveredPubKey] = useState<string | null>(null);
+
+    // Helper function to update step status
+    const updateStep = (stepId: string, status: 'pending' | 'loading' | 'complete' | 'error') => {
+        setUploadSteps(prev => prev.map(step =>
+            step.id === stepId ? { ...step, status } : step
+        ));
+    };
 
     // Check Lighthouse connection on mount
     React.useEffect(() => {
@@ -108,6 +125,7 @@ export function UploadForm() {
             // 0. Upload Thumbnail first (Public)
             let thumbnailCid = 'bafkreid7q4s23333333333333333333333333333333333333333333333'; // Default placeholder
             if (thumbnail) {
+                updateStep('thumbnail', 'loading');
                 setStatus('Uploading thumbnail...');
                 const thumbFile = new File([thumbnail], "thumbnail.jpg", { type: "image/jpeg" });
                 const thumbUpload = await uploadFile(thumbFile) as UploadResponse;
@@ -119,7 +137,12 @@ export function UploadForm() {
                 if (thumbHash) {
                     thumbnailCid = thumbHash;
                     console.log('Thumbnail uploaded CID:', thumbnailCid);
+                    updateStep('thumbnail', 'complete');
+                } else {
+                    updateStep('thumbnail', 'complete');
                 }
+            } else {
+                updateStep('thumbnail', 'complete');
             }
 
             // 0. Recover Ethereum Address (MPC)
@@ -141,6 +164,7 @@ export function UploadForm() {
             );
 
             // 2. Encrypt with Lit Protocol using Session Keys
+            updateStep('encrypt', 'loading');
             setStatus('Encrypting file with Lit Protocol...');
 
             // 4. Encrypt file with Lit Protocol
@@ -174,6 +198,8 @@ export function UploadForm() {
                 sessionSignatures
             );
 
+            updateStep('encrypt', 'complete');
+            updateStep('upload', 'loading');
             setStatus('Uploading encrypted file to IPFS...');
 
             // 5. Upload to Lighthouse (Regular upload)
@@ -201,9 +227,11 @@ export function UploadForm() {
 
             console.log('Encrypted File CID:', fileHash);
 
+            updateStep('upload', 'complete');
             setStatus('Upload Complete! CID: ' + fileHash);
 
             // 6. Mint NFT + Create Event (BATCH - Single Signature!)
+            updateStep('mint', 'loading');
             setStatus('Preparing Mint & Event Creation...');
             try {
                 // Construct Title with RealCID for Player to parse
@@ -214,7 +242,7 @@ export function UploadForm() {
                 // Construct full IPFS Gateway URL for media
                 const mediaUrl = `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`;
 
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick6.testnet';
                 const priceYocto = utils.format.parseNearAmount(price) || '0';
 
                 // Prepare metadata for batch transaction
@@ -252,10 +280,12 @@ export function UploadForm() {
                     eventMetadata
                 );
 
+                updateStep('mint', 'complete');
                 setStatus('Success! Video Uploaded & Ticket Sales Started!');
 
             } catch (mintError: any) {
                 console.error('Minting/Event failed:', mintError);
+                updateStep('mint', 'error');
                 setStatus(`Upload success, but Blockchain actions failed: ${mintError.message}`);
             }
 
@@ -270,6 +300,11 @@ export function UploadForm() {
 
         } catch (error: any) {
             console.error('Upload failed:', error);
+            // Mark current loading step as error
+            const currentStep = uploadSteps.find(s => s.status === 'loading');
+            if (currentStep) {
+                updateStep(currentStep.id, 'error');
+            }
             setStatus(`Upload failed: ${error.message}`);
             setUploading(false);
         }
@@ -310,21 +345,27 @@ export function UploadForm() {
         setStatus('Initializing Session...');
         setProgress(0);
 
+        // Reset all steps to pending
+        setUploadSteps(prev => prev.map(step => ({ ...step, status: 'pending' as const })));
+
         try {
             const wallet = await selector.wallet();
             const sessionManager = new SessionManager(accountId);
 
             // 0. Ensure Session Key exists
+            updateStep('session', 'loading');
             if (!(await sessionManager.hasSessionKey())) {
                 setStatus('Setting up App Session Key (One-time)...');
                 await sessionManager.createSessionKey(wallet);
             }
+            updateStep('session', 'complete');
 
             const { deriveEthAddress } = await import('@/lib/chain-signatures');
             const derivationPath = 'youtick-demo,chunky-paste.testnet,v1';
 
             // 1. Discover the correct MPC address
             // We can use the session key to sign the dummy message via proxy!
+            updateStep('address', 'loading');
             const dummyMessage = "get_address";
             console.log('Step 1: Signing dummy message to recover address...');
             setStatus('Recovering Address via Session Key...');
@@ -387,6 +428,7 @@ export function UploadForm() {
             // YES.
 
             console.log('Recovered MPC Address:', recoveredAddress);
+            updateStep('address', 'complete');
 
             // 2. Get Auth Message from Lighthouse
             const authMessageResponse = await lighthouse.getAuthMessage(recoveredAddress);
@@ -637,6 +679,54 @@ export function UploadForm() {
                         </div>
                     </div>
 
+
+                    {/* Upload Progress Steps - Only show when uploading */}
+                    {uploading && (
+                        <div className="p-5 bg-zinc-900/50 rounded-xl border border-white/5">
+                            <h3 className="text-sm font-semibold mb-4 text-zinc-300">Upload Progress</h3>
+                            <div className="space-y-3">
+                                {uploadSteps.map((step, index) => (
+                                    <div key={step.id} className="flex items-center gap-3">
+                                        {/* Status Icon */}
+                                        <div className="flex-shrink-0">
+                                            {step.status === 'pending' && (
+                                                <div className="w-6 h-6 rounded-full border-2 border-zinc-700 flex items-center justify-center">
+                                                    <span className="text-[10px] text-zinc-600">{index + 1}</span>
+                                                </div>
+                                            )}
+                                            {step.status === 'loading' && (
+                                                <div className="w-6 h-6 rounded-full border-2 border-blue-500 flex items-center justify-center animate-spin">
+                                                    <Loader2 className="w-3 h-3 text-blue-500" />
+                                                </div>
+                                            )}
+                                            {step.status === 'complete' && (
+                                                <div className="w-6 h-6 rounded-full bg-green-500/20 border-2 border-green-500 flex items-center justify-center">
+                                                    <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                                                </div>
+                                            )}
+                                            {step.status === 'error' && (
+                                                <div className="w-6 h-6 rounded-full bg-red-500/20 border-2 border-red-500 flex items-center justify-center">
+                                                    <AlertCircle className="w-3.5 h-3.5 text-red-500" />
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Step Label */}
+                                        <div className="flex-1">
+                                            <p className={`text-sm font-medium ${
+                                                step.status === 'complete' ? 'text-green-400' :
+                                                step.status === 'loading' ? 'text-blue-400' :
+                                                step.status === 'error' ? 'text-red-400' :
+                                                'text-zinc-500'
+                                            }`}>
+                                                {step.label}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                     <div className="p-6 bg-zinc-900/50 rounded-xl border border-white/5 text-xs text-slate-500 dark:text-slate-400">
                         <p className="font-semibold mb-2 text-zinc-300">How it works:</p>
                         <ol className="list-decimal list-inside space-y-1">

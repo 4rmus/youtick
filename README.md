@@ -14,6 +14,8 @@
 - ✅ **NFT-Gated Access**: Only NFT holders can decrypt and watch videos
 - ✅ **Event System**: Create ticketed events for videos with custom pricing
 - ✅ **Session Keys**: Seamless UX with GasTank prepaid balance system
+- ✅ **Batch Transactions**: Single signature for multiple operations (mint + event creation)
+- ✅ **Upload Progress UI**: Step-by-step visual feedback during upload
 - ✅ **Profile Dashboard**: View balances and owned tickets
 - ✅ **MPC Integration**: NEAR-to-Ethereum address derivation for Lit Protocol
 
@@ -54,7 +56,7 @@ npm install
 cat > .env.local << EOF
 NEXT_PUBLIC_NEAR_NETWORK=testnet
 NEXT_PUBLIC_NFT_CONTRACT_ID=utick6.testnet
-NEXT_PUBLIC_LIGHTHOUSE_API_KEY=YOUR_API_KEY
+NEXT_PUBLIC_LIGHTHOUSE_API_KEY=your_lighthouse_api_key
 EOF
 
 # Start dev server
@@ -79,6 +81,13 @@ near call utick6.testnet deposit_funds --accountId your-account.testnet --deposi
 2. Select video file
 3. Enter title, description, and price
 4. Click "Upload Video"
+5. Watch progress indicator for each step:
+   - Session Setup
+   - Address Recovery
+   - Thumbnail Upload
+   - File Encryption
+   - File Upload
+   - Blockchain Transaction
 
 ### 4. Discover & Watch
 1. Browse videos on `/discover`
@@ -120,6 +129,8 @@ IPFS/Lighthouse ←→ Lit Protocol
 
 ### Implemented
 - [x] Video upload with encryption
+- [x] Batch transactions (1 signature for mint + event)
+- [x] Upload progress tracking UI
 - [x] Event creation and management
 - [x] NFT-gated video playback
 - [x] Session key support (GasTank)

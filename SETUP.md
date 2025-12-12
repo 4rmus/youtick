@@ -47,6 +47,7 @@ NEXT_PUBLIC_LIGHTHOUSE_API_KEY=YOUR_LIGHTHOUSE_API_KEY
 **Önemli Notlar:**
 - `NEXT_PUBLIC_NFT_CONTRACT_ID`: Mevcut contract adresi `utick6.testnet`
 - Lighthouse API key'inizi [lighthouse.storage](https://lighthouse.storage) adresinden alabilirsiniz
+- Uygulama sadece NEAR Protocol ve Lighthouse kullanmaktadır
 
 ### 4. Geliştirme Sunucusunu Başlatın
 
@@ -148,6 +149,13 @@ Profile sayfasından (`/profile`) GasTank bakiyenizi görebilirsiniz.
 3. Başlık ve açıklama girin
 4. Ticket fiyatı belirleyin (NEAR cinsinden)
 5. "Upload Video" butonuna tıklayın
+6. Upload progress ekranında her adımı takip edin:
+   - Session Setup: Oturum anahtarı kontrolü
+   - Address Recovery: MPC Ethereum adresi alınması  
+   - Thumbnail Upload: Thumbnail IPFS'e yükleme
+   - File Encryption: Video şifreleme
+   - File Upload: Şifreli dosya yükleme
+   - Blockchain Transaction: NFT mint + Event oluşturma (tek imza!)
 
 ### 3. Video İzleme
 

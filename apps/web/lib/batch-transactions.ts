@@ -67,7 +67,7 @@ export async function batchInitialSetup(
     const actions = [
         // Action 1: Deposit gas to tank (large amount for multiple uploads)
         transactions.functionCall(
-            'gas_tank_deposit',
+            'deposit_funds',
             Buffer.from(JSON.stringify({})),
             BigInt('30000000000000'), // 30 TGas
             BigInt(utils.format.parseNearAmount(gasAmount) || '0')

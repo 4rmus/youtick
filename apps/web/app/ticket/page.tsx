@@ -37,7 +37,7 @@ function TicketContent() {
         const fetchData = async () => {
             setLoading(true);
             try {
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'market.utick.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick6.testnet';
                 const rpcUrl = typeof window !== 'undefined' ? window.location.origin + '/api/near-rpc' : 'https://test.rpc.fastnear.com';
 
                 const near = await connect({
