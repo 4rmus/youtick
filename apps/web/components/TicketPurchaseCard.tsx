@@ -29,7 +29,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
         const fetchDetails = async () => {
             setLoading(true);
             try {
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick-demo-v3.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
                 const rpcUrl = "/api/near-rpc"; // Use proxy
 
                 // Ensure we use the proxy for this call too
@@ -85,7 +85,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
         setPurchasing(true);
         try {
             const wallet = await selector.wallet();
-            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick-demo-v3.testnet';
+            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
 
             const depositYocto = utils.format.parseNearAmount(eventDetails.price);
 

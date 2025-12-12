@@ -43,6 +43,7 @@ export function Navbar() {
         { href: '/discover', label: 'Discover' },
         { href: '/upload', label: 'Upload' },
         { href: '/watch', label: 'Watch' },
+        { href: '/profile', label: 'Profile' },
     ];
 
     return (

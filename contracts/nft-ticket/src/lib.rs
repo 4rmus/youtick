@@ -18,13 +18,31 @@ use serde::{Deserialize, Serialize};
 #[derive(BorshStorageKey, BorshSerialize)]
 #[borsh(crate = "near_sdk::borsh")]
 pub enum StorageKey {
+    V2(StorageKeyV2),
+}
+
+#[derive(BorshStorageKey, BorshSerialize)]
+#[borsh(crate = "near_sdk::borsh")]
+pub enum StorageKeyV2 {
     NonFungibleToken,
-    TokenMetadata,      // Prefix: "m"
-    Enumeration,        // Prefix: "e"
-    Approval,           // Prefix: "a"
-    ContractMetadata,   // Prefix: "c"
-    VideoMetadata,      // Prefix: "v" - Custom
-    UserDeposits,       // Prefix: "d"
+    TokenMetadata,
+    Enumeration,
+    Approval,
+    ContractMetadata,
+    VideoMetadata,
+    UserDeposits,
+    Events,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
+#[borsh(crate = "near_sdk::borsh")]
+#[serde(crate = "near_sdk::serde")]
+pub struct Event {
+    pub title: String,
+    pub description: String,
+    pub price: U128,
+    pub creator_id: AccountId,
+    pub created_at: u64,
 }
 
 // Custom video metadata for token-gated content
@@ -56,6 +74,7 @@ pub struct Contract {
     metadata: LazyOption<NFTContractMetadata>,
     video_metadata: UnorderedMap<TokenId, VideoMetadata>,
     user_deposits: LookupMap<AccountId, NearToken>,
+    events: UnorderedMap<String, Event>, // Key: encrypted_cid (UUID)
     next_token_id: u64,
 }
 
@@ -78,21 +97,139 @@ impl Contract {
 
         Self {
             tokens: NonFungibleToken::new(
-                StorageKey::NonFungibleToken,
+                StorageKey::V2(StorageKeyV2::NonFungibleToken),
                 owner_id,
-                Some(StorageKey::TokenMetadata),
-                Some(StorageKey::Enumeration),
-                Some(StorageKey::Approval),
+                Some(StorageKey::V2(StorageKeyV2::TokenMetadata)),
+                Some(StorageKey::V2(StorageKeyV2::Enumeration)),
+                Some(StorageKey::V2(StorageKeyV2::Approval)),
             ),
             metadata: LazyOption::new(
-                StorageKey::ContractMetadata,
+                StorageKey::V2(StorageKeyV2::ContractMetadata),
                 Some(&metadata),
             ),
-            video_metadata: UnorderedMap::new(StorageKey::VideoMetadata),
-            user_deposits: LookupMap::new(StorageKey::UserDeposits),
+            video_metadata: UnorderedMap::new(StorageKey::V2(StorageKeyV2::VideoMetadata)),
+            user_deposits: LookupMap::new(StorageKey::V2(StorageKeyV2::UserDeposits)),
+            events: UnorderedMap::new(StorageKey::V2(StorageKeyV2::Events)),
             next_token_id: 0,
         }
     }
+
+    /// Migration function to reset state with completely new storage keys
+    /// This creates a fresh start by using new storage prefixes
+    #[init(ignore_state)]
+    pub fn migrate_state() -> Self {
+        let owner_id = env::predecessor_account_id();
+        
+        let metadata = NFTContractMetadata {
+            spec: NFT_METADATA_SPEC.to_string(),
+            name: "YouTick Video Tickets".to_string(),
+            symbol: "YTICK".to_string(),
+            icon: None,
+            base_uri: None,
+            reference: None,
+            reference_hash: None,
+        };
+
+        Self {
+            tokens: NonFungibleToken::new(
+                StorageKey::V2(StorageKeyV2::NonFungibleToken),
+                owner_id,
+                Some(StorageKey::V2(StorageKeyV2::TokenMetadata)),
+                Some(StorageKey::V2(StorageKeyV2::Enumeration)),
+                Some(StorageKey::V2(StorageKeyV2::Approval)),
+            ),
+            metadata: LazyOption::new(
+                StorageKey::V2(StorageKeyV2::ContractMetadata),
+                Some(&metadata),
+            ),
+            video_metadata: UnorderedMap::new(StorageKey::V2(StorageKeyV2::VideoMetadata)),
+            user_deposits: LookupMap::new(StorageKey::V2(StorageKeyV2::UserDeposits)),
+            events: UnorderedMap::new(StorageKey::V2(StorageKeyV2::Events)),
+            next_token_id: 0,
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // EVENT FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════
+
+    #[payable]
+    pub fn create_event(&mut self, encrypted_cid: String, title: String, description: String, price: U128) {
+        let deposit = env::attached_deposit();
+        require!(
+            deposit >= NearToken::from_millinear(100), // 0.1 NEAR
+            "Requires at least 0.1 NEAR deposit to create an event"
+        );
+
+        let event = Event {
+            title,
+            description,
+            price,
+            creator_id: env::predecessor_account_id(),
+            created_at: env::block_timestamp(),
+        };
+
+        self.events.insert(&encrypted_cid, &event);
+    }
+
+    pub fn get_events(&self, from_index: Option<U128>, limit: Option<u64>) -> Vec<(String, Event)> {
+        self.events.iter().skip(from_index.map(|v| v.0 as usize).unwrap_or(0)).take(limit.unwrap_or(50) as usize).collect()
+    }
+
+    /// Get a single event by encrypted CID
+    pub fn get_event(&self, encrypted_cid: String) -> Option<Event> {
+        self.events.get(&encrypted_cid)
+    }
+
+    /// Purchase a ticket (mint NFT) for an event
+    #[payable]
+    pub fn buy_ticket(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Token {
+        let event = self.events.get(&encrypted_cid)
+            .expect("Event not found");
+        
+        let deposit = env::attached_deposit();
+        let required_price = NearToken::from_yoctonear(event.price.0);
+        
+        require!(
+            deposit >= required_price,
+            &format!("Insufficient deposit. Required: {} yoctoNEAR", event.price.0)
+        );
+
+        let token_id = self.next_token_id.to_string();
+        self.next_token_id += 1;
+
+        let video_metadata = VideoMetadata {
+            encrypted_cid: encrypted_cid.clone(),
+            livepeer_playback_id: String::new(),
+            duration_seconds: 0,
+            event_date: Some(event.created_at),
+            content_type: ContentType::Exclusive,
+        };
+
+        self.video_metadata.insert(&token_id, &video_metadata);
+
+        let token_metadata = TokenMetadata {
+            title: Some(event.title.clone()),
+            description: Some(event.description.clone()),
+            media: None,
+            media_hash: None,
+            copies: Some(1),
+            issued_at: None,
+            expires_at: None,
+            starts_at: None,
+            updated_at: None,
+            extra: None,
+            reference: None,
+            reference_hash: None,
+        };
+
+        self.tokens.internal_mint(
+            token_id.clone(),
+            receiver_id,
+            Some(token_metadata),
+        )
+    }
+
 
     // ═══════════════════════════════════════════════════════════════
     // MINTING FUNCTIONS

@@ -235,7 +235,7 @@ export function UploadForm() {
                 setStatus('Video Minted! Initializing Ticket Sales...');
 
                 // 7. Create Event (Ticket Sales)
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'market.utick.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
                 const deposit = utils.format.parseNearAmount('0.1');
                 const priceYocto = utils.format.parseNearAmount(price) || '0';
 
@@ -244,6 +244,7 @@ export function UploadForm() {
                     Buffer.from(JSON.stringify({
                         encrypted_cid: videoUuid, // Key is UUID
                         title: eventTitle,
+                        description: description || 'No description provided',
                         price: priceYocto
                     })),
                     BigInt('30000000000000'),

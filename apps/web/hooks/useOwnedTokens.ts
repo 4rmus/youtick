@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { connect, keyStores } from 'near-api-js';
 
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'contract.utick.testnet';
+const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
 
 interface VideoMetadata {
     encrypted_cid: string;
@@ -93,7 +93,7 @@ export function useOwnedTokens() {
                     };
                 });
 
-                setTokens(mappedTokens);
+                setTokens(mappedTokens.reverse());
 
             } catch (err: any) {
                 console.error("Error fetching tokens:", err);
