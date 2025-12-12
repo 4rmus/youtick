@@ -164,15 +164,7 @@ Profile sayfasından (`/profile`) GasTank bakiyenizi görebilirsiniz.
 
 ## 🐛 Sorun Giderme
 
-### Port 3000 Zaten Kullanımda
 
-```bash
-# Port 3000'i kullanan process'i bulun ve sonlandırın
-lsof -ti:3000 | xargs kill -9
-
-# Veya farklı bir port kullanın
-npm run dev -- -p 3001
-```
 
 ### Contract Method Not Found
 

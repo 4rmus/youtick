@@ -60,7 +60,7 @@ export class SessionManager {
         }
     }
 
-    async createSessionKey(wallet: any): Promise<void> {
+    async createSessionKey(wallet: any, gasAmount: string = '1'): Promise<void> {
         // Generate new key pair
         const keyPair = KeyPair.fromRandom('ed25519');
         const publicKey = keyPair.getPublicKey().toString();
@@ -68,36 +68,16 @@ export class SessionManager {
         // Store in local storage
         await this.keyStore.setKey(NETWORK_ID, this.accountId, keyPair);
 
-        // Add key to account via wallet (requires popup)
-        // We use the raw near-api-js action format to avoid "Enum key" errors
-        const allowance = utils.format.parseNearAmount('0.25');
+        // Use batch transaction to add key AND deposit gas in one signature
+        const { batchInitialSetup } = await import('./batch-transactions');
 
-        // Construct the action manually to match Borsh schema
-        const action = {
-            addKey: {
-                publicKey: KeyPair.fromRandom('ed25519').getPublicKey(), // Wait, we need the specific public key
-                accessKey: {
-                    permission: {
-                        functionCall: {
-                            receiverId: CONTRACT_ID,
-                            methodNames: [],
-                            allowance: allowance ? BigInt(allowance) : undefined
-                        }
-                    },
-                    nonce: 0 // Nonce is ignored/handled by protocol
-                }
-            }
-        };
-
-        // Fix public key
-        // PublicKey.from(publicKey) returns a PublicKey object
-        // We need to pass that object.
-        action.addKey.publicKey = utils.PublicKey.from(publicKey);
-
-        await wallet.signAndSendTransaction({
-            receiverId: this.accountId,
-            actions: [action as any],
-        });
+        await batchInitialSetup(
+            wallet,
+            this.accountId,
+            CONTRACT_ID,
+            publicKey,
+            gasAmount
+        );
     }
 
     async callMethod(method: string, args: any, gas: string = '300000000000000'): Promise<any> {

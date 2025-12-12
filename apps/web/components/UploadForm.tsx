@@ -5,6 +5,7 @@ import { useWallet } from '@/components/providers/WalletProvider';
 import { uploadFile } from '@/lib/lighthouse';
 import { lit, LIT_ACTION_CID } from '@/lib/lit';
 import { SessionManager } from '@/lib/session-manager';
+import { batchUploadActions } from '@/lib/batch-transactions';
 import { GasTank } from '@/components/GasTank';
 import { generateVideoThumbnail } from '@/lib/video-utils';
 import lighthouse from '@lighthouse-web3/sdk';
@@ -202,22 +203,22 @@ export function UploadForm() {
 
             setStatus('Upload Complete! CID: ' + fileHash);
 
-            // 6. Mint NFT
-            setStatus('Minting Video NFT (via Session Key)...');
+            // 6. Mint NFT + Create Event (BATCH - Single Signature!)
+            setStatus('Preparing Mint & Event Creation...');
             try {
                 // Construct Title with RealCID for Player to parse
                 // Schema: "RealCID:::ThumbnailCID:::Title"
                 // This allows us to retrieve the thumbnail in get_events lookup without finding the NFT
                 const eventTitle = `${fileHash}:::${thumbnailCid}:::${title || file.name}`;
 
-                const sessionManager = new SessionManager(accountId);
-
                 // Construct full IPFS Gateway URL for media
                 const mediaUrl = `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`;
 
-                // Note: We use the UUID as the encrypted_cid key in the contract
-                // This matches what the Lit Action expects (it checks against this UUID)
-                await sessionManager.callMethod('nft_mint_prepaid', {
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+                const priceYocto = utils.format.parseNearAmount(price) || '0';
+
+                // Prepare metadata for batch transaction
+                const videoMetadata = {
                     receiver_id: accountId,
                     token_metadata: {
                         title: eventTitle,
@@ -231,30 +232,25 @@ export function UploadForm() {
                         duration_seconds: 0,
                         content_type: 'Exclusive'
                     }
-                });
-                setStatus('Video Minted! Initializing Ticket Sales...');
+                };
 
-                // 7. Create Event (Ticket Sales)
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-                const deposit = utils.format.parseNearAmount('0.1');
-                const priceYocto = utils.format.parseNearAmount(price) || '0';
+                const eventMetadata = {
+                    encrypted_cid: videoUuid, // Key is UUID
+                    title: eventTitle,
+                    description: description || 'No description provided',
+                    price: priceYocto
+                };
 
-                const action = transactions.functionCall(
-                    'create_event',
-                    Buffer.from(JSON.stringify({
-                        encrypted_cid: videoUuid, // Key is UUID
-                        title: eventTitle,
-                        description: description || 'No description provided',
-                        price: priceYocto
-                    })),
-                    BigInt('30000000000000'),
-                    BigInt(deposit || '0')
+                // Use batch transaction - ONE SIGNATURE for both mint and create_event!
+                setStatus('Sign to Mint NFT & Create Event (1 signature)...');
+
+                await batchUploadActions(
+                    wallet,
+                    contractId,
+                    accountId,
+                    videoMetadata,
+                    eventMetadata
                 );
-
-                await wallet.signAndSendTransaction({
-                    receiverId: contractId,
-                    actions: [action as any]
-                });
 
                 setStatus('Success! Video Uploaded & Ticket Sales Started!');
 
