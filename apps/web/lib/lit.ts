@@ -4,13 +4,54 @@ import { encryptFile, decryptToFile } from "@lit-protocol/encryption";
 import { createSiweMessageWithRecaps, generateAuthSig, LitAccessControlConditionResource } from "@lit-protocol/auth-helpers";
 import { ethers } from "ethers";
 
-export const LIT_ACTION_CID = "bafkreiabdfnu7k6nljy5hg5k3vn7cz7imofscf7wezautr7t6bpeucurua";
+export const LIT_ACTION_CID = "QmR1n4XYgp6g6EE2vxTkp8XbzZFb5Nv2TkzWcNGgoWKxYf";
+
+// Session cache key prefix
+const SESSION_CACHE_KEY = 'lit_session_sigs';
+const SESSION_CACHE_EXPIRY = 23 * 60 * 60 * 1000; // 23 hours (slightly less than 24h session expiry)
 
 const client = new LitNodeClient({
     litNetwork: "datil-dev",
     debug: true,
     rpcUrl: "https://175188.rpc.thirdweb.com"
 });
+
+// Session cache helpers
+function getCachedSessionSigs(accountId: string): any | null {
+    if (typeof window === 'undefined') return null;
+    try {
+        const cached = localStorage.getItem(`${SESSION_CACHE_KEY}_${accountId}`);
+        if (!cached) return null;
+
+        const { sessionSigs, timestamp } = JSON.parse(cached);
+        const age = Date.now() - timestamp;
+
+        if (age > SESSION_CACHE_EXPIRY) {
+            console.log('Lit session cache expired, will create new session');
+            localStorage.removeItem(`${SESSION_CACHE_KEY}_${accountId}`);
+            return null;
+        }
+
+        console.log('Using cached Lit session signatures (age:', Math.round(age / 60000), 'minutes)');
+        return sessionSigs;
+    } catch (e) {
+        console.warn('Error reading session cache:', e);
+        return null;
+    }
+}
+
+function setCachedSessionSigs(accountId: string, sessionSigs: any): void {
+    if (typeof window === 'undefined') return;
+    try {
+        localStorage.setItem(`${SESSION_CACHE_KEY}_${accountId}`, JSON.stringify({
+            sessionSigs,
+            timestamp: Date.now()
+        }));
+        console.log('Cached Lit session signatures for', accountId);
+    } catch (e) {
+        console.warn('Error caching session sigs:', e);
+    }
+}
 
 class Lit {
     private litNodeClient: LitNodeClient;
@@ -32,15 +73,21 @@ class Lit {
         signWithMPC: (wallet: any, accountId: string, path: string, message: string) => Promise<any>,
         accessControlConditions?: any[],
         dataToEncryptHash?: string,
-        derivationPath: string = "test" // Default to test for backward compatibility if needed, but explicit is better
+        derivationPath: string = "test"
     ) {
         await this.connect();
         console.log("getSessionSigs called with accountId:", accountId, "Path:", derivationPath);
 
+        // Check cache first - avoid repeated signatures!
+        const cachedSigs = getCachedSessionSigs(accountId);
+        if (cachedSigs) {
+            return cachedSigs;
+        }
+
         // Revert to wildcard for simplicity and add Signing ability
         const resource = new LitAccessControlConditionResource('*');
 
-        return this.litNodeClient.getSessionSigs({
+        const sessionSigs = await this.litNodeClient.getSessionSigs({
             chain: 'ethereum',
             expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
             resourceAbilityRequests: [
@@ -119,6 +166,10 @@ class Lit {
                 };
             },
         });
+
+        // Cache the session signatures for future use
+        setCachedSessionSigs(accountId, sessionSigs);
+        return sessionSigs;
     }
 
     async encryptFile(

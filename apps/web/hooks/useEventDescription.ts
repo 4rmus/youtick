@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { connect, keyStores } from 'near-api-js';
 
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick6.testnet';
+const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
 
 interface EventData {
     title: string;
@@ -9,15 +9,18 @@ interface EventData {
     price: string;
     creator_id: string;
     created_at: number;
+    livepeer_playback_id?: string;
 }
 
 export function useEventDescription(encrypted_cid: string | null) {
     const [description, setDescription] = useState<string | null>(null);
+    const [livepeerPlaybackId, setLivepeerPlaybackId] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
         if (!encrypted_cid || encrypted_cid === 'ACCESS_PASS') {
             setDescription(null);
+            setLivepeerPlaybackId(null);
             return;
         }
 
@@ -39,8 +42,13 @@ export function useEventDescription(encrypted_cid: string | null) {
                     args: { encrypted_cid }
                 });
 
-                if (event && event.description) {
-                    setDescription(event.description);
+                if (event) {
+                    if (event.description) {
+                        setDescription(event.description);
+                    }
+                    if (event.livepeer_playback_id) {
+                        setLivepeerPlaybackId(event.livepeer_playback_id);
+                    }
                 }
             } catch (error) {
                 console.error('Error fetching event description:', error);
@@ -52,5 +60,6 @@ export function useEventDescription(encrypted_cid: string | null) {
         fetchDescription();
     }, [encrypted_cid]);
 
-    return { description, loading };
+    return { description, livepeerPlaybackId, loading };
 }
+

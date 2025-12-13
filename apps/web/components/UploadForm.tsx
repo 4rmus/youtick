@@ -47,7 +47,8 @@ export function UploadForm() {
         { id: 'address', label: 'Address Recovery', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
         { id: 'thumbnail', label: 'Thumbnail Upload', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
         { id: 'encrypt', label: 'File Encryption', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'upload', label: 'File Upload', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'upload', label: 'IPFS Upload (Lighthouse)', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+
         { id: 'mint', label: 'Blockchain Transaction', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' }
     ]);
 
@@ -174,7 +175,7 @@ export function UploadForm() {
             const videoUuid = crypto.randomUUID();
             console.log("Generated Video UUID for Access Control:", videoUuid);
 
-            // TEMPORARY PROBE: Use Standard EVM Condition (Balance >= 0) to verify playback flow
+            // Use Lit Action to check NEAR NFT ownership on-chain
             const accessControlConditions = [
                 {
                     conditionType: 'evmBasic',
@@ -190,6 +191,14 @@ export function UploadForm() {
                 }
             ];
 
+            // Store nearAccountId and targetCid for later use in decryption
+            // These will be passed as jsParams to the Lit Action
+            const litActionParams = {
+                targetCid: videoUuid,
+                nearAccountId: accountId
+            };
+            console.log("Lit Action params for decryption:", litActionParams);
+
             const { ciphertext, dataToEncryptHash } = await lit.encryptFile(
                 file,
                 accessControlConditions,
@@ -200,7 +209,7 @@ export function UploadForm() {
 
             updateStep('encrypt', 'complete');
             updateStep('upload', 'loading');
-            setStatus('Uploading encrypted file to IPFS...');
+            setStatus('Uploading encrypted backup to IPFS...');
 
             // 5. Upload to Lighthouse (Regular upload)
             // We need to upload a JSON containing ciphertext + metadata to allow decryption later.
@@ -230,6 +239,7 @@ export function UploadForm() {
             updateStep('upload', 'complete');
             setStatus('Upload Complete! CID: ' + fileHash);
 
+
             // 6. Mint NFT + Create Event (BATCH - Single Signature!)
             updateStep('mint', 'loading');
             setStatus('Preparing Mint & Event Creation...');
@@ -242,7 +252,7 @@ export function UploadForm() {
                 // Construct full IPFS Gateway URL for media
                 const mediaUrl = `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`;
 
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick6.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
                 const priceYocto = utils.format.parseNearAmount(price) || '0';
 
                 // Prepare metadata for batch transaction
@@ -256,17 +266,21 @@ export function UploadForm() {
                     },
                     video_metadata: {
                         encrypted_cid: videoUuid, // The UUID
-                        livepeer_playback_id: 'placeholder',
+                        livepeer_playback_id: '', // Not used - kept for contract compatibility
                         duration_seconds: 0,
                         content_type: 'Exclusive'
                     }
                 };
 
+                // Debug: Log what we're sending to contract
+                console.log('📝 Video metadata being sent to contract:', videoMetadata);
+
                 const eventMetadata = {
                     encrypted_cid: videoUuid, // Key is UUID
                     title: eventTitle,
                     description: description || 'No description provided',
-                    price: priceYocto
+                    price: priceYocto,
+                    livepeer_playback_id: '' // Not used - kept for contract compatibility
                 };
 
                 // Use batch transaction - ONE SIGNATURE for both mint and create_event!
@@ -713,12 +727,11 @@ export function UploadForm() {
 
                                         {/* Step Label */}
                                         <div className="flex-1">
-                                            <p className={`text-sm font-medium ${
-                                                step.status === 'complete' ? 'text-green-400' :
+                                            <p className={`text-sm font-medium ${step.status === 'complete' ? 'text-green-400' :
                                                 step.status === 'loading' ? 'text-blue-400' :
-                                                step.status === 'error' ? 'text-red-400' :
-                                                'text-zinc-500'
-                                            }`}>
+                                                    step.status === 'error' ? 'text-red-400' :
+                                                        'text-zinc-500'
+                                                }`}>
                                                 {step.label}
                                             </p>
                                         </div>

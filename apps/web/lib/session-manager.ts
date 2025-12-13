@@ -1,7 +1,7 @@
 import { keyStores, KeyPair, connect, Contract, utils, providers, transactions } from 'near-api-js';
 
 const NETWORK_ID = 'testnet';
-const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick-demo-v3.testnet';
+const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
 
 export class SessionManager {
     private keyStore: any;
