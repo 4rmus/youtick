@@ -26,3 +26,14 @@ Fix serialization error when sending transaction objects manually.
 **Resolution:**
 - Replaced manual transaction object construction in `UploadForm` (and subsequently removed it entirely) with `near-api-js` standard helpers.
 - Standardized transaction construction across `session-manager.ts`.
+
+## [FEAT-004] Pay-First Upload Flow & UI Simplification
+**Status:** CLOSED
+**Description:**
+Refactor UX to use a "Pay then Upload" model, hiding complex gas terminology. The user demanded a flow where payment happens explicitly at the start if funds are low, and terminology related to technical "Gas" balances is minimized.
+**Resolution:**
+- Implemented `CostReceipt` component to verify costs upfront.
+- Refactored `UploadForm` to calculate "Net Payable" (Costs - Current Balance).
+- If funds are low, Upload button changes to "Pay X NEAR & Upload" and executes deposit first.
+- Simplified UI terminology: Removed references to "Prepaid Gas" and "Balance", using "Processing Fee" and "Total Payable" instead.
+- Created `CONTRACT_TODO.md` to track future refund capability.

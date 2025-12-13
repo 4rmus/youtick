@@ -17,6 +17,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Progress } from "@/components/ui/progress"
 import { Button } from "@/components/ui/button"
 import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
+import { CostReceipt } from './CostReceipt';
 
 interface UploadResponse {
     data: Array<{ Hash: string }> | { Hash: string };
@@ -58,6 +59,12 @@ export function UploadForm() {
     const [recoveredPubKey, setRecoveredPubKey] = useState<string | null>(null);
     const [verifiedStorageFee, setVerifiedStorageFee] = useState<string>('0');
 
+    // Cost Receipt State
+    const [estimatedStorageFee, setEstimatedStorageFee] = useState('0');
+    const [currentBalance, setCurrentBalance] = useState('0');
+    const [payAmount, setPayAmount] = useState('0');
+    const [isCalculatingCosts, setIsCalculatingCosts] = useState(false);
+
     // Helper function to update step status
     const updateStep = (stepId: string, status: 'pending' | 'loading' | 'complete' | 'error') => {
         setUploadSteps(prev => prev.map(step =>
@@ -89,12 +96,71 @@ export function UploadForm() {
                 URL.revokeObjectURL(thumbnailPreview);
             }
         };
-    }, []);
+        checkConnection();
+
+        // Check gas status on mount/account change
+        if (accountId && selector) {
+            checkGasStatus();
+        }
+
+        // Cleanup thumbnail preview URL on unmount
+        return () => {
+            if (thumbnailPreview) {
+                URL.revokeObjectURL(thumbnailPreview);
+            }
+        };
+    }, [accountId, selector]); // Added deps to useEffect
+
+    const checkGasStatus = async () => {
+        if (!accountId) return;
+        setIsCalculatingCosts(true);
+        try {
+            const sessionManager = new SessionManager(accountId);
+            if (!selector) return;
+
+            const nodeUrl = selector.options.network.nodeUrl;
+            const balanceVal = await sessionManager.getAccountBalance(nodeUrl);
+            setCurrentBalance(balanceVal.toString());
+
+            recalculatePayAmount(estimatedStorageFee, balanceVal);
+
+        } catch (e) {
+            console.error("Error checking gas:", e);
+        } finally {
+            setIsCalculatingCosts(false);
+        }
+    };
+
+    const recalculatePayAmount = (feeStr: string, balance: number) => {
+        const fee = parseFloat(feeStr) || 0;
+        // Total needed = Storage Fee + 1 NEAR Buffer
+        const totalNeeded = fee + 1.0;
+
+        let toPay = totalNeeded - balance;
+        if (toPay < 0) toPay = 0;
+
+        // Format to 4 decimals to avoid weird floats
+        setPayAmount(toPay > 0 ? toPay.toFixed(4) : '0');
+    }
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
             const selectedFile = e.target.files[0];
             setFile(selectedFile);
+
+            // Calculate estimated storage fee immediately
+            try {
+                const { getNearPrice, calculateStorageFee } = await import('@/lib/price');
+                const nearPrice = await getNearPrice();
+                const fee = calculateStorageFee(selectedFile.size, nearPrice);
+                setEstimatedStorageFee(fee);
+
+                // Recalculate pay amount with new fee
+                recalculatePayAmount(fee, parseFloat(currentBalance));
+
+            } catch (err) {
+                console.error("Error calculating fee:", err);
+            }
 
             // Generate thumbnail
             if (selectedFile.type.startsWith('video/')) {
@@ -379,7 +445,21 @@ export function UploadForm() {
 
 
 
+            // 0. CHECK & PAY UPFRONT if needed
+            const toPay = parseFloat(payAmount);
             const sessionManager = new SessionManager(accountId);
+
+            if (toPay > 0) {
+                setStatus(`Funding Prepaid Valid (${payAmount} NEAR)...`);
+                console.log(`Pay-First: depositing ${payAmount} NEAR...`);
+                await sessionManager.topUpGas(wallet, payAmount);
+
+                // If we get here, payment was successful/sent.
+                // We can update balance locally to skip next check if code continues
+                setCurrentBalance((parseFloat(currentBalance) + toPay).toString());
+                setPayAmount('0');
+                setStatus('Payment successful. Proceeding to upload...');
+            }
 
             // 0. Ensure Session Key and Gas exists
             updateStep('session', 'loading');
@@ -392,7 +472,10 @@ export function UploadForm() {
             } else {
                 // If session key exists, just check/up gas
                 // We need nodeUrl
+                // NOTE: We already paid above if valid. ensureGas might double-check but should pass.
                 const nodeUrl = selector.options.network.nodeUrl;
+                // We pass '0' minAmount here because we explicitly handled payment above? 
+                // Or we pass 1. If we just paid, balance is >= 1.
                 await sessionManager.ensureGas(wallet, nodeUrl, 1);
             }
             updateStep('session', 'complete');
@@ -589,6 +672,19 @@ export function UploadForm() {
                             </Alert>
                         )}
                     </CardContent>
+
+                    {/* Cost Receipt Section */}
+                    {file && (
+                        <div className="px-6 pb-2">
+                            <CostReceipt
+                                storageFee={estimatedStorageFee}
+                                currentBalance={currentBalance}
+                                payAmount={payAmount}
+                                loading={isCalculatingCosts}
+                            />
+                        </div>
+                    )}
+
                     <CardFooter>
                         <Button
                             onClick={handleUpload}
@@ -603,7 +699,7 @@ export function UploadForm() {
                             ) : (
                                 <>
                                     <Upload className="mr-2 h-4 w-4" />
-                                    Upload Video
+                                    {parseFloat(payAmount) > 0 ? `Pay ${payAmount} NEAR & Upload` : "Upload Video"}
                                 </>
                             )}
                         </Button>
