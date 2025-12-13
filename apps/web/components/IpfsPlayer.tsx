@@ -108,7 +108,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             if (isUuid) {
                 setStatus('Resolving Video Metadata...');
                 try {
-                    const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick-demo-v3.testnet';
+                    const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
                     const rpcUrl = "/api/near-rpc";
                     const body = JSON.stringify({
                         jsonrpc: "2.0",
@@ -229,7 +229,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
     };
 
     const checkSpecificAccess = async (viewerId: string, targetCid: string) => {
-        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick-demo-v3.testnet';
+        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
         const rpcUrl = "/api/near-rpc";
         const body = JSON.stringify({
             jsonrpc: "2.0",
@@ -257,7 +257,13 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                 return false;
             }
 
-            const resultBytes = data.result.result;
+            // Defensive check: ensure result exists and is iterable
+            const resultBytes = data?.result?.result;
+            if (!resultBytes || !Array.isArray(resultBytes)) {
+                console.warn("No result bytes from contract, possibly empty state");
+                return false;
+            }
+
             const resultString = String.fromCharCode(...resultBytes);
             // Returns Vec<(Token, Option<VideoMetadata>)>
             const tokens = JSON.parse(resultString);

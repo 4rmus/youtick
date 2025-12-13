@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { connect, keyStores, utils } from 'near-api-js';
 import { TokenWithVideo } from './useOwnedTokens';
 
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick6.testnet';
+const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
 
 interface DebugInfo {
     contractId?: string;

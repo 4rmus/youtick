@@ -8,7 +8,7 @@ import { User, Wallet, Ticket, Loader2, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick6.testnet';
+const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
 
 export default function ProfilePage() {
     const { accountId } = useWallet();

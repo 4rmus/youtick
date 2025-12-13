@@ -43,6 +43,7 @@ pub struct Event {
     pub price: U128,
     pub creator_id: AccountId,
     pub created_at: u64,
+    pub livepeer_playback_id: String, // Livepeer HLS playback ID
 }
 
 // Custom video metadata for token-gated content
@@ -154,7 +155,7 @@ impl Contract {
     // ═══════════════════════════════════════════════════════════════
 
     #[payable]
-    pub fn create_event(&mut self, encrypted_cid: String, title: String, description: String, price: U128) {
+    pub fn create_event(&mut self, encrypted_cid: String, title: String, description: String, price: U128, livepeer_playback_id: Option<String>) {
         let deposit = env::attached_deposit();
         require!(
             deposit >= NearToken::from_millinear(100), // 0.1 NEAR
@@ -167,6 +168,7 @@ impl Contract {
             price,
             creator_id: env::predecessor_account_id(),
             created_at: env::block_timestamp(),
+            livepeer_playback_id: livepeer_playback_id.unwrap_or_default(),
         };
 
         self.events.insert(&encrypted_cid, &event);
@@ -200,7 +202,7 @@ impl Contract {
 
         let video_metadata = VideoMetadata {
             encrypted_cid: encrypted_cid.clone(),
-            livepeer_playback_id: String::new(),
+            livepeer_playback_id: event.livepeer_playback_id.clone(),
             duration_seconds: 0,
             event_date: Some(event.created_at),
             content_type: ContentType::Exclusive,

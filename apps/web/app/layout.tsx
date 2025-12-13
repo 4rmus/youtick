@@ -3,6 +3,8 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { WalletProvider } from "@/components/providers/WalletProvider";
 import { Navbar } from "@/components/Navbar";
+import { LanguageProvider } from "@/components/providers/LanguageContext";
+import { ThemeProvider } from "@/components/providers/ThemeProvider";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -10,9 +12,6 @@ export const metadata: Metadata = {
     title: "YouTick - Web3 Video Platform",
     description: "Decentralized video streaming on NEAR and Livepeer",
 };
-
-import { LanguageProvider } from "@/components/providers/LanguageContext";
-import { ThemeProvider } from "@/components/providers/ThemeProvider";
 
 export default function RootLayout({
     children,

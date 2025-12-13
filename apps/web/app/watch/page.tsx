@@ -1,7 +1,7 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { IpfsPlayer } from '@/components/IpfsPlayer';
+import { VideoPlayer } from '@/components/VideoPlayer';
 import { MintButton } from '@/components/MintButton';
 import { useState, useEffect, Suspense } from 'react';
 import { useOwnedTokens, TokenWithVideo } from '@/hooks/useOwnedTokens';
@@ -33,6 +33,8 @@ function WatchContent() {
         }
     }, [initialCid]);
 
+
+
     return (
         <div className="max-w-4xl mx-auto space-y-8">
             <div className="text-center space-y-4">
@@ -44,8 +46,8 @@ function WatchContent() {
 
             {playCid ? (
                 <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 mb-12">
-                    {/* 1. The Player */}
-                    <IpfsPlayer
+                    {/* The Player */}
+                    <VideoPlayer
                         cid={playCid}
                         thumbnailUrl={tokens.find(t => t.video_metadata?.encrypted_cid === playCid)?.metadata?.media}
                     />

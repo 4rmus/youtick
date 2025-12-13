@@ -29,7 +29,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
         const fetchDetails = async () => {
             setLoading(true);
             try {
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick6.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
                 const rpcUrl = "/api/near-rpc"; // Use proxy
 
                 // Ensure we use the proxy for this call too
@@ -85,7 +85,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
         setPurchasing(true);
         try {
             const wallet = await selector.wallet();
-            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick6.testnet';
+            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
 
             const depositYocto = utils.format.parseNearAmount(eventDetails.price);
 
@@ -103,6 +103,29 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
                 receiverId: contractId,
                 actions: [action as any],
             });
+
+            // Create Lit session after successful purchase for seamless video playback
+            try {
+                const { lit } = await import('@/lib/lit');
+                const { deriveEthAddress, signWithMPC } = await import('@/lib/chain-signatures');
+
+                console.log('Creating Lit session for seamless video playback...');
+                const mpcAddress = await deriveEthAddress(accountId, 'test', wallet);
+
+                await lit.getSessionSigs(
+                    wallet,
+                    accountId,
+                    mpcAddress,
+                    signWithMPC,
+                    undefined,
+                    undefined,
+                    'test'
+                );
+                console.log('Lit session created and cached successfully!');
+            } catch (sessionError) {
+                console.warn('Failed to create Lit session (video will still work with signature):', sessionError);
+                // Don't fail the purchase if session creation fails
+            }
 
             // Note: success handling depends on redirect or callback
             if (onPurchaseSuccess) onPurchaseSuccess();

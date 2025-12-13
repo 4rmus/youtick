@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { connect, keyStores } from 'near-api-js';
 
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'utick6.testnet';
+const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
 
 interface VideoMetadata {
     encrypted_cid: string;
@@ -52,6 +52,7 @@ export function useOwnedTokens() {
                 const account = await near.account(NFT_CONTRACT_ID);
 
                 // Call the contract method that returns tokens + video metadata
+                console.log("useOwnedTokens: Fetching from contract:", NFT_CONTRACT_ID, "for account:", accountId);
                 const result = await account.viewFunction({
                     contractId: NFT_CONTRACT_ID,
                     methodName: 'get_tokens_with_video',
@@ -97,7 +98,14 @@ export function useOwnedTokens() {
 
             } catch (err: any) {
                 console.error("Error fetching tokens:", err);
-                setError(err.message || "Failed to fetch tokens");
+                // Handle contract state inconsistency (common after migration)
+                if (err.message?.includes('inconsistent state')) {
+                    console.warn("Contract state may have been reset. Returning empty token list.");
+                    setTokens([]);
+                    setError(null); // Don't show error to user - just show empty list
+                } else {
+                    setError(err.message || "Failed to fetch tokens");
+                }
             } finally {
                 setLoading(false);
             }

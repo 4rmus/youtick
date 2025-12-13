@@ -28,6 +28,7 @@ export async function batchUploadActions(
         title: string;
         description: string;
         price: string;
+        livepeer_playback_id?: string; // Optional Livepeer playback ID for HLS streaming
     }
 ) {
     const actions = [
@@ -55,7 +56,9 @@ export async function batchUploadActions(
 
 /**
  * Batch initial setup: Gas deposit + Session Key
- * This is a one-time setup that happens on first use
+ * This requires TWO transactions because:
+ * 1. deposit_funds goes to the CONTRACT
+ * 2. addKey goes to the USER's account
  */
 export async function batchInitialSetup(
     wallet: any,
@@ -64,27 +67,31 @@ export async function batchInitialSetup(
     sessionKeyPublicKey: string,
     gasAmount: string = '1' // 1 NEAR default
 ) {
-    const actions = [
-        // Action 1: Deposit gas to tank (large amount for multiple uploads)
-        transactions.functionCall(
-            'deposit_funds',
-            Buffer.from(JSON.stringify({})),
-            BigInt('30000000000000'), // 30 TGas
-            BigInt(utils.format.parseNearAmount(gasAmount) || '0')
-        ),
-        // Action 2: Add session key
-        transactions.addKey(
-            utils.PublicKey.from(sessionKeyPublicKey),
-            transactions.functionCallAccessKey(
-                contractId,
-                [], // All methods allowed
-                BigInt(utils.format.parseNearAmount('0.25') || '0') // 0.25 NEAR allowance
+    // Transaction 1: Deposit gas to contract
+    await wallet.signAndSendTransaction({
+        receiverId: contractId,
+        actions: [
+            transactions.functionCall(
+                'deposit_funds',
+                Buffer.from(JSON.stringify({})),
+                BigInt('30000000000000'), // 30 TGas
+                BigInt(utils.format.parseNearAmount(gasAmount) || '0')
             )
-        )
-    ];
+        ]
+    });
 
+    // Transaction 2: Add session key to user's account
     return await wallet.signAndSendTransaction({
-        receiverId: accountId, // Add key to user's account
-        actions: actions
+        receiverId: accountId,
+        actions: [
+            transactions.addKey(
+                utils.PublicKey.from(sessionKeyPublicKey),
+                transactions.functionCallAccessKey(
+                    contractId,
+                    [], // All methods allowed
+                    BigInt(utils.format.parseNearAmount('0.25') || '0') // 0.25 NEAR allowance
+                )
+            )
+        ]
     });
 }
