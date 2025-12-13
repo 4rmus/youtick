@@ -6,7 +6,6 @@ import { uploadFile } from '@/lib/lighthouse';
 import { lit, LIT_ACTION_CID } from '@/lib/lit';
 import { SessionManager } from '@/lib/session-manager';
 import { batchUploadActions } from '@/lib/batch-transactions';
-import { GasTank } from '@/components/GasTank';
 import { generateVideoThumbnail } from '@/lib/video-utils';
 import lighthouse from '@lighthouse-web3/sdk';
 import { ethers } from 'ethers';
@@ -43,13 +42,13 @@ export function UploadForm() {
 
     // Upload steps tracking
     const [uploadSteps, setUploadSteps] = useState([
-        { id: 'session', label: 'Session Setup', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'session', label: 'Session & Gas Setup', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
         { id: 'address', label: 'Address Recovery', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
         { id: 'thumbnail', label: 'Thumbnail Upload', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
         { id: 'encrypt', label: 'File Encryption', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
         { id: 'upload', label: 'IPFS Upload (Lighthouse)', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
 
-        { id: 'mint', label: 'Blockchain Transaction', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' }
+        { id: 'mint', label: 'Payment & Blockchain Mint', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' }
     ]);
 
     // Retry state for popup blocked scenarios
@@ -57,6 +56,7 @@ export function UploadForm() {
     const [pendingMessage, setPendingMessage] = useState<string | null>(null);
     const [recoveredAddr, setRecoveredAddr] = useState<string | null>(null);
     const [recoveredPubKey, setRecoveredPubKey] = useState<string | null>(null);
+    const [verifiedStorageFee, setVerifiedStorageFee] = useState<string>('0');
 
     // Helper function to update step status
     const updateStep = (stepId: string, status: 'pending' | 'loading' | 'complete' | 'error') => {
@@ -115,7 +115,7 @@ export function UploadForm() {
     };
 
     // Helper function to process the signature and continue with upload/access conditions/minting
-    const processSignatureAndUpload = async (mpcSignature: MPCSignature, messageToSign: string, lighthouseEthAddress: string) => {
+    const processSignatureAndUpload = async (mpcSignature: MPCSignature, messageToSign: string, lighthouseEthAddress: string, storageFee: string) => {
         if (!file || !accountId || !selector) {
             throw new Error("Missing file, accountId, or selector for upload process.");
         }
@@ -240,9 +240,9 @@ export function UploadForm() {
             setStatus('Upload Complete! CID: ' + fileHash);
 
 
-            // 6. Mint NFT + Create Event (BATCH - Single Signature!)
+            // 6. Mint NFT + Create Event + Pay Fee (BATCH - Single Signature!)
             updateStep('mint', 'loading');
-            setStatus('Preparing Mint & Event Creation...');
+            setStatus(`Paying Fee (${storageFee} NEAR) & Minting NFT...`);
             try {
                 // Construct Title with RealCID for Player to parse
                 // Schema: "RealCID:::ThumbnailCID:::Title"
@@ -337,7 +337,7 @@ export function UploadForm() {
             const { signWithMPC } = await import('@/lib/chain-signatures');
             const mpcSignature = await signWithMPC(wallet, accountId!, 'youtick-demo,chunky-paste.testnet,v1', pendingMessage) as any;
 
-            await processSignatureAndUpload(mpcSignature, pendingMessage, recoveredAddr);
+            await processSignatureAndUpload(mpcSignature, pendingMessage, recoveredAddr, verifiedStorageFee);
         } catch (error: any) {
             console.error('Retry failed:', error);
             setStatus(`Retry failed: ${error.message}`);
@@ -348,6 +348,8 @@ export function UploadForm() {
         }
     };
 
+
+
     const handleUpload = async () => {
         if (!file || !accountId || !selector) return;
         if (!title || !description) {
@@ -356,7 +358,7 @@ export function UploadForm() {
         }
 
         setUploading(true);
-        setStatus('Initializing Session...');
+        setStatus('Initializing Upload...');
         setProgress(0);
 
         // Reset all steps to pending
@@ -364,13 +366,34 @@ export function UploadForm() {
 
         try {
             const wallet = await selector.wallet();
+
+            // --- STEP 1: CALCULATE STORAGE FEE (Deferred Payment) ---
+            setStatus('Calculating Storage Fee...');
+
+            const { getNearPrice, calculateStorageFee } = await import('@/lib/price');
+            const nearPrice = await getNearPrice();
+            const storageFee = calculateStorageFee(file.size, nearPrice);
+            setVerifiedStorageFee(storageFee);
+
+            console.log(`Video Size: ${file.size} bytes. Price: $${nearPrice}/NEAR. Fee: ${storageFee} NEAR`);
+
+
+
             const sessionManager = new SessionManager(accountId);
 
-            // 0. Ensure Session Key exists
+            // 0. Ensure Session Key and Gas exists
             updateStep('session', 'loading');
+            setStatus('Checking Session & Prepaid Gas...');
+
+            // If no session key, create one (which deposits 1 NEAR)
             if (!(await sessionManager.hasSessionKey())) {
                 setStatus('Setting up App Session Key (One-time)...');
                 await sessionManager.createSessionKey(wallet);
+            } else {
+                // If session key exists, just check/up gas
+                // We need nodeUrl
+                const nodeUrl = selector.options.network.nodeUrl;
+                await sessionManager.ensureGas(wallet, nodeUrl, 1);
             }
             updateStep('session', 'complete');
 
@@ -378,21 +401,13 @@ export function UploadForm() {
             const derivationPath = 'youtick-demo,chunky-paste.testnet,v1';
 
             // 1. Discover the correct MPC address
-            // We can use the session key to sign the dummy message via proxy!
-            updateStep('address', 'loading');
             const dummyMessage = "get_address";
             console.log('Step 1: Signing dummy message to recover address...');
             setStatus('Recovering Address via Session Key...');
+            updateStep('address', 'loading');
 
-            // Use Session Key to call sign_with_mpc on Proxy
-            // Payload must be 32 bytes (hash)
-            const dummyHash = ethers.sha256(ethers.toUtf8Bytes(dummyMessage)); // Returns hex string
-            const dummyPayload = ethers.getBytes(dummyHash); // Returns Uint8Array
-
-            // Convert Uint8Array to regular array for JSON serialization if needed, 
-            // but near-api-js handles it? No, we need to pass [u8; 32].
-            // SessionManager.callMethod passes args as JSON.
-            // Rust expects [u8; 32]. JSON array of numbers is fine.
+            const dummyHash = ethers.sha256(ethers.toUtf8Bytes(dummyMessage));
+            const dummyPayload = ethers.getBytes(dummyHash);
             const dummyPayloadArray = Array.from(dummyPayload);
 
             const dummySignatureResult = await sessionManager.callMethod('sign_with_mpc', {
@@ -401,23 +416,8 @@ export function UploadForm() {
                 key_version: 0
             });
 
-            // Parse result. It should be the signature object.
-            // Note: The return value is base64 encoded in the transaction outcome, 
-            // but near-api-js functionCall returns the outcome.
-            // Wait, sessionManager.callMethod returns the *outcome*.
-            // We need to extract the return value.
-
-            // Let's update SessionManager to return the value.
-            // For now, let's assume sessionManager.callMethod returns the parsed value (we need to fix SessionManager).
-            // Actually, let's fix SessionManager first or handle it here.
-            // I'll assume I fix SessionManager to return the JSON parsed result.
-
+            console.log("Dummy Signature Result:", dummySignatureResult);
             const dummySignatureObj = dummySignatureResult;
-            // Note: The structure returned by MPC contract might be [big_r, s] or struct.
-            // We need to check MPC contract return type.
-            // Usually it returns { big_r: { affine_point: "..." }, s: { scalar: "..." }, recovery_id: 0 }
-
-            console.log("Dummy Signature Result:", dummySignatureObj);
 
             const dummyR = '0x' + dummySignatureObj.big_r.affine_point.substring(2, 66);
             const dummyS = '0x' + dummySignatureObj.s.scalar;
@@ -429,17 +429,7 @@ export function UploadForm() {
                 v: dummyV
             }).serialized;
 
-            const recoveredAddress = ethers.verifyMessage(dummyMessage, dummySignature); // Wait, we signed HASH.
-            // If we signed hash, we verify hash?
-            // MPC signs the payload.
-            // If payload is hash of message, then we verify hash?
-            // ethers.verifyMessage hashes the message.
-            // So if we passed hash(message) to MPC, we are effectively double hashing?
-            // NO. MPC signs exactly what we give it.
-            // ethers.verifyMessage(msg, sig) -> hashes msg, then recovers.
-            // If we gave MPC hash(msg), then MPC signed hash(msg).
-            // So ethers.verifyMessage(msg, sig) should work IF MPC does ECDSA correctly on the payload.
-            // YES.
+            const recoveredAddress = ethers.verifyMessage(dummyMessage, dummySignature);
 
             console.log('Recovered MPC Address:', recoveredAddress);
             updateStep('address', 'complete');
@@ -467,14 +457,7 @@ export function UploadForm() {
                 key_version: 0
             });
 
-            // 4. Proceed with Upload (using the signature we just got)
-            // We need to adapt processSignatureAndUpload to take the signature object directly
-            // OR construct the signature here.
-
-            // Let's construct the signature object expected by processSignatureAndUpload
-            // It expects the raw MPC signature object (big_r, s, etc.)
-
-            await processSignatureAndUpload(mpcSignature, messageToSign, recoveredAddress);
+            await processSignatureAndUpload(mpcSignature, messageToSign, recoveredAddress, storageFee);
 
         } catch (error: any) {
             console.error('Upload failed:', error);
@@ -504,7 +487,7 @@ export function UploadForm() {
                             </Alert>
                         )}
 
-                        {accountId && <GasTank />}
+
 
                         <div className="space-y-2">
                             <label htmlFor="video-title" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">

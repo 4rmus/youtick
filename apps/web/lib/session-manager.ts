@@ -111,4 +111,48 @@ export class SessionManager {
         const result = providers.getTransactionLastResult(outcome);
         return result;
     }
+
+    async getAccountBalance(nodeUrl: string): Promise<number> {
+        try {
+            const provider = new providers.JsonRpcProvider({ url: nodeUrl });
+            const res = await provider.query({
+                request_type: 'call_function',
+                account_id: CONTRACT_ID,
+                method_name: 'get_user_balance',
+                args_base64: Buffer.from(JSON.stringify({ account_id: this.accountId })).toString('base64'),
+                finality: 'final',
+            }) as any;
+            const balString = JSON.parse(Buffer.from(res.result).toString());
+            return parseFloat(utils.format.formatNearAmount(balString));
+        } catch (e) {
+            console.warn("Error getting gas balance (maybe not registered?):", e);
+            return 0;
+        }
+    }
+
+    async ensureGas(wallet: any, nodeUrl: string, minAmount: number = 0.2): Promise<void> {
+        const currentBalance = await this.getAccountBalance(nodeUrl);
+        console.log(`Current Prepaid Gas Balance: ${currentBalance} NEAR`);
+
+        if (currentBalance < minAmount) {
+            console.log(`Low gas (< ${minAmount}), triggering Top Up...`);
+            // Deposit 1 NEAR if low
+            await this.topUpGas(wallet, '1');
+        }
+    }
+
+    async topUpGas(wallet: any, amount: string) {
+        console.log(`Topping up gas: ${amount} NEAR`);
+        const action = transactions.functionCall(
+            'deposit_funds',
+            Buffer.from(JSON.stringify({})),
+            BigInt('30000000000000'), // 30 TGas
+            BigInt(utils.format.parseNearAmount(amount) || '0')
+        );
+
+        await wallet.signAndSendTransaction({
+            receiverId: CONTRACT_ID,
+            actions: [action as any]
+        });
+    }
 }

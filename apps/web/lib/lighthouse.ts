@@ -3,12 +3,15 @@ import { env } from './env';
 
 /**
  * Upload file to Lighthouse (IPFS) without encryption
- * SECURITY: Requires server-side API key
+ * SECURITY: Requires an API key (User's own key or App's key)
  */
-export async function uploadFile(file: File) {
+export async function uploadFile(file: File, apiKey?: string) {
+    const keyToUse = apiKey || env.lighthouseApiKey;
+    if (!keyToUse) throw new Error("No API Key provided for Lighthouse upload");
+
     const output = await lighthouse.upload(
         [file],
-        env.lighthouseApiKey
+        keyToUse
     );
     return output;
 }
@@ -19,6 +22,7 @@ export async function uploadFile(file: File) {
  */
 export async function uploadEncryptedFile(
     file: File,
+    apiKey: string,
     publicKey: string,
     signedMessage: string,
     uploadProgressCallback?: (data: any) => void,
@@ -28,7 +32,6 @@ export async function uploadEncryptedFile(
     // Note: dealParams is not supported in uploadEncrypted according to types, but we keep the argument in wrapper for future compatibility or if we switch methods.
 
     try {
-        const apiKey = env.lighthouseApiKey.trim();
         const response = await lighthouse.uploadEncrypted(
             [file], // Wrap file in array as SDK expects a list
             apiKey,
