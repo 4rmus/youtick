@@ -88,12 +88,7 @@ export const HeroSection = memo(({ onDiscoverClick }: HeroSectionProps) => {
           </Link>
         </div>
 
-        {/* Scroll Indicator */}
-        <div className="pt-20">
-          <a href="#stats" className="inline-block animate-bounce opacity-50 hover:opacity-100 transition-opacity">
-            <ChevronDown className="w-8 h-8 text-white" />
-          </a>
-        </div>
+
       </div>
     </section>
   );

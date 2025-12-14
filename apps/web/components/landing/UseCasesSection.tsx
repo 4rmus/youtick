@@ -13,7 +13,9 @@ export const UseCasesSection = memo(() => {
   const { t } = useLanguage();
 
   return (
-    <section id="use-cases" className="py-32 bg-black">
+    <section id="use-cases" className="py-32 bg-black relative">
+
+
       <div className="container mx-auto px-4">
         {/* Header */}
         <div className="max-w-3xl mx-auto text-center mb-20">
@@ -25,48 +27,59 @@ export const UseCasesSection = memo(() => {
           </p>
         </div>
 
-        {/* Use Cases */}
-        <div className="max-w-5xl mx-auto space-y-8">
-          {useCases.map(({ icon: Icon, titleKey, physicalKey, digitalKey, gradient, border }) => (
+        {/* Use Cases Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-7xl mx-auto">
+          {useCases.map(({ icon: Icon, titleKey, physicalKey, digitalKey, gradient, border }, index) => (
             <div
               key={titleKey}
-              className={`p-8 md:p-10 rounded-2xl bg-gradient-to-br ${gradient} border ${border} ${ANIMATION.transition.default} hover:scale-[1.02]`}
+              className={`relative p-6 rounded-3xl bg-gradient-to-br ${gradient} border ${border} ${ANIMATION.transition.default} hover:scale-[1.02] group flex flex-col h-full`}
             >
-              {/* Title */}
-              <div className="flex items-center gap-4 mb-6">
-                <div className="w-14 h-14 bg-white/10 rounded-xl flex items-center justify-center">
-                  <Icon className="w-7 h-7 text-white" />
+              {/* Header */}
+              <div className="flex flex-col items-center text-center mb-6">
+                <div className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-xl flex items-center justify-center shadow-lg border border-white/10 mb-4">
+                  <Icon className="w-6 h-6 text-white" />
                 </div>
-                <h3 className="text-2xl md:text-3xl font-black text-white">
+                <h3 className="text-xl font-bold text-white tracking-tight">
                   {t.landing.use_cases[titleKey as keyof typeof t.landing.use_cases]}
                 </h3>
               </div>
 
-              {/* Comparison */}
-              <div className="grid md:grid-cols-2 gap-6">
-                {/* Physical */}
-                <div className={`p-6 rounded-xl ${COLORS.background.card} border ${COLORS.border.default}`}>
-                  <div className="text-zinc-500 font-semibold text-sm mb-3 uppercase tracking-wider">Physical</div>
-                  <p className="text-zinc-400 text-sm leading-relaxed">
+              {/* Vertical Flow */}
+              <div className="flex-1 flex flex-col gap-4">
+
+                {/* Physical (Top) */}
+                <div className="p-4 rounded-xl bg-black/40 border border-white/5 backdrop-blur-sm relative opacity-60 group-hover:opacity-80 transition-opacity">
+                  <div className="text-zinc-500 font-bold text-[10px] mb-2 uppercase tracking-widest">
+                    Physical
+                  </div>
+                  <p className="text-zinc-400 text-xs leading-relaxed font-medium">
                     {t.landing.use_cases[physicalKey as keyof typeof t.landing.use_cases]}
                   </p>
                 </div>
 
-                {/* Digital */}
-                <div className={`p-6 rounded-xl bg-white/5 border border-white/10 relative`}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <ArrowRight className="w-5 h-5 text-emerald-400" />
-                    <div className="text-emerald-400 font-semibold text-sm uppercase tracking-wider">YouTick Digital</div>
+                {/* Divider */}
+                <div className="flex items-center justify-center py-2">
+                  <div className="w-px h-8 bg-gradient-to-b from-transparent via-white/20 to-transparent"></div>
+                </div>
+
+                {/* Digital (Bottom) */}
+                <div className="p-4 rounded-xl bg-white/5 border border-white/10 backdrop-blur-md relative flex-1">
+                  <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-emerald-500/50 to-transparent" />
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <div className="text-emerald-400 font-bold text-[10px] uppercase tracking-widest">Digital</div>
                   </div>
-                  <p className="text-white text-sm leading-relaxed font-medium">
+                  <p className="text-zinc-200 text-sm leading-relaxed font-medium">
                     {t.landing.use_cases[digitalKey as keyof typeof t.landing.use_cases]}
                   </p>
                 </div>
+
               </div>
             </div>
           ))}
         </div>
       </div>
+
     </section>
   );
 });

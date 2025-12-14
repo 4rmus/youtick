@@ -18,6 +18,7 @@ import { Progress } from "@/components/ui/progress"
 import { Button } from "@/components/ui/button"
 import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
+import { useLanguage } from '@/components/providers/LanguageContext';
 
 interface UploadResponse {
     data: Array<{ Hash: string }> | { Hash: string };
@@ -30,6 +31,7 @@ interface MPCSignature {
 }
 
 export function UploadForm() {
+    const { t } = useLanguage();
     const { selector, accountId } = useWallet();
     const [file, setFile] = useState<File | null>(null);
     const [thumbnail, setThumbnail] = useState<Blob | null>(null);
@@ -556,8 +558,8 @@ export function UploadForm() {
                 {/* LEFT COLUMN: FORM INPUTS */}
                 <Card className="lg:col-span-3 order-2 lg:order-1">
                     <CardHeader>
-                        <CardTitle>Upload Video</CardTitle>
-                        <CardDescription>Upload your video securely to IPFS with encryption.</CardDescription>
+                        <CardTitle>{t.upload_page.form_title}</CardTitle>
+                        <CardDescription>{t.upload_page.form_desc}</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         {!accountId && (
@@ -574,12 +576,12 @@ export function UploadForm() {
 
                         <div className="space-y-2">
                             <label htmlFor="video-title" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                Video Title
+                                {t.upload_page.video_title}
                             </label>
                             <Input
                                 id="video-title"
                                 type="text"
-                                placeholder="Enter video title"
+                                placeholder={t.upload_page.video_title}
                                 value={title}
                                 onChange={(e) => setTitle(e.target.value)}
                                 disabled={uploading || !accountId}
@@ -588,11 +590,11 @@ export function UploadForm() {
 
                         <div className="space-y-2">
                             <label htmlFor="video-description" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                Description
+                                {t.upload_page.video_desc}
                             </label>
                             <Textarea
                                 id="video-description"
-                                placeholder="Enter video description"
+                                placeholder={t.upload_page.video_desc}
                                 value={description}
                                 onChange={(e) => setDescription(e.target.value)}
                                 disabled={uploading || !accountId}
@@ -602,7 +604,7 @@ export function UploadForm() {
 
                         <div className="space-y-2">
                             <label htmlFor="ticket-price" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                Ticket Price (NEAR)
+                                {t.upload_page.price}
                             </label>
                             <Input
                                 id="ticket-price"
@@ -617,7 +619,7 @@ export function UploadForm() {
 
                         <div className="space-y-2">
                             <label htmlFor="video-file" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                Video File
+                                {t.upload_page.file}
                             </label>
                             <div className="grid w-full max-w-sm items-center gap-1.5">
                                 <Input
@@ -694,12 +696,12 @@ export function UploadForm() {
                             {uploading ? (
                                 <>
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    Processing
+                                    {t.upload_page.processing}
                                 </>
                             ) : (
                                 <>
                                     <Upload className="mr-2 h-4 w-4" />
-                                    {parseFloat(payAmount) > 0 ? `Pay ${payAmount} NEAR & Upload` : "Upload Video"}
+                                    {parseFloat(payAmount) > 0 ? `${t.upload_page.pay_and_upload} (${payAmount} NEAR)` : t.upload_page.upload_btn}
                                 </>
                             )}
                         </Button>
@@ -709,7 +711,7 @@ export function UploadForm() {
                 {/* RIGHT COLUMN: PREVIEW & INFO */}
                 <div className="lg:col-span-2 space-y-6 sticky top-24 order-1 lg:order-2">
                     <div>
-                        <h3 className="text-sm font-medium mb-3 text-muted-foreground">Ticket Preview</h3>
+                        <h3 className="text-sm font-medium mb-3 text-muted-foreground">{t.upload_page.preview_title}</h3>
                         <div className="relative group overflow-hidden rounded-xl bg-zinc-900 border border-zinc-800 shadow-2xl transition-all hover:border-zinc-600">
                             {/* Image Container */}
                             <div className="aspect-video relative bg-zinc-950">
@@ -721,7 +723,7 @@ export function UploadForm() {
                                     />
                                 ) : (
                                     <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-zinc-900 to-black">
-                                        <div className="text-zinc-700 font-mono text-xs">NO MEDIA</div>
+                                        <div className="text-zinc-700 font-mono text-xs">{t.upload_page.no_media}</div>
                                     </div>
                                 )}
 
@@ -737,7 +739,7 @@ export function UploadForm() {
 
                                 {/* Badge */}
                                 <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full border border-white/10">
-                                    <span className="text-[10px] font-bold text-white tracking-wider uppercase">Exclusive</span>
+                                    <span className="text-[10px] font-bold text-white tracking-wider uppercase">{t.upload_page.exclusive}</span>
                                 </div>
                             </div>
 
@@ -745,12 +747,12 @@ export function UploadForm() {
                             <div className="p-5 relative">
                                 <div className="flex justify-between items-start mb-2">
                                     <h4 className="font-bold text-white text-lg leading-tight line-clamp-1">
-                                        {title || "Untitled Event"}
+                                        {title || t.upload_page.untitled}
                                     </h4>
                                 </div>
 
                                 <p className="text-xs text-zinc-400 line-clamp-2 mb-4 min-h-[2.5em]">
-                                    {description || "No description provided."}
+                                    {description || t.upload_page.no_desc}
                                 </p>
 
                                 {/* Footer Info */}
@@ -760,11 +762,11 @@ export function UploadForm() {
                                             {accountId ? accountId.substring(0, 2).toUpperCase() : "??"}
                                         </div>
                                         <span className="text-xs text-zinc-400 font-medium truncate max-w-[100px]">
-                                            {accountId || "Connect Wallet"}
+                                            {accountId || t.upload_page.connect_wallet}
                                         </span>
                                     </div>
                                     <div className="flex flex-col items-end">
-                                        <span className="text-[10px] text-zinc-500 uppercase tracking-widest">Price</span>
+                                        <span className="text-[10px] text-zinc-500 uppercase tracking-widest">{t.upload_page.price_label}</span>
                                         <span className="text-sm font-bold text-white">{price} NEAR</span>
                                     </div>
                                 </div>
@@ -776,7 +778,7 @@ export function UploadForm() {
                     {/* Upload Progress Steps - Only show when uploading */}
                     {uploading && (
                         <div className="p-5 bg-zinc-900/50 rounded-xl border border-white/5">
-                            <h3 className="text-sm font-semibold mb-4 text-zinc-300">Upload Progress</h3>
+                            <h3 className="text-sm font-semibold mb-4 text-zinc-300">{t.upload_page.progress_title}</h3>
                             <div className="space-y-3">
                                 {uploadSteps.map((step, index) => (
                                     <div key={step.id} className="flex items-center gap-3">
@@ -811,7 +813,7 @@ export function UploadForm() {
                                                     step.status === 'error' ? 'text-red-400' :
                                                         'text-zinc-500'
                                                 }`}>
-                                                {step.label}
+                                                {(t.upload_page.steps as any)[step.id]}
                                             </p>
                                         </div>
                                     </div>
@@ -820,11 +822,11 @@ export function UploadForm() {
                         </div>
                     )}
                     <div className="p-6 bg-zinc-900/50 rounded-xl border border-white/5 text-xs text-slate-500 dark:text-slate-400">
-                        <p className="font-semibold mb-2 text-zinc-300">How it works:</p>
+                        <p className="font-semibold mb-2 text-zinc-300">{t.upload_page.how_it_works_title}</p>
                         <ol className="list-decimal list-inside space-y-1">
-                            <li>Your video is encrypted before upload</li>
-                            <li>Only NFT holders can decrypt and watch</li>
-                            <li>We use MPC to sign the upload securely</li>
+                            <li>{t.upload_page.how_it_works_step1}</li>
+                            <li>{t.upload_page.how_it_works_step2}</li>
+                            <li>{t.upload_page.how_it_works_step3}</li>
                         </ol>
                     </div>
                 </div>

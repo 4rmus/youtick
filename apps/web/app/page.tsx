@@ -35,10 +35,10 @@ export default function Home() {
     <div className="flex flex-col min-h-screen bg-black text-white selection:bg-white selection:text-black">
       <Navigation onDiscoverClick={handleDiscoverClick} variant="landing" />
       <HeroSection onDiscoverClick={handleDiscoverClick} />
-      <StatsSection />
+
       <ValuePropositionSection />
       <DigitalSalonSection />
-      <FeaturesSection />
+
       <CompetitiveAdvantagesSection />
       <ComparisonSection />
       <UseCasesSection />

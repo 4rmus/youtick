@@ -4,15 +4,17 @@ import Link from 'next/link';
 import { Play, Ticket, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAllVideos } from '@/hooks/useAllVideos';
+import { useLanguage } from '@/components/providers/LanguageContext';
 
 export default function DiscoverPage() {
     const { tokens, loading, error, debugInfo } = useAllVideos();
+    const { t } = useLanguage();
 
     if (loading) {
         return (
             <div className="flex flex-col items-center justify-center min-h-[50vh] text-white">
                 <Loader2 className="h-12 w-12 animate-spin mb-4 text-red-600" />
-                <p className="text-xl">Scanning Blockchain...</p>
+                <p className="text-xl">{t.discover_page.scanning}</p>
             </div>
         );
     }
@@ -20,7 +22,7 @@ export default function DiscoverPage() {
     if (error) {
         return (
             <div className="text-center py-24 text-white">
-                <p className="text-red-500 text-xl font-bold">Failed to load videos</p>
+                <p className="text-red-500 text-xl font-bold">{t.discover_page.failed}</p>
                 <p className="text-gray-400">{error}</p>
             </div>
         );
@@ -31,25 +33,25 @@ export default function DiscoverPage() {
             <div className="space-y-8">
                 <div className="flex justify-between items-end">
                     <div>
-                        <h1 className="text-4xl font-bold tracking-tight mb-2">Discover</h1>
-                        <p className="text-muted-foreground">Explore the latest encrypted content from the community.</p>
+                        <h1 className="text-4xl font-bold tracking-tight mb-2">{t.discover_page.title}</h1>
+                        <p className="text-muted-foreground">{t.discover_page.subtitle}</p>
                     </div>
                 </div>
 
                 {tokens.length === 0 ? (
                     <div className="text-center py-24 text-white">
-                        <p className="text-2xl font-bold mb-4">No Videos Found</p>
-                        <p className="text-gray-400">Be the first to upload content!</p>
+                        <p className="text-2xl font-bold mb-4">{t.discover_page.no_videos}</p>
+                        <p className="text-gray-400">{t.discover_page.be_first}</p>
 
                         {/* Debug Info */}
                         <div className="mt-8 p-4 bg-zinc-900 mx-auto max-w-md rounded text-left text-xs font-mono text-zinc-500 overflow-auto">
-                            <p className="font-bold text-zinc-300 mb-2">Debug Info:</p>
+                            <p className="font-bold text-zinc-300 mb-2">{t.discover_page.debug_info}</p>
                             <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
                         </div>
 
                         <Link href="/upload" className="mt-8 inline-block">
                             <Button variant="outline" className="border-red-600 text-red-100 hover:bg-red-900/50">
-                                Upload Now
+                                {t.discover_page.upload_now}
                             </Button>
                         </Link>
                     </div>
@@ -88,12 +90,12 @@ export default function DiscoverPage() {
                                                 {token.metadata?.title || `Token #${token.token_id}`}
                                             </h3>
                                             <p className="text-sm text-zinc-400 line-clamp-2 min-h-[2.5rem]">
-                                                {token.metadata?.description || "No description provided."}
+                                                {token.metadata?.description || t.discover_page.no_desc}
                                             </p>
                                             <div className="mt-4 flex items-center justify-between text-xs text-zinc-500 border-t border-zinc-800 pt-3">
-                                                <span>OWN: {token.owner_id}</span>
+                                                <span>{t.discover_page.own} {token.owner_id}</span>
                                                 <span className={`px-2 py-1 rounded text-zinc-300 ${isVideo ? 'bg-zinc-800' : 'bg-blue-900/30 text-blue-200'}`}>
-                                                    {token.video_metadata?.content_type || "Access Pass"}
+                                                    {token.video_metadata?.content_type || t.discover_page.access_pass}
                                                 </span>
                                             </div>
                                         </div>

@@ -33,22 +33,22 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
 
   // App Links for Logged In Users
   const navLinks = [
-    { href: '/discover', label: 'Discover' },
-    { href: '/upload', label: 'Upload' },
-    { href: '/watch', label: 'Watch' },
+    { href: '/discover', label: t.nav.discover },
+    { href: '/upload', label: t.nav.upload },
+    { href: '/watch', label: t.nav.watch },
   ];
 
   // If logged in, render the Unified App Header (matches Navbar.tsx)
   if (accountId) {
     return (
       <nav className="sticky top-0 z-50 w-full backdrop-blur-md bg-black/95 border-b border-white/10 px-4 py-3 transition-colors duration-300">
-        <div className="container mx-auto flex justify-between items-center">
+        <div className="container mx-auto flex justify-between items-center relative">
           <Link href="/" className="flex items-center gap-2">
             <Branding size="sm" />
           </Link>
 
           {/* Desktop Nav - App Links */}
-          <div className="hidden md:flex items-center gap-8">
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden md:flex items-center gap-8">
             {navLinks.map((link) => (
               <Link
                 key={link.href}
@@ -79,8 +79,10 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
 
             {/* User Pill */}
             <div className="rounded-full bg-zinc-900 border border-zinc-800 flex items-center pl-3 pr-1 py-1 gap-2">
-              <User className="w-3 h-3 text-zinc-500" />
-              <span className="text-xs font-mono text-zinc-400 truncate max-w-[100px]">{accountId}</span>
+              <Link href="/profile" className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer">
+                <User className="w-3 h-3 text-zinc-500" />
+                <span className="text-xs font-mono text-zinc-400 truncate max-w-[100px]">{accountId}</span>
+              </Link>
               <Button
                 variant="ghost"
                 size="icon"

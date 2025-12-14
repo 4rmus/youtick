@@ -122,13 +122,8 @@ NEXT_PUBLIC_NFT_CONTRACT_ID=your-contract.testnet
 
 YouTick, session key özelliği için GasTank (prepaid balance) sistemi kullanır:
 
-### 1. Hesabınıza NEAR Yatırın
-
-```bash
-near call utick6.testnet deposit_funds --accountId your-account.testnet --deposit 1
-```
-
-Bu komut 1 NEAR'i GasTank'e yatırır ve session key ile işlem yapmanıza olanak sağlar.
+### 1. Otomatik Yönetim
+Video yükleme sırasında uygulama gerekli ücreti (Storage + Gas) hesaplar ve bakiyeniz eksikse "Pay & Upload" butonu ile tek seferde ödeme yapmanızı sağlar. Manuel CLI komutu kullanmanıza gerek yoktur.
 
 ### 2. Bakiyenizi Kontrol Edin
 

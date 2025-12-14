@@ -79,22 +79,15 @@ Video Playback → 0 Signatures → Instant Play!
 
 This dramatically improves user experience by front-loading the signature requirement to the purchase moment, when users are already engaged in a transaction.
 
-### IPFS-Only Architecture
+### Optimized Storage Architecture
 
-We removed Livepeer HLS streaming in favor of a simpler IPFS-only approach:
-
-| Metric | Before (Livepeer + IPFS) | After (IPFS-only) |
-|--------|--------------------------|-------------------|
-| NPM Packages | 1,369 | 1,091 (-278) |
-| Complexity | High (dual storage) | Low (single source) |
-| Storage Cost | 2x (raw + encrypted) | 1x (encrypted only) |
-| Maintenance | Complex | Simple |
+We utilize a streamlined IPFS-only approach using Lighthouse for all video storage requirements. This architecture significantly reduces system complexity and dependency overhead (removing roughly 20% of previous packages) while ensuring content permanence and censorship resistance. By encrypting content before upload, we maintain privacy without needing specialized streaming servers.
 
 ---
 
 ## Smart Contract Features
 
-**Contract ID:** `v0-2.utick.testnet`
+**Contract ID:** `utick6.testnet`
 
 ### Core Functions
 
@@ -110,7 +103,6 @@ We removed Livepeer HLS streaming in favor of a simpler IPFS-only approach:
 ```rust
 VideoMetadata {
     encrypted_cid: String,      // UUID for access control
-    livepeer_playback_id: String,  // Reserved for future use
     duration_seconds: u32,
     content_type: ContentType,  // Exclusive, Preview, etc.
 }
@@ -171,7 +163,7 @@ const hasTicket = tokensWithVideo.some(([token, metadata]) => {
 ```env
 # NEAR Protocol
 NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=v0-2.utick.testnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=utick6.testnet
 
 # IPFS Storage
 NEXT_PUBLIC_LIGHTHOUSE_API_KEY=your_key
@@ -188,48 +180,6 @@ PINATA_JWT=your_jwt
 2. **Trial Accounts**: Watch previews without wallet
 3. **Secondary Market**: Ticket resale with royalties
 4. **Multi-chain Support**: Expand beyond NEAR
-
----
-
-## December 2025 Ecosystem & Grant Analysis
-
-### Grant Landscape Overview
-As of December 2025, the Web3 grant landscape has shifted significantly towards **AI x Crypto** and **Chain Abstraction**. NEAR Protocol is aggressively positioning itself as the "AI Blockchain," with substantial funding allocated to projects at this intersection.
-
-### Active Grant Opportunities (Dec 2025)
-
-| Program | Focus Area | Status | Relevancy for YouTick |
-|---------|------------|--------|-----------------------|
-| **NEAR AI Agent Fund** | AI Agents, Consumer Apps | **Active ($20M)** | ⭐⭐⭐ High - If we position the recommended videos or search as "AI-driven". |
-| **NEAR DevHub** | Developer Tooling, Infra | **Active** | ⭐⭐⭐ High - For the "Session Key" or "IPFS" infrastructure components. |
-| **Proximity Labs** | DeFi & Consumer | **Active** | ⭐⭐ Medium - If we emphasize the "Ticket Resale" (DeFi) aspect. |
-| **Mintbase / Bitte** | AI Wallets, NFT infra | **Changed** | See below. |
-| **Ethereum ESP** | Public Goods, Privacy | **Rolling** | ⭐⭐ Medium - For Lit Protocol (MPC) research. |
-| **Scroll Community** | Community Growth | **Ends Dec 19**| ⭐ Low - Unless deploying multichain. |
-
-### Mintbase -> Bitte AI Transition
-
-**Status Confirmation:**
-✅ **Rebrand Confirmed:** Mintbase has effectively rebranded its core infrastructure and wallet efforts to **Bitte AI (Bitte Protocol)**.
-✅ **Pivot to AI:** The focus has shifted from a pure NFT utility platform to an ecosystem for **AI Agents** and **Chain Abstraction**.
-✅ **Grant Status:**
-*   **Old Program:** The specific "Mintbase NFT Grants" program appears to be deprecated or subsumed contributing to the broader NEAR AI vision.
-*   **New Reality:** Bitte AI is now primarily a **recipient** of ecosystem grants (e.g., from Avalanche/NEAR for AI infra) rather than a distributor of small NFT project grants.
-*   **Action Item:** For NFT-specific funding, we should now look directly to **NEAR DevHub** or **NEAR Foundation Ecosystem Grants**, rather than Bitte directly, unless building specific AI Agent plugins for the Bitte Wallet.
-
-### Strategic Recommendations
-
-1.  **Reframe for AI Grants**:
-    *   Instead of just "NFT Ticketing," pitch YouTick as an **"AI-Enhanced Media Protocol"**.
-    *   *Idea:* Use AI to summarize events or recommend tickets. This makes us eligible for the $20M NEAR AI Fund.
-
-2.  **Target NEAR DevHub**:
-    *   Since Mintbase grants are less certain/changed, DevHub is the most reliable path for a technical MVP like YouTick.
-    *   Highlight the **"IPFS-only architecture"** and **"MPC Session Keys"** as reusable open-source contributions.
-
-3.  **Application Timing**:
-    *   **Immediate:** Submit to NEAR DevHub (rolling).
-    *   **By Dec 19:** Check if any "End of Year" community rounds (like Scroll's) are applicable for cross-chain pilots.
 
 ---
 

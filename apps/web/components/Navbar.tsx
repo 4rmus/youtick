@@ -40,21 +40,21 @@ export function Navbar() {
     if (pathname === '/') return null;
 
     const navLinks = [
-        { href: '/discover', label: 'Discover' },
-        { href: '/upload', label: 'Upload' },
-        { href: '/watch', label: 'Watch' },
-        { href: '/profile', label: 'Profile' },
+        { href: '/discover', label: t.nav.discover },
+        { href: '/upload', label: t.nav.upload },
+        { href: '/watch', label: t.nav.watch },
+        { href: '/profile', label: t.nav.profile },
     ];
 
     return (
         <nav className="sticky top-0 z-50 w-full backdrop-blur-md bg-black/95 border-b border-white/10 px-4 py-3 transition-colors duration-300">
-            <div className="container mx-auto flex justify-between items-center">
+            <div className="container mx-auto flex justify-between items-center relative">
                 <Link href="/" className="flex items-center gap-2">
                     <Branding size="sm" />
                 </Link>
 
                 {/* Desktop Nav */}
-                <div className="hidden md:flex items-center gap-8">
+                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden md:flex items-center gap-8">
                     {navLinks.map((link) => (
                         <Link
                             key={link.href}
@@ -129,9 +129,9 @@ export function Navbar() {
                     ))}
                     <div className="h-px bg-white/10 my-2" />
                     {accountId ? (
-                        <button onClick={handleSignOut} className="text-left text-red-500 font-medium">Disconnect</button>
+                        <button onClick={handleSignOut} className="text-left text-red-500 font-medium">{t.nav.disconnect}</button>
                     ) : (
-                        <button onClick={handleSignIn} className="text-left font-bold text-white">Connect Wallet</button>
+                        <button onClick={handleSignIn} className="text-left font-bold text-white">{t.nav.connect}</button>
                     )}
                 </div>
             )}

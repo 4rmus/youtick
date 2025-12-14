@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Lock, DollarSign, Zap, Shield, Clock, Globe } from 'lucide-react';
+import { Lock, DollarSign, Zap, Shield, Clock, Palette } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { COLORS, ANIMATION } from '@/lib/constants';
 
@@ -9,14 +9,16 @@ const features = [
   { icon: Zap, key: 'near_speed' },
   { icon: Shield, key: 'true_ownership' },
   { icon: Clock, key: 'instant_payment' },
-  { icon: Globe, key: 'global_access' },
+  { icon: Palette, key: 'event_centric' },
 ] as const;
 
 export const FeaturesSection = memo(() => {
   const { t } = useLanguage();
 
   return (
-    <section id="features" className="py-32 bg-black">
+    <section id="features" className="py-32 bg-black relative">
+
+
       <div className="container mx-auto px-4">
         {/* Header */}
         <div className="max-w-3xl mx-auto text-center mb-20">
@@ -33,10 +35,10 @@ export const FeaturesSection = memo(() => {
           {features.map(({ icon: Icon, key }) => (
             <div
               key={key}
-              className={`${COLORS.background.card} border ${COLORS.border.default} p-8 rounded-2xl hover:border-white/20 ${ANIMATION.transition.default} group`}
+              className={`p-8 rounded-2xl ${ANIMATION.transition.default} group`}
             >
-              <div className={`w-14 h-14 bg-white/5 rounded-xl flex items-center justify-center mb-6 group-hover:bg-white/10 ${ANIMATION.transition.colors}`}>
-                <Icon className="w-7 h-7 text-white" />
+              <div className={`w-14 h-14 flex items-center justify-start mb-6 ${ANIMATION.transition.colors}`}>
+                <Icon className="w-8 h-8 text-white" />
               </div>
               <h3 className="text-xl font-bold mb-3 text-white">
                 {t.landing.features[`${key}_title` as keyof typeof t.landing.features]}
@@ -48,6 +50,7 @@ export const FeaturesSection = memo(() => {
           ))}
         </div>
       </div>
+
     </section>
   );
 });

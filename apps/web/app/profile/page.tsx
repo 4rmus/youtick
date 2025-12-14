@@ -7,10 +7,12 @@ import { connect, keyStores } from 'near-api-js';
 import { User, Wallet, Ticket, Loader2, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
+import { useLanguage } from '@/components/providers/LanguageContext';
 
 const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
 
 export default function ProfilePage() {
+    const { t } = useLanguage();
     const { accountId } = useWallet();
     const { tokens, loading: tokensLoading } = useOwnedTokens();
     const [walletBalance, setWalletBalance] = useState<string | null>(null);
@@ -66,10 +68,10 @@ export default function ProfilePage() {
                 <div className="max-w-2xl mx-auto text-center">
                     <div className="p-8 bg-zinc-900/50 rounded-xl border border-zinc-800">
                         <User className="w-16 h-16 mx-auto mb-4 text-zinc-600" />
-                        <h2 className="text-2xl font-bold mb-2">Wallet Not Connected</h2>
-                        <p className="text-zinc-400 mb-6">Please connect your NEAR wallet to view your profile.</p>
+                        <h2 className="text-2xl font-bold mb-2">{t.profile_page.wallet_not_connected}</h2>
+                        <p className="text-zinc-400 mb-6">{t.profile_page.connect_prompt}</p>
                         <Link href="/">
-                            <Button variant="outline">Go to Home</Button>
+                            <Button variant="outline">{t.profile_page.go_home}</Button>
                         </Link>
                     </div>
                 </div>
@@ -89,8 +91,8 @@ export default function ProfilePage() {
                             </Button>
                         </Link>
                         <div>
-                            <h1 className="text-4xl font-bold tracking-tight">Profile</h1>
-                            <p className="text-muted-foreground mt-1">Manage your account and tickets</p>
+                            <h1 className="text-4xl font-bold tracking-tight">{t.profile_page.title}</h1>
+                            <p className="text-muted-foreground mt-1">{t.profile_page.subtitle}</p>
                         </div>
                     </div>
                 </div>
@@ -103,10 +105,10 @@ export default function ProfilePage() {
                             <div className="p-2 bg-purple-500/10 rounded-lg">
                                 <User className="w-5 h-5 text-purple-500" />
                             </div>
-                            <h3 className="font-semibold text-zinc-200">Account</h3>
+                            <h3 className="font-semibold text-zinc-200">{t.profile_page.account}</h3>
                         </div>
                         <div className="space-y-2">
-                            <p className="text-xs text-zinc-500 uppercase tracking-wider">Account ID</p>
+                            <p className="text-xs text-zinc-500 uppercase tracking-wider">{t.profile_page.account_id}</p>
                             <p className="text-sm font-mono text-white break-all">{accountId}</p>
                         </div>
                     </div>
@@ -117,7 +119,7 @@ export default function ProfilePage() {
                             <div className="p-2 bg-green-500/10 rounded-lg">
                                 <Wallet className="w-5 h-5 text-green-500" />
                             </div>
-                            <h3 className="font-semibold text-zinc-200">Wallet Balance</h3>
+                            <h3 className="font-semibold text-zinc-200">{t.profile_page.wallet_balance}</h3>
                         </div>
                         <div className="space-y-2">
                             {loadingBalances ? (
@@ -127,7 +129,7 @@ export default function ProfilePage() {
                                     <p className="text-2xl font-bold text-white">
                                         {walletBalance || '0.00'} <span className="text-sm font-normal text-zinc-400">NEAR</span>
                                     </p>
-                                    <p className="text-xs text-zinc-500">Available balance</p>
+                                    <p className="text-xs text-zinc-500">{t.profile_page.available}</p>
                                 </>
                             )}
                         </div>
@@ -139,7 +141,7 @@ export default function ProfilePage() {
                             <div className="p-2 bg-blue-500/10 rounded-lg">
                                 <Ticket className="w-5 h-5 text-blue-500" />
                             </div>
-                            <h3 className="font-semibold text-zinc-200">GasTank</h3>
+                            <h3 className="font-semibold text-zinc-200">{t.profile_page.gastank}</h3>
                         </div>
                         <div className="space-y-2">
                             {loadingBalances ? (
@@ -149,7 +151,7 @@ export default function ProfilePage() {
                                     <p className="text-2xl font-bold text-white">
                                         {gasTankBalance || '0.00'} <span className="text-sm font-normal text-zinc-400">NEAR</span>
                                     </p>
-                                    <p className="text-xs text-zinc-500">Prepaid balance</p>
+                                    <p className="text-xs text-zinc-500">{t.profile_page.prepaid}</p>
                                 </>
                             )}
                         </div>
@@ -159,7 +161,7 @@ export default function ProfilePage() {
                 {/* Purchased Tickets Section */}
                 <div className="space-y-6 pt-4">
                     <div className="flex items-center justify-between">
-                        <h2 className="font-bold text-2xl text-white">My Tickets</h2>
+                        <h2 className="font-bold text-2xl text-white">{t.profile_page.my_tickets}</h2>
                         <span className="text-xs text-zinc-500 uppercase tracking-widest">{tokens.length} Total</span>
                     </div>
 
@@ -172,12 +174,12 @@ export default function ProfilePage() {
                     {!tokensLoading && tokens.length === 0 && (
                         <div className="text-center py-16 border border-dashed border-zinc-800 rounded-2xl bg-zinc-950/50">
                             <Ticket className="w-12 h-12 mx-auto text-zinc-700 mb-4" />
-                            <h3 className="text-lg font-medium text-white mb-2">No Tickets Yet</h3>
+                            <h3 className="text-lg font-medium text-white mb-2">{t.profile_page.no_tickets}</h3>
                             <p className="text-muted-foreground max-w-sm mx-auto mb-6">
-                                You haven't purchased any tickets yet. Explore content on the Discover page.
+                                {t.profile_page.no_tickets_desc}
                             </p>
                             <Link href="/discover">
-                                <Button variant="outline">Browse Discover</Button>
+                                <Button variant="outline">{t.profile_page.browse}</Button>
                             </Link>
                         </div>
                     )}
@@ -228,7 +230,7 @@ export default function ProfilePage() {
                                                     <p className="text-xs text-zinc-500">{subtitle}</p>
                                                     {isVideo && !isAccessPass && (
                                                         <div className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-bold text-white bg-white/10 px-2 py-1 rounded">
-                                                            WATCH
+                                                            {t.profile_page.watch_btn}
                                                         </div>
                                                     )}
                                                 </div>

@@ -70,24 +70,18 @@ Visit [http://localhost:3000](http://localhost:3000)
 ### 1. Connect Wallet
 Click "Connect Wallet" and sign in with your NEAR testnet account.
 
-### 2. Deposit to GasTank (Optional)
-For seamless transactions with session keys:
-```bash
-near call utick6.testnet deposit_funds --accountId your-account.testnet --deposit 1
-```
-
 ### 3. Upload Video
 1. Go to `/upload`
 2. Select video file
 3. Enter title, description, and price
-4. Click "Upload Video"
-5. Watch progress indicator for each step:
+4. **Pay Service Fee** (if balance is low, a "Pay & Upload" button appears)
+5. Click "Upload Video"
+6. Watch progress indicator:
+   - Payment / Gas Check
    - Session Setup
    - Address Recovery
-   - Thumbnail Upload
-   - File Encryption
-   - File Upload
-   - Blockchain Transaction
+   - Thumbnail & File Upload (Encrypted)
+   - Final Transaction (Mint + Event)
 
 ### 4. Discover & Watch
 1. Browse videos on `/discover`

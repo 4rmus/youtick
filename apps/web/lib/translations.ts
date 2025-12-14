@@ -5,6 +5,10 @@ export const translations = {
         nav: {
             connect: "Connect Wallet",
             disconnect: "Sign Out",
+            discover: "Discover",
+            upload: "Upload",
+            watch: "Watch",
+            profile: "Profile"
         },
         hero: {
             title: "youtick",
@@ -49,6 +53,95 @@ export const translations = {
             title: "Ready to Launch?",
             subtitle: "Upload your first video to the decentralized network today.",
         },
+        upload_page: {
+            title: "Upload Content",
+            description: "Encrypt, upload to IPFS, and monetize your content with NFT gating.",
+            form_title: "Upload Video",
+            form_desc: "Upload your video securely to IPFS with encryption.",
+            video_title: "Video Title",
+            video_desc: "Description",
+            price: "Ticket Price (NEAR)",
+            file: "Video File",
+            upload_btn: "Upload Video",
+            processing: "Processing",
+            pay_and_upload: "Pay & Upload",
+            preview_title: "Ticket Preview",
+            no_media: "NO MEDIA",
+            exclusive: "Exclusive",
+            untitled: "Untitled Event",
+            no_desc: "No description provided.",
+            how_it_works_title: "How it works:",
+            how_it_works_step1: "Your video is encrypted before upload",
+            how_it_works_step2: "Only NFT holders can decrypt and watch",
+            how_it_works_step3: "We use MPC to sign the upload securely",
+            price_label: "Price",
+            connect_wallet: "Connect Wallet",
+            cost_receipt: {
+                title: "Cost Breakdown",
+                storage_fee: "Storage Fee (IPFS)",
+                processing_fee: "Processing Fee",
+                total: "Total Payable",
+                unused_warning: "* Unused processing fees will be retained for future uploads."
+            },
+            progress_title: "Upload Progress",
+            steps: {
+                session: "Session & Gas Setup",
+                address: "Address Recovery",
+                thumbnail: "Thumbnail Upload",
+                encrypt: "File Encryption",
+                upload: "IPFS Upload (Lighthouse)",
+                mint: "Payment & Blockchain Mint"
+            }
+        },
+        watch_page: {
+            title: "Watch Secure Content",
+            description: "Decentralized, encrypted streaming. Only NFT holders can watch.",
+            select_video: "Select a Video",
+            select_video_desc: "Choose a video from your library below to start watching securely.",
+            browse_new: "Browse New Content",
+            library: "Your Library",
+            loading: "Loading library...",
+            empty: "Your library is empty.",
+            browse_discover: "Browse Discover",
+            now_playing: "Now Playing",
+            play: "PLAY",
+            untitled: "Untitled Video",
+            desc_label: "Description",
+            loading_desc: "Loading description...",
+            no_desc: "No description provided."
+        },
+        discover_page: {
+            title: "Discover",
+            subtitle: "Explore the latest encrypted content from the community.",
+            scanning: "Scanning Blockchain...",
+            failed: "Failed to load videos",
+            no_videos: "No Videos Found",
+            be_first: "Be the first to upload content!",
+            upload_now: "Upload Now",
+            debug_info: "Debug Info:",
+            own: "OWN:",
+            access_pass: "Access Pass",
+            no_desc: "No description provided."
+        },
+        profile_page: {
+            title: "Profile",
+            subtitle: "Manage your account and tickets",
+            account: "Account",
+            account_id: "Account ID",
+            wallet_balance: "Wallet Balance",
+            available: "Available balance",
+            gastank: "GasTank",
+            prepaid: "Prepaid balance",
+            my_tickets: "My Tickets",
+            loading: "Loading tickets...",
+            no_tickets: "No Tickets Yet",
+            no_tickets_desc: "You haven't purchased any tickets yet.",
+            browse: "Browse Discover",
+            watch_btn: "WATCH",
+            wallet_not_connected: "Wallet Not Connected",
+            connect_prompt: "Please connect your NEAR wallet to view your profile.",
+            go_home: "Go to Home"
+        },
         roadmap: {
             title: "Roadmap",
             subtitle: "Our journey to revolutionizing video streaming.",
@@ -64,11 +157,11 @@ export const translations = {
                 name: "youtick"
             },
             hero: {
-                badge: "The Digital Salon Experience",
-                title_line1: "Web2 Ease",
-                title_line2: "Web3 Ownership",
-                subtitle: "Next generation video streaming & NFT ticketing platform for concerts, cinema, and workshops",
-                description: "Where creators and viewers meet directly. 98% creator revenue. True content ownership. Decentralized monetization.",
+                badge: "The Decentralized Salon",
+                title_line1: "Your Decentralized",
+                title_line2: "Digital Stage",
+                subtitle: "Powered by NEAR Protocol, Lighthouse Storage, and Lit Protocol.",
+                description: "Own 100% of your content with Decentralized Storage, Cryptographic Encryption, and NFTs. Experience the power of Web3 securely and easily on the youtick stage.",
                 badge_no_censorship: "Censorship Resistant",
                 badge_ownership: "True Ownership",
                 badge_instant_revenue: "98% Revenue Share",
@@ -96,19 +189,19 @@ export const translations = {
             },
             features: {
                 title: "Why YouTick?",
-                subtitle: "Revolutionary features that make YouTick the future of event streaming.",
-                nft_gated_title: "NFT-Gated Access",
-                nft_gated_desc: "Client-side encryption ensures only NFT holders can view content. 100% fraud-proof.",
+                subtitle: "Revolutionary features that will change the future of streaming.",
+                nft_gated_title: "True Ownership",
+                nft_gated_desc: "Tickets are assets, not permissions. Resellable, transferable, and permanent on the NEAR blockchain.",
                 revenue_share_title: "98% Revenue Share",
                 revenue_share_desc: "Lowest fees in the industry. Keep almost everything you earn compared to 45-55% on Web2 platforms.",
                 near_speed_title: "Lightning Fast",
                 near_speed_desc: "Built on NEAR Protocol with 100,000 TPS capacity. Instant transactions, minimal fees.",
-                true_ownership_title: "True Ownership",
-                true_ownership_desc: "Content stored on IPFS. Your NFTs remain valid even if the platform closes. Forever yours.",
+                true_ownership_title: "Chain Abstraction",
+                true_ownership_desc: "Chain Abstraction and 'Session Caching' technology aid the process: video upload requires 1-2 confirmations, while playback requires zero.",
                 instant_payment_title: "Instant Payment",
                 instant_payment_desc: "Revenue goes directly to your wallet. No delays, no middlemen, no waiting.",
-                global_access_title: "Global Access",
-                global_access_desc: "No geo-restrictions. Cross-platform access. Available anywhere, anytime."
+                event_centric_title: "Event-Centric Design",
+                event_centric_desc: "Optimized UI/UX specifically for concerts, cinema, and workshops."
             },
             comparison: {
                 title: "Traditional Systems vs YouTick",
@@ -149,8 +242,8 @@ export const translations = {
             },
             cta: {
                 title_line1: "Join the",
-                title_line2: "Future of Ticketing",
-                subtitle: "Create your first event or discover existing events. Experience blockchain-based ticketing.",
+                title_line2: "Future of youtick",
+                subtitle: "Create your first event or discover existing events. Experience blockchain-based video streaming easily.",
                 start_exploring: "Start Exploring"
             },
             footer: {
@@ -171,10 +264,10 @@ export const translations = {
                 access_pass: "Access Pass"
             },
             value_proposition: {
-                title: "Creators Keep",
+                title: "Economically Sovereign",
                 percentage: "98%",
-                subtitle: "The Highest Revenue Share in the Industry",
-                description: "While YouTube and Vimeo take 45-55%, we only charge 2% platform fee. Your content, your revenue, your control.",
+                subtitle: "The Zero-Server Economy",
+                description: "Forget AWS bills and 50% platform deductions. With our 'Encrypted File' architecture, pay once for decentralized storage (~$4/GB) and keep it forever.",
                 instant: "Instant Payment",
                 instant_desc: "Direct to wallet",
                 no_middlemen: "No Middlemen",
@@ -183,10 +276,10 @@ export const translations = {
                 full_control_desc: "Set your own prices"
             },
             digital_salon: {
-                title: "The Digital Salon",
-                subtitle: "Replicating the magic of physical events in the digital world",
+                title: "The Decentralized Salon",
+                subtitle: "Recreating the magic of physical events in a decentralized digital world.",
                 physical: "Physical Event",
-                digital: "YouTick Digital Salon",
+                digital: "youtick",
                 ticket: "Ticket Purchase",
                 ticket_physical: "Paper/PDF Ticket",
                 ticket_digital: "NFT Ticket",
@@ -201,22 +294,24 @@ export const translations = {
                 memorabilia_digital: "Digital Collectible + Value Growth"
             },
             competitive_advantages: {
-                title: "Why YouTick Wins",
-                subtitle: "Our unique position in the market",
+                title: "Why YouTick?",
+                subtitle: "Revolutionary features that will change the future of streaming.",
                 end_to_end: "End-to-End Solution",
                 end_to_end_desc: "Ticketing + Video Streaming + NFT all in one platform. Competitors only do one.",
-                event_centric: "Event-Centric Design",
-                event_centric_desc: "Optimized UI/UX specifically for concerts, cinema, and workshops.",
-                hybrid: "Hybrid Approach",
-                hybrid_desc: "Web2 ease of use combined with Web3 ownership benefits.",
+                global_access: "Invisible Security",
+                global_access_desc: "Lit Protocol encryption ensures only ticket holders can watch. No DRM servers, just pure cryptography.",
+                hybrid: "Chain Abstraction",
+                hybrid_desc: "Complex crypto cryptography hidden behind a seamless 'One-Signature' interface.",
                 creator_first: "Creator First",
                 creator_first_desc: "98% revenue share and complete control over your content.",
                 near_ecosystem: "NEAR Ecosystem",
                 near_ecosystem_desc: "Low fees, high performance, and seamless user experience.",
+                decentralization: "Full Decentralization",
+                decentralization_desc: "No central servers. True user ownership and censorship resistance.",
                 comparison_web2: "vs Web2 Platforms",
                 comparison_web2_desc: "We give creators ownership and 2x more revenue",
-                comparison_web3: "vs Web3 Platforms",
-                comparison_web3_desc: "We provide complete event experience, not just one piece"
+                comparison_web3: "vs Identity-Based",
+                comparison_web3_desc: "No specialized nodes. Just encrypted IPFS files. 20% lighter architecture."
             },
             web3_bridge: {
                 title: "Web3 Made Simple",
@@ -236,11 +331,15 @@ export const translations = {
         nav: {
             connect: "Cüzdanı Bağla",
             disconnect: "Çıkış Yap",
+            discover: "Keşfet",
+            upload: "Yükle",
+            watch: "İzle",
+            profile: "Profil"
         },
         hero: {
             title: "youtick",
             subtitle: "Premium Video İçeriğinin Geleceği",
-            tagline: "NFT TABANLI MERKEZİYETSİZ VİDEO YAYIN PLATFORMU",
+            tagline: "GERÇEK DİJİTAL SAHİPLİĞİN ALTYAPISI",
             cta_watch: "İzlemeye Başla",
             cta_upload: "Video Yükle",
             stats: {
@@ -280,6 +379,95 @@ export const translations = {
             title: "Başlamaya Hazır mısınız?",
             subtitle: "İlk videonuzu bugün merkeziyetsiz ağa yükleyin.",
         },
+        upload_page: {
+            title: "İçerik Yükle",
+            description: "Şifrele, IPFS'e yükle ve NFT koruması ile içeriğini paraya dönüştür.",
+            form_title: "Video Yükle",
+            form_desc: "Videonuzu şifreleme ile güvenli bir şekilde IPFS'e yükleyin.",
+            video_title: "Video Başlığı",
+            video_desc: "Açıklama",
+            price: "Bilet Fiyatı (NEAR)",
+            file: "Video Dosyası",
+            upload_btn: "Video Yükle",
+            processing: "İşleniyor",
+            pay_and_upload: "Öde & Yükle",
+            preview_title: "Bilet Önizleme",
+            no_media: "MEDYA YOK",
+            exclusive: "Özel",
+            untitled: "İsimsiz Etkinlik",
+            no_desc: "Açıklama girilmedi.",
+            how_it_works_title: "Nasıl Çalışır:",
+            how_it_works_step1: "Videonuz yüklenmeden önce şifrelenir",
+            how_it_works_step2: "Sadece NFT sahipleri şifreyi çözüp izleyebilir",
+            how_it_works_step3: "Yüklemeyi güvenli bir şekilde imzalamak için MPC kullanıyoruz",
+            price_label: "Fiyat",
+            connect_wallet: "Cüzdan Bağla",
+            cost_receipt: {
+                title: "Maliyet Dağılımı",
+                storage_fee: "Depolama Ücreti (IPFS)",
+                processing_fee: "İşlem Ücreti",
+                total: "Toplam Ödenecek",
+                unused_warning: "* Kullanılmayan işlem ücretleri gelecekteki yüklemeler için saklanır."
+            },
+            progress_title: "Yükleme Durumu",
+            steps: {
+                session: "Oturum & Gas Kurulumu",
+                address: "Adres Kurtarma",
+                thumbnail: "Küçük Resim Yükleme",
+                encrypt: "Dosya Şifreleme",
+                upload: "IPFS Yükleme (Lighthouse)",
+                mint: "Ödeme & Blokzincir Basımı"
+            }
+        },
+        watch_page: {
+            title: "Güvenli İçerik İzle",
+            description: "Merkeziyetsiz, şifreli yayın. Sadece NFT sahipleri izleyebilir.",
+            select_video: "Bir Video Seçin",
+            select_video_desc: "Güvenli bir şekilde izlemeye başlamak için kütüphanenizden bir video seçin.",
+            browse_new: "Yeni İçeriklere Göz At",
+            library: "Kütüphaneniz",
+            loading: "Kütüphane yükleniyor...",
+            empty: "Kütüphaneniz boş.",
+            browse_discover: "Keşfetmeye Göz At",
+            now_playing: "Şu An Oynatılıyor",
+            play: "OYNAT",
+            untitled: "İsimsiz Video",
+            desc_label: "Açıklama",
+            loading_desc: "Açıklama yükleniyor...",
+            no_desc: "Açıklama yok."
+        },
+        discover_page: {
+            title: "Keşfet",
+            subtitle: "Topluluktan en son şifrelenmiş içerikleri keşfedin.",
+            scanning: "Blokzinciri Taranıyor...",
+            failed: "Videolar yüklenemedi",
+            no_videos: "Video Bulunamadı",
+            be_first: "İçerik yükleyen ilk kişi siz olun!",
+            upload_now: "Şimdi Yükle",
+            debug_info: "Hata Ayıklama Bilgisi:",
+            own: "SAHİP:",
+            access_pass: "Erişim Bileti",
+            no_desc: "Açıklama girilmedi."
+        },
+        profile_page: {
+            title: "Profil",
+            subtitle: "Hesabınızı ve biletlerinizi yönetin",
+            account: "Hesap",
+            account_id: "Hesap ID",
+            wallet_balance: "Cüzdan Bakiyesi",
+            available: "Kullanılabilir bakiye",
+            gastank: "GasTank",
+            prepaid: "Ön ödemeli bakiye",
+            my_tickets: "Biletlerim",
+            loading: "Biletler yükleniyor...",
+            no_tickets: "Henüz Bilet Yok",
+            no_tickets_desc: "Henüz bir bilet satın almadınız. Keşfet sayfasından içeriklere göz atın.",
+            browse: "Keşfete Git",
+            watch_btn: "İZLE",
+            wallet_not_connected: "Cüzdan Bağlı Değil",
+            connect_prompt: "Profilinizi görüntülemek için lütfen NEAR cüzdanınızı bağlayın.",
+            go_home: "Ana Sayfaya Dön"
+        },
         roadmap: {
             title: "Yol Haritası",
             subtitle: "Video yayıncılığında devrim yaratma yolculuğumuz.",
@@ -296,15 +484,16 @@ export const translations = {
             },
             hero: {
                 badge: "Dijital Salon Deneyimi",
-                title_line1: "Web2 Kolaylığı",
-                title_line2: "Web3 Sahipliği",
-                subtitle: "Konserler, sinema ve workshop'lar için yeni nesil video streaming ve NFT ticketing platformu",
-                description: "İçerik oluşturucuların ve izleyicilerin doğrudan buluştuğu platform. %98 üretici geliri. Gerçek içerik sahipliği. Merkezi olmayan monetizasyon.",
+                title_line1: "Merkeziyetsiz",
+                title_line2: "Dijital Sahneniz",
+                subtitle: "Near Protocol, LightHouse Storage ve Lit Protocol ile geliştirildi.",
+                description: "Merkeziyetsiz Depolama, Kriptografik Şifreleme ve NFT'ler ile içeriklerin %100 sahibi olun. Web3'ün gücünü youtick sahnesinde güvenli ve kolay deneyimleyin.",
                 badge_no_censorship: "Sansür Dirençli",
                 badge_ownership: "Gerçek Sahiplik",
                 badge_instant_revenue: "%98 Gelir Payı",
                 cta_discover: "Etkinlikleri Keşfet",
-                cta_create_event: "Oluşturmaya Başla"
+                cta_create_event: "Oluşturmaya Başla",
+                tagline: "BAĞIMSIZ & ARACISIZ DİJİTAL SAHNENİZ"
             },
             nav: {
                 home: "Ana Sayfa",
@@ -327,19 +516,19 @@ export const translations = {
             },
             features: {
                 title: "Neden YouTick?",
-                subtitle: "Etkinlik streaming'in geleceğini oluşturan devrimci özellikler.",
-                nft_gated_title: "NFT-Korumalı Erişim",
-                nft_gated_desc: "Client-side şifreleme ile sadece NFT sahipleri içeriği görebilir. %100 sahteciliğe karşı koruma.",
+                subtitle: "Streaming'in geleceğini değiştirecek devrimci özellikler.",
+                nft_gated_title: "Gerçek Sahiplik",
+                nft_gated_desc: "Biletler izin değil, varlıktır. Satılabilir, devredilebilir ve NEAR blokzincirinde kalıcıdır.",
                 revenue_share_title: "%98 Gelir Payı",
                 revenue_share_desc: "Sektördeki en düşük ücret. Web2 platformların %45-55'ine kıyasla kazancınızın neredeyse tamamı sizde.",
                 near_speed_title: "Yıldırım Hızı",
                 near_speed_desc: "100,000 TPS kapasiteli NEAR Protocol üzerinde. Anında işlemler, minimum ücretler.",
-                true_ownership_title: "Gerçek Sahiplik",
-                true_ownership_desc: "İçerik IPFS'de saklanır. Platform kapansa bile NFT'leriniz geçerli. Sonsuza dek sizin.",
+                true_ownership_title: "Chain Abstraction",
+                true_ownership_desc: "\"Chain Abstraction\" ve 'Session Caching' teknolojimiz, video yükleme sürecini 1-2 onay ile, video oynatmayı ise onaysız yapar.",
                 instant_payment_title: "Anlık Ödeme",
                 instant_payment_desc: "Gelir doğrudan cüzdanınıza. Gecikme yok, aracı yok, bekleme yok.",
-                global_access_title: "Global Erişim",
-                global_access_desc: "Coğrafi kısıtlama yok. Çapraz platform erişimi. Her zaman, her yerde."
+                event_centric_title: "Etkinlik-Merkezli Tasarım",
+                event_centric_desc: "Konserler, sinema ve workshop'lar için özel optimize edilmiş UI/UX."
             },
             comparison: {
                 title: "Geleneksel Sistemler vs YouTick",
@@ -379,9 +568,9 @@ export const translations = {
                 step3_desc: "NFT biletinizi alın ve blockchain üzerinde sahipliğinizi kanıtlayın."
             },
             cta: {
-                title_line1: "Biletlemenin",
+                title_line1: "youtick'in",
                 title_line2: "Geleceğine Katılın",
-                subtitle: "İlk etkinliğinizi oluşturun veya mevcut etkinlikleri keşfedin. Blockchain tabanlı biletleme deneyimini yaşayın.",
+                subtitle: "İlk etkinliğinizi oluşturun veya mevcut etkinlikleri keşfedin. Blockchain tabanlı video yayıncılığını kolayca deneyimleyin.",
                 start_exploring: "Keşfetmeye Başla"
             },
             footer: {
@@ -402,10 +591,10 @@ export const translations = {
                 access_pass: "Erişim Kartı"
             },
             value_proposition: {
-                title: "Üreticiler Alır",
+                title: "Ekonomik Egemenlik",
                 percentage: "%98",
-                subtitle: "Sektördeki En Yüksek Gelir Payı",
-                description: "YouTube ve Vimeo %45-55 alırken, biz sadece %2 platform ücreti alıyoruz. İçeriğiniz, geliriniz, kontrolünüz.",
+                subtitle: "Sıfır Sunucu Ekonomisi",
+                description: "Forget AWS bills and 50% platform deductions. With our 'Encrypted File' architecture, pay once for decentralized storage (~$4/GB) and keep it forever.",
                 instant: "Anlık Ödeme",
                 instant_desc: "Doğrudan cüzdana",
                 no_middlemen: "Aracı Yok",
@@ -414,10 +603,10 @@ export const translations = {
                 full_control_desc: "Kendi fiyatınızı belirleyin"
             },
             digital_salon: {
-                title: "Dijital Salon",
-                subtitle: "Fiziksel etkinliklerin büyüsünü dijital dünyada yeniden yaratıyoruz",
+                title: "Merkeziyetsiz Salon",
+                subtitle: "Fiziksel etkinliklerin büyüsünü merkeziyetsiz dijital dünyada yeniden yaratıyoruz.",
                 physical: "Fiziksel Etkinlik",
-                digital: "YouTick Dijital Salon",
+                digital: "youtick",
                 ticket: "Bilet Satın Alma",
                 ticket_physical: "Kağıt/PDF Bilet",
                 ticket_digital: "NFT Bilet",
@@ -432,22 +621,24 @@ export const translations = {
                 memorabilia_digital: "Dijital Koleksiyon + Değer Artışı"
             },
             competitive_advantages: {
-                title: "Neden YouTick Kazanır",
-                subtitle: "Pazardaki benzersiz konumumuz",
+                title: "Neden YouTick?",
+                subtitle: "Streaming'in geleceğini değiştirecek devrimci özellikler.",
                 end_to_end: "Uçtan Uca Çözüm",
                 end_to_end_desc: "Ticketing + Video Streaming + NFT tek platformda. Rakipler sadece birini yapıyor.",
-                event_centric: "Etkinlik-Merkezli Tasarım",
-                event_centric_desc: "Konserler, sinema ve workshop'lar için özel optimize edilmiş UI/UX.",
-                hybrid: "Hibrit Yaklaşım",
-                hybrid_desc: "Web2 kullanım kolaylığı ile Web3 sahiplik avantajları birlikte.",
+                global_access: "Görünmez Güvenlik",
+                global_access_desc: "Lit Protocol şifrelemesi sadece bilet sahiplerinin izlemesini sağlar. DRM sunucusu yok, sadece saf kriptografi.",
+                hybrid: "Zincir Soyutlama",
+                hybrid_desc: "Karmaşık kripto şifreleme, kesintisiz 'Tek-İmza' arayüzünün arkasına gizlenmiştir.",
                 creator_first: "Üretici Öncelikli",
                 creator_first_desc: "%98 gelir payı ve içeriğiniz üzerinde tam kontrol.",
                 near_ecosystem: "NEAR Ekosistemi",
                 near_ecosystem_desc: "Düşük ücretler, yüksek performans ve kusursuz kullanıcı deneyimi.",
+                decentralization: "Tam Merkeziyetsizlik",
+                decentralization_desc: "Merkezi sunucu yok. Gerçek kullanıcı sahipliği ve sansür direnci.",
                 comparison_web2: "vs Web2 Platformları",
                 comparison_web2_desc: "Üreticilere sahiplik ve 2x daha fazla gelir veriyoruz",
-                comparison_web3: "vs Web3 Platformları",
-                comparison_web3_desc: "Tam etkinlik deneyimi sunuyoruz, sadece bir parça değil"
+                comparison_web3: "vs Kimlik Tabanlı",
+                comparison_web3_desc: "Özel node yok. Sadece şifreli IPFS dosyaları. %20 daha hafif mimari."
             },
             web3_bridge: {
                 title: "Web3 Basitleştirildi",
@@ -462,5 +653,5 @@ export const translations = {
                 progressive_desc: "Hafta 1-2: Temel özellikler. Hafta 3-4: Akıllı kontratlar. Ay 2+: Tam Web3 gücü."
             }
         }
-    }
+    },
 };

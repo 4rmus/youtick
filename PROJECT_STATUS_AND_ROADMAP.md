@@ -21,6 +21,11 @@ The **YouTick Demo** is a functional Proof-of-Concept (PoC) for a decentralized 
 5.  **Playback**:
     -   Custom `IpfsPlayer` handles encrypted streaming.
 
+6.  **Optimized UX**:
+    -   **Single Signature Upload**: Bundles NFT Minting and Event Creation into one transaction (Storage fee covered by prepaid gas).
+    -   **Pay-First Flow**: Users pay the exact simplified "Service Fee" upfront if balance is low.
+    -   **Hidden Gas Mechanics**: "GasTank" complexity is abstracted away; unused gas is retained for future uploads.
+
 ### Technical Stack
 -   **Frontend**: Next.js 14 (React), Tailwind CSS, Lucide Icons.
 -   **Blockchain**: NEAR Protocol (Testnet).

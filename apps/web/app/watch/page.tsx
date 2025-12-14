@@ -6,6 +6,7 @@ import { MintButton } from '@/components/MintButton';
 import { useState, useEffect, Suspense } from 'react';
 import { useOwnedTokens, TokenWithVideo } from '@/hooks/useOwnedTokens';
 import { useEventDescription } from '@/hooks/useEventDescription';
+import { useLanguage } from '@/components/providers/LanguageContext';
 
 import { Button } from "@/components/ui/button";
 import { Search, Ticket, Loader2 } from "lucide-react";
@@ -21,6 +22,7 @@ export default function WatchPage() {
 }
 
 function WatchContent() {
+    const { t } = useLanguage();
     const searchParams = useSearchParams();
     const initialCid = searchParams.get('cid') || '';
     const [playCid, setPlayCid] = useState(initialCid);
@@ -38,9 +40,9 @@ function WatchContent() {
     return (
         <div className="max-w-4xl mx-auto space-y-8">
             <div className="text-center space-y-4">
-                <h1 className="text-4xl font-bold tracking-tight">Watch Secure Content</h1>
+                <h1 className="text-4xl font-bold tracking-tight">{t.watch_page.title}</h1>
                 <p className="text-muted-foreground">
-                    Decentralized, encrypted streaming. Only NFT holders can watch.
+                    {t.watch_page.description}
                 </p>
             </div>
 
@@ -62,7 +64,7 @@ function WatchContent() {
                                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
                                     <div>
                                         <h2 className="text-2xl font-bold text-white leading-tight">
-                                            {activeToken.metadata?.title || "Untitled Video"}
+                                            {activeToken.metadata?.title || t.watch_page.untitled}
                                         </h2>
                                         <div className="flex items-center gap-2 mt-2">
                                             <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-[10px] font-bold text-white">
@@ -76,12 +78,12 @@ function WatchContent() {
                                 </div>
 
                                 <div className="p-6 bg-zinc-900/50 rounded-xl border border-white/5">
-                                    <h3 className="text-sm font-semibold text-zinc-300 mb-2">Description</h3>
+                                    <h3 className="text-sm font-semibold text-zinc-300 mb-2">{t.watch_page.desc_label}</h3>
                                     {descLoading ? (
-                                        <p className="text-sm text-zinc-500 italic">Loading description...</p>
+                                        <p className="text-sm text-zinc-500 italic">{t.watch_page.loading_desc}</p>
                                     ) : (
                                         <p className="text-sm text-zinc-400 whitespace-pre-wrap leading-relaxed">
-                                            {eventDescription || activeToken.metadata?.description || "No description provided."}
+                                            {eventDescription || activeToken.metadata?.description || t.watch_page.no_desc}
                                         </p>
                                     )}
                                 </div>
@@ -96,13 +98,13 @@ function WatchContent() {
                             <Search className="w-8 h-8 text-zinc-500" />
                         </div>
                     </div>
-                    <h3 className="text-lg font-medium text-white mb-2">Select a Video</h3>
+                    <h3 className="text-lg font-medium text-white mb-2">{t.watch_page.select_video}</h3>
                     <p className="text-muted-foreground max-w-sm mx-auto">
-                        Choose a video from your library below to start watching securely.
+                        {t.watch_page.select_video_desc}
                     </p>
                     <div className="mt-6">
                         <Button variant="outline" onClick={() => window.location.href = '/discover'}>
-                            Browse New Content
+                            {t.watch_page.browse_new}
                         </Button>
                     </div>
                 </div>
@@ -111,7 +113,7 @@ function WatchContent() {
             {/* On-Chain Tickets/Videos Library */}
             <div className="space-y-6 pt-8 border-t border-zinc-900">
                 <div className="flex items-center justify-between">
-                    <h3 className="font-bold text-xl text-white">Your Library</h3>
+                    <h3 className="font-bold text-xl text-white">{t.watch_page.library}</h3>
                     <span className="text-xs text-zinc-500 uppercase tracking-widest">{tokens.length} Assets</span>
                 </div>
 
