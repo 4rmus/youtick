@@ -1,181 +1,167 @@
-# YouTick MVP - Decentralized Video-on-Demand Platform
+# YouTick
 
-**YouTick** is a Web3-native Video-on-Demand (VOD) platform built on the **NEAR Protocol**. It enables content creators to securely upload encrypted videos to IPFS and monetize them via NFT-gated access control.
+> **Decentralized Video-on-Demand Platform on NEAR Protocol**
 
-![Status](https://img.shields.io/badge/Status-MVP-green)
+YouTick is a Web3-native VOD platform where creators upload encrypted videos to IPFS and monetize through NFT-gated access. Built with NEAR Protocol, Lit Protocol, and Lighthouse Storage.
+
 ![NEAR](https://img.shields.io/badge/Blockchain-NEAR%20Testnet-blue)
 ![IPFS](https://img.shields.io/badge/Storage-IPFS%20(Lighthouse)-yellow)
 ![Lit](https://img.shields.io/badge/Encryption-Lit%20Protocol-orange)
+![Next.js](https://img.shields.io/badge/Frontend-Next.js%2016-black)
 
-## 🌟 Key Features
+## ✨ Features
 
-- ✅ **Decentralized Storage**: Videos stored on IPFS using Lighthouse Storage
-- ✅ **Client-Side Encryption**: Content encrypted in browser using Lit Protocol
-- ✅ **NFT-Gated Access**: Only NFT holders can decrypt and watch videos
-- ✅ **Event System**: Create ticketed events for videos with custom pricing
-- ✅ **Session Keys**: Seamless UX with GasTank prepaid balance system
-- ✅ **Batch Transactions**: Single signature for multiple operations (mint + event creation)
-- ✅ **Upload Progress UI**: Step-by-step visual feedback during upload
-- ✅ **Profile Dashboard**: View balances and owned tickets
-- ✅ **MPC Integration**: NEAR-to-Ethereum address derivation for Lit Protocol
+- **Decentralized Storage** – Videos encrypted client-side and stored on IPFS via Lighthouse
+- **NFT-Gated Access** – Only ticket (NFT) holders can decrypt and watch content
+- **One-Click Upload** – Session keys enable single-signature batch transactions
+- **Pay-Per-View Events** – Create ticketed events with custom NEAR pricing
+- **MPC Integration** – Secure NEAR↔Ethereum address derivation for Lit Protocol
 
-## 🛠️ Technology Stack
+## 🛠 Tech Stack
 
-- **Frontend**: Next.js 16, React 19, Tailwind CSS, TypeScript
-- **Blockchain**: NEAR Protocol (Testnet)
-- **Smart Contract**: Rust (NEAR SDK 5.5)
-- **Encryption**: Lit Protocol (Datil Dev Network)
-- **Storage**: Lighthouse/IPFS
-- **Wallet**: NEAR Wallet Selector
-
-## 📚 Documentation
-
-- **[SETUP.md](./SETUP.md)** - Detaylı kurulum ve deployment rehberi
-- **[MVP.md](./MVP.md)** - Teknik dokümantasyon ve mimari açıklama
+| Layer | Technology |
+|-------|------------|
+| Frontend | Next.js 16, React 19, Tailwind CSS, TypeScript |
+| Blockchain | NEAR Protocol (Testnet) |
+| Smart Contract | Rust (NEAR SDK) |
+| Encryption | Lit Protocol (Datil Dev) |
+| Storage | Lighthouse / IPFS |
+| Wallet | NEAR Wallet Selector |
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - Node.js 18+
-- NEAR Testnet Wallet
-- Lighthouse API Key
+- NEAR Testnet Wallet ([mynearwallet.com](https://testnet.mynearwallet.com))
+- Lighthouse API Key ([lighthouse.storage](https://lighthouse.storage))
 
 ### Installation
 
 ```bash
 # Clone repository
-git clone https://github.com/YOUR_USERNAME/youtick-mvp.git
+git clone https://github.com/4rmus/youtick-mvp.git
 cd youtick-mvp
 
 # Install dependencies
 cd apps/web
 npm install
 
-# Create .env.local
-cat > .env.local << EOF
-NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=utick6.testnet
-NEXT_PUBLIC_LIGHTHOUSE_API_KEY=your_lighthouse_api_key
-EOF
+# Configure environment
+cp .env.example .env.local
+# Edit .env.local with your API keys
 
 # Start dev server
 npm run dev
 ```
 
-Visit [http://localhost:3000](http://localhost:3000)
+Open [http://localhost:3000](http://localhost:3000)
+
+### Environment Variables
+
+Create `apps/web/.env.local`:
+
+```env
+NEXT_PUBLIC_NEAR_NETWORK=testnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=v1-0.utick.testnet
+LIGHTHOUSE_API_KEY=your_lighthouse_api_key
+```
 
 ## 📖 Usage
 
-### 1. Connect Wallet
-Click "Connect Wallet" and sign in with your NEAR testnet account.
+### Upload Video
 
-### 3. Upload Video
-1. Go to `/upload`
-2. Select video file
-3. Enter title, description, and price
-4. **Pay Service Fee** (if balance is low, a "Pay & Upload" button appears)
-5. Click "Upload Video"
-6. Watch progress indicator:
-   - Payment / Gas Check
-   - Session Setup
-   - Address Recovery
-   - Thumbnail & File Upload (Encrypted)
-   - Final Transaction (Mint + Event)
+1. Connect NEAR wallet
+2. Go to `/upload`
+3. Select video, enter title/description/price
+4. Click "Upload Video" – progress UI shows each step
+5. Video is encrypted, uploaded to IPFS, and NFT minted
 
-### 4. Discover & Watch
-1. Browse videos on `/discover`
-2. Purchase ticket (NFT minted to your wallet)
-3. Watch on `/watch` page (automatic decryption)
+### Watch Video
 
-### 5. Profile
-View your account info, balances, and tickets on `/profile`
+1. Browse `/discover`
+2. Purchase ticket (0.5+ NEAR)
+3. Open `/watch` – video auto-decrypts for ticket holders
 
-## 🏗️ Architecture
+### Profile
+
+View balances and owned tickets at `/profile`
+
+## 🏗 Project Structure
 
 ```
-Frontend (Next.js)
-    ↓
-NEAR Smart Contract (utick6.testnet)
-    ↓
-├─ NFT Management
-├─ Event System
-└─ GasTank (Prepaid)
-    ↓
-IPFS/Lighthouse ←→ Lit Protocol
-(Video Storage)    (Encryption/Access Control)
+youtick-mvp/
+├── apps/
+│   └── web/                 # Next.js frontend
+│       ├── app/             # App router pages
+│       ├── components/      # React components
+│       ├── hooks/           # Custom hooks
+│       └── lib/             # Utilities & services
+├── contracts/
+│   └── nft-ticket/          # NEAR smart contract (Rust)
+│       └── src/lib.rs       # Contract logic
+└── README.md
 ```
 
-### Smart Contract Functions
+## 🔧 Smart Contract
 
-**Core:**
-- `nft_mint()` - Mint video NFT
-- `create_event()` - Create ticketed event
-- `buy_ticket()` - Purchase event ticket
-- `deposit_funds()` - Add to GasTank
+Deployed to: `v1-0.utick.testnet`
 
-**View:**
-- `get_event()` - Get event details
-- `get_tokens_with_video()` - User's tokens + metadata
-- `get_user_balance()` - GasTank balance
+### Key Functions
 
-## 🎯 MVP Features
+| Function | Description |
+|----------|-------------|
+| `nft_mint()` | Mint video NFT |
+| `create_event()` | Create ticketed event |
+| `buy_ticket()` | Purchase event ticket |
+| `get_event()` | Get event details |
+| `nft_tokens()` | List all tokens |
 
-### Implemented
-- [x] Video upload with encryption
-- [x] Batch transactions (1 signature for mint + event)
-- [x] Upload progress tracking UI
-- [x] Event creation and management
-- [x] NFT-gated video playback
-- [x] Session key support (GasTank)
-- [x] Profile page
-- [x] Event description display
-- [x] Horizontal ticket slider
-- [x] Newest-first sorting
+### Deploy Your Own (Optional)
 
-### Planned
-- [ ] Livestreaming support
-- [ ] Royalty system
-- [ ] Social features (comments, likes)
-- [ ] Creator analytics
-- [ ] Mobile app
+```bash
+cd contracts/nft-ticket
+cargo build --target wasm32-unknown-unknown --release
+
+# Optimize WASM
+wasm-opt -Oz -o target/.../youtick_nft_opt.wasm \
+             target/.../youtick_nft.wasm
+
+# Deploy
+near deploy YOUR_ACCOUNT.testnet target/.../youtick_nft_opt.wasm \
+     --initFunction new --initArgs '{"owner_id":"YOUR_ACCOUNT.testnet"}'
+```
 
 ## 🔐 Security
 
 - **Client-side encryption**: Videos never leave browser unencrypted
-- **NFT ownership verification**: On-chain proof required
-- **MPC signatures**: Secure NEAR-to-Ethereum bridging
-- **Access control**: Lit Protocol ACCs
+- **NFT ownership verification**: On-chain proof required for decryption
+- **MPC signatures**: Secure cross-chain address derivation
+- **Lit Protocol ACCs**: Programmable access control conditions
 
 ## 🧪 Testing
 
 ```bash
 # View contract metadata
-near view utick6.testnet nft_metadata
+near view v1-0.utick.testnet nft_metadata '{}'
 
-# Check user balance
-near view utick6.testnet get_user_balance '{"account_id":"test.testnet"}'
+# List tokens
+near view v1-0.utick.testnet nft_tokens '{"from_index":"0","limit":10}'
 
-# Get event
-near view utick6.testnet get_event '{"encrypted_cid":"VIDEO_UUID"}'
+# Get event details
+near view v1-0.utick.testnet get_event '{"encrypted_cid":"VIDEO_CID"}'
 ```
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📄 License
 
-This project is licensed under the MIT License.
+MIT License
 
-## 🆘 Support
+## 🔗 Links
 
-- **Documentation**: See [SETUP.md](./SETUP.md) and [MVP.md](./MVP.md)
-- **NEAR Discord**: [https://discord.gg/near](https://discord.gg/near)
-- **Issues**: Use GitHub Issues for bug reports
+- [NEAR Protocol](https://near.org)
+- [Lit Protocol](https://litprotocol.com)
+- [Lighthouse Storage](https://lighthouse.storage)
 
 ---
 
-**Contract Address**: `utick6.testnet`  
-**Version**: 1.0.0 (MVP)  
-**Last Updated**: 2025-12-12
+**Contract**: `v1-0.utick.testnet` | **Version**: 1.0.0 MVP

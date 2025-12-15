@@ -29,7 +29,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
         const fetchDetails = async () => {
             setLoading(true);
             try {
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0.utick.testnet';
                 const rpcUrl = "/api/near-rpc"; // Use proxy
 
                 // Ensure we use the proxy for this call too
@@ -87,7 +87,18 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
             const wallet = await selector.wallet();
             const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
 
-            const depositYocto = utils.format.parseNearAmount(eventDetails.price);
+            // 0.01 NEAR to cover storage cost (panic was 0.00536 NEAR)
+            // Even if price is 0, user must pay for storage
+            const MIN_STORAGE_COST = utils.format.parseNearAmount('0.01');
+            const priceYocto = utils.format.parseNearAmount(eventDetails.price) || '0';
+
+            let finalDeposit = BigInt(priceYocto);
+            const minStorage = BigInt(MIN_STORAGE_COST || '0');
+
+            if (finalDeposit < minStorage) {
+                console.log(`Price (${eventDetails.price}) is less than storage cost. Attaching 0.01 NEAR.`);
+                finalDeposit = minStorage;
+            }
 
             const action = transactions.functionCall(
                 'buy_ticket',
@@ -96,7 +107,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
                     encrypted_cid: cid
                 })),
                 BigInt('30000000000000'), // 30 Tgas
-                BigInt(depositYocto || '0')
+                finalDeposit
             );
 
             await wallet.signAndSendTransaction({
@@ -104,28 +115,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
                 actions: [action as any],
             });
 
-            // Create Lit session after successful purchase for seamless video playback
-            try {
-                const { lit } = await import('@/lib/lit');
-                const { deriveEthAddress, signWithMPC } = await import('@/lib/chain-signatures');
-
-                console.log('Creating Lit session for seamless video playback...');
-                const mpcAddress = await deriveEthAddress(accountId, 'test', wallet);
-
-                await lit.getSessionSigs(
-                    wallet,
-                    accountId,
-                    mpcAddress,
-                    signWithMPC,
-                    undefined,
-                    undefined,
-                    'test'
-                );
-                console.log('Lit session created and cached successfully!');
-            } catch (sessionError) {
-                console.warn('Failed to create Lit session (video will still work with signature):', sessionError);
-                // Don't fail the purchase if session creation fails
-            }
+            // Lit session will be created on-demand when user clicks 'Play' in the video player.
+            // This avoids the second signature prompt during purchase.
 
             // Note: success handling depends on redirect or callback
             if (onPurchaseSuccess) onPurchaseSuccess();
