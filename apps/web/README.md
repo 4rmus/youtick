@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# YouTick Web Application
 
-## Getting Started
+Next.js frontend for the YouTick decentralized video platform.
 
-First, run the development server:
+## Development
 
 ```bash
+# Install dependencies
+npm install
+
+# Start dev server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+
+# Build for production
+npm run build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Environment Variables
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Create `.env.local`:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```env
+NEXT_PUBLIC_NEAR_NETWORK=testnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=v1-0.utick.testnet
+LIGHTHOUSE_API_KEY=your_api_key
+```
 
-## Learn More
+## Project Structure
 
-To learn more about Next.js, take a look at the following resources:
+```
+app/              # Next.js App Router pages
+  ├── discover/   # Video discovery page
+  ├── upload/     # Video upload page
+  ├── watch/      # Video playback page
+  ├── profile/    # User profile page
+  └── ticket/     # Ticket purchase page
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+components/       # React components
+  ├── landing/    # Landing page sections
+  ├── ui/         # Reusable UI components
+  └── providers/  # Context providers
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+hooks/            # Custom React hooks
+  ├── useAllVideos.ts
+  ├── useOwnedTokens.ts
+  └── useNearWallet.ts
 
-## Deploy on Vercel
+lib/              # Utilities & services
+  ├── near/       # NEAR blockchain integration
+  ├── lit/        # Lit Protocol encryption
+  ├── lighthouse/ # IPFS storage
+  └── translations.ts
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Key Components
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Component | Description |
+|-----------|-------------|
+| `UploadForm` | Video upload with encryption & progress UI |
+| `VideoPlayer` | Encrypted video playback with Lit decryption |
+| `TicketPurchaseCard` | Event ticket purchasing |
+| `WalletSelector` | NEAR wallet connection |
+
+## Technologies
+
+- **Next.js 16** with App Router
+- **React 19** with Server Components
+- **Tailwind CSS** for styling
+- **@near-wallet-selector** for wallet integration
+- **Lit Protocol SDK** for encryption
+- **Lighthouse SDK** for IPFS uploads

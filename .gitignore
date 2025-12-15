@@ -37,3 +37,12 @@ next-env.d.ts
 
 # Rust
 target/
+
+# Internal Documentation (not for public repo)
+CHANGELOG.md
+DEEP_DIVE_REPORT_TR.md
+DEEP_DIVE_REPORT_EN.md
+DEPLOYMENT.md
+PROJECT_STATUS_AND_ROADMAP.md
+REPORT.md
+SETUP.md
