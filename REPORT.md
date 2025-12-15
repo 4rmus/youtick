@@ -62,22 +62,7 @@ YouTick is a decentralized video ticketing platform built on NEAR Protocol that 
 
 ---
 
-## Recent Optimizations
 
-### Session Creation at Ticket Purchase
-
-**Before:**
-```
-Video Playback → 3 Signatures Required → Decrypt → Play
-```
-
-**After:**
-```
-Ticket Purchase → 1 Signature → Session Cached (23h)
-Video Playback → 0 Signatures → Instant Play!
-```
-
-This dramatically improves user experience by front-loading the signature requirement to the purchase moment, when users are already engaged in a transaction.
 
 ### Optimized Storage Architecture
 
@@ -167,10 +152,6 @@ NEXT_PUBLIC_NFT_CONTRACT_ID=utick6.testnet
 
 # IPFS Storage
 NEXT_PUBLIC_LIGHTHOUSE_API_KEY=your_key
-
-# Lit Action (Pinata IPFS)
-PINATA_JWT=your_jwt
-```
 
 ---
 
