@@ -4,16 +4,38 @@
 
 YouTick is a Web3-native VOD platform where creators upload encrypted videos to IPFS and monetize through NFT-gated access. Built with NEAR Protocol, Lit Protocol, and Lighthouse Storage.
 
-![NEAR](https://img.shields.io/badge/Blockchain-NEAR%20Testnet-blue)
+![NEAR](https://img.shields.io/badge/Blockchain-NEAR%20Protocol-blue)
 ![IPFS](https://img.shields.io/badge/Storage-IPFS%20(Lighthouse)-yellow)
 ![Lit](https://img.shields.io/badge/Encryption-Lit%20Protocol-orange)
 ![Next.js](https://img.shields.io/badge/Frontend-Next.js%2016-black)
+
+## 🌟 Why YouTick?
+
+### True Digital Ownership
+Traditional platforms give you a "viewing right" that can be revoked anytime. YouTick gives you an **NFT ticket** that sits in your wallet forever. You can transfer it, sell it on secondary markets, or keep it as a collectible.
+
+### Frictionless Web3 UX
+Most dApps suffer from "Signature Fatigue" – endless wallet pop-ups. YouTick uses **Session Caching with Chain Signatures (MPC)** to create a seamless experience:
+- User buys ticket → **One signature**
+- Background: Session created using NEAR Chain Signatures
+- Result: Hit "Play" and video starts **instantly** – no more pop-ups
+
+### Creator-First Economics
+- **98% Revenue to Creators** – Only 2% protocol fee
+- **No Middlemen** – Smart contract routes payment directly from buyer to creator
+- **No Demonetization** – Your content, your rules
+
+### Censorship-Resistant Infrastructure
+- Content stored on **IPFS** (distributed, persistent)
+- Encryption via **Lit Protocol** (decentralized key management)
+- Access rights on **NEAR blockchain** (immutable)
+- Even if the frontend goes down, your content and access rights persist
 
 ## ✨ Features
 
 - **Decentralized Storage** – Videos encrypted client-side and stored on IPFS via Lighthouse
 - **NFT-Gated Access** – Only ticket (NFT) holders can decrypt and watch content
-- **One-Click Upload** – Session keys enable single-signature batch transactions
+- **Session Key Uploads** – Chain Signatures enable seamless batch transactions with progress tracking
 - **Pay-Per-View Events** – Create ticketed events with custom NEAR pricing
 - **MPC Integration** – Secure NEAR↔Ethereum address derivation for Lit Protocol
 
@@ -74,7 +96,11 @@ LIGHTHOUSE_API_KEY=your_lighthouse_api_key
 1. Connect NEAR wallet
 2. Go to `/upload`
 3. Select video, enter title/description/price
-4. Click "Upload Video" – progress UI shows each step
+4. Click "Upload Video" – progress UI shows each step:
+   - Session Setup (Chain Signatures)
+   - Address Recovery (MPC)
+   - File Encryption & Upload
+   - NFT Minting
 5. Video is encrypted, uploaded to IPFS, and NFT minted
 
 ### Watch Video
@@ -136,8 +162,16 @@ near deploy YOUR_ACCOUNT.testnet target/.../youtick_nft_opt.wasm \
 
 - **Client-side encryption**: Videos never leave browser unencrypted
 - **NFT ownership verification**: On-chain proof required for decryption
-- **MPC signatures**: Secure cross-chain address derivation
+- **MPC signatures**: Secure cross-chain address derivation via NEAR Chain Signatures
 - **Lit Protocol ACCs**: Programmable access control conditions
+
+## 💰 Cost Advantage
+
+YouTick operates on a **Zero-Server Economy**:
+- No monthly AWS/server bills
+- IPFS storage: ~$4/GB one-time fee
+- Costs scale linearly with usage
+- Compare: Traditional video platforms cost thousands monthly
 
 ## 🧪 Testing
 
@@ -165,3 +199,5 @@ MIT License
 ---
 
 **Contract**: `v1-0.utick.testnet` | **Version**: 1.0.0 MVP
+
+*"Own Your Content. Own Your Audience. Own Your Revenue."*
