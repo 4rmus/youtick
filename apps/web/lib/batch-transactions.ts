@@ -18,7 +18,6 @@ export async function batchUploadActions(
         };
         video_metadata: {
             encrypted_cid: string;
-            livepeer_playback_id: string;
             duration_seconds: number;
             content_type: string;
         };
@@ -28,7 +27,6 @@ export async function batchUploadActions(
         title: string;
         description: string;
         price: string;
-        livepeer_playback_id?: string; // Optional Livepeer playback ID for HLS streaming
     }
 ) {
     const actions = [
@@ -37,7 +35,7 @@ export async function batchUploadActions(
             'nft_mint_prepaid',
             Buffer.from(JSON.stringify(videoMetadata)),
             BigInt('100000000000000'), // 100 TGas
-            BigInt('0') // No deposit
+            BigInt('0') // No deposit attached (uses internal balance)
         ),
         // Action 2: Create Event (requires storage deposit)
         transactions.functionCall(

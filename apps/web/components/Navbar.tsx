@@ -36,19 +36,20 @@ export function Navbar() {
 
     if (!mounted) return null;
 
-    // Do not render Navbar on the landing page (root path)
-    if (pathname === '/') return null;
+    // Do not render Navbar on the landing page for GUESTS (root path)
+    // If logged in, we SHOW the navbar for consistency
+    if (pathname === '/' && !accountId) return null;
 
     const navLinks = [
         { href: '/discover', label: t.nav.discover },
         { href: '/upload', label: t.nav.upload },
         { href: '/watch', label: t.nav.watch },
-        { href: '/profile', label: t.nav.profile },
+        ...(accountId ? [{ href: '/profile', label: t.nav.profile }] : []),
     ];
 
     return (
-        <nav className="sticky top-0 z-50 w-full backdrop-blur-md bg-black/95 border-b border-white/10 px-4 py-3 transition-colors duration-300">
-            <div className="container mx-auto flex justify-between items-center relative">
+        <nav className="sticky top-0 z-50 w-full backdrop-blur-md bg-black/95 border-b border-white/10 transition-colors duration-300">
+            <div className="container mx-auto flex justify-between items-center h-16 px-4 relative">
                 <Link href="/" className="flex items-center gap-2">
                     <Branding size="sm" />
                 </Link>

@@ -2,18 +2,29 @@ import lighthouse from '@lighthouse-web3/sdk';
 import { env } from './env';
 
 /**
- * Upload file to Lighthouse (IPFS) without encryption
- * SECURITY: Requires an API key (User's own key or App's key)
+ * Upload file to Lighthouse (IPFS) via Server Proxy
+ * SECURITY: No Client-side API Key required.
  */
-export async function uploadFile(file: File, apiKey?: string) {
-    const keyToUse = apiKey || env.lighthouseApiKey;
-    if (!keyToUse) throw new Error("No API Key provided for Lighthouse upload");
+export async function uploadFile(file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
 
-    const output = await lighthouse.upload(
-        [file],
-        keyToUse
-    );
-    return output;
+    const res = await fetch('/api/lighthouse/upload', {
+        method: 'POST',
+        body: formData,
+    });
+
+    if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Upload failed');
+    }
+
+    const data = await res.json();
+    // Maintain interface compatibility for calling code
+    // SDK returns { data: { Hash... } }, our proxy returns just the inner object.
+    // Let's wrap it to match { data: ... } expectation if needed, or adjust caller.
+    // Existing caller expects: UploadResponse { data: Array<{Hash}> | {Hash} }
+    return { data: data };
 }
 
 /**

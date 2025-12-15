@@ -24,7 +24,7 @@ function TicketContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const cid = searchParams.get('cid');
-    const { selector, accountId } = useWallet();
+    const { selector, modal, accountId } = useWallet();
 
     const [loading, setLoading] = useState(true);
     const [event, setEvent] = useState<any>(null);
@@ -111,12 +111,39 @@ function TicketContent() {
     return (
         <Card className="w-full max-w-lg shadow-2xl bg-zinc-950 border-zinc-800">
             <CardHeader className="text-center space-y-4">
-                <div className="mx-auto bg-primary/10 p-4 rounded-full w-fit">
-                    <Ticket className="w-12 h-12 text-primary" />
-                </div>
-                <CardTitle className="text-3xl font-bold text-white">
-                    {event?.title ? event.title.split(':::').pop() : "Exclusive Event"}
-                </CardTitle>
+                {(() => {
+                    const parts = event?.title ? event.title.split(':::') : [];
+                    const realTitle = parts.length >= 3 ? parts[2] : (event?.title || "Exclusive Event");
+                    const thumbnailCid = parts.length >= 3 ? parts[1] : null;
+                    const thumbnailUrl = thumbnailCid ? `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}` : null;
+
+                    return (
+                        <>
+                            {thumbnailUrl ? (
+                                <div className="mx-auto w-full aspect-video rounded-lg overflow-hidden border border-zinc-800 relative group">
+                                    <img
+                                        src={thumbnailUrl}
+                                        alt={realTitle}
+                                        className="w-full h-full object-cover"
+                                    />
+                                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
+                                        <div className="bg-white/10 backdrop-blur-md p-3 rounded-full border border-white/20">
+                                            <Ticket className="w-8 h-8 text-white relative z-10" />
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="mx-auto bg-primary/10 p-4 rounded-full w-fit">
+                                    <Ticket className="w-12 h-12 text-primary" />
+                                </div>
+                            )}
+                            <CardTitle className="text-3xl font-bold text-white mt-4">
+                                {realTitle}
+                            </CardTitle>
+                        </>
+                    );
+                })()}
                 <CardDescription className="text-lg">
                     {hasAccess ? "You have a ticket!" : "Ticket Required"}
                 </CardDescription>
@@ -161,9 +188,13 @@ function TicketContent() {
                                 </div>
                             )
                         ) : (
-                            <div className="text-center p-2 bg-blue-500/10 text-blue-500 rounded border border-blue-500/20">
+                            <Button
+                                className="w-full bg-blue-500/10 text-blue-500 border border-blue-500/20 hover:bg-blue-500/20"
+                                variant="outline"
+                                onClick={() => modal?.show()}
+                            >
                                 Connect Wallet to Check Access
-                            </div>
+                            </Button>
                         )}
                     </div>
                 )}

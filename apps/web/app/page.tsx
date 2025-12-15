@@ -11,6 +11,7 @@ import { CompetitiveAdvantagesSection } from '@/components/landing/CompetitiveAd
 import { ComparisonSection } from '@/components/landing/ComparisonSection';
 import { UseCasesSection } from '@/components/landing/UseCasesSection';
 import { Web3BridgeSection } from '@/components/landing/Web3BridgeSection';
+import { Roadmap } from '@/components/landing/Roadmap';
 import { HowItWorksSection } from '@/components/landing/HowItWorksSection';
 import { CTASection } from '@/components/landing/CTASection';
 import { LandingFooter } from '@/components/landing/LandingFooter';
@@ -36,14 +37,16 @@ export default function Home() {
       <Navigation onDiscoverClick={handleDiscoverClick} variant="landing" />
       <HeroSection onDiscoverClick={handleDiscoverClick} />
 
+
       <ValuePropositionSection />
       <DigitalSalonSection />
 
       <CompetitiveAdvantagesSection />
       <ComparisonSection />
       <UseCasesSection />
-      <Web3BridgeSection />
+
       <HowItWorksSection />
+      <Roadmap />
       <CTASection onDiscoverClick={handleDiscoverClick} />
       <LandingFooter />
     </div>

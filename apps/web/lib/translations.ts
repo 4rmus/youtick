@@ -86,7 +86,7 @@ export const translations = {
             progress_title: "Upload Progress",
             steps: {
                 session: "Session & Gas Setup",
-                address: "Address Recovery",
+                address: "MPC Address Verification",
                 thumbnail: "Thumbnail Upload",
                 encrypt: "File Encryption",
                 upload: "IPFS Upload (Lighthouse)",
@@ -146,10 +146,10 @@ export const translations = {
             title: "Roadmap",
             subtitle: "Our journey to revolutionizing video streaming.",
             phases: [
-                { year: "2026 Q1", title: "Phase 1: MVP", desc: "NEAR wallet authentication, Video upload with Lighthouse encryption, NFT minting, Token-gated streaming via Livepeer, Basic creator dashboard." },
-                { year: "2026 Q2", title: "Phase 2: Growth", desc: "Secondary marketplace integration, Royalty distribution system, Analytics dashboard for creators, Multi-language support." },
-                { year: "2026 Q3", title: "Phase 3: Scale", desc: "Live streaming support, Cross-chain payment support (ETH, BTC via bridges), DAO governance for platform decisions." },
-                { year: "2026 Q4", title: "Phase 3: Ecosystem", desc: "Creator tokenomics (social tokens), Enterprise partnerships (venues, labels), Mobile app (iOS/Android)." },
+                { year: "2026 Q1", title: "Fast Auth", desc: "Seamless email/social login integration. Auto-wallet creation for zero-friction onboarding." },
+                { year: "2026 Q2", title: "Keypom Integration", desc: "Trial accounts, gift links, and advanced access drops. Try before you buy." },
+                { year: "2026 Q3", title: "Live Broadcast", desc: "Decentralized live streaming with real-time token gating and chat." },
+                { year: "2026 Q4", title: "DAO Governance", desc: "Community-driven platform decisions, treasury management, and protocol upgrades." },
             ]
         },
         landing: {
@@ -157,7 +157,7 @@ export const translations = {
                 name: "youtick"
             },
             hero: {
-                badge: "The Decentralized Salon",
+                badge: "The Decentralized Stage",
                 title_line1: "Your Decentralized",
                 title_line2: "Digital Stage",
                 subtitle: "Powered by NEAR Protocol, Lighthouse Storage, and Lit Protocol.",
@@ -175,7 +175,9 @@ export const translations = {
                 start: "Get Started",
                 features: "Features",
                 comparison: "Comparison",
-                use_cases: "Use Cases"
+                use_cases: "Use Cases",
+                how_it_works: "How It Works",
+                roadmap: "Roadmap"
             },
             stats: {
                 users: "Users (2026 Target)",
@@ -188,7 +190,7 @@ export const translations = {
                 volume_value: "$10M+"
             },
             features: {
-                title: "Why YouTick?",
+                title: "Why youtick?",
                 subtitle: "Revolutionary features that will change the future of streaming.",
                 nft_gated_title: "True Ownership",
                 nft_gated_desc: "Tickets are assets, not permissions. Resellable, transferable, and permanent on the NEAR blockchain.",
@@ -204,11 +206,11 @@ export const translations = {
                 event_centric_desc: "Optimized UI/UX specifically for concerts, cinema, and workshops."
             },
             comparison: {
-                title: "Traditional Systems vs YouTick",
+                title: "Traditional Systems vs youtick",
                 subtitle: "Comparison with Ticketmaster, Eventbrite and similar systems",
                 feature: "Feature",
                 traditional: "Traditional",
-                youtick: "YouTick",
+                youtick: "youtick",
                 fake_risk: "Fake Ticket Risk",
                 transparent_pricing: "Transparent Pricing",
                 instant_transfer: "Instant Revenue Transfer",
@@ -218,14 +220,14 @@ export const translations = {
                 proof_of_ownership: "Proof of Ownership"
             },
             use_cases: {
-                title: "Digital Salon Experience",
+                title: "Digital Stage Experience",
                 subtitle: "Physical events meet digital excellence. The best of both worlds.",
                 concerts_title: "Concert Experience",
                 concerts_physical: "Physical: Ticket ($50) → Attend → Photos → Souvenir",
-                concerts_digital: "Digital: NFT Ticket (0.5 NEAR) → 4K Stream → Backstage Content → Token-Gated Chat → Permanent Collectible → Potential Value Increase",
+                concerts_digital: "Digital: NFT Bilet (0.5 NEAR) → 4K Stream → Backstage İçerik → Token-Gated Chat → Kalıcı Koleksiyon → Değer Artışı Potansiyeli",
                 cinema_title: "Cinema Premiere",
                 cinema_physical: "Physical: Ticket ($30) → Theater → Q&A → Poster",
-                cinema_digital: "Digital: Limited NFT (0.3 NEAR) → Premium Stream → Live Q&A (NFT Holders) → Digital Poster → Making-Of Content → Resale Market",
+                cinema_digital: "Digital: Limitli NFT (0.3 NEAR) → Premium Stream → Canlı Soru-Cevap (NFT Sahipleri) → Dijital Poster → Yapım İçeriği → Resale Market",
                 workshop_title: "Workshop/Masterclass",
                 workshop_physical: "Physical: Registration ($200) → Attend → Notes → Certificate",
                 workshop_digital: "Digital: NFT Pass (2 NEAR) → Live Stream + Q&A → Exclusive Materials → Blockchain Certificate → Lifetime Access → On-Chain Credential"
@@ -247,7 +249,9 @@ export const translations = {
                 start_exploring: "Start Exploring"
             },
             footer: {
-                built_on: "Built on NEAR Protocol.",
+                copyright: "© 2025 youtick. All rights reserved.",
+                built_on_prefix: "Built on",
+                built_on_tech: "NEAR Protocol, Lighthouse & Lit Protocol.",
                 privacy: "Privacy",
                 terms: "Terms",
                 support: "Support"
@@ -276,7 +280,7 @@ export const translations = {
                 full_control_desc: "Set your own prices"
             },
             digital_salon: {
-                title: "The Decentralized Salon",
+                title: "The Decentralized Stage",
                 subtitle: "Recreating the magic of physical events in a decentralized digital world.",
                 physical: "Physical Event",
                 digital: "youtick",
@@ -294,7 +298,7 @@ export const translations = {
                 memorabilia_digital: "Digital Collectible + Value Growth"
             },
             competitive_advantages: {
-                title: "Why YouTick?",
+                title: "Why youtick?",
                 subtitle: "Revolutionary features that will change the future of streaming.",
                 end_to_end: "End-to-End Solution",
                 end_to_end_desc: "Ticketing + Video Streaming + NFT all in one platform. Competitors only do one.",
@@ -313,19 +317,7 @@ export const translations = {
                 comparison_web3: "vs Identity-Based",
                 comparison_web3_desc: "No specialized nodes. Just encrypted IPFS files. 20% lighter architecture."
             },
-            web3_bridge: {
-                title: "Web3 Made Simple",
-                subtitle: "No blockchain knowledge required. We handle the complexity.",
-                fast_auth: "Easy Login",
-                fast_auth_desc: "Email, Google, or Apple sign-in. NEAR wallet created automatically in the background.",
-                gift_links: "Gift Links",
-                gift_links_desc: "Share events via simple links. Recipients get wallet + ticket instantly with one click.",
-                trial_accounts: "Free Trial",
-                trial_accounts_desc: "Start with free trial account. Platform covers your first transactions. Upgrade when ready.",
-                progressive: "Learn Gradually",
-                progressive_desc: "Week 1-2: Basic features. Week 3-4: Smart contracts. Month 2+: Full Web3 power."
-            }
-        }
+        },
     },
     tr: {
         nav: {
@@ -412,7 +404,7 @@ export const translations = {
             progress_title: "Yükleme Durumu",
             steps: {
                 session: "Oturum & Gas Kurulumu",
-                address: "Adres Kurtarma",
+                address: "MPC Adres Doğrulama",
                 thumbnail: "Küçük Resim Yükleme",
                 encrypt: "Dosya Şifreleme",
                 upload: "IPFS Yükleme (Lighthouse)",
@@ -472,18 +464,18 @@ export const translations = {
             title: "Yol Haritası",
             subtitle: "Video yayıncılığında devrim yaratma yolculuğumuz.",
             phases: [
-                { year: "2026 Q1", title: "Faz 1: MVP", desc: "NEAR cüzdan kimlik doğrulama, Lighthouse şifreleme ile video yükleme, NFT basımı, Livepeer üzerinden token korumalı yayın, Temel içerik üretici paneli." },
-                { year: "2026 Q2", title: "Faz 2: Büyüme", desc: "İkincil pazar entegrasyonu, Telif hakkı dağıtım sistemi, İçerik üreticileri için analiz paneli, Çoklu dil desteği." },
-                { year: "2026 Q3", title: "Faz 3: Ölçeklenme", desc: "Canlı yayın desteği, Zincirler arası ödeme desteği (Köprüler ile ETH, BTC), Platform kararları için DAO yönetişimi." },
-                { year: "2026 Q4", title: "Faz 3: Ekosistem", desc: "İçerik üretici token ekonomisi (sosyal tokenlar), Kurumsal ortaklıklar (mekanlar, şirketler), Mobil uygulama (iOS/Android)." },
+                { year: "2026 Q1", title: "Fast Auth (Hızlı Giriş)", desc: "Sorunsuz email/sosyal giriş entegrasyonu. Sıfır sürtünme için otomatik cüzdan oluşturma." },
+                { year: "2026 Q2", title: "Keypom Entegrasyonu", desc: "Deneme hesapları, hediye linkleri ve gelişmiş erişim dağıtımı. Satın almadan önce dene." },
+                { year: "2026 Q3", title: "Canlı Yayın", desc: "Gerçek zamanlı token kontrolü ve sohbet ile merkeziyetsiz canlı yayın." },
+                { year: "2026 Q4", title: "DAO Yönetişimi", desc: "Topluluk odaklı platform kararları, hazine yönetimi ve protokol güncellemeleri." },
             ]
         },
         landing: {
             branding: {
-                name: "YOUTICK"
+                name: "youtick"
             },
             hero: {
-                badge: "Dijital Salon Deneyimi",
+                badge: "Merkeziyetsiz Salon Deneyimi",
                 title_line1: "Merkeziyetsiz",
                 title_line2: "Dijital Sahneniz",
                 subtitle: "Near Protocol, LightHouse Storage ve Lit Protocol ile geliştirildi.",
@@ -502,7 +494,9 @@ export const translations = {
                 start: "Başla",
                 features: "Özellikler",
                 comparison: "Karşılaştırma",
-                use_cases: "Kullanım Alanları"
+                use_cases: "Kullanım Alanları",
+                how_it_works: "Nasıl Çalışır",
+                roadmap: "Yol Haritası"
             },
             stats: {
                 users: "Kullanıcı (2026 Hedef)",
@@ -515,7 +509,7 @@ export const translations = {
                 volume_value: "$10M+"
             },
             features: {
-                title: "Neden YouTick?",
+                title: "Neden youtick?",
                 subtitle: "Streaming'in geleceğini değiştirecek devrimci özellikler.",
                 nft_gated_title: "Gerçek Sahiplik",
                 nft_gated_desc: "Biletler izin değil, varlıktır. Satılabilir, devredilebilir ve NEAR blokzincirinde kalıcıdır.",
@@ -526,16 +520,16 @@ export const translations = {
                 true_ownership_title: "Chain Abstraction",
                 true_ownership_desc: "\"Chain Abstraction\" ve 'Session Caching' teknolojimiz, video yükleme sürecini 1-2 onay ile, video oynatmayı ise onaysız yapar.",
                 instant_payment_title: "Anlık Ödeme",
-                instant_payment_desc: "Gelir doğrudan cüzdanınıza. Gecikme yok, aracı yok, bekleme yok.",
+                instant_payment_desc: "Gelir doğrudan cüzdana. Gecikme yok, aracı yok, bekleme yok.",
                 event_centric_title: "Etkinlik-Merkezli Tasarım",
                 event_centric_desc: "Konserler, sinema ve workshop'lar için özel optimize edilmiş UI/UX."
             },
             comparison: {
-                title: "Geleneksel Sistemler vs YouTick",
+                title: "Geleneksel Sistemler vs youtick",
                 subtitle: "Biletix, Passo ve benzeri sistemlerle karşılaştırma",
                 feature: "Özellik",
                 traditional: "Geleneksel",
-                youtick: "YouTick",
+                youtick: "youtick",
                 fake_risk: "Sahte Bilet Riski",
                 transparent_pricing: "Şeffaf Fiyatlandırma",
                 instant_transfer: "Anlık Gelir Transferi",
@@ -545,7 +539,7 @@ export const translations = {
                 proof_of_ownership: "Bilet Sahipliği Kanıtı"
             },
             use_cases: {
-                title: "Dijital Salon Deneyimi",
+                title: "Merkeziyetsiz Salon Deneyimi",
                 subtitle: "Fiziksel etkinlikler dijital mükemmellikle buluşuyor. İki dünyanın en iyisi.",
                 concerts_title: "Konser Deneyimi",
                 concerts_physical: "Fiziksel: Bilet ($50) → Konsere Git → Fotoğraf → Hatıra",
@@ -574,7 +568,9 @@ export const translations = {
                 start_exploring: "Keşfetmeye Başla"
             },
             footer: {
-                built_on: "NEAR Protocol üzerinde inşa edildi.",
+                copyright: "© 2025 youtick. Tüm hakları saklıdır.",
+                built_on_prefix: "Altyapısı:",
+                built_on_tech: "NEAR Protocol, Lighthouse ve Lit Protocol",
                 privacy: "Gizlilik",
                 terms: "Şartlar",
                 support: "Destek"
@@ -612,16 +608,16 @@ export const translations = {
                 ticket_digital: "NFT Bilet",
                 experience: "Etkinlik Deneyimi",
                 experience_physical: "Fiziksel Katılım",
-                experience_digital: "Premium Video Stream",
+                experience_digital: "Premium Video Yayını",
                 social: "Sosyal Etkileşim",
                 social_physical: "Katılımcılarla Sohbet",
-                social_digital: "Token-Korumalı Chat",
+                social_digital: "Token Korumalı Sohbet",
                 memorabilia: "Hatıra",
                 memorabilia_physical: "Fiziksel Hatıra",
                 memorabilia_digital: "Dijital Koleksiyon + Değer Artışı"
             },
             competitive_advantages: {
-                title: "Neden YouTick?",
+                title: "Neden youtick?",
                 subtitle: "Streaming'in geleceğini değiştirecek devrimci özellikler.",
                 end_to_end: "Uçtan Uca Çözüm",
                 end_to_end_desc: "Ticketing + Video Streaming + NFT tek platformda. Rakipler sadece birini yapıyor.",
@@ -642,16 +638,16 @@ export const translations = {
             },
             web3_bridge: {
                 title: "Web3 Basitleştirildi",
-                subtitle: "Blockchain bilgisi gerekmez. Karmaşıklığı biz hallederiz.",
-                fast_auth: "Kolay Giriş",
-                fast_auth_desc: "Email, Google veya Apple ile giriş. NEAR cüzdanı arka planda otomatik oluşturulur.",
-                gift_links: "Hediye Linkleri",
-                gift_links_desc: "Etkinlikleri basit linklerle paylaşın. Alıcılar tek tıkla cüzdan + bilet alır.",
-                trial_accounts: "Ücretsiz Deneme",
-                trial_accounts_desc: "Ücretsiz deneme hesabıyla başlayın. Platform ilk işlemlerinizi karşılar. Hazır olunca yükseltin.",
-                progressive: "Kademeli Öğrenme",
-                progressive_desc: "Hafta 1-2: Temel özellikler. Hafta 3-4: Akıllı kontratlar. Ay 2+: Tam Web3 gücü."
+                subtitle: "",
+                chain_abstraction: "Zincir Soyutlama",
+                chain_abstraction_desc: "Blockchain ile etkileşime girdiğinizi bile anlamadan işlem yapın.",
+                storage: "Merkeziyetsiz Depolama",
+                storage_desc: "İçerik IPFS/Filecoin üzerinde saklanır. Kalıcı, sansürsüz ve size ait.",
+                encryption: "Merkeziyetsiz Şifreleme",
+                encryption_desc: "Lit Protocol sayesinde sadece bilet sahipleri şifreyi çözebilir.",
+                fees: "Minimal Ücretler",
+                fees_desc: "Tek seferlik depolama ücreti. Sürekli sunucu maliyeti yok. Maksimum kazanç."
             }
         }
-    },
+    }
 };

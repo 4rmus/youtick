@@ -16,7 +16,7 @@ export const CompetitiveAdvantagesSection = memo(() => {
     const { t } = useLanguage();
 
     return (
-        <section id="competitive-advantages" className="py-32 bg-black relative">
+        <section id="features" className="py-32 bg-black relative">
 
 
             <div className="container mx-auto px-4">

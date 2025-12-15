@@ -9,14 +9,11 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
-
 export default function ProfilePage() {
     const { t } = useLanguage();
     const { accountId } = useWallet();
     const { tokens, loading: tokensLoading } = useOwnedTokens();
     const [walletBalance, setWalletBalance] = useState<string | null>(null);
-    const [gasTankBalance, setGasTankBalance] = useState<string | null>(null);
     const [loadingBalances, setLoadingBalances] = useState(false);
 
     useEffect(() => {
@@ -39,18 +36,6 @@ export default function ProfilePage() {
                 const balanceInNear = (BigInt(balance.available) / BigInt(10 ** 24)).toString();
                 const decimals = (Number(BigInt(balance.available) % BigInt(10 ** 24)) / 10 ** 24).toFixed(2).substring(2);
                 setWalletBalance(`${balanceInNear}.${decimals}`);
-
-                // Fetch GasTank balance
-                const contractAccount = await near.account(NFT_CONTRACT_ID);
-                const gasTankBalanceResult: any = await contractAccount.viewFunction({
-                    contractId: NFT_CONTRACT_ID,
-                    methodName: 'get_user_balance',
-                    args: { account_id: accountId }
-                });
-
-                const gasTankInNear = (BigInt(gasTankBalanceResult) / BigInt(10 ** 24)).toString();
-                const gasTankDecimals = (Number(BigInt(gasTankBalanceResult) % BigInt(10 ** 24)) / 10 ** 24).toFixed(2).substring(2);
-                setGasTankBalance(`${gasTankInNear}.${gasTankDecimals}`);
 
             } catch (error) {
                 console.error('Error fetching balances:', error);
@@ -98,7 +83,7 @@ export default function ProfilePage() {
                 </div>
 
                 {/* Account Info Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* Account Card */}
                     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                         <div className="flex items-center gap-3 mb-4">
@@ -130,28 +115,6 @@ export default function ProfilePage() {
                                         {walletBalance || '0.00'} <span className="text-sm font-normal text-zinc-400">NEAR</span>
                                     </p>
                                     <p className="text-xs text-zinc-500">{t.profile_page.available}</p>
-                                </>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* GasTank Balance Card */}
-                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-                        <div className="flex items-center gap-3 mb-4">
-                            <div className="p-2 bg-blue-500/10 rounded-lg">
-                                <Ticket className="w-5 h-5 text-blue-500" />
-                            </div>
-                            <h3 className="font-semibold text-zinc-200">{t.profile_page.gastank}</h3>
-                        </div>
-                        <div className="space-y-2">
-                            {loadingBalances ? (
-                                <Loader2 className="w-5 h-5 animate-spin text-zinc-500" />
-                            ) : (
-                                <>
-                                    <p className="text-2xl font-bold text-white">
-                                        {gasTankBalance || '0.00'} <span className="text-sm font-normal text-zinc-400">NEAR</span>
-                                    </p>
-                                    <p className="text-xs text-zinc-500">{t.profile_page.prepaid}</p>
                                 </>
                             )}
                         </div>

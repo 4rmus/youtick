@@ -12,7 +12,7 @@ export const HowItWorksSection = memo(() => {
   const { t } = useLanguage();
 
   return (
-    <section className="py-32 bg-zinc-950 border-y border-white/5">
+    <section id="how-it-works" className="py-32 bg-zinc-950 border-y border-white/5">
       <div className="container mx-auto px-4">
         {/* Header */}
         <div className="max-w-3xl mx-auto text-center mb-20">

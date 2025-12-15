@@ -8,13 +8,19 @@ export const LIT_ACTION_CID = "QmR1n4XYgp6g6EE2vxTkp8XbzZFb5Nv2TkzWcNGgoWKxYf";
 
 // Session cache key prefix
 const SESSION_CACHE_KEY = 'lit_session_sigs';
-const SESSION_CACHE_EXPIRY = 23 * 60 * 60 * 1000; // 23 hours (slightly less than 24h session expiry)
+const SESSION_CACHE_EXPIRY = 6 * 60 * 60 * 1000; // 6 hours (safe side to avoid stale sessions)
 
 const client = new LitNodeClient({
     litNetwork: "datil-dev",
     debug: true,
     rpcUrl: "https://175188.rpc.thirdweb.com"
 });
+
+export function clearSessionCache(accountId: string) {
+    if (typeof window === 'undefined') return;
+    localStorage.removeItem(`${SESSION_CACHE_KEY}_${accountId}`);
+    console.log(`Cleared Lit session cache for ${accountId}`);
+}
 
 // Session cache helpers
 function getCachedSessionSigs(accountId: string): any | null {

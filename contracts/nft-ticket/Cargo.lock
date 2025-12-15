@@ -69,9 +69,9 @@ checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
 
 [[package]]
 name = "cc"
-version = "1.2.48"
+version = "1.2.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c481bdbf0ed3b892f6f806287d72acd515b352a4ec27a208489b8c1bc839633a"
+checksum = "90583009037521a116abf44494efecd645ba48b6622457080f080b85544e2215"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -335,9 +335,9 @@ checksum = "8452105ba047068f40ff7093dd1d9da90898e63dd61736462e9cdda6a90ad3c3"
 
 [[package]]
 name = "near-account-id"
-version = "2.2.0"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d895dcfceb6eeec6c76c0ed861b9422cb918ad857fa321c78eaa577a90514707"
+checksum = "91f75ff8eee73815c247d0e17f3c0b705f0e993922a5548acd2ad377aeb67fca"
 dependencies = [
  "borsh",
  "serde",
@@ -345,9 +345,9 @@ dependencies = [
 
 [[package]]
 name = "near-contract-standards"
-version = "5.20.0"
+version = "5.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e126270076c93397cf305f0a8bb7c54db50d2a3f4526cf71eeef66bc59ce8832"
+checksum = "b637fd2a9e8f30deb4fdb221a709c2794cfe120c4a1f1a6707d53ad07c674b23"
 dependencies = [
  "near-sdk",
 ]
@@ -364,9 +364,9 @@ dependencies = [
 
 [[package]]
 name = "near-sdk"
-version = "5.20.0"
+version = "5.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d46a11cb3fe78b1785a46fb4a7cc5fcd5abd9733c1a131d756559925a0d6549f"
+checksum = "351a4bf9c9811c2ff46315509c19a53a7892d5767b9a58c3eda9e1caac350adc"
 dependencies = [
  "base64",
  "borsh",
@@ -385,9 +385,9 @@ dependencies = [
 
 [[package]]
 name = "near-sdk-macros"
-version = "5.20.0"
+version = "5.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4265bb742a3f1ebed6afc5b288d5ab0453777b4dc4fe7c77a1f50729cdf4c6b"
+checksum = "c9ac3c723876f6c8413d253ffc10c5b759809ac0a3390861fa3353de58997e95"
 dependencies = [
  "Inflector",
  "darling 0.20.11",
@@ -700,9 +700,9 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.23.7"
+version = "0.23.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6485ef6d0d9b5d0ec17244ff7eb05310113c3f316f2d14200d4de56b3cb98f8d"
+checksum = "5d7cbc3b4b49633d57a0509303158ca50de80ae32c265093b24c414705807832"
 dependencies = [
  "indexmap 2.12.1",
  "toml_datetime",

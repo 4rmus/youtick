@@ -285,6 +285,26 @@ impl Contract {
         env::log_str(&format!("Deposited {} for {}", amount, account_id));
     }
 
+    /// Withdraw all prepaid funds for the caller
+    #[payable]
+    pub fn withdraw_funds(&mut self) -> Promise {
+        // 1 yocto deposit for security
+        require!(env::attached_deposit() >= NearToken::from_yoctonear(1), "Requires 1 yoctoNEAR deposit");
+        
+        let account_id = env::predecessor_account_id();
+        let current_bal = self.user_deposits.get(&account_id).unwrap_or(NearToken::from_yoctonear(0));
+        
+        require!(current_bal.as_yoctonear() > 0, "No funds to withdraw");
+        
+        // Remove balance (Effects first)
+        self.user_deposits.remove(&account_id);
+        
+        env::log_str(&format!("Withdrawing {} for {}", current_bal, account_id));
+
+        // Transfer funds (Interactions last)
+        Promise::new(account_id).transfer(current_bal)
+    }
+
     /// Check user's internal balance
     pub fn get_user_balance(&self, account_id: AccountId) -> U128 {
         let val = self.user_deposits.get(&account_id).unwrap_or(NearToken::from_yoctonear(0));

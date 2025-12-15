@@ -13,7 +13,7 @@ import { Search, Ticket, Loader2 } from "lucide-react";
 
 export default function WatchPage() {
     return (
-        <div className="container mx-auto px-4 py-24 min-h-screen">
+        <div className="container mx-auto px-4 py-8 min-h-screen">
             <Suspense fallback={<div className="flex justify-center"><Loader2 className="h-8 w-8 animate-spin" /></div>}>
                 <WatchContent />
             </Suspense>

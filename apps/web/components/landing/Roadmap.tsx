@@ -6,7 +6,7 @@ export const Roadmap = () => {
     const { t } = useLanguage();
 
     return (
-        <section className="py-24 px-4 bg-white dark:bg-black text-black dark:text-white transition-colors duration-300">
+        <section id="roadmap" className="py-24 px-4 bg-white dark:bg-black text-black dark:text-white transition-colors duration-300">
             <div className="max-w-4xl mx-auto">
                 <div className="text-center mb-16">
                     <h2 className="text-3xl md:text-5xl font-bold mb-4">{t.roadmap.title}</h2>

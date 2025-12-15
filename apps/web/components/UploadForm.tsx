@@ -40,7 +40,7 @@ export function UploadForm() {
     const [status, setStatus] = useState('');
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
-    const [price, setPrice] = useState('1'); // Default 1 NEAR
+    const [price, setPrice] = useState('0'); // Default 0 NEAR
     const [progress, setProgress] = useState(0);
 
     // Upload steps tracking
@@ -75,43 +75,21 @@ export function UploadForm() {
     };
 
     // Check Lighthouse connection on mount
+    // Check gas status on mount/account change
     React.useEffect(() => {
-        const checkConnection = async () => {
-            const apiKey = process.env.NEXT_PUBLIC_LIGHTHOUSE_API_KEY;
-            if (!apiKey) {
-                console.warn('Lighthouse API Key missing');
-                return;
-            }
-            try {
-                const balance = await lighthouse.getBalance(apiKey);
-                console.log('Lighthouse Connection OK. Balance:', balance);
-            } catch (error) {
-                console.error('Lighthouse Connection Failed:', error);
-                setStatus('⚠️ Lighthouse connection failed. Check API Key.');
-            }
-        };
-        checkConnection();
-
         // Cleanup thumbnail preview URL on unmount
         return () => {
             if (thumbnailPreview) {
                 URL.revokeObjectURL(thumbnailPreview);
             }
         };
-        checkConnection();
+    }, []);
 
-        // Check gas status on mount/account change
+    React.useEffect(() => {
         if (accountId && selector) {
             checkGasStatus();
         }
-
-        // Cleanup thumbnail preview URL on unmount
-        return () => {
-            if (thumbnailPreview) {
-                URL.revokeObjectURL(thumbnailPreview);
-            }
-        };
-    }, [accountId, selector]); // Added deps to useEffect
+    }, [accountId, selector]);
 
     const checkGasStatus = async () => {
         if (!accountId) return;
@@ -148,6 +126,7 @@ export function UploadForm() {
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
             const selectedFile = e.target.files[0];
+
             setFile(selectedFile);
 
             // Calculate estimated storage fee immediately
@@ -371,6 +350,10 @@ export function UploadForm() {
                 setStatus(`Upload success, but Blockchain actions failed: ${mintError.message}`);
             }
 
+            // 7. Auto-Refund Excess Gas - DISABLED
+            // Excess gas remains in contract as per user request.
+            setStatus('Success! Video Uploaded & Ticket Sales Started!');
+
             setUploading(false);
 
             // Clear form
@@ -447,38 +430,42 @@ export function UploadForm() {
 
 
 
-            // 0. CHECK & PAY UPFRONT if needed
-            const toPay = parseFloat(payAmount);
+            // 0. CHECK Session & PAY UPFRONT (Consolidated)
             const sessionManager = new SessionManager(accountId);
-
-            if (toPay > 0) {
-                setStatus(`Funding Prepaid Valid (${payAmount} NEAR)...`);
-                console.log(`Pay-First: depositing ${payAmount} NEAR...`);
-                await sessionManager.topUpGas(wallet, payAmount);
-
-                // If we get here, payment was successful/sent.
-                // We can update balance locally to skip next check if code continues
-                setCurrentBalance((parseFloat(currentBalance) + toPay).toString());
-                setPayAmount('0');
-                setStatus('Payment successful. Proceeding to upload...');
-            }
-
-            // 0. Ensure Session Key and Gas exists
             updateStep('session', 'loading');
-            setStatus('Checking Session & Prepaid Gas...');
+            setStatus('Checking Session & Fees...');
 
-            // If no session key, create one (which deposits 1 NEAR)
-            if (!(await sessionManager.hasSessionKey())) {
-                setStatus('Setting up App Session Key (One-time)...');
-                await sessionManager.createSessionKey(wallet);
+            const hasKey = await sessionManager.hasSessionKey();
+            const toPayVal = parseFloat(payAmount);
+
+            if (!hasKey) {
+                // Case 1: No Session Key.
+                // We must creating a key. We can bundle the deposit (Storage Fee + Buffer) with this.
+                // If payAmount is 0 (unlikely if no key, but possible if contract has balance but key was lost), default to '1' for safety.
+                const depositAmount = toPayVal > 0 ? payAmount : '1';
+
+                setStatus(`Setting up Session Key & Depositing ${depositAmount} NEAR...`);
+                console.log(`Creating Session Key + Deposit: ${depositAmount} NEAR`);
+                await sessionManager.createSessionKey(wallet, depositAmount);
+
+                // If successful, update local balance
+                if (toPayVal > 0) {
+                    setCurrentBalance((parseFloat(currentBalance) + parseFloat(depositAmount)).toString());
+                    setPayAmount('0');
+                }
+
             } else {
-                // If session key exists, just check/up gas
-                // We need nodeUrl
-                // NOTE: We already paid above if valid. ensureGas might double-check but should pass.
-                const nodeUrl = selector.options.network.nodeUrl;
-                // We pass '0' minAmount here because we explicitly handled payment above? 
-                // Or we pass 1. If we just paid, balance is >= 1.
-                await sessionManager.ensureGas(wallet, nodeUrl, 1);
+                // Case 2: Session Key Exists.
+                // Just check if we need to top up.
+                if (toPayVal > 0) {
+                    setStatus(`Funding Prepaid Storage & Gas (${payAmount} NEAR)...`);
+                    console.log(`TopUp Gas: ${payAmount} NEAR`);
+                    await sessionManager.topUpGas(wallet, payAmount);
+
+                    // Update local balance
+                    setCurrentBalance((parseFloat(currentBalance) + toPayVal).toString());
+                    setPayAmount('0');
+                }
             }
             updateStep('session', 'complete');
 
@@ -610,7 +597,7 @@ export function UploadForm() {
                                 id="ticket-price"
                                 type="number"
                                 step="0.1"
-                                placeholder="1.0"
+                                placeholder="0"
                                 value={price}
                                 onChange={(e) => setPrice(e.target.value)}
                                 disabled={uploading || !accountId}
@@ -701,10 +688,13 @@ export function UploadForm() {
                             ) : (
                                 <>
                                     <Upload className="mr-2 h-4 w-4" />
-                                    {parseFloat(payAmount) > 0 ? `${t.upload_page.pay_and_upload} (${payAmount} NEAR)` : t.upload_page.upload_btn}
+                                    {parseFloat(payAmount) > 0 ? t.upload_page.pay_and_upload : t.upload_page.upload_btn}
                                 </>
                             )}
                         </Button>
+
+                        {/* Manual Refund Button for Success State */}
+
                     </CardFooter>
                 </Card>
 

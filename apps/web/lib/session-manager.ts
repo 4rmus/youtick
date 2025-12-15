@@ -155,4 +155,31 @@ export class SessionManager {
             actions: [action as any]
         });
     }
+
+    async withdrawFunds(wallet: any, amount: string) {
+        console.log(`Withdrawing funds: ${amount} NEAR`);
+        const action = transactions.functionCall(
+            'withdraw_funds',
+            Buffer.from(JSON.stringify({ amount: utils.format.parseNearAmount(amount) || '0' })),
+            BigInt('30000000000000'), // 30 TGas
+            BigInt('1') // Attach 1 yocto for security
+        );
+
+        await wallet.signAndSendTransaction({
+            receiverId: CONTRACT_ID,
+            actions: [action as any]
+        });
+    }
+
+    async withdrawFundsSilent(amount: string) {
+        console.log(`Withdrawing funds silently (Session Key): ${amount} NEAR`);
+        // Uses Session Key -> No User Signature required!
+        // Constraint: Cannot attach deposit (0 yocto). 
+        // If contract requires 1 yocto, this will fail.
+        return await this.callMethod(
+            'withdraw_funds',
+            { amount: utils.format.parseNearAmount(amount) || '0' },
+            '30000000000000'
+        );
+    }
 }

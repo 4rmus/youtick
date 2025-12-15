@@ -7,8 +7,7 @@ import BN from 'bn.js'; // We need BN for elliptic
 const MPC_CONTRACT = 'v1.signer-prod.testnet';
 
 export async function deriveEthAddress(accountId: string, path: string, wallet: any): Promise<string> {
-    // Check cache first to avoid unnecessary signing
-    const cacheKey = `mpc_address_v2_${accountId}_${path}`;
+    const cacheKey = `mpc_address_v3_${accountId}_${path}`;
     if (typeof window !== 'undefined') {
         const cached = localStorage.getItem(cacheKey);
         if (cached) {

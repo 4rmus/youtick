@@ -9,8 +9,8 @@ import { ThemeProvider } from "@/components/providers/ThemeProvider";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-    title: "YouTick - Web3 Video Platform",
-    description: "Decentralized video streaming on NEAR and Livepeer",
+    title: 'youtick - Decentralized Video Streaming',
+    description: 'Experience the future of video streaming on NEAR Protocol.',
 };
 
 export default function RootLayout({

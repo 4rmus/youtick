@@ -60,7 +60,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
     }, [cid, accountId]);
 
 
-    const handlePlay = async () => {
+    const playVideo = async (isRetry: boolean = false) => {
         if (!accountId || !selector) {
             setError("Please connect your wallet to watch.");
             return;
@@ -68,7 +68,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
 
         setLoading(true);
         setError(null);
-        setStatus('Initializing...');
+        setStatus(isRetry ? 'Refreshing Session...' : 'Initializing...');
 
         try {
             const wallet = await selector.wallet();
@@ -97,7 +97,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             };
 
             // 0. Client-Side Access Control Check
-            setStatus('Checking permissions...');
+            if (!isRetry) setStatus('Checking permissions...');
             // Note: We skip client-side check if it's a UUID because we trust Lit Action will handle it 
             // and we might not have the RealCID yet.
 
@@ -106,7 +106,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid);
 
             if (isUuid) {
-                setStatus('Resolving Video Metadata...');
+                if (!isRetry) setStatus('Resolving Video Metadata...');
                 try {
                     const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
                     const rpcUrl = "/api/near-rpc";
@@ -151,7 +151,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             }
 
             // 1. Fetch Encrypted File from IPFS
-            setStatus('Fetching video from IPFS...');
+            if (!isRetry) setStatus('Fetching video from IPFS...');
             const metadataResponse = await fetch(`https://gateway.lighthouse.storage/ipfs/${targetCid}`);
             if (!metadataResponse.ok) {
                 throw new Error(`Failed to fetch from IPFS: ${metadataResponse.statusText}`);
@@ -160,13 +160,13 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             const { ciphertext, dataToEncryptHash, accessControlConditions: storedConditions } = metadata;
 
             // 2. Recover Ethereum Address (MPC)
-            setStatus('Recovering Ethereum address...');
+            if (!isRetry) setStatus('Recovering Ethereum address...');
             const derivationPath = "test"; // Fixed path for demo
             const recoveredAddress = await deriveEthAddress(accountId, derivationPath, wallet);
             console.log('Recovered MPC Address:', recoveredAddress);
 
             // 3. Get Session Signatures (Specific to this file)
-            setStatus('Getting Session Signatures...');
+            if (!isRetry) setStatus('Getting Session Signatures...');
             const sessionSigs = await lit.getSessionSigs(
                 wallet,
                 accountId,
@@ -178,7 +178,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             );
 
             // 4. Decrypt
-            setStatus('Decrypting video...');
+            if (!isRetry) setStatus('Decrypting video...');
 
             // SANITIZATION: Ensure 'chain' exists, remove 'key' (strict schema)
             const sanitizedConditions = storedConditions.map((cond: any) => {
@@ -223,10 +223,29 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
 
         } catch (err: any) {
             console.error('Decryption failed:', err);
+
+            // Check for Stale Session / Capability Error
+            if (
+                (err.message && err.message.includes('Could not find valid capability')) ||
+                (err.shortMessage && err.shortMessage.includes('Could not find valid capability')) ||
+                (err.message && err.message.includes('400')) // 400 Bad Request often from Lit Node on invalid sig
+            ) {
+                if (!isRetry) {
+                    console.warn('Caught capability error. Clearing stale session and retrying...');
+                    const { clearSessionCache } = await import('@/lib/lit');
+                    clearSessionCache(accountId);
+                    // Retry ONCE
+                    await playVideo(true);
+                    return;
+                }
+            }
+
             setError(err.message || 'Failed to decrypt video');
             setLoading(false);
         }
     };
+
+    const handlePlay = () => playVideo(false);
 
     const checkSpecificAccess = async (viewerId: string, targetCid: string) => {
         const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
@@ -344,6 +363,8 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                     ref={videoRef}
                     src={videoUrl}
                     controls
+                    controlsList="nodownload"
+                    onContextMenu={(e) => e.preventDefault()}
                     className="w-full h-full"
                     autoPlay
                 />

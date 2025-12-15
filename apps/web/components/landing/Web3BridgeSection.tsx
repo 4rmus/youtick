@@ -1,13 +1,13 @@
 import { memo } from 'react';
-import { Mail, Gift, TestTube, GraduationCap } from 'lucide-react';
+import { Layers, Database, Lock, Coins } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { COLORS, ANIMATION } from '@/lib/constants';
 
 const features = [
-    { icon: Mail, titleKey: 'fast_auth', descKey: 'fast_auth_desc', color: 'text-blue-400' },
-    { icon: Gift, titleKey: 'gift_links', descKey: 'gift_links_desc', color: 'text-pink-400' },
-    { icon: TestTube, titleKey: 'trial_accounts', descKey: 'trial_accounts_desc', color: 'text-purple-400' },
-    { icon: GraduationCap, titleKey: 'progressive', descKey: 'progressive_desc', color: 'text-emerald-400' },
+    { icon: Layers, titleKey: 'chain_abstraction', descKey: 'chain_abstraction_desc', color: 'text-blue-400' },
+    { icon: Database, titleKey: 'storage', descKey: 'storage_desc', color: 'text-pink-400' },
+    { icon: Lock, titleKey: 'encryption', descKey: 'encryption_desc', color: 'text-purple-400' },
+    { icon: Coins, titleKey: 'fees', descKey: 'fees_desc', color: 'text-emerald-400' },
 ] as const;
 
 export const Web3BridgeSection = memo(() => {
@@ -23,13 +23,10 @@ export const Web3BridgeSection = memo(() => {
                             {t.landing.web3_bridge.title}
                         </span>
                     </h2>
-                    <p className="text-zinc-400 text-lg">
-                        {t.landing.web3_bridge.subtitle}
-                    </p>
                 </div>
 
                 {/* Features Grid */}
-                <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto">
                     {features.map(({ icon: Icon, titleKey, descKey, color }, index) => (
                         <div
                             key={titleKey}
