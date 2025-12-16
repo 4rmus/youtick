@@ -10,7 +10,6 @@ import { FeaturesSection } from '@/components/landing/FeaturesSection';
 import { CompetitiveAdvantagesSection } from '@/components/landing/CompetitiveAdvantagesSection';
 import { ComparisonSection } from '@/components/landing/ComparisonSection';
 import { UseCasesSection } from '@/components/landing/UseCasesSection';
-import { Web3BridgeSection } from '@/components/landing/Web3BridgeSection';
 import { Roadmap } from '@/components/landing/Roadmap';
 import { HowItWorksSection } from '@/components/landing/HowItWorksSection';
 import { CTASection } from '@/components/landing/CTASection';
