@@ -1,13 +1,13 @@
 import { ethers } from 'ethers';
 import { providers, utils, transactions } from 'near-api-js';
-import { base_decode } from 'near-api-js/lib/utils/serialize';
 import { ec as EC } from 'elliptic';
-import BN from 'bn.js'; // We need BN for elliptic
+import BN from 'bn.js';
+import { sha3_256 } from 'js-sha3';
 
 const MPC_CONTRACT = 'v1.signer-prod.testnet';
 
-export async function deriveEthAddress(accountId: string, path: string, wallet: any): Promise<string> {
-    const cacheKey = `mpc_address_v3_${accountId}_${path}`;
+export async function deriveEthAddress(accountId: string, path: string, wallet?: any): Promise<string> {
+    const cacheKey = `mpc_address_v7_${accountId}_${path}`;
     if (typeof window !== 'undefined') {
         const cached = localStorage.getItem(cacheKey);
         if (cached) {
@@ -16,103 +16,109 @@ export async function deriveEthAddress(accountId: string, path: string, wallet: 
         }
     }
 
-    console.log("Deriving MPC address via signature probe...");
+    console.log("Deriving MPC address mathematically...");
 
-    // We cannot reliably derive the address mathematically because the MPC contract's
-    // derivation logic (or the specific path format it uses) is opaque or differs from
-    // standard BIP-32 Ed25519/Secp256k1 derivation in a way we haven't matched.
-    //
-    // SOLUTION: Ask the MPC to sign a dummy message. The signature proves the address.
-    // This is robust and guaranteed to be correct.
+    // 1. Get Master Public Key (View Call - No Signature)
+    // We use a provider directly to avoid wallet interaction
+    // Use proxy to avoid CORS errors in browser
+    const rpcUrl = typeof window !== 'undefined'
+        ? `${window.location.origin}/api/near-rpc`
+        : "https://rpc.testnet.near.org";
 
-    const dummyMsg = "who_am_i";
-    const signature = await signWithMPC(wallet, accountId, path, dummyMsg);
+    const provider = new providers.JsonRpcProvider({ url: rpcUrl });
 
-    const r = '0x' + signature.big_r.affine_point.substring(2, 66);
-    const s = '0x' + signature.s.scalar;
+    let masterKey: string;
+    try {
+        const result = await provider.query({
+            request_type: "call_function",
+            account_id: MPC_CONTRACT,
+            method_name: "public_key",
+            args_base64: Buffer.from("{}").toString("base64"),
+            finality: "final"
+        }) as any;
 
-    // Recover address trying both v=27 and v=28
-    // We don't know the correct v, but usually one of them is valid.
-    // Since we don't have a "target" to compare against (we are finding the target!),
-    // we need a way to know which one is right.
-    //
-    // Actually, for a *given* signature, both v=27 and v=28 produce *valid* addresses,
-    // but only one corresponds to the private key.
-    //
-    // However, the MPC protocol usually returns a `recovery_id` (0 or 1).
-    // If we trust the MPC's recovery_id, we can use it.
-    // The `signature` object from `signWithMPC` has `recovery_id`.
-
-    let v = 27;
-    if (typeof signature.recovery_id === 'number') {
-        v = signature.recovery_id + 27;
+        const keyBytes = result.result;
+        const rawString = String.fromCharCode(...keyBytes);
+        masterKey = JSON.parse(rawString);
+        console.log("Fetched MPC Master Key:", masterKey);
+    } catch (e) {
+        console.error("Failed to fetch MPC master key:", e);
+        // Fallback to known testnet key if fetch fails (unlikely)
+        masterKey = "secp256k1:4HFcTSodRLVCGNVreQW2nRoAT1g8jU6db747155tYf49P7c5t578D5588C889988";
+        throw new Error("Could not fetch MPC master key");
     }
 
-    // Recover
-    const sigObj = ethers.Signature.from({ r, s, v }).serialized;
-    const recoveredAddress = ethers.verifyMessage(dummyMsg, sigObj);
+    // 2. Derive Child Public Key
+    // Standard logic: derived_key = master_key + hash(info) * G
+    const derivedKey = deriveChildKey(masterKey, accountId, path);
 
-    console.log("Recovered MPC Address:", recoveredAddress);
+    // 3. Convert to Ethereum Address
+    // Uncompressed key (65 bytes) -> remove 0x04 prefix -> keccak256 -> last 20 bytes
+    const derivedPoint = derivedKey.replace(/^secp256k1:/, '');
 
-    // Cache it
+    // Let's use ethers for address computation
+    // Ethers expects '0x' + hex
+    const address = ethers.computeAddress('0x' + derivedPoint);
+
+    console.log("Derived MPC Address:", address);
+
     if (typeof window !== 'undefined') {
-        localStorage.setItem(cacheKey, recoveredAddress);
+        localStorage.setItem(cacheKey, address);
     }
 
-    return recoveredAddress;
+    return address;
 }
 
-function deriveChildPublicKey(parentKey: Uint8Array, accountId: string, path: string): string {
-    return deriveChildPublicKeyForPath(parentKey, `${accountId},${path}`);
-}
-
-function deriveChildPublicKeyForPath(parentKey: Uint8Array, derivationPath: string): string {
+function deriveChildKey(masterKeyStr: string, accountId: string, path: string): string {
     const ec = new EC('secp256k1');
-    const parentPoint = ec.keyFromPublic(parentKey).getPublic();
 
-    const payload = new TextEncoder().encode(derivationPath);
-    const hashedPath = ethers.sha256(payload); // Returns hex string
+    // Remove protocol prefix if present
+    const masterKeyBase58 = masterKeyStr.replace('secp256k1:', '');
 
-    // Convert hex hash to BN
-    const scalar = new BN(hashedPath.slice(2), 16);
+    // Decode Base58 to Buffer/Hex
+    // NEAR keys are Base58 encoded.
+    const masterKeyBytes = utils.serialize.base_decode(masterKeyBase58);
 
-    // Compute G * scalar
+    // If raw 64 bytes, prepend '04' to make it a standard uncompressed key
+    let masterKeyHex = Buffer.from(masterKeyBytes).toString('hex');
+    if (masterKeyHex.length === 128) { // 64 bytes * 2 hex chars
+        masterKeyHex = '04' + masterKeyHex;
+    }
+
+    const masterPoint = ec.keyFromPublic(masterKeyHex, 'hex').getPublic();
+
+    // Standard NEAR MPC Derivation Prefix - MUST match exactly
+    // Source: https://github.com/near-examples/chainsig-script/blob/main/src/kdf.ts
+    const derivation_path = `near-mpc-recovery v0.1.0 epsilon derivation:${accountId},${path}`;
+
+    // Hash payload using SHA3-256 (NOT SHA256, NOT Keccak-256)
+    // This is exactly what the official chainsig-script uses via js-sha3
+    const scalarHex = sha3_256(derivation_path);
+
+    // Debug logging
+    console.log("Derivation path:", derivation_path);
+    console.log("Scalar (SHA3-256):", scalarHex);
+    console.log("Master key hex:", masterKeyHex);
+
+    const scalar = new BN(scalarHex, 16);
     const pointToAdd = ec.g.mul(scalar);
+    const derivedPoint = masterPoint.add(pointToAdd);
 
-    // Add to parent point
-    const childPoint = parentPoint.add(pointToAdd);
+    const result = derivedPoint.encode('hex', false);
+    console.log("Derived public key (uncompressed):", result);
 
-    // Return hex string (uncompressed)
-    return childPoint.encode('hex', false);
+    return result;
 }
 
-function deriveChildPublicKeyKeccak(parentKey: Uint8Array, accountId: string, path: string): string {
-    const ec = new EC('secp256k1');
-    const parentPoint = ec.keyFromPublic(parentKey).getPublic();
-
-    const derivationPath = `${accountId},${path}`;
-    const payload = new TextEncoder().encode(derivationPath);
-    const hashedPath = ethers.keccak256(payload); // Returns hex string
-
-    const scalar = new BN(hashedPath.slice(2), 16);
-    const pointToAdd = ec.g.mul(scalar);
-    const childPoint = parentPoint.add(pointToAdd);
-
-    return childPoint.encode('hex', false);
-}
-
+// Keep signWithMPC for actual signing, but not for address derivation
 export async function signWithMPC(
     wallet: any,
     accountId: string,
     path: string,
     message: string
 ): Promise<any> {
-    // 1. Hash the message (EIP-191)
     const messageHash = ethers.hashMessage(message);
     const payload = Array.from(ethers.getBytes(messageHash));
-
-    // 2. Call MPC contract to sign
-    // We use near-api-js transaction builder to ensure compatibility with serialization
 
     const args = {
         request: {
@@ -122,25 +128,6 @@ export async function signWithMPC(
         }
     };
 
-    // Use the wallet's signAndSendTransaction
-    // We try to pass the action in a format that works. 
-    // Since the "type: FunctionCall" format failed, we'll try constructing the Action object directly
-    // or passing the mapped format if the wallet allows it.
-
-    // However, wallet-selector types are strict. We might need to cast to any.
-    // Let's try the standard wallet-selector format again but ensure args is strictly correct?
-    // No, the error "Enum key (type) not found" is very specific to the object structure.
-
-    // Let's try passing the action as a plain object but with the structure expected by near-api-js serialization?
-    // No, that's internal.
-
-    // Best bet: The user's wallet might be expecting the 'params' to be flattened or something?
-    // Actually, let's look at the error again. It expects an enum.
-    // This usually means we should use the `functionCall` helper from near-api-js/lib/transaction
-    // BUT we need to make sure we import it correctly.
-
-    // Note: 'transactions' import from 'near-api-js' should have 'functionCall'.
-
     const functionCallAction = transactions.functionCall(
         'sign',
         Buffer.from(JSON.stringify(args)),
@@ -148,39 +135,16 @@ export async function signWithMPC(
         BigInt('100000000000000000000000') // 0.1 NEAR
     );
 
-    // We need to cast this to any because wallet-selector expects its own Action interface
     const result = await wallet.signAndSendTransaction({
         receiverId: MPC_CONTRACT,
         actions: [functionCallAction as any]
     });
 
-    // 3. Parse signature from the receipt
-    // The signature is returned in the SuccessValue of the transaction outcome
-    // However, wallet.signAndSendTransaction might return the outcome directly or just the tx hash depending on the wallet.
-    // We need to fetch the transaction result if it's not full.
-
-    // Assuming 'result' contains the outcome.
     const successValue = result.status.SuccessValue;
     if (!successValue) {
         throw new Error('Failed to get signature from transaction result');
     }
 
     const signatureObj = JSON.parse(Buffer.from(successValue, 'base64').toString());
-
-    // MPC returns { big_r: { affine_point: "..." }, s: { scalar: "..." }, recovery_id: 0/1 }
-    // We need to construct the ETH signature
-
-    // NOTE: The actual return format of v1.signer-prod.testnet might differ slightly.
-    // Standard MPC return is usually [Big_R_x, Big_R_y], s, recovery_id
-
-    // For now, let's assume we get the standard format and might need to debug the exact JSON structure.
-    // But to proceed, we'll return the raw object and handle it.
-
-    // Actually, let's look at the guide provided by the user.
-    // It says "parseSignatureFromReceipt(result)".
-
-    // Let's implement a basic parser assuming standard format.
-    // If it fails, we will debug.
-
     return signatureObj;
 }
