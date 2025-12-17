@@ -3,6 +3,7 @@ import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from "@/components/ui/button";
 import { Loader2, Ticket, Check, AlertCircle } from "lucide-react";
 import { transactions, utils, connect, keyStores } from 'near-api-js';
+import { SessionManager } from '@/lib/session-manager';
 
 interface TicketPurchaseCardProps {
     cid: string;
@@ -18,21 +19,23 @@ interface EventDetails {
 
 export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCardProps) {
     const { selector, accountId } = useWallet();
-    const [loading, setLoading] = useState(false);
-    const [purchasing, setPurchasing] = useState(false);
+    const [loading, setLoading] = useState(false); // Global loading (initial fetch)
+    const [actionLoading, setActionLoading] = useState(false); // Action button loading
     const [eventDetails, setEventDetails] = useState<EventDetails | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [hasSessionKey, setHasSessionKey] = useState<boolean | null>(null);
 
+    // 1. Initial Load: Fetch Details & Check Session Key
     useEffect(() => {
         if (!cid) return;
 
-        const fetchDetails = async () => {
+        const init = async () => {
             setLoading(true);
             try {
+                // Fetch Event Details
                 const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0.utick.testnet';
-                const rpcUrl = "/api/near-rpc"; // Use proxy
+                const rpcUrl = "/api/near-rpc";
 
-                // Ensure we use the proxy for this call too
                 const near = await connect({
                     networkId: 'testnet',
                     nodeUrl: typeof window !== 'undefined' ? window.location.origin + rpcUrl : 'https://rpc.testnet.near.org',
@@ -50,7 +53,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
                     let title = event.title;
                     let media = "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png";
 
-                    // Parse Title Schema: RealCID:::ThumbnailCID:::Title
                     if (title && title.includes(':::')) {
                         const parts = title.split(':::');
                         if (parts.length >= 3) {
@@ -69,63 +71,118 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
                         uploader: event.creator_id
                     });
                 }
+
+                // Check Session Key (using static import now)
+                if (accountId) {
+                    const sessionManager = new SessionManager(accountId);
+                    const hasKey = await sessionManager.hasSessionKey();
+                    setHasSessionKey(hasKey);
+                }
+
             } catch (e) {
-                console.error("Error fetching ticket details:", e);
+                console.error("Error loading ticket info:", e);
                 setError("Failed to load ticket info");
             } finally {
                 setLoading(false);
             }
         };
 
-        fetchDetails();
-    }, [cid]);
+        init();
+    }, [cid, accountId]);
 
-    const handlePurchase = async () => {
-        if (!selector || !accountId || !eventDetails) return;
-        setPurchasing(true);
+    // Action 1: Setup Account (Add Session Key)
+    const handleSetup = async () => {
+        if (!selector || !accountId) return;
+        setActionLoading(true);
+        setError(null);
         try {
             const wallet = await selector.wallet();
-            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
+            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0.utick.testnet';
+            const sessionManager = new SessionManager(accountId);
 
-            // 0.01 NEAR to cover storage cost (panic was 0.00536 NEAR)
-            // Even if price is 0, user must pay for storage
+            console.log("Requesting access key...");
+            const keyPair = utils.KeyPair.fromRandom('ed25519');
+            const publicKey = keyPair.getPublicKey().toString();
+
+            // Just store locally for now, standard logic implies we trust the wallet tx to succeed
+            await sessionManager.saveSessionKey(keyPair);
+
+            await wallet.signAndSendTransaction({
+                receiverId: accountId,
+                actions: [
+                    transactions.addKey(
+                        utils.PublicKey.from(publicKey),
+                        transactions.functionCallAccessKey(
+                            contractId,
+                            [],
+                            BigInt(utils.format.parseNearAmount('0.25') || '0')
+                        )
+                    )
+                ]
+            });
+
+            // If we get here, tx succeeded
+            setHasSessionKey(true);
+        } catch (e) {
+            console.error("Setup failed:", e);
+            setError("Setup failed. Please try again.");
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    // Action 2: Buy Ticket (Standard Purchase + Deposit)
+    const handlePurchase = async () => {
+        if (!selector || !accountId || !eventDetails) return;
+        setActionLoading(true);
+        setError(null);
+        try {
+            const wallet = await selector.wallet();
+            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0.utick.testnet';
+
+            const actions = [];
             const MIN_STORAGE_COST = utils.format.parseNearAmount('0.01');
             const priceYocto = utils.format.parseNearAmount(eventDetails.price) || '0';
-
             let finalDeposit = BigInt(priceYocto);
             const minStorage = BigInt(MIN_STORAGE_COST || '0');
 
             if (finalDeposit < minStorage) {
-                console.log(`Price (${eventDetails.price}) is less than storage cost. Attaching 0.01 NEAR.`);
                 finalDeposit = minStorage;
             }
 
-            const action = transactions.functionCall(
-                'buy_ticket',
-                Buffer.from(JSON.stringify({
-                    receiver_id: accountId,
-                    encrypted_cid: cid
-                })),
-                BigInt('30000000000000'), // 30 Tgas
-                finalDeposit
+            actions.push(
+                transactions.functionCall(
+                    'buy_ticket',
+                    Buffer.from(JSON.stringify({
+                        receiver_id: accountId,
+                        encrypted_cid: cid
+                    })),
+                    BigInt('30000000000000'), // 30 Tgas
+                    finalDeposit
+                )
+            );
+
+            actions.push(
+                transactions.functionCall(
+                    'deposit_funds',
+                    Buffer.from(JSON.stringify({})),
+                    BigInt('30000000000000'), // 30 TGas
+                    BigInt(utils.format.parseNearAmount('1') || '0')
+                )
             );
 
             await wallet.signAndSendTransaction({
                 receiverId: contractId,
-                actions: [action as any],
+                actions: actions,
             });
 
-            // Lit session will be created on-demand when user clicks 'Play' in the video player.
-            // This avoids the second signature prompt during purchase.
-
-            // Note: success handling depends on redirect or callback
             if (onPurchaseSuccess) onPurchaseSuccess();
 
         } catch (e) {
             console.error("Purchase failed:", e);
             setError("Transaction failed");
         } finally {
-            setPurchasing(false);
+            setActionLoading(false);
         }
     };
 
@@ -149,17 +206,14 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
                     className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity duration-500 blur-sm"
                 />
 
-                {/* Overlay Gradient */}
                 <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-transparent to-transparent opacity-90" />
 
-                {/* Lock Icon */}
                 <div className="absolute inset-0 flex items-center justify-center">
                     <div className="bg-black/50 backdrop-blur-md p-4 rounded-full border border-white/10 shadow-xl">
                         <Ticket className="w-6 h-6 text-white" />
                     </div>
                 </div>
 
-                {/* Badge */}
                 <div className="absolute top-3 right-3 bg-red-500/90 backdrop-blur-md px-3 py-1 rounded-full border border-red-400/20 shadow-lg glow-red">
                     <span className="text-[10px] font-bold text-white tracking-wider uppercase">Access Required</span>
                 </div>
@@ -202,22 +256,38 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
                         <span className="text-xl font-bold text-white leading-none">{eventDetails.price} <span className="text-xs font-normal text-zinc-400">NEAR</span></span>
                     </div>
 
-                    <Button
-                        onClick={handlePurchase}
-                        disabled={purchasing || !accountId}
-                        className="bg-white text-black hover:bg-zinc-200 font-bold shadow-lg shadow-white/5"
-                    >
-                        {purchasing ? (
-                            <>
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                Mining...
-                            </>
-                        ) : (
-                            <>
-                                Buy Ticket
-                            </>
-                        )}
-                    </Button>
+
+                    {hasSessionKey === false ? (
+                        <Button
+                            onClick={handleSetup}
+                            disabled={actionLoading || !accountId}
+                            className="bg-zinc-100 text-zinc-900 hover:bg-zinc-200 font-bold shadow-lg shadow-white/5"
+                        >
+                            {actionLoading ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Initializing...
+                                </>
+                            ) : (
+                                "Initialize Account"
+                            )}
+                        </Button>
+                    ) : (
+                        <Button
+                            onClick={handlePurchase}
+                            disabled={actionLoading || !accountId || hasSessionKey === null}
+                            className="bg-white text-black hover:bg-zinc-200 font-bold shadow-lg shadow-white/5"
+                        >
+                            {actionLoading ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Mining...
+                                </>
+                            ) : (
+                                "Buy Ticket"
+                            )}
+                        </Button>
+                    )}
                 </div>
             </div>
         </div>

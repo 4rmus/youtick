@@ -1,7 +1,7 @@
 import { keyStores, KeyPair, connect, Contract, utils, providers, transactions } from 'near-api-js';
 
 const NETWORK_ID = 'testnet';
-const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
+const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0.utick.testnet';
 
 export class SessionManager {
     private keyStore: any;
@@ -80,6 +80,10 @@ export class SessionManager {
         );
     }
 
+    async saveSessionKey(keyPair: any): Promise<void> {
+        await this.keyStore.setKey(NETWORK_ID, this.accountId, keyPair);
+    }
+
     async callMethod(method: string, args: any, gas: string = '300000000000000'): Promise<any> {
         const keyPair = await this.keyStore.getKey(NETWORK_ID, this.accountId);
         if (!keyPair) {
@@ -130,12 +134,16 @@ export class SessionManager {
         }
     }
 
-    async ensureGas(wallet: any, nodeUrl: string, minAmount: number = 0.2): Promise<void> {
+    async hasSufficientGas(nodeUrl: string, minAmount: number = 0.2): Promise<boolean> {
         const currentBalance = await this.getAccountBalance(nodeUrl);
-        console.log(`Current Prepaid Gas Balance: ${currentBalance} NEAR`);
+        console.log(`Current Prepaid Gas Balance: ${currentBalance} NEAR, Required: ${minAmount}`);
+        return currentBalance >= minAmount;
+    }
 
-        if (currentBalance < minAmount) {
-            console.log(`Low gas (< ${minAmount}), triggering Top Up...`);
+    async ensureGas(wallet: any, nodeUrl: string, minAmount: number = 0.2): Promise<void> {
+        const sufficient = await this.hasSufficientGas(nodeUrl, minAmount);
+        if (!sufficient) {
+            console.log(`Low gas, triggering Top Up...`);
             // Deposit 1 NEAR if low
             await this.topUpGas(wallet, '1');
         }
