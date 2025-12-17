@@ -27,6 +27,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
 
     const [checkingAccess, setCheckingAccess] = useState(true);
     const [hasAccess, setHasAccess] = useState<boolean | null>(null);
+    const [needsTopUp, setNeedsTopUp] = useState(false);
 
     useEffect(() => {
         let mounted = true;
@@ -59,6 +60,28 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
         return () => { mounted = false; };
     }, [cid, accountId]);
 
+    const handleTopUp = async () => {
+        if (!selector || !accountId) {
+            setError("Wallet not connected");
+            return;
+        }
+        try {
+            setLoading(true);
+            setStatus('Processing Top Up...');
+            const wallet = await selector.wallet();
+            const sessionManager = new SessionManager(accountId);
+            // Deposit 1 NEAR
+            await sessionManager.topUpGas(wallet, '1');
+            setNeedsTopUp(false);
+            // Resume play after topup
+            await playVideo(true);
+        } catch (e) {
+            console.error("Top Up Failed:", e);
+            setError("Top Up Failed. Please try again.");
+            setLoading(false);
+        }
+    };
+
 
     const playVideo = async (isRetry: boolean = false) => {
         if (!accountId || !selector) {
@@ -68,6 +91,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
 
         setLoading(true);
         setError(null);
+        setNeedsTopUp(false);
         setStatus(isRetry ? 'Refreshing Session...' : 'Initializing...');
 
         try {
@@ -164,6 +188,27 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             const derivationPath = "test"; // Fixed path for demo
             const recoveredAddress = await deriveEthAddress(accountId, derivationPath, wallet);
             console.log('Recovered MPC Address:', recoveredAddress);
+
+            // 2.5 Ensure Gas for MPC (Session Key Mode)
+            // We check if the user has enough prepaid gas to cover the MPC signature cost
+            const sessionManager = new SessionManager(accountId);
+            if (await sessionManager.hasSessionKey()) {
+                const rpcUrl = typeof window !== 'undefined'
+                    ? `${window.location.origin}/api/near-rpc`
+                    : "https://rpc.testnet.near.org";
+
+                // CHECK GAS - NON BLOCKING
+                // We use 0.75 NEAR threshold
+                const hasGas = await sessionManager.hasSufficientGas(rpcUrl, 0.75);
+
+                if (!hasGas) {
+                    // STOP FLOW HERE
+                    console.warn("Insufficient Gas for MPC. Halting flow to request User TopUp.");
+                    setNeedsTopUp(true);
+                    setLoading(false);
+                    return; // Exit function, wait for user click
+                }
+            }
 
             // 3. Get Session Signatures (Specific to this file)
             if (!isRetry) setStatus('Getting Session Signatures...');
@@ -309,6 +354,23 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                             <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-zinc-500" />
                             <p className="text-xs text-zinc-500">Verifying access...</p>
                         </div>
+                    ) : needsTopUp ? (
+                        <div className="relative z-10 p-6 bg-black/80 backdrop-blur-md rounded-xl border border-yellow-500/30 text-center max-w-sm">
+                            <div className="h-12 w-12 bg-yellow-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <span className="text-2xl">⛽</span>
+                            </div>
+                            <h3 className="text-xl font-bold mb-2 text-white">Prepaid Gas Low</h3>
+                            <p className="text-sm text-slate-300 mb-6">
+                                The MPC signer needs a small gas deposit to verify your identity without popups.
+                                Your balance is low.
+                            </p>
+                            <Button onClick={handleTopUp} size="lg" className="w-full gap-2 bg-yellow-500 hover:bg-yellow-600 text-black font-bold">
+                                Top Up Gas (1 NEAR)
+                            </Button>
+                            <p className="text-xs text-zinc-500 mt-3">
+                                This is a one-time deposit. Unused funds remain yours.
+                            </p>
+                        </div>
                     ) : loading ? (
                         <div className="text-center">
                             <Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-primary" />
@@ -318,7 +380,24 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                         // SHOW TICKET CARD IF NO ACCESS OR ERROR
                         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 backdrop-blur-md w-full h-full p-4">
                             <div className="w-full max-w-sm">
-                                <TicketPurchaseCard cid={cid} onPurchaseSuccess={() => window.location.reload()} />
+                                <TicketPurchaseCard
+                                    cid={cid}
+                                    onPurchaseSuccess={async () => {
+                                        // After purchase, immediately create session in background
+                                        // This uses the gas from ticket purchase, making first play instant
+                                        setHasAccess(true);
+                                        setStatus('Preparing session...');
+                                        try {
+                                            // Pre-create session so first play is gas-free
+                                            await playVideo(false);
+                                        } catch (e) {
+                                            // Session creation failed, user can retry with play button
+                                            console.warn('Auto-session creation failed, user can retry:', e);
+                                            setLoading(false);
+                                            setStatus('');
+                                        }
+                                    }}
+                                />
                                 <div className="mt-4 text-center">
                                     <Button onClick={handlePlay} variant="ghost" className="text-zinc-400 hover:text-white text-xs">
                                         Already bought? Check Access Again
