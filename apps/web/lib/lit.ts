@@ -8,7 +8,7 @@ export const LIT_ACTION_CID = "QmR1n4XYgp6g6EE2vxTkp8XbzZFb5Nv2TkzWcNGgoWKxYf";
 
 // Session cache key prefix
 const SESSION_CACHE_KEY = 'lit_session_sigs';
-const SESSION_CACHE_EXPIRY = 6 * 60 * 60 * 1000; // 6 hours (safe side to avoid stale sessions)
+const SESSION_CACHE_EXPIRY = 30 * 24 * 60 * 60 * 1000; // 30 days - minimizes gas costs for viewers
 
 const client = new LitNodeClient({
     litNetwork: "datil-dev",
@@ -112,32 +112,20 @@ class Lit {
                     throw new Error("Missing required fields in authNeededCallback");
                 }
 
-                // 1. Probe Address with Dummy Signature (to ensure SIWE matches signer)
-                // We ignore the `ethAddress` passed in constructor/arg and trust the key.
-                const probeMsg = "probe_address_for_siwe";
-                console.log("Probing MPC address with dummy message...");
-                const probeSig = await signWithMPC(wallet, accountId, derivationPath, probeMsg);
-
-                // Recover Address from Probe
-                const r_probe = '0x' + probeSig.big_r.affine_point.substring(2, 66);
-                const s_probe = '0x' + probeSig.s.scalar;
-                let v_probe = 27;
-                if (typeof probeSig.recovery_id === 'number') {
-                    v_probe = probeSig.recovery_id + 27;
+                // Use mathematical derivation directly (verified to work correctly)
+                // This saves one MPC call per video playback
+                if (!ethAddress) {
+                    throw new Error("ethAddress is required - mathematical derivation should have provided it");
                 }
-                const probeSignature = ethers.Signature.from({ r: r_probe, s: s_probe, v: v_probe }).serialized;
-                let derivedAddress = ethers.verifyMessage(probeMsg, probeSignature);
+                const derivedAddress = ethAddress;
+                console.log("Using derived MPC Address:", derivedAddress);
 
-                // Double check recovery if needed (v=27 vs 28) logic could be here, but usually one works. 
-                // Since we don't have a "target", we have to trust the `recovery_id` returned by MPC.
-                console.log("Probed MPC Address:", derivedAddress);
-
-                // 2. Create SIWE Message with the Correct Address
+                // Create SIWE Message with the Derived Address
                 const toSign = await createSiweMessageWithRecaps({
                     uri,
                     expiration,
                     resources: resourceAbilityRequests,
-                    walletAddress: derivedAddress, // USE PROBED ADDRESS
+                    walletAddress: derivedAddress,
                     nonce: await this.litNodeClient.getLatestBlockhash(),
                     litNodeClient: this.litNodeClient,
                 });
@@ -156,16 +144,31 @@ class Lit {
                 const signature = ethers.Signature.from({ r: r_val, s: s_val, v: v_val }).serialized;
 
                 // Verify
-                const recoveredAddr = ethers.verifyMessage(toSign, signature);
+                let recoveredAddr = ethers.verifyMessage(toSign, signature);
                 console.log("Final Session Sig Address:", recoveredAddr);
 
+                let validSignature = signature;
+
                 if (recoveredAddr.toLowerCase() !== derivedAddress.toLowerCase()) {
-                    console.warn("Address mismatch between Probe and SIWE sign! Retrying verify with v-flip...");
-                    // This implies the session key was stable, but maybe `v` is flaky?
+                    console.warn("Address mismatch! Retrying with v-flip...");
+                    const flippedV = v_val === 27 ? 28 : 27;
+                    const flippedSignature = ethers.Signature.from({ r: r_val, s: s_val, v: flippedV }).serialized;
+                    const recoveredFlipped = ethers.verifyMessage(toSign, flippedSignature);
+
+                    if (recoveredFlipped.toLowerCase() === derivedAddress.toLowerCase()) {
+                        console.log("v-flip successful! Correct address recovered:", recoveredFlipped);
+                        recoveredAddr = recoveredFlipped;
+                        validSignature = flippedSignature;
+                    } else {
+                        console.error("Critical: Address mismatch even after v-flip!", {
+                            expected: derivedAddress,
+                            got: recoveredFlipped
+                        });
+                    }
                 }
 
                 return {
-                    sig: signature,
+                    sig: validSignature,
                     derivedVia: "web3.eth.personal.sign",
                     signedMessage: toSign,
                     address: derivedAddress,
