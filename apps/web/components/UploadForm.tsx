@@ -113,8 +113,8 @@ export function UploadForm() {
 
     const recalculatePayAmount = (feeStr: string, balance: number) => {
         const fee = parseFloat(feeStr) || 0;
-        // Total needed = Storage Fee + 1 NEAR Buffer
-        const totalNeeded = fee + 1.0;
+        // Total needed = Storage Fee + 0.3 NEAR Buffer (enough for 1 MPC signature)
+        const totalNeeded = fee + 0.3;
 
         let toPay = totalNeeded - balance;
         if (toPay < 0) toPay = 0;
@@ -472,38 +472,12 @@ export function UploadForm() {
             const { deriveEthAddress } = await import('@/lib/chain-signatures');
             const derivationPath = 'youtick-demo,chunky-paste.testnet,v1';
 
-            // 1. Discover the correct MPC address
-            const dummyMessage = "get_address";
-            console.log('Step 1: Signing dummy message to recover address...');
-            setStatus('Recovering Address via Session Key...');
+            // 1. Get MPC address using mathematical derivation (no MPC call needed!)
             updateStep('address', 'loading');
+            setStatus('Deriving MPC Address...');
 
-            const dummyHash = ethers.sha256(ethers.toUtf8Bytes(dummyMessage));
-            const dummyPayload = ethers.getBytes(dummyHash);
-            const dummyPayloadArray = Array.from(dummyPayload);
-
-            const dummySignatureResult = await sessionManager.callMethod('sign_with_mpc', {
-                payload: dummyPayloadArray,
-                path: derivationPath,
-                key_version: 0
-            });
-
-            console.log("Dummy Signature Result:", dummySignatureResult);
-            const dummySignatureObj = dummySignatureResult;
-
-            const dummyR = '0x' + dummySignatureObj.big_r.affine_point.substring(2, 66);
-            const dummyS = '0x' + dummySignatureObj.s.scalar;
-            const dummyV = dummySignatureObj.recovery_id + 27;
-
-            const dummySignature = ethers.Signature.from({
-                r: dummyR,
-                s: dummyS,
-                v: dummyV
-            }).serialized;
-
-            const recoveredAddress = ethers.verifyMessage(dummyMessage, dummySignature);
-
-            console.log('Recovered MPC Address:', recoveredAddress);
+            const recoveredAddress = await deriveEthAddress(accountId, derivationPath);
+            console.log('Derived MPC Address (mathematical):', recoveredAddress);
             updateStep('address', 'complete');
 
             // 2. Get Auth Message from Lighthouse

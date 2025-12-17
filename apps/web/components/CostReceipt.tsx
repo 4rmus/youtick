@@ -27,7 +27,7 @@ export function CostReceipt({ storageFee, currentBalance, payAmount, loading }: 
 
                 <div className="flex justify-between items-center text-zinc-300">
                     <span>{t.upload_page.cost_receipt.processing_fee}</span>
-                    <span className="font-mono">1.00 NEAR</span>
+                    <span className="font-mono">0.30 NEAR</span>
                 </div>
 
                 <Separator className="bg-white/10" />
