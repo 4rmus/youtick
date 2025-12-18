@@ -1,10 +1,10 @@
 import { LitNodeClient } from "@lit-protocol/lit-node-client";
 import { LitNetwork, LitAbility } from "@lit-protocol/constants";
 import { encryptFile, decryptToFile } from "@lit-protocol/encryption";
-import { createSiweMessageWithRecaps, generateAuthSig, LitAccessControlConditionResource } from "@lit-protocol/auth-helpers";
+import { createSiweMessageWithRecaps, generateAuthSig, LitAccessControlConditionResource, LitPKPResource } from "@lit-protocol/auth-helpers";
 import { ethers } from "ethers";
 
-export const LIT_ACTION_CID = "QmR1n4XYgp6g6EE2vxTkp8XbzZFb5Nv2TkzWcNGgoWKxYf";
+export const LIT_ACTION_CID = "QmZhqF9xZAJTTRyUR4d5L1zt83MByXaXUQuaU3a7gKdsh6";
 
 // Session cache key prefix
 const SESSION_CACHE_KEY = 'lit_session_sigs';
@@ -246,6 +246,84 @@ class Lit {
     async getLatestBlockhash() {
         await this.connect();
         return this.litNodeClient.getLatestBlockhash();
+    }
+
+    /**
+     * Get session signatures using a PKP (signless experience).
+     * Uses Lit Action to verify NEAR signature and authorize the PKP.
+     * 
+     * @param pkpPublicKey - PKP's public key (from minting)
+     * @param pkpEthAddress - PKP's ETH address
+     * @param nearAccountId - Original NEAR account ID for cache key
+     * @param nearSignature - NEAR wallet signature (stored during PKP linking)
+     * @param nearMessage - Message that was signed
+     * @param nearPublicKey - NEAR public key that signed
+     */
+    async getSessionSigsWithPKP(
+        pkpPublicKey: string,
+        pkpEthAddress: string,
+        nearAccountId: string,
+        nearSignature?: string,
+        nearMessage?: string,
+        nearPublicKey?: string
+    ) {
+        await this.connect();
+        console.log("getSessionSigsWithPKP called for:", nearAccountId, "PKP:", pkpEthAddress);
+
+        // Check cache with PKP-specific key
+        const cacheKey = `pkp_${nearAccountId}`;
+        const cachedSigs = getCachedSessionSigs(cacheKey);
+        if (cachedSigs) {
+            console.log("Using cached PKP session sigs");
+            return cachedSigs;
+        }
+
+        // Verify we have NEAR signature for Lit Action
+        if (!nearSignature || !nearMessage || !nearPublicKey) {
+            throw new Error("NEAR signature data required for PKP session sigs. Please re-link your PKP.");
+        }
+
+        // Get the Lit Action IPFS CID from PKP info (stored during minting) or environment
+        const pkpDataRaw = localStorage.getItem(`lit_pkp_${nearAccountId}`);
+        const pkpData = pkpDataRaw ? JSON.parse(pkpDataRaw) : null;
+        const litActionIpfsCid = pkpData?.litActionCid || process.env.NEXT_PUBLIC_LIT_ACTION_IPFS_CID;
+
+        if (!litActionIpfsCid) {
+            throw new Error("Lit Action IPFS CID not found. PKP may have been minted without permitted action. Please re-mint PKP.");
+        }
+
+        console.log("Using Lit Action IPFS CID for session sigs:", litActionIpfsCid);
+
+        // Use getLitActionSessionSigs with IPFS CID instead of inline code
+        // This must match the permitted action registered during PKP minting
+        const sessionSigs = await this.litNodeClient.getLitActionSessionSigs({
+            pkpPublicKey,
+            litActionIpfsId: litActionIpfsCid, // Use IPFS CID instead of litActionCode
+            jsParams: {
+                publicKey: nearPublicKey,
+                sig: nearSignature,
+                message: nearMessage
+            },
+            resourceAbilityRequests: [
+                {
+                    resource: new LitAccessControlConditionResource('*'),
+                    ability: LitAbility.AccessControlConditionDecryption
+                },
+                {
+                    resource: new LitAccessControlConditionResource('*'),
+                    ability: LitAbility.AccessControlConditionSigning
+                },
+                {
+                    resource: new LitPKPResource('*'),
+                    ability: LitAbility.PKPSigning
+                }
+            ],
+            expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
+        });
+
+        console.log("PKP Session Sigs created with Lit Action verification!");
+        setCachedSessionSigs(cacheKey, sessionSigs);
+        return sessionSigs;
     }
 }
 

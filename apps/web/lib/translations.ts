@@ -85,12 +85,12 @@ export const translations = {
             },
             progress_title: "Upload Progress",
             steps: {
-                session: "Session & Gas Setup",
-                address: "MPC Address Verification",
-                thumbnail: "Thumbnail Upload",
-                encrypt: "File Encryption",
-                upload: "IPFS Upload (Lighthouse)",
-                mint: "Payment & Blockchain Mint"
+                session: "Preparing Identity",
+                address: "Verifying MPC Access",
+                thumbnail: "Uploading Cover",
+                encrypt: "Securing Video",
+                upload: "Finalizing Storage",
+                mint: "Publishing to Blockchain"
             }
         },
         watch_page: {
@@ -403,12 +403,12 @@ export const translations = {
             },
             progress_title: "Yükleme Durumu",
             steps: {
-                session: "Oturum & Gas Kurulumu",
-                address: "MPC Adres Doğrulama",
-                thumbnail: "Küçük Resim Yükleme",
-                encrypt: "Dosya Şifreleme",
-                upload: "IPFS Yükleme (Lighthouse)",
-                mint: "Ödeme & Blokzincir Basımı"
+                session: "Kimlik Hazırlanıyor",
+                address: "MPC Erişimi Doğrulanıyor",
+                thumbnail: "Kapak Fotoğrafı Yükleniyor",
+                encrypt: "Video Şifreleniyor",
+                upload: "Depolama Tamamlanıyor",
+                mint: "Blockchain'de Yayınlanıyor"
             }
         },
         watch_page: {

@@ -7,53 +7,58 @@ import { LitPKPResource } from "@lit-protocol/auth-helpers";
 // Ideally this is imported from the file we just created, but for strict typing 
 // and bundling/loading issues in frontend, defining it here or fetching it is common.
 export const VERIFY_NEAR_LIT_ACTION_CODE = `
-const verifyNearSignature = async () => {
+(async () => {
   try {
-    const { publicKey, sig, message } = jsParams;
+    const params = typeof jsParams !== 'undefined' ? jsParams : {};
+    const { publicKey, sig, message } = params;
+    
     if (!publicKey || !sig || !message) {
-      throw new Error("Missing params: publicKey, sig, message");
+      throw new Error("Missing params: publicKey, sig, message in jsParams");
     }
 
-    // Import TweetNaCl from an ESM CDN supported by Lit
     const nacl = await import("https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/+esm");
     const bs58 = await import("https://cdn.jsdelivr.net/npm/bs58@5.0.0/+esm");
     
-    console.log("Verifying for:", publicKey);
+    console.log("Verifying NEAR signature for:", publicKey);
 
     let pubKeyBytes;
     if (publicKey.startsWith("ed25519:")) {
         pubKeyBytes = bs58.default.decode(publicKey.split(":")[1]);
-    } else if (publicKey.length === 64 || publicKey.length === 66) {
-        // Hex string
-        const cleanHex = publicKey.startsWith("0x") ? publicKey.slice(2) : publicKey;
-        pubKeyBytes = new Uint8Array(cleanHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
     } else {
-        // Assume raw base58
         pubKeyBytes = bs58.default.decode(publicKey);
     }
 
-    const cleanSig = sig.startsWith("0x") ? sig.slice(2) : sig;
-    const sigBytes = new Uint8Array(cleanSig.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+    let sigBytes;
+    const isBase64 = (sig.length % 4 === 0) && (/[A-Za-z0-9+/=]/.test(sig));
+    if (isBase64) {
+        try {
+            const binaryString = atob(sig);
+            sigBytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                sigBytes[i] = binaryString.charCodeAt(i);
+            }
+        } catch (e) {
+            const cleanSig = sig.startsWith("0x") ? sig.slice(2) : sig;
+            sigBytes = new Uint8Array(cleanSig.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+        }
+    } else {
+        const cleanSig = sig.startsWith("0x") ? sig.slice(2) : sig;
+        sigBytes = new Uint8Array(cleanSig.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+    }
 
     const msgBytes = new TextEncoder().encode(message);
-
     const verified = nacl.default.sign.detached.verify(msgBytes, sigBytes, pubKeyBytes);
 
-    console.log("Verification Result:", verified);
+    if (!verified) {
+      throw new Error("NEAR Signature Verification Failed");
+    }
 
-    Lit.Actions.setResponse({ 
-      response: JSON.stringify({ 
-        verified: verified, 
-        uid: publicKey 
-      })
-    });
+    Lit.Actions.setResponse({ response: JSON.stringify({ verified: true, uid: publicKey }) });
   } catch (e) {
-    console.log("Verification Error:", e);
-    Lit.Actions.setResponse({ response: JSON.stringify({ verified: false, error: e.toString() }) });
+    console.log("Lit Action Error:", e.toString());
+    throw e;
   }
-};
-
-verifyNearSignature();
+})();
 `;
 
 
@@ -140,42 +145,102 @@ export class PKPManager {
     }
 
     /**
-     * Mint a PKP directly via contracts (no Relay API key needed).
-     * Requires Chronicle Yellowstone testnet tokens (tstLPX) for gas.
+     * Mint a PKP directly via contracts with permitted Lit Action using a single transaction.
+     * Uses PKPHelper to bundle Mint + Permit Action.
      * 
      * @param signer - ethers.Signer with tstLPX balance on Chronicle Yellowstone
-     * @returns PKP info { tokenId, publicKey, ethAddress }
+     * @param litActionIpfsCid - Optional IPFS CID of Lit Action to permit (defaults to env var)
+     * @returns PKP info { tokenId, publicKey, ethAddress, litActionCid }
      */
-    async mintPKPDirect(signer: any) {
+    async mintPKPDirect(signer: any, litActionIpfsCid?: string) {
         try {
             const { LitContracts } = await import('@lit-protocol/contracts-sdk');
             const { LitNetwork } = await import('@lit-protocol/constants');
+            const { ethers } = await import('ethers');
+            const { CID } = await import('multiformats/cid');
 
             console.log("Initializing LitContracts for Datil-Dev...");
-
             const litContracts = new LitContracts({
                 signer,
-                network: LitNetwork.DatilDev, // Centralized testnet - no capacity credits needed
+                network: LitNetwork.DatilDev,
                 debug: true
-            });
+            }) as any;
 
             await litContracts.connect();
-            console.log("Connected to Lit Contracts on Datil-Dev");
 
-            // Mint PKP NFT
-            console.log("Minting PKP NFT...");
-            const mintResult = await litContracts.pkpNftContractUtils.write.mint();
+            const ipfsCid = litActionIpfsCid || process.env.NEXT_PUBLIC_LIT_ACTION_IPFS_CID;
+            if (!ipfsCid) throw new Error("No Lit Action CID provided or found in ENV");
 
-            console.log("PKP Minted!", mintResult);
+            console.log("Batching Mint + Permit Action for CID:", ipfsCid);
+
+            // Using mintNextAndAddAuthMethodsWithTypes via utility
+            // This method handles the complex encoding for the PKPHelper contract
+            const mintCost = await litContracts.pkpNftContract.read.mintCost();
+
+            // We need to convert the CIDv0 to bytes for the contract
+            // The Lit SDK helper requires the multiformats CID object
+            const sdkUtils = await import('@lit-protocol/contracts-sdk');
+            const { getBytes32FromMultihash } = sdkUtils as any;
+            const cidBytes = getBytes32FromMultihash(ipfsCid, CID);
+
+            const tx = await litContracts.pkpHelperContract.write.mintNextAndAddAuthMethodsWithTypes(
+                2, // KeyType: ECDSA
+                [cidBytes.digest], // permittedIpfsCIDs (expecting bytes32 digest)
+                [[]], // permittedIpfsCIDScopes (empty = full access)
+                [], // permittedAddresses
+                [], // permittedAddressScopes
+                [], // permittedAuthMethodTypes
+                [], // permittedAuthMethodIds
+                [], // permittedAuthMethodPubkeys
+                [[]], // permittedAuthMethodScopes
+                true, // addPkpEthAddressAsPermittedAddress
+                true, // sendPkpToItself
+                { value: mintCost }
+            );
+
+            console.log("Batch transaction sent:", tx.hash);
+            const receipt = await tx.wait();
+            console.log("Batch transaction confirmed!");
+
+            // Parse logs to find PKP info
+            let tokenId = "";
+            let publicKey = "";
+            let ethAddress = "";
+
+            // Use explicit interface for parsing
+            const nftInterface = new ethers.Interface(litContracts.pkpNftContract.abi || []);
+
+            for (const log of receipt.logs) {
+                try {
+                    const parsed = nftInterface.parseLog(log as any);
+                    if (parsed && parsed.name === 'Transfer' && parsed.args.from === ethers.ZeroAddress) {
+                        tokenId = parsed.args.tokenId.toString();
+                        console.log("Found TokenId from logs:", tokenId);
+                    }
+                } catch (e) { /* ignore other logs */ }
+            }
+
+            if (!tokenId) {
+                // Fallback: try to find the minted event
+                throw new Error("Could not find PKP TokenId in transaction logs");
+            }
+
+            // Get the full PKP info from the registry
+            const pkpInfo = await litContracts.pubkeyRouterContract.read.getPubkey(tokenId);
+            publicKey = pkpInfo;
+            ethAddress = ethers.computeAddress(publicKey);
+
+            console.log("PKP Fully Initialized:", { tokenId, ethAddress });
 
             return {
-                tokenId: mintResult.pkp.tokenId,
-                publicKey: mintResult.pkp.publicKey,
-                ethAddress: mintResult.pkp.ethAddress,
-                txHash: mintResult.tx.hash
+                tokenId: tokenId,
+                publicKey: publicKey,
+                ethAddress: ethAddress,
+                txHash: receipt.transactionHash,
+                litActionCid: ipfsCid
             };
         } catch (e) {
-            console.error("Direct minting failed:", e);
+            console.error("Batch minting failed:", e);
             throw e;
         }
     }

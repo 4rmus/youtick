@@ -45,13 +45,11 @@ export function UploadForm() {
 
     // Upload steps tracking
     const [uploadSteps, setUploadSteps] = useState([
-        { id: 'session', label: 'Session & Gas Setup', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'address', label: 'Address Recovery', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'thumbnail', label: 'Thumbnail Upload', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'encrypt', label: 'File Encryption', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'upload', label: 'IPFS Upload (Lighthouse)', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-
-        { id: 'mint', label: 'Payment & Blockchain Mint', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' }
+        { id: 'session', label: 'Preparing Identity', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'thumbnail', label: 'Uploading Cover', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'encrypt', label: 'Securing Video', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'upload', label: 'Finalizing Storage', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'mint', label: 'Publishing to Blockchain', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' }
     ]);
 
     // Retry state for popup blocked scenarios
@@ -430,57 +428,39 @@ export function UploadForm() {
 
 
 
-            // 0. CHECK Session & PAY UPFRONT (Consolidated)
+            // 0. CHECK Session & PAY UPFRONT (Consolidated Identity Verification)
             const sessionManager = new SessionManager(accountId);
+            const { deriveEthAddress } = await import('@/lib/chain-signatures');
+            const derivationPath = 'youtick-demo,chunky-paste.testnet,v1';
+
             updateStep('session', 'loading');
-            setStatus('Checking Session & Fees...');
+            setStatus('Verifying Identity & Preparing Session...');
 
             const hasKey = await sessionManager.hasSessionKey();
             const toPayVal = parseFloat(payAmount);
 
             if (!hasKey) {
-                // Case 1: No Session Key.
-                // We must creating a key. We can bundle the deposit (Storage Fee + Buffer) with this.
-                // If payAmount is 0 (unlikely if no key, but possible if contract has balance but key was lost), default to '1' for safety.
                 const depositAmount = toPayVal > 0 ? payAmount : '1';
-
                 setStatus(`Setting up Session Key & Depositing ${depositAmount} NEAR...`);
-                console.log(`Creating Session Key + Deposit: ${depositAmount} NEAR`);
                 await sessionManager.createSessionKey(wallet, depositAmount);
-
-                // If successful, update local balance
                 if (toPayVal > 0) {
                     setCurrentBalance((parseFloat(currentBalance) + parseFloat(depositAmount)).toString());
                     setPayAmount('0');
                 }
-
-            } else {
-                // Case 2: Session Key Exists.
-                // Just check if we need to top up.
-                if (toPayVal > 0) {
-                    setStatus(`Funding Prepaid Storage & Gas (${payAmount} NEAR)...`);
-                    console.log(`TopUp Gas: ${payAmount} NEAR`);
-                    await sessionManager.topUpGas(wallet, payAmount);
-
-                    // Update local balance
-                    setCurrentBalance((parseFloat(currentBalance) + toPayVal).toString());
-                    setPayAmount('0');
-                }
+            } else if (toPayVal > 0) {
+                setStatus(`Funding Prepaid Storage & Gas (${payAmount} NEAR)...`);
+                await sessionManager.topUpGas(wallet, payAmount);
+                setCurrentBalance((parseFloat(currentBalance) + toPayVal).toString());
+                setPayAmount('0');
             }
+
+            // Derive MPC address (mathematical - lightning fast)
+            const recoveredAddress = await deriveEthAddress(accountId, derivationPath);
+            console.log('Identity Verified. MPC Address:', recoveredAddress);
             updateStep('session', 'complete');
 
-            const { deriveEthAddress } = await import('@/lib/chain-signatures');
-            const derivationPath = 'youtick-demo,chunky-paste.testnet,v1';
-
-            // 1. Get MPC address using mathematical derivation (no MPC call needed!)
-            updateStep('address', 'loading');
-            setStatus('Deriving MPC Address...');
-
-            const recoveredAddress = await deriveEthAddress(accountId, derivationPath);
-            console.log('Derived MPC Address (mathematical):', recoveredAddress);
-            updateStep('address', 'complete');
-
-            // 2. Get Auth Message from Lighthouse
+            // 1. Get Auth Message from Lighthouse
+            setStatus('Authenticating with Storage Network...');
             const authMessageResponse = await lighthouse.getAuthMessage(recoveredAddress);
             const messageToSign = authMessageResponse.data.message;
 
@@ -488,12 +468,8 @@ export function UploadForm() {
                 throw new Error('Failed to get auth message from Lighthouse');
             }
 
-            console.log('Message to sign for Lighthouse:', messageToSign);
-
-            // 3. Sign the REAL message via Session Key
-            console.log('Step 2: Signing real auth message...');
-            setStatus('Signing Auth Message via Session Key...');
-
+            // 2. Sign Auth Message via Session Key
+            setStatus('Authorizing Upload...');
             const realHash = ethers.sha256(ethers.toUtf8Bytes(messageToSign));
             const realPayload = Array.from(ethers.getBytes(realHash));
 

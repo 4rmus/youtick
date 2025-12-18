@@ -131,7 +131,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
         }
     };
 
-    // Action 2: Buy Ticket (Standard Purchase + Deposit)
+    // Action: Buy Ticket (Standard Purchase + Deposit + Optional Session Key Setup)
     const handlePurchase = async () => {
         if (!selector || !accountId || !eventDetails) return;
         setActionLoading(true);
@@ -139,8 +139,32 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
         try {
             const wallet = await selector.wallet();
             const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0.utick.testnet';
+            const sessionManager = new SessionManager(accountId);
 
             const actions = [];
+
+            // 1. If no session key, add it to the batch
+            if (hasSessionKey === false) {
+                console.log("No session key found. Adding Initialization to batch...");
+                const keyPair = utils.KeyPair.fromRandom('ed25519');
+                const publicKey = keyPair.getPublicKey().toString();
+
+                // Store locally (optimistic)
+                await sessionManager.saveSessionKey(keyPair);
+
+                actions.push(
+                    transactions.addKey(
+                        utils.PublicKey.from(publicKey),
+                        transactions.functionCallAccessKey(
+                            contractId,
+                            [],
+                            BigInt(utils.format.parseNearAmount('0.25') || '0')
+                        )
+                    )
+                );
+            }
+
+            // 2. Add Purchase Action
             const MIN_STORAGE_COST = utils.format.parseNearAmount('0.01');
             const priceYocto = utils.format.parseNearAmount(eventDetails.price) || '0';
             let finalDeposit = BigInt(priceYocto);
@@ -162,6 +186,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
                 )
             );
 
+            // 3. Add Deposit Action
             actions.push(
                 transactions.functionCall(
                     'deposit_funds',
@@ -171,16 +196,19 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
                 )
             );
 
+            console.log(`Sending batch transaction (${actions.length} actions)...`);
             await wallet.signAndSendTransaction({
                 receiverId: contractId,
                 actions: actions,
             });
 
+            // If we get here, tx succeeded
+            if (hasSessionKey === false) setHasSessionKey(true);
             if (onPurchaseSuccess) onPurchaseSuccess();
 
         } catch (e) {
             console.error("Purchase failed:", e);
-            setError("Transaction failed");
+            setError("Transaction failed or was rejected");
         } finally {
             setActionLoading(false);
         }
@@ -257,37 +285,20 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
                     </div>
 
 
-                    {hasSessionKey === false ? (
-                        <Button
-                            onClick={handleSetup}
-                            disabled={actionLoading || !accountId}
-                            className="bg-zinc-100 text-zinc-900 hover:bg-zinc-200 font-bold shadow-lg shadow-white/5"
-                        >
-                            {actionLoading ? (
-                                <>
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    Initializing...
-                                </>
-                            ) : (
-                                "Initialize Account"
-                            )}
-                        </Button>
-                    ) : (
-                        <Button
-                            onClick={handlePurchase}
-                            disabled={actionLoading || !accountId || hasSessionKey === null}
-                            className="bg-white text-black hover:bg-zinc-200 font-bold shadow-lg shadow-white/5"
-                        >
-                            {actionLoading ? (
-                                <>
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    Mining...
-                                </>
-                            ) : (
-                                "Buy Ticket"
-                            )}
-                        </Button>
-                    )}
+                    <Button
+                        onClick={handlePurchase}
+                        disabled={actionLoading || !accountId || hasSessionKey === null}
+                        className="bg-white text-black hover:bg-zinc-200 font-bold shadow-lg shadow-white/5"
+                    >
+                        {actionLoading ? (
+                            <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                {hasSessionKey === false ? "Initializing..." : "Mining..."}
+                            </>
+                        ) : (
+                            hasSessionKey === false ? "Buy & Setup" : "Buy Ticket"
+                        )}
+                    </Button>
                 </div>
             </div>
         </div>

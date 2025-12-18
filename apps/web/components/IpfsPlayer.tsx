@@ -183,44 +183,89 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             const metadata = await metadataResponse.json();
             const { ciphertext, dataToEncryptHash, accessControlConditions: storedConditions } = metadata;
 
-            // 2. Recover Ethereum Address (MPC)
+            // 2. Recover Ethereum Address (needed for MPC fallback)
             if (!isRetry) setStatus('Recovering Ethereum address...');
-            const derivationPath = "test"; // Fixed path for demo
+            const derivationPath = "lit/pkp-minting"; // Standardized path
             const recoveredAddress = await deriveEthAddress(accountId, derivationPath, wallet);
             console.log('Recovered MPC Address:', recoveredAddress);
 
-            // 2.5 Ensure Gas for MPC (Session Key Mode)
-            // We check if the user has enough prepaid gas to cover the MPC signature cost
-            const sessionManager = new SessionManager(accountId);
-            if (await sessionManager.hasSessionKey()) {
-                const rpcUrl = typeof window !== 'undefined'
-                    ? `${window.location.origin}/api/near-rpc`
-                    : "https://rpc.testnet.near.org";
+            // 3. Get Session Signatures
+            // PRIORITY: Use PKP if available (signless experience - NO GAS NEEDED!)
+            // FALLBACK: Use MPC with Session Keys (requires gas)
+            if (!isRetry) setStatus('Checking authentication method...');
 
-                // CHECK GAS - NON BLOCKING
-                // We use 0.75 NEAR threshold
-                const hasGas = await sessionManager.hasSufficientGas(rpcUrl, 0.75);
+            let sessionSigs;
+            const storedPkp = typeof window !== 'undefined'
+                ? localStorage.getItem(`lit_pkp_${accountId}`)
+                : null;
 
-                if (!hasGas) {
-                    // STOP FLOW HERE
-                    console.warn("Insufficient Gas for MPC. Halting flow to request User TopUp.");
-                    setNeedsTopUp(true);
-                    setLoading(false);
-                    return; // Exit function, wait for user click
+            // PKP PATH - Check FIRST before gas (PKP doesn't need gas!)
+            if (storedPkp) {
+                const pkp = JSON.parse(storedPkp);
+                console.log("Found PKP for decryption (signless):", pkp.ethAddress);
+
+                // Check if we have NEAR signature data for Lit Action
+                if (pkp.nearSignature && pkp.nearMessage && pkp.nearPublicKey) {
+                    setStatus('Using PKP with Lit Action (signless - no gas needed!)...');
+                    try {
+                        sessionSigs = await lit.getSessionSigsWithPKP(
+                            pkp.publicKey,
+                            pkp.ethAddress,
+                            accountId,
+                            pkp.nearSignature,
+                            pkp.nearMessage,
+                            pkp.nearPublicKey
+                        );
+                        console.log("PKP session sigs with Lit Action obtained successfully!");
+                    } catch (pkpError: any) {
+                        console.warn("PKP session failed, will try MPC fallback:", pkpError.message);
+                        sessionSigs = null;
+                    }
+                } else {
+                    console.warn("PKP found but missing NEAR signature data. Please re-link your PKP.");
+                    setStatus('PKP needs re-linking, checking MPC...');
+                    sessionSigs = null;
                 }
             }
 
-            // 3. Get Session Signatures (Specific to this file)
-            if (!isRetry) setStatus('Getting Session Signatures...');
-            const sessionSigs = await lit.getSessionSigs(
-                wallet,
-                accountId,
-                recoveredAddress,
-                signWithSessionKey,
-                storedConditions,
-                dataToEncryptHash,
-                derivationPath
-            );
+            // MPC FALLBACK PATH - Only check gas if PKP failed or unavailable
+            if (!sessionSigs) {
+                console.log("PKP unavailable or failed, using MPC fallback");
+
+                // 2.5 Ensure Gas for MPC (Session Key Mode)
+                // We check if the user has enough prepaid gas to cover the MPC signature cost
+                const sessionManager = new SessionManager(accountId);
+                if (await sessionManager.hasSessionKey()) {
+                    const rpcUrl = typeof window !== 'undefined'
+                        ? `${window.location.origin}/api/near-rpc`
+                        : "https://rpc.testnet.near.org";
+
+                    // CHECK GAS - NON BLOCKING
+                    // We use 0.75 NEAR threshold
+                    const hasGas = await sessionManager.hasSufficientGas(rpcUrl, 0.75);
+
+                    if (!hasGas) {
+                        // STOP FLOW HERE
+                        console.warn("Insufficient Gas for MPC. Halting flow to request User TopUp.");
+                        setNeedsTopUp(true);
+                        setLoading(false);
+                        return; // Exit function, wait for user click
+                    }
+                }
+
+                // Get MPC session signatures
+                console.log("Using MPC for session signatures");
+                setStatus('Getting MPC Session Signatures...');
+                sessionSigs = await lit.getSessionSigs(
+                    wallet,
+                    accountId,
+                    recoveredAddress,
+                    signWithSessionKey,
+                    storedConditions,
+                    dataToEncryptHash,
+                    derivationPath
+                );
+            }
 
             // 4. Decrypt
             if (!isRetry) setStatus('Decrypting video...');
@@ -382,20 +427,12 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                             <div className="w-full max-w-sm">
                                 <TicketPurchaseCard
                                     cid={cid}
-                                    onPurchaseSuccess={async () => {
-                                        // After purchase, immediately create session in background
-                                        // This uses the gas from ticket purchase, making first play instant
+                                    onPurchaseSuccess={() => {
+                                        // After purchase, just update access state
+                                        // User will click play button manually
                                         setHasAccess(true);
-                                        setStatus('Preparing session...');
-                                        try {
-                                            // Pre-create session so first play is gas-free
-                                            await playVideo(false);
-                                        } catch (e) {
-                                            // Session creation failed, user can retry with play button
-                                            console.warn('Auto-session creation failed, user can retry:', e);
-                                            setLoading(false);
-                                            setStatus('');
-                                        }
+                                        setStatus('Ticket purchased! Click play to watch.');
+                                        setLoading(false);
                                     }}
                                 />
                                 <div className="mt-4 text-center">
