@@ -1,0 +1,46 @@
+name: Deploy Youtick MVP
+
+on:
+  push:
+    branches: [ main ] # Sadece main branch'ine push yapınca çalışır
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install & Build
+        run: |
+          npm install
+          npm run build
+        # Not: Eğer environment variable kullanıyorsan buraya eklemeliyiz
+
+      - name: Deploy to Oracle
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.REMOTE_HOST }}
+          username: ${{ secrets.REMOTE_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # Sadece gereken dosyaları gönderiyoruz, node_modules'ü DEĞİL
+          source: ".next/,public/,package.json,package-lock.json,next.config.js"
+          target: "~/youtick-mvp/apps/web"
+
+      - name: Finalize on Server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.REMOTE_HOST }}
+          username: ${{ secrets.REMOTE_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd ~/youtick-mvp/apps/web
+            npm install --production
+            # PM2 ile uygulamayı restart ediyoruz
+            pm2 restart youtick || pm2 start npm --name "youtick" -- start
