@@ -1,8 +1,7 @@
 name: Deploy Youtick MVP
 
 on:
-  push:
-    branches: [ main ] # Main branch'ine her push yapıldığında çalışır
+  workflow_dispatch: # Sadece manuel olarak tetiklendiğinde çalışır
 
 jobs:
   build-and-deploy:
