@@ -148,3 +148,296 @@ export async function signWithMPC(
     const signatureObj = JSON.parse(Buffer.from(successValue, 'base64').toString());
     return signatureObj;
 }
+
+/**
+ * Custom Signer that uses NEAR MPC for signing EVM transactions.
+ * This allows using NEAR Chain Signatures with ethers.js contracts.
+ */
+export class MPCSigner extends ethers.AbstractSigner {
+    private wallet: any;
+    private nearAccountId: string;
+    private derivationPath: string;
+    private _address: string | null = null;
+
+    constructor(
+        wallet: any,
+        nearAccountId: string,
+        derivationPath: string = 'lit/pkp-minting',
+        provider?: ethers.Provider
+    ) {
+        super(provider);
+        this.wallet = wallet;
+        this.nearAccountId = nearAccountId;
+        this.derivationPath = derivationPath;
+    }
+
+    async getAddress(): Promise<string> {
+        if (!this._address) {
+            this._address = await deriveEthAddress(this.nearAccountId, this.derivationPath);
+        }
+        return this._address;
+    }
+
+    connect(provider: ethers.Provider): MPCSigner {
+        return new MPCSigner(this.wallet, this.nearAccountId, this.derivationPath, provider);
+    }
+
+    async signTransaction(tx: ethers.TransactionRequest): Promise<string> {
+        // Serialize the transaction
+        const address = await this.getAddress();
+        const populatedTx = await this.populateTransaction(tx);
+
+        // Get the unsigned transaction hash
+        const unsignedTx = ethers.Transaction.from({
+            ...populatedTx,
+            from: address
+        } as any);
+
+        const txHash = unsignedTx.unsignedHash;
+        const payload = Array.from(ethers.getBytes(txHash));
+
+        // Sign via MPC
+        const args = {
+            request: {
+                payload,
+                path: this.derivationPath,
+                key_version: 0
+            }
+        };
+
+        const functionCallAction = transactions.functionCall(
+            'sign',
+            Buffer.from(JSON.stringify(args)),
+            BigInt('300000000000000'), // 300 TGas
+            BigInt('100000000000000000000000') // 0.1 NEAR
+        );
+
+        const result = await this.wallet.signAndSendTransaction({
+            receiverId: MPC_CONTRACT,
+            actions: [functionCallAction as any]
+        });
+
+        const successValue = result.status.SuccessValue;
+        if (!successValue) {
+            throw new Error('MPC signing failed');
+        }
+
+        const mpcSig = JSON.parse(Buffer.from(successValue, 'base64').toString());
+
+        // Convert MPC signature to ethers format
+        const r = '0x' + mpcSig.big_r.affine_point.substring(2, 66);
+        const s = '0x' + mpcSig.s.scalar;
+        const v = mpcSig.recovery_id + 27;
+
+        // Create signed transaction
+        const signedTx = unsignedTx.clone();
+        signedTx.signature = ethers.Signature.from({ r, s, v });
+
+        return signedTx.serialized;
+    }
+
+    async signMessage(message: string | Uint8Array): Promise<string> {
+        const msgBytes = typeof message === 'string'
+            ? ethers.toUtf8Bytes(message)
+            : message;
+        const messageHash = ethers.hashMessage(msgBytes);
+        const payload = Array.from(ethers.getBytes(messageHash));
+
+        const args = {
+            request: {
+                payload,
+                path: this.derivationPath,
+                key_version: 0
+            }
+        };
+
+        const functionCallAction = transactions.functionCall(
+            'sign',
+            Buffer.from(JSON.stringify(args)),
+            BigInt('300000000000000'),
+            BigInt('100000000000000000000000')
+        );
+
+        const result = await this.wallet.signAndSendTransaction({
+            receiverId: MPC_CONTRACT,
+            actions: [functionCallAction as any]
+        });
+
+        const successValue = result.status.SuccessValue;
+        if (!successValue) {
+            throw new Error('MPC message signing failed');
+        }
+
+        const mpcSig = JSON.parse(Buffer.from(successValue, 'base64').toString());
+        const r = '0x' + mpcSig.big_r.affine_point.substring(2, 66);
+        const s = '0x' + mpcSig.s.scalar;
+        const v = mpcSig.recovery_id + 27;
+
+        return ethers.Signature.from({ r, s, v }).serialized;
+    }
+
+    async signTypedData(
+        domain: ethers.TypedDataDomain,
+        types: Record<string, ethers.TypedDataField[]>,
+        value: Record<string, any>
+    ): Promise<string> {
+        const hash = ethers.TypedDataEncoder.hash(domain, types, value);
+        const payload = Array.from(ethers.getBytes(hash));
+
+        const args = {
+            request: {
+                payload,
+                path: this.derivationPath,
+                key_version: 0
+            }
+        };
+
+        const functionCallAction = transactions.functionCall(
+            'sign',
+            Buffer.from(JSON.stringify(args)),
+            BigInt('300000000000000'),
+            BigInt('100000000000000000000000')
+        );
+
+        const result = await this.wallet.signAndSendTransaction({
+            receiverId: MPC_CONTRACT,
+            actions: [functionCallAction as any]
+        });
+
+        const successValue = result.status.SuccessValue;
+        if (!successValue) {
+            throw new Error('MPC typed data signing failed');
+        }
+
+        const mpcSig = JSON.parse(Buffer.from(successValue, 'base64').toString());
+        const r = '0x' + mpcSig.big_r.affine_point.substring(2, 66);
+        const s = '0x' + mpcSig.s.scalar;
+        const v = mpcSig.recovery_id + 27;
+
+        return ethers.Signature.from({ r, s, v }).serialized;
+    }
+}
+
+/**
+ * Ethers v5 compatible MPC Signer for LitContracts.
+ * LitContracts uses ethers v5 internally, so we need a v5 Signer.
+ */
+import * as ethers5 from 'ethers5';
+
+export class MPCSignerV5 extends ethers5.Signer {
+    private wallet: any;
+    private nearAccountId: string;
+    private derivationPath: string;
+    private _address: string | null = null;
+
+    constructor(
+        wallet: any,
+        nearAccountId: string,
+        derivationPath: string = 'lit/pkp-minting',
+        provider?: ethers5.providers.Provider
+    ) {
+        super();
+        ethers5.utils.defineReadOnly(this, 'provider', provider || null as any);
+        this.wallet = wallet;
+        this.nearAccountId = nearAccountId;
+        this.derivationPath = derivationPath;
+    }
+
+    async getAddress(): Promise<string> {
+        if (!this._address) {
+            this._address = await deriveEthAddress(this.nearAccountId, this.derivationPath);
+        }
+        return this._address;
+    }
+
+    connect(provider: ethers5.providers.Provider): MPCSignerV5 {
+        return new MPCSignerV5(this.wallet, this.nearAccountId, this.derivationPath, provider);
+    }
+
+    async signTransaction(tx: ethers5.providers.TransactionRequest): Promise<string> {
+        const address = await this.getAddress();
+
+        // Resolve any promises in the transaction
+        const resolvedTx = await ethers5.utils.resolveProperties(tx);
+
+        // Serialize for signing
+        const serializedTx = ethers5.utils.serializeTransaction(resolvedTx as any);
+        const txHash = ethers5.utils.keccak256(serializedTx);
+        const payload = Array.from(ethers5.utils.arrayify(txHash));
+
+        // Sign via MPC
+        const args = {
+            request: {
+                payload,
+                path: this.derivationPath,
+                key_version: 0
+            }
+        };
+
+        const functionCallAction = transactions.functionCall(
+            'sign',
+            Buffer.from(JSON.stringify(args)),
+            BigInt('300000000000000'),
+            BigInt('100000000000000000000000')
+        );
+
+        const result = await this.wallet.signAndSendTransaction({
+            receiverId: MPC_CONTRACT,
+            actions: [functionCallAction as any]
+        });
+
+        const successValue = result.status.SuccessValue;
+        if (!successValue) {
+            throw new Error('MPC signing failed');
+        }
+
+        const mpcSig = JSON.parse(Buffer.from(successValue, 'base64').toString());
+
+        const r = '0x' + mpcSig.big_r.affine_point.substring(2, 66);
+        const s = '0x' + mpcSig.s.scalar;
+        const v = mpcSig.recovery_id + 27;
+
+        // Serialize signed transaction
+        return ethers5.utils.serializeTransaction(resolvedTx as any, { r, s, v });
+    }
+
+    async signMessage(message: ethers5.Bytes | string): Promise<string> {
+        const msgBytes = typeof message === 'string'
+            ? ethers5.utils.toUtf8Bytes(message)
+            : message;
+        const messageHash = ethers5.utils.hashMessage(msgBytes);
+        const payload = Array.from(ethers5.utils.arrayify(messageHash));
+
+        const args = {
+            request: {
+                payload,
+                path: this.derivationPath,
+                key_version: 0
+            }
+        };
+
+        const functionCallAction = transactions.functionCall(
+            'sign',
+            Buffer.from(JSON.stringify(args)),
+            BigInt('300000000000000'),
+            BigInt('100000000000000000000000')
+        );
+
+        const result = await this.wallet.signAndSendTransaction({
+            receiverId: MPC_CONTRACT,
+            actions: [functionCallAction as any]
+        });
+
+        const successValue = result.status.SuccessValue;
+        if (!successValue) {
+            throw new Error('MPC message signing failed');
+        }
+
+        const mpcSig = JSON.parse(Buffer.from(successValue, 'base64').toString());
+        const r = '0x' + mpcSig.big_r.affine_point.substring(2, 66);
+        const s = '0x' + mpcSig.s.scalar;
+        const v = mpcSig.recovery_id + 27;
+
+        return ethers5.utils.joinSignature({ r, s, v });
+    }
+}
