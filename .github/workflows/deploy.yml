@@ -23,6 +23,7 @@ jobs:
           NEXT_PUBLIC_NEAR_NETWORK: ${{ secrets.NEXT_PUBLIC_NEAR_NETWORK }}
           NEXT_PUBLIC_NFT_CONTRACT_ID: ${{ secrets.NEXT_PUBLIC_NFT_CONTRACT_ID }}
         run: |
+          cd apps/web
           npm install
           npm run build
 
@@ -34,7 +35,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           # Sadece çalışma anında lazım olan dosyaları gönderiyoruz
           # apps/web altındaki dosyaları hedefliyoruz
-          source: "apps/web/.next/,apps/web/public/,apps/web/package.json,apps/web/next.config.js,package.json,package-lock.json"
+          source: "apps/web/.next/,apps/web/public/,apps/web/package.json,apps/web/next.config.ts,apps/web/package-lock.json"
           target: "~/youtick-mvp"
           rm: false # Sunucudaki .env dosyasını silmemesi için false
 
@@ -45,10 +46,9 @@ jobs:
           username: ${{ secrets.REMOTE_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd ~/youtick-mvp
-            # Ana dizinde production bağımlılıklarını kur (workspace yapıları için)
+            cd ~/youtick-mvp/apps/web
+            # Uygulama bağımlılıklarını kur
             npm install --production
             
-            cd apps/web
             # Uygulamayı restart et (Eğer daha önce başlamadıysa başlat)
             pm2 restart youtick || pm2 start npm --name "youtick" -- start
