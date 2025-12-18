@@ -2,7 +2,7 @@ name: Deploy Youtick MVP
 
 on:
   push:
-    branches: [ main ] # Sadece main branch'ine push yapınca çalışır
+    branches: [ main ] # Main branch'ine her push yapıldığında çalışır
 
 jobs:
   build-and-deploy:
@@ -18,29 +18,37 @@ jobs:
           cache: 'npm'
 
       - name: Install & Build
+        # NEXT_PUBLIC_ değişkenleri build anı için gereklidir
+        env:
+          NEXT_PUBLIC_NEAR_NETWORK: ${{ secrets.NEXT_PUBLIC_NEAR_NETWORK }}
+          NEXT_PUBLIC_NFT_CONTRACT_ID: ${{ secrets.NEXT_PUBLIC_NFT_CONTRACT_ID }}
         run: |
           npm install
           npm run build
-        # Not: Eğer environment variable kullanıyorsan buraya eklemeliyiz
 
-      - name: Deploy to Oracle
+      - name: Deploy to Oracle via SCP
         uses: appleboy/scp-action@master
         with:
           host: ${{ secrets.REMOTE_HOST }}
           username: ${{ secrets.REMOTE_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          # Sadece gereken dosyaları gönderiyoruz, node_modules'ü DEĞİL
-          source: ".next/,public/,package.json,package-lock.json,next.config.js"
-          target: "~/youtick-mvp/apps/web"
+          # Sadece çalışma anında lazım olan dosyaları gönderiyoruz
+          # apps/web altındaki dosyaları hedefliyoruz
+          source: "apps/web/.next/,apps/web/public/,apps/web/package.json,apps/web/next.config.js,package.json,package-lock.json"
+          target: "~/youtick-mvp"
+          rm: false # Sunucudaki .env dosyasını silmemesi için false
 
-      - name: Finalize on Server
+      - name: Finalize and Restart on Server
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.REMOTE_HOST }}
           username: ${{ secrets.REMOTE_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd ~/youtick-mvp/apps/web
+            cd ~/youtick-mvp
+            # Ana dizinde production bağımlılıklarını kur (workspace yapıları için)
             npm install --production
-            # PM2 ile uygulamayı restart ediyoruz
+            
+            cd apps/web
+            # Uygulamayı restart et (Eğer daha önce başlamadıysa başlat)
             pm2 restart youtick || pm2 start npm --name "youtick" -- start
