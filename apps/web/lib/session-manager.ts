@@ -116,6 +116,30 @@ export class SessionManager {
         return result;
     }
 
+    async sendBatchTransaction(actions: any[], gas: string = '300000000000000'): Promise<any> {
+        const keyPair = await this.keyStore.getKey(NETWORK_ID, this.accountId);
+        if (!keyPair) {
+            throw new Error("No session key found. Please setup account first.");
+        }
+
+        const near = await connect({
+            networkId: NETWORK_ID,
+            keyStore: this.keyStore,
+            nodeUrl: 'https://test.rpc.fastnear.com',
+            walletUrl: 'https://wallet.testnet.near.org',
+            helperUrl: 'https://helper.testnet.near.org',
+        });
+
+        const account = await near.account(this.accountId);
+
+        const outcome = await account.signAndSendTransaction({
+            receiverId: CONTRACT_ID,
+            actions: actions
+        });
+
+        const result = providers.getTransactionLastResult(outcome);
+        return result;
+    }
     async getAccountBalance(nodeUrl: string): Promise<number> {
         try {
             const provider = new providers.JsonRpcProvider({ url: nodeUrl });
@@ -134,13 +158,13 @@ export class SessionManager {
         }
     }
 
-    async hasSufficientGas(nodeUrl: string, minAmount: number = 0.2): Promise<boolean> {
+    async hasSufficientGas(nodeUrl: string, minAmount: number = 1.0): Promise<boolean> {
         const currentBalance = await this.getAccountBalance(nodeUrl);
         console.log(`Current Prepaid Gas Balance: ${currentBalance} NEAR, Required: ${minAmount}`);
         return currentBalance >= minAmount;
     }
 
-    async ensureGas(wallet: any, nodeUrl: string, minAmount: number = 0.2): Promise<void> {
+    async ensureGas(wallet: any, nodeUrl: string, minAmount: number = 1.0): Promise<void> {
         const sufficient = await this.hasSufficientGas(nodeUrl, minAmount);
         if (!sufficient) {
             console.log(`Low gas, triggering Top Up...`);

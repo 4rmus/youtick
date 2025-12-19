@@ -10,15 +10,30 @@ export const LIT_ACTION_CID = "QmZhqF9xZAJTTRyUR4d5L1zt83MByXaXUQuaU3a7gKdsh6";
 const SESSION_CACHE_KEY = 'lit_session_sigs';
 const SESSION_CACHE_EXPIRY = 30 * 24 * 60 * 60 * 1000; // 30 days - minimizes gas costs for viewers
 
+// Session cache helpers
+const CURRENT_NETWORK = "datil-test";
+
 const client = new LitNodeClient({
-    litNetwork: "datil-dev",
+    litNetwork: "datil-test",
     debug: true,
-    rpcUrl: "https://175188.rpc.thirdweb.com"
+    rpcUrl: typeof window !== 'undefined' ? `${window.location.origin}/api/lit-rpc` : undefined
 });
+
+function checkNetworkAndClearCache(accountId: string) {
+    if (typeof window === 'undefined') return;
+    const storedNet = localStorage.getItem('lit_active_network');
+    if (storedNet !== CURRENT_NETWORK) {
+        localStorage.removeItem(`${SESSION_CACHE_KEY}_${accountId}`);
+        localStorage.removeItem(`pkp_${accountId}`);
+        localStorage.setItem('lit_active_network', CURRENT_NETWORK);
+        console.log(`Network mismatch detected (${storedNet} -> ${CURRENT_NETWORK}). Lit session cache cleared.`);
+    }
+}
 
 export function clearSessionCache(accountId: string) {
     if (typeof window === 'undefined') return;
     localStorage.removeItem(`${SESSION_CACHE_KEY}_${accountId}`);
+    localStorage.removeItem(`pkp_${accountId}`); // Also clear PKP session cache
     console.log(`Cleared Lit session cache for ${accountId}`);
 }
 
@@ -79,10 +94,13 @@ class Lit {
         signWithMPC: (wallet: any, accountId: string, path: string, message: string) => Promise<any>,
         accessControlConditions?: any[],
         dataToEncryptHash?: string,
-        derivationPath: string = "test"
+        derivationPath: string = "lit/pkp-minting"
     ) {
         await this.connect();
         console.log("getSessionSigs called with accountId:", accountId, "Path:", derivationPath);
+
+        // Security: Clear stale cache if network changed
+        checkNetworkAndClearCache(accountId);
 
         // Check cache first - avoid repeated signatures!
         const cachedSigs = getCachedSessionSigs(accountId);
@@ -269,6 +287,9 @@ class Lit {
     ) {
         await this.connect();
         console.log("getSessionSigsWithPKP called for:", nearAccountId, "PKP:", pkpEthAddress);
+
+        // Security: Clear stale cache if network changed
+        checkNetworkAndClearCache(nearAccountId);
 
         // Check cache with PKP-specific key
         const cacheKey = `pkp_${nearAccountId}`;

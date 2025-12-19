@@ -156,17 +156,25 @@ export class PKPManager {
         try {
             const { LitContracts } = await import('@lit-protocol/contracts-sdk');
             const { LitNetwork } = await import('@lit-protocol/constants');
-            const { ethers } = await import('ethers');
+            const ethers5 = await import('ethers5');
+            // @ts-ignore - multiformats/cid has resolution issues with some TS configurations but works at runtime
             const { CID } = await import('multiformats/cid');
 
-            console.log("Initializing LitContracts for Datil-Dev...");
+            const rpcUrl = typeof window !== 'undefined'
+                ? `${window.location.origin}/api/lit-rpc`
+                : (process.env.CHRONICLE_YELLOWSTONE_RPC || 'https://yellowstone-rpc.litprotocol.com');
+
+            console.log("Initializing LitContracts for Datil-Test (Yellowstone)...");
             const litContracts = new LitContracts({
                 signer,
-                network: LitNetwork.DatilDev,
+                network: LitNetwork.DatilTest,
+                rpc: rpcUrl,
                 debug: true
             }) as any;
 
+            console.log("Connecting to Lit Contracts...");
             await litContracts.connect();
+            console.log("✅ Lit Contracts Connected.");
 
             const ipfsCid = litActionIpfsCid || process.env.NEXT_PUBLIC_LIT_ACTION_IPFS_CID;
             if (!ipfsCid) throw new Error("No Lit Action CID provided or found in ENV");
@@ -178,21 +186,21 @@ export class PKPManager {
             const mintCost = await litContracts.pkpNftContract.read.mintCost();
 
             // We need to convert the CIDv0 to bytes for the contract
-            // The Lit SDK helper requires the multiformats CID object
-            const sdkUtils = await import('@lit-protocol/contracts-sdk');
-            const { getBytes32FromMultihash } = sdkUtils as any;
-            const cidBytes = getBytes32FromMultihash(ipfsCid, CID);
+            // Manual implementation using ethers5 utilities
+            const decoded = ethers5.utils.base58.decode(ipfsCid);
+            const digest = `0x${Buffer.from(decoded.slice(2)).toString('hex')}`;
+            console.log("Encoded CID digest:", digest);
 
             const tx = await litContracts.pkpHelperContract.write.mintNextAndAddAuthMethodsWithTypes(
                 2, // KeyType: ECDSA
-                [cidBytes.digest], // permittedIpfsCIDs (expecting bytes32 digest)
+                [digest], // permittedIpfsCIDs (expecting bytes32 digest)
                 [[]], // permittedIpfsCIDScopes (empty = full access)
                 [], // permittedAddresses
                 [], // permittedAddressScopes
                 [], // permittedAuthMethodTypes
                 [], // permittedAuthMethodIds
                 [], // permittedAuthMethodPubkeys
-                [[]], // permittedAuthMethodScopes
+                [], // permittedAuthMethodScopes
                 true, // addPkpEthAddressAsPermittedAddress
                 true, // sendPkpToItself
                 { value: mintCost }
@@ -200,20 +208,27 @@ export class PKPManager {
 
             console.log("Batch transaction sent:", tx.hash);
             const receipt = await tx.wait();
-            console.log("Batch transaction confirmed!");
+            console.log("✅ Batch transaction confirmed! Status:", receipt.status);
 
             // Parse logs to find PKP info
             let tokenId = "";
             let publicKey = "";
             let ethAddress = "";
 
-            // Use explicit interface for parsing
-            const nftInterface = new ethers.Interface(litContracts.pkpNftContract.abi || []);
+            if (!litContracts.pkpNftContract?.abi) {
+                console.warn("PKP NFT Contract ABI missing, attempting manual parse...");
+            }
 
+            // Use explicit interface for parsing (Ethers v5 style)
+            const nftInterface = new ethers5.utils.Interface(litContracts.pkpNftContract?.abi || [
+                "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)"
+            ]);
+
+            console.log(`Analyzing ${receipt.logs.length} logs for PKP Transfer...`);
             for (const log of receipt.logs) {
                 try {
                     const parsed = nftInterface.parseLog(log as any);
-                    if (parsed && parsed.name === 'Transfer' && parsed.args.from === ethers.ZeroAddress) {
+                    if (parsed && parsed.name === 'Transfer' && parsed.args.from === ethers5.constants.AddressZero) {
                         tokenId = parsed.args.tokenId.toString();
                         console.log("Found TokenId from logs:", tokenId);
                     }
@@ -226,9 +241,10 @@ export class PKPManager {
             }
 
             // Get the full PKP info from the registry
+            console.log("Fetching public key from router for TokenID:", tokenId);
             const pkpInfo = await litContracts.pubkeyRouterContract.read.getPubkey(tokenId);
             publicKey = pkpInfo;
-            ethAddress = ethers.computeAddress(publicKey);
+            ethAddress = ethers5.utils.computeAddress(publicKey);
 
             console.log("PKP Fully Initialized:", { tokenId, ethAddress });
 
@@ -239,7 +255,7 @@ export class PKPManager {
                 txHash: receipt.transactionHash,
                 litActionCid: ipfsCid
             };
-        } catch (e) {
+        } catch (e: any) {
             console.error("Batch minting failed:", e);
             throw e;
         }

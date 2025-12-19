@@ -5,7 +5,7 @@ import { useWallet } from '@/components/providers/WalletProvider';
 import { uploadFile } from '@/lib/lighthouse';
 import { lit, LIT_ACTION_CID } from '@/lib/lit';
 import { SessionManager } from '@/lib/session-manager';
-import { batchUploadActions } from '@/lib/batch-transactions';
+import { batchUploadActions, batchUploadActionsSignless } from '@/lib/batch-transactions';
 import { generateVideoThumbnail } from '@/lib/video-utils';
 import lighthouse from '@lighthouse-web3/sdk';
 import { ethers } from 'ethers';
@@ -19,6 +19,8 @@ import { Button } from "@/components/ui/button"
 import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
+
+const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0.utick.testnet';
 
 interface UploadResponse {
     data: Array<{ Hash: string }> | { Hash: string };
@@ -53,7 +55,7 @@ export function UploadForm() {
     ]);
 
     // Retry state for popup blocked scenarios
-    const [retryStep, setRetryStep] = useState<'none' | 'sign_auth'>('none');
+    const [retryStep, setRetryStep] = useState<'none' | 'sign_auth' | 'pkp_link'>('none');
     const [pendingMessage, setPendingMessage] = useState<string | null>(null);
     const [recoveredAddr, setRecoveredAddr] = useState<string | null>(null);
     const [recoveredPubKey, setRecoveredPubKey] = useState<string | null>(null);
@@ -64,6 +66,9 @@ export function UploadForm() {
     const [currentBalance, setCurrentBalance] = useState('0');
     const [payAmount, setPayAmount] = useState('0');
     const [isCalculatingCosts, setIsCalculatingCosts] = useState(false);
+
+    // PKP State for Uploader
+    const [pkpData, setPkpData] = useState<{ publicKey: string, ethAddress: string, litActionCid: string } | null>(null);
 
     // Helper function to update step status
     const updateStep = (stepId: string, status: 'pending' | 'loading' | 'complete' | 'error') => {
@@ -86,8 +91,23 @@ export function UploadForm() {
     React.useEffect(() => {
         if (accountId && selector) {
             checkGasStatus();
+            checkPKPStatus();
         }
     }, [accountId, selector]);
+
+    const checkPKPStatus = () => {
+        if (!accountId) return;
+        const cached = localStorage.getItem(`lit_pkp_${accountId}`);
+        if (cached) {
+            try {
+                const parsed = JSON.parse(cached);
+                setPkpData(parsed);
+                console.log("Found linked PKP for uploader:", parsed.ethAddress);
+            } catch (e) {
+                console.warn("Error parsing cached PKP data:", e);
+            }
+        }
+    };
 
     const checkGasStatus = async () => {
         if (!accountId) return;
@@ -111,8 +131,8 @@ export function UploadForm() {
 
     const recalculatePayAmount = (feeStr: string, balance: number) => {
         const fee = parseFloat(feeStr) || 0;
-        // Total needed = Storage Fee + 0.3 NEAR Buffer (enough for 1 MPC signature)
-        const totalNeeded = fee + 0.3;
+        // Total needed = Storage Fee + 1.0 NEAR Buffer (enough for multiple MPC signatures/storage/minting)
+        const totalNeeded = fee + 1.0;
 
         let toPay = totalNeeded - balance;
         if (toPay < 0) toPay = 0;
@@ -160,7 +180,7 @@ export function UploadForm() {
     };
 
     // Helper function to process the signature and continue with upload/access conditions/minting
-    const processSignatureAndUpload = async (mpcSignature: MPCSignature, messageToSign: string, lighthouseEthAddress: string, storageFee: string) => {
+    const processSignatureAndUpload = async (mpcSignature: MPCSignature, messageToSign: string, lighthouseEthAddress: string, storageFee: string, sessionManager: SessionManager) => {
         if (!file || !accountId || !selector) {
             throw new Error("Missing file, accountId, or selector for upload process.");
         }
@@ -191,23 +211,48 @@ export function UploadForm() {
                 updateStep('thumbnail', 'complete');
             }
 
-            // 0. Recover Ethereum Address (MPC)
-            // We already have the address from the previous step (lighthouseEthAddress)
-            console.log('Using recovered MPC Address for Session Sigs:', lighthouseEthAddress);
-            const { signWithMPC } = await import('@/lib/chain-signatures');
-
-            // 1. Get Session Signatures (One-time signature for session)
+            // 1. Get Session Signatures (SIGNLESS if session key exists or PKP exists!)
             setStatus('Getting Session Signatures...');
 
-            const sessionSignatures = await lit.getSessionSigs(
-                wallet,
-                accountId,
-                lighthouseEthAddress,
-                signWithMPC,
-                undefined, // ACC (optional)
-                undefined, // hash (optional)
-                'youtick-demo,chunky-paste.testnet,v1' // derivationPath
-            );
+            let sessionSignatures: any;
+
+            if (pkpData) {
+                // OPTION A: PKP SIGNLESS (Zero-Signature!)
+                console.log("Using PKP for fully signless Lit session...");
+                sessionSignatures = await lit.getSessionSigsWithPKP(
+                    pkpData.publicKey,
+                    pkpData.ethAddress,
+                    accountId,
+                    // These are stored during PKP linking in LinkAccount.tsx
+                    localStorage.getItem(`lit_pkp_sig_${accountId}`) || undefined,
+                    localStorage.getItem(`lit_pkp_msg_${accountId}`) || undefined,
+                    localStorage.getItem(`lit_pkp_pubkey_${accountId}`) || undefined
+                );
+            } else {
+                // OPTION B: MPC SIGNLESS (uses Session Key)
+                // Custom signWithMPC that uses Session Key to avoid wallet popup
+                const signWithSessionKey = async (w: any, accId: string, path: string, msg: string) => {
+                    console.log("Using Session Key for signless MPC signature...");
+                    const messageHash = ethers.hashMessage(msg);
+                    const payload = Array.from(ethers.getBytes(messageHash));
+
+                    return await sessionManager.callMethod('sign_with_mpc', {
+                        payload,
+                        path,
+                        key_version: 0
+                    });
+                };
+
+                sessionSignatures = await lit.getSessionSigs(
+                    wallet,
+                    accountId,
+                    lighthouseEthAddress,
+                    signWithSessionKey,
+                    undefined, // ACC (optional)
+                    undefined, // hash (optional)
+                    'lit/pkp-minting' // derivationPath
+                );
+            }
 
             // 2. Encrypt with Lit Protocol using Session Keys
             updateStep('encrypt', 'loading');
@@ -331,10 +376,12 @@ export function UploadForm() {
                 // Use batch transaction - ONE SIGNATURE for both mint and create_event!
                 setStatus('Sign to Mint NFT & Create Event (1 signature)...');
 
-                await batchUploadActions(
-                    wallet,
-                    contractId,
-                    accountId,
+                // Use signless batch transaction if possible
+                setStatus('Publishing to Blockchain (Signless)...');
+                console.log("Using Session Key for signless final publication...");
+
+                await batchUploadActionsSignless(
+                    sessionManager,
                     videoMetadata,
                     eventMetadata
                 );
@@ -384,9 +431,10 @@ export function UploadForm() {
             // 3. Sign the REAL message (Retry)
             console.log('Step 2 (Retry): Signing real auth message...');
             const { signWithMPC } = await import('@/lib/chain-signatures');
-            const mpcSignature = await signWithMPC(wallet, accountId!, 'youtick-demo,chunky-paste.testnet,v1', pendingMessage) as any;
+            const mpcSignature = await signWithMPC(wallet, accountId!, 'lit/pkp-minting', pendingMessage) as any;
 
-            await processSignatureAndUpload(mpcSignature, pendingMessage, recoveredAddr, verifiedStorageFee);
+            const sessionManager = new SessionManager(accountId!);
+            await processSignatureAndUpload(mpcSignature, pendingMessage, recoveredAddr, verifiedStorageFee, sessionManager);
         } catch (error: any) {
             console.error('Retry failed:', error);
             setStatus(`Retry failed: ${error.message}`);
@@ -416,22 +464,38 @@ export function UploadForm() {
         try {
             const wallet = await selector.wallet();
 
-            // --- STEP 1: CALCULATE STORAGE FEE (Deferred Payment) ---
-            setStatus('Calculating Storage Fee...');
+            // --- STEP 0: AUTOMATIC PKP LINKING (Auto-Onboarding) ---
+            // CRITICAL: We do this FIRST to maximize chance of popup success
+            let signResult = null;
+            let pkpOnboardingMessage = "";
+            if (!pkpData) {
+                try {
+                    setStatus('Enabling One-Click Upload (Fast Identity)...');
+                    pkpOnboardingMessage = `I authorize Lit Protocol PKP for account ${accountId} at ${Date.now()}`;
+                    const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
+                    const recipient = CONTRACT_ID;
 
-            const { getNearPrice, calculateStorageFee } = await import('@/lib/price');
-            const nearPrice = await getNearPrice();
-            const storageFee = calculateStorageFee(file.size, nearPrice);
+                    console.log("Requesting NEAR signature for Lit Action (Auto-Onboarding)...");
+                    signResult = await wallet.signMessage({ message: pkpOnboardingMessage, nonce, recipient });
+                } catch (pkpError: any) {
+                    console.warn("PKP signMessage failed/blocked:", pkpError);
+                    if (pkpError?.message?.includes('Popup window blocked')) {
+                        setRetryStep('pkp_link');
+                    }
+                    // Continue anyway, we can fallback to regular signless MPC (Session Key)
+                }
+            }
+
+            // --- STEP 1: CALCULATE STORAGE FEE (Use pre-calculated state) ---
+            const storageFee = estimatedStorageFee;
             setVerifiedStorageFee(storageFee);
 
-            console.log(`Video Size: ${file.size} bytes. Price: $${nearPrice}/NEAR. Fee: ${storageFee} NEAR`);
+            console.log(`Video Size: ${file.size} bytes. Fee: ${storageFee} NEAR`);
 
-
-
-            // 0. CHECK Session & PAY UPFRONT (Consolidated Identity Verification)
+            // 2. CHECK Session & PAY UPFRONT (Consolidated Identity Verification)
             const sessionManager = new SessionManager(accountId);
             const { deriveEthAddress } = await import('@/lib/chain-signatures');
-            const derivationPath = 'youtick-demo,chunky-paste.testnet,v1';
+            const derivationPath = 'lit/pkp-minting';
 
             updateStep('session', 'loading');
             setStatus('Verifying Identity & Preparing Session...');
@@ -440,7 +504,8 @@ export function UploadForm() {
             const toPayVal = parseFloat(payAmount);
 
             if (!hasKey) {
-                const depositAmount = toPayVal > 0 ? payAmount : '1';
+                // Ensure at least 1.0 NEAR for a new session setup to prevent "Insufficient Balance"
+                const depositAmount = toPayVal > 1 ? payAmount : '1';
                 setStatus(`Setting up Session Key & Depositing ${depositAmount} NEAR...`);
                 await sessionManager.createSessionKey(wallet, depositAmount);
                 if (toPayVal > 0) {
@@ -455,9 +520,48 @@ export function UploadForm() {
             }
 
             // Derive MPC address (mathematical - lightning fast)
-            const recoveredAddress = await deriveEthAddress(accountId, derivationPath);
+            // CRITICAL: We MUST use CONTRACT_ID as the account creator because the contract 
+            // is the predecessor when calling sign_with_mpc.
+            const recoveredAddress = await deriveEthAddress(CONTRACT_ID, derivationPath);
             console.log('Identity Verified. MPC Address:', recoveredAddress);
             updateStep('session', 'complete');
+
+            // --- STEP 3: FINALIZE PKP LINKING (If signResult exists) ---
+            if (signResult && !pkpData) {
+                try {
+                    setStatus('Minting Fast Identity (Sponsored)...');
+                    const relayerResponse = await fetch('/api/relayer/mint', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            nearAccountId: accountId,
+                            nearPublicKey: signResult.publicKey,
+                            signature: signResult.signature,
+                            message: pkpOnboardingMessage
+                        })
+                    });
+
+                    const relayerData = await relayerResponse.json();
+                    if (relayerResponse.ok && relayerData.pkp) {
+                        const pkpWithVerification = {
+                            ...relayerData.pkp,
+                            nearSignature: signResult.signature,
+                            nearMessage: pkpOnboardingMessage,
+                            nearPublicKey: signResult.publicKey
+                        };
+
+                        localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify(pkpWithVerification));
+                        localStorage.setItem(`lit_pkp_sig_${accountId}`, signResult.signature);
+                        localStorage.setItem(`lit_pkp_msg_${accountId}`, pkpOnboardingMessage);
+                        localStorage.setItem(`lit_pkp_pubkey_${accountId}`, signResult.publicKey);
+
+                        setPkpData(pkpWithVerification);
+                        console.log("One-Click Onboarding successful!");
+                    }
+                } catch (e) {
+                    console.warn("Relayer failed after signature, continuing with regular upload:", e);
+                }
+            }
 
             // 1. Get Auth Message from Lighthouse
             setStatus('Authenticating with Storage Network...');
@@ -479,7 +583,7 @@ export function UploadForm() {
                 key_version: 0
             });
 
-            await processSignatureAndUpload(mpcSignature, messageToSign, recoveredAddress, storageFee);
+            await processSignatureAndUpload(mpcSignature, messageToSign, recoveredAddress, storageFee, sessionManager);
 
         } catch (error: any) {
             console.error('Upload failed:', error);
@@ -606,6 +710,23 @@ export function UploadForm() {
                                         className="w-full border-yellow-500/50 hover:bg-yellow-500/20"
                                     >
                                         Continue Signing & Upload
+                                    </Button>
+                                </AlertDescription>
+                            </Alert>
+                        )}
+
+                        {retryStep === 'pkp_link' && (
+                            <Alert className="border-blue-500/50 bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                                <AlertCircle className="h-4 w-4" />
+                                <AlertTitle>One-Click Setup Blocked</AlertTitle>
+                                <AlertDescription className="flex flex-col gap-2">
+                                    <p>Your browser blocked the setup popup. Click below to enable faster future uploads.</p>
+                                    <Button
+                                        onClick={handleUpload}
+                                        variant="outline"
+                                        className="w-full border-blue-500/50 hover:bg-blue-500/20"
+                                    >
+                                        Try Setup Again
                                     </Button>
                                 </AlertDescription>
                             </Alert>

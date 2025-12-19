@@ -141,30 +141,34 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
             const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0.utick.testnet';
             const sessionManager = new SessionManager(accountId);
 
-            const actions = [];
+            const transactionsList = [];
 
-            // 1. If no session key, add it to the batch
+            // 1. Prepare Session Key Transaction if missing
             if (hasSessionKey === false) {
-                console.log("No session key found. Adding Initialization to batch...");
+                console.log("No session key found. Adding Initialization to transactions...");
                 const keyPair = utils.KeyPair.fromRandom('ed25519');
                 const publicKey = keyPair.getPublicKey().toString();
 
                 // Store locally (optimistic)
                 await sessionManager.saveSessionKey(keyPair);
 
-                actions.push(
-                    transactions.addKey(
-                        utils.PublicKey.from(publicKey),
-                        transactions.functionCallAccessKey(
-                            contractId,
-                            [],
-                            BigInt(utils.format.parseNearAmount('0.25') || '0')
+                transactionsList.push({
+                    receiverId: accountId,
+                    actions: [
+                        transactions.addKey(
+                            utils.PublicKey.from(publicKey),
+                            transactions.functionCallAccessKey(
+                                contractId,
+                                [],
+                                BigInt(utils.format.parseNearAmount('0.25') || '0')
+                            )
                         )
-                    )
-                );
+                    ]
+                });
             }
 
-            // 2. Add Purchase Action
+            // 2. Prepare Purchase & Deposit Transaction
+            const purchaseActions = [];
             const MIN_STORAGE_COST = utils.format.parseNearAmount('0.01');
             const priceYocto = utils.format.parseNearAmount(eventDetails.price) || '0';
             let finalDeposit = BigInt(priceYocto);
@@ -174,7 +178,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
                 finalDeposit = minStorage;
             }
 
-            actions.push(
+            // Buy Ticket Action
+            purchaseActions.push(
                 transactions.functionCall(
                     'buy_ticket',
                     Buffer.from(JSON.stringify({
@@ -186,8 +191,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
                 )
             );
 
-            // 3. Add Deposit Action
-            actions.push(
+            // Deposit Action (Prepaid Gas/Storage Buffer)
+            purchaseActions.push(
                 transactions.functionCall(
                     'deposit_funds',
                     Buffer.from(JSON.stringify({})),
@@ -196,13 +201,16 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
                 )
             );
 
-            console.log(`Sending batch transaction (${actions.length} actions)...`);
-            await wallet.signAndSendTransaction({
+            transactionsList.push({
                 receiverId: contractId,
-                actions: actions,
+                actions: purchaseActions
             });
 
-            // If we get here, tx succeeded
+            console.log(`Sending bundled transactions (${transactionsList.length} txs)...`);
+            await wallet.signAndSendTransactions({
+                transactions: transactionsList
+            });
+
             if (hasSessionKey === false) setHasSessionKey(true);
             if (onPurchaseSuccess) onPurchaseSuccess();
 

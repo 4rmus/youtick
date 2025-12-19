@@ -73,7 +73,7 @@ export function LinkAccount() {
         }
     };
 
-    const handleDirectMint = async () => {
+    const handleSponsoredMint = async () => {
         if (!selector || !accountId) return;
 
         try {
@@ -90,25 +90,27 @@ export function LinkAccount() {
             if (!signResult) throw new Error("User rejected signature");
             console.log("NEAR Signature received:", signResult);
 
-            // Step 2: Mint & Permit PKP in ONE Transaction
+            // Step 2: Use Relayer API for Sponsored Mint (App pays gas!)
             setStatus('minting & permissioning');
-            console.log("Starting batch Mint + Permit transaction...");
+            console.log("Sending mint request to Relayer...");
 
-            // Create Chronicle provider using ethers v5 (LitContracts requires v5)
-            const provider = new ethers5.providers.JsonRpcProvider(CHRONICLE_YELLOWSTONE_RPC);
+            const response = await fetch('/api/relayer/mint', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    nearAccountId: accountId,
+                    nearPublicKey: signResult.publicKey,
+                    signature: signResult.signature,
+                    message: message
+                })
+            });
 
-            // Create MPC Signer (v5 compatible)
-            const mpcSigner = new MPCSignerV5(wallet, accountId, 'lit/pkp-minting', provider);
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Relayer failed');
 
-            console.log("MPC Signer Address:", await mpcSigner.getAddress());
+            const mintedPkp = data.pkp;
 
-            // Use mintPKPDirect (now batched)
-            const pkpManager = new PKPManager((lit as any).litNodeClient);
-            await lit.connect();
-
-            const mintedPkp = await pkpManager.mintPKPDirect(mpcSigner);
-
-            // Step 3: Store PKP info WITH NEAR signature for Lit Action
+            // Step 3: Store PKP info WITH NEAR signature
             const pkpWithSignature = {
                 ...mintedPkp,
                 nearSignature: signResult.signature,
@@ -122,9 +124,9 @@ export function LinkAccount() {
 
             setPkpInfo(pkpWithSignature);
             setStatus('success');
-            console.log("PKP linked with NEAR signature for signless decryption!");
+            console.log("PKP linked via Sponsored Relayer!");
         } catch (e: any) {
-            console.error("Direct mint failed:", e);
+            console.error("Sponsored mint failed:", e);
             setStatus('error');
             setErrorMsg(e.message || e.toString());
         }
@@ -150,41 +152,22 @@ export function LinkAccount() {
 
                     {mpcAddress && (
                         <div className="space-y-4">
-                            <Card className="bg-muted/30 border-dashed border-muted-foreground/20">
+                            <Card className="bg-primary/5 border-primary/20 border">
                                 <CardHeader className="py-3">
-                                    <CardTitle className="text-sm font-medium">Onboarding Gas (Chronicle Yellowstone)</CardTitle>
+                                    <div className="flex justify-between items-center">
+                                        <CardTitle className="text-sm font-bold text-primary">Sponsored Onboarding</CardTitle>
+                                        <div className="px-2 py-0.5 bg-green-500/10 text-green-600 text-[10px] font-bold rounded-full animate-pulse">
+                                            GAS FREE
+                                        </div>
+                                    </div>
                                 </CardHeader>
                                 <CardContent className="py-2 space-y-3">
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-xs text-muted-foreground">My Identity Address:</span>
-                                        <span className="text-[10px] font-mono bg-background px-2 py-0.5 rounded border">{mpcAddress}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-xs text-muted-foreground">Gas Balance (tstLPX):</span>
-                                        <span className={`text-sm font-bold ${parseFloat(mpcBalance) > 0 ? 'text-green-500' : 'text-yellow-500'}`}>
-                                            {mpcBalance} tstLPX
-                                        </span>
-                                    </div>
-
-                                    {parseFloat(mpcBalance) === 0 ? (
-                                        <div className="p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-md">
-                                            <p className="text-[11px] text-yellow-700 dark:text-yellow-400">
-                                                <strong>Action Required:</strong> To create your PKP (Programmable Key Pair), you need a tiny amount of testnet gas.
-                                            </p>
-                                            <Button variant="link" size="sm" className="h-auto p-0 mt-1 text-blue-500 text-[11px]" asChild>
-                                                <a href="https://chronicle-yellowstone-faucet.getlit.dev/" target="_blank" rel="noopener noreferrer">
-                                                    Get free testnet tokens from faucet →
-                                                </a>
-                                            </Button>
-                                        </div>
-                                    ) : (
-                                        <div className="p-2 bg-green-500/5 border border-green-500/20 rounded-md text-[10px] text-green-600">
-                                            ✅ Ready to mint! Gas detected.
-                                        </div>
-                                    )}
+                                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                                        We use a <strong>Gas Relayer</strong> to sponsor your account setup. No testnet tokens are required for this step.
+                                    </p>
 
                                     <div className="text-[9px] text-muted-foreground italic border-t pt-2">
-                                        💡 Production Tip: In a real app, we use "Relayers" to pay this gas automatically for you. No manual tokens required!
+                                        💡 Tip: The app pays the gas fees on the Chronicle network so you can start watching instantly.
                                     </div>
                                 </CardContent>
                             </Card>
@@ -206,20 +189,15 @@ export function LinkAccount() {
                     {status === 'idle' && (
                         <div className="flex flex-col gap-3">
                             <Button
-                                onClick={handleDirectMint}
-                                disabled={parseFloat(mpcBalance) === 0}
-                                className="w-full bg-purple-600 hover:bg-purple-700 text-white shadow-lg shadow-purple-500/20"
+                                onClick={handleSponsoredMint}
+                                className="w-full bg-purple-600 hover:bg-purple-700 text-white shadow-lg shadow-purple-500/40 py-6 text-base font-bold"
                             >
-                                {parseFloat(mpcBalance) === 0 ? "Gas Required to Link" : "Link Real PKP Identity"}
+                                Link Sponsored Identity (Free)
                             </Button>
 
-                            <Button
-                                onClick={handleMockLink}
-                                variant="outline"
-                                className="w-full text-xs text-muted-foreground"
-                            >
-                                Try with Demo Identity (No Gas Needed)
-                            </Button>
+                            <p className="text-[10px] text-center text-muted-foreground">
+                                Powered by YouTick Gas Relayer
+                            </p>
                         </div>
                     )}
 

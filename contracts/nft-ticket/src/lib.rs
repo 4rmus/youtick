@@ -34,9 +34,8 @@ pub enum StorageKeyV2 {
     Events,
 }
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
-#[borsh(crate = "near_sdk::borsh")]
-#[serde(crate = "near_sdk::serde")]
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
 pub struct Event {
     pub title: String,
     pub description: String,
@@ -47,9 +46,8 @@ pub struct Event {
 }
 
 // Custom video metadata for token-gated content
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
-#[borsh(crate = "near_sdk::borsh")]
-#[serde(crate = "near_sdk::serde")]
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
 pub struct VideoMetadata {
     pub encrypted_cid: String,       // Lighthouse encrypted video CID
     pub livepeer_playback_id: String,// Livepeer playback ID
@@ -58,9 +56,8 @@ pub struct VideoMetadata {
     pub content_type: ContentType,   // Concert, Cinema, Exclusive
 }
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone)]
-#[borsh(crate = "near_sdk::borsh")]
-#[serde(crate = "near_sdk::serde")]
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
 pub enum ContentType {
     Concert,
     Cinema,
@@ -178,9 +175,33 @@ impl Contract {
         self.events.iter().skip(from_index.map(|v| v.0 as usize).unwrap_or(0)).take(limit.unwrap_or(50) as usize).collect()
     }
 
-    /// Get a single event by encrypted CID
     pub fn get_event(&self, encrypted_cid: String) -> Option<Event> {
         self.events.get(&encrypted_cid)
+    }
+
+    /// Create an event using prepaid funds (Callable via Session Key)
+    pub fn create_event_prepaid(&mut self, encrypted_cid: String, title: String, description: String, price: U128, livepeer_playback_id: Option<String>) {
+        let account_id = env::predecessor_account_id();
+        let charge_amount = NearToken::from_millinear(100); // 0.1 NEAR for storage
+        
+        let current_bal = self.user_deposits.get(&account_id).expect("Insufficient prepaid balance for event creation");
+        require!(current_bal.as_yoctonear() >= charge_amount.as_yoctonear(), "Insufficient prepaid balance for event creation");
+        
+        // Deduct balance
+        let new_bal = current_bal.saturating_sub(charge_amount);
+        self.user_deposits.insert(&account_id, &new_bal);
+        
+        // Execute creation
+        let event = Event {
+            title,
+            description,
+            price,
+            creator_id: account_id,
+            created_at: env::block_timestamp(),
+            livepeer_playback_id: livepeer_playback_id.unwrap_or_default(),
+        };
+
+        self.events.insert(&encrypted_cid, &event);
     }
 
     /// Purchase a ticket (mint NFT) for an event

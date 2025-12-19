@@ -7,7 +7,7 @@ import { sha3_256 } from 'js-sha3';
 const MPC_CONTRACT = 'v1.signer-prod.testnet';
 
 export async function deriveEthAddress(accountId: string, path: string, wallet?: any): Promise<string> {
-    const cacheKey = `mpc_address_v7_${accountId}_${path}`;
+    const cacheKey = `mpc_address_v8_${accountId}_${path}`;
     if (typeof window !== 'undefined') {
         const cached = localStorage.getItem(cacheKey);
         if (cached) {
@@ -88,7 +88,7 @@ function deriveChildKey(masterKeyStr: string, accountId: string, path: string): 
     const masterPoint = ec.keyFromPublic(masterKeyHex, 'hex').getPublic();
 
     // Standard NEAR MPC Derivation Prefix - MUST match exactly
-    // Source: https://github.com/near-examples/chainsig-script/blob/main/src/kdf.ts
+    // The contract uses "near-mpc-recovery v0.1.0 epsilon derivation:${accountId},${path}"
     const derivation_path = `near-mpc-recovery v0.1.0 epsilon derivation:${accountId},${path}`;
 
     // Hash payload using SHA3-256 (NOT SHA256, NOT Keccak-256)
