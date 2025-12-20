@@ -15,10 +15,10 @@ YouTick is a Web3-native VOD platform where creators upload encrypted videos to 
 Traditional platforms give you a "viewing right" that can be revoked anytime. YouTick gives you an **NFT ticket** that sits in your wallet forever. You can transfer it, sell it on secondary markets, or keep it as a collectible.
 
 ### Frictionless Web3 UX
-Most dApps suffer from "Signature Fatigue" – endless wallet pop-ups. YouTick uses **Session Caching with Chain Signatures (MPC)** to create a seamless experience:
-- User buys ticket → **One signature**
-- Background: Session created using NEAR Chain Signatures
-- Result: Hit "Play" and video starts **instantly** – no more pop-ups
+Most dApps suffer from \"Signature Fatigue\" – endless wallet pop-ups. YouTick uses **Session Keys with Chain Signatures (MPC)** to create a seamless experience:
+- **First upload** → One signature to create Session Key
+- **Subsequent uploads** → Fully signless (Session Key enables MPC calls)
+- **Video playback** → Signless decryption for ticket holders
 
 ### Creator-First Economics
 - **98% Revenue to Creators** – Only 2% protocol fee
@@ -86,7 +86,9 @@ Create `apps/web/.env.local`:
 ```env
 NEXT_PUBLIC_NEAR_NETWORK=testnet
 NEXT_PUBLIC_NFT_CONTRACT_ID=v1-0.utick.testnet
+NEXT_PUBLIC_LIT_ACTION_IPFS_CID=your_lit_action_cid
 LIGHTHOUSE_API_KEY=your_lighthouse_api_key
+RELAYER_PRIVATE_KEY=your_relayer_private_key  # Optional: for sponsored PKP minting
 ```
 
 ## 📖 Usage
