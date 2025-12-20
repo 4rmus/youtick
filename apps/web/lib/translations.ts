@@ -90,7 +90,8 @@ export const translations = {
                 thumbnail: "Uploading Cover",
                 encrypt: "Securing Video",
                 upload: "Finalizing Storage",
-                mint: "Publishing to Blockchain"
+                mint: "Publishing to Blockchain",
+                event: "Event Created"
             }
         },
         watch_page: {
@@ -408,7 +409,8 @@ export const translations = {
                 thumbnail: "Kapak Fotoğrafı Yükleniyor",
                 encrypt: "Video Şifreleniyor",
                 upload: "Depolama Tamamlanıyor",
-                mint: "Blockchain'de Yayınlanıyor"
+                mint: "Blockchain'de Yayınlanıyor",
+                event: "Etkinlik Oluşturuldu"
             }
         },
         watch_page: {

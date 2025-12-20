@@ -45,13 +45,17 @@ export function UploadForm() {
     const [price, setPrice] = useState('0'); // Default 0 NEAR
     const [progress, setProgress] = useState(0);
 
+    // Verified Creator Status (has session key)
+    const [isVerifiedCreator, setIsVerifiedCreator] = useState(false);
+
     // Upload steps tracking
     const [uploadSteps, setUploadSteps] = useState([
         { id: 'session', label: 'Preparing Identity', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
         { id: 'thumbnail', label: 'Uploading Cover', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
         { id: 'encrypt', label: 'Securing Video', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
         { id: 'upload', label: 'Finalizing Storage', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'mint', label: 'Publishing to Blockchain', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' }
+        { id: 'mint', label: 'Publishing to Blockchain', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'event', label: 'Event Created', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' }
     ]);
 
     // Retry state for popup blocked scenarios
@@ -92,8 +96,16 @@ export function UploadForm() {
         if (accountId && selector) {
             checkGasStatus();
             checkPKPStatus();
+            checkVerifiedCreatorStatus();
         }
     }, [accountId, selector]);
+
+    const checkVerifiedCreatorStatus = async () => {
+        if (!accountId) return;
+        const sessionManager = new SessionManager(accountId);
+        const hasKey = await sessionManager.hasSessionKey();
+        setIsVerifiedCreator(hasKey);
+    };
 
     const checkPKPStatus = () => {
         if (!accountId) return;
@@ -211,48 +223,35 @@ export function UploadForm() {
                 updateStep('thumbnail', 'complete');
             }
 
-            // 1. Get Session Signatures (SIGNLESS if session key exists or PKP exists!)
+            // 1. Get Session Signatures (Always use Session Key + MPC for uploads)
+            // PKP is reserved for video playback where signless experience is desired
             setStatus('Getting Session Signatures...');
 
             let sessionSignatures: any;
 
-            if (pkpData) {
-                // OPTION A: PKP SIGNLESS (Zero-Signature!)
-                console.log("Using PKP for fully signless Lit session...");
-                sessionSignatures = await lit.getSessionSigsWithPKP(
-                    pkpData.publicKey,
-                    pkpData.ethAddress,
-                    accountId,
-                    // These are stored during PKP linking in LinkAccount.tsx
-                    localStorage.getItem(`lit_pkp_sig_${accountId}`) || undefined,
-                    localStorage.getItem(`lit_pkp_msg_${accountId}`) || undefined,
-                    localStorage.getItem(`lit_pkp_pubkey_${accountId}`) || undefined
-                );
-            } else {
-                // OPTION B: MPC SIGNLESS (uses Session Key)
-                // Custom signWithMPC that uses Session Key to avoid wallet popup
-                const signWithSessionKey = async (w: any, accId: string, path: string, msg: string) => {
-                    console.log("Using Session Key for signless MPC signature...");
-                    const messageHash = ethers.hashMessage(msg);
-                    const payload = Array.from(ethers.getBytes(messageHash));
+            // MPC SIGNLESS (uses Session Key) - requires 1 signature per upload
+            // Custom signWithMPC that uses Session Key
+            const signWithSessionKey = async (w: any, accId: string, path: string, msg: string) => {
+                console.log("Using Session Key for MPC signature...");
+                const messageHash = ethers.hashMessage(msg);
+                const payload = Array.from(ethers.getBytes(messageHash));
 
-                    return await sessionManager.callMethod('sign_with_mpc', {
-                        payload,
-                        path,
-                        key_version: 0
-                    });
-                };
+                return await sessionManager.callMethod('sign_with_mpc', {
+                    payload,
+                    path,
+                    key_version: 0
+                });
+            };
 
-                sessionSignatures = await lit.getSessionSigs(
-                    wallet,
-                    accountId,
-                    lighthouseEthAddress,
-                    signWithSessionKey,
-                    undefined, // ACC (optional)
-                    undefined, // hash (optional)
-                    'lit/pkp-minting' // derivationPath
-                );
-            }
+            sessionSignatures = await lit.getSessionSigs(
+                wallet,
+                accountId,
+                lighthouseEthAddress,
+                signWithSessionKey,
+                undefined, // ACC (optional)
+                undefined, // hash (optional)
+                'lit/pkp-minting' // derivationPath
+            );
 
             // 2. Encrypt with Lit Protocol using Session Keys
             updateStep('encrypt', 'loading');
@@ -380,6 +379,7 @@ export function UploadForm() {
                 setStatus('Publishing to Blockchain (Signless)...');
                 console.log("Using Session Key for signless final publication...");
 
+                updateStep('event', 'loading');
                 await batchUploadActionsSignless(
                     sessionManager,
                     videoMetadata,
@@ -387,6 +387,7 @@ export function UploadForm() {
                 );
 
                 updateStep('mint', 'complete');
+                updateStep('event', 'complete');
                 setStatus('Success! Video Uploaded & Ticket Sales Started!');
 
             } catch (mintError: any) {
@@ -470,30 +471,9 @@ export function UploadForm() {
             const hasSessionKey = await sessionManager.hasSessionKey();
             console.log("Session key status:", hasSessionKey ? "EXISTS" : "NEEDS CREATION");
 
-            // --- SINGLE POPUP LOGIC ---
-            // Browser only allows ONE popup per user gesture.
-            // Priority: Session Key > PKP Onboarding
-            // - If no session key: create it (popup #1), skip PKP this time
-            // - If session key exists: try PKP onboarding (popup #1)
-
-            let signResult = null;
-            let pkpOnboardingMessage = "";
-
-            if (hasSessionKey && !pkpData) {
-                // Session key exists, we can try PKP onboarding as the single popup
-                try {
-                    setStatus('Enabling One-Click Upload (Fast Identity)...');
-                    pkpOnboardingMessage = `I authorize Lit Protocol PKP for account ${accountId} at ${Date.now()}`;
-                    const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
-                    const recipient = CONTRACT_ID;
-
-                    console.log("Requesting NEAR signature for PKP (session key already exists)...");
-                    signResult = await wallet.signMessage({ message: pkpOnboardingMessage, nonce, recipient });
-                } catch (pkpError: any) {
-                    console.warn("PKP signMessage failed/blocked:", pkpError);
-                    // Continue anyway - PKP is optional, session key works for upload
-                }
-            }
+            // Note: PKP onboarding removed from upload flow
+            // PKP is now reserved for signless video playback only
+            // Each upload uses Session Key + MPC (1 signature per upload)
 
             // --- STEP 1: CALCULATE STORAGE FEE (Use pre-calculated state) ---
             const storageFee = estimatedStorageFee;
@@ -516,6 +496,7 @@ export function UploadForm() {
                 setStatus(`Setting up Session Key & Depositing ${depositAmount} NEAR...`);
                 console.log("Creating session key (first-time setup)...");
                 await sessionManager.createSessionKey(wallet, depositAmount);
+                setIsVerifiedCreator(true); // Update verified status
                 if (toPayVal > 0) {
                     setCurrentBalance((parseFloat(currentBalance) + parseFloat(depositAmount)).toString());
                     setPayAmount('0');
@@ -535,42 +516,7 @@ export function UploadForm() {
             console.log('Identity Verified. MPC Address:', recoveredAddress);
             updateStep('session', 'complete');
 
-            // --- STEP 3: FINALIZE PKP LINKING (If signResult exists) ---
-            if (signResult && !pkpData) {
-                try {
-                    setStatus('Minting Fast Identity (Sponsored)...');
-                    const relayerResponse = await fetch('/api/relayer/mint', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            nearAccountId: accountId,
-                            nearPublicKey: signResult.publicKey,
-                            signature: signResult.signature,
-                            message: pkpOnboardingMessage
-                        })
-                    });
-
-                    const relayerData = await relayerResponse.json();
-                    if (relayerResponse.ok && relayerData.pkp) {
-                        const pkpWithVerification = {
-                            ...relayerData.pkp,
-                            nearSignature: signResult.signature,
-                            nearMessage: pkpOnboardingMessage,
-                            nearPublicKey: signResult.publicKey
-                        };
-
-                        localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify(pkpWithVerification));
-                        localStorage.setItem(`lit_pkp_sig_${accountId}`, signResult.signature);
-                        localStorage.setItem(`lit_pkp_msg_${accountId}`, pkpOnboardingMessage);
-                        localStorage.setItem(`lit_pkp_pubkey_${accountId}`, signResult.publicKey);
-
-                        setPkpData(pkpWithVerification);
-                        console.log("One-Click Onboarding successful!");
-                    }
-                } catch (e) {
-                    console.warn("Relayer failed after signature, continuing with regular upload:", e);
-                }
-            }
+            // PKP linking removed - PKP is now only for video playback
 
             // 1. Get Auth Message from Lighthouse
             setStatus('Authenticating with Storage Network...');
@@ -845,52 +791,77 @@ export function UploadForm() {
                     </div>
 
 
-                    {/* Upload Progress Steps - Only show when uploading */}
-                    {uploading && (
-                        <div className="p-5 bg-zinc-900/50 rounded-xl border border-white/5">
-                            <h3 className="text-sm font-semibold mb-4 text-zinc-300">{t.upload_page.progress_title}</h3>
-                            <div className="space-y-3">
-                                {uploadSteps.map((step, index) => (
-                                    <div key={step.id} className="flex items-center gap-3">
-                                        {/* Status Icon */}
-                                        <div className="flex-shrink-0">
-                                            {step.status === 'pending' && (
-                                                <div className="w-6 h-6 rounded-full border-2 border-zinc-700 flex items-center justify-center">
-                                                    <span className="text-[10px] text-zinc-600">{index + 1}</span>
-                                                </div>
-                                            )}
-                                            {step.status === 'loading' && (
-                                                <div className="w-6 h-6 rounded-full border-2 border-blue-500 flex items-center justify-center animate-spin">
-                                                    <Loader2 className="w-3 h-3 text-blue-500" />
-                                                </div>
-                                            )}
-                                            {step.status === 'complete' && (
-                                                <div className="w-6 h-6 rounded-full bg-green-500/20 border-2 border-green-500 flex items-center justify-center">
-                                                    <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
-                                                </div>
-                                            )}
-                                            {step.status === 'error' && (
-                                                <div className="w-6 h-6 rounded-full bg-red-500/20 border-2 border-red-500 flex items-center justify-center">
-                                                    <AlertCircle className="w-3.5 h-3.5 text-red-500" />
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        {/* Step Label */}
-                                        <div className="flex-1">
-                                            <p className={`text-sm font-medium ${step.status === 'complete' ? 'text-green-400' :
-                                                step.status === 'loading' ? 'text-blue-400' :
-                                                    step.status === 'error' ? 'text-red-400' :
-                                                        'text-zinc-500'
-                                                }`}>
-                                                {(t.upload_page.steps as any)[step.id]}
-                                            </p>
-                                        </div>
-                                    </div>
-                                ))}
+                    {/* Verified Creator Badge */}
+                    <div className={`p-4 rounded-xl border ${isVerifiedCreator
+                        ? 'bg-amber-500/10 border-amber-500/30'
+                        : 'bg-zinc-900/50 border-white/5'}`}>
+                        <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isVerifiedCreator
+                                ? 'bg-amber-500/20 border-2 border-amber-500'
+                                : 'bg-zinc-800 border-2 border-zinc-700'}`}>
+                                {isVerifiedCreator ? (
+                                    <CheckCircle2 className="w-5 h-5 text-amber-500" />
+                                ) : (
+                                    <div className="w-5 h-5 rounded-full border-2 border-zinc-600" />
+                                )}
+                            </div>
+                            <div>
+                                <p className={`text-sm font-semibold ${isVerifiedCreator ? 'text-amber-400' : 'text-zinc-400'}`}>
+                                    {isVerifiedCreator ? 'Verified Creator' : 'Pending Verification'}
+                                </p>
+                                <p className="text-xs text-zinc-500">
+                                    {isVerifiedCreator
+                                        ? 'Session key active - Signless uploads enabled'
+                                        : 'Complete your first upload to verify'}
+                                </p>
                             </div>
                         </div>
-                    )}
+                    </div>
+
+                    {/* Upload Progress Steps - Always visible */}
+                    <div className="p-5 bg-zinc-900/50 rounded-xl border border-white/5">
+                        <h3 className="text-sm font-semibold mb-4 text-zinc-300">{t.upload_page.progress_title}</h3>
+                        <div className="space-y-3">
+                            {uploadSteps.map((step, index) => (
+                                <div key={step.id} className="flex items-center gap-3">
+                                    {/* Status Icon */}
+                                    <div className="flex-shrink-0">
+                                        {step.status === 'pending' && (
+                                            <div className="w-6 h-6 rounded-full border-2 border-zinc-700 flex items-center justify-center">
+                                                <span className="text-[10px] text-zinc-600">{index + 1}</span>
+                                            </div>
+                                        )}
+                                        {step.status === 'loading' && (
+                                            <div className="w-6 h-6 rounded-full border-2 border-blue-500 flex items-center justify-center animate-spin">
+                                                <Loader2 className="w-3 h-3 text-blue-500" />
+                                            </div>
+                                        )}
+                                        {step.status === 'complete' && (
+                                            <div className="w-6 h-6 rounded-full bg-green-500/20 border-2 border-green-500 flex items-center justify-center">
+                                                <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                                            </div>
+                                        )}
+                                        {step.status === 'error' && (
+                                            <div className="w-6 h-6 rounded-full bg-red-500/20 border-2 border-red-500 flex items-center justify-center">
+                                                <AlertCircle className="w-3.5 h-3.5 text-red-500" />
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Step Label */}
+                                    <div className="flex-1">
+                                        <p className={`text-sm font-medium ${step.status === 'complete' ? 'text-green-400' :
+                                            step.status === 'loading' ? 'text-blue-400' :
+                                                step.status === 'error' ? 'text-red-400' :
+                                                    'text-zinc-500'
+                                            }`}>
+                                            {(t.upload_page.steps as any)[step.id] || step.label}
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
                     <div className="p-6 bg-zinc-900/50 rounded-xl border border-white/5 text-xs text-slate-500 dark:text-slate-400">
                         <p className="font-semibold mb-2 text-zinc-300">{t.upload_page.how_it_works_title}</p>
                         <ol className="list-decimal list-inside space-y-1">
