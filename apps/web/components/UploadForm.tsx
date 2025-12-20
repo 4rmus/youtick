@@ -463,26 +463,35 @@ export function UploadForm() {
 
         try {
             const wallet = await selector.wallet();
+            const sessionManager = new SessionManager(accountId);
 
-            // --- STEP 0: AUTOMATIC PKP LINKING (Auto-Onboarding) ---
-            // CRITICAL: We do this FIRST to maximize chance of popup success
+            // --- PRE-CHECK: Session Key Status (SYNC - no popup yet) ---
+            // We check this FIRST to decide which popup to show
+            const hasSessionKey = await sessionManager.hasSessionKey();
+            console.log("Session key status:", hasSessionKey ? "EXISTS" : "NEEDS CREATION");
+
+            // --- SINGLE POPUP LOGIC ---
+            // Browser only allows ONE popup per user gesture.
+            // Priority: Session Key > PKP Onboarding
+            // - If no session key: create it (popup #1), skip PKP this time
+            // - If session key exists: try PKP onboarding (popup #1)
+
             let signResult = null;
             let pkpOnboardingMessage = "";
-            if (!pkpData) {
+
+            if (hasSessionKey && !pkpData) {
+                // Session key exists, we can try PKP onboarding as the single popup
                 try {
                     setStatus('Enabling One-Click Upload (Fast Identity)...');
                     pkpOnboardingMessage = `I authorize Lit Protocol PKP for account ${accountId} at ${Date.now()}`;
                     const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
                     const recipient = CONTRACT_ID;
 
-                    console.log("Requesting NEAR signature for Lit Action (Auto-Onboarding)...");
+                    console.log("Requesting NEAR signature for PKP (session key already exists)...");
                     signResult = await wallet.signMessage({ message: pkpOnboardingMessage, nonce, recipient });
                 } catch (pkpError: any) {
                     console.warn("PKP signMessage failed/blocked:", pkpError);
-                    if (pkpError?.message?.includes('Popup window blocked')) {
-                        setRetryStep('pkp_link');
-                    }
-                    // Continue anyway, we can fallback to regular signless MPC (Session Key)
+                    // Continue anyway - PKP is optional, session key works for upload
                 }
             }
 
@@ -492,27 +501,29 @@ export function UploadForm() {
 
             console.log(`Video Size: ${file.size} bytes. Fee: ${storageFee} NEAR`);
 
-            // 2. CHECK Session & PAY UPFRONT (Consolidated Identity Verification)
-            const sessionManager = new SessionManager(accountId);
+            // --- STEP 2: SESSION KEY SETUP (Only if not exists) ---
             const { deriveEthAddress } = await import('@/lib/chain-signatures');
             const derivationPath = 'lit/pkp-minting';
 
             updateStep('session', 'loading');
             setStatus('Verifying Identity & Preparing Session...');
 
-            const hasKey = await sessionManager.hasSessionKey();
             const toPayVal = parseFloat(payAmount);
 
-            if (!hasKey) {
-                // Ensure at least 1.0 NEAR for a new session setup to prevent "Insufficient Balance"
+            if (!hasSessionKey) {
+                // This is our SINGLE popup for this upload
                 const depositAmount = toPayVal > 1 ? payAmount : '1';
                 setStatus(`Setting up Session Key & Depositing ${depositAmount} NEAR...`);
+                console.log("Creating session key (first-time setup)...");
                 await sessionManager.createSessionKey(wallet, depositAmount);
                 if (toPayVal > 0) {
                     setCurrentBalance((parseFloat(currentBalance) + parseFloat(depositAmount)).toString());
                     setPayAmount('0');
                 }
+                // Note: PKP was skipped this time, will be attempted on next upload
+                console.log("Session key created! PKP onboarding will happen on next upload.");
             } else if (toPayVal > 0) {
+                // Session key exists, just top up if needed (may or may not need popup)
                 setStatus(`Funding Prepaid Storage & Gas (${payAmount} NEAR)...`);
                 await sessionManager.topUpGas(wallet, payAmount);
                 setCurrentBalance((parseFloat(currentBalance) + toPayVal).toString());
@@ -520,8 +531,6 @@ export function UploadForm() {
             }
 
             // Derive MPC address (mathematical - lightning fast)
-            // CRITICAL: We MUST use CONTRACT_ID as the account creator because the contract 
-            // is the predecessor when calling sign_with_mpc.
             const recoveredAddress = await deriveEthAddress(CONTRACT_ID, derivationPath);
             console.log('Identity Verified. MPC Address:', recoveredAddress);
             updateStep('session', 'complete');
