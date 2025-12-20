@@ -38,40 +38,17 @@ export function clearSessionCache(accountId: string) {
 }
 
 // Session cache helpers
+// DISABLED: User requested exactly 1 signature per upload for security/UX
+// To re-enable signless experience, restore the original caching logic
 function getCachedSessionSigs(accountId: string): any | null {
-    if (typeof window === 'undefined') return null;
-    try {
-        const cached = localStorage.getItem(`${SESSION_CACHE_KEY}_${accountId}`);
-        if (!cached) return null;
-
-        const { sessionSigs, timestamp } = JSON.parse(cached);
-        const age = Date.now() - timestamp;
-
-        if (age > SESSION_CACHE_EXPIRY) {
-            console.log('Lit session cache expired, will create new session');
-            localStorage.removeItem(`${SESSION_CACHE_KEY}_${accountId}`);
-            return null;
-        }
-
-        console.log('Using cached Lit session signatures (age:', Math.round(age / 60000), 'minutes)');
-        return sessionSigs;
-    } catch (e) {
-        console.warn('Error reading session cache:', e);
-        return null;
-    }
+    // Always return null to force new signature each upload
+    console.log('Session cache disabled - requiring fresh signature for each upload');
+    return null;
 }
 
 function setCachedSessionSigs(accountId: string, sessionSigs: any): void {
-    if (typeof window === 'undefined') return;
-    try {
-        localStorage.setItem(`${SESSION_CACHE_KEY}_${accountId}`, JSON.stringify({
-            sessionSigs,
-            timestamp: Date.now()
-        }));
-        console.log('Cached Lit session signatures for', accountId);
-    } catch (e) {
-        console.warn('Error caching session sigs:', e);
-    }
+    // Cache disabled per user request - 1 signature per upload
+    console.log('Session caching disabled - each upload requires signature');
 }
 
 class Lit {
