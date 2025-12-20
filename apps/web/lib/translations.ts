@@ -225,10 +225,10 @@ export const translations = {
                 subtitle: "Physical events meet digital excellence. The best of both worlds.",
                 concerts_title: "Concert Experience",
                 concerts_physical: "Physical: Ticket ($50) → Attend → Photos → Souvenir",
-                concerts_digital: "Digital: NFT Bilet (0.5 NEAR) → 4K Stream → Backstage İçerik → Token-Gated Chat → Kalıcı Koleksiyon → Değer Artışı Potansiyeli",
+                concerts_digital: "Digital: NFT Ticket (0.5 NEAR) → 4K Stream → Backstage Content → Token-Gated Chat → Permanent Collection → Value Growth Potential",
                 cinema_title: "Cinema Premiere",
                 cinema_physical: "Physical: Ticket ($30) → Theater → Q&A → Poster",
-                cinema_digital: "Digital: Limitli NFT (0.3 NEAR) → Premium Stream → Canlı Soru-Cevap (NFT Sahipleri) → Dijital Poster → Yapım İçeriği → Resale Market",
+                cinema_digital: "Digital: Limited NFT (0.3 NEAR) → Premium Stream → Live Q&A (NFT Holders) → Digital Poster → Production Content → Resale Market",
                 workshop_title: "Workshop/Masterclass",
                 workshop_physical: "Physical: Registration ($200) → Attend → Notes → Certificate",
                 workshop_digital: "Digital: NFT Pass (2 NEAR) → Live Stream + Q&A → Exclusive Materials → Blockchain Certificate → Lifetime Access → On-Chain Credential"
