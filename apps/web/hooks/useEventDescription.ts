@@ -15,12 +15,14 @@ interface EventData {
 export function useEventDescription(encrypted_cid: string | null) {
     const [description, setDescription] = useState<string | null>(null);
     const [livepeerPlaybackId, setLivepeerPlaybackId] = useState<string | null>(null);
+    const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
         if (!encrypted_cid || encrypted_cid === 'ACCESS_PASS') {
             setDescription(null);
             setLivepeerPlaybackId(null);
+            setThumbnailUrl(null);
             return;
         }
 
@@ -49,6 +51,15 @@ export function useEventDescription(encrypted_cid: string | null) {
                     if (event.livepeer_playback_id) {
                         setLivepeerPlaybackId(event.livepeer_playback_id);
                     }
+
+                    // Extract thumbnail from title format: "RealCID:::ThumbnailCID:::Title"
+                    if (event.title && event.title.includes(':::')) {
+                        const parts = event.title.split(':::');
+                        if (parts.length >= 3) {
+                            const thumbnailCid = parts[1];
+                            setThumbnailUrl(`https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`);
+                        }
+                    }
                 }
             } catch (error) {
                 console.error('Error fetching event description:', error);
@@ -60,6 +71,6 @@ export function useEventDescription(encrypted_cid: string | null) {
         fetchDescription();
     }, [encrypted_cid]);
 
-    return { description, livepeerPlaybackId, loading };
+    return { description, livepeerPlaybackId, thumbnailUrl, loading };
 }
 

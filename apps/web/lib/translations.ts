@@ -90,7 +90,8 @@ export const translations = {
                 thumbnail: "Uploading Cover",
                 encrypt: "Securing Video",
                 upload: "Finalizing Storage",
-                mint: "Publishing to Blockchain",
+                mint: "Minting Ticket",
+                refund: "Processing Refund",
                 event: "Event Created"
             }
         },
@@ -409,7 +410,8 @@ export const translations = {
                 thumbnail: "Kapak Fotoğrafı Yükleniyor",
                 encrypt: "Video Şifreleniyor",
                 upload: "Depolama Tamamlanıyor",
-                mint: "Blockchain'de Yayınlanıyor",
+                mint: "Bilet Basılıyor",
+                refund: "İade İşleniyor",
                 event: "Etkinlik Oluşturuldu"
             }
         },

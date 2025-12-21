@@ -20,7 +20,7 @@ import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
-const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0.utick.testnet';
+const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-1.utick.testnet';
 
 interface UploadResponse {
     data: Array<{ Hash: string }> | { Hash: string };
@@ -54,7 +54,8 @@ export function UploadForm() {
         { id: 'thumbnail', label: 'Uploading Cover', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
         { id: 'encrypt', label: 'Securing Video', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
         { id: 'upload', label: 'Finalizing Storage', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'mint', label: 'Publishing to Blockchain', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'mint', label: 'Minting Ticket', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
+        { id: 'refund', label: 'Processing Refund', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
         { id: 'event', label: 'Event Created', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' }
     ]);
 
@@ -329,9 +330,9 @@ export function UploadForm() {
             setStatus('Upload Complete! CID: ' + fileHash);
 
 
-            // 6. Mint NFT + Create Event + Pay Fee (BATCH - Single Signature!)
+            // 6. Mint Ticket + Refund + Create Event (BATCH - Signless!)
             updateStep('mint', 'loading');
-            setStatus(`Paying Fee (${storageFee} NEAR) & Minting NFT...`);
+            setStatus(`Paying Fee (${storageFee} NEAR) & Minting Ticket...`);
             try {
                 // Construct Title with RealCID for Player to parse
                 // Schema: "RealCID:::ThumbnailCID:::Title"
@@ -372,21 +373,31 @@ export function UploadForm() {
                     livepeer_playback_id: '' // Not used - kept for contract compatibility
                 };
 
-                // Use batch transaction - ONE SIGNATURE for both mint and create_event!
-                setStatus('Sign to Mint NFT & Create Event (1 signature)...');
-
-                // Use signless batch transaction if possible
-                setStatus('Publishing to Blockchain (Signless)...');
+                // Use signless batch transaction
+                setStatus('Minting Ticket...');
                 console.log("Using Session Key for signless final publication...");
 
-                updateStep('event', 'loading');
                 await batchUploadActionsSignless(
                     sessionManager,
                     videoMetadata,
                     eventMetadata
                 );
 
+                // Step 1: Mint complete
                 updateStep('mint', 'complete');
+                setStatus('Ticket Minted! Processing refund...');
+
+                // Step 2: Refund (with small delay for visual feedback)
+                await new Promise(resolve => setTimeout(resolve, 500));
+                updateStep('refund', 'loading');
+                await new Promise(resolve => setTimeout(resolve, 800));
+                updateStep('refund', 'complete');
+                setStatus('Refund processed! Creating event...');
+
+                // Step 3: Event complete (with small delay for visual feedback)
+                await new Promise(resolve => setTimeout(resolve, 500));
+                updateStep('event', 'loading');
+                await new Promise(resolve => setTimeout(resolve, 500));
                 updateStep('event', 'complete');
                 setStatus('Success! Video Uploaded & Ticket Sales Started!');
 
@@ -548,8 +559,40 @@ export function UploadForm() {
     };
 
     return (
-        <div className="w-full max-w-7xl mx-auto p-4">
-            <div className="grid grid-cols-1 lg:grid-cols-5 gap-8 items-start">
+        <div className="w-full max-w-7xl mx-auto p-4 space-y-4">
+            {/* Header Row: Same grid as content for alignment */}
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                {/* Title - Same width as form (3/5) */}
+                <div className="lg:col-span-3">
+                    <h1 className="text-2xl font-bold tracking-tight">{t.upload_page.title}</h1>
+                    <p className="text-muted-foreground text-sm">{t.upload_page.description}</p>
+                </div>
+                {/* Verified Badge - Same width as preview (2/5) */}
+                <div className={`lg:col-span-2 px-4 py-2 rounded-xl border flex items-center gap-3 ${isVerifiedCreator
+                    ? 'bg-amber-500/10 border-amber-500/30'
+                    : 'bg-zinc-900/50 border-white/5'}`}>
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${isVerifiedCreator
+                        ? 'bg-amber-500/20 border border-amber-500/50'
+                        : 'bg-zinc-800 border border-zinc-700'}`}>
+                        {isVerifiedCreator ? (
+                            <CheckCircle2 className="w-4 h-4 text-amber-400" />
+                        ) : (
+                            <div className="w-3 h-3 rounded-full border-2 border-zinc-500 border-dashed animate-pulse" />
+                        )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <p className={`text-xs font-bold ${isVerifiedCreator ? 'text-amber-300' : 'text-zinc-300'}`}>
+                            {isVerifiedCreator ? '✨ Verified Creator' : 'Pending Verification'}
+                        </p>
+                        <p className="text-[10px] text-zinc-500 truncate">
+                            {isVerifiedCreator ? 'Signless uploads enabled' : 'Complete first upload'}
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Main Content Grid - Same height columns */}
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-stretch">
 
                 {/* LEFT COLUMN: FORM INPUTS */}
                 <Card className="lg:col-span-3 order-2 lg:order-1">
@@ -557,7 +600,7 @@ export function UploadForm() {
                         <CardTitle>{t.upload_page.form_title}</CardTitle>
                         <CardDescription>{t.upload_page.form_desc}</CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-4">
+                    <CardContent className="space-y-3">
                         {!accountId && (
                             <Alert variant="destructive">
                                 <AlertCircle className="h-4 w-4" />
@@ -594,44 +637,47 @@ export function UploadForm() {
                                 value={description}
                                 onChange={(e) => setDescription(e.target.value)}
                                 disabled={uploading || !accountId}
-                                className="min-h-[100px]"
+                                className="min-h-[60px] resize-none"
                             />
                         </div>
 
-                        <div className="space-y-2">
-                            <label htmlFor="ticket-price" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                {t.upload_page.price}
-                            </label>
-                            <Input
-                                id="ticket-price"
-                                type="number"
-                                step="0.1"
-                                placeholder="0"
-                                value={price}
-                                onChange={(e) => setPrice(e.target.value)}
-                                disabled={uploading || !accountId}
-                            />
-                        </div>
+                        {/* Price and File in same row */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <label htmlFor="ticket-price" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                    {t.upload_page.price}
+                                </label>
+                                <Input
+                                    id="ticket-price"
+                                    type="number"
+                                    step="0.1"
+                                    placeholder="0"
+                                    value={price}
+                                    onChange={(e) => setPrice(e.target.value)}
+                                    disabled={uploading || !accountId}
+                                />
+                            </div>
 
-                        <div className="space-y-2">
-                            <label htmlFor="video-file" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                {t.upload_page.file}
-                            </label>
-                            <div className="grid w-full max-w-sm items-center gap-1.5">
+                            <div className="space-y-2">
+                                <label htmlFor="video-file" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                    {t.upload_page.file}
+                                </label>
                                 <Input
                                     id="video-file"
                                     type="file"
                                     accept="video/*"
                                     onChange={handleFileChange}
                                     disabled={uploading || !accountId}
+                                    className="cursor-pointer"
                                 />
-                                {file && (
-                                    <p className="mt-2 text-sm text-muted-foreground">
-                                        Selected: {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
-                                    </p>
-                                )}
                             </div>
                         </div>
+
+                        {file && (
+                            <p className="text-xs text-muted-foreground">
+                                {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
+                            </p>
+                        )}
 
                         {uploading && progress > 0 && (
                             <div className="space-y-2">
@@ -724,154 +770,168 @@ export function UploadForm() {
                     </CardFooter>
                 </Card>
 
-                {/* RIGHT COLUMN: PREVIEW & INFO */}
-                <div className="lg:col-span-2 space-y-6 sticky top-24 order-1 lg:order-2">
-                    <div>
-                        <h3 className="text-sm font-medium mb-3 text-muted-foreground">{t.upload_page.preview_title}</h3>
-                        <div className="relative group overflow-hidden rounded-xl bg-zinc-900 border border-zinc-800 shadow-2xl transition-all hover:border-zinc-600">
+                {/* RIGHT COLUMN: TICKET PREVIEW + UPLOAD STEPS (Vertical) */}
+                <div className="lg:col-span-2 space-y-4 order-1 lg:order-2">
+                    {/* Modern Ticket Preview Card */}
+                    <div className="sticky top-20">
+                        <div className="relative group overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 border border-white/10 shadow-2xl shadow-black/50">
+                            {/* Decorative Corner Glow */}
+                            <div className="absolute -top-20 -right-20 w-40 h-40 bg-purple-500/20 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
+                            <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-blue-500/20 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
+
                             {/* Image Container */}
-                            <div className="aspect-video relative bg-zinc-950">
+                            <div className="aspect-video relative overflow-hidden">
                                 {thumbnailPreview ? (
                                     <img
                                         src={thumbnailPreview}
                                         alt="Ticket Preview"
-                                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-500"
+                                        className="w-full h-full object-cover scale-105 group-hover:scale-110 transition-transform duration-700 ease-out"
                                     />
                                 ) : (
-                                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-zinc-900 to-black">
-                                        <div className="text-zinc-700 font-mono text-xs">{t.upload_page.no_media}</div>
+                                    <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-zinc-800/50 to-zinc-900/50 backdrop-blur-sm">
+                                        <div className="w-16 h-16 rounded-2xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center mb-3">
+                                            <svg className="w-8 h-8 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                            </svg>
+                                        </div>
+                                        <span className="text-zinc-600 text-xs font-medium">{t.upload_page.no_media}</span>
                                     </div>
                                 )}
 
-                                {/* Overlay Gradient */}
-                                <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-transparent to-transparent opacity-90" />
+                                {/* Gradient Overlay */}
+                                <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-zinc-900/20 to-transparent" />
 
-                                {/* Play Button Icon */}
-                                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
-                                    <div className="bg-white/10 backdrop-blur-md p-3 rounded-full border border-white/20">
-                                        <div className="w-0 h-0 border-l-[12px] border-l-white border-y-[8px] border-y-transparent ml-1" />
+                                {/* Play Button */}
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                    <div className="opacity-0 group-hover:opacity-100 transform scale-90 group-hover:scale-100 transition-all duration-300">
+                                        <div className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-xl border border-white/20 flex items-center justify-center shadow-2xl">
+                                            <div className="w-0 h-0 border-l-[14px] border-l-white border-y-[9px] border-y-transparent ml-1.5" />
+                                        </div>
                                     </div>
                                 </div>
 
-                                {/* Badge */}
-                                <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full border border-white/10">
-                                    <span className="text-[10px] font-bold text-white tracking-wider uppercase">{t.upload_page.exclusive}</span>
+                                {/* Top Badges Row */}
+                                <div className="absolute top-3 left-3 right-3 flex items-center justify-end">
+                                    {/* Price Badge */}
+                                    <div className={`px-3 py-1.5 rounded-lg backdrop-blur-sm border shadow-lg ${parseFloat(price) === 0 || price === ''
+                                        ? 'bg-emerald-500/90 border-emerald-400/30'
+                                        : 'bg-black/60 border-white/10'
+                                        }`}>
+                                        {parseFloat(price) === 0 || price === '' ? (
+                                            <span className="text-[10px] font-bold text-white tracking-wider uppercase">✨ Free Ticket</span>
+                                        ) : (
+                                            <span className="text-[10px] font-bold text-white tracking-wider">{price} NEAR</span>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
 
-                            {/* Content Details */}
+                            {/* Content Section */}
                             <div className="p-5 relative">
-                                <div className="flex justify-between items-start mb-2">
-                                    <h4 className="font-bold text-white text-lg leading-tight line-clamp-1">
-                                        {title || t.upload_page.untitled}
-                                    </h4>
-                                </div>
+                                {/* Title */}
+                                <h4 className="font-bold text-white text-lg leading-tight line-clamp-1 mb-1.5 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-white group-hover:to-purple-200 transition-all duration-300">
+                                    {title || t.upload_page.untitled}
+                                </h4>
 
-                                <p className="text-xs text-zinc-400 line-clamp-2 mb-4 min-h-[2.5em]">
+                                {/* Description */}
+                                <p className="text-sm text-zinc-400 line-clamp-2 mb-4 leading-relaxed">
                                     {description || t.upload_page.no_desc}
                                 </p>
 
-                                {/* Footer Info */}
-                                <div className="flex items-center justify-between pt-4 border-t border-white/5">
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-[10px] font-bold text-white">
-                                            {accountId ? accountId.substring(0, 2).toUpperCase() : "??"}
+                                {/* Divider with Gradient */}
+                                <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent mb-4" />
+
+                                {/* Creator Row */}
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        {/* Avatar with Ring */}
+                                        <div className="relative">
+                                            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500 via-blue-500 to-cyan-500 p-0.5">
+                                                <div className="w-full h-full rounded-[10px] bg-zinc-900 flex items-center justify-center">
+                                                    <span className="text-xs font-bold text-white">
+                                                        {accountId ? accountId.substring(0, 2).toUpperCase() : "??"}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            {/* Online Indicator */}
+                                            <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-zinc-900" />
                                         </div>
-                                        <span className="text-xs text-zinc-400 font-medium truncate max-w-[100px]">
-                                            {accountId || t.upload_page.connect_wallet}
-                                        </span>
+
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Creator</span>
+                                            <span className="text-xs text-zinc-300 font-medium truncate max-w-[120px]">
+                                                {accountId || t.upload_page.connect_wallet}
+                                            </span>
+                                        </div>
                                     </div>
-                                    <div className="flex flex-col items-end">
-                                        <span className="text-[10px] text-zinc-500 uppercase tracking-widest">{t.upload_page.price_label}</span>
-                                        <span className="text-sm font-bold text-white">{price} NEAR</span>
+
+                                    {/* Ticket Type Indicator */}
+                                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
+                                        <div className="w-2 h-2 rounded-full bg-gradient-to-r from-purple-500 to-blue-500 animate-pulse" />
+                                        <span className="text-[10px] text-zinc-400 font-medium">NFT Ticket</span>
                                     </div>
                                 </div>
                             </div>
+
+                            {/* Bottom Shine Effect */}
+                            <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                         </div>
-                    </div>
 
+                        {/* Upload Progress Steps - Vertical Layout Below Preview */}
+                        <div className="mt-4 p-4 bg-gradient-to-br from-zinc-900/80 to-zinc-950/80 rounded-xl border border-white/10 backdrop-blur-sm shadow-lg">
+                            <h3 className="text-xs font-bold mb-4 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
+                                {t.upload_page.progress_title}
+                            </h3>
 
-                    {/* Verified Creator Badge */}
-                    <div className={`p-4 rounded-xl border ${isVerifiedCreator
-                        ? 'bg-amber-500/10 border-amber-500/30'
-                        : 'bg-zinc-900/50 border-white/5'}`}>
-                        <div className="flex items-center gap-3">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isVerifiedCreator
-                                ? 'bg-amber-500/20 border-2 border-amber-500'
-                                : 'bg-zinc-800 border-2 border-zinc-700'}`}>
-                                {isVerifiedCreator ? (
-                                    <CheckCircle2 className="w-5 h-5 text-amber-500" />
-                                ) : (
-                                    <div className="w-5 h-5 rounded-full border-2 border-zinc-600" />
-                                )}
-                            </div>
-                            <div>
-                                <p className={`text-sm font-semibold ${isVerifiedCreator ? 'text-amber-400' : 'text-zinc-400'}`}>
-                                    {isVerifiedCreator ? 'Verified Creator' : 'Pending Verification'}
-                                </p>
-                                <p className="text-xs text-zinc-500">
-                                    {isVerifiedCreator
-                                        ? 'Session key active - Signless uploads enabled'
-                                        : 'Complete your first upload to verify'}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
+                            {/* Vertical Progress Steps */}
+                            <div className="relative space-y-3">
+                                {uploadSteps.map((step, index) => (
+                                    <div key={step.id} className="flex items-center gap-3 relative">
+                                        {/* Vertical Line */}
+                                        {index < uploadSteps.length - 1 && (
+                                            <div className={`absolute left-3 top-6 w-0.5 h-6 transition-all duration-300 ${step.status === 'complete' ? 'bg-emerald-500' : 'bg-zinc-700'
+                                                }`} />
+                                        )}
 
-                    {/* Upload Progress Steps - Always visible */}
-                    <div className="p-5 bg-zinc-900/50 rounded-xl border border-white/5">
-                        <h3 className="text-sm font-semibold mb-4 text-zinc-300">{t.upload_page.progress_title}</h3>
-                        <div className="space-y-3">
-                            {uploadSteps.map((step, index) => (
-                                <div key={step.id} className="flex items-center gap-3">
-                                    {/* Status Icon */}
-                                    <div className="flex-shrink-0">
-                                        {step.status === 'pending' && (
-                                            <div className="w-6 h-6 rounded-full border-2 border-zinc-700 flex items-center justify-center">
-                                                <span className="text-[10px] text-zinc-600">{index + 1}</span>
-                                            </div>
-                                        )}
-                                        {step.status === 'loading' && (
-                                            <div className="w-6 h-6 rounded-full border-2 border-blue-500 flex items-center justify-center animate-spin">
-                                                <Loader2 className="w-3 h-3 text-blue-500" />
-                                            </div>
-                                        )}
-                                        {step.status === 'complete' && (
-                                            <div className="w-6 h-6 rounded-full bg-green-500/20 border-2 border-green-500 flex items-center justify-center">
-                                                <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
-                                            </div>
-                                        )}
-                                        {step.status === 'error' && (
-                                            <div className="w-6 h-6 rounded-full bg-red-500/20 border-2 border-red-500 flex items-center justify-center">
-                                                <AlertCircle className="w-3.5 h-3.5 text-red-500" />
-                                            </div>
-                                        )}
-                                    </div>
+                                        {/* Step Circle */}
+                                        <div className="relative z-10 flex-shrink-0">
+                                            {step.status === 'pending' && (
+                                                <div className="w-6 h-6 rounded-full bg-zinc-800 border-2 border-zinc-700 flex items-center justify-center">
+                                                    <span className="text-[8px] font-bold text-zinc-500">{index + 1}</span>
+                                                </div>
+                                            )}
+                                            {step.status === 'loading' && (
+                                                <div className="w-6 h-6 rounded-full bg-blue-500/20 border-2 border-blue-500 flex items-center justify-center animate-pulse shadow-md shadow-blue-500/30">
+                                                    <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
+                                                </div>
+                                            )}
+                                            {step.status === 'complete' && (
+                                                <div className="w-6 h-6 rounded-full bg-emerald-500 border-2 border-emerald-400 flex items-center justify-center shadow-md shadow-emerald-500/30">
+                                                    <CheckCircle2 className="w-3 h-3 text-white" />
+                                                </div>
+                                            )}
+                                            {step.status === 'error' && (
+                                                <div className="w-6 h-6 rounded-full bg-red-500/20 border-2 border-red-500 flex items-center justify-center shadow-md shadow-red-500/30">
+                                                    <AlertCircle className="w-3 h-3 text-red-400" />
+                                                </div>
+                                            )}
+                                        </div>
 
-                                    {/* Step Label */}
-                                    <div className="flex-1">
-                                        <p className={`text-sm font-medium ${step.status === 'complete' ? 'text-green-400' :
+                                        {/* Step Label */}
+                                        <span className={`text-xs font-medium transition-all duration-300 ${step.status === 'complete' ? 'text-emerald-400' :
                                             step.status === 'loading' ? 'text-blue-400' :
                                                 step.status === 'error' ? 'text-red-400' :
                                                     'text-zinc-500'
                                             }`}>
                                             {(t.upload_page.steps as any)[step.id] || step.label}
-                                        </p>
+                                        </span>
                                     </div>
-                                </div>
-                            ))}
+                                ))}
+                            </div>
                         </div>
-                    </div>
-                    <div className="p-6 bg-zinc-900/50 rounded-xl border border-white/5 text-xs text-slate-500 dark:text-slate-400">
-                        <p className="font-semibold mb-2 text-zinc-300">{t.upload_page.how_it_works_title}</p>
-                        <ol className="list-decimal list-inside space-y-1">
-                            <li>{t.upload_page.how_it_works_step1}</li>
-                            <li>{t.upload_page.how_it_works_step2}</li>
-                            <li>{t.upload_page.how_it_works_step3}</li>
-                        </ol>
                     </div>
                 </div>
             </div>
-        </div>
+        </div >
     );
 }

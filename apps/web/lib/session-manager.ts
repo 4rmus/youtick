@@ -1,7 +1,7 @@
 import { keyStores, KeyPair, connect, Contract, utils, providers, transactions } from 'near-api-js';
 
 const NETWORK_ID = 'testnet';
-const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0.utick.testnet';
+const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-1.utick.testnet';
 
 export class SessionManager {
     private keyStore: any;
@@ -206,11 +206,10 @@ export class SessionManager {
     async withdrawFundsSilent(amount: string) {
         console.log(`Withdrawing funds silently (Session Key): ${amount} NEAR`);
         // Uses Session Key -> No User Signature required!
-        // Constraint: Cannot attach deposit (0 yocto). 
-        // If contract requires 1 yocto, this will fail.
+        // Uses withdraw_funds_prepaid which doesn't require 1 yocto deposit
         return await this.callMethod(
-            'withdraw_funds',
-            { amount: utils.format.parseNearAmount(amount) || '0' },
+            'withdraw_funds_prepaid',
+            {},
             '30000000000000'
         );
     }

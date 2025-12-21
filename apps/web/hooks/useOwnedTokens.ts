@@ -10,6 +10,7 @@ interface VideoMetadata {
     duration_seconds: number;
     event_date?: number;
     content_type: string;
+    price?: string; // Event price in yoctoNEAR
 }
 
 export interface TokenWithVideo {

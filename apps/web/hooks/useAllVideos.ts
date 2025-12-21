@@ -54,7 +54,7 @@ export function useAllVideos() {
                 const events: unknown[] = await account.viewFunction({
                     contractId: NFT_CONTRACT_ID,
                     methodName: 'get_events',
-                    args: { limit: 50 }
+                    args: { limit: 200 } // Increased to show more events
                 });
 
                 console.log("Fetched events:", events);
@@ -68,8 +68,7 @@ export function useAllVideos() {
                 // Transform Events into the structure expected by the UI (TokenWithVideo)
                 // effectively treating each Event as a "Virtual Token" for display purposes
                 const eventTokens: TokenWithVideo[] = events.map((item, index) => {
-                    const [cid, event] = item as [string, { title: string; creator_id: string; price: string }];
-                    // Handle "RealCID:::Title" format
+                    const [cid, event] = item as [string, { title: string; description: string; creator_id: string; price: string }];
                     // Handle "RealCID:::Title" or "RealCID:::ThumbnailCID:::Title" format
                     let displayTitle = event.title;
                     let displayMedia = "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png"; // Default placeholder
@@ -87,12 +86,15 @@ export function useAllVideos() {
                         }
                     }
 
+                    // Use actual description from contract, with price as fallback info
+                    const displayDescription = event.description || `NFT ticket - ${utils.format.formatNearAmount(event.price)} NEAR`;
+
                     return {
                         token_id: `event-${index}`,
                         owner_id: event.creator_id,
                         metadata: {
                             title: displayTitle,
-                            description: `Price: ${utils.format.formatNearAmount(event.price)} NEAR`,
+                            description: displayDescription,
                             media: displayMedia,
                             copies: 1
                         },
@@ -100,7 +102,8 @@ export function useAllVideos() {
                             encrypted_cid: cid,
                             livepeer_playback_id: "TICKET",
                             duration_seconds: 0,
-                            content_type: "Exclusive"
+                            content_type: "Exclusive",
+                            price: event.price // Store price separately
                         }
                     };
                 });

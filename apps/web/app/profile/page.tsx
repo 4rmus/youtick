@@ -155,7 +155,6 @@ export default function ProfilePage() {
                                 const isAccessPass = videoCid === 'ACCESS_PASS';
 
                                 const title = token.metadata?.title || token.token_id;
-                                const subtitle = isAccessPass ? "Global Pass" : (isVideo ? "Video NFT" : "Asset");
                                 const media = token.metadata?.media;
 
                                 return (
@@ -165,39 +164,86 @@ export default function ProfilePage() {
                                         className="group"
                                     >
                                         <div className={`
-                                            relative overflow-hidden rounded-xl border transition-all duration-300
-                                            ${isAccessPass ? 'bg-green-950/10 border-green-800/30' : 'bg-zinc-900 border-zinc-800 hover:border-zinc-600 hover:shadow-xl hover:shadow-black/50 hover:-translate-y-1'}
+                                            relative overflow-hidden rounded-2xl border transition-all duration-300
+                                            ${isAccessPass
+                                                ? 'bg-gradient-to-br from-green-950/20 to-zinc-900 border-green-800/30'
+                                                : 'bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 border-white/10 hover:border-white/20 hover:shadow-xl hover:shadow-purple-500/10 hover:-translate-y-1'}
                                         `}>
+                                            {/* Decorative Corner Glow */}
+                                            <div className="absolute -top-16 -right-16 w-32 h-32 bg-purple-500/20 rounded-full blur-2xl opacity-0 group-hover:opacity-60 transition-opacity duration-700" />
+
                                             {/* Thumbnail Area */}
-                                            <div className="aspect-video bg-zinc-950 relative overflow-hidden">
-                                                {media && !media.includes('token.png') && (
-                                                    <img src={media} alt={title} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
+                                            <div className="aspect-video relative overflow-hidden">
+                                                {media && !media.includes('token.png') ? (
+                                                    <img
+                                                        src={media}
+                                                        alt={title}
+                                                        className="w-full h-full object-cover scale-105 group-hover:scale-110 transition-transform duration-700 ease-out"
+                                                    />
+                                                ) : (
+                                                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-zinc-800/50 to-zinc-900/50">
+                                                        <div className="w-12 h-12 rounded-xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center">
+                                                            <svg className="w-6 h-6 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                                            </svg>
+                                                        </div>
+                                                    </div>
                                                 )}
+
+                                                {/* Gradient Overlay */}
+                                                <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-zinc-900/20 to-transparent" />
+
+                                                {/* Play Button on Hover */}
+                                                {isVideo && !isAccessPass && (
+                                                    <div className="absolute inset-0 flex items-center justify-center">
+                                                        <div className="opacity-0 group-hover:opacity-100 transform scale-90 group-hover:scale-100 transition-all duration-300">
+                                                            <div className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-xl border border-white/20 flex items-center justify-center shadow-2xl">
+                                                                <svg className="w-4 h-4 text-white fill-current ml-0.5" viewBox="0 0 24 24">
+                                                                    <path d="M8 5v14l11-7z" />
+                                                                </svg>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+
                                                 {isAccessPass && (
-                                                    <div className="absolute inset-0 flex items-center justify-center bg-green-900/20">
-                                                        <Ticket className="w-12 h-12 text-green-500/50" />
+                                                    <div className="absolute inset-0 flex items-center justify-center bg-green-900/30">
+                                                        <Ticket className="w-10 h-10 text-green-500/70" />
+                                                    </div>
+                                                )}
+
+                                                {/* Top Badge */}
+                                                {isAccessPass && (
+                                                    <div className="absolute top-2 right-2 px-2 py-1 rounded-md bg-green-500/90 backdrop-blur-sm border border-green-400/30 shadow-lg">
+                                                        <span className="text-[9px] font-bold text-white tracking-wider uppercase">PASS</span>
                                                     </div>
                                                 )}
                                             </div>
 
                                             {/* Content Area */}
-                                            <div className="p-4">
-                                                <div className="flex justify-between items-start gap-2 mb-2">
-                                                    <h4 className="font-medium text-sm line-clamp-1 text-zinc-200">
-                                                        {title}
-                                                    </h4>
-                                                    {isAccessPass && <span className="text-[10px] bg-green-500/10 text-green-500 px-1.5 py-0.5 rounded border border-green-500/20">PASS</span>}
-                                                </div>
+                                            <div className="p-3 relative">
+                                                <h4 className="font-medium text-sm line-clamp-1 mb-1 text-zinc-200 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-white group-hover:to-purple-200 transition-all duration-300">
+                                                    {title}
+                                                </h4>
 
-                                                <div className="flex justify-between items-end">
-                                                    <p className="text-xs text-zinc-500">{subtitle}</p>
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="w-1.5 h-1.5 rounded-full bg-gradient-to-r from-purple-500 to-blue-500 animate-pulse" />
+                                                        <span className="text-[10px] text-zinc-500 font-medium">
+                                                            {isAccessPass ? 'Global Pass' : 'NFT Ticket'}
+                                                        </span>
+                                                    </div>
+
                                                     {isVideo && !isAccessPass && (
-                                                        <div className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-bold text-white bg-white/10 px-2 py-1 rounded">
+                                                        <div className="opacity-0 group-hover:opacity-100 transition-opacity text-[9px] font-bold text-white bg-gradient-to-r from-purple-600/80 to-blue-600/80 px-2 py-0.5 rounded">
                                                             {t.profile_page.watch_btn}
                                                         </div>
                                                     )}
                                                 </div>
                                             </div>
+
+                                            {/* Bottom Shine Effect */}
+                                            <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                                         </div>
                                     </Link>
                                 );

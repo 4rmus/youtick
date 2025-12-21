@@ -205,6 +205,11 @@ impl Contract {
     }
 
     /// Purchase a ticket (mint NFT) for an event
+    /// - Free tickets (price=0): Contract pays storage, user pays nothing
+    /// - Paid tickets: 2% commission to contract, 98% to creator
+    /// 
+    /// IMPORTANT: This function keeps deposits in contract balance and only 
+    /// explicitly transfers to creator. No automatic refund to buyer.
     #[payable]
     pub fn buy_ticket(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Token {
         let event = self.events.get(&encrypted_cid)
@@ -212,12 +217,140 @@ impl Contract {
         
         let deposit = env::attached_deposit();
         let required_price = NearToken::from_yoctonear(event.price.0);
+        let is_free = required_price.as_yoctonear() == 0;
         
-        require!(
-            deposit >= required_price,
-            &format!("Insufficient deposit. Required: {} yoctoNEAR", event.price.0)
-        );
+        // Storage cost for NFT (safe upper bound)
+        let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        
+        if !is_free {
+            // Paid ticket - require full payment plus minimal storage
+            let min_deposit = required_price.saturating_add(storage_cost);
+            require!(
+                deposit >= min_deposit,
+                &format!("Insufficient deposit. Required: {} yoctoNEAR (price) + {} (storage)", 
+                    event.price.0, storage_cost.as_yoctonear())
+            );
+            
+            // Calculate commission (2% to contract, 98% to creator)
+            let commission_rate: u128 = 2;
+            let price_yocto = required_price.as_yoctonear();
+            let commission = price_yocto * commission_rate / 100;
+            let creator_amount = price_yocto - commission;
+            
+            // Transfer 98% to creator
+            // Note: The rest (commission + storage + any excess) stays in contract
+            if creator_amount > 0 {
+                Promise::new(event.creator_id.clone()).transfer(NearToken::from_yoctonear(creator_amount));
+            }
+            
+            env::log_str(&format!("Ticket sold: {} to creator, {} commission, {} storage", 
+                creator_amount, commission, storage_cost.as_yoctonear()));
+        } else {
+            // Free ticket - just require minimal storage (or contract pays)
+            require!(
+                deposit >= storage_cost || env::account_balance() > storage_cost,
+                "Insufficient deposit for storage"
+            );
+            env::log_str("Free ticket minted");
+        }
 
+        // Mint the NFT
+        let token_id = self.next_token_id.to_string();
+        self.next_token_id += 1;
+
+        let video_metadata = VideoMetadata {
+            encrypted_cid: encrypted_cid.clone(),
+            livepeer_playback_id: event.livepeer_playback_id.clone(),
+            duration_seconds: 0,
+            event_date: Some(event.created_at),
+            content_type: ContentType::Exclusive,
+        };
+
+        self.video_metadata.insert(&token_id, &video_metadata);
+
+        let token_metadata = TokenMetadata {
+            title: Some(event.title.clone()),
+            description: Some(event.description.clone()),
+            media: None,
+            media_hash: None,
+            copies: Some(1),
+            issued_at: None,
+            expires_at: None,
+            starts_at: None,
+            updated_at: None,
+            extra: None,
+            reference: None,
+            reference_hash: None,
+        };
+
+        self.tokens.internal_mint(
+            token_id.clone(),
+            receiver_id,
+            Some(token_metadata),
+        )
+    }
+
+    /// Purchase a ticket using prepaid balance (Callable via Session Key)
+    /// For paid tickets: deducts price + storage from user's prepaid balance
+    /// For free tickets (price=0): contract pays storage, user pays nothing
+    /// Returns a Promise that resolves to the minted Token
+    pub fn buy_ticket_prepaid(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Promise {
+        let account_id = env::predecessor_account_id();
+        let event = self.events.get(&encrypted_cid)
+            .expect("Event not found");
+        
+        let required_price = NearToken::from_yoctonear(event.price.0);
+        let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        let is_free = required_price.as_yoctonear() == 0;
+        
+        if is_free {
+            // FREE TICKET: Contract pays storage, user pays nothing
+            env::log_str("Free ticket - contract sponsors storage");
+        } else {
+            // PAID TICKET: Deduct from user's prepaid balance
+            let total_cost = required_price.saturating_add(storage_cost);
+            
+            let current_bal = self.user_deposits.get(&account_id)
+                .expect("No prepaid balance. Call deposit_funds first.");
+            require!(
+                current_bal >= total_cost,
+                &format!("Insufficient prepaid balance. Required: {} yoctoNEAR, Have: {} yoctoNEAR", 
+                    total_cost.as_yoctonear(), current_bal.as_yoctonear())
+            );
+            
+            // Deduct total cost from user's balance
+            let new_bal = current_bal.saturating_sub(total_cost);
+            self.user_deposits.insert(&account_id, &new_bal);
+            
+            // Calculate commission (2% to contract, 98% to creator)
+            let commission_rate: u128 = 2;
+            let price_yocto = required_price.as_yoctonear();
+            let commission = price_yocto * commission_rate / 100;
+            let creator_amount = price_yocto - commission;
+            
+            // Transfer 98% to creator
+            if creator_amount > 0 {
+                Promise::new(event.creator_id.clone()).transfer(NearToken::from_yoctonear(creator_amount));
+            }
+            
+            env::log_str(&format!("Prepaid ticket: {} to creator, {} commission", creator_amount, commission));
+        }
+
+        // Call buy_ticket internally with storage deposit from contract balance
+        // This ensures the NFT minting has proper storage deposit attached
+        Self::ext(env::current_account_id())
+            .with_attached_deposit(storage_cost)
+            .buy_ticket_internal(receiver_id, encrypted_cid)
+    }
+
+    /// Internal buy ticket function - called via cross-contract call with deposit
+    #[payable]
+    #[private]
+    pub fn buy_ticket_internal(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Token {
+        let event = self.events.get(&encrypted_cid)
+            .expect("Event not found");
+
+        // Mint the NFT (storage paid by attached deposit from contract)
         let token_id = self.next_token_id.to_string();
         self.next_token_id += 1;
 
@@ -321,6 +454,23 @@ impl Contract {
         self.user_deposits.remove(&account_id);
         
         env::log_str(&format!("Withdrawing {} for {}", current_bal, account_id));
+
+        // Transfer funds (Interactions last)
+        Promise::new(account_id).transfer(current_bal)
+    }
+
+    /// Withdraw prepaid funds - Callable via Session Key (no deposit required)
+    /// This enables signless refund functionality for users
+    pub fn withdraw_funds_prepaid(&mut self) -> Promise {
+        let account_id = env::predecessor_account_id();
+        let current_bal = self.user_deposits.get(&account_id).unwrap_or(NearToken::from_yoctonear(0));
+        
+        require!(current_bal.as_yoctonear() > 0, "No funds to withdraw");
+        
+        // Remove balance (Effects first)
+        self.user_deposits.remove(&account_id);
+        
+        env::log_str(&format!("Signless withdraw: {} for {}", current_bal, account_id));
 
         // Transfer funds (Interactions last)
         Promise::new(account_id).transfer(current_bal)

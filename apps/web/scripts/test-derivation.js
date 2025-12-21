@@ -5,7 +5,7 @@ const { sha3_256 } = require('js-sha3');
 const { utils } = require('near-api-js');
 
 const masterKeyStr = "secp256k1:4NfTiv3UsGahebgTaHyD9vF8KYKMBnfd6kh94mK6xv8fGBiJB8TBtFMP5WWXz6B89Ac1fbpzPwAvoyQebemHFwx3";
-const accountId = "v1-0.utick.testnet";
+const accountId = "v1-1.utick.testnet";
 const path = "youtick-demo,chunky-paste.testnet,v1";
 
 function deriveChildKey(prefix, accountId, path) {

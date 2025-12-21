@@ -20,7 +20,7 @@ export function MintButton({ cid }: MintButtonProps) {
         const fetchPrice = async () => {
             setLoadingPrice(true);
             try {
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0.utick.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-1.utick.testnet';
                 // Use the proxy by default or direct RPC if needed. Using proxy config.
                 const near = await connect({
                     networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet',
@@ -53,7 +53,7 @@ export function MintButton({ cid }: MintButtonProps) {
         setMinting(true);
         try {
             const wallet = await selector.wallet();
-            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0.utick.testnet';
+            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-1.utick.testnet';
 
             // SALES FLOW: Buy Ticket
             if (cid && price) {

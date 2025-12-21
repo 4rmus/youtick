@@ -27,13 +27,23 @@ function WatchContent() {
     const initialCid = searchParams.get('cid') || '';
     const [playCid, setPlayCid] = useState(initialCid);
     const { tokens, loading, error } = useOwnedTokens();
-    const { description: eventDescription, loading: descLoading } = useEventDescription(playCid);
+    const { description: eventDescription, thumbnailUrl: eventThumbnail, loading: descLoading } = useEventDescription(playCid);
 
     useEffect(() => {
         if (initialCid) {
             setPlayCid(initialCid);
         }
     }, [initialCid]);
+
+    // Get thumbnail from tokens first, fallback to event data
+    const getActiveThumbnail = () => {
+        const tokenThumbnail = tokens.find(t => t.video_metadata?.encrypted_cid === playCid)?.metadata?.media;
+        // Use token thumbnail if available and not placeholder, otherwise use event thumbnail
+        if (tokenThumbnail && !tokenThumbnail.includes('token.png')) {
+            return tokenThumbnail;
+        }
+        return eventThumbnail || tokenThumbnail;
+    };
 
 
 
@@ -51,7 +61,7 @@ function WatchContent() {
                     {/* The Player */}
                     <VideoPlayer
                         cid={playCid}
-                        thumbnailUrl={tokens.find(t => t.video_metadata?.encrypted_cid === playCid)?.metadata?.media}
+                        thumbnailUrl={getActiveThumbnail()}
                     />
 
                     {/* 2. Video Details */}
