@@ -82,13 +82,14 @@ export function UploadForm() {
         ));
     };
 
-    // Check Lighthouse connection on mount
-    // Check gas status on mount/account change
+    // Track thumbnail preview for cleanup
+    const thumbnailPreviewRef = React.useRef<string | null>(null);
+
+    // Cleanup thumbnail preview URL on unmount
     React.useEffect(() => {
-        // Cleanup thumbnail preview URL on unmount
         return () => {
-            if (thumbnailPreview) {
-                URL.revokeObjectURL(thumbnailPreview);
+            if (thumbnailPreviewRef.current) {
+                URL.revokeObjectURL(thumbnailPreviewRef.current);
             }
         };
     }, []);
@@ -182,6 +183,7 @@ export function UploadForm() {
                     setThumbnail(thumbBlob);
 
                     const previewUrl = URL.createObjectURL(thumbBlob);
+                    thumbnailPreviewRef.current = previewUrl; // Track for cleanup
                     setThumbnailPreview(previewUrl);
                     setStatus('');
                 } catch (error) {

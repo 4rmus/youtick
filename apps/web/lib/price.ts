@@ -4,7 +4,12 @@ export async function getNearPrice(): Promise<number> {
             'https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd'
         );
         const data = await response.json();
-        return data.near.usd;
+        const price = data?.near?.usd;
+        if (typeof price !== 'number' || price <= 0) {
+            console.warn('Invalid NEAR price from API, using fallback $5.00');
+            return 5.00;
+        }
+        return price;
     } catch (error) {
         console.warn('Failed to fetch NEAR price, using fallback $5.00');
         return 5.00; // Fallback

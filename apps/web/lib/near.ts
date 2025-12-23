@@ -123,7 +123,6 @@ export async function verifySignature(
         }
 
         return true;
-        return true;
     } catch (error) {
         console.error('Error verifying NEAR signature:', error);
         return false;
