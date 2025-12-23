@@ -8,20 +8,25 @@ export const ValuePropositionSection = memo(() => {
 
     return (
         <section id="value-proposition" className="py-32 bg-black relative overflow-hidden">
-            {/* Background gradient */}
-            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-emerald-500/5 to-transparent" />
-
-
+            {/* Background gradient orb */}
+            <div className="absolute inset-0 pointer-events-none">
+                <div
+                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] rounded-full animate-glow-pulse"
+                    style={{
+                        background: 'radial-gradient(circle, rgba(255, 0, 110, 0.15) 0%, rgba(131, 56, 236, 0.1) 40%, transparent 70%)',
+                    }}
+                />
+            </div>
 
             <div className="container mx-auto px-4 relative z-10">
                 <div className="max-w-5xl mx-auto">
                     {/* Main Value Prop */}
                     <div className="text-center mb-16">
                         <div className="inline-block mb-6">
-                            <div className="text-8xl md:text-9xl font-black bg-gradient-to-r from-emerald-400 via-emerald-300 to-emerald-500 bg-clip-text text-transparent animate-pulse mb-2">
+                            <div className="text-8xl md:text-9xl font-black text-gradient-concert animate-gradient-flow mb-2" style={{ backgroundSize: '200% 200%' }}>
                                 {t.landing.value_proposition.title}
                             </div>
-                            <div className="text-zinc-400 text-4xl md:text-5xl font-bold tracking-tight">
+                            <div className="text-zinc-300 text-4xl md:text-5xl font-bold tracking-tight">
                                 {t.landing.value_proposition.percentage}
                             </div>
                         </div>
@@ -35,27 +40,27 @@ export const ValuePropositionSection = memo(() => {
                         </p>
                     </div>
 
-                    {/* Benefits Grid */}
+                    {/* Benefits Grid - Concert Colors */}
                     <div className="grid md:grid-cols-3 gap-6">
-                        <div className={`p-8 rounded-2xl ${COLORS.background.card} border ${COLORS.border.default} hover:border-emerald-500/30 ${ANIMATION.transition.default} group`}>
-                            <div className="w-14 h-14 mb-6 bg-emerald-500/10 rounded-xl flex items-center justify-center group-hover:bg-emerald-500/20 transition-colors">
-                                <Zap className="w-7 h-7 text-emerald-400" />
+                        <div className="p-8 rounded-2xl glass-card hover:scale-[1.02] transition-all duration-300 group">
+                            <div className="w-14 h-14 mb-6 bg-[#FF006E]/10 rounded-xl flex items-center justify-center group-hover:bg-[#FF006E]/20 transition-colors">
+                                <Zap className="w-7 h-7 text-[#FF006E]" />
                             </div>
                             <h3 className="text-xl font-bold text-white mb-3">{t.landing.value_proposition.instant}</h3>
                             <p className="text-zinc-500">{t.landing.value_proposition.instant_desc}</p>
                         </div>
 
-                        <div className={`p-8 rounded-2xl ${COLORS.background.card} border ${COLORS.border.default} hover:border-emerald-500/30 ${ANIMATION.transition.default} group`}>
-                            <div className="w-14 h-14 mb-6 bg-emerald-500/10 rounded-xl flex items-center justify-center group-hover:bg-emerald-500/20 transition-colors">
-                                <Shield className="w-7 h-7 text-emerald-400" />
+                        <div className="p-8 rounded-2xl glass-card hover:scale-[1.02] transition-all duration-300 group">
+                            <div className="w-14 h-14 mb-6 bg-[#8338EC]/10 rounded-xl flex items-center justify-center group-hover:bg-[#8338EC]/20 transition-colors">
+                                <Shield className="w-7 h-7 text-[#8338EC]" />
                             </div>
                             <h3 className="text-xl font-bold text-white mb-3">{t.landing.value_proposition.no_middlemen}</h3>
                             <p className="text-zinc-500">{t.landing.value_proposition.no_middlemen_desc}</p>
                         </div>
 
-                        <div className={`p-8 rounded-2xl ${COLORS.background.card} border ${COLORS.border.default} hover:border-emerald-500/30 ${ANIMATION.transition.default} group`}>
-                            <div className="w-14 h-14 mb-6 bg-emerald-500/10 rounded-xl flex items-center justify-center group-hover:bg-emerald-500/20 transition-colors">
-                                <TrendingUp className="w-7 h-7 text-emerald-400" />
+                        <div className="p-8 rounded-2xl glass-card hover:scale-[1.02] transition-all duration-300 group">
+                            <div className="w-14 h-14 mb-6 bg-[#00F5D4]/10 rounded-xl flex items-center justify-center group-hover:bg-[#00F5D4]/20 transition-colors">
+                                <TrendingUp className="w-7 h-7 text-[#00F5D4]" />
                             </div>
                             <h3 className="text-xl font-bold text-white mb-3">{t.landing.value_proposition.full_control}</h3>
                             <p className="text-zinc-500">{t.landing.value_proposition.full_control_desc}</p>
@@ -63,9 +68,9 @@ export const ValuePropositionSection = memo(() => {
                     </div>
                 </div>
             </div>
-
         </section>
     );
 });
 
 ValuePropositionSection.displayName = 'ValuePropositionSection';
+

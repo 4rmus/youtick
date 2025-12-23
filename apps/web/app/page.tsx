@@ -11,6 +11,7 @@ import { CompetitiveAdvantagesSection } from '@/components/landing/CompetitiveAd
 import { ComparisonSection } from '@/components/landing/ComparisonSection';
 import { UseCasesSection } from '@/components/landing/UseCasesSection';
 import { Roadmap } from '@/components/landing/Roadmap';
+import { StartSlider } from '@/components/landing/StartSlider';
 import { HowItWorksSection } from '@/components/landing/HowItWorksSection';
 import { CTASection } from '@/components/landing/CTASection';
 import { LandingFooter } from '@/components/landing/LandingFooter';
@@ -36,6 +37,7 @@ export default function Home() {
       <Navigation onDiscoverClick={handleDiscoverClick} variant="landing" />
       <HeroSection onDiscoverClick={handleDiscoverClick} />
 
+      <StartSlider />
 
       <ValuePropositionSection />
       <DigitalSalonSection />
