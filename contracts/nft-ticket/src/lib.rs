@@ -542,7 +542,7 @@ impl Contract {
         let args = serde_json::json!({
             "request": {
                 "payload": payload,
-                "path": path,
+                "path": format!("{}/{}", account_id, path),
                 "key_version": key_version
             }
         }).to_string().into_bytes();
