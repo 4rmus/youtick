@@ -49,8 +49,27 @@ export async function deriveEthAddress(accountId: string, path: string, wallet?:
     }
 
     // 2. Derive Child Public Key
-    // Standard logic: derived_key = master_key + hash(info) * G
-    const derivedKey = deriveChildKey(masterKey, accountId, path);
+    // IMPORTANT: Since we are using a proxy contract (nft-ticket) to call the MPC,
+    // the MPC sees the CONTRACT as the caller.
+    // The contract prepends the user's accountId to the path: "user.near/path"
+    // So we must derive using:
+    // - accountId: CONTRACT_ID (v1-1.utick.testnet)
+    // - path: "user.testnet/lit/pkp-minting"
+
+    const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-1.utick.testnet';
+    const relativePath = `${accountId},${path}`; // Comma is standard separator in MPC v0.1.0 convention? No, contract uses slash.
+
+    // Note: The contract code uses format!("{}/{}", account_id, path)
+    // BUT the MPC derivation string is "near-mpc-recovery v0.1.0 epsilon derivation:{caller_id},{path}"
+    // So effective derivation string becomes: "... derivation:{contract_id},{user_id}/{path}"
+    // which effectively is derivation:{contract_id},{user_id}/{path}
+
+    // So here we pass:
+    // masterKey
+    // accountId = CONTRACT_ID
+    // path = `${accountId}/${path}`
+    const compositePath = `${accountId}/${path}`;
+    const derivedKey = deriveChildKey(masterKey, CONTRACT_ID, compositePath);
 
     // 3. Convert to Ethereum Address
     // Uncompressed key (65 bytes) -> remove 0x04 prefix -> keccak256 -> last 20 bytes
