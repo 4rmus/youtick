@@ -1,7 +1,7 @@
 import { LitNodeClient } from "@lit-protocol/lit-node-client";
 import { LitNetwork, LitAbility } from "@lit-protocol/constants";
 import { encryptFile, decryptToFile } from "@lit-protocol/encryption";
-import { createSiweMessageWithRecaps, generateAuthSig, LitAccessControlConditionResource, LitPKPResource } from "@lit-protocol/auth-helpers";
+import { createSiweMessageWithRecaps, generateAuthSig, LitAccessControlConditionResource, LitPKPResource, LitActionResource } from "@lit-protocol/auth-helpers";
 import { ethers } from "ethers";
 
 export const LIT_ACTION_CID = "QmZhqF9xZAJTTRyUR4d5L1zt83MByXaXUQuaU3a7gKdsh6";
@@ -253,6 +253,7 @@ class Lit {
      * @param nearSignature - NEAR wallet signature (stored during PKP linking)
      * @param nearMessage - Message that was signed
      * @param nearPublicKey - NEAR public key that signed
+     * @param capacityDelegationAuthSig - Optional capacity delegation auth sig for testnet
      */
     async getSessionSigsWithPKP(
         pkpPublicKey: string,
@@ -260,7 +261,8 @@ class Lit {
         nearAccountId: string,
         nearSignature?: string,
         nearMessage?: string,
-        nearPublicKey?: string
+        nearPublicKey?: string,
+        capacityDelegationAuthSig?: any
     ) {
         await this.connect();
         console.log("getSessionSigsWithPKP called for:", nearAccountId, "PKP:", pkpEthAddress);
@@ -276,31 +278,33 @@ class Lit {
             return cachedSigs;
         }
 
-        // Verify we have NEAR signature for Lit Action
-        if (!nearSignature || !nearMessage || !nearPublicKey) {
-            throw new Error("NEAR signature data required for PKP session sigs. Please re-link your PKP.");
+        // Import capacity delegation helper
+        const { createCapacityDelegationAuthSig, isCapacityDelegationAvailable } = await import('./capacity');
+
+        // Create capacity delegation auth sig if available and not provided
+        let effectiveCapacityDelegationAuthSig = capacityDelegationAuthSig;
+        if (!effectiveCapacityDelegationAuthSig && isCapacityDelegationAvailable()) {
+            console.log("Creating capacity delegation auth sig...");
+            effectiveCapacityDelegationAuthSig = await createCapacityDelegationAuthSig(
+                this.litNodeClient,
+                pkpEthAddress,
+                10, // 10 uses
+                60  // 1 hour expiry
+            );
         }
 
-        // Get the Lit Action IPFS CID from PKP info (stored during minting) or environment
-        const pkpDataRaw = localStorage.getItem(`lit_pkp_${nearAccountId}`);
-        const pkpData = pkpDataRaw ? JSON.parse(pkpDataRaw) : null;
-        const litActionIpfsCid = pkpData?.litActionCid || process.env.NEXT_PUBLIC_LIT_ACTION_IPFS_CID;
+        // Use IPFS CID of Lit Action - MUST match the CID registered as auth method during PKP minting
+        const litActionIpfsCid = process.env.NEXT_PUBLIC_LIT_ACTION_IPFS_CID ||
+            "Qmc6cLer2fmtuzNFhdtBoZvM1gCzX9s8gbc8wzWdizeuJe";
 
-        if (!litActionIpfsCid) {
-            throw new Error("Lit Action IPFS CID not found. PKP may have been minted without permitted action. Please re-mint PKP.");
-        }
+        console.log("Using Lit Action IPFS CID for PKP session sigs:", litActionIpfsCid);
 
-        console.log("Using Lit Action IPFS CID for session sigs:", litActionIpfsCid);
-
-        // Use getLitActionSessionSigs with IPFS CID instead of inline code
-        // This must match the permitted action registered during PKP minting
-        const sessionSigs = await this.litNodeClient.getLitActionSessionSigs({
+        // Build session sig params
+        const sessionParams: any = {
             pkpPublicKey,
-            litActionIpfsId: litActionIpfsCid, // Use IPFS CID instead of litActionCode
+            litActionIpfsId: litActionIpfsCid,
             jsParams: {
-                publicKey: nearPublicKey,
-                sig: nearSignature,
-                message: nearMessage
+                pkpPublicKey: pkpPublicKey  // Pass to Lit Action context
             },
             resourceAbilityRequests: [
                 {
@@ -308,18 +312,26 @@ class Lit {
                     ability: LitAbility.AccessControlConditionDecryption
                 },
                 {
-                    resource: new LitAccessControlConditionResource('*'),
-                    ability: LitAbility.AccessControlConditionSigning
-                },
-                {
                     resource: new LitPKPResource('*'),
                     ability: LitAbility.PKPSigning
+                },
+                {
+                    resource: new LitActionResource('*'),
+                    ability: LitAbility.LitActionExecution
                 }
             ],
             expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
-        });
+        };
 
-        console.log("PKP Session Sigs created with Lit Action verification!");
+        // Add capacity delegation if available (required for datil-test)
+        if (effectiveCapacityDelegationAuthSig) {
+            sessionParams.capabilityAuthSigs = [effectiveCapacityDelegationAuthSig];
+            console.log("Using capacity delegation auth sig for testnet");
+        }
+
+        const sessionSigs = await this.litNodeClient.getLitActionSessionSigs(sessionParams);
+
+        console.log("✅ PKP Session Sigs created with IPFS CID!");
         setCachedSessionSigs(cacheKey, sessionSigs);
         return sessionSigs;
     }

@@ -204,26 +204,19 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                 const pkp = JSON.parse(storedPkp);
                 console.log("Found PKP for decryption (signless):", pkp.ethAddress);
 
-                // Check if we have NEAR signature data for Lit Action
-                if (pkp.nearSignature && pkp.nearMessage && pkp.nearPublicKey) {
-                    setStatus('Using PKP with Lit Action (signless - no gas needed!)...');
-                    try {
-                        sessionSigs = await lit.getSessionSigsWithPKP(
-                            pkp.publicKey,
-                            pkp.ethAddress,
-                            accountId,
-                            pkp.nearSignature,
-                            pkp.nearMessage,
-                            pkp.nearPublicKey
-                        );
-                        console.log("PKP session sigs with Lit Action obtained successfully!");
-                    } catch (pkpError: any) {
-                        console.warn("PKP session failed, will try MPC fallback:", pkpError.message);
-                        sessionSigs = null;
-                    }
-                } else {
-                    console.warn("PKP found but missing NEAR signature data. Please re-link your PKP.");
-                    setStatus('PKP needs re-linking, checking MPC...');
+                setStatus('Using PKP for signless decryption...');
+                try {
+                    // Use inline Lit Action - no pre-signed NEAR data needed
+                    // The Lit Action handles authentication internally
+                    sessionSigs = await lit.getSessionSigsWithPKP(
+                        pkp.publicKey,
+                        pkp.ethAddress,
+                        accountId
+                        // No NEAR signature params needed for inline Lit Action
+                    );
+                    console.log("✅ PKP session sigs obtained successfully!");
+                } catch (pkpError: any) {
+                    console.warn("PKP session failed, will try MPC fallback:", pkpError.message);
                     sessionSigs = null;
                 }
             }

@@ -80,6 +80,30 @@ export class SessionManager {
         );
     }
 
+    /**
+     * Create session key with minimal deposit (for PKP users)
+     * PKP users need less gas but still need prepaid for MPC + NFT minting
+     */
+    async createSessionKeyMinimal(wallet: any): Promise<void> {
+        // Generate new key pair
+        const keyPair = KeyPair.fromRandom('ed25519');
+        const publicKey = keyPair.getPublicKey().toString();
+
+        // Store in local storage
+        await this.keyStore.setKey(NETWORK_ID, this.accountId, keyPair);
+
+        // Use batch transaction with minimal deposit (0.1 NEAR for minting)
+        const { batchInitialSetup } = await import('./batch-transactions');
+
+        await batchInitialSetup(
+            wallet,
+            this.accountId,
+            CONTRACT_ID,
+            publicKey,
+            '0.5' // Covers: MPC signature (0.25) + NFT mint (0.1) + Event (0.1) = 0.45 NEAR + margin
+        );
+    }
+
     async saveSessionKey(keyPair: any): Promise<void> {
         await this.keyStore.setKey(NETWORK_ID, this.accountId, keyPair);
     }

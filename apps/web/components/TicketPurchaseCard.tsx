@@ -17,6 +17,49 @@ interface EventDetails {
     uploader?: string;
 }
 
+/**
+ * Mint PKP in background after ticket purchase for signless experience.
+ * Non-blocking - errors are logged but don't affect user flow.
+ */
+async function mintPKPInBackground(accountId: string) {
+    try {
+        // Check if user already has a PKP
+        const existingPkp = localStorage.getItem(`lit_pkp_${accountId}`);
+        if (existingPkp) {
+            console.log("PKP already exists for user, skipping mint");
+            return;
+        }
+
+        console.log("🔐 Minting PKP for signless experience...");
+
+        const response = await fetch('/api/relayer/mint', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nearAccountId: accountId })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            console.warn("PKP minting failed (non-blocking):", error);
+            return;
+        }
+
+        const data = await response.json();
+        if (data.success && data.pkp) {
+            // Store PKP info for future signless sessions
+            localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify({
+                publicKey: data.pkp.publicKey,
+                ethAddress: data.pkp.ethAddress,
+                tokenId: data.pkp.tokenId
+            }));
+            console.log("✅ PKP minted and stored:", data.pkp.ethAddress);
+        }
+    } catch (error) {
+        // Non-blocking - user can still use MPC fallback
+        console.warn("Background PKP minting error (non-blocking):", error);
+    }
+}
+
 export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCardProps) {
     const { selector, accountId } = useWallet();
     const [loading, setLoading] = useState(false); // Global loading (initial fetch)
@@ -211,6 +254,10 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
             });
 
             if (hasSessionKey === false) setHasSessionKey(true);
+
+            // 🔥 Mint PKP for signless experience - WAIT for completion before showing player
+            await mintPKPInBackground(accountId);
+
             if (onPurchaseSuccess) onPurchaseSuccess();
 
         } catch (e) {
@@ -267,8 +314,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
 
                     {/* Price Badge */}
                     <div className={`px-3 py-1.5 rounded-lg backdrop-blur-sm border shadow-lg ${isFree
-                            ? 'bg-emerald-500/90 border-emerald-400/30'
-                            : 'bg-gradient-to-r from-purple-600/90 to-blue-600/90 border-white/20'
+                        ? 'bg-emerald-500/90 border-emerald-400/30'
+                        : 'bg-gradient-to-r from-purple-600/90 to-blue-600/90 border-white/20'
                         }`}>
                         {isFree ? (
                             <span className="text-[10px] font-bold text-white tracking-wider uppercase">✨ Free Ticket</span>

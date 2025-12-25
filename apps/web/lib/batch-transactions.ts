@@ -137,3 +137,28 @@ export async function batchUploadActionsSignless(
         livepeer_playback_id: ""
     });
 }
+
+/**
+ * Create session key only (no deposit) for PKP users
+ * PKP users don't need prepaid gas - they pay directly
+ */
+export async function createSessionKeyOnly(
+    wallet: any,
+    accountId: string,
+    contractId: string,
+    sessionKeyPublicKey: string
+) {
+    return await wallet.signAndSendTransaction({
+        receiverId: accountId,
+        actions: [
+            transactions.addKey(
+                utils.PublicKey.from(sessionKeyPublicKey),
+                transactions.functionCallAccessKey(
+                    contractId,
+                    [], // All methods allowed
+                    BigInt(utils.format.parseNearAmount('0.25') || '0') // 0.25 NEAR allowance for tx fees
+                )
+            )
+        ]
+    });
+}

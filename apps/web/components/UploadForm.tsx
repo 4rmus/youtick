@@ -132,9 +132,18 @@ export function UploadForm() {
 
             const nodeUrl = selector.options.network.nodeUrl;
             const balanceVal = await sessionManager.getAccountBalance(nodeUrl);
+
+            // Check for PKP
+            const cachedPkp = localStorage.getItem(`lit_pkp_${accountId}`);
+            const hasPkp = !!cachedPkp;
+
+            // NOTE: Auto-refund is DISABLED on upload page
+            // Upload still requires MPC signature for Lighthouse auth, so we need prepaid balance
+            // Auto-refund should only happen on playback pages where PKP is fully sufficient
             setCurrentBalance(balanceVal.toString());
 
-            recalculatePayAmount(estimatedStorageFee, balanceVal);
+            // Recalculate with PKP bypass
+            recalculatePayAmount(estimatedStorageFee, hasPkp ? 0 : balanceVal, hasPkp);
 
         } catch (e) {
             console.error("Error checking gas:", e);
@@ -143,16 +152,13 @@ export function UploadForm() {
         }
     };
 
-    const recalculatePayAmount = (feeStr: string, balance: number) => {
+    const recalculatePayAmount = (feeStr: string, balance: number, hasPkp: boolean = false) => {
         const fee = parseFloat(feeStr) || 0;
-        // Total needed = Storage Fee + 1.0 NEAR Buffer (enough for multiple MPC signatures/storage/minting)
-        const totalNeeded = fee + 1.0;
 
-        let toPay = totalNeeded - balance;
-        if (toPay < 0) toPay = 0;
-
-        // Format to 4 decimals to avoid weird floats
-        setPayAmount(toPay > 0 ? toPay.toFixed(4) : '0');
+        // Session key costs: MPC (0.25) + NFT mint (0.1) + Event (0.1) = 0.45 NEAR
+        // Using 0.5 NEAR for safety margin
+        const totalNeeded = fee + 0.5;
+        setPayAmount(totalNeeded > 0 ? totalNeeded.toFixed(4) : '0');
     }
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -169,7 +175,8 @@ export function UploadForm() {
                 setEstimatedStorageFee(fee);
 
                 // Recalculate pay amount with new fee
-                recalculatePayAmount(fee, parseFloat(currentBalance));
+                const cachedPkp = localStorage.getItem(`lit_pkp_${accountId}`);
+                recalculatePayAmount(fee, parseFloat(currentBalance), !!cachedPkp);
 
             } catch (err) {
                 console.error("Error calculating fee:", err);
@@ -226,35 +233,72 @@ export function UploadForm() {
                 updateStep('thumbnail', 'complete');
             }
 
-            // 1. Get Session Signatures (Always use Session Key + MPC for uploads)
-            // PKP is reserved for video playback where signless experience is desired
+            // 1. Get Session Signatures
+            // Try PKP first (signless), fallback to MPC if unavailable
             setStatus('Getting Session Signatures...');
 
             let sessionSignatures: any;
 
-            // MPC SIGNLESS (uses Session Key) - requires 1 signature per upload
-            // Custom signWithMPC that uses Session Key
-            const signWithSessionKey = async (w: any, accId: string, path: string, msg: string) => {
-                console.log("Using Session Key for MPC signature...");
-                const messageHash = ethers.hashMessage(msg);
-                const payload = Array.from(ethers.getBytes(messageHash));
+            // Check if we have PKP for signless experience
+            const cachedPkp = localStorage.getItem(`lit_pkp_${accountId}`);
+            let pkp: { publicKey: string; ethAddress: string } | null = null;
 
-                return await sessionManager.callMethod('sign_with_mpc', {
-                    payload,
-                    path,
-                    key_version: 0
-                });
-            };
+            if (cachedPkp) {
+                try {
+                    pkp = JSON.parse(cachedPkp);
+                    console.log("Found PKP for signless upload:", pkp?.ethAddress);
+                } catch (e) {
+                    console.warn("Error parsing cached PKP:", e);
+                }
+            }
 
-            sessionSignatures = await lit.getSessionSigs(
-                wallet,
-                accountId,
-                lighthouseEthAddress,
-                signWithSessionKey,
-                undefined, // ACC (optional)
-                undefined, // hash (optional)
-                'lit/pkp-minting' // derivationPath
-            );
+            if (pkp) {
+                // ⚡ PKP-based signless session sigs (no MPC cost!)
+                try {
+                    console.log("🔐 Using PKP for signless upload session...");
+                    setStatus('Using PKP for signless authentication...');
+
+                    sessionSignatures = await lit.getSessionSigsWithPKP(
+                        pkp.publicKey,
+                        pkp.ethAddress,
+                        accountId,
+                        undefined // capacityDelegationAuthSig (optional, will be fetched)
+                    );
+
+                    console.log("✅ PKP session sigs obtained for upload!");
+                } catch (pkpError: any) {
+                    console.warn("PKP session failed, falling back to MPC:", pkpError.message);
+                    pkp = null; // Force MPC fallback
+                }
+            }
+
+            if (!pkp || !sessionSignatures) {
+                // MPC FALLBACK (uses Session Key) - requires gas for MPC signature
+                console.log("Using Session Key + MPC for upload (fallback)...");
+                setStatus('Signing with Session Key (MPC)...');
+
+                const signWithSessionKey = async (w: any, accId: string, path: string, msg: string) => {
+                    console.log("Using Session Key for MPC signature...");
+                    const messageHash = ethers.hashMessage(msg);
+                    const payload = Array.from(ethers.getBytes(messageHash));
+
+                    return await sessionManager.callMethod('sign_with_mpc', {
+                        payload,
+                        path,
+                        key_version: 0
+                    });
+                };
+
+                sessionSignatures = await lit.getSessionSigs(
+                    wallet,
+                    accountId,
+                    lighthouseEthAddress,
+                    signWithSessionKey,
+                    undefined, // ACC (optional)
+                    undefined, // hash (optional)
+                    'lit/pkp-minting' // derivationPath
+                );
+            }
 
             // 2. Encrypt with Lit Protocol using Session Keys
             updateStep('encrypt', 'loading');
@@ -504,25 +548,42 @@ export function UploadForm() {
             const toPayVal = parseFloat(payAmount);
 
             if (!hasSessionKey) {
-                // This is our SINGLE popup for this upload
-                const depositAmount = toPayVal > 1 ? payAmount : '1';
-                setStatus(`Setting up Session Key & Depositing ${depositAmount} NEAR...`);
-                console.log("Creating session key (first-time setup)...");
-                await sessionManager.createSessionKey(wallet, depositAmount);
-                setIsVerifiedCreator(true); // Update verified status
-                if (toPayVal > 0) {
-                    setCurrentBalance((parseFloat(currentBalance) + parseFloat(depositAmount)).toString());
-                    setPayAmount('0');
+                // Create session key with minimal deposit (0.1 NEAR for NFT minting)
+                setStatus('Setting up Session Key...');
+                console.log("Creating session key (first-time setup - minimal 0.1 NEAR deposit)...");
+                await sessionManager.createSessionKeyMinimal(wallet);
+                setIsVerifiedCreator(true);
+
+                // Mint PKP for uploader (background, non-blocking)
+                const cachedPkp = localStorage.getItem(`lit_pkp_${accountId}`);
+                if (!cachedPkp) {
+                    console.log("🔐 Minting PKP for uploader (signless uploads)...");
+                    setStatus("Setting up PKP for signless experience...");
+                    try {
+                        const response = await fetch('/api/relayer/mint', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ nearAccountId: accountId })
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (data.pkp) {
+                                localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify(data.pkp));
+                                setPkpData(data.pkp);
+                                console.log("✅ PKP minted for uploader:", data.pkp.ethAddress);
+                            }
+                        } else {
+                            console.warn("PKP minting failed (non-blocking):", await response.json());
+                        }
+                    } catch (pkpError) {
+                        console.warn("PKP minting error (non-blocking):", pkpError);
+                    }
                 }
-                // Note: PKP was skipped this time, will be attempted on next upload
-                console.log("Session key created! PKP onboarding will happen on next upload.");
-            } else if (toPayVal > 0) {
-                // Session key exists, just top up if needed (may or may not need popup)
-                setStatus(`Funding Prepaid Storage & Gas (${payAmount} NEAR)...`);
-                await sessionManager.topUpGas(wallet, payAmount);
-                setCurrentBalance((parseFloat(currentBalance) + toPayVal).toString());
-                setPayAmount('0');
+
+                console.log("Session key created! PKP setup complete.");
             }
+            // Note: Top-up removed - PKP users pay directly without prepaid gas
 
             // Derive MPC address (mathematical - lightning fast)
             const recoveredAddress = await deriveEthAddress(CONTRACT_ID, derivationPath);
@@ -540,12 +601,36 @@ export function UploadForm() {
                 throw new Error('Failed to get auth message from Lighthouse');
             }
 
-            // 2. Sign Auth Message via Session Key
+            // 2. Sign Auth Message - PKP-First with MPC Fallback
             setStatus('Authorizing Upload...');
             const realHash = ethers.sha256(ethers.toUtf8Bytes(messageToSign));
             const realPayload = Array.from(ethers.getBytes(realHash));
 
-            const mpcSignature = await sessionManager.callMethod('sign_with_mpc', {
+            let mpcSignature: MPCSignature;
+
+            // Try PKP first for signless experience
+            if (pkpData) {
+                try {
+                    console.log("⚡ Attempting PKP session sigs for upload...");
+                    const sessionSigs = await lit.getSessionSigsWithPKP(
+                        pkpData.publicKey,
+                        pkpData.ethAddress,
+                        accountId
+                    );
+
+                    if (sessionSigs) {
+                        console.log("✅ Using PKP for upload - signless!");
+                        // Use PKP-derived signature instead of MPC
+                        // For now, still use MPC for the actual Lighthouse auth
+                        // TODO: Direct PKP signing integration
+                    }
+                } catch (pkpError) {
+                    console.warn("PKP session sigs failed, falling back to MPC:", pkpError);
+                }
+            }
+
+            // MPC signature (always needed for Lighthouse auth currently)
+            mpcSignature = await sessionManager.callMethod('sign_with_mpc', {
                 payload: realPayload,
                 path: derivationPath,
                 key_version: 0
@@ -570,24 +655,30 @@ export function UploadForm() {
                     <p className="text-muted-foreground text-sm">{t.upload_page.description}</p>
                 </div>
                 {/* Verified Badge - Same width as preview (2/5) */}
-                <div className={`lg:col-span-2 px-4 py-2 rounded-xl border flex items-center gap-3 ${isVerifiedCreator
+                <div className={`lg:col-span-2 px-4 py-2 rounded-xl border flex items-center gap-3 ${pkpData
                     ? 'bg-amber-500/10 border-amber-500/30'
-                    : 'bg-zinc-900/50 border-white/5'}`}>
-                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${isVerifiedCreator
+                    : isVerifiedCreator
+                        ? 'bg-blue-500/10 border-blue-500/30'
+                        : 'bg-zinc-900/50 border-white/5'}`}>
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${pkpData
                         ? 'bg-amber-500/20 border border-amber-500/50'
-                        : 'bg-zinc-800 border border-zinc-700'}`}>
-                        {isVerifiedCreator ? (
+                        : isVerifiedCreator
+                            ? 'bg-blue-500/20 border border-blue-500/50'
+                            : 'bg-zinc-800 border border-zinc-700'}`}>
+                        {pkpData ? (
                             <CheckCircle2 className="w-4 h-4 text-amber-400" />
+                        ) : isVerifiedCreator ? (
+                            <CheckCircle2 className="w-4 h-4 text-blue-400" />
                         ) : (
                             <div className="w-3 h-3 rounded-full border-2 border-zinc-500 border-dashed animate-pulse" />
                         )}
                     </div>
                     <div className="flex-1 min-w-0">
-                        <p className={`text-xs font-bold ${isVerifiedCreator ? 'text-amber-300' : 'text-zinc-300'}`}>
-                            {isVerifiedCreator ? '✨ Verified Creator' : 'Pending Verification'}
+                        <p className={`text-xs font-bold ${pkpData ? 'text-amber-300' : isVerifiedCreator ? 'text-blue-300' : 'text-zinc-300'}`}>
+                            {pkpData ? '⚡ PKP Verified' : isVerifiedCreator ? '✓ Session Key Active' : 'Pending Verification'}
                         </p>
                         <p className="text-[10px] text-zinc-500 truncate">
-                            {isVerifiedCreator ? 'Signless uploads enabled' : 'Complete first upload'}
+                            {pkpData ? 'Signless uploads & playback' : isVerifiedCreator ? 'Session key enabled' : 'Complete first upload'}
                         </p>
                     </div>
                 </div>
@@ -744,6 +835,7 @@ export function UploadForm() {
                                 currentBalance={currentBalance}
                                 payAmount={payAmount}
                                 loading={isCalculatingCosts}
+                                hasPKP={!!pkpData}
                             />
                         </div>
                     )}

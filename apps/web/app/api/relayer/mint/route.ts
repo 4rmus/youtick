@@ -5,9 +5,9 @@ import { ethers } from 'ethers';
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { nearAccountId, nearPublicKey, signature, message } = body;
+        const { nearAccountId } = body;
 
-        if (!nearAccountId || !nearPublicKey || !signature || !message) {
+        if (!nearAccountId) {
             return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
         }
 

@@ -39,7 +39,6 @@ next-env.d.ts
 target/
 
 # Internal Documentation (not for public repo)
-CHANGELOG.md
 DEEP_DIVE_REPORT_TR.md
 DEEP_DIVE_REPORT_EN.md
 DEPLOYMENT.md

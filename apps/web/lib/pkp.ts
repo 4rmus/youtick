@@ -145,20 +145,17 @@ export class PKPManager {
     }
 
     /**
-     * Mint a PKP directly via contracts with permitted Lit Action using a single transaction.
-     * Uses PKPHelper to bundle Mint + Permit Action.
+     * Mint a PKP directly via contracts with Lit Action auth method.
+     * Registers an IPFS CID as permitted auth method for signless PKP usage.
      * 
      * @param signer - ethers.Signer with tstLPX balance on Chronicle Yellowstone
-     * @param litActionIpfsCid - Optional IPFS CID of Lit Action to permit (defaults to env var)
-     * @returns PKP info { tokenId, publicKey, ethAddress, litActionCid }
+     * @returns PKP info { tokenId, publicKey, ethAddress }
      */
-    async mintPKPDirect(signer: any, litActionIpfsCid?: string) {
+    async mintPKPDirect(signer: any) {
         try {
             const { LitContracts } = await import('@lit-protocol/contracts-sdk');
             const { LitNetwork } = await import('@lit-protocol/constants');
             const ethers5 = await import('ethers5');
-            // @ts-ignore - multiformats/cid has resolution issues with some TS configurations but works at runtime
-            const { CID } = await import('multiformats/cid');
 
             const rpcUrl = typeof window !== 'undefined'
                 ? `${window.location.origin}/api/lit-rpc`
@@ -176,51 +173,51 @@ export class PKPManager {
             await litContracts.connect();
             console.log("✅ Lit Contracts Connected.");
 
-            const ipfsCid = litActionIpfsCid || process.env.NEXT_PUBLIC_LIT_ACTION_IPFS_CID;
-            if (!ipfsCid) throw new Error("No Lit Action CID provided or found in ENV");
-
-            console.log("Batching Mint + Permit Action for CID:", ipfsCid);
-
-            // Using mintNextAndAddAuthMethodsWithTypes via utility
-            // This method handles the complex encoding for the PKPHelper contract
+            // Get mint cost
             const mintCost = await litContracts.pkpNftContract.read.mintCost();
+            console.log("Mint cost:", ethers5.utils.formatEther(mintCost), "tstLPX");
 
-            // We need to convert the CIDv0 to bytes for the contract
-            // Manual implementation using ethers5 utilities
-            const decoded = ethers5.utils.base58.decode(ipfsCid);
-            const digest = `0x${Buffer.from(decoded.slice(2)).toString('hex')}`;
-            console.log("Encoded CID digest:", digest);
+            // Lit Action IPFS CID for simple PKP authorization
+            const litActionIpfsCid = process.env.NEXT_PUBLIC_LIT_ACTION_IPFS_CID ||
+                "Qmc6cLer2fmtuzNFhdtBoZvM1gCzX9s8gbc8wzWdizeuJe";
 
-            const tx = await litContracts.pkpHelperContract.write.mintNextAndAddAuthMethodsWithTypes(
-                2, // KeyType: ECDSA
-                [digest], // permittedIpfsCIDs (expecting bytes32 digest)
-                [[]], // permittedIpfsCIDScopes (empty = full access)
-                [], // permittedAddresses
-                [], // permittedAddressScopes
-                [], // permittedAuthMethodTypes
-                [], // permittedAuthMethodIds
-                [], // permittedAuthMethodPubkeys
-                [], // permittedAuthMethodScopes
+            console.log("Using Lit Action IPFS CID:", litActionIpfsCid);
+
+            // Auth method configuration for Lit Action (IPFS CID)
+            // authMethodType: 2 = LitAction (IPFS CID auth)
+            const authMethodType = 2;
+
+            // authMethodId: Use LitContracts utility for proper IPFS CID to bytes conversion
+            const authMethodId = litContracts.utils.getBytesFromMultihash(litActionIpfsCid);
+            console.log("authMethodId (multihash bytes):", authMethodId);
+
+            const authMethodPubkey = "0x"; // Not needed for Lit Action auth
+
+            console.log("Minting PKP with Lit Action auth method...");
+
+            // Try using pkpHelperContract for auth method registration
+            // Scopes: 1 = SignAnything, 2 = PersonalSign, 17 = GrantDecrypt
+            const tx = await litContracts.pkpHelperContract.write.mintNextAndAddAuthMethods(
+                2, // keyType: ECDSA
+                [authMethodType], // permittedAuthMethodTypes
+                [authMethodId], // permittedAuthMethodIds (bytes[])
+                [authMethodPubkey], // permittedAuthMethodPubkeys
+                [[1, 2, 17]], // permittedAuthMethodScopes - SignAnything + PersonalSign + GrantDecrypt
                 true, // addPkpEthAddressAsPermittedAddress
                 true, // sendPkpToItself
                 { value: mintCost }
             );
 
-            console.log("Batch transaction sent:", tx.hash);
+            console.log("Mint transaction sent:", tx.hash);
             const receipt = await tx.wait();
-            console.log("✅ Batch transaction confirmed! Status:", receipt.status);
+            console.log("✅ Mint with auth method confirmed! Status:", receipt.status);
 
             // Parse logs to find PKP info
             let tokenId = "";
             let publicKey = "";
             let ethAddress = "";
 
-            if (!litContracts.pkpNftContract?.abi) {
-                console.warn("PKP NFT Contract ABI missing, attempting manual parse...");
-            }
-
-            // Use explicit interface for parsing (Ethers v5 style)
-            const nftInterface = new ethers5.utils.Interface(litContracts.pkpNftContract?.abi || [
+            const nftInterface = new ethers5.utils.Interface([
                 "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)"
             ]);
 
@@ -236,27 +233,24 @@ export class PKPManager {
             }
 
             if (!tokenId) {
-                // Fallback: try to find the minted event
                 throw new Error("Could not find PKP TokenId in transaction logs");
             }
 
             // Get the full PKP info from the registry
-            console.log("Fetching public key from router for TokenID:", tokenId);
-            const pkpInfo = await litContracts.pubkeyRouterContract.read.getPubkey(tokenId);
-            publicKey = pkpInfo;
+            console.log("Fetching public key for TokenID:", tokenId);
+            publicKey = await litContracts.pubkeyRouterContract.read.getPubkey(tokenId);
             ethAddress = ethers5.utils.computeAddress(publicKey);
 
-            console.log("PKP Fully Initialized:", { tokenId, ethAddress });
+            console.log("✅ PKP Minted with Auth Method:", { tokenId, ethAddress, litActionIpfsCid });
 
             return {
-                tokenId: tokenId,
-                publicKey: publicKey,
-                ethAddress: ethAddress,
-                txHash: receipt.transactionHash,
-                litActionCid: ipfsCid
+                tokenId,
+                publicKey,
+                ethAddress,
+                txHash: receipt.transactionHash
             };
         } catch (e: any) {
-            console.error("Batch minting failed:", e);
+            console.error("Minting with auth method failed:", e);
             throw e;
         }
     }
