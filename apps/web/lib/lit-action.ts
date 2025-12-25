@@ -30,7 +30,7 @@ export const LIT_ACTION_CODE = `
     
     // 2. Query NEAR Smart Contract
     const rpcUrl = "https://rpc.testnet.near.org";
-    const contractId = "v0-2.utick.testnet";  // UPDATED CONTRACT ID
+    const contractId = "v1-0-0.utick.testnet";  // UPDATED CONTRACT ID
     
     try {
         const args = JSON.stringify({ account_id: nearAccountId, limit: 100 });

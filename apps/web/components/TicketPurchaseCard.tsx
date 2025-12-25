@@ -76,7 +76,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
             setLoading(true);
             try {
                 // Fetch Event Details
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-1.utick.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
                 const rpcUrl = "/api/near-rpc";
 
                 const near = await connect({
@@ -140,7 +140,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
         setError(null);
         try {
             const wallet = await selector.wallet();
-            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-1.utick.testnet';
+            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
             const sessionManager = new SessionManager(accountId);
 
             console.log("Requesting access key...");
@@ -181,7 +181,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess }: TicketPurchaseCar
         setError(null);
         try {
             const wallet = await selector.wallet();
-            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-1.utick.testnet';
+            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
             const sessionManager = new SessionManager(accountId);
 
             const transactionsList = [];

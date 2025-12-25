@@ -20,7 +20,7 @@ import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
-const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-1.utick.testnet';
+const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
 
 interface UploadResponse {
     data: Array<{ Hash: string }> | { Hash: string };
@@ -388,7 +388,7 @@ export function UploadForm() {
                 // Construct full IPFS Gateway URL for media
                 const mediaUrl = `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`;
 
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
                 const priceYocto = utils.format.parseNearAmount(price) || '0';
 
                 // Prepare metadata for batch transaction

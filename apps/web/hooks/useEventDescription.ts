@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { connect, keyStores } from 'near-api-js';
 
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v0-2.utick.testnet';
+const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
 
 interface EventData {
     title: string;
