@@ -49,54 +49,60 @@ function WatchContent() {
 
     return (
         <div className="max-w-4xl mx-auto space-y-8">
-            <div className="text-center space-y-4">
-                <h1 className="text-4xl font-bold tracking-tight">{t.watch_page.title}</h1>
-                <p className="text-muted-foreground">
-                    {t.watch_page.description}
-                </p>
-            </div>
+            {!playCid && (
+                <div className="text-center space-y-4">
+                    <h1 className="text-4xl font-bold tracking-tight">{t.watch_page.title}</h1>
+                    <p className="text-muted-foreground">
+                        {t.watch_page.description}
+                    </p>
+                </div>
+            )}
 
             {playCid ? (
                 <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 mb-12">
+                    {/* Video Title & Uploader - Above Player */}
+                    {(() => {
+                        const activeToken = tokens.find(t => t.video_metadata?.encrypted_cid === playCid);
+                        if (!activeToken) return null;
+
+                        return (
+                            <div className="space-y-2">
+                                <h2 className="text-2xl font-bold text-white leading-tight">
+                                    {activeToken.metadata?.title || t.watch_page.untitled}
+                                </h2>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-[10px] font-bold text-white">
+                                        {activeToken.owner_id.substring(0, 2).toUpperCase()}
+                                    </div>
+                                    <p className="text-sm text-zinc-400">
+                                        Uploaded by <span className="text-zinc-200 font-medium">{activeToken.owner_id}</span>
+                                    </p>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
                     {/* The Player */}
                     <VideoPlayer
                         cid={playCid}
                         thumbnailUrl={getActiveThumbnail()}
                     />
 
-                    {/* 2. Video Details */}
+                    {/* Description - Below Player */}
                     {(() => {
                         const activeToken = tokens.find(t => t.video_metadata?.encrypted_cid === playCid);
                         if (!activeToken) return null;
 
                         return (
-                            <div className="space-y-4">
-                                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-                                    <div>
-                                        <h2 className="text-2xl font-bold text-white leading-tight">
-                                            {activeToken.metadata?.title || t.watch_page.untitled}
-                                        </h2>
-                                        <div className="flex items-center gap-2 mt-2">
-                                            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-[10px] font-bold text-white">
-                                                {activeToken.owner_id.substring(0, 2).toUpperCase()}
-                                            </div>
-                                            <p className="text-sm text-zinc-400">
-                                                Uploaded by <span className="text-zinc-200 font-medium">{activeToken.owner_id}</span>
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="p-6 bg-zinc-900/50 rounded-xl border border-white/5">
-                                    <h3 className="text-sm font-semibold text-zinc-300 mb-2">{t.watch_page.desc_label}</h3>
-                                    {descLoading ? (
-                                        <p className="text-sm text-zinc-500 italic">{t.watch_page.loading_desc}</p>
-                                    ) : (
-                                        <p className="text-sm text-zinc-400 whitespace-pre-wrap leading-relaxed">
-                                            {eventDescription || activeToken.metadata?.description || t.watch_page.no_desc}
-                                        </p>
-                                    )}
-                                </div>
+                            <div className="p-6 bg-zinc-900/50 rounded-xl border border-white/5">
+                                <h3 className="text-sm font-semibold text-zinc-300 mb-2">{t.watch_page.desc_label}</h3>
+                                {descLoading ? (
+                                    <p className="text-sm text-zinc-500 italic">{t.watch_page.loading_desc}</p>
+                                ) : (
+                                    <p className="text-sm text-zinc-400 whitespace-pre-wrap leading-relaxed">
+                                        {eventDescription || activeToken.metadata?.description || t.watch_page.no_desc}
+                                    </p>
+                                )}
                             </div>
                         );
                     })()}

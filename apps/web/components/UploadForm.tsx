@@ -72,6 +72,11 @@ export function UploadForm() {
     const [payAmount, setPayAmount] = useState('0');
     const [isCalculatingCosts, setIsCalculatingCosts] = useState(false);
 
+    // Gas Top-Up State
+    const [gasBalance, setGasBalance] = useState(0);
+    const [needsTopUp, setNeedsTopUp] = useState(false);
+    const REQUIRED_GAS = 0.5; // MPC (0.25) + NFT (0.1) + Event (0.1)
+
     // PKP State for Uploader
     const [pkpData, setPkpData] = useState<{ publicKey: string, ethAddress: string, litActionCid: string } | null>(null);
 
@@ -137,10 +142,20 @@ export function UploadForm() {
             const cachedPkp = localStorage.getItem(`lit_pkp_${accountId}`);
             const hasPkp = !!cachedPkp;
 
-            // NOTE: Auto-refund is DISABLED on upload page
-            // Upload still requires MPC signature for Lighthouse auth, so we need prepaid balance
-            // Auto-refund should only happen on playback pages where PKP is fully sufficient
+            // Store gas balance for display
+            setGasBalance(balanceVal);
             setCurrentBalance(balanceVal.toString());
+
+            // Check if session key exists (returning user)
+            const hasSessionKey = await sessionManager.hasSessionKey();
+
+            // Determine if top-up is needed:
+            // - Only for returning users (hasSessionKey = true)
+            // - When balance is below required threshold
+            const topUpNeeded = hasSessionKey && balanceVal < REQUIRED_GAS;
+            setNeedsTopUp(topUpNeeded);
+
+            console.log(`Gas Status: Balance=${balanceVal}, Required=${REQUIRED_GAS}, NeedsTopUp=${topUpNeeded}`);
 
             // Recalculate with PKP bypass
             recalculatePayAmount(estimatedStorageFee, hasPkp ? 0 : balanceVal, hasPkp);
@@ -582,8 +597,19 @@ export function UploadForm() {
                 }
 
                 console.log("Session key created! PKP setup complete.");
+            } else if (needsTopUp) {
+                // Returning user with low balance - trigger top-up
+                setStatus('Gas balance low. Topping up...');
+                console.log(`Topping up gas: Current=${gasBalance}, Required=${REQUIRED_GAS}`);
+
+                const topUpAmount = Math.ceil((REQUIRED_GAS - gasBalance + 0.1) * 10) / 10; // Round up + margin
+                await sessionManager.topUpGas(wallet, topUpAmount.toString());
+
+                // Update local state after top-up
+                setGasBalance(gasBalance + topUpAmount);
+                setNeedsTopUp(false);
+                console.log(`✅ Gas topped up by ${topUpAmount} NEAR`);
             }
-            // Note: Top-up removed - PKP users pay directly without prepaid gas
 
             // Derive MPC address (mathematical - lightning fast)
             const recoveredAddress = await deriveEthAddress(CONTRACT_ID, derivationPath);
@@ -836,6 +862,9 @@ export function UploadForm() {
                                 payAmount={payAmount}
                                 loading={isCalculatingCosts}
                                 hasPKP={!!pkpData}
+                                gasBalance={gasBalance}
+                                requiredGas={REQUIRED_GAS}
+                                needsTopUp={needsTopUp}
                             />
                         </div>
                     )}
