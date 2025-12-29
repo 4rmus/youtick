@@ -5,6 +5,7 @@ import { WalletProvider } from "@/components/providers/WalletProvider";
 import { Navbar } from "@/components/Navbar";
 import { LanguageProvider } from "@/components/providers/LanguageContext";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
+import { GoogleAnalytics } from "@next/third-parties/google";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -35,6 +36,7 @@ export default function RootLayout({
                     </LanguageProvider>
                 </ThemeProvider>
             </body>
+            <GoogleAnalytics gaId="G-4J9W05MW6W" />
         </html>
     );
 }
