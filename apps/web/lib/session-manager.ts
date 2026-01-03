@@ -3,6 +3,61 @@ import { keyStores, KeyPair, connect, Contract, utils, providers, transactions }
 const NETWORK_ID = 'testnet';
 const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
 
+// RPC Failover Configuration - ordered by priority
+const RPC_ENDPOINTS = [
+    'https://test.rpc.fastnear.com',
+    'https://rpc.testnet.near.org',
+    'https://near-testnet.lava.build',
+];
+
+// Track current working endpoint index
+let currentRpcIndex = 0;
+
+/**
+ * Get the current best RPC URL
+ */
+function getCurrentRpcUrl(): string {
+    return RPC_ENDPOINTS[currentRpcIndex];
+}
+
+/**
+ * Try next RPC endpoint on failure
+ */
+function switchToNextRpc(): boolean {
+    const previousIndex = currentRpcIndex;
+    currentRpcIndex = (currentRpcIndex + 1) % RPC_ENDPOINTS.length;
+    console.warn(`RPC failover: ${RPC_ENDPOINTS[previousIndex]} -> ${RPC_ENDPOINTS[currentRpcIndex]}`);
+    return currentRpcIndex !== 0; // Returns false when we've cycled back to start
+}
+
+/**
+ * Execute a function with RPC failover
+ */
+async function withRpcFailover<T>(fn: (rpcUrl: string) => Promise<T>, maxRetries: number = 3): Promise<T> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            return await fn(getCurrentRpcUrl());
+        } catch (e: any) {
+            lastError = e;
+            console.warn(`RPC attempt ${attempt + 1} failed:`, e.message);
+
+            // Only switch RPC if it looks like a network/RPC error
+            if (e.message?.includes('fetch') || e.message?.includes('network') || e.message?.includes('timeout') || e.message?.includes('502')) {
+                switchToNextRpc();
+                // Small delay before retry
+                await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+            } else {
+                // Not an RPC error, don't retry
+                throw e;
+            }
+        }
+    }
+
+    throw lastError || new Error('All RPC endpoints failed');
+}
+
 export class SessionManager {
     private keyStore: any;
     private accountId: string;
@@ -18,40 +73,37 @@ export class SessionManager {
 
         // Verify key exists on-chain to avoid stale keys
         try {
-            const near = await connect({
-                networkId: NETWORK_ID,
-                keyStore: this.keyStore,
-                nodeUrl: 'https://test.rpc.fastnear.com',
-                walletUrl: 'https://wallet.testnet.near.org',
-                helperUrl: 'https://helper.testnet.near.org',
-            });
-            const account = await near.account(this.accountId);
-            const accessKeys = await account.getAccessKeys();
-            const publicKey = keyPair.getPublicKey().toString();
-            const accessKeyInfo = accessKeys.find(k => k.public_key === publicKey);
+            return await withRpcFailover(async (rpcUrl) => {
+                const near = await connect({
+                    networkId: NETWORK_ID,
+                    keyStore: this.keyStore,
+                    nodeUrl: rpcUrl,
+                    walletUrl: 'https://wallet.testnet.near.org',
+                    helperUrl: 'https://helper.testnet.near.org',
+                });
+                const account = await near.account(this.accountId);
+                const accessKeys = await account.getAccessKeys();
+                const publicKey = keyPair.getPublicKey().toString();
+                const accessKeyInfo = accessKeys.find(k => k.public_key === publicKey);
 
-            if (!accessKeyInfo) {
-                console.warn("Session key found locally but not on-chain. Removing.");
-                await this.keyStore.removeKey(NETWORK_ID, this.accountId);
-                return false;
-            }
-
-            // Verify the key is for the correct contract
-            const permission = accessKeyInfo.access_key.permission;
-            // Permission can be 'FullAccess' (string) or object with FunctionCall
-            if (typeof permission === 'object' && 'FunctionCall' in permission) {
-                if (permission.FunctionCall.receiver_id !== CONTRACT_ID) {
-                    console.warn(`Session key found but for wrong contract (${permission.FunctionCall.receiver_id} vs ${CONTRACT_ID}). Removing.`);
+                if (!accessKeyInfo) {
+                    console.warn("Session key found locally but not on-chain. Removing.");
                     await this.keyStore.removeKey(NETWORK_ID, this.accountId);
                     return false;
                 }
-            } else if (permission !== 'FullAccess') {
-                // Should be FullAccess or FunctionCall. If it's something else weird, remove.
-                // But wait, if it IS FullAccess, it's valid for everything.
-                // So we only care if it IS FunctionCall AND wrong receiver.
-            }
 
-            return true;
+                // Verify the key is for the correct contract
+                const permission = accessKeyInfo.access_key.permission;
+                // Permission can be 'FullAccess' (string) or object with FunctionCall
+                if (typeof permission === 'object' && 'FunctionCall' in permission) {
+                    if (permission.FunctionCall.receiver_id !== CONTRACT_ID) {
+                        console.warn(`Session key found but for wrong contract (${permission.FunctionCall.receiver_id} vs ${CONTRACT_ID}). Removing.`);
+                        await this.keyStore.removeKey(NETWORK_ID, this.accountId);
+                        return false;
+                    }
+                }
+                return true;
+            });
         } catch (e) {
             console.warn("Error checking session key on-chain (network issue?). Assuming local key is valid.", e);
             // Fallback: if we have a local key but can't check chain, assume it's valid to allow progress.

@@ -100,7 +100,6 @@ export function useAllVideos() {
                         },
                         video_metadata: {
                             encrypted_cid: cid,
-                            livepeer_playback_id: "TICKET",
                             duration_seconds: 0,
                             content_type: "Exclusive",
                             price: event.price // Store price separately

@@ -133,8 +133,7 @@ export async function batchUploadActionsSignless(
         encrypted_cid: eventMetadata.encrypted_cid,
         title: eventMetadata.title,
         description: eventMetadata.description,
-        price: eventMetadata.price,
-        livepeer_playback_id: ""
+        price: eventMetadata.price
     });
 }
 

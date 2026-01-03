@@ -10,6 +10,9 @@ export const LIT_ACTION_CID = "QmZhqF9xZAJTTRyUR4d5L1zt83MByXaXUQuaU3a7gKdsh6";
 const SESSION_CACHE_KEY = 'lit_session_sigs';
 const SESSION_CACHE_EXPIRY = 30 * 24 * 60 * 60 * 1000; // 30 days - minimizes gas costs for viewers
 
+// Operation types for dual caching strategy
+export type SessionOperation = 'upload' | 'view' | 'purchase';
+
 // Session cache helpers
 const CURRENT_NETWORK = "datil-test";
 
@@ -37,18 +40,53 @@ export function clearSessionCache(accountId: string) {
     console.log(`Cleared Lit session cache for ${accountId}`);
 }
 
-// Session cache helpers
-// DISABLED: User requested exactly 1 signature per upload for security/UX
-// To re-enable signless experience, restore the original caching logic
-function getCachedSessionSigs(accountId: string): any | null {
-    // Always return null to force new signature each upload
-    console.log('Session cache disabled - requiring fresh signature for each upload');
+/**
+ * Dual Session Caching Strategy:
+ * - 'upload': Always fresh signature (security - involves payment)
+ * - 'view' / 'purchase': Use cached session (30 days - UX optimization)
+ */
+function getCachedSessionSigs(accountId: string, operation: SessionOperation = 'view'): any | null {
+    // Upload operations always require fresh signature for security
+    if (operation === 'upload') {
+        console.log('Upload operation - requiring fresh signature for security');
+        return null;
+    }
+
+    if (typeof window === 'undefined') return null;
+
+    const cached = localStorage.getItem(`${SESSION_CACHE_KEY}_${accountId}`);
+    if (!cached) return null;
+
+    try {
+        const { sigs, expiresAt } = JSON.parse(cached);
+        if (Date.now() < expiresAt) {
+            console.log(`Using cached session sigs for ${operation} (expires in ${Math.round((expiresAt - Date.now()) / 1000 / 60)} min)`);
+            return sigs;
+        }
+        // Expired - remove
+        localStorage.removeItem(`${SESSION_CACHE_KEY}_${accountId}`);
+        console.log('Session cache expired, will create new one');
+    } catch (e) {
+        localStorage.removeItem(`${SESSION_CACHE_KEY}_${accountId}`);
+    }
     return null;
 }
 
-function setCachedSessionSigs(accountId: string, sessionSigs: any): void {
-    // Cache disabled per user request - 1 signature per upload
-    console.log('Session caching disabled - each upload requires signature');
+function setCachedSessionSigs(accountId: string, sessionSigs: any, operation: SessionOperation = 'view'): void {
+    // Don't cache upload sessions
+    if (operation === 'upload') {
+        console.log('Upload operation - not caching session');
+        return;
+    }
+
+    if (typeof window === 'undefined') return;
+
+    const cacheData = {
+        sigs: sessionSigs,
+        expiresAt: Date.now() + SESSION_CACHE_EXPIRY
+    };
+    localStorage.setItem(`${SESSION_CACHE_KEY}_${accountId}`, JSON.stringify(cacheData));
+    console.log(`Cached session sigs for ${accountId} (30 days)`);
 }
 
 class Lit {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PKPManager } from '@/lib/pkp';
 import { ethers } from 'ethers';
+import { pkpMintLimiter } from '@/lib/rate-limiter';
 
 export async function POST(req: NextRequest) {
     try {
@@ -10,6 +11,30 @@ export async function POST(req: NextRequest) {
         if (!nearAccountId) {
             return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
         }
+
+        // Rate limiting - use nearAccountId as identifier
+        const identifier = nearAccountId;
+        if (!pkpMintLimiter.checkLimit(identifier)) {
+            const resetTime = pkpMintLimiter.getResetTime(identifier);
+            console.log(`[RATE_LIMIT] PKP mint blocked for ${nearAccountId} - retry after ${Math.ceil(resetTime / 1000)}s`);
+            return NextResponse.json(
+                {
+                    error: 'Rate limit exceeded. Too many PKP mint requests.',
+                    code: 'RATE_LIMITED',
+                    retryAfter: Math.ceil(resetTime / 1000)
+                },
+                {
+                    status: 429,
+                    headers: {
+                        'Retry-After': Math.ceil(resetTime / 1000).toString()
+                    }
+                }
+            );
+        }
+
+        // Audit logging
+        console.log(`[AUDIT] PKP Mint Request: account=${nearAccountId} time=${new Date().toISOString()} remaining=${pkpMintLimiter.getRemainingRequests(identifier)}`);
+
 
         // 1. Initialize Relayer Wallet (The "Contract Account" / App Sponsor)
         const relayerKey = process.env.RELAYER_PRIVATE_KEY;

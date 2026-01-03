@@ -85,7 +85,6 @@ export function MintButton({ cid }: MintButtonProps) {
                     },
                     video_metadata: {
                         encrypted_cid: "ACCESS_PASS",
-                        livepeer_playback_id: "ACCESS_PASS",
                         duration_seconds: 0,
                         content_type: "Exclusive"
                     }

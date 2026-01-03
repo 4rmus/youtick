@@ -6,7 +6,6 @@ const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick
 
 interface VideoMetadata {
     encrypted_cid: string;
-    livepeer_playback_id: string;
     duration_seconds: number;
     event_date?: number;
     content_type: string;

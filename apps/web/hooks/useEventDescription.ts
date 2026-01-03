@@ -9,19 +9,16 @@ interface EventData {
     price: string;
     creator_id: string;
     created_at: number;
-    livepeer_playback_id?: string;
 }
 
 export function useEventDescription(encrypted_cid: string | null) {
     const [description, setDescription] = useState<string | null>(null);
-    const [livepeerPlaybackId, setLivepeerPlaybackId] = useState<string | null>(null);
     const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
         if (!encrypted_cid || encrypted_cid === 'ACCESS_PASS') {
             setDescription(null);
-            setLivepeerPlaybackId(null);
             setThumbnailUrl(null);
             return;
         }
@@ -48,9 +45,6 @@ export function useEventDescription(encrypted_cid: string | null) {
                     if (event.description) {
                         setDescription(event.description);
                     }
-                    if (event.livepeer_playback_id) {
-                        setLivepeerPlaybackId(event.livepeer_playback_id);
-                    }
 
                     // Extract thumbnail from title format: "RealCID:::ThumbnailCID:::Title"
                     if (event.title && event.title.includes(':::')) {
@@ -71,6 +65,6 @@ export function useEventDescription(encrypted_cid: string | null) {
         fetchDescription();
     }, [encrypted_cid]);
 
-    return { description, livepeerPlaybackId, thumbnailUrl, loading };
+    return { description, thumbnailUrl, loading };
 }
 

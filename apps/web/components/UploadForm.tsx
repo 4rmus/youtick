@@ -327,20 +327,14 @@ export function UploadForm() {
             console.log("Generated Video UUID for Access Control:", videoUuid);
 
             // Use Lit Action to check NEAR NFT ownership on-chain
-            const accessControlConditions = [
-                {
-                    conditionType: 'evmBasic',
-                    contractAddress: '',
-                    standardContractType: '',
-                    chain: 'ethereum',
-                    method: 'eth_getBalance',
-                    parameters: [':userAddress', 'latest'],
-                    returnValueTest: {
-                        comparator: '>=',
-                        value: '0'
-                    }
-                }
-            ];
+            // Import the secure ACC helper
+            const { createAccessControlConditions } = await import('@/lib/access-conditions');
+
+            const accessControlConditions = createAccessControlConditions({
+                videoUuid,
+                uploaderAccountId: accountId,
+                useSecureNearCheck: true // Enable NEAR NFT verification
+            });
 
             // Store nearAccountId and targetCid for later use in decryption
             // These will be passed as jsParams to the Lit Action
@@ -417,7 +411,6 @@ export function UploadForm() {
                     },
                     video_metadata: {
                         encrypted_cid: videoUuid, // The UUID
-                        livepeer_playback_id: '', // Not used - kept for contract compatibility
                         duration_seconds: 0,
                         content_type: 'Exclusive'
                     }
@@ -430,8 +423,7 @@ export function UploadForm() {
                     encrypted_cid: videoUuid, // Key is UUID
                     title: eventTitle,
                     description: description || 'No description provided',
-                    price: priceYocto,
-                    livepeer_playback_id: '' // Not used - kept for contract compatibility
+                    price: priceYocto
                 };
 
                 // Use signless batch transaction
