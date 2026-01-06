@@ -11,7 +11,7 @@ import { Menu, X, User, LogOut } from 'lucide-react';
 import { Branding } from '@/components/landing/Branding';
 
 export function Navbar() {
-    const { modal, accountId, selector } = useWallet();
+    const { modal, accountId, selector, getWallet } = useWallet();
     const { language, setLanguage, t } = useLanguage();
     // Theme toggle is removed as we are enforcing dark mode
     const [mounted, setMounted] = useState(false);
@@ -29,9 +29,15 @@ export function Navbar() {
     };
 
     const handleSignOut = async () => {
-        const wallet = await selector?.wallet();
-        wallet?.signOut();
-        window.location.reload();
+        try {
+            const wallet = await getWallet();
+            await wallet.signOut();
+            window.location.reload();
+        } catch (e) {
+            console.error("Failed to sign out:", e);
+            // Force reload if wallet interaction fails, ensuring UI state clears
+            window.location.reload();
+        }
     };
 
     if (!mounted) return null;

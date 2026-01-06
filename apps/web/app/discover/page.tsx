@@ -4,10 +4,12 @@ import Link from 'next/link';
 import { Play, Ticket, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAllVideos } from '@/hooks/useAllVideos';
+import { useWallet } from '@/components/providers/WalletProvider';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
 export default function DiscoverPage() {
     const { tokens, loading, error, debugInfo } = useAllVideos();
+    const { accountId } = useWallet();
     const { t } = useLanguage();
 
     if (loading) {
@@ -63,10 +65,11 @@ export default function DiscoverPage() {
                             const priceYocto = token.video_metadata?.price;
                             const priceNear = priceYocto ? parseFloat(priceYocto) / 1e24 : 0;
                             const isFree = priceNear === 0;
+                            const isCreator = accountId && token.owner_id === accountId;
 
                             return (
                                 <Link
-                                    href={isVideo ? `/watch?cid=${token.video_metadata?.encrypted_cid}` : '/watch'}
+                                    href={isVideo ? `/ticket/${token.video_metadata?.encrypted_cid}` : '/watch'}
                                     key={token.token_id}
                                     className="group"
                                 >
@@ -116,7 +119,9 @@ export default function DiscoverPage() {
                                                     ? 'bg-emerald-500/90 border-emerald-400/30'
                                                     : 'bg-black/60 border-white/10'
                                                     }`}>
-                                                    {isFree ? (
+                                                    {isCreator ? (
+                                                        <span className="text-[9px] font-bold text-white tracking-wider uppercase">✨ Owner</span>
+                                                    ) : isFree ? (
                                                         <span className="text-[9px] font-bold text-white tracking-wider uppercase">✨ Free</span>
                                                     ) : (
                                                         <span className="text-[9px] font-bold text-white tracking-wider">{priceNear.toFixed(2)} NEAR</span>

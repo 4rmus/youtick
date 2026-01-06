@@ -13,6 +13,8 @@ interface WalletContextValue {
     modal: WalletSelectorModal | null;
     accounts: Array<AccountState>;
     accountId: string | null;
+    isTrial: boolean;
+    getWallet: () => Promise<any>;
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -21,8 +23,18 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const [selector, setSelector] = useState<WalletSelector | null>(null);
     const [modal, setModal] = useState<WalletSelectorModal | null>(null);
     const [accounts, setAccounts] = useState<Array<AccountState>>([]);
+    const [trialAccountId, setTrialAccountId] = useState<string | null>(null);
 
+    // Initial setup
     useEffect(() => {
+        // Check for trial account
+        if (typeof window !== "undefined") {
+            const storedTrial = localStorage.getItem("trialAccountId");
+            if (storedTrial) {
+                setTrialAccountId(storedTrial);
+            }
+        }
+
         setupWalletSelector({
             network: (process.env.NEXT_PUBLIC_NEAR_NETWORK as 'testnet' | 'mainnet') || 'testnet',
             modules: [setupMyNearWallet()],
@@ -44,6 +56,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             });
     }, []);
 
+    // Subscribe to wallet selector changes
     useEffect(() => {
         if (!selector) {
             return;
@@ -56,10 +69,31 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return () => subscription.unsubscribe();
     }, [selector]);
 
-    const accountId = accounts.find((account) => account.active)?.accountId || null;
+    // Determine active account (Wallet Selector > Trial Account)
+    const walletAccountId = accounts.find((account) => account.active)?.accountId || null;
+    const activeAccountId = walletAccountId || trialAccountId;
+    const isTrial = !walletAccountId && !!trialAccountId;
+
+    const getWallet = async () => {
+        if (isTrial && trialAccountId) {
+            const { TrialWallet } = await import('@/lib/trial-wallet');
+            return new TrialWallet(trialAccountId);
+        }
+        if (selector) {
+            return selector.wallet();
+        }
+        throw new Error("No wallet connected");
+    };
 
     return (
-        <WalletContext.Provider value={{ selector, modal, accounts, accountId }}>
+        <WalletContext.Provider value={{
+            selector,
+            modal,
+            accounts,
+            accountId: activeAccountId,
+            isTrial,
+            getWallet
+        }}>
             {children}
         </WalletContext.Provider>
     );

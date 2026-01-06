@@ -373,6 +373,275 @@ class Lit {
         setCachedSessionSigs(cacheKey, sessionSigs);
         return sessionSigs;
     }
+
+    /**
+     * Get session signatures using NEAR account verification (no MPC/PKP required).
+     * Uses a Lit Action that verifies NFT ownership directly via NEAR RPC.
+     * This is GAS-FREE and works for trial accounts without prepaid balance.
+     * 
+     * @param nearAccountId - NEAR account ID
+     * @param targetCid - Video UUID/CID to verify access for
+     * @param contractId - NFT contract ID
+     */
+    async getSessionSigsWithNEARVerification(
+        nearAccountId: string,
+        targetCid: string,
+        contractId: string
+    ) {
+        await this.connect();
+        console.log("getSessionSigsWithNEARVerification for:", nearAccountId, "video:", targetCid);
+
+        // Security: Clear stale cache if network changed
+        checkNetworkAndClearCache(nearAccountId);
+
+        // Check cache first - avoid repeated queries
+        const cacheKey = `near_verify_${nearAccountId}`;
+        const cachedSigs = getCachedSessionSigs(cacheKey);
+        if (cachedSigs) {
+            console.log("Using cached NEAR verification session sigs");
+            return cachedSigs;
+        }
+
+        // Lit Action code that verifies NEAR NFT ownership directly
+        const litActionCode = `
+        (async () => {
+            try {
+                const nearAccountId = jsParams.nearAccountId;
+                const targetCid = jsParams.targetCid;
+                const contractId = jsParams.contractId;
+                
+                console.log("Verifying NEAR NFT ownership for:", nearAccountId, "video:", targetCid);
+                
+                const rpcUrl = "https://rpc.testnet.near.org";
+                
+                const response = await fetch(rpcUrl, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        jsonrpc: "2.0",
+                        id: "verify-nft",
+                        method: "query",
+                        params: {
+                            request_type: "call_function",
+                            finality: "final",
+                            account_id: contractId,
+                            method_name: "get_tokens_with_video",
+                            args_base64: btoa(JSON.stringify({ 
+                                account_id: nearAccountId, 
+                                limit: 100 
+                            }))
+                        }
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    console.error("NEAR RPC Error:", data.error);
+                    LitActions.setResponse({ response: JSON.stringify({ verified: false, error: data.error.message }) });
+                    return;
+                }
+                
+                const resultBytes = data?.result?.result;
+                if (!resultBytes || !Array.isArray(resultBytes)) {
+                    console.log("No tokens found");
+                    LitActions.setResponse({ response: JSON.stringify({ verified: false, reason: "No tokens" }) });
+                    return;
+                }
+                
+                const resultString = String.fromCharCode(...resultBytes);
+                const tokens = JSON.parse(resultString);
+                
+                const hasAccess = tokens.some(([token, metadata]) => {
+                    if (!metadata) return false;
+                    return metadata.encrypted_cid === targetCid || metadata.encrypted_cid === 'ACCESS_PASS';
+                });
+                
+                console.log("NFT Ownership verified:", hasAccess);
+                
+                if (hasAccess) {
+                    // Sign the session to prove verification
+                    const toSign = new TextEncoder().encode(\`verified:\${nearAccountId}:\${targetCid}:\${Date.now()}\`);
+                    const signature = await LitActions.signEcdsa({ 
+                        toSign, 
+                        publicKey: pkpPublicKey,
+                        sigName: "sig1"
+                    });
+                    LitActions.setResponse({ response: JSON.stringify({ verified: true, nearAccountId }) });
+                } else {
+                    LitActions.setResponse({ response: JSON.stringify({ verified: false, reason: "No matching NFT" }) });
+                }
+                
+            } catch (e) {
+                console.error("Lit Action Error:", e.toString());
+                LitActions.setResponse({ response: JSON.stringify({ verified: false, error: e.toString() }) });
+            }
+        })();
+        `;
+
+        // Import capacity delegation helper
+        const { createCapacityDelegationAuthSig, isCapacityDelegationAvailable } = await import('./capacity');
+
+        // Create a dummy ETH address for session (we're not using MPC)
+        const dummyEthAddress = "0x" + "1".repeat(40);
+
+        // Create capacity delegation if available
+        let capacityDelegationAuthSig = null;
+        if (isCapacityDelegationAvailable()) {
+            capacityDelegationAuthSig = await createCapacityDelegationAuthSig(
+                this.litNodeClient,
+                dummyEthAddress,
+                10,
+                60
+            );
+        }
+
+        // Use the existing IPFS CID Lit Action for verification
+        const litActionIpfsCid = process.env.NEXT_PUBLIC_LIT_ACTION_IPFS_CID ||
+            "Qmc6cLer2fmtuzNFhdtBoZvM1gCzX9s8gbc8wzWdizeuJe";
+
+        // Build session params using Lit Action code inline
+        const sessionParams: any = {
+            litActionCode: litActionCode,
+            jsParams: {
+                nearAccountId,
+                targetCid,
+                contractId
+            },
+            resourceAbilityRequests: [
+                {
+                    resource: new LitAccessControlConditionResource('*'),
+                    ability: LitAbility.AccessControlConditionDecryption
+                },
+                {
+                    resource: new LitActionResource('*'),
+                    ability: LitAbility.LitActionExecution
+                }
+            ],
+            expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(),
+        };
+
+        if (capacityDelegationAuthSig) {
+            sessionParams.capabilityAuthSigs = [capacityDelegationAuthSig];
+        }
+
+        try {
+            const sessionSigs = await this.litNodeClient.getLitActionSessionSigs(sessionParams);
+            console.log("✅ NEAR Verification Session Sigs created!");
+            setCachedSessionSigs(cacheKey, sessionSigs);
+            return sessionSigs;
+        } catch (e: any) {
+            console.error("NEAR Verification session failed:", e.message);
+            throw e;
+        }
+    }
+
+    /**
+     * Sign an arbitrary message using PKP (signless, no MPC cost!)
+     * This enables gas-free Lighthouse auth signing.
+     * 
+     * @param pkpPublicKey - PKP's public key
+     * @param pkpEthAddress - PKP's ETH address
+     * @param message - Message to sign
+     * @param nearAccountId - NEAR account ID (for caching)
+     * @returns Ethereum signature compatible with ethers
+     */
+    async signWithPKP(
+        pkpPublicKey: string,
+        pkpEthAddress: string,
+        message: string,
+        nearAccountId: string
+    ): Promise<{ signature: string; address: string }> {
+        await this.connect();
+        console.log("🔐 Signing with PKP for:", nearAccountId);
+
+        // Get PKP session sigs first
+        const sessionSigs = await this.getSessionSigsWithPKP(
+            pkpPublicKey,
+            pkpEthAddress,
+            nearAccountId
+        );
+
+        if (!sessionSigs) {
+            throw new Error("Failed to get PKP session sigs for signing");
+        }
+
+        // Encode message for safe embedding in Lit Action code
+        const encodedMessage = Buffer.from(message).toString('base64');
+
+        // Lit Action code to sign with PKP  
+        // Note: We embed the message and pkpPublicKey directly since jsParams access can be unreliable
+        const signLitActionCode = `
+        (async () => {
+            try {
+                // Decode the base64 message
+                const messageBase64 = "${encodedMessage}";
+                const messageBytes = Uint8Array.from(atob(messageBase64), c => c.charCodeAt(0));
+                const message = new TextDecoder().decode(messageBytes);
+                
+                // PKP public key from parameter
+                const publicKey = "${pkpPublicKey}";
+                
+                // Hash the message (EIP-191 personal sign format)
+                const prefix = "\\x19Ethereum Signed Message:\\n" + message.length;
+                const prefixedMessage = prefix + message;
+                const encoder = new TextEncoder();
+                const msgBytes = encoder.encode(prefixedMessage);
+                
+                // Use Lit's built-in ethers for hashing
+                const messageHash = ethers.utils.keccak256(msgBytes);
+                const toSign = ethers.utils.arrayify(messageHash);
+                
+                const sigShare = await LitActions.signEcdsa({
+                    toSign,
+                    publicKey,
+                    sigName: "pkp_sig"
+                });
+                
+                LitActions.setResponse({ 
+                    response: JSON.stringify({ 
+                        success: true 
+                    }) 
+                });
+            } catch (e) {
+                LitActions.setResponse({ 
+                    response: JSON.stringify({ 
+                        success: false,
+                        error: e.toString()
+                    }) 
+                });
+            }
+        })();
+        `;
+
+        try {
+            const result = await this.litNodeClient.executeJs({
+                sessionSigs,
+                code: signLitActionCode,
+                jsParams: {} // Keep empty, params embedded in code
+            });
+
+            console.log("PKP signing result:", result);
+
+            // Extract signature from result
+            if (result.signatures && result.signatures.pkp_sig) {
+                const sig = result.signatures.pkp_sig;
+                const signature = ethers.Signature.from({
+                    r: "0x" + sig.r,
+                    s: "0x" + sig.s,
+                    v: sig.recid + 27
+                }).serialized;
+
+                console.log("✅ PKP signature created:", signature.substring(0, 20) + "...");
+                return { signature, address: pkpEthAddress };
+            }
+
+            throw new Error("No signature in PKP result");
+        } catch (e: any) {
+            console.error("PKP signing failed:", e.message);
+            throw e;
+        }
+    }
 }
 
 export const lit = new Lit();

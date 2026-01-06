@@ -14,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 const CHRONICLE_YELLOWSTONE_RPC = 'https://yellowstone-rpc.litprotocol.com';
 
 export function LinkAccount() {
-    const { selector, accountId } = useWallet();
+    const { selector, accountId, getWallet } = useWallet();
     const [status, setStatus] = useState<'idle' | 'signing' | 'minting' | 'minting & permissioning' | 'success' | 'error'>('idle');
     const [pkpInfo, setPkpInfo] = useState<any>(null);
     const [errorMsg, setErrorMsg] = useState('');
@@ -36,15 +36,15 @@ export function LinkAccount() {
     }, [accountId]);
 
     const handleMockLink = async () => {
-        if (!selector || !accountId) return;
+        if (!accountId) return;
 
         try {
             setStatus('signing');
-            const wallet = await selector.wallet();
+            const wallet = await getWallet();
 
             const message = "Allow this NEAR account to control a Lit PKP";
             const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
-            const recipient = "v1-0-0.utick.testnet";
+            const recipient = "dev-gift-1767641243.testnet";
 
             console.log("Requesting signature...");
             const result = await wallet.signMessage({ message, nonce, recipient });
@@ -74,16 +74,16 @@ export function LinkAccount() {
     };
 
     const handleSponsoredMint = async () => {
-        if (!selector || !accountId) return;
+        if (!accountId) return;
 
         try {
             // Step 1: Request NEAR signature for Lit Action verification
             setStatus('signing');
-            const wallet = await selector.wallet();
+            const wallet = await getWallet();
 
             const message = `I authorize Lit Protocol PKP for account ${accountId} at ${Date.now()}`;
             const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
-            const recipient = "v1-0-0.utick.testnet";
+            const recipient = "dev-gift-1767641243.testnet";
 
             console.log("Requesting NEAR signature for Lit Action...");
             const signResult = await wallet.signMessage({ message, nonce, recipient });

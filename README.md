@@ -38,6 +38,8 @@ Most dApps suffer from \"Signature Fatigue\" – endless wallet pop-ups. YouTick
 - **Session Key Uploads** – Chain Signatures enable seamless batch transactions with progress tracking
 - **Pay-Per-View Events** – Create ticketed events with custom NEAR pricing
 - **MPC Integration** – Secure NEAR↔Ethereum address derivation for Lit Protocol
+- **🎁 Gift Tickets** – Create shareable gift links for your videos; recipients can claim NFT tickets
+- **👤 Trial Accounts** – New users can claim gifts without a NEAR wallet; automatic sub-account creation
 
 ## 🛠 Tech Stack
 
@@ -85,10 +87,15 @@ Create `apps/web/.env.local`:
 
 ```env
 NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=v1-0-1.utick.testnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=dev-gift-1767641243.testnet
 NEXT_PUBLIC_LIT_ACTION_IPFS_CID=your_lit_action_cid
 LIGHTHOUSE_API_KEY=your_lighthouse_api_key
 RELAYER_PRIVATE_KEY=your_relayer_private_key  # Optional: for sponsored PKP minting
+
+# Trial Account / Gift Feature
+TRIAL_MASTER_ACCOUNT_ID=your_contract.testnet
+TRIAL_MASTER_PRIVATE_KEY=your_master_account_private_key
+NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
 ## 📖 Usage
@@ -110,6 +117,21 @@ RELAYER_PRIVATE_KEY=your_relayer_private_key  # Optional: for sponsored PKP mint
 1. Browse `/discover`
 2. Purchase ticket (0.5+ NEAR)
 3. Open `/watch` – video auto-decrypts for ticket holders
+
+### Gift Tickets
+
+1. Go to `/profile`
+2. Click "Hediye Et" (Gift) button
+3. Select the video you want to gift
+4. Choose how many gift links to create
+5. Share the generated links – recipients can claim tickets
+
+### Trial Accounts (for Gift Recipients)
+
+1. Open a gift link (e.g., `/claim?secret=...`)
+2. Choose "Yeni Hesap" (New Account)
+3. Enter a username – a sub-account is created automatically
+4. Ticket is claimed and you're logged in instantly
 
 ### Profile
 

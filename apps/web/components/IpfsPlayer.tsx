@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { lit } from '@/lib/lit';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { ethers } from 'ethers';
-import { Loader2, Play, Lock } from 'lucide-react';
+import { Loader2, Play, Lock, Ticket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { MintButton } from '@/components/MintButton'; // Keep for legacy/fallback
@@ -18,7 +18,7 @@ interface IpfsPlayerProps {
 }
 
 export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
-    const { selector, accountId } = useWallet();
+    const { selector, accountId, getWallet, isTrial } = useWallet();
     const [videoUrl, setVideoUrl] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -61,14 +61,14 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
     }, [cid, accountId]);
 
     const handleTopUp = async () => {
-        if (!selector || !accountId) {
+        if (!accountId) {
             setError("Wallet not connected");
             return;
         }
         try {
             setLoading(true);
             setStatus('Processing Top Up...');
-            const wallet = await selector.wallet();
+            const wallet = await getWallet();
             const sessionManager = new SessionManager(accountId);
             // Deposit 1 NEAR
             await sessionManager.topUpGas(wallet, '1');
@@ -84,7 +84,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
 
 
     const playVideo = async (isRetry: boolean = false) => {
-        if (!accountId || !selector) {
+        if (!accountId) {
             setError("Please connect your wallet to watch.");
             return;
         }
@@ -95,7 +95,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
         setStatus(isRetry ? 'Refreshing Session...' : 'Initializing...');
 
         try {
-            const wallet = await selector.wallet();
+            const wallet = await getWallet();
             const { deriveEthAddress } = await import('@/lib/chain-signatures');
 
             // Custom signWithMPC using Session Keys
@@ -132,7 +132,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             if (isUuid) {
                 if (!isRetry) setStatus('Resolving Video Metadata...');
                 try {
-                    const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
+                    const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
                     const rpcUrl = "/api/near-rpc";
                     const body = JSON.stringify({
                         jsonrpc: "2.0",
@@ -221,9 +221,51 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                 }
             }
 
-            // MPC FALLBACK PATH - Only check gas if PKP failed or unavailable
+            // LAZY PKP MINTING - Mint PKP for any account that doesn't have one yet
+            // This eliminates MPC gas costs for all future video plays
+            if (!sessionSigs && !storedPkp) {
+                console.log("🔐 Account without PKP - minting now for signless experience...");
+                setStatus('Setting up signless access (one-time)...');
+
+                try {
+                    const response = await fetch('/api/relayer/mint', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ nearAccountId: accountId })
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.success && data.pkp) {
+                            // Store PKP for future use
+                            localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify({
+                                publicKey: data.pkp.publicKey,
+                                ethAddress: data.pkp.ethAddress,
+                                tokenId: data.pkp.tokenId
+                            }));
+                            console.log("✅ PKP minted for trial account:", data.pkp.ethAddress);
+
+                            // Now use the newly minted PKP for this session
+                            setStatus('Using new PKP for signless decryption...');
+                            sessionSigs = await lit.getSessionSigsWithPKP(
+                                data.pkp.publicKey,
+                                data.pkp.ethAddress,
+                                accountId
+                            );
+                            console.log("✅ First play with new PKP successful!");
+                        }
+                    } else {
+                        console.warn("PKP minting failed, will use MPC fallback");
+                    }
+                } catch (pkpMintError: any) {
+                    console.warn("Lazy PKP minting failed, falling back to MPC:", pkpMintError.message);
+                }
+            }
+
+
+            // MPC FALLBACK PATH - Only if PKP failed or unavailable
             if (!sessionSigs) {
-                console.log("PKP unavailable or failed, using MPC fallback");
+                console.log("PKP unavailable, using MPC fallback");
 
                 // 2.5 Ensure Gas for MPC (Session Key Mode)
                 // We check if the user has enough prepaid gas to cover the MPC signature cost
@@ -234,8 +276,8 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                         : "https://rpc.testnet.near.org";
 
                     // CHECK GAS - NON BLOCKING
-                    // We use 0.75 NEAR threshold
-                    const hasGas = await sessionManager.hasSufficientGas(rpcUrl, 0.75);
+                    // We use 0.25 NEAR threshold (0.75 was too high for trials)
+                    const hasGas = await sessionManager.hasSufficientGas(rpcUrl, 0.25);
 
                     if (!hasGas) {
                         // STOP FLOW HERE
@@ -331,7 +373,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
     const handlePlay = () => playVideo(false);
 
     const checkSpecificAccess = async (viewerId: string, targetCid: string) => {
-        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
+        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
         const rpcUrl = "/api/near-rpc";
         const body = JSON.stringify({
             jsonrpc: "2.0",
@@ -415,25 +457,24 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                             <p className="text-sm text-slate-300">{status}</p>
                         </div>
                     ) : (hasAccess === false || error) ? (
-                        // SHOW TICKET CARD IF NO ACCESS OR ERROR
-                        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 backdrop-blur-md w-full h-full p-4">
-                            <div className="w-full max-w-sm">
-                                <TicketPurchaseCard
-                                    cid={cid}
-                                    onPurchaseSuccess={() => {
-                                        // After purchase, just update access state
-                                        // User will click play button manually
-                                        setHasAccess(true);
-                                        setStatus('Ticket purchased! Click play to watch.');
-                                        setLoading(false);
-                                    }}
-                                />
-                                <div className="mt-4 text-center">
-                                    <Button onClick={handlePlay} variant="ghost" className="text-zinc-400 hover:text-white text-xs">
-                                        Already bought? Check Access Again
-                                    </Button>
-                                    {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
-                                </div>
+                        // SHOW LOCKED SCREEN IF NO ACCESS OR ERROR
+                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md w-full h-full p-6 text-center">
+                            <Lock className="w-16 h-16 text-zinc-600 mb-4" />
+                            <h3 className="text-2xl font-bold text-white mb-2">Content Locked</h3>
+                            <p className="text-zinc-400 max-w-sm mb-8">
+                                You need a ticket to watch this video. Purchase one to unlock permanent access.
+                            </p>
+
+                            <div className="flex flex-col gap-4 w-full max-w-xs">
+                                <Button
+                                    className="w-full h-12 text-lg font-bold gap-2"
+                                    onClick={() => window.location.href = `/ticket/${cid}`}
+                                >
+                                    <Ticket className="w-5 h-5" />
+                                    Get Ticket
+                                </Button>
+
+                                {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
                             </div>
                         </div>
                     ) : (

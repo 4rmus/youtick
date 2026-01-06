@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { connect, keyStores } from 'near-api-js';
 
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
+const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
 
 interface EventData {
     title: string;
@@ -14,6 +14,7 @@ interface EventData {
 export function useEventDescription(encrypted_cid: string | null) {
     const [description, setDescription] = useState<string | null>(null);
     const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+    const [creatorId, setCreatorId] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
@@ -45,6 +46,9 @@ export function useEventDescription(encrypted_cid: string | null) {
                     if (event.description) {
                         setDescription(event.description);
                     }
+                    if (event.creator_id) {
+                        setCreatorId(event.creator_id);
+                    }
 
                     // Extract thumbnail from title format: "RealCID:::ThumbnailCID:::Title"
                     if (event.title && event.title.includes(':::')) {
@@ -65,6 +69,6 @@ export function useEventDescription(encrypted_cid: string | null) {
         fetchDescription();
     }, [encrypted_cid]);
 
-    return { description, thumbnailUrl, loading };
+    return { description, thumbnailUrl, creatorId, loading };
 }
 

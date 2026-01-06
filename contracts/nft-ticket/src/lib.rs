@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 #[borsh(crate = "near_sdk::borsh")]
 pub enum StorageKey {
     V2(StorageKeyV2),
+    V3(StorageKeyV3),  // NEW: Fresh storage after state fix
 }
 
 #[derive(BorshStorageKey, BorshSerialize)]
@@ -32,6 +33,22 @@ pub enum StorageKeyV2 {
     VideoMetadata,
     UserDeposits,
     Events,
+    GiftDrops,
+}
+
+// V3: Fresh storage keys to fix collection corruption
+#[derive(BorshStorageKey, BorshSerialize)]
+#[borsh(crate = "near_sdk::borsh")]
+pub enum StorageKeyV3 {
+    NonFungibleToken,
+    TokenMetadata,
+    Enumeration,
+    Approval,
+    ContractMetadata,
+    VideoMetadata,
+    UserDeposits,
+    Events,
+    GiftDrops,
 }
 
 #[near(serializers = [borsh, json])]
@@ -63,6 +80,17 @@ pub enum ContentType {
     LiveEvent,
 }
 
+// NEW: Gift drop for trial account creation
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
+pub struct GiftDrop {
+    pub creator_id: AccountId,
+    pub event_cid: String,
+    pub remaining_claims: u32,
+    pub deposit_per_claim: U128,  // Amount reserved for each claim
+    pub created_at: u64,
+}
+
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
@@ -72,6 +100,8 @@ pub struct Contract {
     user_deposits: LookupMap<AccountId, NearToken>,
     events: UnorderedMap<String, Event>, // Key: encrypted_cid (UUID)
     next_token_id: u64,
+    // NEW: Gift drop system
+    gift_drops: LookupMap<String, GiftDrop>, // Key: hash of secret key
 }
 
 // SECURITY: Use #[init] to prevent re-initialization attacks
@@ -107,6 +137,7 @@ impl Contract {
             user_deposits: LookupMap::new(StorageKey::V2(StorageKeyV2::UserDeposits)),
             events: UnorderedMap::new(StorageKey::V2(StorageKeyV2::Events)),
             next_token_id: 0,
+            gift_drops: LookupMap::new(StorageKey::V2(StorageKeyV2::GiftDrops)),
         }
     }
 
@@ -126,22 +157,24 @@ impl Contract {
             reference_hash: None,
         };
 
+        // Using V3 storage keys for fresh state (avoids corrupted V2 enumeration)
         Self {
             tokens: NonFungibleToken::new(
-                StorageKey::V2(StorageKeyV2::NonFungibleToken),
+                StorageKey::V3(StorageKeyV3::NonFungibleToken),
                 owner_id,
-                Some(StorageKey::V2(StorageKeyV2::TokenMetadata)),
-                Some(StorageKey::V2(StorageKeyV2::Enumeration)),
-                Some(StorageKey::V2(StorageKeyV2::Approval)),
+                Some(StorageKey::V3(StorageKeyV3::TokenMetadata)),
+                Some(StorageKey::V3(StorageKeyV3::Enumeration)),
+                Some(StorageKey::V3(StorageKeyV3::Approval)),
             ),
             metadata: LazyOption::new(
-                StorageKey::V2(StorageKeyV2::ContractMetadata),
+                StorageKey::V3(StorageKeyV3::ContractMetadata),
                 Some(&metadata),
             ),
-            video_metadata: UnorderedMap::new(StorageKey::V2(StorageKeyV2::VideoMetadata)),
-            user_deposits: LookupMap::new(StorageKey::V2(StorageKeyV2::UserDeposits)),
-            events: UnorderedMap::new(StorageKey::V2(StorageKeyV2::Events)),
+            video_metadata: UnorderedMap::new(StorageKey::V3(StorageKeyV3::VideoMetadata)),
+            user_deposits: LookupMap::new(StorageKey::V3(StorageKeyV3::UserDeposits)),
+            events: UnorderedMap::new(StorageKey::V3(StorageKeyV3::Events)),
             next_token_id: 0,
+            gift_drops: LookupMap::new(StorageKey::V3(StorageKeyV3::GiftDrops)),
         }
     }
 
@@ -433,6 +466,21 @@ impl Contract {
         env::log_str(&format!("Deposited {} for {}", amount, account_id));
     }
 
+    /// Deposit funds for a SPECIFIC account (used by Keypom for trial accounts)
+    /// This allows third parties to fund prepaid gas for new users
+    #[payable]
+    pub fn deposit_funds_for(&mut self, account_id: AccountId) {
+        let amount = env::attached_deposit();
+        
+        let current_bal = self.user_deposits.get(&account_id).unwrap_or(NearToken::from_yoctonear(0));
+        let new_bal = current_bal.saturating_add(amount);
+        
+        self.user_deposits.insert(&account_id, &new_bal);
+        
+        env::log_str(&format!("Deposited {} for {} (by {})", amount, account_id, env::predecessor_account_id()));
+    }
+
+
     /// Withdraw all prepaid funds for the caller
     #[payable]
     pub fn withdraw_funds(&mut self) -> Promise {
@@ -591,6 +639,383 @@ impl Contract {
 
     pub fn nft_metadata(&self) -> NFTContractMetadata {
         self.metadata.get().unwrap()
+    }
+
+    /// Get the next token ID (useful for predicting IDs for batch operations)
+    pub fn get_next_token_id(&self) -> u64 {
+        self.next_token_id
+    }
+
+    /// Gift a ticket to a receiver (commission-free minting for creators)
+    /// Creator pays storage cost, no commission taken
+    /// SECURITY: Requires deposit for storage (0.01 NEAR)
+    #[payable]
+    pub fn gift_ticket(
+        &mut self,
+        receiver_id: AccountId,
+        encrypted_cid: String,
+    ) -> Token {
+        let event = self.events.get(&encrypted_cid)
+            .expect("Event not found");
+        
+        // Verify caller is the event creator
+        require!(
+            env::predecessor_account_id() == event.creator_id,
+            "Only event creator can gift tickets"
+        );
+        
+        // Require storage deposit
+        let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        require!(
+            env::attached_deposit() >= storage_cost,
+            "Requires at least 0.01 NEAR for storage"
+        );
+
+        // Mint the NFT (no commission)
+        let token_id = self.next_token_id.to_string();
+        self.next_token_id += 1;
+
+        let video_metadata = VideoMetadata {
+            encrypted_cid: encrypted_cid.clone(),
+            duration_seconds: 0,
+            event_date: Some(event.created_at),
+            content_type: ContentType::Exclusive,
+        };
+
+        self.video_metadata.insert(&token_id, &video_metadata);
+
+        let token_metadata = TokenMetadata {
+            title: Some(event.title.clone()),
+            description: Some(event.description.clone()),
+            media: None,
+            media_hash: None,
+            copies: Some(1),
+            issued_at: None,
+            expires_at: None,
+            starts_at: None,
+            updated_at: None,
+            extra: None,
+            reference: None,
+            reference_hash: None,
+        };
+
+        env::log_str(&format!("Gift ticket minted: {} -> {}", token_id, receiver_id));
+
+        self.tokens.internal_mint(
+            token_id.clone(),
+            receiver_id,
+            Some(token_metadata),
+        )
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // GIFT DROP FUNCTIONS (Replaces Keypom)
+    // ═══════════════════════════════════════════════════════════════
+
+    // ═══════════════════════════════════════════════════════════════
+    // GIFT DROP FUNCTIONS (Access Key Based)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Create a gift drop - adds Access Keys for claiming
+    /// Returns nothing (keys are generated client-side)
+    /// DEPOSIT: 0.15 NEAR per key (account creation + NFT storage)
+    #[payable]
+    pub fn create_gift_drop(
+        &mut self,
+        event_cid: String,
+        public_keys: Vec<near_sdk::PublicKey>,
+    ) {
+        let num_keys = public_keys.len() as u32;
+        require!(num_keys > 0 && num_keys <= 50, "Must create 1-50 keys");
+        
+        // Verify event exists
+        let event = self.events.get(&event_cid)
+            .expect("Event not found");
+        
+        // Creator must own the event
+        require!(
+            env::predecessor_account_id() == event.creator_id,
+            "Only event creator can create gift drops"
+        );
+        
+        // Cost per claim: account creation + NFT storage + buffer
+        let deposit_per_claim = NearToken::from_millinear(150); // 0.15 NEAR
+        let total_required = deposit_per_claim.saturating_mul(num_keys as u128);
+        
+        require!(
+            env::attached_deposit() >= total_required,
+            &format!("Requires {} NEAR for {} keys", total_required, num_keys)
+        );
+        
+        for pk in public_keys {
+            // Store gift drop info mapped to the Public Key
+            let pk_str: String = String::from(&pk);
+            
+            let gift_drop = GiftDrop {
+                creator_id: event.creator_id.clone(),
+                event_cid: event_cid.clone(),
+                remaining_claims: 1,
+                deposit_per_claim: U128(deposit_per_claim.as_yoctonear()),
+                created_at: env::block_timestamp(),
+            };
+            
+            self.gift_drops.insert(&pk_str, &gift_drop);
+            
+            // Add Function Call Access Key to THIS contract
+            // This allows the holder of the Private Key to call claim functions
+            // Allowance: 0.05 NEAR for gas fees (enough for claim tx)
+            Promise::new(env::current_account_id()).add_access_key(
+                pk,
+                NearToken::from_millinear(50), // 0.05 NEAR allowance
+                env::current_account_id(),
+                "claim_gift,claim_gift_and_create_account".to_string(),
+            );
+        }
+        
+        env::log_str(&format!(
+            "Gift drop created: {} keys for event {} by {}",
+            num_keys, event_cid, event.creator_id
+        ));
+    }
+
+    /// Claim a gift - creates trial account and mints NFT
+    /// Called by the recipient using the Linkdrop Access Key
+    #[payable]
+    pub fn claim_gift(
+        &mut self,
+        receiver_id: AccountId,
+    ) -> Token {
+        // Identify the drop via the Signer's Public Key
+        let signer_pk: String = String::from(&env::signer_account_pk());
+        
+        let mut gift_drop = self.gift_drops.get(&signer_pk)
+            .expect("Invalid or already claimed gift key");
+        
+        require!(gift_drop.remaining_claims > 0, "Gift already claimed");
+        
+        // Mark as claimed and cleanup
+        gift_drop.remaining_claims = 0;
+        self.gift_drops.remove(&signer_pk); // Remove from map
+        
+        // DELETE the Access Key to prevent reuse
+        Promise::new(env::current_account_id()).delete_key(
+            env::signer_account_pk()
+        );
+        
+        // Get event details for NFT metadata
+        let event = self.events.get(&gift_drop.event_cid)
+            .expect("Event not found");
+        
+        // Mint NFT to receiver (Standard logic)
+        let token_id = self.next_token_id.to_string();
+        self.next_token_id += 1;
+        
+        let video_metadata = VideoMetadata {
+            encrypted_cid: gift_drop.event_cid.clone(),
+            duration_seconds: 0,
+            event_date: Some(event.created_at),
+            content_type: ContentType::Exclusive,
+        };
+        
+        self.video_metadata.insert(&token_id, &video_metadata);
+        
+        let token_metadata = TokenMetadata {
+            title: Some(event.title.clone()),
+            description: Some(format!("Gift ticket: {}", event.description)),
+            media: None,
+            media_hash: None,
+            copies: Some(1),
+            issued_at: None,
+            expires_at: None,
+            starts_at: None,
+            updated_at: None,
+            extra: None,
+            reference: None,
+            reference_hash: None,
+        };
+        
+        env::log_str(&format!(
+            "Gift claimed: {} -> {} (event: {})",
+            token_id, receiver_id, gift_drop.event_cid
+        ));
+        
+        self.tokens.internal_mint(
+            token_id.clone(),
+            receiver_id,
+            Some(token_metadata),
+        )
+    }
+
+    /// View function: Check if a gift key is valid
+    pub fn is_gift_valid(&self, public_key: String) -> bool {
+        match self.gift_drops.get(&public_key) {
+            Some(drop) => drop.remaining_claims > 0,
+            None => false,
+        }
+    }
+
+    /// View function: Get gift drop info
+    pub fn get_gift_info(&self, public_key: String) -> Option<(String, AccountId)> {
+        self.gift_drops.get(&public_key).map(|drop| {
+            (drop.event_cid, drop.creator_id)
+        })
+    }
+
+    /// View function: Get full gift drop details
+    /// Returns complete GiftDrop struct for UI display
+    pub fn get_gift_info_full(&self, public_key: String) -> Option<GiftDrop> {
+        self.gift_drops.get(&public_key)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // RELAYER-LESS GIFT CLAIM (Account creation from contract)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Claim a gift AND create a new account in one transaction
+    /// Called using the Linkdrop Access Key
+    pub fn claim_gift_and_create_account(
+        &mut self,
+        new_account_id: AccountId,
+        new_public_key: near_sdk::PublicKey,
+    ) -> Promise {
+        // Identify the drop via the Signer's Public Key
+        let signer_pk: String = String::from(&env::signer_account_pk());
+        
+        let mut gift_drop = self.gift_drops.get(&signer_pk)
+            .expect("Invalid or already claimed gift key");
+        
+        require!(gift_drop.remaining_claims > 0, "Gift already claimed");
+        
+        // Mark as claimed and cleanup
+        gift_drop.remaining_claims = 0;
+        self.gift_drops.remove(&signer_pk); // Remove from map
+        
+        // DELETE the Access Key to prevent reuse
+        Promise::new(env::current_account_id()).delete_key(
+            env::signer_account_pk()
+        );
+        
+        // Account creation costs ~0.1 NEAR + access key storage ~0.0075 NEAR
+        let account_creation_cost = NearToken::from_millinear(110); // 0.11 NEAR
+        
+        env::log_str(&format!(
+            "Creating account {} for gift claim (event: {})",
+            new_account_id, gift_drop.event_cid
+        ));
+
+        // Create new account and add full access key
+        // Then callback to mint the NFT
+        // Leave 0.01 NEAR for NFT storage in callback
+        let nft_storage_cost = NearToken::from_millinear(10); // 0.01 NEAR for NFT storage
+        
+        Promise::new(new_account_id.clone())
+            .create_account()
+            .transfer(account_creation_cost)
+            .add_full_access_key(new_public_key)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(50))
+                    .with_attached_deposit(nft_storage_cost)
+                    .on_account_created(
+                        new_account_id,
+                        gift_drop.event_cid,
+                    )
+            )
+    }
+
+    /// Callback after account creation - mints the NFT
+    #[payable]
+    #[private]
+    pub fn on_account_created(
+        &mut self,
+        receiver_id: AccountId,
+        event_cid: String,
+    ) -> Token {
+        // Check if account creation succeeded
+        require!(
+            env::promise_results_count() == 1,
+            "Expected 1 promise result"
+        );
+        
+        match env::promise_result(0) {
+            near_sdk::PromiseResult::Successful(_) => {
+                // Account created successfully, now mint NFT
+                let event = self.events.get(&event_cid)
+                    .expect("Event not found");
+                
+                let token_id = self.next_token_id.to_string();
+                self.next_token_id += 1;
+                
+                let video_metadata = VideoMetadata {
+                    encrypted_cid: event_cid.clone(),
+                    duration_seconds: 0,
+                    event_date: Some(event.created_at),
+                    content_type: ContentType::Exclusive,
+                };
+                
+                self.video_metadata.insert(&token_id, &video_metadata);
+                
+                let token_metadata = TokenMetadata {
+                    title: Some(event.title.clone()),
+                    description: Some(format!("Gift ticket: {}", event.description)),
+                    media: None,
+                    media_hash: None,
+                    copies: Some(1),
+                    issued_at: None,
+                    expires_at: None,
+                    starts_at: None,
+                    updated_at: None,
+                    extra: None,
+                    reference: None,
+                    reference_hash: None,
+                };
+                
+                env::log_str(&format!(
+                    "Gift NFT minted: {} -> {} (event: {})",
+                    token_id, receiver_id, event_cid
+                ));
+                
+                self.tokens.internal_mint(
+                    token_id.clone(),
+                    receiver_id,
+                    Some(token_metadata),
+                )
+            }
+            _ => {
+                env::panic_str("Account creation failed. The account may already exist.");
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // TRIAL ACCOUNT UPGRADE (Contract-sponsored)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Upgrade a trial account by adding a Full Access Key
+    /// Gas is paid by the contract, not the trial user
+    /// Can only be called by the trial account itself
+    pub fn upgrade_trial_account(
+        &mut self,
+        new_public_key: near_sdk::PublicKey,
+    ) -> Promise {
+        let caller = env::predecessor_account_id();
+        
+        // Verify caller is a sub-account of this contract (trial account pattern)
+        let contract_id = env::current_account_id().to_string();
+        require!(
+            caller.to_string().ends_with(&format!(".{}", contract_id)),
+            "Only trial sub-accounts can upgrade via this method"
+        );
+        
+        env::log_str(&format!(
+            "Upgrading trial account {} with new FAK",
+            caller
+        ));
+        
+        // Add Full Access Key to the caller's account
+        // This is a cross-contract call where the contract sponsors the gas
+        Promise::new(caller)
+            .add_full_access_key(new_public_key)
     }
 }
 
