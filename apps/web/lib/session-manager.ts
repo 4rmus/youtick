@@ -1,7 +1,7 @@
 import { keyStores, KeyPair, connect, Contract, utils, providers, transactions } from 'near-api-js';
 
 const NETWORK_ID = 'testnet';
-const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
+const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
 
 // RPC Failover Configuration - ordered by priority
 const RPC_ENDPOINTS = [

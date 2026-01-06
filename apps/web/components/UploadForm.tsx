@@ -19,8 +19,10 @@ import { Button } from "@/components/ui/button"
 import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
+import { GiftLinkGenerator } from './GiftLinkGenerator';
 
-const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
+
+const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
 
 interface UploadResponse {
     data: Array<{ Hash: string }> | { Hash: string };
@@ -34,7 +36,7 @@ interface MPCSignature {
 
 export function UploadForm() {
     const { t } = useLanguage();
-    const { selector, accountId } = useWallet();
+    const { selector, accountId, getWallet } = useWallet();
     const [file, setFile] = useState<File | null>(null);
     const [thumbnail, setThumbnail] = useState<Blob | null>(null);
     const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
@@ -79,6 +81,10 @@ export function UploadForm() {
 
     // PKP State for Uploader
     const [pkpData, setPkpData] = useState<{ publicKey: string, ethAddress: string, litActionCid: string } | null>(null);
+
+    // Track the generated UUID for gifting
+    const [generatedVideoUuid, setGeneratedVideoUuid] = useState<string | null>(null);
+    const [lastUploadedTitle, setLastUploadedTitle] = useState<string>('');
 
     // Helper function to update step status
     const updateStep = (stepId: string, status: 'pending' | 'loading' | 'complete' | 'error') => {
@@ -133,9 +139,8 @@ export function UploadForm() {
         setIsCalculatingCosts(true);
         try {
             const sessionManager = new SessionManager(accountId);
-            if (!selector) return;
 
-            const nodeUrl = selector.options.network.nodeUrl;
+            const nodeUrl = selector?.options?.network?.nodeUrl || (process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet' ? 'https://rpc.mainnet.near.org' : 'https://rpc.testnet.near.org');
             const balanceVal = await sessionManager.getAccountBalance(nodeUrl);
 
             // Check for PKP
@@ -147,18 +152,21 @@ export function UploadForm() {
             setCurrentBalance(balanceVal.toString());
 
             // Check if session key exists (returning user)
+            // Check if session key exists (returning user)
             const hasSessionKey = await sessionManager.hasSessionKey();
 
             // Determine if top-up is needed:
-            // - Only for returning users (hasSessionKey = true)
-            // - When balance is below required threshold
-            const topUpNeeded = hasSessionKey && balanceVal < REQUIRED_GAS;
+            // PKP eliminates MPC cost (0.25 NEAR) but NFT mint (0.1) + Event (0.1) still need prepaid balance!
+            // With PKP: Need 0.2 NEAR minimum
+            // Without PKP: Need 0.5 NEAR (MPC + NFT + Event)
+            const minRequired = hasPkp ? 0.2 : REQUIRED_GAS;
+            const topUpNeeded = hasSessionKey && balanceVal < minRequired;
             setNeedsTopUp(topUpNeeded);
 
-            console.log(`Gas Status: Balance=${balanceVal}, Required=${REQUIRED_GAS}, NeedsTopUp=${topUpNeeded}`);
+            console.log(`Gas Status: Balance=${balanceVal}, Required=${minRequired} (PKP=${hasPkp}), NeedsTopUp=${topUpNeeded}`);
 
-            // Recalculate with PKP bypass
-            recalculatePayAmount(estimatedStorageFee, hasPkp ? 0 : balanceVal, hasPkp);
+            // Recalculate pay amount
+            recalculatePayAmount(estimatedStorageFee, balanceVal, hasPkp);
 
         } catch (e) {
             console.error("Error checking gas:", e);
@@ -218,12 +226,12 @@ export function UploadForm() {
 
     // Helper function to process the signature and continue with upload/access conditions/minting
     const processSignatureAndUpload = async (mpcSignature: MPCSignature, messageToSign: string, lighthouseEthAddress: string, storageFee: string, sessionManager: SessionManager) => {
-        if (!file || !accountId || !selector) {
+        if (!file || !accountId) {
             throw new Error("Missing file, accountId, or selector for upload process.");
         }
 
         try {
-            const wallet = await selector.wallet();
+            const wallet = await getWallet();
 
             // 0. Upload Thumbnail first (Public)
             let thumbnailCid = 'bafkreid7q4s23333333333333333333333333333333333333333333333'; // Default placeholder
@@ -325,6 +333,8 @@ export function UploadForm() {
             // The Real IPFS CID will be stored in the Title for now.
             const videoUuid = crypto.randomUUID();
             console.log("Generated Video UUID for Access Control:", videoUuid);
+            setGeneratedVideoUuid(videoUuid);
+            setLastUploadedTitle(title || file.name);
 
             // Use Lit Action to check NEAR NFT ownership on-chain
             // Import the secure ACC helper
@@ -397,7 +407,7 @@ export function UploadForm() {
                 // Construct full IPFS Gateway URL for media
                 const mediaUrl = `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`;
 
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
                 const priceYocto = utils.format.parseNearAmount(price) || '0';
 
                 // Prepare metadata for batch transaction
@@ -486,12 +496,12 @@ export function UploadForm() {
     };
 
     const handleRetrySign = async () => {
-        if (!pendingMessage || !recoveredAddr || !selector) return;
+        if (!pendingMessage || !recoveredAddr) return;
 
         try {
             setRetryStep('none');
             setStatus('Requesting Signature for Upload...');
-            const wallet = await selector.wallet();
+            const wallet = await getWallet();
 
             // 3. Sign the REAL message (Retry)
             console.log('Step 2 (Retry): Signing real auth message...');
@@ -513,7 +523,7 @@ export function UploadForm() {
 
 
     const handleUpload = async () => {
-        if (!file || !accountId || !selector) return;
+        if (!file || !accountId) return;
         if (!title || !description) {
             setStatus('Please enter a title and description');
             return;
@@ -527,7 +537,7 @@ export function UploadForm() {
         setUploadSteps(prev => prev.map(step => ({ ...step, status: 'pending' as const })));
 
         try {
-            const wallet = await selector.wallet();
+            const wallet = await getWallet();
             const sessionManager = new SessionManager(accountId);
 
             // --- PRE-CHECK: Session Key Status (SYNC - no popup yet) ---
@@ -545,63 +555,99 @@ export function UploadForm() {
 
             console.log(`Video Size: ${file.size} bytes. Fee: ${storageFee} NEAR`);
 
-            // --- STEP 2: SESSION KEY SETUP (Only if not exists) ---
+            // --- STEP 2: DYNAMIC GAS CHECK (Every upload) ---
             const { deriveEthAddress } = await import('@/lib/chain-signatures');
             const derivationPath = 'lit/pkp-minting';
 
             updateStep('session', 'loading');
-            setStatus('Verifying Identity & Preparing Session...');
+            setStatus('Checking gas balance...');
 
-            const toPayVal = parseFloat(payAmount);
+            // Re-check gas balance BEFORE upload
+            const nodeUrl = selector?.options?.network?.nodeUrl || 'https://rpc.testnet.near.org';
+            const currentGasBalance = await sessionManager.getAccountBalance(nodeUrl);
+
+            // Check for PKP to determine minimum required
+            const cachedPkp = localStorage.getItem(`lit_pkp_${accountId}`);
+            const hasPkpNow = !!cachedPkp;
+
+            // Calculate minimum required:
+            // With PKP: NFT (0.1) + Event (0.1) = 0.2 NEAR
+            // Without PKP: MPC (0.25) + NFT (0.1) + Event (0.1) = 0.45 NEAR (using 0.5 for safety)
+            const minRequired = hasPkpNow ? 0.2 : 0.5;
+
+            console.log(`📊 Dynamic Gas Check: Balance=${currentGasBalance}, Required=${minRequired}, HasPKP=${hasPkpNow}`);
 
             if (!hasSessionKey) {
-                // Create session key with minimal deposit (0.1 NEAR for NFT minting)
+                // First time user - create session key with appropriate deposit
                 setStatus('Setting up Session Key...');
-                console.log("Creating session key (first-time setup - minimal 0.1 NEAR deposit)...");
-                await sessionManager.createSessionKeyMinimal(wallet);
+                const depositAmount = hasPkpNow ? '0.3' : '0.6'; // Extra margin for safety
+                console.log(`Creating session key (first-time setup - depositing ${depositAmount} NEAR)...`);
+
+                // Use the regular createSessionKey with appropriate amount
+                await sessionManager.createSessionKey(wallet, depositAmount);
                 setIsVerifiedCreator(true);
+                console.log("Session key created!");
+            } else if (currentGasBalance < minRequired) {
+                // Returning user with insufficient balance - top up
+                const topUpAmount = Math.ceil((minRequired - currentGasBalance + 0.1) * 10) / 10;
+                setStatus(`Gas balance low (${currentGasBalance.toFixed(2)} NEAR). Topping up ${topUpAmount} NEAR...`);
+                console.log(`⛽ Topping up gas: Current=${currentGasBalance}, Required=${minRequired}, TopUp=${topUpAmount}`);
 
-                // Mint PKP for uploader (background, non-blocking)
-                const cachedPkp = localStorage.getItem(`lit_pkp_${accountId}`);
-                if (!cachedPkp) {
-                    console.log("🔐 Minting PKP for uploader (signless uploads)...");
-                    setStatus("Setting up PKP for signless experience...");
-                    try {
-                        const response = await fetch('/api/relayer/mint', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ nearAccountId: accountId })
-                        });
-
-                        if (response.ok) {
-                            const data = await response.json();
-                            if (data.pkp) {
-                                localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify(data.pkp));
-                                setPkpData(data.pkp);
-                                console.log("✅ PKP minted for uploader:", data.pkp.ethAddress);
-                            }
-                        } else {
-                            console.warn("PKP minting failed (non-blocking):", await response.json());
-                        }
-                    } catch (pkpError) {
-                        console.warn("PKP minting error (non-blocking):", pkpError);
-                    }
-                }
-
-                console.log("Session key created! PKP setup complete.");
-            } else if (needsTopUp) {
-                // Returning user with low balance - trigger top-up
-                setStatus('Gas balance low. Topping up...');
-                console.log(`Topping up gas: Current=${gasBalance}, Required=${REQUIRED_GAS}`);
-
-                const topUpAmount = Math.ceil((REQUIRED_GAS - gasBalance + 0.1) * 10) / 10; // Round up + margin
                 await sessionManager.topUpGas(wallet, topUpAmount.toString());
 
-                // Update local state after top-up
-                setGasBalance(gasBalance + topUpAmount);
+                // Update local state
+                setGasBalance(currentGasBalance + topUpAmount);
                 setNeedsTopUp(false);
                 console.log(`✅ Gas topped up by ${topUpAmount} NEAR`);
+            } else {
+                console.log(`✅ Gas balance sufficient: ${currentGasBalance} >= ${minRequired}`);
             }
+
+            setStatus('Verifying Identity & Preparing Session...');
+
+            // ============ PKP AUTO-MINT LOGIC ============
+            // Check for PKP on EVERY upload, auto-mint if missing, fallback to MPC if fails
+            let currentPkp = localStorage.getItem(`lit_pkp_${accountId}`);
+
+            if (!currentPkp) {
+                console.log("🔐 No PKP found. Attempting auto-mint...");
+                setStatus("Setting up PKP for signless experience...");
+
+                try {
+                    const response = await fetch('/api/relayer/mint', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ nearAccountId: accountId })
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.pkp) {
+                            localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify(data.pkp));
+                            setPkpData(data.pkp);
+                            currentPkp = JSON.stringify(data.pkp);
+                            console.log("✅ PKP auto-minted successfully:", data.pkp.ethAddress);
+                        }
+                    } else {
+                        const errorData = await response.json();
+                        console.warn("⚠️ PKP auto-mint failed, will use MPC fallback:", errorData.error);
+                    }
+                } catch (pkpError) {
+                    console.warn("⚠️ PKP auto-mint error, will use MPC fallback:", pkpError);
+                }
+            } else {
+                // PKP exists, update state if not already set
+                if (!pkpData) {
+                    try {
+                        const parsed = JSON.parse(currentPkp);
+                        setPkpData(parsed);
+                        console.log("✅ Using cached PKP:", parsed.ethAddress);
+                    } catch (e) {
+                        console.warn("Error parsing cached PKP:", e);
+                    }
+                }
+            }
+            // ============================================
 
             // Derive MPC address (mathematical - lightning fast)
             const recoveredAddress = await deriveEthAddress(CONTRACT_ID, derivationPath);
@@ -621,40 +667,58 @@ export function UploadForm() {
 
             // 2. Sign Auth Message - PKP-First with MPC Fallback
             setStatus('Authorizing Upload...');
-            const realHash = ethers.sha256(ethers.toUtf8Bytes(messageToSign));
-            const realPayload = Array.from(ethers.getBytes(realHash));
 
-            let mpcSignature: MPCSignature;
+            let mpcSignature: MPCSignature | null = null;
 
-            // Try PKP first for signless experience
+            // Try PKP signing first (gas-free!) - this is just for Lighthouse auth
+            // Note: processSignatureAndUpload also uses PKP for session sigs internally
             if (pkpData) {
                 try {
-                    console.log("⚡ Attempting PKP session sigs for upload...");
-                    const sessionSigs = await lit.getSessionSigsWithPKP(
+                    console.log("⚡ Attempting PKP signing for Lighthouse auth...");
+                    setStatus("Signing with PKP (gas-free)...");
+
+                    const pkpResult = await lit.signWithPKP(
                         pkpData.publicKey,
                         pkpData.ethAddress,
+                        messageToSign,
                         accountId
                     );
 
-                    if (sessionSigs) {
-                        console.log("✅ Using PKP for upload - signless!");
-                        // Use PKP-derived signature instead of MPC
-                        // For now, still use MPC for the actual Lighthouse auth
-                        // TODO: Direct PKP signing integration
-                    }
-                } catch (pkpError) {
-                    console.warn("PKP session sigs failed, falling back to MPC:", pkpError);
+                    // Convert PKP signature to MPC-compatible format for processSignatureAndUpload
+                    // Parse the signature to get r, s, v components
+                    const sig = ethers.Signature.from(pkpResult.signature);
+                    mpcSignature = {
+                        big_r: { affine_point: "04" + sig.r.substring(2) + sig.r.substring(2) }, // Pad to expected format
+                        s: { scalar: sig.s.substring(2) },
+                        recovery_id: sig.v - 27
+                    };
+
+                    console.log("✅ PKP signing successful - zero MPC cost!");
+
+                } catch (pkpSignError: any) {
+                    console.warn("PKP signing failed, falling back to MPC:", pkpSignError.message);
+                    // Fall through to MPC
+                    mpcSignature = null as any;
                 }
             }
 
-            // MPC signature (always needed for Lighthouse auth currently)
-            mpcSignature = await sessionManager.callMethod('sign_with_mpc', {
-                payload: realPayload,
-                path: derivationPath,
-                key_version: 0
-            });
+            // MPC fallback if PKP not available or failed
+            if (!mpcSignature) {
+                console.log("Using MPC for Lighthouse auth (requires gas)...");
+                setStatus("Signing with MPC...");
 
-            await processSignatureAndUpload(mpcSignature, messageToSign, recoveredAddress, storageFee, sessionManager);
+                const realHash = ethers.sha256(ethers.toUtf8Bytes(messageToSign));
+                const realPayload = Array.from(ethers.getBytes(realHash));
+
+                mpcSignature = await sessionManager.callMethod('sign_with_mpc', {
+                    payload: realPayload,
+                    path: derivationPath,
+                    key_version: 0
+                });
+            }
+
+            // Continue with upload using the obtained signature
+            await processSignatureAndUpload(mpcSignature!, messageToSign, recoveredAddress, storageFee, sessionManager);
 
         } catch (error: any) {
             console.error('Upload failed:', error);
@@ -1046,6 +1110,18 @@ export function UploadForm() {
                         </div>
                     </div>
                 </div>
+
+                {/* GIFT LINK GENERATOR - DISABLED (moved to separate page)
+                {(generatedVideoUuid || uploading) && (
+                    <div className="lg:col-span-3 space-y-4">
+                        <GiftLinkGenerator
+                            eventCid={generatedVideoUuid || 'pending'}
+                            eventTitle={lastUploadedTitle || title}
+                            creatorAccountId={accountId || ''}
+                        />
+                    </div>
+                )}
+                */}
             </div>
         </div >
     );

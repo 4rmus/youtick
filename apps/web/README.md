@@ -21,7 +21,7 @@ Create `.env.local`:
 
 ```env
 NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=v1-0-0.utick.testnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=dev-cr-1767470095.utick.testnet
 LIGHTHOUSE_API_KEY=your_api_key
 ```
 

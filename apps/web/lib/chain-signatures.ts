@@ -53,10 +53,10 @@ export async function deriveEthAddress(accountId: string, path: string, wallet?:
     // the MPC sees the CONTRACT as the caller.
     // The contract prepends the user's accountId to the path: "user.near/path"
     // So we must derive using:
-    // - accountId: CONTRACT_ID (v1-0-0.utick.testnet)
+    // - accountId: CONTRACT_ID (dev-gift-1767641243.testnet)
     // - path: "user.testnet/lit/pkp-minting"
 
-    const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1-0-0.utick.testnet';
+    const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
     const relativePath = `${accountId},${path}`; // Comma is standard separator in MPC v0.1.0 convention? No, contract uses slash.
 
     // Note: The contract code uses format!("{}/{}", account_id, path)

@@ -27,7 +27,7 @@ function WatchContent() {
     const initialCid = searchParams.get('cid') || '';
     const [playCid, setPlayCid] = useState(initialCid);
     const { tokens, loading, error } = useOwnedTokens();
-    const { description: eventDescription, thumbnailUrl: eventThumbnail, loading: descLoading } = useEventDescription(playCid);
+    const { description: eventDescription, thumbnailUrl: eventThumbnail, creatorId, loading: descLoading } = useEventDescription(playCid);
 
     useEffect(() => {
         if (initialCid) {
@@ -71,11 +71,11 @@ function WatchContent() {
                                     {activeToken.metadata?.title || t.watch_page.untitled}
                                 </h2>
                                 <div className="flex items-center gap-2">
-                                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-[10px] font-bold text-white">
-                                        {activeToken.owner_id.substring(0, 2).toUpperCase()}
+                                    <div className="w-6 h-6 rounded-full bg-zinc-700 flex items-center justify-center text-[10px] font-bold text-white">
+                                        {(creatorId || activeToken.owner_id).substring(0, 2).toUpperCase()}
                                     </div>
                                     <p className="text-sm text-zinc-400">
-                                        Uploaded by <span className="text-zinc-200 font-medium">{activeToken.owner_id}</span>
+                                        Uploaded by <span className="text-zinc-200 font-medium">{creatorId || activeToken.owner_id}</span>
                                     </p>
                                 </div>
                             </div>
