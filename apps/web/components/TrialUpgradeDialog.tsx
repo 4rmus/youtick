@@ -11,8 +11,9 @@ import {
     DialogTitle,
     DialogTrigger,
 } from '@/components/ui/dialog';
-import { getKeypomManager } from '@/lib/keypom';
-import { Copy, Check, AlertTriangle, Wallet, ArrowRight } from 'lucide-react';
+import { Copy, Check, AlertTriangle, Wallet, ArrowRight, ExternalLink } from 'lucide-react';
+import { KeyPair } from 'near-api-js';
+import { generateSeedPhrase } from 'near-seed-phrase';
 
 interface TrialUpgradeDialogProps {
     accountId: string;
@@ -33,18 +34,47 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
         setError('');
 
         try {
-            const manager = getKeypomManager();
-            const result = await manager.upgradeTrialAccount(accountId);
+            // Generate a new seed phrase and derive keypair
+            const { seedPhrase: phrase, publicKey: pk, secretKey } = generateSeedPhrase();
 
-            if (result.success) {
-                setSeedPhrase(result.seedPhrase);
-                setPublicKey(result.publicKey);
-                setStep('seedPhrase');
-            } else {
-                setError(result.error || 'Yükseltme başarısız oldu');
-                setStep('error');
+            // Get stored trial key from localStorage
+            const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet';
+            const storedKey = localStorage.getItem(`near-api-js:keystore:${accountId}:${networkId}`);
+
+            if (!storedKey) {
+                throw new Error('Trial hesap anahtarı bulunamadı. Lütfen tekrar giriş yapın.');
             }
+
+            // Use current trial key to add new Full Access Key
+            const trialKeyPair = KeyPair.fromString(storedKey as any);
+
+            // Connect to NEAR
+            const { connect, keyStores } = await import('near-api-js');
+            const keyStore = new keyStores.InMemoryKeyStore();
+            await keyStore.setKey(networkId, accountId, trialKeyPair);
+
+            const near = await connect({
+                networkId,
+                keyStore,
+                nodeUrl: networkId === 'mainnet'
+                    ? 'https://rpc.fastnear.com'
+                    : 'https://test.rpc.fastnear.com',
+            });
+
+            const account = await near.account(accountId);
+
+            // Add the new Full Access Key derived from seed phrase
+            console.log('Adding Full Access Key:', pk);
+            await account.addKey(pk);
+            console.log('✅ Full Access Key added successfully!');
+
+            // Now the seed phrase can be used to recover this account
+            setSeedPhrase(phrase);
+            setPublicKey(pk);
+            setStep('seedPhrase');
+
         } catch (err: any) {
+            console.error('Upgrade error:', err);
             setError(err.message || 'Beklenmeyen bir hata oluştu');
             setStep('error');
         }
@@ -105,23 +135,22 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                         <DialogHeader>
                             <DialogTitle className="flex items-center gap-2">
                                 <Wallet className="w-5 h-5 text-purple-500" />
-                                Trial Hesabı Yükselt
+                                Tam Cüzdana Geç
                             </DialogTitle>
                             <DialogDescription>
-                                Trial hesabınızı kalıcı bir NEAR hesabına dönüştürün
+                                Trial hesabınızı kalıcı bir NEAR cüzdanına dönüştürün
                             </DialogDescription>
                         </DialogHeader>
 
                         <div className="space-y-4 py-4">
                             <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
                                 <h4 className="font-medium text-blue-800 dark:text-blue-200 mb-2">
-                                    Bu işlem ne yapar?
+                                    Nasıl çalışır?
                                 </h4>
                                 <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
-                                    <li>• 12 kelimelik güvenli bir seed phrase oluşturur</li>
-                                    <li>• Hesabınıza Full Access Key ekler</li>
-                                    <li>• MyNearWallet'a import edebilirsiniz</li>
-                                    <li>• Trial kısıtlamaları kaldırılır</li>
+                                    <li>• 12 kelimelik güvenli seed phrase oluşturulur</li>
+                                    <li>• MyNearWallet'a bu seed ile hesap oluşturabilirsiniz</li>
+                                    <li>• NFT'lerinizi yeni hesaba transfer edebilirsiniz</li>
                                 </ul>
                             </div>
 
@@ -146,7 +175,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                                 İptal
                             </Button>
                             <Button onClick={handleUpgrade} className="bg-purple-600 hover:bg-purple-700">
-                                Yükseltmeyi Başlat
+                                Seed Phrase Oluştur
                                 <ArrowRight className="w-4 h-4 ml-2" />
                             </Button>
                         </DialogFooter>
@@ -161,7 +190,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                         <div className="flex flex-col items-center justify-center py-8">
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mb-4" />
                             <p className="text-muted-foreground">
-                                Hesabınız yükseltiliyor, lütfen bekleyin...
+                                Seed phrase oluşturuluyor...
                             </p>
                         </div>
                     </>
@@ -171,10 +200,10 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                     <>
                         <DialogHeader>
                             <DialogTitle className="text-green-600">
-                                ✓ Hesap Yükseltildi!
+                                ✓ Seed Phrase Hazır!
                             </DialogTitle>
                             <DialogDescription>
-                                Seed phrase'inizi güvenli bir yere kaydedin
+                                Bu kelimeleri güvenli bir yere kaydedin
                             </DialogDescription>
                         </DialogHeader>
 
@@ -231,7 +260,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                                 disabled={!confirmed}
                                 className="w-full bg-green-600 hover:bg-green-700"
                             >
-                                Tamamla
+                                Devam Et
                             </Button>
                         </DialogFooter>
                     </>
@@ -241,33 +270,32 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                     <>
                         <DialogHeader>
                             <DialogTitle className="text-green-600">
-                                🎉 Tebrikler!
+                                🎉 Sonraki Adım
                             </DialogTitle>
                         </DialogHeader>
 
                         <div className="space-y-4 py-4 text-center">
                             <p className="text-muted-foreground">
-                                Hesabınız başarıyla yükseltildi.
-                                Artık seed phrase'inizi kullanarak herhangi bir NEAR wallet'a import edebilirsiniz.
+                                Seed phrase'inizi kullanarak MyNearWallet'ta hesap oluşturun.
+                                Sonra NFT'lerinizi yeni hesabınıza transfer edebilirsiniz.
                             </p>
 
                             <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-3">
-                                <p className="text-xs text-muted-foreground mb-1">Hesap ID</p>
+                                <p className="text-xs text-muted-foreground mb-1">Mevcut Hesap</p>
                                 <p className="font-mono text-sm">{accountId}</p>
                             </div>
 
                             <Button
-                                variant="outline"
-                                className="w-full"
-                                onClick={() => window.open('https://wallet.testnet.near.org/recover-seed-phrase', '_blank')}
+                                className="w-full bg-purple-600 hover:bg-purple-700"
+                                onClick={() => window.open('https://wallet.testnet.near.org/create', '_blank')}
                             >
-                                MyNearWallet'a Import Et
-                                <ArrowRight className="w-4 h-4 ml-2" />
+                                MyNearWallet'ta Hesap Oluştur
+                                <ExternalLink className="w-4 h-4 ml-2" />
                             </Button>
                         </div>
 
                         <DialogFooter>
-                            <Button onClick={handleClose} className="w-full">
+                            <Button variant="outline" onClick={handleClose} className="w-full">
                                 Kapat
                             </Button>
                         </DialogFooter>

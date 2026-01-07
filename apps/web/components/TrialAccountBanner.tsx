@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Clock, ArrowUpRight, X } from "lucide-react";
 import { useState } from "react";
+import { useLanguage } from "@/components/providers/LanguageContext";
 
 interface TrialAccountBannerProps {
     accountId: string;
@@ -18,6 +19,7 @@ export function TrialAccountBanner({
     onDismiss,
 }: TrialAccountBannerProps) {
     const [dismissed, setDismissed] = useState(false);
+    const { t } = useLanguage();
 
     if (dismissed) return null;
 
@@ -50,9 +52,9 @@ export function TrialAccountBanner({
                     <Clock className="w-4 h-4" />
                 </div>
                 <div className="text-sm">
-                    <span className="text-gray-300">Trial hesap kullanıyorsun</span>
+                    <span className="text-gray-300">{t.trial_banner?.using_trial || "You're using a trial account"}</span>
                     <span className={`ml-2 font-medium ${textColor}`}>
-                        {daysRemaining} gün kaldı
+                        {daysRemaining} {t.trial_banner?.days_remaining || "days remaining"}
                     </span>
                 </div>
             </div>
@@ -63,7 +65,7 @@ export function TrialAccountBanner({
                     size="sm"
                     className="h-8 bg-white/10 hover:bg-white/20 text-white border-0"
                 >
-                    Tam Cüzdana Geç
+                    {t.trial_banner?.upgrade_button || "Upgrade to Full Wallet"}
                     <ArrowUpRight className="w-3 h-3 ml-1" />
                 </Button>
                 <button
@@ -76,3 +78,4 @@ export function TrialAccountBanner({
         </div>
     );
 }
+

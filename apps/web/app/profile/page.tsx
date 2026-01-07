@@ -141,7 +141,7 @@ export default function ProfilePage() {
                     {createdEvents.length > 0 && (
                         <Button
                             onClick={() => setShowGiftModal(true)}
-                            className="bg-white text-black hover:bg-zinc-200 font-semibold gap-2"
+                            className="bg-near-green text-near-black hover:bg-near-green/80 font-semibold gap-2"
                         >
                             <Gift className="w-4 h-4" />
                             Hediye Et
@@ -192,7 +192,7 @@ export default function ProfilePage() {
                         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                             <div>
                                 <h3 className="font-semibold text-white flex items-center gap-2">
-                                    <span className="text-yellow-400">⚡</span>
+                                    <span className="text-near-green">⚡</span>
                                     Trial Hesabınızı Yükseltin
                                 </h3>
                                 <p className="text-sm text-zinc-300 mt-1">
@@ -267,7 +267,7 @@ export default function ProfilePage() {
                                                     </p>
                                                 </div>
                                                 <div className="opacity-0 group-hover:opacity-100 transition-opacity self-center">
-                                                    <span className="text-[10px] font-bold text-black bg-white px-2 py-1 rounded">
+                                                    <span className="text-[10px] font-bold text-near-black bg-near-green px-2 py-1 rounded">
                                                         Watch
                                                     </span>
                                                 </div>

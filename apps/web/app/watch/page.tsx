@@ -179,7 +179,7 @@ function WatchContent() {
                                             )}
                                             {isActive && (
                                                 <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
-                                                    <span className="text-xs font-bold text-white bg-primary px-2 py-1 rounded-full animate-pulse">Now Playing</span>
+                                                    <span className="text-xs font-bold text-near-black bg-near-green px-2 py-1 rounded-full animate-pulse">Now Playing</span>
                                                 </div>
                                             )}
                                             {isAccessPass && (
@@ -201,7 +201,7 @@ function WatchContent() {
                                             <div className="flex justify-between items-end">
                                                 <p className="text-xs text-zinc-500">{subtitle}</p>
                                                 {isVideo && !isAccessPass && (
-                                                    <div className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-bold text-white bg-white/10 px-2 py-1 rounded">
+                                                    <div className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-bold text-near-black bg-near-green px-2 py-1 rounded">
                                                         PLAY
                                                     </div>
                                                 )}

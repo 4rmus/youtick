@@ -72,7 +72,7 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
       <Navigation onDiscoverClick={onBackClick} variant="discover" />
 
       <div className="container mx-auto px-4 py-8">
-        <h2 className="text-3xl font-bold text-white mb-8 border-l-4 border-white pl-4">
+        <h2 className="text-3xl font-bold text-white mb-8 border-l-4 border-near-green pl-4">
           {t.landing.discover.recently_uploaded}
         </h2>
 
@@ -91,9 +91,9 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
                 className="group"
               >
                 <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 border border-white/10 shadow-2xl shadow-black/50 transition-all duration-300 hover:border-white/20 hover:shadow-purple-500/10">
-                  {/* Decorative Corner Glow */}
-                  <div className="absolute -top-20 -right-20 w-40 h-40 bg-purple-500/20 rounded-full blur-3xl opacity-0 group-hover:opacity-60 transition-opacity duration-700" />
-                  <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-blue-500/20 rounded-full blur-3xl opacity-0 group-hover:opacity-60 transition-opacity duration-700" />
+                  {/* Decorative Corner Glow - NEAR Colors */}
+                  <div className="absolute -top-20 -right-20 w-40 h-40 bg-near-green/20 rounded-full blur-3xl opacity-0 group-hover:opacity-60 transition-opacity duration-700" />
+                  <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-near-purple/20 rounded-full blur-3xl opacity-0 group-hover:opacity-60 transition-opacity duration-700" />
 
                   {/* Thumbnail */}
                   <div className="aspect-video relative overflow-hidden">
@@ -148,7 +148,7 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
                   {/* Content Section */}
                   <div className="p-4 relative">
                     {/* Title */}
-                    <h3 className="font-bold text-white text-base leading-tight line-clamp-1 mb-1 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-white group-hover:to-purple-200 transition-all duration-300">
+                    <h3 className="font-bold text-white text-base leading-tight line-clamp-1 mb-1 group-hover:text-near-green transition-all duration-300">
                       {token.metadata?.title || `Token #${token.token_id}`}
                     </h3>
                     {/* Description */}
@@ -163,7 +163,7 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
                       <div className="flex items-center gap-2">
                         {/* Avatar with Ring */}
                         <div className="relative">
-                          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-purple-500 via-blue-500 to-cyan-500 p-0.5">
+                          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-near-green via-near-purple to-near-blue p-0.5">
                             <div className="w-full h-full rounded-[6px] bg-zinc-900 flex items-center justify-center">
                               <span className="text-[9px] font-bold text-white">
                                 {token.owner_id ? token.owner_id.substring(0, 2).toUpperCase() : "??"}
@@ -179,7 +179,7 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
 
                       {/* NFT Ticket Indicator */}
                       <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/50 border border-zinc-700/50">
-                        <div className="w-1.5 h-1.5 rounded-full bg-gradient-to-r from-purple-500 to-blue-500 animate-pulse" />
+                        <div className="w-1.5 h-1.5 rounded-full bg-near-green animate-pulse" />
                         <span className="text-[9px] text-zinc-400 font-medium">NFT</span>
                       </div>
                     </div>

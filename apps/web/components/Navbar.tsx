@@ -66,7 +66,7 @@ export function Navbar() {
                         <Link
                             key={link.href}
                             href={link.href}
-                            className={`text-sm font-medium transition-colors hover:text-white ${pathname === link.href ? 'text-white font-bold' : 'text-zinc-400'
+                            className={`text-sm font-medium transition-colors hover:text-near-green ${pathname === link.href ? 'text-near-green font-bold' : 'text-zinc-400'
                                 }`}
                         >
                             {link.label}
@@ -91,12 +91,12 @@ export function Navbar() {
                     </div>
 
                     {accountId ? (
-                        <div className="rounded-full bg-zinc-900 border border-zinc-800 flex items-center pl-3 pr-1 py-1 gap-2">
-                            <User className="w-3 h-3 text-zinc-500" />
+                        <div className="rounded-full bg-near-black border border-near-green/30 flex items-center pl-3 pr-1 py-1 gap-2">
+                            <User className="w-3 h-3 text-near-green" />
                             <span className="text-xs font-mono text-zinc-400 truncate max-w-[100px]">{accountId}</span>
                             <Button // This uses the generic button which might have different default styles, let's use standard button class instead or ensure Button import
                                 onClick={handleSignOut}
-                                className="h-6 w-6 ml-1 p-0 rounded-full bg-transparent hover:bg-red-500/10 text-zinc-500 hover:text-red-500 flex items-center justify-center transition-colors"
+                                className="h-6 w-6 ml-1 p-0 rounded-full bg-transparent hover:bg-near-red/10 text-zinc-500 hover:text-near-red flex items-center justify-center transition-colors"
                             >
                                 <LogOut className="w-3 h-3" />
                             </Button>
@@ -104,7 +104,7 @@ export function Navbar() {
                     ) : (
                         <button
                             onClick={handleSignIn}
-                            className="px-4 py-2 text-sm font-medium text-black bg-white rounded-full hover:bg-gray-200 transition-colors"
+                            className="px-4 py-2 text-sm font-semibold text-near-black bg-near-green rounded-full hover:bg-near-green/80 transition-colors"
                         >
                             {t.nav.connect}
                         </button>

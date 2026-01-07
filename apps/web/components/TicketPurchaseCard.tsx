@@ -130,7 +130,45 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         init();
     }, [cid, accountId]);
 
-    // Buy Ticket with NEAR
+    // Claim FREE Ticket (Sponsored by Contract)
+    const handleFreeTicketClaim = async () => {
+        if (!accountId || !eventDetails) return;
+        setActionLoading(true);
+        setError(null);
+        try {
+            console.log("Claiming free ticket via sponsored API...");
+
+            const response = await fetch('/api/ticket/claim-free', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    receiver_id: accountId,
+                    encrypted_cid: cid
+                })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to claim free ticket');
+            }
+
+            console.log("✅ Free ticket claimed:", data);
+
+            // Mint PKP for signless experience
+            await mintPKPInBackground(accountId);
+
+            if (onPurchaseSuccess) onPurchaseSuccess();
+
+        } catch (e: any) {
+            console.error("Free ticket claim failed:", e);
+            setError(e.message || "Failed to claim free ticket");
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    // Buy Ticket with NEAR (for paid tickets)
     const handlePurchase = async () => {
         if (!accountId || !eventDetails) return;
         setActionLoading(true);
@@ -238,8 +276,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     return (
         <div className={`relative group overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 border border-white/10 shadow-2xl shadow-black/50 max-w-sm mx-auto ${className}`}>
             {/* Decorative Corner Glow */}
-            <div className="absolute -top-20 -right-20 w-40 h-40 bg-zinc-500/10 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
-            <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-zinc-500/10 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
+            <div className="absolute -top-20 -right-20 w-40 h-40 bg-near-green/10 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
+            <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-near-purple/10 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
 
             {/* Image Container */}
             <div className="aspect-video relative overflow-hidden">
@@ -276,13 +314,13 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     )}
 
                     <div className={`px-3 py-1.5 rounded-lg backdrop-blur-sm border shadow-lg ${isFree || isCreator
-                        ? 'bg-emerald-500/90 border-emerald-400/30'
+                        ? 'bg-near-green/90 border-near-green/30'
                         : 'bg-zinc-800 border-zinc-600'
                         }`}>
                         {isCreator ? (
-                            <span className="text-[10px] font-bold text-white tracking-wider uppercase">Owner</span>
+                            <span className="text-[10px] font-bold text-near-black tracking-wider uppercase">Owner</span>
                         ) : isFree ? (
-                            <span className="text-[10px] font-bold text-white tracking-wider uppercase">✨ Free Ticket</span>
+                            <span className="text-[10px] font-bold text-near-black tracking-wider uppercase">✨ Free Ticket</span>
                         ) : (
                             <span className="text-[10px] font-bold text-white tracking-wider">{eventDetails.price} NEAR</span>
                         )}
@@ -334,18 +372,18 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     </div>
 
                     <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-                        <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                        <div className="w-2 h-2 rounded-full bg-near-green animate-pulse" />
                         <span className="text-[10px] text-zinc-400 font-medium">NFT Ticket</span>
                     </div>
                 </div>
 
                 {/* Purchase Button */}
                 <Button
-                    onClick={isCreator ? () => window.location.href = `/watch?cid=${cid}` : handlePurchase}
-                    disabled={(!isCreator && (actionLoading || !accountId || hasSessionKey === null))}
+                    onClick={isCreator ? () => window.location.href = `/watch?cid=${cid}` : isFree ? handleFreeTicketClaim : handlePurchase}
+                    disabled={(!isCreator && (actionLoading || !accountId))}
                     className={`w-full font-bold py-3 shadow-lg border-0 ${isCreator
-                        ? "bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white shadow-green-500/20"
-                        : "bg-white text-black hover:bg-zinc-200"
+                        ? "bg-near-green hover:bg-near-green/80 text-near-black shadow-near-green/20"
+                        : "bg-near-green text-near-black hover:bg-near-green/80"
                         }`}
                 >
                     {actionLoading && !isCreator ? (

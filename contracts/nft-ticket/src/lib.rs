@@ -100,8 +100,10 @@ pub struct Contract {
     user_deposits: LookupMap<AccountId, NearToken>,
     events: UnorderedMap<String, Event>, // Key: encrypted_cid (UUID)
     next_token_id: u64,
-    // NEW: Gift drop system
+    // Gift drop system
     gift_drops: LookupMap<String, GiftDrop>, // Key: hash of secret key
+    // Sponsored trial pool - contract pays for trial account creation
+    trial_pool: NearToken,
 }
 
 // SECURITY: Use #[init] to prevent re-initialization attacks
@@ -138,6 +140,7 @@ impl Contract {
             events: UnorderedMap::new(StorageKey::V2(StorageKeyV2::Events)),
             next_token_id: 0,
             gift_drops: LookupMap::new(StorageKey::V2(StorageKeyV2::GiftDrops)),
+            trial_pool: NearToken::from_yoctonear(0),
         }
     }
 
@@ -175,7 +178,23 @@ impl Contract {
             events: UnorderedMap::new(StorageKey::V3(StorageKeyV3::Events)),
             next_token_id: 0,
             gift_drops: LookupMap::new(StorageKey::V3(StorageKeyV3::GiftDrops)),
+            trial_pool: NearToken::from_yoctonear(0),
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // OWNER ADMIN FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Set the next token ID (owner only) - for recovery after state issues
+    pub fn set_next_token_id(&mut self, new_id: u64) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can set next token ID"
+        );
+        let old_id = self.next_token_id;
+        self.next_token_id = new_id;
+        env::log_str(&format!("next_token_id updated: {} -> {}", old_id, new_id));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -596,6 +615,119 @@ impl Contract {
                 charge_amount, // Attach the deposit we charged
                 near_sdk::Gas::from_tgas(100) // Attach gas
             )
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // SPONSORED TRIAL FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Fund the trial pool - anyone can contribute (typically owner)
+    /// These funds are used to sponsor trial account creation
+    #[payable]
+    pub fn fund_trial_pool(&mut self) {
+        let deposit = env::attached_deposit();
+        require!(deposit.as_yoctonear() > 0, "Must attach some NEAR");
+        
+        self.trial_pool = self.trial_pool.saturating_add(deposit);
+        
+        env::log_str(&format!(
+            "Trial pool funded: {} added, total: {}",
+            deposit, self.trial_pool
+        ));
+    }
+
+    /// Create a sponsored trial account as a subaccount of this contract
+    /// Contract pays the cost from trial pool!
+    /// Creates: {username}.{contract_id} (e.g. "alice.youtick.testnet")
+    /// Cost: ~0.1 NEAR per account from trial pool
+    pub fn create_sponsored_trial(
+        &mut self,
+        username: String,
+        new_public_key: near_sdk::PublicKey,
+    ) -> Promise {
+        // Validate username
+        require!(
+            username.len() >= 2 && username.len() <= 32,
+            "Username must be 2-32 characters"
+        );
+        require!(
+            username.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'),
+            "Username can only contain lowercase letters, numbers, - and _"
+        );
+        
+        // Cost for account creation + initial balance
+        let account_cost = NearToken::from_millinear(100); // 0.1 NEAR
+        
+        require!(
+            self.trial_pool >= account_cost,
+            "Trial pool empty. Please contact the platform owner."
+        );
+        
+        // Deduct from pool
+        self.trial_pool = self.trial_pool.saturating_sub(account_cost);
+        
+        // Create subaccount ID: {username}.{this_contract}
+        let contract_id = env::current_account_id();
+        let new_account_id: AccountId = format!("{}.{}", username, contract_id)
+            .parse()
+            .expect("Invalid account ID format");
+        
+        env::log_str(&format!(
+            "Sponsored trial: {} (pool remaining: {})",
+            new_account_id, self.trial_pool
+        ));
+        
+        // Create the subaccount with Full Access Key
+        Promise::new(new_account_id)
+            .create_account()
+            .add_full_access_key(new_public_key)
+            .transfer(account_cost)
+    }
+
+    /// View: Get trial pool balance
+    pub fn get_trial_pool_balance(&self) -> U128 {
+        U128(self.trial_pool.as_yoctonear())
+    }
+
+    /// Claim a FREE ticket - Contract pays storage from trial_pool!
+    /// This allows trial accounts and any user to claim free content
+    /// without needing any NEAR balance.
+    /// 
+    /// Can be called by anyone (usually via relayer API)
+    pub fn claim_free_ticket_sponsored(
+        &mut self,
+        receiver_id: AccountId,
+        encrypted_cid: String,
+    ) -> Promise {
+        let event = self.events.get(&encrypted_cid)
+            .expect("Event not found");
+        
+        // Verify this is actually a free ticket
+        require!(
+            event.price.0 == 0,
+            "This ticket is not free. Use buy_ticket for paid tickets."
+        );
+        
+        // Storage cost for minting
+        let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        
+        require!(
+            self.trial_pool >= storage_cost,
+            "Trial pool empty. Cannot sponsor free ticket claim."
+        );
+        
+        // Deduct from trial pool
+        self.trial_pool = self.trial_pool.saturating_sub(storage_cost);
+        
+        env::log_str(&format!(
+            "Sponsored free ticket claim for {} (pool remaining: {})",
+            receiver_id, self.trial_pool
+        ));
+        
+        // Call internal minting with storage from contract
+        Self::ext(env::current_account_id())
+            .with_attached_deposit(storage_cost)
+            .buy_ticket_internal(receiver_id, encrypted_cid)
     }
 
     // ═══════════════════════════════════════════════════════════════

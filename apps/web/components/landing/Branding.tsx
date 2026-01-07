@@ -1,22 +1,23 @@
-import { memo } from 'react';
-import { BRANDING } from '@/lib/constants';
+'use client';
+
+import { useLanguage } from '@/components/providers/LanguageContext';
 
 interface BrandingProps {
-  size?: 'sm' | 'md' | 'lg';
+    size?: 'sm' | 'md' | 'lg';
 }
 
-export const Branding = memo(({ size = 'md' }: BrandingProps) => {
-  const fontSize = {
-    sm: 'text-xl',
-    md: 'text-2xl',
-    lg: 'text-4xl',
-  }[size];
+export const Branding = ({ size = 'md' }: BrandingProps) => {
+    const { t } = useLanguage();
 
-  return (
-    <div className={`font-black tracking-tight ${fontSize}`}>
-      <span className="text-white">youtick</span>
-    </div>
-  );
-});
+    const sizeClasses = {
+        sm: 'text-xl',
+        md: 'text-2xl',
+        lg: 'text-4xl',
+    };
 
-Branding.displayName = 'Branding';
+    return (
+        <span className={`font-black tracking-tight text-white ${sizeClasses[size]}`}>
+            {t.landing.branding.name}
+        </span>
+    );
+};

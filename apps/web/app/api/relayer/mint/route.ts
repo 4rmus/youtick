@@ -37,11 +37,12 @@ export async function POST(req: NextRequest) {
 
 
         // 1. Initialize Relayer Wallet (The "Contract Account" / App Sponsor)
-        const relayerKey = process.env.RELAYER_PRIVATE_KEY;
+        // PKP minting requires Ethereum-format key (0x...), not NEAR key
+        const relayerKey = process.env.LIT_DELEGATION_WALLET_PRIVATE_KEY;
         if (!relayerKey) {
-            console.error("RELAYER_PRIVATE_KEY is not set in environment variables.");
+            console.error("LIT_DELEGATION_WALLET_PRIVATE_KEY is not set in environment variables.");
             return NextResponse.json({
-                error: 'Relayer not configured. Please set RELAYER_PRIVATE_KEY in .env.local to enable One-Click Upload sponsoring.',
+                error: 'Lit Relayer not configured. Please set LIT_DELEGATION_WALLET_PRIVATE_KEY in .env.local (Ethereum format: 0x...).',
                 code: 'MISSING_RELAYER_KEY'
             }, { status: 501 }); // Not Implemented / Not Configured
         }
@@ -79,9 +80,9 @@ export async function POST(req: NextRequest) {
         try {
             wallet = new ethers5.Wallet(relayerKey, provider);
         } catch (e) {
-            console.error("Invalid RELAYER_PRIVATE_KEY format:", e);
+            console.error("Invalid LIT_DELEGATION_WALLET_PRIVATE_KEY format:", e);
             return NextResponse.json({
-                error: 'Invalid Relayer Key format. RELAYER_PRIVATE_KEY must be a 64-character hex string (Ethereum-style), not a NEAR Ed25519 key.',
+                error: 'Invalid Lit Relayer Key format. LIT_DELEGATION_WALLET_PRIVATE_KEY must be a 64-character hex string (Ethereum-style, e.g. 0xabc...).',
                 code: 'INVALID_RELAYER_KEY'
             }, { status: 400 });
         }
