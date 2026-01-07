@@ -24,7 +24,7 @@ export const StartSlider = memo(() => {
     if (loading) {
         return (
             <div className="py-20 flex justify-center items-center bg-black">
-                <Loader2 className="w-8 h-8 text-[#FF006E] animate-spin" />
+                <Loader2 className="w-8 h-8 text-[var(--near-green)] animate-spin" />
             </div>
         );
     }
@@ -48,7 +48,7 @@ export const StartSlider = memo(() => {
             <div className="container mx-auto px-4 relative z-10">
                 <div className="flex items-center justify-between mb-8">
                     <h2 className="text-2xl font-bold text-white flex items-center gap-3">
-                        <span className="w-2 h-8 bg-gradient-to-b from-[#FF006E] to-[#8338EC] rounded-full" />
+                        <span className="w-2 h-8 bg-gradient-to-b from-[var(--near-green)] to-[var(--near-purple)] rounded-full" />
                         <span className="text-gradient-concert">Discover</span>
                     </h2>
 
@@ -57,7 +57,7 @@ export const StartSlider = memo(() => {
                             variant="outline"
                             size="icon"
                             onClick={() => scroll('left')}
-                            className="bg-black/50 border-white/10 hover:bg-[#FF006E]/20 hover:border-[#FF006E]/50 text-white rounded-full transition-all duration-300"
+                            className="bg-black/50 border-white/10 hover:bg-[var(--near-green)]/20 hover:border-[var(--near-green)]/50 text-white rounded-full transition-all duration-300"
                         >
                             <ChevronLeft className="w-5 h-5" />
                         </Button>
@@ -65,7 +65,7 @@ export const StartSlider = memo(() => {
                             variant="outline"
                             size="icon"
                             onClick={() => scroll('right')}
-                            className="bg-black/50 border-white/10 hover:bg-[#FF006E]/20 hover:border-[#FF006E]/50 text-white rounded-full transition-all duration-300"
+                            className="bg-black/50 border-white/10 hover:bg-[var(--near-green)]/20 hover:border-[var(--near-green)]/50 text-white rounded-full transition-all duration-300"
                         >
                             <ChevronRight className="w-5 h-5" />
                         </Button>
@@ -89,9 +89,9 @@ export const StartSlider = memo(() => {
                                 key={token.token_id}
                                 className="group flex-none w-[380px] snap-center cursor-pointer"
                             >
-                                <div className="relative overflow-hidden rounded-xl bg-zinc-900/80 border border-white/10 shadow-lg transition-all duration-500 hover:border-[#FF006E]/50 hover:shadow-[#FF006E]/20 hover:shadow-2xl hover:-translate-y-2">
+                                <div className="relative overflow-hidden rounded-xl bg-zinc-900/80 border border-white/10 shadow-lg transition-all duration-500 hover:border-[var(--near-green)]/50 hover:shadow-[var(--near-green)]/20 hover:shadow-2xl hover:-translate-y-2">
                                     {/* Glow effect on hover */}
-                                    <div className="absolute inset-0 bg-gradient-to-br from-[#FF006E]/0 to-[#8338EC]/0 group-hover:from-[#FF006E]/10 group-hover:to-[#8338EC]/10 transition-all duration-500 z-0" />
+                                    <div className="absolute inset-0 bg-gradient-to-br from-[var(--near-green)]/0 to-[var(--near-purple)]/0 group-hover:from-[var(--near-green)]/10 group-hover:to-[var(--near-purple)]/10 transition-all duration-500 z-0" />
 
                                     {/* Thumbnail */}
                                     <div className="aspect-video relative overflow-hidden bg-zinc-800">
@@ -109,7 +109,7 @@ export const StartSlider = memo(() => {
 
                                         {/* Play Overlay */}
                                         <div className="absolute inset-0 bg-black/20 group-hover:bg-black/50 transition-all duration-500 flex items-center justify-center opacity-0 group-hover:opacity-100">
-                                            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#FF006E] to-[#8338EC] flex items-center justify-center transform scale-75 group-hover:scale-100 transition-transform duration-300">
+                                            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[var(--near-green)] to-[var(--near-purple)] flex items-center justify-center transform scale-75 group-hover:scale-100 transition-transform duration-300">
                                                 <Play className="w-6 h-6 text-white fill-current translate-x-0.5" />
                                             </div>
                                         </div>
@@ -117,7 +117,7 @@ export const StartSlider = memo(() => {
                                         {/* Price Badge */}
                                         <div className="absolute top-3 right-3">
                                             <div className={`px-3 py-1.5 rounded-full text-xs font-bold backdrop-blur-md shadow-lg ${isFree
-                                                ? 'bg-gradient-to-r from-[#00F5D4] to-[#00D4AA] text-black'
+                                                ? 'bg-gradient-to-r from-[var(--near-blue)] to-[#00D4AA] text-black'
                                                 : 'bg-black/60 text-white border border-white/20'
                                                 }`}>
                                                 {isFree ? 'FREE' : `${priceNear.toFixed(2)} NEAR`}
@@ -127,13 +127,13 @@ export const StartSlider = memo(() => {
 
                                     {/* Content */}
                                     <div className="p-4 relative z-10">
-                                        <h3 className="font-bold text-white mb-2 truncate text-lg group-hover:text-[#FF006E] transition-colors duration-300">
+                                        <h3 className="font-bold text-white mb-2 truncate text-lg group-hover:text-[var(--near-green)] transition-colors duration-300">
                                             {token.metadata?.title || `Token #${token.token_id}`}
                                         </h3>
 
                                         <div className="flex items-center justify-between text-xs text-zinc-400">
                                             <div className="flex items-center gap-2">
-                                                <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#FF006E] to-[#8338EC] p-[1px]">
+                                                <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[var(--near-green)] to-[var(--near-purple)] p-[1px]">
                                                     <div className="w-full h-full rounded-full bg-black flex items-center justify-center text-[8px] text-white font-bold">
                                                         {token.owner_id ? token.owner_id.substring(0, 1).toUpperCase() : "?"}
                                                     </div>

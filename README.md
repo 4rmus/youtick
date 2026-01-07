@@ -87,15 +87,14 @@ Create `apps/web/.env.local`:
 
 ```env
 NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=dev-gift-1767641243.testnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=dev-cr-1767470095.utick.testnet
 NEXT_PUBLIC_LIT_ACTION_IPFS_CID=your_lit_action_cid
+LIT_DELEGATION_WALLET_PRIVATE_KEY=0x...         # Ethereum key for Lit PKP minting
 LIGHTHOUSE_API_KEY=your_lighthouse_api_key
-RELAYER_PRIVATE_KEY=your_relayer_private_key  # Optional: for sponsored PKP minting
+RELAYER_ACCOUNT_ID=your-relayer.testnet         # For sponsored transactions
+RELAYER_PRIVATE_KEY=ed25519:...                 # NEAR key for relayer
+```
 
-# Trial Account / Gift Feature
-TRIAL_MASTER_ACCOUNT_ID=your_contract.testnet
-TRIAL_MASTER_PRIVATE_KEY=your_master_account_private_key
-NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
 ## 📖 Usage
@@ -155,7 +154,7 @@ youtick-mvp/
 
 ## 🔧 Smart Contract
 
-Deployed to: `v1-0-1.utick.testnet`
+Deployed to: `dev-cr-1767470095.utick.testnet`
 
 ### Key Functions
 
@@ -164,6 +163,10 @@ Deployed to: `v1-0-1.utick.testnet`
 | `nft_mint()` | Mint video NFT |
 | `create_event()` | Create ticketed event |
 | `buy_ticket()` | Purchase event ticket |
+| `buy_ticket_prepaid()` | Buy ticket with prepaid balance |
+| `create_sponsored_trial()` | Create trial subaccount (sponsored) |
+| `claim_free_ticket_sponsored()` | Claim free ticket (sponsored) |
+| `fund_trial_pool()` | Fund trial/sponsorship pool |
 | `get_event()` | Get event details |
 | `nft_tokens()` | List all tokens |
 
@@ -222,6 +225,6 @@ MIT License
 
 ---
 
-**Contract**: `v1-0-1.utick.testnet` | **Version**: 1.0.1
+**Contract**: `dev-cr-1767470095.utick.testnet` | **Network**: Testnet
 
 *"Own Your Content. Own Your Audience. Own Your Revenue."*

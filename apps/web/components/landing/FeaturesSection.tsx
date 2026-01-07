@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Lock, DollarSign, Zap, Shield, Clock, Palette } from 'lucide-react';
+import { Lock, DollarSign, Zap, Shield, Clock, Palette, Gift, UserPlus } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { COLORS, ANIMATION } from '@/lib/constants';
 
@@ -10,6 +10,8 @@ const features = [
   { icon: Shield, key: 'true_ownership' },
   { icon: Clock, key: 'instant_payment' },
   { icon: Palette, key: 'event_centric' },
+  { icon: Gift, key: 'gift_tickets' },
+  { icon: UserPlus, key: 'trial_accounts' },
 ] as const;
 
 export const FeaturesSection = memo(() => {
@@ -31,7 +33,7 @@ export const FeaturesSection = memo(() => {
         </div>
 
         {/* Feature Grid */}
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-7xl mx-auto">
           {features.map(({ icon: Icon, key }) => (
             <div
               key={key}

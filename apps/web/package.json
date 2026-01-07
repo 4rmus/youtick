@@ -10,7 +10,6 @@
     "postinstall": "patch-package"
   },
   "dependencies": {
-    "@keypom/core": "^1.0.6",
     "@lighthouse-web3/kavach": "^0.2.1",
     "@lighthouse-web3/sdk": "^0.4.3",
     "@lit-protocol/accs-schemas": "^0.0.36",
@@ -38,7 +37,6 @@
     "elliptic": "^6.6.1",
     "ethers5": "npm:ethers@^5.8.0",
     "js-sha3": "^0.9.3",
-    "keypom-js": "^1.5.0-rc.1",
     "lucide-react": "^0.555.0",
     "multiformats": "^13.4.2",
     "near-api-js": "^6.5.1",

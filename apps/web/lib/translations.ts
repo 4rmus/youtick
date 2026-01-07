@@ -149,7 +149,7 @@ export const translations = {
             subtitle: "Our journey to revolutionizing video streaming.",
             phases: [
                 { year: "2026 Q1", title: "Fast Auth", desc: "Seamless email/social login integration. Auto-wallet creation for zero-friction onboarding." },
-                { year: "2026 Q2", title: "Keypom Integration", desc: "Trial accounts, gift links, and advanced access drops. Try before you buy." },
+                { year: "2026 Q2", title: "Mainnet Migration", desc: "NEAR Mainnet launch. Production-ready infrastructure with full decentralization." },
                 { year: "2026 Q3", title: "Live Broadcast", desc: "Decentralized live streaming with real-time token gating and chat." },
                 { year: "2026 Q4", title: "DAO Governance", desc: "Community-driven platform decisions, treasury management, and protocol upgrades." },
             ]
@@ -168,7 +168,8 @@ export const translations = {
                 badge_ownership: "True Ownership",
                 badge_instant_revenue: "98% Revenue Share",
                 cta_discover: "Explore Events",
-                cta_create_event: "Start Creating"
+                cta_create_event: "Start Creating",
+                cta_try_free: "Try Free"
             },
             nav: {
                 home: "Home",
@@ -205,7 +206,11 @@ export const translations = {
                 instant_payment_title: "Instant Payment",
                 instant_payment_desc: "Revenue goes directly to your wallet. No delays, no middlemen, no waiting.",
                 event_centric_title: "Event-Centric Design",
-                event_centric_desc: "Optimized UI/UX specifically for concerts, cinema, and workshops."
+                event_centric_desc: "Optimized UI/UX specifically for concerts, cinema, and workshops.",
+                gift_tickets_title: "Gift Tickets",
+                gift_tickets_desc: "Share ticket links with anyone. No wallet needed to claim.",
+                trial_accounts_title: "Try Before You Buy",
+                trial_accounts_desc: "New users can explore the platform without a wallet. Frictionless onboarding, upgrade when ready."
             },
             comparison: {
                 title: "Traditional Systems vs youtick",
@@ -314,11 +319,62 @@ export const translations = {
                 near_ecosystem_desc: "Low fees, high performance, and seamless user experience.",
                 decentralization: "Full Decentralization",
                 decentralization_desc: "No central servers. True user ownership and censorship resistance.",
+                gift_tickets: "Gift Tickets",
+                gift_tickets_desc: "Share ticket links with anyone. No wallet needed to claim.",
+                trial_accounts: "Try Before You Buy",
+                trial_accounts_desc: "New users can explore without a wallet. Frictionless onboarding, upgrade when ready.",
                 comparison_web2: "vs Web2 Platforms",
                 comparison_web2_desc: "We give creators ownership and 2x more revenue",
                 comparison_web3: "vs Identity-Based",
                 comparison_web3_desc: "No specialized nodes. Just encrypted IPFS files. 20% lighter architecture."
             },
+            web3_bridge: {
+                title: "Web3 Basitlestirildi",
+                subtitle: "",
+                chain_abstraction: "Zincir Soyutlama",
+                chain_abstraction_desc: "Blockchain ile etkilesime girdiginizi bile anlamadan islem yapin.",
+                storage: "Merkeziyetsiz Depolama",
+                storage_desc: "Icerik IPFS/Filecoin uzerinde saklanir. Kalici, sansursuz ve size ait.",
+                encryption: "Merkeziyetsiz Sifreleme",
+                encryption_desc: "Lit Protocol sayesinde sadece bilet sahipleri sifreyi cozebilir.",
+                fees: "Minimal Ucretler",
+                fees_desc: "Tek seferlik depolama ucreti. Surekli sunucu maliyeti yok. Maksimum kazanc."
+            }
+        },
+        trial_banner: {
+            using_trial: "You're using a trial account",
+            days_remaining: "days remaining",
+            upgrade_button: "Upgrade to Full Wallet"
+        },
+        trial_page: {
+            welcome_title: "Welcome to YouTick!",
+            welcome_desc: "Discover content on the Web3 video platform",
+            connect_wallet: "Connect Wallet",
+            or: "or",
+            try_free: "Try Free (7 Days)",
+            no_wallet_required: "No wallet required",
+            free_content_access: "Access free content",
+            upgrade_anytime: "Upgrade to full wallet anytime",
+            choose_username: "Choose Username",
+            username_desc: "This will be your NEAR account address",
+            username_placeholder: "username",
+            username_validation: "At least 2 characters, only letters, numbers, _ and -",
+            username_taken: "This username is already taken. Please choose another.",
+            create_account: "Create Account",
+            back: "Back",
+            creating_account: "Creating your account...",
+            creating_wait: "This may take a few seconds",
+            welcome_success: "Welcome!",
+            account_ready: "Your account is ready:",
+            trial_duration: "You have 7 days of free access",
+            ticket_ready: "Your ticket is now accessible",
+            go_to_ticket: "Go to Ticket",
+            start_exploring: "Start Exploring",
+            error_title: "Something went wrong",
+            try_again: "Try Again",
+            generating_trial: "Generating trial...",
+            no_gift_link: "No gift link found. Please use a valid gift link or connect your wallet.",
+            gift_for: "Gift ticket for:"
         },
     },
     tr: {
@@ -469,7 +525,7 @@ export const translations = {
             subtitle: "Video yayıncılığında devrim yaratma yolculuğumuz.",
             phases: [
                 { year: "2026 Q1", title: "Fast Auth (Hızlı Giriş)", desc: "Sorunsuz email/sosyal giriş entegrasyonu. Sıfır sürtünme için otomatik cüzdan oluşturma." },
-                { year: "2026 Q2", title: "Keypom Entegrasyonu", desc: "Deneme hesapları, hediye linkleri ve gelişmiş erişim dağıtımı. Satın almadan önce dene." },
+                { year: "2026 Q2", title: "Mainnet Geçişi", desc: "NEAR Mainnet lansmanı. Tam merkeziyetsizlik ile üretime hazır altyapı." },
                 { year: "2026 Q3", title: "Canlı Yayın", desc: "Gerçek zamanlı token kontrolü ve sohbet ile merkeziyetsiz canlı yayın." },
                 { year: "2026 Q4", title: "DAO Yönetişimi", desc: "Topluluk odaklı platform kararları, hazine yönetimi ve protokol güncellemeleri." },
             ]
@@ -489,7 +545,7 @@ export const translations = {
                 badge_instant_revenue: "%98 Gelir Payı",
                 cta_discover: "Etkinlikleri Keşfet",
                 cta_create_event: "Oluşturmaya Başla",
-                tagline: "BAĞIMSIZ & ARACISIZ DİJİTAL SAHNENİZ"
+                cta_try_free: "Ücretsiz Dene"
             },
             nav: {
                 home: "Ana Sayfa",
@@ -526,7 +582,11 @@ export const translations = {
                 instant_payment_title: "Anlık Ödeme",
                 instant_payment_desc: "Gelir doğrudan cüzdana. Gecikme yok, aracı yok, bekleme yok.",
                 event_centric_title: "Etkinlik-Merkezli Tasarım",
-                event_centric_desc: "Konserler, sinema ve workshop'lar için özel optimize edilmiş UI/UX."
+                event_centric_desc: "Konserler, sinema ve workshop'lar için özel optimize edilmiş UI/UX.",
+                gift_tickets_title: "Hediye Biletler",
+                gift_tickets_desc: "Bilet linklerini herkesle paylaşın. Talep için cüzdan gerekmiyor.",
+                trial_accounts_title: "Önce Dene",
+                trial_accounts_desc: "Yeni kullanıcılar cüzdan olmadan platformu keşfedebilir. Sürtünmesiz giriş, hazır olunca yükselt."
             },
             comparison: {
                 title: "Geleneksel Sistemler vs youtick",
@@ -635,6 +695,10 @@ export const translations = {
                 near_ecosystem_desc: "Düşük ücretler, yüksek performans ve kusursuz kullanıcı deneyimi.",
                 decentralization: "Tam Merkeziyetsizlik",
                 decentralization_desc: "Merkezi sunucu yok. Gerçek kullanıcı sahipliği ve sansür direnci.",
+                gift_tickets: "Hediye Biletler",
+                gift_tickets_desc: "Bilet linklerini herkesle paylaşın. Talep için cüzdan gerekmiyor.",
+                trial_accounts: "Önce Dene",
+                trial_accounts_desc: "Yeni kullanıcılar cüzdan olmadan keşfedebilir. Sürtünmesiz giriş, hazır olunca yükselt.",
                 comparison_web2: "vs Web2 Platformları",
                 comparison_web2_desc: "Üreticilere sahiplik ve 2x daha fazla gelir veriyoruz",
                 comparison_web3: "vs Kimlik Tabanlı",
@@ -652,6 +716,41 @@ export const translations = {
                 fees: "Minimal Ücretler",
                 fees_desc: "Tek seferlik depolama ücreti. Sürekli sunucu maliyeti yok. Maksimum kazanç."
             }
-        }
+        },
+        trial_banner: {
+            using_trial: "Trial hesap kullanıyorsun",
+            days_remaining: "gün kaldı",
+            upgrade_button: "Tam Cüzdana Geç"
+        },
+        trial_page: {
+            welcome_title: "YouTick'e Hoş Geldin!",
+            welcome_desc: "Web3 video platformunda içerikleri keşfet",
+            connect_wallet: "Cüzdan Bağla",
+            or: "veya",
+            try_free: "Ücretsiz Dene (7 Gün)",
+            no_wallet_required: "Cüzdan gerektirmez",
+            free_content_access: "Ücretsiz içeriklere eriş",
+            upgrade_anytime: "İstediğin zaman tam cüzdana geç",
+            choose_username: "Kullanıcı Adı Seç",
+            username_desc: "Bu, senin NEAR hesap adresinin olacak",
+            username_placeholder: "kullaniciadi",
+            username_validation: "En az 2 karakter, sadece harf, rakam, _ ve -",
+            username_taken: "Bu kullanıcı adı zaten alınmış. Lütfen başka bir tane seç.",
+            create_account: "Hesap Oluştur",
+            back: "Geri",
+            creating_account: "Hesabın oluşturuluyor...",
+            creating_wait: "Bu birkaç saniye sürebilir",
+            welcome_success: "Hoş Geldin!",
+            account_ready: "Hesabın hazır:",
+            trial_duration: "7 gün boyunca ücretsiz erişimin var",
+            ticket_ready: "Biletine şimdi erişebilirsin",
+            go_to_ticket: "Bilete Git",
+            start_exploring: "Keşfetmeye Başla",
+            error_title: "Bir şeyler yanlış gitti",
+            try_again: "Tekrar Dene",
+            generating_trial: "Trial oluşturuluyor...",
+            no_gift_link: "Hediye linki bulunamadı. Lütfen geçerli bir hediye linki kullanın veya cüzdanınızı bağlayın.",
+            gift_for: "Hediye bilet:"
+        },
     }
 };

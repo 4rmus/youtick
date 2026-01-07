@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Check, Package, Palette, Zap, Coins, Globe, Server } from 'lucide-react';
+import { Check, Package, Palette, Zap, Coins, Globe, Server, Gift, UserPlus } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { COLORS, ANIMATION } from '@/lib/constants';
 
@@ -10,6 +10,8 @@ const advantages = [
     { icon: Coins, titleKey: 'creator_first', descKey: 'creator_first_desc', color: 'text-emerald-400' },
     { icon: Globe, titleKey: 'near_ecosystem', descKey: 'near_ecosystem_desc', color: 'text-orange-400' },
     { icon: Server, titleKey: 'decentralization', descKey: 'decentralization_desc', color: 'text-red-400' },
+    { icon: Gift, titleKey: 'gift_tickets', descKey: 'gift_tickets_desc', color: 'text-cyan-400' },
+    { icon: UserPlus, titleKey: 'trial_accounts', descKey: 'trial_accounts_desc', color: 'text-violet-400' },
 ] as const;
 
 export const CompetitiveAdvantagesSection = memo(() => {

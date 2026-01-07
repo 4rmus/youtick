@@ -304,7 +304,7 @@ function ClaimContent() {
                         <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-zinc-900/40 to-transparent" />
 
                         {/* Gift Badge */}
-                        <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 rounded-full bg-white text-black text-xs font-bold shadow-lg">
+                        <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 rounded-full bg-near-green text-near-black text-xs font-bold shadow-lg">
                             <Sparkles className="w-3.5 h-3.5" />
                             Hediye Bilet
                         </div>
@@ -355,7 +355,7 @@ function ClaimContent() {
                         {/* CTA Button */}
                         <Button
                             onClick={() => setStep("claim-options")}
-                            className="w-full h-12 bg-white text-black hover:bg-zinc-200 font-semibold rounded-xl"
+                            className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
                         >
                             <Ticket className="w-5 h-5 mr-2" />
                             Hediyeyi Al
@@ -392,7 +392,7 @@ function ClaimContent() {
                             <button
                                 onClick={() => setAccountOption("new")}
                                 className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all ${accountOption === "new"
-                                    ? "bg-white text-black shadow-lg"
+                                    ? "bg-near-green text-near-black shadow-lg"
                                     : "text-zinc-400 hover:text-white"
                                     }`}
                             >
@@ -401,7 +401,7 @@ function ClaimContent() {
                             <button
                                 onClick={() => setAccountOption("existing")}
                                 className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all ${accountOption === "existing"
-                                    ? "bg-white text-black shadow-lg"
+                                    ? "bg-near-green text-near-black shadow-lg"
                                     : "text-zinc-400 hover:text-white"
                                     }`}
                             >
@@ -452,7 +452,7 @@ function ClaimContent() {
                                 <Button
                                     onClick={handleClaimWithNewAccount}
                                     disabled={!isValidUsername(newUsername) || accountCheckStatus !== "available"}
-                                    className="w-full h-12 bg-white text-black hover:bg-zinc-200 disabled:opacity-50 font-semibold rounded-xl"
+                                    className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 disabled:opacity-50 font-semibold rounded-xl"
                                 >
                                     <User className="w-4 h-4 mr-2" />
                                     {accountCheckStatus === "checking" ? "Kontrol ediliyor..." : "Hesap Oluştur ve Al"}
@@ -475,7 +475,7 @@ function ClaimContent() {
                                 <Button
                                     onClick={handleClaimToExisting}
                                     disabled={!existingAccountId.trim()}
-                                    className="w-full h-12 bg-white text-black hover:bg-zinc-200 disabled:opacity-50 font-semibold rounded-xl"
+                                    className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 disabled:opacity-50 font-semibold rounded-xl"
                                 >
                                     <Wallet className="w-4 h-4 mr-2" />
                                     Cüzdana Aktar
@@ -561,7 +561,7 @@ function ClaimContent() {
                         <div className="space-y-3 pt-2">
                             <Button
                                 onClick={() => window.location.href = "/watch"}
-                                className="w-full h-12 bg-white text-black hover:bg-zinc-200 font-semibold rounded-xl"
+                                className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
                             >
                                 <Play className="w-4 h-4 mr-2" />
                                 Hemen İzle

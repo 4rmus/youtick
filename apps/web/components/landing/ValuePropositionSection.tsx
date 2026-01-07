@@ -43,24 +43,24 @@ export const ValuePropositionSection = memo(() => {
                     {/* Benefits Grid - Concert Colors */}
                     <div className="grid md:grid-cols-3 gap-6">
                         <div className="p-8 rounded-2xl glass-card hover:scale-[1.02] transition-all duration-300 group">
-                            <div className="w-14 h-14 mb-6 bg-[#FF006E]/10 rounded-xl flex items-center justify-center group-hover:bg-[#FF006E]/20 transition-colors">
-                                <Zap className="w-7 h-7 text-[#FF006E]" />
+                            <div className="w-14 h-14 mb-6 bg-[var(--near-green)]/10 rounded-xl flex items-center justify-center group-hover:bg-[var(--near-green)]/20 transition-colors">
+                                <Zap className="w-7 h-7 text-[var(--near-green)]" />
                             </div>
                             <h3 className="text-xl font-bold text-white mb-3">{t.landing.value_proposition.instant}</h3>
                             <p className="text-zinc-500">{t.landing.value_proposition.instant_desc}</p>
                         </div>
 
                         <div className="p-8 rounded-2xl glass-card hover:scale-[1.02] transition-all duration-300 group">
-                            <div className="w-14 h-14 mb-6 bg-[#8338EC]/10 rounded-xl flex items-center justify-center group-hover:bg-[#8338EC]/20 transition-colors">
-                                <Shield className="w-7 h-7 text-[#8338EC]" />
+                            <div className="w-14 h-14 mb-6 bg-[var(--near-purple)]/10 rounded-xl flex items-center justify-center group-hover:bg-[var(--near-purple)]/20 transition-colors">
+                                <Shield className="w-7 h-7 text-[var(--near-purple)]" />
                             </div>
                             <h3 className="text-xl font-bold text-white mb-3">{t.landing.value_proposition.no_middlemen}</h3>
                             <p className="text-zinc-500">{t.landing.value_proposition.no_middlemen_desc}</p>
                         </div>
 
                         <div className="p-8 rounded-2xl glass-card hover:scale-[1.02] transition-all duration-300 group">
-                            <div className="w-14 h-14 mb-6 bg-[#00F5D4]/10 rounded-xl flex items-center justify-center group-hover:bg-[#00F5D4]/20 transition-colors">
-                                <TrendingUp className="w-7 h-7 text-[#00F5D4]" />
+                            <div className="w-14 h-14 mb-6 bg-[var(--near-blue)]/10 rounded-xl flex items-center justify-center group-hover:bg-[var(--near-blue)]/20 transition-colors">
+                                <TrendingUp className="w-7 h-7 text-[var(--near-blue)]" />
                             </div>
                             <h3 className="text-xl font-bold text-white mb-3">{t.landing.value_proposition.full_control}</h3>
                             <p className="text-zinc-500">{t.landing.value_proposition.full_control_desc}</p>

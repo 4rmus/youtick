@@ -172,7 +172,7 @@ export function GiftLinkGenerator({
                     <Button
                         onClick={handleGenerate}
                         disabled={generating || ticketCount < 1}
-                        className="w-full h-11 bg-white text-black hover:bg-zinc-200 font-semibold rounded-xl"
+                        className="w-full h-11 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
                     >
                         {generating ? (
                             <>
@@ -190,7 +190,7 @@ export function GiftLinkGenerator({
             ) : (
                 <>
                     {/* Success Header */}
-                    <div className="flex items-center gap-2 text-emerald-400 text-sm">
+                    <div className="flex items-center gap-2 text-near-green text-sm">
                         <Check className="w-4 h-4" />
                         <span>{links.length} hediye linki oluşturuldu!</span>
                     </div>
@@ -211,7 +211,7 @@ export function GiftLinkGenerator({
                                     className="p-1.5 hover:bg-zinc-700 rounded transition-colors"
                                 >
                                     {copiedIndex === index ? (
-                                        <Check className="w-4 h-4 text-emerald-400" />
+                                        <Check className="w-4 h-4 text-near-green" />
                                     ) : (
                                         <Copy className="w-4 h-4 text-zinc-400" />
                                     )}
