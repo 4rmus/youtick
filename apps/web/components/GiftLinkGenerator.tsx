@@ -38,7 +38,7 @@ export function GiftLinkGenerator({
                     keyStore: new (pkg.keyStores.InMemoryKeyStore)(),
                 }));
 
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
                 const account = await near.account(contractId);
 
                 const event: any = await account.viewFunction({
@@ -80,7 +80,7 @@ export function GiftLinkGenerator({
             const publicKeys = keyPairs.map(kp => kp.getPublicKey().toString());
             const secretKeys = keyPairs.map(kp => kp.toString().replace("ed25519:", ""));
 
-            const NFT_CONTRACT = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "dev-gift-1767641243.testnet";
+            const NFT_CONTRACT = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "v1.utick.testnet";
             const DEPOSIT_PER_TICKET = "150000000000000000000000";
             const totalDeposit = (BigInt(DEPOSIT_PER_TICKET) * BigInt(ticketCount)).toString();
 

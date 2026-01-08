@@ -7,7 +7,7 @@ import { connect, keyStores, KeyPair } from "near-api-js";
  * POST /api/trial/sponsored
  * Body: { username: string, new_public_key: string }
  * 
- * Creates: {username}.{contract_id} (e.g. "alice.dev-cr-1767470095.utick.testnet")
+ * Creates: {username}.{contract_id} (e.g. "alice.v1.utick.testnet")
  */
 export async function POST(request: Request) {
     try {
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
             );
         }
 
-        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "dev-cr-1767470095.utick.testnet";
+        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "v1.utick.testnet";
         const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || "testnet";
 
         // The new account will be: {username}.{contractId}

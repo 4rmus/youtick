@@ -8,7 +8,7 @@ import { Loader2, CheckCircle2, AlertCircle, Ticket, ExternalLink, Wallet, User,
 import { useLanguage } from "@/components/providers/LanguageContext";
 
 const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || "testnet";
-const NFT_CONTRACT = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "dev-gift-1767641243.testnet";
+const NFT_CONTRACT = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "v1.utick.testnet";
 
 interface GiftInfo {
     eventTitle?: string;

@@ -44,7 +44,7 @@ export function LinkAccount() {
 
             const message = "Allow this NEAR account to control a Lit PKP";
             const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
-            const recipient = "dev-gift-1767641243.testnet";
+            const recipient = "v1.utick.testnet";
 
             console.log("Requesting signature...");
             const result = await wallet.signMessage({ message, nonce, recipient });
@@ -83,7 +83,7 @@ export function LinkAccount() {
 
             const message = `I authorize Lit Protocol PKP for account ${accountId} at ${Date.now()}`;
             const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
-            const recipient = "dev-gift-1767641243.testnet";
+            const recipient = "v1.utick.testnet";
 
             console.log("Requesting NEAR signature for Lit Action...");
             const signResult = await wallet.signMessage({ message, nonce, recipient });

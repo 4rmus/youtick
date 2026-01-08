@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Branding } from './Branding';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { User, LogOut } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 
 interface NavigationProps {
   onDiscoverClick: () => void;
@@ -52,14 +52,23 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
               {t.landing.nav.home}
             </Button>
             <div className="flex items-center gap-2">
+              <Link href="/trial">
+                <Button
+                  variant="ghost"
+                  className="text-near-green hover:text-near-green/80"
+                >
+                  <Sparkles className="w-4 h-4 mr-1" />
+                  {language === 'tr' ? 'Ücretsiz Dene' : 'Try Free'}
+                </Button>
+              </Link>
               <Button
                 variant="ghost" onClick={() => modal?.show()}
                 className="text-zinc-400 hover:text-white"
               >
-                Login
+                {language === 'tr' ? 'Giriş' : 'Login'}
               </Button>
               <Link href="/upload">
-                <Button className="bg-white hover:bg-zinc-200 text-black">
+                <Button className="bg-near-green hover:bg-near-green/80 text-black font-semibold">
                   {t.landing.nav.upload}
                 </Button>
               </Link>
@@ -81,44 +90,39 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
         </button>
 
         {/* Desktop Nav - Centered */}
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden md:flex items-center gap-8 text-sm text-zinc-400">
-
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden md:flex items-center gap-6 text-sm text-zinc-400">
+          <a href="#pain-points" className="hover:text-white transition-colors">
+            {language === 'tr' ? 'Sorunlar' : 'Problems'}
+          </a>
+          <a href="#commission-comparison" className="hover:text-white transition-colors">
+            {t.landing.nav.comparison}
+          </a>
           <a href="#features" className="hover:text-white transition-colors">
             {t.landing.nav.features}
           </a>
-          <a href="#comparison" className="hover:text-white transition-colors">
-            {t.landing.nav.comparison}
-          </a>
-          <a href="#use-cases" className="hover:text-white transition-colors">
-            {t.landing.nav.use_cases}
+          <a href="#roi-calculator" className="hover:text-white transition-colors">
+            {language === 'tr' ? 'Hesaplayıcı' : 'Calculator'}
           </a>
           <a href="#how-it-works" className="hover:text-white transition-colors">
             {t.landing.nav.how_it_works}
           </a>
-          <a href="#roadmap" className="hover:text-white transition-colors">
-            {t.landing.nav.roadmap}
-          </a>
         </div>
-        <div className="flex items-center gap-4">
-          {/* Language Switcher for Guest */}
-          <div className="flex items-center gap-2 mr-2 border-r border-white/10 pr-4">
-            <button
-              onClick={() => setLanguage('en')}
-              className={`text-xs font-bold ${language === 'en' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
+        <div className="flex items-center gap-3">
+
+          {/* Try Free CTA */}
+          <Link href="/trial">
+            <Button
+              variant="outline"
+              className="border-near-green/50 text-near-green hover:bg-near-green/10 hover:border-near-green font-semibold px-4"
             >
-              EN
-            </button>
-            <button
-              onClick={() => setLanguage('tr')}
-              className={`text-xs font-bold ${language === 'tr' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
-            >
-              TR
-            </button>
-          </div>
+              <Sparkles className="w-4 h-4 mr-1" />
+              {language === 'tr' ? 'Ücretsiz Dene' : 'Try Free'}
+            </Button>
+          </Link>
 
           <Button
             onClick={handleGetStarted}
-            className="bg-white hover:bg-zinc-200 text-black font-semibold px-6"
+            className="bg-near-green hover:bg-near-green/80 text-black font-semibold px-6"
           >
             {t.landing.nav.start}
           </Button>
@@ -129,3 +133,4 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
 });
 
 Navigation.displayName = 'Navigation';
+

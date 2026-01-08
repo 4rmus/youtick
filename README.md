@@ -87,7 +87,7 @@ Create `apps/web/.env.local`:
 
 ```env
 NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=dev-cr-1767470095.utick.testnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
 NEXT_PUBLIC_LIT_ACTION_IPFS_CID=your_lit_action_cid
 LIT_DELEGATION_WALLET_PRIVATE_KEY=0x...         # Ethereum key for Lit PKP minting
 LIGHTHOUSE_API_KEY=your_lighthouse_api_key
@@ -154,7 +154,7 @@ youtick-mvp/
 
 ## 🔧 Smart Contract
 
-Deployed to: `dev-cr-1767470095.utick.testnet`
+Deployed to: `v1.utick.testnet`
 
 ### Key Functions
 
@@ -204,13 +204,13 @@ YouTick operates on a **Zero-Server Economy**:
 
 ```bash
 # View contract metadata
-near view v1-0-1.utick.testnet nft_metadata '{}'
+near view v1.utick.testnet nft_metadata '{}'
 
 # List tokens
-near view v1-0-1.utick.testnet nft_tokens '{"from_index":"0","limit":10}'
+near view v1.utick.testnet nft_tokens '{"from_index":"0","limit":10}'
 
 # Get event details
-near view v1-0-1.utick.testnet get_event '{"encrypted_cid":"VIDEO_CID"}'
+near view v1.utick.testnet get_event '{"encrypted_cid":"VIDEO_CID"}'
 ```
 
 ## 📄 License
@@ -225,6 +225,6 @@ MIT License
 
 ---
 
-**Contract**: `dev-cr-1767470095.utick.testnet` | **Network**: Testnet
+**Contract**: `v1.utick.testnet` | **Network**: Testnet
 
 *"Own Your Content. Own Your Audience. Own Your Revenue."*

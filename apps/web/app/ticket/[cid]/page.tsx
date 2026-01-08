@@ -34,7 +34,7 @@ export default function TicketPage() {
             if (!cid) return;
             try {
                 // Determine contract ID
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
 
                 // Fetch event metadata
                 const res = await fetch('/api/near-rpc', {
@@ -86,7 +86,7 @@ export default function TicketPage() {
             if (!accountId || !cid) return;
             setVerifyingAccess(true);
             try {
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
                 const res = await fetch('/api/near-rpc', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

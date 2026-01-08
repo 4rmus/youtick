@@ -34,7 +34,7 @@ export async function POST(request: Request) {
             );
         }
 
-        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "dev-cr-1767470095.utick.testnet";
+        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "v1.utick.testnet";
         const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || "testnet";
 
         // Setup keystore
