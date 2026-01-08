@@ -71,12 +71,14 @@ export function Navbar() {
 
                 <div className="hidden md:flex items-center gap-3">
                     {/* Try Free CTA */}
-                    <Link href="/trial">
-                        <button className="flex items-center gap-1 px-3 py-2 text-sm font-semibold text-near-green border border-near-green/50 rounded-full hover:bg-near-green/10 transition-colors">
-                            <Sparkles className="w-4 h-4" />
-                            {language === 'tr' ? 'Ücretsiz Dene' : 'Try Free'}
-                        </button>
-                    </Link>
+                    {!accountId && (
+                        <Link href="/trial">
+                            <button className="flex items-center gap-1 px-3 py-2 text-sm font-semibold text-near-green border border-near-green/50 rounded-full hover:bg-near-green/10 transition-colors">
+                                <Sparkles className="w-4 h-4" />
+                                {language === 'tr' ? 'Ücretsiz Dene' : 'Try Free'}
+                            </button>
+                        </Link>
+                    )}
 
                     {accountId ? (
                         <div className="rounded-full bg-near-black border border-near-green/30 flex items-center pl-3 pr-1 py-1 gap-2">
@@ -122,10 +124,12 @@ export function Navbar() {
                         </Link>
                     ))}
                     <div className="h-px bg-white/10 my-2" />
-                    <Link href="/trial" onClick={() => setIsMenuOpen(false)} className="text-near-green font-semibold flex items-center gap-2">
-                        <Sparkles className="w-4 h-4" />
-                        {language === 'tr' ? 'Ücretsiz Dene' : 'Try Free'}
-                    </Link>
+                    {!accountId && (
+                        <Link href="/trial" onClick={() => setIsMenuOpen(false)} className="text-near-green font-semibold flex items-center gap-2">
+                            <Sparkles className="w-4 h-4" />
+                            {language === 'tr' ? 'Ücretsiz Dene' : 'Try Free'}
+                        </Link>
+                    )}
                     {accountId ? (
                         <button onClick={handleSignOut} className="text-left text-red-500 font-medium">{t.nav.disconnect}</button>
                     ) : (
