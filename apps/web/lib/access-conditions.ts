@@ -180,11 +180,22 @@ export interface AccessControlConfig {
  * 2. The Lit Action that verifies NFT ownership before allowing decryption
  */
 export function createAccessControlConditions(config: AccessControlConfig): any[] {
-    // For now, use permissive ACC for encryption
-    // NEAR NFT verification happens at decryption time via PKP session Lit Action
+    /**
+     * TWO-LAYER SECURITY ARCHITECTURE:
+     * 
+     * Layer 1 (ACC - this function): Permissive placeholder
+     * - Uses eth_getBalance >= 0 (allows everyone)
+     * - This is intentional for NEAR-based dApps where users don't have ETH
+     * 
+     * Layer 2 (Lit Action during decryption): Actual security
+     * - PKP session Lit Action verifies NEAR NFT ownership via RPC
+     * - Only NFT holders can decrypt content
+     * 
+     * The real access control is enforced in the Lit Action, not here.
+     * This ACC exists because Lit SDK requires an ACC for encryption.
+     */
     console.log(`ACC created for video: ${config.videoUuid}, uploader: ${config.uploaderAccountId}`);
 
-    // Standard evmBasic ACC - actual NEAR verification happens at decryption via Lit Action
     return [
         {
             conditionType: 'evmBasic',
@@ -195,7 +206,7 @@ export function createAccessControlConditions(config: AccessControlConfig): any[
             parameters: [':userAddress', 'latest'],
             returnValueTest: {
                 comparator: '>=',
-                value: '0'
+                value: '0' // Permissive - real security is in Lit Action
             }
         }
     ];

@@ -81,6 +81,11 @@ export function UploadForm() {
 
     // PKP State for Uploader
     const [pkpData, setPkpData] = useState<{ publicKey: string, ethAddress: string, litActionCid: string } | null>(null);
+    const [pkpCheckComplete, setPkpCheckComplete] = useState(false);
+
+    // MPC Fallback Confirmation State
+    const [showMpcFallbackConfirm, setShowMpcFallbackConfirm] = useState(false);
+    const [pendingUploadAfterMpcConfirm, setPendingUploadAfterMpcConfirm] = useState(false);
 
     // Track the generated UUID for gifting
     const [generatedVideoUuid, setGeneratedVideoUuid] = useState<string | null>(null);
@@ -110,6 +115,7 @@ export function UploadForm() {
             checkGasStatus();
             checkPKPStatus();
             checkVerifiedCreatorStatus();
+            // Note: PKP mint now happens on file selection to avoid race conditions
         }
     }, [accountId, selector]);
 
@@ -127,10 +133,62 @@ export function UploadForm() {
             try {
                 const parsed = JSON.parse(cached);
                 setPkpData(parsed);
+                setPkpCheckComplete(true);
                 console.log("Found linked PKP for uploader:", parsed.ethAddress);
             } catch (e) {
                 console.warn("Error parsing cached PKP data:", e);
             }
+        }
+    };
+
+    // Pre-mint PKP on component mount (before user clicks upload)
+    // This prevents popup blocking since wallet popup opens immediately on upload click
+    const pkpMintInProgress = React.useRef(false);
+
+    const preMintPkp = async () => {
+        if (!accountId) return;
+
+        // Check if PKP already exists
+        const cached = localStorage.getItem(`lit_pkp_${accountId}`);
+        if (cached) {
+            console.log("✅ PKP already exists, no pre-mint needed");
+            return;
+        }
+
+        // Prevent concurrent mints (React StrictMode calls useEffect twice)
+        if (pkpMintInProgress.current) {
+            console.log("⏳ PKP mint already in progress, skipping...");
+            return;
+        }
+        pkpMintInProgress.current = true;
+
+        console.log("🔐 Pre-minting PKP in background...");
+
+        try {
+            const response = await fetch('/api/relayer/mint', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nearAccountId: accountId })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.pkp) {
+                    localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify(data.pkp));
+                    setPkpData(data.pkp);
+                    console.log("✅ PKP pre-minted successfully:", data.pkp.ethAddress);
+                }
+            } else {
+                const errorData = await response.json();
+                console.warn("⚠️ PKP pre-mint failed (will use MPC):", errorData.error);
+            }
+        } catch (error) {
+            console.warn("⚠️ PKP pre-mint error (will use MPC):", error);
+        } finally {
+            pkpMintInProgress.current = false;
+            setPkpCheckComplete(true);
+            // Update CostReceipt after PKP status is known
+            checkGasStatus();
         }
     };
 
@@ -200,6 +258,12 @@ export function UploadForm() {
                 // Recalculate pay amount with new fee
                 const cachedPkp = localStorage.getItem(`lit_pkp_${accountId}`);
                 recalculatePayAmount(fee, parseFloat(currentBalance), !!cachedPkp);
+
+                // Pre-mint PKP when file is selected (not on mount)
+                // This gives enough time for PKP to be ready before upload click
+                if (!cachedPkp) {
+                    preMintPkp();
+                }
 
             } catch (err) {
                 console.error("Error calculating fee:", err);
@@ -448,12 +512,38 @@ export function UploadForm() {
 
                 // Step 1: Mint complete
                 updateStep('mint', 'complete');
-                setStatus('Ticket Minted! Processing refund...');
+                setStatus('Ticket Minted! Checking for excess deposit...');
 
-                // Step 2: Refund (with small delay for visual feedback)
+                // Step 2: Auto-Refund Excess Gas (when MPC fallback was used with 1 NEAR deposit)
                 await new Promise(resolve => setTimeout(resolve, 500));
                 updateStep('refund', 'loading');
-                await new Promise(resolve => setTimeout(resolve, 800));
+
+                try {
+                    // Check remaining prepaid balance
+                    const refundNodeUrl = selector?.options?.network?.nodeUrl || 'https://rpc.testnet.near.org';
+                    const remainingBalance = await sessionManager.getAccountBalance(refundNodeUrl);
+                    const minKeepBalance = 0.1; // Keep minimum for future operations
+
+                    if (remainingBalance > minKeepBalance + 0.05) {
+                        // Refund excess - use withdraw_funds_prepaid (signless)
+                        // Note: This is limited to 0.1 NEAR per call by contract security
+                        const refundAmount = Math.min(remainingBalance - minKeepBalance, 0.1);
+
+                        if (refundAmount > 0.02) {
+                            console.log(`💰 Refunding excess: ${refundAmount.toFixed(4)} NEAR (keeping ${minKeepBalance} NEAR for future ops)`);
+                            setStatus(`Refunding ${refundAmount.toFixed(2)} NEAR to your account...`);
+
+                            await sessionManager.withdrawFundsSilent(refundAmount.toString());
+                            console.log('✅ Refund complete!');
+                        }
+                    } else {
+                        console.log(`ℹ️ No excess to refund (balance: ${remainingBalance.toFixed(4)} NEAR)`);
+                    }
+                } catch (refundError: any) {
+                    console.warn('Refund failed (non-critical):', refundError.message);
+                    // Refund failure is non-critical, continue with success
+                }
+
                 updateStep('refund', 'complete');
                 setStatus('Refund processed! Creating event...');
 
@@ -470,8 +560,7 @@ export function UploadForm() {
                 setStatus(`Upload success, but Blockchain actions failed: ${mintError.message}`);
             }
 
-            // 7. Auto-Refund Excess Gas - DISABLED
-            // Excess gas remains in contract as per user request.
+            // Final success message
             setStatus('Success! Video Uploaded & Ticket Sales Started!');
 
             setUploading(false);
@@ -562,34 +651,111 @@ export function UploadForm() {
             updateStep('session', 'loading');
             setStatus('Checking gas balance...');
 
+            // ============ PKP-FIRST with MPC FALLBACK ============
+            // 1. Try to mint PKP first (free, Relayer pays)
+            // 2. If PKP fails, STOP and ask user confirmation for MPC (1 NEAR)
+            // 3. Only continue with MPC after user confirms
+            let currentPkp = localStorage.getItem(`lit_pkp_${accountId}`);
+            let pkpFailed = false;
+
+            if (!currentPkp && !pendingUploadAfterMpcConfirm) {
+                // First attempt - try PKP mint
+                console.log("🔐 PKP-First: No PKP found. Minting before session key setup...");
+                setStatus("Setting up PKP for zero-cost signing...");
+
+                try {
+                    const response = await fetch('/api/relayer/mint', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ nearAccountId: accountId })
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.pkp) {
+                            localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify(data.pkp));
+                            setPkpData(data.pkp);
+                            currentPkp = JSON.stringify(data.pkp);
+                            console.log("✅ PKP minted FIRST - will save ~0.25 NEAR on MPC:", data.pkp.ethAddress);
+                        }
+                    } else {
+                        const errorData = await response.json();
+                        console.warn("⚠️ PKP mint failed:", errorData.error);
+                        pkpFailed = true;
+                    }
+                } catch (pkpError) {
+                    console.warn("⚠️ PKP mint error:", pkpError);
+                    pkpFailed = true;
+                }
+
+                // If PKP failed, stop here and ask user confirmation
+                if (pkpFailed) {
+                    console.log("🛑 PKP failed - showing MPC confirmation dialog");
+                    setStatus("PKP oluşturulamadı. MPC fallback için onay gerekli.");
+                    setShowMpcFallbackConfirm(true);
+                    setUploading(false);
+                    return; // Stop here, wait for user confirmation
+                }
+            } else if (!currentPkp && pendingUploadAfterMpcConfirm) {
+                // User confirmed MPC fallback, continue with MPC
+                console.log("✅ User confirmed MPC fallback, continuing...");
+                setPendingUploadAfterMpcConfirm(false);
+                pkpFailed = true; // Mark as using MPC
+            } else {
+                // PKP exists, update state if not already set
+                if (!pkpData && currentPkp) {
+                    try {
+                        const parsed = JSON.parse(currentPkp);
+                        setPkpData(parsed);
+                        console.log("✅ Using cached PKP (zero MPC cost):", parsed.ethAddress);
+                    } catch (e) {
+                        console.warn("Error parsing cached PKP:", e);
+                    }
+                }
+            }
+            // ================================================
+
+            // Re-check PKP status after potential mint
+            const hasPkpNow = !!currentPkp;
+
             // Re-check gas balance BEFORE upload
             const nodeUrl = selector?.options?.network?.nodeUrl || 'https://rpc.testnet.near.org';
             const currentGasBalance = await sessionManager.getAccountBalance(nodeUrl);
 
-            // Check for PKP to determine minimum required
-            const cachedPkp = localStorage.getItem(`lit_pkp_${accountId}`);
-            const hasPkpNow = !!cachedPkp;
-
             // Calculate minimum required:
             // With PKP: NFT (0.1) + Event (0.1) = 0.2 NEAR
-            // Without PKP: MPC (0.25) + NFT (0.1) + Event (0.1) = 0.45 NEAR (using 0.5 for safety)
+            // Without PKP (MPC fallback): MPC (0.25) + NFT (0.1) + Event (0.1) = 0.45 NEAR
             const minRequired = hasPkpNow ? 0.2 : 0.5;
 
-            console.log(`📊 Dynamic Gas Check: Balance=${currentGasBalance}, Required=${minRequired}, HasPKP=${hasPkpNow}`);
+            console.log(`📊 Gas Check: Balance=${currentGasBalance}, Required=${minRequired}, HasPKP=${hasPkpNow}, PKPFailed=${pkpFailed}`);
 
             if (!hasSessionKey) {
                 // First time user - create session key with appropriate deposit
                 setStatus('Setting up Session Key...');
-                const depositAmount = hasPkpNow ? '0.3' : '0.6'; // Extra margin for safety
-                console.log(`Creating session key (first-time setup - depositing ${depositAmount} NEAR)...`);
 
-                // Use the regular createSessionKey with appropriate amount
+                // Deposit amount based on PKP status:
+                // - PKP available: 0.5 NEAR (covers MPC fallback if PKP signing fails)
+                // - PKP failed/MPC fallback: 1.0 NEAR (to cover MPC + operations + refund margin)
+                // Even with PKP, we deposit extra for safety since PKP signing can timeout
+                const depositAmount = hasPkpNow ? '0.3' : '1.0';
+
+                if (!hasPkpNow) {
+                    console.log(`⚠️ PKP unavailable - using MPC fallback with ${depositAmount} NEAR deposit (will refund excess after mint)`);
+                    setStatus(`PKP unavailable - depositing ${depositAmount} NEAR (excess will be refunded)...`);
+                } else {
+                    console.log(`Creating session key (PKP available - depositing ${depositAmount} NEAR)...`);
+                }
+
                 await sessionManager.createSessionKey(wallet, depositAmount);
                 setIsVerifiedCreator(true);
                 console.log("Session key created!");
             } else if (currentGasBalance < minRequired) {
                 // Returning user with insufficient balance - top up
-                const topUpAmount = Math.ceil((minRequired - currentGasBalance + 0.1) * 10) / 10;
+                // For MPC fallback, ensure enough for MPC + operations
+                const topUpAmount = hasPkpNow
+                    ? Math.ceil((minRequired - currentGasBalance + 0.1) * 10) / 10
+                    : 1.0; // 1 NEAR for MPC fallback
+
                 setStatus(`Gas balance low (${currentGasBalance.toFixed(2)} NEAR). Topping up ${topUpAmount} NEAR...`);
                 console.log(`⛽ Topping up gas: Current=${currentGasBalance}, Required=${minRequired}, TopUp=${topUpAmount}`);
 
@@ -605,51 +771,7 @@ export function UploadForm() {
 
             setStatus('Verifying Identity & Preparing Session...');
 
-            // ============ PKP AUTO-MINT LOGIC ============
-            // Check for PKP on EVERY upload, auto-mint if missing, fallback to MPC if fails
-            let currentPkp = localStorage.getItem(`lit_pkp_${accountId}`);
-
-            if (!currentPkp) {
-                console.log("🔐 No PKP found. Attempting auto-mint...");
-                setStatus("Setting up PKP for signless experience...");
-
-                try {
-                    const response = await fetch('/api/relayer/mint', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ nearAccountId: accountId })
-                    });
-
-                    if (response.ok) {
-                        const data = await response.json();
-                        if (data.pkp) {
-                            localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify(data.pkp));
-                            setPkpData(data.pkp);
-                            currentPkp = JSON.stringify(data.pkp);
-                            console.log("✅ PKP auto-minted successfully:", data.pkp.ethAddress);
-                        }
-                    } else {
-                        const errorData = await response.json();
-                        console.warn("⚠️ PKP auto-mint failed, will use MPC fallback:", errorData.error);
-                    }
-                } catch (pkpError) {
-                    console.warn("⚠️ PKP auto-mint error, will use MPC fallback:", pkpError);
-                }
-            } else {
-                // PKP exists, update state if not already set
-                if (!pkpData) {
-                    try {
-                        const parsed = JSON.parse(currentPkp);
-                        setPkpData(parsed);
-                        console.log("✅ Using cached PKP:", parsed.ethAddress);
-                    } catch (e) {
-                        console.warn("Error parsing cached PKP:", e);
-                    }
-                }
-            }
-            // ============================================
-
-            // Derive MPC address (mathematical - lightning fast)
+            // Derive MPC address (mathematical derivation - no gas cost)
             const recoveredAddress = await deriveEthAddress(CONTRACT_ID, derivationPath);
             console.log('Identity Verified. MPC Address:', recoveredAddress);
             updateStep('session', 'complete');
@@ -705,6 +827,26 @@ export function UploadForm() {
             // MPC fallback if PKP not available or failed
             if (!mpcSignature) {
                 console.log("Using MPC for Lighthouse auth (requires gas)...");
+
+                // Check if we have enough balance for MPC (0.25 NEAR)
+                // This is needed when PKP signing failed at runtime after deposit was made
+                const nodeUrl = selector?.options?.network?.nodeUrl || 'https://rpc.testnet.near.org';
+                const currentBalance = await sessionManager.getAccountBalance(nodeUrl);
+                const mpcCost = 0.25;
+
+                if (currentBalance < mpcCost) {
+                    console.log(`⚠️ Insufficient balance for MPC: ${currentBalance} < ${mpcCost}`);
+                    setStatus(`PKP failed, MPC requires more gas. Please top-up.`);
+
+                    // Request top-up
+                    const topUpAmount = Math.ceil((mpcCost - currentBalance + 0.3) * 10) / 10;
+                    console.log(`Requesting top-up of ${topUpAmount} NEAR for MPC fallback...`);
+
+                    const wallet = await getWallet();
+                    await sessionManager.topUpGas(wallet, topUpAmount.toString());
+                    console.log(`✅ Topped up ${topUpAmount} NEAR for MPC fallback`);
+                }
+
                 setStatus("Signing with MPC...");
 
                 const realHash = ethers.sha256(ethers.toUtf8Bytes(messageToSign));
@@ -874,6 +1016,54 @@ export function UploadForm() {
                             </Alert>
                         )}
 
+                        {/* MPC Fallback Confirmation Dialog */}
+                        {showMpcFallbackConfirm && (
+                            <Alert className="border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                                <AlertCircle className="h-4 w-4" />
+                                <AlertTitle>{t.upload_page.mpc_fallback.title}</AlertTitle>
+                                <AlertDescription className="flex flex-col gap-3">
+                                    <p>{t.upload_page.mpc_fallback.desc}</p>
+                                    <div className="text-sm space-y-1">
+                                        <div className="flex justify-between">
+                                            <span>{t.upload_page.mpc_fallback.mpc_deposit}:</span>
+                                            <span className="font-mono">1.0 NEAR</span>
+                                        </div>
+                                        <div className="flex justify-between text-green-500">
+                                            <span>{t.upload_page.mpc_fallback.estimated_refund}:</span>
+                                            <span className="font-mono">~0.45 NEAR</span>
+                                        </div>
+                                        <div className="flex justify-between font-bold">
+                                            <span>{t.upload_page.mpc_fallback.net_cost}:</span>
+                                            <span className="font-mono">~0.55 NEAR</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-2 mt-2">
+                                        <Button
+                                            onClick={() => {
+                                                setShowMpcFallbackConfirm(false);
+                                                setPendingUploadAfterMpcConfirm(true);
+                                                handleUpload(); // Restart upload with MPC
+                                            }}
+                                            variant="default"
+                                            className="flex-1 bg-amber-500 hover:bg-amber-600"
+                                        >
+                                            {t.upload_page.mpc_fallback.continue_btn}
+                                        </Button>
+                                        <Button
+                                            onClick={() => {
+                                                setShowMpcFallbackConfirm(false);
+                                                setStatus('');
+                                            }}
+                                            variant="outline"
+                                            className="flex-1 border-amber-500/50 hover:bg-amber-500/10"
+                                        >
+                                            {t.upload_page.mpc_fallback.cancel_btn}
+                                        </Button>
+                                    </div>
+                                </AlertDescription>
+                            </Alert>
+                        )}
+
                         {retryStep === 'sign_auth' && (
                             <Alert className="border-yellow-500/50 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">
                                 <AlertCircle className="h-4 w-4" />
@@ -909,8 +1099,8 @@ export function UploadForm() {
                         )}
                     </CardContent>
 
-                    {/* Cost Receipt Section */}
-                    {file && (
+                    {/* Cost Receipt Section - shown after PKP status is determined */}
+                    {file && (pkpCheckComplete || !!pkpData) && (
                         <div className="px-6 pb-2">
                             <CostReceipt
                                 storageFee={estimatedStorageFee}
@@ -921,14 +1111,25 @@ export function UploadForm() {
                                 gasBalance={gasBalance}
                                 requiredGas={REQUIRED_GAS}
                                 needsTopUp={needsTopUp}
+                                isFirstUpload={!isVerifiedCreator}
                             />
+                        </div>
+                    )}
+
+                    {/* Loading indicator while PKP is being minted */}
+                    {file && !pkpCheckComplete && !pkpData && (
+                        <div className="px-6 pb-2">
+                            <div className="rounded-lg border border-white/10 bg-black/20 p-4 flex items-center justify-center gap-2">
+                                <Loader2 className="h-4 w-4 animate-spin text-green-400" />
+                                <span className="text-sm text-zinc-400">Setting up PKP for signless upload...</span>
+                            </div>
                         </div>
                     )}
 
                     <CardFooter>
                         <Button
                             onClick={handleUpload}
-                            disabled={uploading || !file || !title || !description || !accountId}
+                            disabled={uploading || !file || !title || !description || !accountId || (!pkpCheckComplete && !pkpData)}
                             className="w-full"
                         >
                             {uploading ? (
