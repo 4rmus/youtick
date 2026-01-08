@@ -43,13 +43,12 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 setSelector(selector);
                 setAccounts(selector.store.getState().accounts);
 
-                // Add a small delay to ensure DOM is fully ready and stable
-                setTimeout(() => {
-                    const modal = setupModal(selector, {
-                        contractId: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || '',
-                    });
-                    setModal(modal);
-                }, 200);
+                // P1 LCP Optimization: Remove arbitrary delay, setup modal immediately
+                // The selector is already ready at this point
+                const modal = setupModal(selector, {
+                    contractId: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || '',
+                });
+                setModal(modal);
             })
             .catch((err) => {
                 console.error('Failed to setup wallet selector', err);

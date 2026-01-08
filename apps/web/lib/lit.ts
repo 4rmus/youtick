@@ -6,9 +6,52 @@ import { ethers } from "ethers";
 
 export const LIT_ACTION_CID = "QmZhqF9xZAJTTRyUR4d5L1zt83MByXaXUQuaU3a7gKdsh6";
 
+// P1 Fix: Lit Error Handling Wrapper with exponential backoff
+async function withLitErrorHandling<T>(
+    operation: () => Promise<T>,
+    maxRetries: number = 3,
+    fallback?: T
+): Promise<T> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            return await operation();
+        } catch (error: any) {
+            lastError = error;
+            console.warn(`Lit operation attempt ${attempt + 1}/${maxRetries} failed:`, error.message);
+
+            // Check for rate limiting or transient errors
+            if (
+                error.message?.includes('rate limit') ||
+                error.message?.includes('timeout') ||
+                error.message?.includes('handshake') ||
+                error.message?.includes('network')
+            ) {
+                // Exponential backoff: 1s, 2s, 4s
+                const delay = 1000 * Math.pow(2, attempt);
+                console.log(`Retrying in ${delay}ms...`);
+                await new Promise(r => setTimeout(r, delay));
+                continue;
+            }
+
+            // Non-transient error, don't retry
+            break;
+        }
+    }
+
+    if (fallback !== undefined) {
+        console.warn('Lit operation failed, using fallback');
+        return fallback;
+    }
+
+    throw lastError || new Error('Lit operation failed after retries');
+}
+
 // Session cache key prefix
 const SESSION_CACHE_KEY = 'lit_session_sigs';
-const SESSION_CACHE_EXPIRY = 30 * 24 * 60 * 60 * 1000; // 30 days - minimizes gas costs for viewers
+// P0 Security Fix: Reduced from 30 days to 7 days to minimize XSS token theft window
+const SESSION_CACHE_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 // Operation types for dual caching strategy
 export type SessionOperation = 'upload' | 'view' | 'purchase';
@@ -615,11 +658,14 @@ class Lit {
         `;
 
         try {
-            const result = await this.litNodeClient.executeJs({
-                sessionSigs,
-                code: signLitActionCode,
-                jsParams: {} // Keep empty, params embedded in code
-            });
+            // Wrap executeJs with retry logic for transient failures
+            const result = await withLitErrorHandling(async () => {
+                return await this.litNodeClient.executeJs({
+                    sessionSigs,
+                    code: signLitActionCode,
+                    jsParams: {} // Keep empty, params embedded in code
+                });
+            }, 3); // 3 retries with exponential backoff
 
             console.log("PKP signing result:", result);
 
@@ -638,6 +684,11 @@ class Lit {
 
             throw new Error("No signature in PKP result");
         } catch (e: any) {
+            // Provide specific error message for timeout
+            if (e.message?.includes('timeout') || e.message?.includes('30000ms')) {
+                console.error("PKP signing timed out. Lit nodes may be overloaded.");
+                throw new Error("PKP signing timed out. Falling back to MPC.");
+            }
             console.error("PKP signing failed:", e.message);
             throw e;
         }

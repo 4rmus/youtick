@@ -522,11 +522,19 @@ impl Contract {
 
     /// Withdraw prepaid funds - Callable via Session Key (no deposit required)
     /// This enables signless refund functionality for users
+    /// P0 Security Fix: Limited to 0.1 NEAR max to prevent session key abuse
     pub fn withdraw_funds_prepaid(&mut self) -> Promise {
         let account_id = env::predecessor_account_id();
         let current_bal = self.user_deposits.get(&account_id).unwrap_or(NearToken::from_yoctonear(0));
         
         require!(current_bal.as_yoctonear() > 0, "No funds to withdraw");
+        
+        // P0 Security: Limit signless withdrawals to prevent session key abuse
+        let max_signless_withdraw = NearToken::from_millinear(100); // 0.1 NEAR
+        require!(
+            current_bal <= max_signless_withdraw,
+            "Amount exceeds signless limit (0.1 NEAR). Use withdraw_funds with wallet signature for larger amounts."
+        );
         
         // Remove balance (Effects first)
         self.user_deposits.remove(&account_id);

@@ -193,10 +193,10 @@ export default function ProfilePage() {
                             <div>
                                 <h3 className="font-semibold text-white flex items-center gap-2">
                                     <span className="text-near-green">⚡</span>
-                                    Trial Hesabınızı Yükseltin
+                                    {t.profile_page.upgrade_trial_title}
                                 </h3>
                                 <p className="text-sm text-zinc-300 mt-1">
-                                    Kalıcı bir NEAR hesabı oluşturun ve tüm özelliklere erişin.
+                                    {t.profile_page.upgrade_trial_desc}
                                 </p>
                             </div>
                             <TrialUpgradeDialog
@@ -216,10 +216,14 @@ export default function ProfilePage() {
                                 <div className="p-2 bg-zinc-800 rounded-lg">
                                     <Ticket className="w-5 h-5 text-zinc-400" />
                                 </div>
-                                <h2 className="font-bold text-xl text-white">Tickets</h2>
+                                <h2 className="font-bold text-xl text-white">{t.profile_page.my_tickets}</h2>
                             </div>
                             <span className="text-xs text-zinc-500 bg-zinc-800/50 px-2 py-1 rounded">
-                                {tokens.length}
+                                {/* Filter out own uploads - only show purchased tickets */}
+                                {tokens.filter(t => {
+                                    const tokenCid = t.video_metadata?.encrypted_cid;
+                                    return !createdEvents.some(e => e.cid === tokenCid);
+                                }).length}
                             </span>
                         </div>
 
@@ -227,7 +231,10 @@ export default function ProfilePage() {
                             <div className="flex justify-center py-12">
                                 <Loader2 className="h-8 w-8 animate-spin text-zinc-500" />
                             </div>
-                        ) : tokens.length === 0 ? (
+                        ) : tokens.filter(t => {
+                            const tokenCid = t.video_metadata?.encrypted_cid;
+                            return !createdEvents.some(e => e.cid === tokenCid);
+                        }).length === 0 ? (
                             <div className="text-center py-12 border border-dashed border-zinc-800 rounded-xl bg-zinc-950/50">
                                 <Ticket className="w-10 h-10 mx-auto text-zinc-700 mb-3" />
                                 <h3 className="text-sm font-medium text-white mb-1">{t.profile_page.no_tickets}</h3>
@@ -238,43 +245,49 @@ export default function ProfilePage() {
                             </div>
                         ) : (
                             <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
-                                {tokens.map((token: TokenWithVideo) => {
-                                    const videoCid = token.video_metadata?.encrypted_cid;
-                                    const isAccessPass = videoCid === 'ACCESS_PASS';
-                                    const title = token.metadata?.title || token.token_id;
-                                    const media = token.metadata?.media;
+                                {tokens
+                                    .filter((token: TokenWithVideo) => {
+                                        // Exclude own uploads - only show purchased tickets
+                                        const tokenCid = token.video_metadata?.encrypted_cid;
+                                        return !createdEvents.some(e => e.cid === tokenCid);
+                                    })
+                                    .map((token: TokenWithVideo) => {
+                                        const videoCid = token.video_metadata?.encrypted_cid;
+                                        const isAccessPass = videoCid === 'ACCESS_PASS';
+                                        const title = token.metadata?.title || token.token_id;
+                                        const media = token.metadata?.media;
 
-                                    return (
-                                        <Link
-                                            key={token.token_id}
-                                            href={!isAccessPass && videoCid ? `/watch?cid=${videoCid}` : '/watch'}
-                                            className="block group"
-                                        >
-                                            <div className="flex gap-3 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900 transition-all">
-                                                <div className="w-20 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-800">
-                                                    {media && !media.includes('token.png') ? (
-                                                        <img src={media} alt={title} className="w-full h-full object-cover" />
-                                                    ) : (
-                                                        <div className="w-full h-full flex items-center justify-center">
-                                                            <Video className="w-5 h-5 text-zinc-600" />
-                                                        </div>
-                                                    )}
+                                        return (
+                                            <Link
+                                                key={token.token_id}
+                                                href={!isAccessPass && videoCid ? `/watch?cid=${videoCid}` : '/watch'}
+                                                className="block group"
+                                            >
+                                                <div className="flex gap-3 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900 transition-all">
+                                                    <div className="w-20 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-800">
+                                                        {media && !media.includes('token.png') ? (
+                                                            <img src={media} alt={title} className="w-full h-full object-cover" />
+                                                        ) : (
+                                                            <div className="w-full h-full flex items-center justify-center">
+                                                                <Video className="w-5 h-5 text-zinc-600" />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <h4 className="text-sm font-medium text-white truncate">{title}</h4>
+                                                        <p className="text-xs text-zinc-500 mt-0.5">
+                                                            {isAccessPass ? 'Access Pass' : 'NFT Ticket'}
+                                                        </p>
+                                                    </div>
+                                                    <div className="opacity-0 group-hover:opacity-100 transition-opacity self-center">
+                                                        <span className="text-[10px] font-bold text-near-black bg-near-green px-2 py-1 rounded">
+                                                            {t.profile_page.watch_btn}
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <h4 className="text-sm font-medium text-white truncate">{title}</h4>
-                                                    <p className="text-xs text-zinc-500 mt-0.5">
-                                                        {isAccessPass ? 'Access Pass' : 'NFT Ticket'}
-                                                    </p>
-                                                </div>
-                                                <div className="opacity-0 group-hover:opacity-100 transition-opacity self-center">
-                                                    <span className="text-[10px] font-bold text-near-black bg-near-green px-2 py-1 rounded">
-                                                        Watch
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </Link>
-                                    );
-                                })}
+                                            </Link>
+                                        );
+                                    })}
                             </div>
                         )}
                     </div>

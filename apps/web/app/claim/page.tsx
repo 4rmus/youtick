@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, CheckCircle2, AlertCircle, Ticket, ExternalLink, Wallet, User, Play, Sparkles } from "lucide-react";
+import { useLanguage } from "@/components/providers/LanguageContext";
 
 const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || "testnet";
 const NFT_CONTRACT = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "dev-gift-1767641243.testnet";
@@ -18,6 +19,7 @@ interface GiftInfo {
 }
 
 function ClaimContent() {
+    const { t } = useLanguage();
     const searchParams = useSearchParams();
     const secretKey = searchParams.get("secret") || searchParams.get("key");
     const eventCidParam = searchParams.get("eventCid");
@@ -77,7 +79,7 @@ function ClaimContent() {
         const validateGift = async () => {
             if (!secretKey) {
                 setStep("error");
-                setError("Geçersiz link. Claim key bulunamadı.");
+                setError(t.claim_page?.invalid_link || "Geçersiz link. Claim key bulunamadı.");
                 return;
             }
 
@@ -105,7 +107,7 @@ function ClaimContent() {
                 });
 
                 if (!giftData) {
-                    setError("Bu link geçersiz veya daha önce kullanılmış.");
+                    setError(t.claim_page?.invalid_or_used || "Bu link geçersiz veya daha önce kullanılmış.");
                     setStep("error");
                     return;
                 }
@@ -118,7 +120,7 @@ function ClaimContent() {
                 });
 
                 // Parse title and media from event
-                let title = eventData?.title || "YouTick Exclusive Content";
+                let title = eventData?.title || (t.claim_page?.exclusive_content || "YouTick Exclusive Content");
                 let media = "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png";
 
                 if (title && title.includes(':::')) {
@@ -137,21 +139,21 @@ function ClaimContent() {
                     creator: giftData.creator_id,
                     eventCid: giftData.event_cid,
                     media: media,
-                    description: "Özel içeriğe erişim bileti"
+                    description: t.claim_page?.ticket_for_content || "Özel içeriğe erişim bileti"
                 });
                 setStep("preview");
             } catch (err: any) {
                 console.error("Gift validation error:", err);
                 if (eventCidParam) {
                     setGiftInfo({
-                        eventTitle: "YouTick Exclusive Content",
+                        eventTitle: t.claim_page?.exclusive_content || "YouTick Exclusive Content",
                         creator: "Creator",
                         eventCid: decodeURIComponent(eventCidParam),
                         media: "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png"
                     });
                     setStep("preview");
                 } else {
-                    setError("Hediye bilgisi alınamadı. Link geçersiz olabilir.");
+                    setError(t.claim_page?.gift_info_failed || "Hediye bilgisi alınamadı. Link geçersiz olabilir.");
                     setStep("error");
                 }
             }
@@ -211,11 +213,11 @@ function ClaimContent() {
             setStep("success");
         } catch (err: any) {
             console.error("Create account error:", err);
-            let errorMsg = "Hesap oluşturulamadı.";
+            let errorMsg = t.claim_page?.account_create_failed || "Hesap oluşturulamadı.";
             if (err.message?.includes("already claimed")) {
-                errorMsg = "Bu hediye linki daha önce kullanılmış.";
+                errorMsg = t.claim_page?.invalid_or_used || "Bu hediye linki daha önce kullanılmış.";
             } else if (err.message?.includes("account already exists")) {
-                errorMsg = "Bu hesap adı zaten kullanılıyor.";
+                errorMsg = t.claim_page?.username_taken || "Bu hesap adı zaten kullanılıyor.";
             }
             setError(errorMsg);
             setStep("error");
@@ -261,11 +263,11 @@ function ClaimContent() {
             setStep("success");
         } catch (err: any) {
             console.error("Claim to existing error:", err);
-            let errorMsg = "Bilet aktarılamadı.";
+            let errorMsg = t.claim_page?.transfer_failed || "Bilet aktarılamadı.";
             if (err.message?.includes("already claimed")) {
-                errorMsg = "Bu hediye linki daha önce kullanılmış.";
+                errorMsg = t.claim_page?.invalid_or_used || "Bu hediye linki daha önce kullanılmış.";
             } else if (err.message?.includes("Invalid")) {
-                errorMsg = "Geçersiz hediye linki.";
+                errorMsg = t.claim_page?.invalid_link || "Geçersiz hediye linki.";
             }
             setError(errorMsg);
             setStep("error");
@@ -283,7 +285,7 @@ function ClaimContent() {
             <div className="w-full max-w-md mx-auto">
                 <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-8 text-center">
                     <Loader2 className="w-10 h-10 animate-spin text-zinc-400 mx-auto" />
-                    <p className="text-zinc-300 mt-4 text-sm">Hediye bilgisi yükleniyor...</p>
+                    <p className="text-zinc-300 mt-4 text-sm">{t.claim_page?.loading_gift || "Hediye bilgisi yükleniyor..."}</p>
                 </div>
             </div>
         );
@@ -306,7 +308,7 @@ function ClaimContent() {
                         {/* Gift Badge */}
                         <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 rounded-full bg-near-green text-near-black text-xs font-bold shadow-lg">
                             <Sparkles className="w-3.5 h-3.5" />
-                            Hediye Bilet
+                            {t.claim_page?.gift_ticket_badge || "Hediye Bilet"}
                         </div>
 
                         {/* Play indicator */}
@@ -334,7 +336,7 @@ function ClaimContent() {
                                 </div>
                             </div>
                             <div className="flex-1 min-w-0">
-                                <p className="text-xs text-zinc-500 uppercase tracking-wider">Gönderen</p>
+                                <p className="text-xs text-zinc-500 uppercase tracking-wider">{t.claim_page?.sent_by || "Gönderen"}</p>
                                 <p className="text-sm text-white font-medium truncate">
                                     {giftInfo?.creator}
                                 </p>
@@ -344,12 +346,12 @@ function ClaimContent() {
                         {/* Blockchain Badge */}
                         <div className="flex items-center justify-center gap-2 text-xs text-emerald-400">
                             <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Blockchain ile güvence altında</span>
+                            <span>{t.claim_page?.secured_by_blockchain || "Blockchain ile güvence altında"}</span>
                         </div>
 
                         {/* Description */}
                         <p className="text-sm text-zinc-400 text-center">
-                            Bu bilet size hediye edildi! Almak için devam edin.
+                            {t.claim_page?.gift_received_msg || "Bu bilet size hediye edildi! Almak için devam edin."}
                         </p>
 
                         {/* CTA Button */}
@@ -358,7 +360,7 @@ function ClaimContent() {
                             className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
                         >
                             <Ticket className="w-5 h-5 mr-2" />
-                            Hediyeyi Al
+                            {t.claim_page?.claim_gift_button || "Hediyeyi Al"}
                         </Button>
                     </div>
                 </div>
@@ -379,13 +381,13 @@ function ClaimContent() {
                         <div className="flex-1 min-w-0">
                             <h3 className="text-sm font-medium text-white truncate">{giftInfo?.eventTitle}</h3>
                             <p className="text-xs text-zinc-500 truncate">
-                                {giftInfo?.creator} tarafından
+                                {t.claim_page?.sent_by || "Gönderen"}: {giftInfo?.creator}
                             </p>
                         </div>
                     </div>
 
                     <div className="p-6 space-y-5">
-                        <h2 className="text-lg font-semibold text-white text-center">Nasıl almak istersin?</h2>
+                        <h2 className="text-lg font-semibold text-white text-center">{t.claim_page?.choose_claim_method || "Nasıl almak istersin?"}</h2>
 
                         {/* Option Tabs */}
                         <div className="flex gap-2 p-1 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
@@ -396,7 +398,7 @@ function ClaimContent() {
                                     : "text-zinc-400 hover:text-white"
                                     }`}
                             >
-                                Yeni Hesap
+                                {t.claim_page?.new_account || "Yeni Hesap"}
                             </button>
                             <button
                                 onClick={() => setAccountOption("existing")}
@@ -405,7 +407,7 @@ function ClaimContent() {
                                     : "text-zinc-400 hover:text-white"
                                     }`}
                             >
-                                Mevcut Cüzdan
+                                {t.claim_page?.existing_wallet || "Mevcut Cüzdan"}
                             </button>
                         </div>
 
@@ -413,13 +415,13 @@ function ClaimContent() {
                         {accountOption === "new" && (
                             <div className="space-y-4">
                                 <p className="text-sm text-zinc-400">
-                                    Hemen bir hesap oluştur ve biletini al
+                                    {t.claim_page?.create_account_desc || "Hemen bir hesap oluştur ve biletini al"}
                                 </p>
                                 <div className="relative">
                                     <Input
                                         value={newUsername}
                                         onChange={(e) => setNewUsername(e.target.value)}
-                                        placeholder="kullaniciadi"
+                                        placeholder={t.claim_page?.username_placeholder || "kullaniciadi"}
                                         className={`pr-24 bg-zinc-800/50 border-zinc-700 text-white rounded-xl h-12 ${accountCheckStatus === "taken" ? "border-red-500 focus:ring-red-500" :
                                             accountCheckStatus === "available" ? "border-emerald-500 focus:ring-emerald-500" : ""
                                             }`}
@@ -431,22 +433,22 @@ function ClaimContent() {
                                 </div>
                                 {newUsername && !isValidUsername(newUsername) && (
                                     <p className="text-red-400 text-xs">
-                                        En az 2 karakter, sadece harf, rakam, _ ve - kullanabilirsin
+                                        {t.claim_page?.invalid_username_msg || "En az 2 karakter, sadece harf, rakam, _ ve - kullanabilirsin"}
                                     </p>
                                 )}
                                 {accountCheckStatus === "checking" && (
                                     <p className="text-yellow-400 text-xs flex items-center gap-2">
-                                        <Loader2 className="w-3 h-3 animate-spin" /> Kontrol ediliyor...
+                                        <Loader2 className="w-3 h-3 animate-spin" /> {t.claim_page?.checking_username || "Kontrol ediliyor..."}
                                     </p>
                                 )}
                                 {accountCheckStatus === "available" && (
                                     <p className="text-emerald-400 text-xs flex items-center gap-2">
-                                        <CheckCircle2 className="w-3 h-3" /> Bu isim kullanılabilir!
+                                        <CheckCircle2 className="w-3 h-3" /> {t.claim_page?.username_available || "Bu isim kullanılabilir!"}
                                     </p>
                                 )}
                                 {accountCheckStatus === "taken" && (
                                     <p className="text-red-400 text-xs flex items-center gap-2">
-                                        <AlertCircle className="w-3 h-3" /> Bu hesap zaten mevcut
+                                        <AlertCircle className="w-3 h-3" /> {t.claim_page?.username_taken || "Bu hesap zaten mevcut"}
                                     </p>
                                 )}
                                 <Button
@@ -455,7 +457,7 @@ function ClaimContent() {
                                     className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 disabled:opacity-50 font-semibold rounded-xl"
                                 >
                                     <User className="w-4 h-4 mr-2" />
-                                    {accountCheckStatus === "checking" ? "Kontrol ediliyor..." : "Hesap Oluştur ve Al"}
+                                    {accountCheckStatus === "checking" ? (t.claim_page?.check_account_button || "Kontrol ediliyor...") : (t.claim_page?.create_and_claim_button || "Hesap Oluştur ve Al")}
                                 </Button>
                             </div>
                         )}
@@ -464,12 +466,12 @@ function ClaimContent() {
                         {accountOption === "existing" && (
                             <div className="space-y-4">
                                 <p className="text-sm text-zinc-400">
-                                    NEAR hesap adresini gir
+                                    {t.claim_page?.existing_wallet_desc || "NEAR hesap adresini gir"}
                                 </p>
                                 <Input
                                     value={existingAccountId}
                                     onChange={(e) => setExistingAccountId(e.target.value)}
-                                    placeholder="hesap.testnet veya hesap.near"
+                                    placeholder={t.claim_page?.existing_placeholder || "hesap.testnet veya hesap.near"}
                                     className="bg-zinc-800/50 border-zinc-700 text-white rounded-xl h-12"
                                 />
                                 <Button
@@ -478,7 +480,7 @@ function ClaimContent() {
                                     className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 disabled:opacity-50 font-semibold rounded-xl"
                                 >
                                     <Wallet className="w-4 h-4 mr-2" />
-                                    Cüzdana Aktar
+                                    {t.claim_page?.transfer_to_wallet || "Cüzdana Aktar"}
                                 </Button>
                             </div>
                         )}
@@ -488,7 +490,7 @@ function ClaimContent() {
                             variant="ghost"
                             className="w-full text-zinc-400 hover:text-white"
                         >
-                            Geri
+                            {t.claim_page?.back_button || "Geri"}
                         </Button>
                     </div>
                 </div>
@@ -503,11 +505,11 @@ function ClaimContent() {
                 <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-8 text-center space-y-4">
                     <Loader2 className="w-10 h-10 animate-spin text-zinc-400 mx-auto" />
                     <p className="text-white text-lg font-medium">
-                        {step === "creating-account" ? "Hesap oluşturuluyor..." : "Bilet aktarılıyor..."}
+                        {step === "creating-account" ? (t.claim_page?.creating_account_loading || "Hesap oluşturuluyor...") : (t.claim_page?.claiming_ticket_loading || "Bilet aktarılıyor...")}
                     </p>
-                    <p className="text-zinc-500 text-sm">Bu birkaç saniye sürebilir</p>
+                    <p className="text-zinc-500 text-sm">{t.claim_page?.please_wait || "Bu birkaç saniye sürebilir"}</p>
                     <p className="text-xs text-emerald-400 flex items-center justify-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" /> Blockchain üzerinde işleniyor
+                        <CheckCircle2 className="w-3 h-3" /> {t.claim_page?.processing_on_blockchain || "Blockchain üzerinde işleniyor"}
                     </p>
                 </div>
             </div>
@@ -537,13 +539,13 @@ function ClaimContent() {
                             <div className="w-20 h-20 rounded-full bg-emerald-500/20 backdrop-blur-xl border border-emerald-500/30 flex items-center justify-center mb-4">
                                 <CheckCircle2 className="w-10 h-10 text-emerald-400" />
                             </div>
-                            <h2 className="text-2xl font-bold text-white">Bilet Alındı! 🎉</h2>
+                            <h2 className="text-2xl font-bold text-white">{t.claim_page?.success_title || "Bilet Alındı! 🎉"}</h2>
                         </div>
                     </div>
 
                     <div className="p-6 space-y-4">
                         <div className="text-center">
-                            <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Hesap</p>
+                            <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">{t.claim_page?.account_label || "Hesap"}</p>
                             <p className="text-zinc-300 font-mono text-sm break-all">{claimedAccountId}</p>
                         </div>
 
@@ -554,17 +556,17 @@ function ClaimContent() {
                                 rel="noopener noreferrer"
                                 className="flex items-center justify-center gap-1 text-xs text-zinc-500 hover:text-white transition-colors"
                             >
-                                İşlemi görüntüle <ExternalLink className="w-3 h-3" />
+                                {t.claim_page?.view_transaction || "İşlemi görüntüle"} <ExternalLink className="w-3 h-3" />
                             </a>
                         )}
 
                         <div className="space-y-3 pt-2">
                             <Button
-                                onClick={() => window.location.href = "/watch"}
+                                onClick={() => window.location.href = `/watch?cid=${giftInfo?.eventCid}`}
                                 className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
                             >
                                 <Play className="w-4 h-4 mr-2" />
-                                Hemen İzle
+                                {t.claim_page?.watch_now || "Watch Now"}
                             </Button>
 
                             <Button
@@ -572,11 +574,11 @@ function ClaimContent() {
                                 variant="outline"
                                 className="w-full h-12 border-zinc-700 text-zinc-300 hover:bg-zinc-800 rounded-xl"
                             >
-                                Daha Fazla Keşfet
+                                {t.claim_page?.explore_more || "Daha Fazla Keşfet"}
                             </Button>
 
                             <p className="text-xs text-zinc-500 text-center">
-                                ✅ Trial hesabınız aktif! Otomatik giriş yaptınız.
+                                ✅ {t.claim_page?.trial_active_msg || "Trial hesabınız aktif! Otomatik giriş yaptınız."}
                             </p>
                         </div>
                     </div>
@@ -593,7 +595,7 @@ function ClaimContent() {
                     <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto">
                         <AlertCircle className="w-8 h-8 text-red-400" />
                     </div>
-                    <h3 className="text-xl text-white font-semibold">Bir Hata Oluştu</h3>
+                    <h3 className="text-xl text-white font-semibold">{t.claim_page?.error_title || "Bir Hata Oluştu"}</h3>
                     <p className="text-zinc-400">{error}</p>
                     <Button
                         onClick={() => {
@@ -603,7 +605,7 @@ function ClaimContent() {
                         variant="outline"
                         className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 rounded-xl"
                     >
-                        Tekrar Dene
+                        {t.claim_page?.try_again || "Tekrar Dene"}
                     </Button>
                 </div>
             </div>
