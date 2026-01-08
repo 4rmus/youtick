@@ -193,7 +193,8 @@ export const translations = {
                 badge_instant_revenue: "98% Revenue Share",
                 cta_discover: "Explore Events",
                 cta_create_event: "Start Creating",
-                cta_try_free: "Try Free"
+                cta_try_free: "Try Free",
+                trial_highlight: "No wallet needed • Watch free content with trial account"
             },
             nav: {
                 home: "Home",
@@ -281,11 +282,25 @@ export const translations = {
             },
             footer: {
                 copyright: "© 2025 youtick. All rights reserved.",
+                description: "Empowering artists with true ownership and instant payments.",
                 built_on_prefix: "Built on",
                 built_on_tech: "NEAR Protocol, Lighthouse & Lit Protocol.",
                 privacy: "Privacy",
                 terms: "Terms",
                 support: "Support"
+            },
+            pain_points: {
+                title: "Artist Pain Points",
+                subtitle: "Traditional platforms extract value. We return it.",
+                revenue_title: "Revenue Inequity",
+                revenue_web2: "Spotify: $0.003-0.005 per stream. YouTube: 55% cut. Ticketmaster: 25-30% commission.",
+                revenue_youtick: "98% revenue to artist. Instant payment. No bank delays.",
+                censorship_title: "Censorship Risk",
+                censorship_web2: "Content can be demonetized, removed, or geo-restricted anytime.",
+                censorship_youtick: "IPFS storage. Decentralized. Censorship-proof. Permanent.",
+                fan_title: "Fan Disconnection",
+                fan_web2: "Platforms own fan data. No direct contact. Followers belong to platform.",
+                fan_youtick: "NFT holders identified by wallet. Direct relationship. Artist controls communication."
             },
             discover: {
                 scanning_blockchain: "Scanning Blockchain...",
@@ -635,7 +650,8 @@ export const translations = {
                 badge_instant_revenue: "%98 Gelir Payı",
                 cta_discover: "Etkinlikleri Keşfet",
                 cta_create_event: "Oluşturmaya Başla",
-                cta_try_free: "Ücretsiz Dene"
+                cta_try_free: "Ücretsiz Dene",
+                trial_highlight: "Cüzdan gerekmez • Deneme hesabıyla ücretsiz içerikleri izleyin"
             },
             nav: {
                 home: "Ana Sayfa",
@@ -723,11 +739,25 @@ export const translations = {
             },
             footer: {
                 copyright: "© 2025 youtick. Tüm hakları saklıdır.",
+                description: "Sanatçılara gerçek sahiplik ve anlık ödemeler sunuyoruz.",
                 built_on_prefix: "Altyapısı:",
                 built_on_tech: "NEAR Protocol, Lighthouse ve Lit Protocol",
                 privacy: "Gizlilik",
                 terms: "Şartlar",
                 support: "Destek"
+            },
+            pain_points: {
+                title: "Sanatçıların Acı Noktaları",
+                subtitle: "Geleneksel platformlar değer çıkarır. Biz iade ediyoruz.",
+                revenue_title: "Gelir Adaletsizliği",
+                revenue_web2: "Spotify: stream başına $0.003-0.005. YouTube: %55 kesinti. Ticketmaster: %25-30 komisyon.",
+                revenue_youtick: "Gelirin %98'i sanatçıya. Anında ödeme. Banka gecikmesi yok.",
+                censorship_title: "Sansür Riski",
+                censorship_web2: "İçerik her an para kazanamaz hale gelebilir, kaldırılabilir veya bölge kısıtlamasına tabi olabilir.",
+                censorship_youtick: "IPFS depolama. Merkeziyetsiz. Sansüre dayanıklı. Kalıcı.",
+                fan_title: "Hayran Kopukluğu",
+                fan_web2: "Platformlar hayran verisine sahip. Doğrudan iletişim yok. Takipçiler platforma ait.",
+                fan_youtick: "NFT sahipleri cüzdan adresiyle tanımlanır. Doğrudan ilişki. Sanatçı iletişimi kontrol eder."
             },
             discover: {
                 scanning_blockchain: "Blockchain Taranıyor...",

@@ -110,6 +110,7 @@ export const HeroSection = memo(({ onDiscoverClick }: HeroSectionProps) => {
               variant="outline"
               className={`border-near-purple/50 bg-near-purple/10 backdrop-blur-sm text-white hover:bg-near-purple/20 hover:border-near-purple hover:scale-105 text-lg px-10 py-7 rounded-full font-bold ${ANIMATION.transition.default}`}
             >
+              <Sparkles className="mr-2 w-5 h-5 text-near-purple" />
               {t.landing.hero.cta_try_free || "Try Free"}
             </Button>
           </Link>
@@ -122,6 +123,14 @@ export const HeroSection = memo(({ onDiscoverClick }: HeroSectionProps) => {
               {t.landing.hero.cta_create_event}
             </Button>
           </Link>
+        </div>
+
+        {/* Trial Highlight */}
+        <div className="mt-6 text-center">
+          <p className="text-sm text-zinc-500">
+            <Sparkles className="inline w-4 h-4 mr-1 text-near-purple" />
+            {t.landing.hero.trial_highlight || 'No wallet needed • Watch free content with trial account'}
+          </p>
         </div>
       </div>
     </section>

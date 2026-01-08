@@ -281,3 +281,60 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   NEAR TYPOGRAPHY UTILITIES
+   Per NEAR Brand Guidelines: left-aligned text, lots of whitespace
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Left-aligned text for headers and body */
+.near-text-left {
+  text-align: left;
+}
+
+/* Breathing whitespace for readability */
+.near-breathe {
+  letter-spacing: 0.02em;
+  line-height: 1.7;
+}
+
+/* NEAR section spacing */
+.near-section-spacing {
+  padding-top: 8rem;
+  padding-bottom: 8rem;
+}
+
+/* NEAR card style (flat, minimal) */
+.near-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.75rem;
+}
+
+.near-card:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Slider accent color override */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--near-green);
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 0 10px rgba(0, 236, 151, 0.4);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--near-green);
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 0 10px rgba(0, 236, 151, 0.4);
+}

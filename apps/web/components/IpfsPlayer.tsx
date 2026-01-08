@@ -132,7 +132,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             if (isUuid) {
                 if (!isRetry) setStatus('Resolving Video Metadata...');
                 try {
-                    const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
+                    const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
                     const rpcUrl = "/api/near-rpc";
                     const body = JSON.stringify({
                         jsonrpc: "2.0",
@@ -373,7 +373,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
     const handlePlay = () => playVideo(false);
 
     const checkSpecificAccess = async (viewerId: string, targetCid: string) => {
-        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
+        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
         const rpcUrl = "/api/near-rpc";
         const body = JSON.stringify({
             jsonrpc: "2.0",

@@ -6,19 +6,17 @@ import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { Menu, X, User, LogOut } from 'lucide-react';
+import { Menu, X, User, LogOut, Sparkles } from 'lucide-react';
 
 import { Branding } from '@/components/landing/Branding';
 
 export function Navbar() {
     const { modal, accountId, selector, getWallet } = useWallet();
     const { language, setLanguage, t } = useLanguage();
-    // Theme toggle is removed as we are enforcing dark mode
     const [mounted, setMounted] = useState(false);
     const pathname = usePathname();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
 
-    // Mounting check for hydration safety
     useEffect(() => {
         const timer = setTimeout(() => setMounted(true), 0);
         return () => clearTimeout(timer);
@@ -35,15 +33,13 @@ export function Navbar() {
             window.location.reload();
         } catch (e) {
             console.error("Failed to sign out:", e);
-            // Force reload if wallet interaction fails, ensuring UI state clears
             window.location.reload();
         }
     };
 
     if (!mounted) return null;
 
-    // Do not render Navbar on the landing page for GUESTS (root path)
-    // If logged in, we SHOW the navbar for consistency
+    // Do not render Navbar on landing page for guests
     if (pathname === '/' && !accountId) return null;
 
     const navLinks = [
@@ -66,35 +62,27 @@ export function Navbar() {
                         <Link
                             key={link.href}
                             href={link.href}
-                            className={`text-sm font-medium transition-colors hover:text-near-green ${pathname === link.href ? 'text-near-green font-bold' : 'text-zinc-400'
-                                }`}
+                            className={`text-sm font-medium transition-colors hover:text-near-green ${pathname === link.href ? 'text-near-green font-bold' : 'text-zinc-400'}`}
                         >
                             {link.label}
                         </Link>
                     ))}
                 </div>
 
-                <div className="hidden md:flex items-center gap-4">
-                    <div className="flex items-center gap-2 mr-2 border-r border-white/10 pr-4">
-                        <button
-                            onClick={() => setLanguage('en')}
-                            className={`text-xs font-bold ${language === 'en' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
-                        >
-                            EN
+                <div className="hidden md:flex items-center gap-3">
+                    {/* Try Free CTA */}
+                    <Link href="/trial">
+                        <button className="flex items-center gap-1 px-3 py-2 text-sm font-semibold text-near-green border border-near-green/50 rounded-full hover:bg-near-green/10 transition-colors">
+                            <Sparkles className="w-4 h-4" />
+                            {language === 'tr' ? 'Ücretsiz Dene' : 'Try Free'}
                         </button>
-                        <button
-                            onClick={() => setLanguage('tr')}
-                            className={`text-xs font-bold ${language === 'tr' ? 'text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
-                        >
-                            TR
-                        </button>
-                    </div>
+                    </Link>
 
                     {accountId ? (
                         <div className="rounded-full bg-near-black border border-near-green/30 flex items-center pl-3 pr-1 py-1 gap-2">
                             <User className="w-3 h-3 text-near-green" />
                             <span className="text-xs font-mono text-zinc-400 truncate max-w-[100px]">{accountId}</span>
-                            <Button // This uses the generic button which might have different default styles, let's use standard button class instead or ensure Button import
+                            <Button
                                 onClick={handleSignOut}
                                 className="h-6 w-6 ml-1 p-0 rounded-full bg-transparent hover:bg-near-red/10 text-zinc-500 hover:text-near-red flex items-center justify-center transition-colors"
                             >
@@ -128,13 +116,16 @@ export function Navbar() {
                             key={link.href}
                             href={link.href}
                             onClick={() => setIsMenuOpen(false)}
-                            className={`text-lg font-medium transition-colors ${pathname === link.href ? 'text-white' : 'text-zinc-400'
-                                }`}
+                            className={`text-lg font-medium transition-colors ${pathname === link.href ? 'text-white' : 'text-zinc-400'}`}
                         >
                             {link.label}
                         </Link>
                     ))}
                     <div className="h-px bg-white/10 my-2" />
+                    <Link href="/trial" onClick={() => setIsMenuOpen(false)} className="text-near-green font-semibold flex items-center gap-2">
+                        <Sparkles className="w-4 h-4" />
+                        {language === 'tr' ? 'Ücretsiz Dene' : 'Try Free'}
+                    </Link>
                     {accountId ? (
                         <button onClick={handleSignOut} className="text-left text-red-500 font-medium">{t.nav.disconnect}</button>
                     ) : (

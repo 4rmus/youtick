@@ -4,6 +4,7 @@ import "./globals.css";
 import { WalletProvider } from "@/components/providers/WalletProvider";
 import { Navbar } from "@/components/Navbar";
 import { LanguageProvider } from "@/components/providers/LanguageContext";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { GoogleAnalytics } from "@next/third-parties/google";
 
@@ -31,6 +32,7 @@ export default function RootLayout({
                                     {children}
                                 </main>
                             </div>
+                            <LanguageSwitcher />
                             <div id="wallet-modal-container" />
                         </WalletProvider>
                     </LanguageProvider>

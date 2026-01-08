@@ -22,7 +22,7 @@ import { useLanguage } from '@/components/providers/LanguageContext';
 import { GiftLinkGenerator } from './GiftLinkGenerator';
 
 
-const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
+const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
 
 interface UploadResponse {
     data: Array<{ Hash: string }> | { Hash: string };
@@ -471,7 +471,7 @@ export function UploadForm() {
                 // Construct full IPFS Gateway URL for media
                 const mediaUrl = `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`;
 
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
                 const priceYocto = utils.format.parseNearAmount(price) || '0';
 
                 // Prepare metadata for batch transaction

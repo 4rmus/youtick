@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { connect, keyStores } from 'near-api-js';
 
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
+const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
 
 interface VideoMetadata {
     encrypted_cid: string;

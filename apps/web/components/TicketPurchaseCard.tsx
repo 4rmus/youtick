@@ -73,7 +73,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         const init = async () => {
             setLoading(true);
             try {
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
+                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
                 const rpcUrl = "/api/near-rpc";
 
                 const near = await connect({
@@ -175,7 +175,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         setError(null);
         try {
             const wallet = await getWallet();
-            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
+            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
             const sessionManager = new SessionManager(accountId);
 
             const transactionsList = [];

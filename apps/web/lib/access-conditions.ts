@@ -8,7 +8,7 @@
  */
 
 // Contract ID for YouTick NFT contract
-export const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'dev-gift-1767641243.testnet';
+export const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
 
 /**
  * Lit Action code that runs inside Lit Protocol nodes to verify NEAR NFT ownership.
