@@ -1,7 +1,17 @@
 name: Deploy Youtick MVP
 
 on:
-  workflow_dispatch: # Sadece manuel olarak tetiklendiğinde çalışır
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  # Public vars (Updated for current config)
+  NEXT_PUBLIC_NEAR_NETWORK: testnet
+  NEXT_PUBLIC_NFT_CONTRACT_ID: v1.utick.testnet
+  NEXT_PUBLIC_LIT_ACTION_IPFS_CID: Qmc6cLer2fmtuzNFhdtBoZvM1gCzX9s8gbc8wzWdizeuJe
+  NEXT_PUBLIC_LIT_CAPACITY_TOKEN_ID: 354131
 
 jobs:
   build-and-deploy:
@@ -18,14 +28,16 @@ jobs:
           cache-dependency-path: apps/web/package-lock.json
 
       - name: Install & Build
-        # NEXT_PUBLIC_ değişkenleri build anı için gereklidir
-        env:
-          NEXT_PUBLIC_NEAR_NETWORK: ${{ secrets.NEXT_PUBLIC_NEAR_NETWORK }}
-          NEXT_PUBLIC_NFT_CONTRACT_ID: ${{ secrets.NEXT_PUBLIC_NFT_CONTRACT_ID }}
         run: |
           cd apps/web
           npm install
           npm run build
+        env:
+          # Build time secrets
+          LIT_DELEGATION_WALLET_PRIVATE_KEY: ${{ secrets.LIT_DELEGATION_WALLET_PRIVATE_KEY }}
+          LIGHTHOUSE_API_KEY: ${{ secrets.LIGHTHOUSE_API_KEY }}
+          RELAYER_ACCOUNT_ID: ${{ secrets.RELAYER_ACCOUNT_ID }}
+          RELAYER_PRIVATE_KEY: ${{ secrets.RELAYER_PRIVATE_KEY }}
 
       - name: Deploy to Oracle via SCP
         uses: appleboy/scp-action@master
@@ -34,10 +46,10 @@ jobs:
           username: ${{ secrets.REMOTE_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           # Sadece çalışma anında lazım olan dosyaları gönderiyoruz
-          # apps/web altındaki dosyaları hedefliyoruz
           source: "apps/web/.next/,apps/web/public/,apps/web/package.json,apps/web/next.config.ts,apps/web/package-lock.json"
           target: "~/youtick-mvp"
-          rm: false # Sunucudaki .env dosyasını silmemesi için false
+          strip_components: 0
+          rm: false 
 
       - name: Finalize and Restart on Server
         uses: appleboy/ssh-action@master
@@ -52,8 +64,22 @@ jobs:
             export PATH=$PATH:/usr/local/bin:$HOME/.npm-global/bin
             
             cd ~/youtick-mvp/apps/web
+            
+            # .env.local dosyasını oluştur (Secrets kullanarak)
+            echo "Creating .env.local..."
+            cat <<EOF > .env.local
+            NEXT_PUBLIC_NEAR_NETWORK=testnet
+            NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
+            NEXT_PUBLIC_LIT_ACTION_IPFS_CID=Qmc6cLer2fmtuzNFhdtBoZvM1gCzX9s8gbc8wzWdizeuJe
+            NEXT_PUBLIC_LIT_CAPACITY_TOKEN_ID=354131
+            LIT_DELEGATION_WALLET_PRIVATE_KEY=${{ secrets.LIT_DELEGATION_WALLET_PRIVATE_KEY }}
+            LIGHTHOUSE_API_KEY=${{ secrets.LIGHTHOUSE_API_KEY }}
+            RELAYER_ACCOUNT_ID=${{ secrets.RELAYER_ACCOUNT_ID }}
+            RELAYER_PRIVATE_KEY=${{ secrets.RELAYER_PRIVATE_KEY }}
+            EOF
+            
             # Uygulama bağımlılıklarını kur
             npm install --production
             
-            # Uygulamayı restart et (Eğer daha önce başlamadıysa başlat)
+            # Uygulamayı restart et (Eski yöntem)
             pm2 restart youtick || pm2 start npm --name "youtick" -- start
