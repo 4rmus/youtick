@@ -6,10 +6,10 @@ use near_contract_standards::non_fungible_token::{
 
 use near_sdk::{
     borsh::{BorshDeserialize, BorshSerialize},
-    collections::{LazyOption, UnorderedMap, LookupMap},
+    collections::{LazyOption, UnorderedMap, LookupMap, LookupSet},
     env, near, require,
     json_types::U128,
-    AccountId, BorshStorageKey, NearToken, PanicOnDefault, Promise, PromiseOrValue,
+    AccountId, BorshStorageKey, NearToken, PanicOnDefault, Promise, PromiseOrValue, PublicKey,
 };
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +49,14 @@ pub enum StorageKeyV3 {
     UserDeposits,
     Events,
     GiftDrops,
+}
+
+// V4: Onboarding system storage keys
+#[derive(BorshStorageKey, BorshSerialize)]
+#[borsh(crate = "near_sdk::borsh")]
+pub enum StorageKeyV4 {
+    OnboardingKeys,      // Authorized public keys for trial creation
+    DailyTrialCounts,    // Daily rate limiting
 }
 
 #[near(serializers = [borsh, json])]
@@ -91,6 +99,23 @@ pub struct GiftDrop {
     pub created_at: u64,
 }
 
+// Onboarding configuration
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
+pub struct OnboardingConfig {
+    pub daily_limit: u32,           // Max trials per day (0 = unlimited)
+    pub enabled: bool,              // Master switch for relayer-less onboarding
+}
+
+impl Default for OnboardingConfig {
+    fn default() -> Self {
+        Self {
+            daily_limit: 100,  // Default: 100 trials per day
+            enabled: true,
+        }
+    }
+}
+
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
@@ -104,6 +129,13 @@ pub struct Contract {
     gift_drops: LookupMap<String, GiftDrop>, // Key: hash of secret key
     // Sponsored trial pool - contract pays for trial account creation
     trial_pool: NearToken,
+    // V4: RELAYER-LESS ONBOARDING SYSTEM
+    // Authorized Function Call Access Keys for trial creation
+    onboarding_keys: LookupSet<PublicKey>,
+    // Daily trial counts for rate limiting: day_timestamp -> count
+    daily_trial_counts: LookupMap<u64, u32>,
+    // Onboarding configuration
+    onboarding_config: OnboardingConfig,
 }
 
 // SECURITY: Use #[init] to prevent re-initialization attacks
@@ -141,6 +173,10 @@ impl Contract {
             next_token_id: 0,
             gift_drops: LookupMap::new(StorageKey::V2(StorageKeyV2::GiftDrops)),
             trial_pool: NearToken::from_yoctonear(0),
+            // V4: Onboarding system
+            onboarding_keys: LookupSet::new(StorageKeyV4::OnboardingKeys),
+            daily_trial_counts: LookupMap::new(StorageKeyV4::DailyTrialCounts),
+            onboarding_config: OnboardingConfig::default(),
         }
     }
 
@@ -179,6 +215,10 @@ impl Contract {
             next_token_id: 0,
             gift_drops: LookupMap::new(StorageKey::V3(StorageKeyV3::GiftDrops)),
             trial_pool: NearToken::from_yoctonear(0),
+            // V4: Onboarding system
+            onboarding_keys: LookupSet::new(StorageKeyV4::OnboardingKeys),
+            daily_trial_counts: LookupMap::new(StorageKeyV4::DailyTrialCounts),
+            onboarding_config: OnboardingConfig::default(),
         }
     }
 
@@ -195,6 +235,107 @@ impl Contract {
         let old_id = self.next_token_id;
         self.next_token_id = new_id;
         env::log_str(&format!("next_token_id updated: {} -> {}", old_id, new_id));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // RELAYER-LESS ONBOARDING ADMIN FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Add an onboarding key (owner only)
+    /// This key will be added as a Function Call Access Key to the contract
+    /// Authorized to call: create_sponsored_trial_direct
+    pub fn add_onboarding_key(&mut self, public_key: PublicKey) -> Promise {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can add onboarding keys"
+        );
+
+        // Store in set
+        self.onboarding_keys.insert(&public_key);
+
+        env::log_str(&format!("Onboarding key added: {:?}", public_key));
+
+        // Add Function Call Access Key to contract
+        // Allowance: 1 NEAR for gas (enough for many trial creations)
+        // Restricted to: create_sponsored_trial_direct only
+        Promise::new(env::current_account_id()).add_access_key(
+            public_key,
+            NearToken::from_near(1), // 1 NEAR allowance
+            env::current_account_id(),
+            "create_sponsored_trial_direct".to_string(),
+        )
+    }
+
+    /// Remove an onboarding key (owner only)
+    pub fn remove_onboarding_key(&mut self, public_key: PublicKey) -> Promise {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can remove onboarding keys"
+        );
+
+        self.onboarding_keys.remove(&public_key);
+
+        env::log_str(&format!("Onboarding key removed: {:?}", public_key));
+
+        // Delete the access key
+        Promise::new(env::current_account_id()).delete_key(public_key)
+    }
+
+    /// Update onboarding configuration (owner only)
+    pub fn set_onboarding_config(&mut self, daily_limit: u32, enabled: bool) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can update onboarding config"
+        );
+
+        self.onboarding_config = OnboardingConfig {
+            daily_limit,
+            enabled,
+        };
+
+        env::log_str(&format!(
+            "Onboarding config updated: daily_limit={}, enabled={}",
+            daily_limit, enabled
+        ));
+    }
+
+    /// View: Check if a key is authorized for onboarding
+    pub fn is_onboarding_key(&self, public_key: PublicKey) -> bool {
+        self.onboarding_keys.contains(&public_key)
+    }
+
+    /// View: Get onboarding configuration
+    pub fn get_onboarding_config(&self) -> OnboardingConfig {
+        self.onboarding_config.clone()
+    }
+
+    /// View: Get today's trial count
+    pub fn get_daily_trial_count(&self) -> u32 {
+        let today = Self::get_day_timestamp();
+        self.daily_trial_counts.get(&today).unwrap_or(0)
+    }
+
+    /// Internal: Get day timestamp (seconds since epoch, rounded to day)
+    fn get_day_timestamp() -> u64 {
+        let now_ns = env::block_timestamp();
+        let now_s = now_ns / 1_000_000_000; // nanoseconds to seconds
+        now_s / 86400 * 86400 // Round to day start
+    }
+
+    /// Internal: Check and increment daily trial count
+    fn check_and_increment_daily_limit(&mut self) -> bool {
+        let today = Self::get_day_timestamp();
+        let current_count = self.daily_trial_counts.get(&today).unwrap_or(0);
+
+        // Check limit (0 = unlimited)
+        if self.onboarding_config.daily_limit > 0
+            && current_count >= self.onboarding_config.daily_limit {
+            return false;
+        }
+
+        // Increment count
+        self.daily_trial_counts.insert(&today, &(current_count + 1));
+        true
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -635,23 +776,101 @@ impl Contract {
     pub fn fund_trial_pool(&mut self) {
         let deposit = env::attached_deposit();
         require!(deposit.as_yoctonear() > 0, "Must attach some NEAR");
-        
+
         self.trial_pool = self.trial_pool.saturating_add(deposit);
-        
+
         env::log_str(&format!(
             "Trial pool funded: {} added, total: {}",
             deposit, self.trial_pool
         ));
     }
 
+    /// RELAYER-LESS: Create a sponsored trial account directly from client
+    ///
+    /// This function can ONLY be called via an onboarding Function Call Access Key.
+    /// Anti-abuse measures:
+    /// 1. Signer's public key must be in `onboarding_keys`
+    /// 2. Daily rate limit enforced
+    /// 3. Onboarding must be enabled
+    ///
+    /// Creates: {username}.{contract_id} (e.g. "alice.youtick.testnet")
+    /// Cost: ~0.1 NEAR per account from trial pool
+    pub fn create_sponsored_trial_direct(
+        &mut self,
+        username: String,
+        new_public_key: PublicKey,
+    ) -> Promise {
+        // Anti-abuse check 1: Verify onboarding is enabled
+        require!(
+            self.onboarding_config.enabled,
+            "Onboarding is currently disabled"
+        );
+
+        // Anti-abuse check 2: Verify signer's public key is an authorized onboarding key
+        let signer_pk = env::signer_account_pk();
+        require!(
+            self.onboarding_keys.contains(&signer_pk),
+            "Unauthorized: Signer's key is not an onboarding key"
+        );
+
+        // Anti-abuse check 3: Daily rate limiting (DoS prevention)
+        require!(
+            self.check_and_increment_daily_limit(),
+            "Daily trial limit reached. Please try again tomorrow."
+        );
+
+        // Validate username
+        require!(
+            username.len() >= 2 && username.len() <= 32,
+            "Username must be 2-32 characters"
+        );
+        require!(
+            username.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'),
+            "Username can only contain lowercase letters, numbers, - and _"
+        );
+
+        // Cost for account creation + initial balance
+        let account_cost = NearToken::from_millinear(100); // 0.1 NEAR
+
+        require!(
+            self.trial_pool >= account_cost,
+            "Trial pool empty. Please contact the platform owner."
+        );
+
+        // Deduct from pool
+        self.trial_pool = self.trial_pool.saturating_sub(account_cost);
+
+        // Create subaccount ID: {username}.{this_contract}
+        let contract_id = env::current_account_id();
+        let new_account_id: AccountId = format!("{}.{}", username, contract_id)
+            .parse()
+            .expect("Invalid account ID format");
+
+        env::log_str(&format!(
+            "Relayer-less trial created: {} (pool remaining: {}, daily count: {})",
+            new_account_id,
+            self.trial_pool,
+            self.daily_trial_counts.get(&Self::get_day_timestamp()).unwrap_or(0)
+        ));
+
+        // Create the subaccount with Full Access Key
+        Promise::new(new_account_id)
+            .create_account()
+            .add_full_access_key(new_public_key)
+            .transfer(account_cost)
+    }
+
     /// Create a sponsored trial account as a subaccount of this contract
     /// Contract pays the cost from trial pool!
     /// Creates: {username}.{contract_id} (e.g. "alice.youtick.testnet")
     /// Cost: ~0.1 NEAR per account from trial pool
+    ///
+    /// NOTE: This is the original relayer-based method. For relayer-less onboarding,
+    /// use create_sponsored_trial_direct with an onboarding key.
     pub fn create_sponsored_trial(
         &mut self,
         username: String,
-        new_public_key: near_sdk::PublicKey,
+        new_public_key: PublicKey,
     ) -> Promise {
         // Validate username
         require!(

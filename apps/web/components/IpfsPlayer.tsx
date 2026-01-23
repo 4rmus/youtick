@@ -10,6 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { MintButton } from '@/components/MintButton'; // Keep for legacy/fallback
 import { TicketPurchaseCard } from '@/components/TicketPurchaseCard';
 import { SessionManager } from '@/lib/session-manager';
+import { PKPManager } from '@/lib/pkp';
 
 interface IpfsPlayerProps {
     cid: string;
@@ -222,41 +223,35 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             }
 
             // LAZY PKP MINTING - Mint PKP for any account that doesn't have one yet
+            // Uses relay-based minting (gas-free for users)
             // This eliminates MPC gas costs for all future video plays
             if (!sessionSigs && !storedPkp) {
                 console.log("🔐 Account without PKP - minting now for signless experience...");
                 setStatus('Setting up signless access (one-time)...');
 
                 try {
-                    const response = await fetch('/api/relayer/mint', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ nearAccountId: accountId })
-                    });
+                    // Initialize PKP Manager
+                    const pkpManager = new PKPManager(lit.getLitNodeClient());
 
-                    if (response.ok) {
-                        const data = await response.json();
-                        if (data.success && data.pkp) {
-                            // Store PKP for future use
-                            localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify({
-                                publicKey: data.pkp.publicKey,
-                                ethAddress: data.pkp.ethAddress,
-                                tokenId: data.pkp.tokenId
-                            }));
-                            console.log("✅ PKP minted for trial account:", data.pkp.ethAddress);
+                    // Relay-based minting (gas-free for users)
+                    const result = await pkpManager.mintPKPSmart(accountId);
 
-                            // Now use the newly minted PKP for this session
-                            setStatus('Using new PKP for signless decryption...');
-                            sessionSigs = await lit.getSessionSigsWithPKP(
-                                data.pkp.publicKey,
-                                data.pkp.ethAddress,
-                                accountId
-                            );
-                            console.log("✅ First play with new PKP successful!");
-                        }
-                    } else {
-                        console.warn("PKP minting failed, will use MPC fallback");
-                    }
+                    // Store PKP for future use
+                    localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify({
+                        publicKey: result.publicKey,
+                        ethAddress: result.ethAddress,
+                        tokenId: result.tokenId
+                    }));
+                    console.log(`✅ PKP minted via ${result.method}:`, result.ethAddress);
+
+                    // Now use the newly minted PKP for this session
+                    setStatus('Using new PKP for signless decryption...');
+                    sessionSigs = await lit.getSessionSigsWithPKP(
+                        result.publicKey,
+                        result.ethAddress,
+                        accountId
+                    );
+                    console.log("✅ First play with new PKP successful!");
                 } catch (pkpMintError: any) {
                     console.warn("Lazy PKP minting failed, falling back to MPC:", pkpMintError.message);
                 }
