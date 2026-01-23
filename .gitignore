@@ -39,18 +39,13 @@ next-env.d.ts
 target/
 
 # Internal Documentation (not for public repo)
-DEEP_DIVE_REPORT_TR.md
-DEEP_DIVE_REPORT_EN.md
-DEPLOYMENT.md
-PROJECT_STATUS_AND_ROADMAP.md
-REPORT.md
-SETUP.md
-PROPOSAL_DRAFT.md
-TECHNICAL_ARCHITECTURE_REPORT.md
-KEYPOM_IMPLEMENTATION_PLAN.md
-TECHNICAL_REPORT.md
-SECURITY_AUDIT_REPORT.md
+# Removed non-existent files
 
 # NEAR Credentials (sensitive keys)
 .near-credentials/
-TECHNICAL_REPORT_MASTER_PROMPT.md
+
+# Project Specific
+CLAUDE.md
+PRD.md
+.claude/
+claudedocs/
