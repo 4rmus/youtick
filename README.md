@@ -173,18 +173,18 @@ View balances and owned tickets at `/profile`
 
 ## 🏗 Project Structure
 
-```
+```text
 youtick-mvp/
 ├── apps/
 │   └── web/                 # Next.js frontend
-│       ├── app/             # App router pages
+│       ├── app/             # App Router pages
 │       ├── components/      # React components
 │       ├── hooks/           # Custom hooks
 │       └── lib/             # Utilities & services
 ├── contracts/
-│   └── nft-ticket/          # NEAR smart contract (Rust)
-│       └── src/lib.rs       # Contract logic
-└── README.md
+│   └── nft-ticket/          # NEAR smart contract
+│       └── src/lib.rs       # Contract source code
+└── docs/                    # Detailed technical documentation
 ```
 
 ## 🔧 Smart Contract
