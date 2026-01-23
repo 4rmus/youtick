@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Loader2, Ticket, AlertCircle, Play } from "lucide-react";
 import { transactions, utils, connect, keyStores } from 'near-api-js';
 import { SessionManager } from '@/lib/session-manager';
+import { PKPManager } from '@/lib/pkp';
+import { lit } from '@/lib/lit';
 
 interface TicketPurchaseCardProps {
     cid: string;
@@ -20,6 +22,7 @@ interface EventDetails {
 
 /**
  * Mint PKP in background after ticket purchase for signless experience.
+ * Uses relay-based minting (gas-free for users).
  * Non-blocking - errors are logged but don't affect user flow.
  */
 async function mintPKPInBackground(accountId: string) {
@@ -32,27 +35,21 @@ async function mintPKPInBackground(accountId: string) {
 
         console.log("🔐 Minting PKP for signless experience...");
 
-        const response = await fetch('/api/relayer/mint', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ nearAccountId: accountId })
-        });
+        // Initialize PKP Manager with Lit client
+        await lit.connect();
+        const pkpManager = new PKPManager(lit.getLitNodeClient());
 
-        if (!response.ok) {
-            const error = await response.json();
-            console.warn("PKP minting failed (non-blocking):", error);
-            return;
-        }
+        // Relay-based minting (gas-free for users)
+        const result = await pkpManager.mintPKPSmart(accountId);
 
-        const data = await response.json();
-        if (data.success && data.pkp) {
-            localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify({
-                publicKey: data.pkp.publicKey,
-                ethAddress: data.pkp.ethAddress,
-                tokenId: data.pkp.tokenId
-            }));
-            console.log("✅ PKP minted and stored:", data.pkp.ethAddress);
-        }
+        // Store PKP for future use
+        localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify({
+            publicKey: result.publicKey,
+            ethAddress: result.ethAddress,
+            tokenId: result.tokenId
+        }));
+
+        console.log(`✅ PKP minted via ${result.method} and stored:`, result.ethAddress);
     } catch (error) {
         console.warn("Background PKP minting error (non-blocking):", error);
     }
@@ -155,7 +152,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             console.log("✅ Free ticket claimed:", data);
 
-            // Mint PKP for signless experience
+            // Mint PKP for signless experience (smart mode - direct first, relay fallback)
             await mintPKPInBackground(accountId);
 
             if (onPurchaseSuccess) onPurchaseSuccess();
@@ -246,7 +243,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             if (hasSessionKey === false) setHasSessionKey(true);
 
-            // Mint PKP for signless experience
+            // Mint PKP for signless experience (relay-based, gas-free)
             await mintPKPInBackground(accountId);
 
             if (onPurchaseSuccess) onPurchaseSuccess();

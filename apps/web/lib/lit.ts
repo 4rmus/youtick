@@ -139,6 +139,14 @@ class Lit {
         this.litNodeClient = client;
     }
 
+    /**
+     * Get the underlying LitNodeClient instance
+     * Used by PKPManager for smart minting
+     */
+    getLitNodeClient(): LitNodeClient {
+        return this.litNodeClient;
+    }
+
     async connect() {
         if (!this.litNodeClient.ready) {
             await this.litNodeClient.connect();

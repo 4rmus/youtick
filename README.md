@@ -43,14 +43,17 @@ Most dApps suffer from \"Signature Fatigue\" – endless wallet pop-ups. YouTick
 
 ## 🛠 Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| Frontend | Next.js 16, React 19, Tailwind CSS, TypeScript |
-| Blockchain | NEAR Protocol (Testnet) |
-| Smart Contract | Rust (NEAR SDK) |
-| Encryption | Lit Protocol (Datil Dev) |
-| Storage | Lighthouse / IPFS |
-| Wallet | NEAR Wallet Selector |
+| Layer | Technology | Version |
+|-------|------------|---------|
+| Frontend | Next.js (App Router) | 16.0.10 |
+| UI Framework | React | 19.2.3 |
+| Styling | Tailwind CSS | 4.x |
+| Language | TypeScript | 5.x |
+| Blockchain | NEAR Protocol | Testnet |
+| Smart Contract | Rust (NEAR SDK) | 5.1.0 |
+| Encryption | Lit Protocol | 7.3.1 (Datil Dev) |
+| Storage | Lighthouse / IPFS | 0.4.3 |
+| Wallet | NEAR Wallet Selector | 10.1.2 |
 
 ## 🚀 Quick Start
 

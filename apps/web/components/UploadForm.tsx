@@ -7,6 +7,7 @@ import { lit, LIT_ACTION_CID } from '@/lib/lit';
 import { SessionManager } from '@/lib/session-manager';
 import { batchUploadActions, batchUploadActionsSignless } from '@/lib/batch-transactions';
 import { generateVideoThumbnail } from '@/lib/video-utils';
+import { PKPManager } from '@/lib/pkp';
 import lighthouse from '@lighthouse-web3/sdk';
 import { ethers } from 'ethers';
 import { transactions, utils } from 'near-api-js';
@@ -80,7 +81,7 @@ export function UploadForm() {
     const REQUIRED_GAS = 0.5; // MPC (0.25) + NFT (0.1) + Event (0.1)
 
     // PKP State for Uploader
-    const [pkpData, setPkpData] = useState<{ publicKey: string, ethAddress: string, litActionCid: string } | null>(null);
+    const [pkpData, setPkpData] = useState<{ publicKey: string, ethAddress: string, tokenId?: string, litActionCid?: string } | null>(null);
     const [pkpCheckComplete, setPkpCheckComplete] = useState(false);
 
     // MPC Fallback Confirmation State
@@ -162,26 +163,28 @@ export function UploadForm() {
         }
         pkpMintInProgress.current = true;
 
-        console.log("🔐 Pre-minting PKP in background...");
+        console.log("🔐 Pre-minting PKP in background (smart mode)...");
 
         try {
-            const response = await fetch('/api/relayer/mint', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nearAccountId: accountId })
-            });
+            // Initialize Lit client and PKP Manager
+            await lit.connect();
+            const pkpManager = new PKPManager(lit.getLitNodeClient());
 
-            if (response.ok) {
-                const data = await response.json();
-                if (data.pkp) {
-                    localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify(data.pkp));
-                    setPkpData(data.pkp);
-                    console.log("✅ PKP pre-minted successfully:", data.pkp.ethAddress);
-                }
-            } else {
-                const errorData = await response.json();
-                console.warn("⚠️ PKP pre-mint failed (will use MPC):", errorData.error);
-            }
+            // Use smart minting - tries direct first (decentralized), falls back to relay
+            const result = await pkpManager.mintPKPSmart(accountId);
+
+            // Store PKP for future use
+            localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify({
+                publicKey: result.publicKey,
+                ethAddress: result.ethAddress,
+                tokenId: result.tokenId
+            }));
+            setPkpData({
+                publicKey: result.publicKey,
+                ethAddress: result.ethAddress,
+                tokenId: result.tokenId
+            });
+            console.log(`✅ PKP pre-minted via ${result.method}:`, result.ethAddress);
         } catch (error) {
             console.warn("⚠️ PKP pre-mint error (will use MPC):", error);
         } finally {
@@ -659,30 +662,28 @@ export function UploadForm() {
             let pkpFailed = false;
 
             if (!currentPkp && !pendingUploadAfterMpcConfirm) {
-                // First attempt - try PKP mint
+                // First attempt - try PKP mint (relay-based, gas-free)
                 console.log("🔐 PKP-First: No PKP found. Minting before session key setup...");
                 setStatus("Setting up PKP for zero-cost signing...");
 
                 try {
-                    const response = await fetch('/api/relayer/mint', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ nearAccountId: accountId })
-                    });
+                    // Initialize Lit client and PKP Manager
+                    await lit.connect();
+                    const pkpManager = new PKPManager(lit.getLitNodeClient());
 
-                    if (response.ok) {
-                        const data = await response.json();
-                        if (data.pkp) {
-                            localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify(data.pkp));
-                            setPkpData(data.pkp);
-                            currentPkp = JSON.stringify(data.pkp);
-                            console.log("✅ PKP minted FIRST - will save ~0.25 NEAR on MPC:", data.pkp.ethAddress);
-                        }
-                    } else {
-                        const errorData = await response.json();
-                        console.warn("⚠️ PKP mint failed:", errorData.error);
-                        pkpFailed = true;
-                    }
+                    // Relay-based minting (gas-free for users)
+                    const result = await pkpManager.mintPKPSmart(accountId);
+
+                    // Store PKP
+                    const pkpObj = {
+                        publicKey: result.publicKey,
+                        ethAddress: result.ethAddress,
+                        tokenId: result.tokenId
+                    };
+                    localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify(pkpObj));
+                    setPkpData(pkpObj);
+                    currentPkp = JSON.stringify(pkpObj);
+                    console.log(`✅ PKP minted via ${result.method} FIRST - will save ~0.25 NEAR on MPC:`, result.ethAddress);
                 } catch (pkpError) {
                     console.warn("⚠️ PKP mint error:", pkpError);
                     pkpFailed = true;
