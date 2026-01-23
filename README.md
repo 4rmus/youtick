@@ -41,6 +41,38 @@ Most dApps suffer from \"Signature Fatigue\" – endless wallet pop-ups. YouTick
 - **🎁 Gift Tickets** – Create shareable gift links for your videos; recipients can claim NFT tickets
 - **👤 Trial Accounts** – New users can claim gifts without a NEAR wallet; automatic sub-account creation
 
+## 🏗 Architecture
+
+```mermaid
+graph TB
+    subgraph Frontend["Frontend (Next.js 16)"]
+        UI[React UI<br/>Components]
+        LIB[lib/ modules<br/>Business Logic]
+    end
+
+    subgraph NEAR["Blockchain (NEAR Protocol)"]
+        CONTRACT[NFT Contract<br/>v1.utick.testnet]
+        WALLET[Wallet Selector]
+        SESSION[Session Keys]
+    end
+
+    subgraph Services["Decentralized Services"]
+        LIT[Lit Protocol<br/>Encryption + ACCs]
+        IPFS[Lighthouse/IPFS<br/>Video Storage]
+        MPC[Chain Signatures<br/>MPC Address]
+    end
+
+    UI --> LIB
+    LIB --> WALLET --> CONTRACT
+    LIB --> LIT
+    LIB --> IPFS
+    LIB --> MPC
+    SESSION --> CONTRACT
+    CONTRACT -.->|ownership check| LIT
+```
+
+> 📚 **Detailed Documentation**: See [docs/](./docs/) for comprehensive technical guides.
+
 ## 🛠 Tech Stack
 
 | Layer | Technology | Version |
