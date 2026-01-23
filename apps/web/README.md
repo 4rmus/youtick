@@ -2,6 +2,18 @@
 
 Next.js frontend for the YouTick decentralized video platform.
 
+> For comprehensive documentation, see the [docs/](../../docs/) folder.
+
+## Documentation
+
+| Topic | Document |
+|-------|----------|
+| Quick Start | [02-quick-start.md](../../docs/02-quick-start.md) |
+| Frontend Implementation | [09-frontend.md](../../docs/09-frontend.md) |
+| Lit Protocol Integration | [05-lit-protocol.md](../../docs/05-lit-protocol.md) |
+| IPFS & Lighthouse | [06-ipfs-lighthouse.md](../../docs/06-ipfs-lighthouse.md) |
+| Contributing | [10-contributing.md](../../docs/10-contributing.md) |
+
 ## Development
 
 ```bash
@@ -17,12 +29,22 @@ npm run build
 
 ## Environment Variables
 
-Create `.env.local`:
+Create `.env.local` (see [.env.example](.env.example) for template):
 
 ```env
+# Required
 NEXT_PUBLIC_NEAR_NETWORK=testnet
 NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
-LIGHTHOUSE_API_KEY=your_api_key
+LIGHTHOUSE_API_KEY=your_lighthouse_api_key
+
+# Lit Protocol
+NEXT_PUBLIC_LIT_ACTION_IPFS_CID=your_lit_action_cid
+NEXT_PUBLIC_LIT_CAPACITY_TOKEN_ID=your_capacity_token_id
+LIT_DELEGATION_WALLET_PRIVATE_KEY=0x...
+
+# Relayer (for sponsored transactions)
+RELAYER_ACCOUNT_ID=your-relayer.testnet
+RELAYER_PRIVATE_KEY=ed25519:...
 ```
 
 ## Project Structure
