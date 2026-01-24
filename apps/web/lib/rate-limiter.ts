@@ -100,15 +100,92 @@ class RateLimiter {
 }
 
 // Pre-configured rate limiters for different endpoints
+
+/**
+ * PKP Minting Rate Limiter
+ *
+ * SECURITY: PKP minting costs real ETH gas on Chronicle Yellowstone
+ *
+ * Limit: 5 PKP per day per account
+ *
+ * Why 5/day:
+ * - PKP is stored in localStorage
+ * - If user clears localStorage, they can recover quickly
+ * - Prevents major abuse while allowing reasonable usage
+ * - Max cost: 5 × ~0.005 ETH = ~0.025 ETH/day per account
+ */
 export const pkpMintLimiter = new RateLimiter({
-    windowMs: 60 * 1000,    // 1 minute
-    maxRequests: 5          // 5 PKP mints per minute per identifier
+    windowMs: 24 * 60 * 60 * 1000,  // 24 hours (1 day)
+    maxRequests: 5                   // 5 PKP per day per account
 });
 
+/**
+ * Video Upload Rate Limiter
+ *
+ * Lighthouse storage has costs, prevent abuse while allowing creators
+ * to upload multiple videos in reasonable time
+ *
+ * Limit: 10 uploads per hour
+ */
 export const uploadLimiter = new RateLimiter({
-    windowMs: 60 * 1000,    // 1 minute
-    maxRequests: 10         // 10 uploads per minute
+    windowMs: 60 * 60 * 1000,  // 1 hour
+    maxRequests: 10            // 10 uploads per hour
 });
+
+// Trial account creation limiter (per IP)
+// Prevents spam account creation
+export const trialAccountLimiter = new RateLimiter({
+    windowMs: 24 * 60 * 60 * 1000,  // 24 hours (1 day)
+    maxRequests: 3                   // Max 3 trial accounts per IP per day
+});
+
+// Daily global trial account limit tracking
+// This is a simple counter, not a per-identifier limiter
+class DailyGlobalLimiter {
+    private count: number = 0;
+    private lastReset: number = Date.now();
+    private maxDaily: number;
+
+    constructor(maxDaily: number) {
+        this.maxDaily = maxDaily;
+    }
+
+    checkAndIncrement(): boolean {
+        const now = Date.now();
+        const oneDayMs = 24 * 60 * 60 * 1000;
+
+        // Reset counter if a day has passed
+        if (now - this.lastReset > oneDayMs) {
+            this.count = 0;
+            this.lastReset = now;
+        }
+
+        if (this.count >= this.maxDaily) {
+            return false;
+        }
+
+        this.count++;
+        return true;
+    }
+
+    getRemaining(): number {
+        const now = Date.now();
+        const oneDayMs = 24 * 60 * 60 * 1000;
+
+        if (now - this.lastReset > oneDayMs) {
+            return this.maxDaily;
+        }
+
+        return Math.max(0, this.maxDaily - this.count);
+    }
+
+    getCount(): number {
+        return this.count;
+    }
+}
+
+// Global daily limit for trial accounts (platform-wide)
+export const trialDailyGlobalLimiter = new DailyGlobalLimiter(100); // Max 100 trials per day
 
 export { RateLimiter };
 export type { RateLimiterConfig };

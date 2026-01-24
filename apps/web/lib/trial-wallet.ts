@@ -1,34 +1,37 @@
-import { connect, keyStores, Account } from "near-api-js";
+// lib/trial-wallet.ts - near-api-js v7 compatible
+import { Account, KeyPair, KeyPairSigner, type KeyPairString } from "near-api-js";
+import { BrowserKeyStore } from "./keystore-v7";
 
 const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet';
+const RPC_URL = NETWORK_ID === 'mainnet'
+    ? 'https://rpc.mainnet.near.org'
+    : 'https://test.rpc.fastnear.com';
 
 /**
  * TrialWallet behaves like a Wallet Selector wallet but uses local browser keys
  * Created during gift claim flow when new trial accounts are made
+ * near-api-js v7 compatible
  */
 export class TrialWallet {
     private accountId: string;
-    private near: any = null;
+    private keyStore: BrowserKeyStore;
     private account: Account | null = null;
-    private keyStore: InstanceType<typeof keyStores.BrowserLocalStorageKeyStore>;
 
     constructor(accountId: string) {
         this.accountId = accountId;
-        this.keyStore = new keyStores.BrowserLocalStorageKeyStore();
+        this.keyStore = new BrowserKeyStore();
     }
 
     private async getAccount(): Promise<Account> {
         if (!this.account) {
-            this.near = await connect({
-                networkId: NETWORK_ID,
-                keyStore: this.keyStore,
-                nodeUrl: NETWORK_ID === 'mainnet'
-                    ? 'https://rpc.mainnet.near.org'
-                    : 'https://test.rpc.fastnear.com',
-            });
-            this.account = await this.near.account(this.accountId);
+            // v7: Get signer from keystore and create Account directly
+            const signer = await this.keyStore.getSigner(NETWORK_ID, this.accountId);
+            if (!signer) {
+                throw new Error(`No key found for account ${this.accountId}`);
+            }
+            this.account = new Account(this.accountId, RPC_URL, signer);
         }
-        return this.account!;
+        return this.account;
     }
 
     async signAndSendTransaction(params: { receiverId: string; actions: any[] }) {
@@ -94,7 +97,7 @@ export class TrialWallet {
     // Check if trial account has valid key
     static async hasValidKey(accountId: string): Promise<boolean> {
         if (typeof window === "undefined") return false;
-        const keyStore = new keyStores.BrowserLocalStorageKeyStore();
+        const keyStore = new BrowserKeyStore();
         const key = await keyStore.getKey(NETWORK_ID, accountId);
         return !!key;
     }

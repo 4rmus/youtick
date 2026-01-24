@@ -1,8 +1,19 @@
 import { useState, useEffect } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { connect, keyStores } from 'near-api-js';
+import { getProvider, viewContract } from '@/lib/near';
+import { parseTitleMetadata } from '@/lib/metadata-parser';
+import { NEAR_CONFIG } from '@/lib/constants';
 
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+/**
+ * Check if a media URL looks valid
+ */
+function isValidMediaUrl(mediaUrl: string | undefined): boolean {
+    if (!mediaUrl) return false;
+    // Valid if it's an http URL or data URI
+    return mediaUrl.startsWith('http') || mediaUrl.startsWith('data:');
+}
+
+const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
 
 interface VideoMetadata {
     encrypted_cid: string;
@@ -41,53 +52,57 @@ export function useOwnedTokens() {
             setLoading(true);
             setError(null);
             try {
-                const near = await connect({
-                    networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet',
-                    nodeUrl: process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
-                        ? 'https://rpc.mainnet.near.org'
-                        : 'https://test.rpc.fastnear.com',
-                    keyStore: new keyStores.InMemoryKeyStore(),
-                });
-
-                const account = await near.account(NFT_CONTRACT_ID);
+                // v7: Use JsonRpcProvider directly for view calls
+                const provider = getProvider();
 
                 // Call the contract method that returns tokens + video metadata
                 console.log("useOwnedTokens: Fetching from contract:", NFT_CONTRACT_ID, "for account:", accountId);
-                const result = await account.viewFunction({
-                    contractId: NFT_CONTRACT_ID,
-                    methodName: 'get_tokens_with_video',
-                    args: {
+                const result = await viewContract<[any, any][]>(
+                    provider,
+                    NFT_CONTRACT_ID,
+                    'get_tokens_with_video',
+                    {
                         account_id: accountId,
                         limit: 50 // Fetch last 50 tokens
                     }
-                });
+                );
 
                 // The contract returns Vec<(Token, Option<VideoMetadata>)>
                 // We need to map this to a flatter structure for the UI
                 const mappedTokens: TokenWithVideo[] = result.map(([token, videoMeta]: [any, any]) => {
-                    let displayTitle = token.metadata?.title || token.token_id;
-                    let displayMedia = token.metadata?.media;
+                    // Use centralized metadata parser
+                    const parsed = parseTitleMetadata(
+                        token.metadata?.title,
+                        token.token_id
+                    );
 
-                    // Parse Schema: RealCID:::ThumbnailCID:::Title
-                    if (displayTitle && displayTitle.includes(':::')) {
-                        const parts = displayTitle.split(':::');
-                        if (parts.length >= 3) {
-                            const thumbnailCid = parts[1];
-                            displayTitle = parts.slice(2).join(':::');
-                            // If media is standard placeholder or missing, use the extracted thumbnail
-                            if (!displayMedia || displayMedia.includes('token.png')) {
-                                displayMedia = `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`;
-                            }
-                        } else if (parts.length === 2) {
-                            displayTitle = parts[1];
-                        }
-                    }
+                    // Determine display media:
+                    // - Use token.metadata.media if it exists and looks valid
+                    // - Otherwise use the parsed thumbnail from title
+                    const originalMediaValid = token.metadata?.media
+                        && !token.metadata.media.includes('token.png')
+                        && isValidMediaUrl(token.metadata.media);
+
+                    const displayMedia = originalMediaValid
+                        ? token.metadata.media
+                        : parsed.thumbnailUrl;
+
+                    console.log('[useOwnedTokens] Token metadata:', {
+                        tokenId: token.token_id,
+                        rawTitle: token.metadata?.title,
+                        originalMedia: token.metadata?.media,
+                        originalMediaValid,
+                        parsedThumbnailCid: parsed.thumbnailCid,
+                        parsedThumbnailUrl: parsed.thumbnailUrl,
+                        displayMedia,
+                        schemaVersion: parsed.schemaVersion
+                    });
 
                     return {
                         ...token,
                         metadata: {
                             ...token.metadata,
-                            title: displayTitle,
+                            title: parsed.title,
                             media: displayMedia
                         },
                         video_metadata: videoMeta

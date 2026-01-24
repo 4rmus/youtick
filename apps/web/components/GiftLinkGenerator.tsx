@@ -30,22 +30,17 @@ export function GiftLinkGenerator({
     useEffect(() => {
         const fetchEventDetails = async () => {
             try {
-                const near = await import("near-api-js").then(pkg => pkg.connect({
-                    networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet',
-                    nodeUrl: process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
-                        ? 'https://rpc.mainnet.near.org'
-                        : 'https://test.rpc.fastnear.com',
-                    keyStore: new (pkg.keyStores.InMemoryKeyStore)(),
-                }));
-
+                // v7: Use JsonRpcProvider directly for view calls
+                const { getProvider, viewContract } = await import("@/lib/near");
+                const provider = getProvider();
                 const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-                const account = await near.account(contractId);
 
-                const event: any = await account.viewFunction({
+                const event = await viewContract<{ price: string }>(
+                    provider,
                     contractId,
-                    methodName: "get_event",
-                    args: { encrypted_cid: eventCid }
-                });
+                    "get_event",
+                    { encrypted_cid: eventCid }
+                );
 
                 if (event && event.price) {
                     setEventPrice(event.price);

@@ -97,7 +97,7 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
 
                   {/* Thumbnail */}
                   <div className="aspect-video relative overflow-hidden">
-                    {token.metadata?.media && token.metadata.media.startsWith('http') ? (
+                    {token.metadata?.media && (token.metadata.media.startsWith('http') || token.metadata.media.startsWith('data:')) ? (
                       <img
                         src={token.metadata.media}
                         alt={token.metadata.title}

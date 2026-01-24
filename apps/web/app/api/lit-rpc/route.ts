@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { addCorsHeaders, handleCorsPreflightRequest, checkCors } from '@/lib/cors';
 
 export async function POST(req: NextRequest) {
+    // CORS check - block disallowed origins
+    const corsBlock = checkCors(req);
+    if (corsBlock) return corsBlock;
+
     try {
         const body = await req.json();
 
@@ -15,23 +20,16 @@ export async function POST(req: NextRequest) {
 
         const data = await response.json();
 
-        // Add CORS headers to the response from our own API
+        // Add CORS headers for allowed origins only (youtick.net, localhost)
         const res = NextResponse.json(data);
-        res.headers.set('Access-Control-Allow-Origin', '*');
-        res.headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-        res.headers.set('Access-Control-Allow-Headers', 'Content-Type');
-
-        return res;
-    } catch (error: any) {
+        return addCorsHeaders(res, req);
+    } catch (error: unknown) {
         console.error('Lit RPC Proxy Error:', error);
-        return NextResponse.json({ error: 'Failed to proxy Lit RPC request' }, { status: 500 });
+        const errorRes = NextResponse.json({ error: 'Failed to proxy Lit RPC request' }, { status: 500 });
+        return addCorsHeaders(errorRes, req);
     }
 }
 
-export async function OPTIONS() {
-    const res = new NextResponse(null, { status: 204 });
-    res.headers.set('Access-Control-Allow-Origin', '*');
-    res.headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.headers.set('Access-Control-Allow-Headers', 'Content-Type');
-    return res;
+export async function OPTIONS(req: NextRequest) {
+    return handleCorsPreflightRequest(req);
 }

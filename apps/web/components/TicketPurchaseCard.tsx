@@ -2,10 +2,12 @@ import { useState, useEffect } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from "@/components/ui/button";
 import { Loader2, Ticket, AlertCircle, Play } from "lucide-react";
-import { transactions, utils, connect, keyStores } from 'near-api-js';
+import { actions, KeyPair, PublicKey, yoctoToNear, nearToYocto } from 'near-api-js';
+import { getProvider, viewContract } from '@/lib/near';
 import { SessionManager } from '@/lib/session-manager';
-import { PKPManager } from '@/lib/pkp';
-import { lit } from '@/lib/lit';
+import { useSessionState, useIsCreator } from '@/lib/hooks/useSessionState';
+import { parseTitleMetadata } from '@/lib/metadata-parser';
+import { NEAR_CONFIG } from '@/lib/constants';
 
 interface TicketPurchaseCardProps {
     cid: string;
@@ -20,100 +22,48 @@ interface EventDetails {
     uploader?: string;
 }
 
-/**
- * Mint PKP in background after ticket purchase for signless experience.
- * Uses relay-based minting (gas-free for users).
- * Non-blocking - errors are logged but don't affect user flow.
- */
-async function mintPKPInBackground(accountId: string) {
-    try {
-        const existingPkp = localStorage.getItem(`lit_pkp_${accountId}`);
-        if (existingPkp) {
-            console.log("PKP already exists for user, skipping mint");
-            return;
-        }
-
-        console.log("🔐 Minting PKP for signless experience...");
-
-        // Initialize PKP Manager with Lit client
-        await lit.connect();
-        const pkpManager = new PKPManager(lit.getLitNodeClient());
-
-        // Relay-based minting (gas-free for users)
-        const result = await pkpManager.mintPKPSmart(accountId);
-
-        // Store PKP for future use
-        localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify({
-            publicKey: result.publicKey,
-            ethAddress: result.ethAddress,
-            tokenId: result.tokenId
-        }));
-
-        console.log(`✅ PKP minted via ${result.method} and stored:`, result.ethAddress);
-    } catch (error) {
-        console.warn("Background PKP minting error (non-blocking):", error);
-    }
-}
-
 export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: TicketPurchaseCardProps) {
-    const { selector, accountId, getWallet } = useWallet();
+    const { selector, accountId, getWallet, pkpData } = useWallet();
+
+    // React Query hooks for cached state
+    const { hasSessionKey, refetchSessionKey } = useSessionState(accountId);
+    const { data: isCreatorData, isLoading: isCreatorLoading } = useIsCreator(accountId, cid);
+
     const [loading, setLoading] = useState(false);
     const [actionLoading, setActionLoading] = useState(false);
     const [eventDetails, setEventDetails] = useState<EventDetails | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [hasSessionKey, setHasSessionKey] = useState<boolean | null>(null);
 
-    // Initial Load: Fetch Details & Check Session Key
+    // Initial Load: Fetch Event Details
+    // Note: Session key check is now handled by useSessionState hook (React Query)
     useEffect(() => {
         if (!cid) return;
 
         const init = async () => {
             setLoading(true);
             try {
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-                const rpcUrl = "/api/near-rpc";
+                const contractId = NEAR_CONFIG.contractId;
 
-                const near = await connect({
-                    networkId: 'testnet',
-                    nodeUrl: typeof window !== 'undefined' ? window.location.origin + rpcUrl : 'https://rpc.testnet.near.org',
-                    keyStore: new keyStores.InMemoryKeyStore(),
-                });
+                // v7: Use JsonRpcProvider directly for view calls
+                const provider = getProvider();
 
-                const account = await near.account(contractId);
-                const event: any = await account.viewFunction({
-                    contractId,
-                    methodName: 'get_event',
-                    args: { encrypted_cid: cid }
-                });
+                const event = await viewContract<{
+                    title: string;
+                    price: string;
+                    creator_id: string;
+                }>(provider, contractId, 'get_event', { encrypted_cid: cid });
 
                 if (event) {
-                    let title = event.title;
-                    let media = "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png";
-
-                    if (title && title.includes(':::')) {
-                        const parts = title.split(':::');
-                        if (parts.length >= 3) {
-                            const thumbnailCid = parts[1];
-                            title = parts.slice(2).join(':::');
-                            media = `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`;
-                        } else if (parts.length === 2) {
-                            title = parts[1];
-                        }
-                    }
+                    // Use centralized metadata parser
+                    const parsed = parseTitleMetadata(event.title, "Exclusive Content");
 
                     setEventDetails({
-                        price: utils.format.formatNearAmount(event.price),
-                        title: title || "Exclusive Content",
-                        media,
+                        // v7: yoctoToNear expects bigint, convert string from contract
+                        price: yoctoToNear(BigInt(event.price)),
+                        title: parsed.title,
+                        media: parsed.thumbnailUrl,
                         uploader: event.creator_id
                     });
-                }
-
-                // Check Session Key
-                if (accountId) {
-                    const sessionManager = new SessionManager(accountId);
-                    const hasKey = await sessionManager.hasSessionKey();
-                    setHasSessionKey(hasKey);
                 }
 
             } catch (e) {
@@ -125,7 +75,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         };
 
         init();
-    }, [cid, accountId]);
+    }, [cid]);
 
     // Claim FREE Ticket (Sponsored by Contract)
     const handleFreeTicketClaim = async () => {
@@ -152,9 +102,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             console.log("✅ Free ticket claimed:", data);
 
-            // Mint PKP for signless experience (smart mode - direct first, relay fallback)
-            await mintPKPInBackground(accountId);
-
+            // PKP minting is now handled automatically by WalletProvider on connect
             if (onPurchaseSuccess) onPurchaseSuccess();
 
         } catch (e: any) {
@@ -172,7 +120,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         setError(null);
         try {
             const wallet = await getWallet();
-            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+            const contractId = NEAR_CONFIG.contractId;
             const sessionManager = new SessionManager(accountId);
 
             const transactionsList = [];
@@ -180,21 +128,22 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             // Prepare Session Key Transaction if missing
             if (hasSessionKey === false) {
                 console.log("No session key found. Adding Initialization to transactions...");
-                const keyPair = utils.KeyPair.fromRandom('ed25519');
+                // v7: Use KeyPair directly
+                const keyPair = KeyPair.fromRandom('ed25519');
                 const publicKey = keyPair.getPublicKey().toString();
 
                 await sessionManager.saveSessionKey(keyPair);
 
+                // v7: Use PublicKey.fromString and actions.addFunctionCallAccessKey
+                const pubKey = PublicKey.fromString(publicKey);
                 transactionsList.push({
                     receiverId: accountId,
                     actions: [
-                        transactions.addKey(
-                            utils.PublicKey.from(publicKey),
-                            transactions.functionCallAccessKey(
-                                contractId,
-                                [],
-                                BigInt(utils.format.parseNearAmount('0.25') || '0')
-                            )
+                        actions.addFunctionCallAccessKey(
+                            pubKey,
+                            contractId,
+                            [], // All methods allowed
+                            BigInt(nearToYocto(0.25))
                         )
                     ]
                 });
@@ -202,17 +151,19 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             // Purchase & Deposit Transaction
             const purchaseActions = [];
-            const STORAGE_COST = utils.format.parseNearAmount('0.01') || '0';
-            const priceYocto = utils.format.parseNearAmount(eventDetails.price) || '0';
+            // v7: Use nearToYocto
+            const STORAGE_COST = nearToYocto(0.01);
+            const priceYocto = nearToYocto(parseFloat(eventDetails.price));
 
             // Total deposit: ticket price + storage + 1N buffer for gas
-            const totalDeposit = BigInt(priceYocto) + BigInt(STORAGE_COST) + BigInt(utils.format.parseNearAmount('1') || '0');
+            const totalDeposit = BigInt(priceYocto) + BigInt(STORAGE_COST) + BigInt(nearToYocto(1));
 
             // Step 1: Deposit all funds to prepaid balance
+            // v7: Use actions.functionCall
             purchaseActions.push(
-                transactions.functionCall(
+                actions.functionCall(
                     'deposit_funds',
-                    Buffer.from(JSON.stringify({})),
+                    {},
                     BigInt('30000000000000'),
                     totalDeposit
                 )
@@ -220,12 +171,12 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             // Step 2: Buy ticket from prepaid balance
             purchaseActions.push(
-                transactions.functionCall(
+                actions.functionCall(
                     'buy_ticket_prepaid',
-                    Buffer.from(JSON.stringify({
+                    {
                         receiver_id: accountId,
                         encrypted_cid: cid
-                    })),
+                    },
                     BigInt('50000000000000'),
                     BigInt('0')
                 )
@@ -241,11 +192,10 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 transactions: transactionsList
             });
 
-            if (hasSessionKey === false) setHasSessionKey(true);
+            // Refetch session key status in React Query cache
+            if (hasSessionKey === false) refetchSessionKey();
 
-            // Mint PKP for signless experience (relay-based, gas-free)
-            await mintPKPInBackground(accountId);
-
+            // PKP minting is now handled automatically by WalletProvider on connect
             if (onPurchaseSuccess) onPurchaseSuccess();
 
         } catch (e) {
@@ -268,7 +218,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
     const priceNear = parseFloat(eventDetails.price) || 0;
     const isFree = priceNear === 0;
-    const isCreator = accountId && eventDetails.uploader === accountId;
+    // Use React Query hook for creator check (cached), fallback to direct comparison
+    const isCreator = isCreatorData === true || (accountId && eventDetails.uploader === accountId);
 
     return (
         <div className={`relative group overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 border border-white/10 shadow-2xl shadow-black/50 max-w-sm mx-auto ${className}`}>

@@ -3,7 +3,9 @@
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useState, useEffect, Suspense } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { connect, keyStores, utils } from 'near-api-js';
+import { yoctoToNear } from 'near-api-js';
+import { getProvider, viewContract } from '@/lib/near';
+import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { MintButton } from '@/components/MintButton';
@@ -38,23 +40,18 @@ function TicketContent() {
             setLoading(true);
             try {
                 const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-                const rpcUrl = typeof window !== 'undefined' ? window.location.origin + '/api/near-rpc' : 'https://test.rpc.fastnear.com';
 
-                const near = await connect({
-                    networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet',
-                    nodeUrl: rpcUrl,
-                    keyStore: new keyStores.InMemoryKeyStore(),
-                });
-
-                const account = await near.account(contractId);
+                // v7: Use JsonRpcProvider directly for view calls
+                const provider = getProvider();
 
                 // 1. Fetch Event Details
                 try {
-                    const eventData = await account.viewFunction({
+                    const eventData = await viewContract<any>(
+                        provider,
                         contractId,
-                        methodName: 'get_event',
-                        args: { encrypted_cid: cid }
-                    });
+                        'get_event',
+                        { encrypted_cid: cid }
+                    );
                     setEvent(eventData);
                 } catch (e) {
                     console.warn("Event not found (might be legacy video):", e);
@@ -64,11 +61,12 @@ function TicketContent() {
                 if (accountId) {
                     setCheckingAccess(true);
                     try {
-                        const ownedTokens: any[] = await account.viewFunction({
+                        const ownedTokens = await viewContract<any[]>(
+                            provider,
                             contractId,
-                            methodName: 'get_tokens_with_video',
-                            args: { account_id: accountId, limit: 100 }
-                        });
+                            'get_tokens_with_video',
+                            { account_id: accountId, limit: 100 }
+                        );
 
                         if (accountId && ownedTokens.length > 0 && cid) {
                             const isOwner = ownedTokens.some(t => {
@@ -112,18 +110,22 @@ function TicketContent() {
         <Card className="w-full max-w-lg shadow-2xl bg-zinc-950 border-zinc-800">
             <CardHeader className="text-center space-y-4">
                 {(() => {
-                    const parts = event?.title ? event.title.split(':::') : [];
-                    const realTitle = parts.length >= 3 ? parts[2] : (event?.title || "Exclusive Event");
-                    const thumbnailCid = parts.length >= 3 ? parts[1] : null;
-                    const thumbnailUrl = thumbnailCid ? `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}` : null;
+                    // Use centralized metadata parser
+                    const parsed = parseTitleMetadata(event?.title, "Exclusive Event");
+                    console.log('[TicketPage] Parsed metadata:', {
+                        rawTitle: event?.title,
+                        thumbnailCid: parsed.thumbnailCid,
+                        thumbnailUrl: parsed.thumbnailUrl,
+                        schemaVersion: parsed.schemaVersion
+                    });
 
                     return (
                         <>
-                            {thumbnailUrl ? (
+                            {parsed.thumbnailCid ? (
                                 <div className="mx-auto w-full aspect-video rounded-lg overflow-hidden border border-zinc-800 relative group">
                                     <img
-                                        src={thumbnailUrl}
-                                        alt={realTitle}
+                                        src={parsed.thumbnailUrl}
+                                        alt={parsed.title}
                                         className="w-full h-full object-cover"
                                     />
                                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
@@ -139,7 +141,7 @@ function TicketContent() {
                                 </div>
                             )}
                             <CardTitle className="text-3xl font-bold text-white mt-4">
-                                {realTitle}
+                                {parsed.title}
                             </CardTitle>
                         </>
                     );
@@ -162,7 +164,7 @@ function TicketContent() {
                                 <span>Event Price</span>
                                 <span className="font-mono text-zinc-300">
                                     {event?.price
-                                        ? `${utils.format.formatNearAmount(event.price)} NEAR`
+                                        ? `${yoctoToNear(event.price)} NEAR`
                                         : "Free / Legacy"}
                                 </span>
                             </div>

@@ -49,3 +49,7 @@ CLAUDE.md
 PRD.md
 .claude/
 claudedocs/
+.skills/
+
+TECHNICAL_DEEP_ANALYSIS.md
+TECHNICAL_REPORT_MASTER_PROMPT.md*.png

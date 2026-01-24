@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from "@/components/ui/button";
 import { Loader2, Coins, Ticket } from "lucide-react";
-import { transactions, utils, connect, keyStores } from 'near-api-js';
+import { actions, yoctoToNear, nearToYocto } from 'near-api-js';
+import { getProvider, viewContract } from '@/lib/near';
 
 interface MintButtonProps {
     cid?: string;
@@ -21,22 +22,19 @@ export function MintButton({ cid }: MintButtonProps) {
             setLoadingPrice(true);
             try {
                 const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-                // Use the proxy by default or direct RPC if needed. Using proxy config.
-                const near = await connect({
-                    networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet',
-                    nodeUrl: typeof window !== 'undefined' ? window.location.origin + '/api/near-rpc' : 'https://test.rpc.fastnear.com',
-                    keyStore: new keyStores.InMemoryKeyStore(),
-                });
+                // v7: Use JsonRpcProvider directly for view calls
+                const provider = getProvider();
 
-                const account = await near.account(contractId);
-                const event: any = await account.viewFunction({
+                const event = await viewContract<{ price: string }>(
+                    provider,
                     contractId,
-                    methodName: 'get_event',
-                    args: { encrypted_cid: cid }
-                });
+                    'get_event',
+                    { encrypted_cid: cid }
+                );
 
                 if (event && event.price) {
-                    setPrice(utils.format.formatNearAmount(event.price));
+                    // v7: yoctoToNear expects bigint, convert string from contract
+                    setPrice(yoctoToNear(BigInt(event.price)));
                 }
             } catch (e) {
                 console.error("Error fetching ticket price:", e);
@@ -57,20 +55,22 @@ export function MintButton({ cid }: MintButtonProps) {
 
             // SALES FLOW: Buy Ticket
             if (cid && price) {
-                const depositYocto = utils.format.parseNearAmount(price);
-                const action = transactions.functionCall(
+                // v7: Use nearToYocto for conversion
+                const depositYocto = nearToYocto(parseFloat(price));
+                // v7: Use actions.functionCall instead of transactions.functionCall
+                const action = actions.functionCall(
                     'buy_ticket',
-                    Buffer.from(JSON.stringify({
+                    {
                         receiver_id: accountId,
                         encrypted_cid: cid
-                    })),
+                    },
                     BigInt('30000000000000'), // 30 Tgas
-                    BigInt(depositYocto || '0') + BigInt('12000000000000000000000') // Price + 0.012 NEAR (Storage + commission buffer)
+                    BigInt(depositYocto) + BigInt('12000000000000000000000') // Price + 0.012 NEAR (Storage + commission buffer)
                 );
 
                 await wallet.signAndSendTransaction({
                     receiverId: contractId,
-                    actions: [action as any],
+                    actions: [action],
                 });
             }
             // LEGACY FLOW: Mint Generic Access Pass
@@ -90,16 +90,17 @@ export function MintButton({ cid }: MintButtonProps) {
                     }
                 };
 
-                const action = transactions.functionCall(
+                // v7: Use actions.functionCall
+                const action = actions.functionCall(
                     'nft_mint',
-                    Buffer.from(JSON.stringify(args)),
+                    args,
                     BigInt('300000000000000'), // 300 Tgas
                     BigInt('100000000000000000000000') // 0.1 NEAR
                 );
 
                 await wallet.signAndSendTransaction({
                     receiverId: contractId,
-                    actions: [action as any],
+                    actions: [action],
                 });
             }
 

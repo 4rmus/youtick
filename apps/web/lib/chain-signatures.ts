@@ -1,5 +1,6 @@
+// lib/chain-signatures.ts - near-api-js v7 compatible
 import { ethers } from 'ethers';
-import { providers, utils, transactions } from 'near-api-js';
+import { JsonRpcProvider, actions, baseDecode } from 'near-api-js';
 import { ec as EC } from 'elliptic';
 import BN from 'bn.js';
 import { sha3_256 } from 'js-sha3';
@@ -25,7 +26,8 @@ export async function deriveEthAddress(accountId: string, path: string, wallet?:
         ? `${window.location.origin}/api/near-rpc`
         : "https://rpc.testnet.near.org";
 
-    const provider = new providers.JsonRpcProvider({ url: rpcUrl });
+    // v7: Use JsonRpcProvider directly
+    const provider = new JsonRpcProvider({ url: rpcUrl });
 
     let masterKey: string;
     try {
@@ -57,17 +59,6 @@ export async function deriveEthAddress(accountId: string, path: string, wallet?:
     // - path: "user.testnet/lit/pkp-minting"
 
     const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-    const relativePath = `${accountId},${path}`; // Comma is standard separator in MPC v0.1.0 convention? No, contract uses slash.
-
-    // Note: The contract code uses format!("{}/{}", account_id, path)
-    // BUT the MPC derivation string is "near-mpc-recovery v0.1.0 epsilon derivation:{caller_id},{path}"
-    // So effective derivation string becomes: "... derivation:{contract_id},{user_id}/{path}"
-    // which effectively is derivation:{contract_id},{user_id}/{path}
-
-    // So here we pass:
-    // masterKey
-    // accountId = CONTRACT_ID
-    // path = `${accountId}/${path}`
     const compositePath = `${accountId}/${path}`;
     const derivedKey = deriveChildKey(masterKey, CONTRACT_ID, compositePath);
 
@@ -94,9 +85,8 @@ function deriveChildKey(masterKeyStr: string, accountId: string, path: string): 
     // Remove protocol prefix if present
     const masterKeyBase58 = masterKeyStr.replace('secp256k1:', '');
 
-    // Decode Base58 to Buffer/Hex
-    // NEAR keys are Base58 encoded.
-    const masterKeyBytes = utils.serialize.base_decode(masterKeyBase58);
+    // v7: Use baseDecode from near-api-js
+    const masterKeyBytes = baseDecode(masterKeyBase58);
 
     // If raw 64 bytes, prepend '04' to make it a standard uncompressed key
     let masterKeyHex = Buffer.from(masterKeyBytes).toString('hex');
@@ -147,16 +137,17 @@ export async function signWithMPC(
         }
     };
 
-    const functionCallAction = transactions.functionCall(
+    // v7: Use actions.functionCall
+    const functionCallAction = actions.functionCall(
         'sign',
-        Buffer.from(JSON.stringify(args)),
+        args,
         BigInt('300000000000000'), // 300 TGas
         BigInt('100000000000000000000000') // 0.1 NEAR
     );
 
     const result = await wallet.signAndSendTransaction({
         receiverId: MPC_CONTRACT,
-        actions: [functionCallAction as any]
+        actions: [functionCallAction]
     });
 
     const successValue = result.status.SuccessValue;
@@ -224,16 +215,17 @@ export class MPCSigner extends ethers.AbstractSigner {
             }
         };
 
-        const functionCallAction = transactions.functionCall(
+        // v7: Use actions.functionCall
+        const functionCallAction = actions.functionCall(
             'sign',
-            Buffer.from(JSON.stringify(args)),
+            args,
             BigInt('300000000000000'), // 300 TGas
             BigInt('100000000000000000000000') // 0.1 NEAR
         );
 
         const result = await this.wallet.signAndSendTransaction({
             receiverId: MPC_CONTRACT,
-            actions: [functionCallAction as any]
+            actions: [functionCallAction]
         });
 
         const successValue = result.status.SuccessValue;
@@ -270,16 +262,17 @@ export class MPCSigner extends ethers.AbstractSigner {
             }
         };
 
-        const functionCallAction = transactions.functionCall(
+        // v7: Use actions.functionCall
+        const functionCallAction = actions.functionCall(
             'sign',
-            Buffer.from(JSON.stringify(args)),
+            args,
             BigInt('300000000000000'),
             BigInt('100000000000000000000000')
         );
 
         const result = await this.wallet.signAndSendTransaction({
             receiverId: MPC_CONTRACT,
-            actions: [functionCallAction as any]
+            actions: [functionCallAction]
         });
 
         const successValue = result.status.SuccessValue;
@@ -311,16 +304,17 @@ export class MPCSigner extends ethers.AbstractSigner {
             }
         };
 
-        const functionCallAction = transactions.functionCall(
+        // v7: Use actions.functionCall
+        const functionCallAction = actions.functionCall(
             'sign',
-            Buffer.from(JSON.stringify(args)),
+            args,
             BigInt('300000000000000'),
             BigInt('100000000000000000000000')
         );
 
         const result = await this.wallet.signAndSendTransaction({
             receiverId: MPC_CONTRACT,
-            actions: [functionCallAction as any]
+            actions: [functionCallAction]
         });
 
         const successValue = result.status.SuccessValue;
@@ -393,16 +387,17 @@ export class MPCSignerV5 extends ethers5.Signer {
             }
         };
 
-        const functionCallAction = transactions.functionCall(
+        // v7: Use actions.functionCall
+        const functionCallAction = actions.functionCall(
             'sign',
-            Buffer.from(JSON.stringify(args)),
+            args,
             BigInt('300000000000000'),
             BigInt('100000000000000000000000')
         );
 
         const result = await this.wallet.signAndSendTransaction({
             receiverId: MPC_CONTRACT,
-            actions: [functionCallAction as any]
+            actions: [functionCallAction]
         });
 
         const successValue = result.status.SuccessValue;
@@ -435,16 +430,17 @@ export class MPCSignerV5 extends ethers5.Signer {
             }
         };
 
-        const functionCallAction = transactions.functionCall(
+        // v7: Use actions.functionCall
+        const functionCallAction = actions.functionCall(
             'sign',
-            Buffer.from(JSON.stringify(args)),
+            args,
             BigInt('300000000000000'),
             BigInt('100000000000000000000000')
         );
 
         const result = await this.wallet.signAndSendTransaction({
             receiverId: MPC_CONTRACT,
-            actions: [functionCallAction as any]
+            actions: [functionCallAction]
         });
 
         const successValue = result.status.SuccessValue;
