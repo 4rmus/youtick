@@ -1,19 +1,26 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import lighthouse from '@lighthouse-web3/sdk';
+import { addCorsHeaders, handleCorsPreflightRequest, checkCors } from '@/lib/cors';
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+    // CORS check - block disallowed origins
+    const corsBlock = checkCors(req);
+    if (corsBlock) return corsBlock;
+
     try {
         const formData = await req.formData();
         const file = formData.get('file') as File | null;
 
         if (!file) {
-            return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+            const errorRes = NextResponse.json({ error: 'No file provided' }, { status: 400 });
+            return addCorsHeaders(errorRes, req);
         }
 
         const apiKey = process.env.LIGHTHOUSE_API_KEY || process.env.NEXT_PUBLIC_LIGHTHOUSE_API_KEY;
         if (!apiKey) {
             console.error('LIGHTHOUSE_API_KEY is not configured');
-            return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
+            const errorRes = NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
+            return addCorsHeaders(errorRes, req);
         }
 
         // Convert File to ArrayBuffer for Node.js environment usage if needed,
@@ -26,13 +33,21 @@ export async function POST(req: Request) {
         // SDK returns: { data: { Name: string, Hash: string, Size: string } }
         const response = await lighthouse.uploadBuffer(buffer, apiKey);
 
-        return NextResponse.json(response.data);
+        const successRes = NextResponse.json(response.data);
+        return addCorsHeaders(successRes, req);
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('Lighthouse Proxy Error:', error);
-        return NextResponse.json(
-            { error: error.message || 'Upload failed' },
+        const errorMessage = error instanceof Error ? error.message : 'Upload failed';
+        const errorRes = NextResponse.json(
+            { error: errorMessage },
             { status: 500 }
         );
+        return addCorsHeaders(errorRes, req);
     }
+}
+
+// Handle CORS preflight requests
+export async function OPTIONS(req: NextRequest) {
+    return handleCorsPreflightRequest(req);
 }

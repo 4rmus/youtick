@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
-import { connect, keyStores } from 'near-api-js';
+import { getProvider, viewContract } from '@/lib/near';
+import { parseTitleMetadata } from '@/lib/metadata-parser';
+import { NEAR_CONFIG } from '@/lib/constants';
 
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
 
 interface EventData {
     title: string;
@@ -27,20 +29,15 @@ export function useEventDescription(encrypted_cid: string | null) {
         const fetchDescription = async () => {
             setLoading(true);
             try {
-                const near = await connect({
-                    networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet',
-                    nodeUrl: process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
-                        ? 'https://rpc.mainnet.near.org'
-                        : 'https://test.rpc.fastnear.com',
-                    keyStore: new keyStores.InMemoryKeyStore(),
-                });
+                // v7: Use JsonRpcProvider directly for view calls
+                const provider = getProvider();
 
-                const account = await near.account(NFT_CONTRACT_ID);
-                const event: EventData | null = await account.viewFunction({
-                    contractId: NFT_CONTRACT_ID,
-                    methodName: 'get_event',
-                    args: { encrypted_cid }
-                });
+                const event = await viewContract<EventData | null>(
+                    provider,
+                    NFT_CONTRACT_ID,
+                    'get_event',
+                    { encrypted_cid }
+                );
 
                 if (event) {
                     if (event.description) {
@@ -50,13 +47,17 @@ export function useEventDescription(encrypted_cid: string | null) {
                         setCreatorId(event.creator_id);
                     }
 
-                    // Extract thumbnail from title format: "RealCID:::ThumbnailCID:::Title"
-                    if (event.title && event.title.includes(':::')) {
-                        const parts = event.title.split(':::');
-                        if (parts.length >= 3) {
-                            const thumbnailCid = parts[1];
-                            setThumbnailUrl(`https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`);
-                        }
+                    // Use centralized metadata parser for thumbnail extraction
+                    const parsed = parseTitleMetadata(event.title);
+                    console.log('[useEventDescription] Parsed metadata:', {
+                        rawTitle: event.title,
+                        thumbnailCid: parsed.thumbnailCid,
+                        thumbnailUrl: parsed.thumbnailUrl,
+                        schemaVersion: parsed.schemaVersion
+                    });
+
+                    if (parsed.thumbnailCid) {
+                        setThumbnailUrl(parsed.thumbnailUrl);
                     }
                 }
             } catch (error) {

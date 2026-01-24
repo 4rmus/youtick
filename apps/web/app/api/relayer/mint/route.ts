@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PKPManager } from '@/lib/pkp';
-import { ethers } from 'ethers';
 import { pkpMintLimiter } from '@/lib/rate-limiter';
+import { addCorsHeaders, handleCorsPreflightRequest, checkCors } from '@/lib/cors';
 
 export async function POST(req: NextRequest) {
+    // CORS check
+    const corsBlock = checkCors(req);
+    if (corsBlock) return corsBlock;
+
     try {
         const body = await req.json();
         const { nearAccountId } = body;
 
         if (!nearAccountId) {
-            return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
+            const errorRes = NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
+            return addCorsHeaders(errorRes, req);
         }
 
         // Rate limiting - use nearAccountId as identifier
@@ -17,7 +22,7 @@ export async function POST(req: NextRequest) {
         if (!pkpMintLimiter.checkLimit(identifier)) {
             const resetTime = pkpMintLimiter.getResetTime(identifier);
             console.log(`[RATE_LIMIT] PKP mint blocked for ${nearAccountId} - retry after ${Math.ceil(resetTime / 1000)}s`);
-            return NextResponse.json(
+            const errorRes = NextResponse.json(
                 {
                     error: 'Rate limit exceeded. Too many PKP mint requests.',
                     code: 'RATE_LIMITED',
@@ -30,6 +35,7 @@ export async function POST(req: NextRequest) {
                     }
                 }
             );
+            return addCorsHeaders(errorRes, req);
         }
 
         // Audit logging
@@ -53,11 +59,10 @@ export async function POST(req: NextRequest) {
         // This is a surgical fix for the "Referrer 'client' is not a valid URL" error.
         // It intercepts all global fetch calls and strips the invalid "client" referrer.
         const originalFetch = global.fetch;
-        // @ts-ignore
         global.fetch = async (url: string | URL | Request, options?: RequestInit) => {
-            if (options && (options as any).referrer === 'client') {
+            if (options && 'referrer' in options && options.referrer === 'client') {
                 // console.log("Intercepted 'client' referrer, removing...");
-                delete (options as any).referrer;
+                delete (options as RequestInit & { referrer?: string }).referrer;
             }
             return originalFetch(url, options);
         };
@@ -66,11 +71,10 @@ export async function POST(req: NextRequest) {
         const rpcUrl = process.env.CHRONICLE_YELLOWSTONE_RPC || 'https://yellowstone-rpc.litprotocol.com';
         console.log("Using RPC URL:", rpcUrl);
 
+        // ConnectionInfo type - ethers5 is dynamically imported so we define the shape inline
+        const connectionInfo: { url: string; referrer?: string } = { url: rpcUrl, referrer: 'about:blank' };
         const provider = new ethers5.providers.StaticJsonRpcProvider(
-            {
-                url: rpcUrl,
-                referrer: 'about:blank'
-            } as any,
+            connectionInfo,
             {
                 name: 'chronicle-yellowstone',
                 chainId: 175188
@@ -90,7 +94,9 @@ export async function POST(req: NextRequest) {
         console.log(`Relayer [${wallet.address}] sponsoring PKP mint for ${nearAccountId}`);
 
         // 2. Use PKPManager to mint
-        const pkpManager = new PKPManager({} as any);
+        // PKPManager constructor requires LitNodeClient, but mintPKPDirect doesn't use it
+        // Using null assertion as the client isn't needed for direct minting path
+        const pkpManager = new PKPManager(null!);
 
         // 3. Check Sponsor Balance
         const balance = await provider.getBalance(wallet.address);
@@ -107,31 +113,40 @@ export async function POST(req: NextRequest) {
 
         console.log(`Successfully minted PKP for ${nearAccountId}:`, mintedPkp.ethAddress);
 
-        return NextResponse.json({
+        const successRes = NextResponse.json({
             success: true,
             pkp: mintedPkp
         });
+        return addCorsHeaders(successRes, req);
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('Relayer Error [Full]:', error);
 
         let errorMessage = 'Failed to sponsor PKP minting';
         let errorCode = 'MINTING_FAILED';
+        const errorString = error instanceof Error ? error.message : String(error);
+        const errorStack = error instanceof Error ? error.stack : undefined;
 
-        if (error.message && error.message.includes('insufficient funds')) {
-            errorMessage = error.message;
+        if (errorString.includes('insufficient funds')) {
+            errorMessage = errorString;
             errorCode = 'INSUFFICIENT_SPONSOR_FUNDS';
-        } else if (error.message && error.message.includes('user rejected')) {
+        } else if (errorString.includes('user rejected')) {
             errorMessage = 'Transaction was rejected by the network provider.';
-        } else if (error.toString().includes('pkpHelperContract')) {
+        } else if (errorString.includes('pkpHelperContract')) {
             errorMessage = 'Communication failure with Lit PKP Contracts on Chronicle Yellowstone.';
         }
 
-        return NextResponse.json({
+        const errorRes = NextResponse.json({
             error: errorMessage,
             code: errorCode,
-            details: error.toString(),
-            stack: error.stack
+            details: errorString,
+            stack: errorStack
         }, { status: 500 });
+        return addCorsHeaders(errorRes, req);
     }
+}
+
+// Handle CORS preflight requests
+export async function OPTIONS(req: NextRequest) {
+    return handleCorsPreflightRequest(req);
 }

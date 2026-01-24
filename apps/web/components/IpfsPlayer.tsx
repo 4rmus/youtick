@@ -1,16 +1,14 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { lit } from '@/lib/lit';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { ethers } from 'ethers';
 import { Loader2, Play, Lock, Ticket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { MintButton } from '@/components/MintButton'; // Keep for legacy/fallback
-import { TicketPurchaseCard } from '@/components/TicketPurchaseCard';
 import { SessionManager } from '@/lib/session-manager';
-import { PKPManager } from '@/lib/pkp';
+import { useNFTOwnership, useSessionState } from '@/lib/hooks/useSessionState';
+import { GAS_CONSTANTS } from '@/lib/constants';
 
 interface IpfsPlayerProps {
     cid: string;
@@ -18,82 +16,99 @@ interface IpfsPlayerProps {
     thumbnailUrl?: string;
 }
 
+// State machine for player states
+type PlayerState =
+    | { type: 'idle' }
+    | { type: 'checking' }
+    | { type: 'waitingPKP'; message: string }
+    | { type: 'decrypting'; message: string }
+    | { type: 'needsTopUp' }
+    | { type: 'playing'; videoUrl: string }
+    | { type: 'error'; message: string }
+    | { type: 'noAccess' };
+
+const initialState: PlayerState = { type: 'idle' };
+
 export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
-    const { selector, accountId, getWallet, isTrial } = useWallet();
-    const [videoUrl, setVideoUrl] = useState<string | null>(null);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [status, setStatus] = useState<string>('');
+    const { selector, accountId, getWallet, isTrial, pkpData, isPKPMinting } = useWallet();
+
+    // React Query hooks for cached state
+    const { hasSessionKey, balance, refetchPKP } = useSessionState(accountId);
+    const { data: hasOwnership, isLoading: checkingAccess } = useNFTOwnership(accountId, cid);
+
+    // Consolidated state machine
+    const [playerState, setPlayerState] = useState<PlayerState>(initialState);
     const videoRef = useRef<HTMLVideoElement>(null);
 
-    const [checkingAccess, setCheckingAccess] = useState(true);
-    const [hasAccess, setHasAccess] = useState<boolean | null>(null);
-    const [needsTopUp, setNeedsTopUp] = useState(false);
+    // Derived states from state machine
+    const videoUrl = playerState.type === 'playing' ? playerState.videoUrl : null;
+    const loading = playerState.type === 'decrypting' || playerState.type === 'waitingPKP';
+    const error = playerState.type === 'error' ? playerState.message : null;
+    const status = (playerState.type === 'decrypting' || playerState.type === 'waitingPKP')
+        ? playerState.message
+        : '';
+    const needsTopUp = playerState.type === 'needsTopUp';
+    const waitingForPKP = playerState.type === 'waitingPKP';
 
-    useEffect(() => {
-        let mounted = true;
-
-        const checkAccess = async () => {
-            if (!accountId || !cid) {
-                setCheckingAccess(false);
-                setHasAccess(false); // No account = no access
-                return;
-            }
-
-            setCheckingAccess(true);
-            try {
-                // Check specific access for this video
-                // We pass 'cid' directly because that's what is stored as 'encrypted_cid' in the contract for `buy_ticket`
-                // (Ticket purchases reference the ID used in the URL/listing)
-                const isAllowed = await checkSpecificAccess(accountId, cid);
-                if (mounted) setHasAccess(isAllowed);
-            } catch (e) {
-                console.error("Access check failed:", e);
-                // If check fails, we default to showing the lock screen (safe fail)
-                if (mounted) setHasAccess(false);
-            } finally {
-                if (mounted) setCheckingAccess(false);
-            }
-        };
-
-        checkAccess();
-
-        return () => { mounted = false; };
-    }, [cid, accountId]);
+    // Derived access state from React Query
+    const hasAccess = hasOwnership === true;
 
     const handleTopUp = async () => {
         if (!accountId) {
-            setError("Wallet not connected");
+            setPlayerState({ type: 'error', message: "Wallet not connected" });
             return;
         }
         try {
-            setLoading(true);
-            setStatus('Processing Top Up...');
+            setPlayerState({ type: 'decrypting', message: 'Processing Top Up...' });
             const wallet = await getWallet();
             const sessionManager = new SessionManager(accountId);
             // Deposit 1 NEAR
             await sessionManager.topUpGas(wallet, '1');
-            setNeedsTopUp(false);
             // Resume play after topup
             await playVideo(true);
         } catch (e) {
             console.error("Top Up Failed:", e);
-            setError("Top Up Failed. Please try again.");
-            setLoading(false);
+            setPlayerState({ type: 'error', message: "Top Up Failed. Please try again." });
         }
     };
 
 
-    const playVideo = async (isRetry: boolean = false) => {
+    // Helper: Wait for PKP to be ready (with timeout)
+    const waitForPKP = async (maxWaitMs: number = 30000): Promise<typeof pkpData> => {
+        const startTime = Date.now();
+        const pollInterval = 500; // Check every 500ms
+
+        while (Date.now() - startTime < maxWaitMs) {
+            // Refetch PKP data from cache/storage
+            const result = await refetchPKP();
+            if (result.data) {
+                console.log('[IpfsPlayer] PKP ready after', Date.now() - startTime, 'ms');
+                return result.data;
+            }
+
+            // If not minting anymore and still no PKP, it failed
+            if (!isPKPMinting) {
+                console.log('[IpfsPlayer] PKP minting finished but no PKP data');
+                return null;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+        }
+
+        console.warn('[IpfsPlayer] PKP wait timeout after', maxWaitMs, 'ms');
+        return null;
+    };
+
+    const playVideo = useCallback(async (isRetry: boolean = false) => {
         if (!accountId) {
-            setError("Please connect your wallet to watch.");
+            setPlayerState({ type: 'error', message: "Please connect your wallet to watch." });
             return;
         }
 
-        setLoading(true);
-        setError(null);
-        setNeedsTopUp(false);
-        setStatus(isRetry ? 'Refreshing Session...' : 'Initializing...');
+        setPlayerState({
+            type: 'decrypting',
+            message: isRetry ? 'Refreshing Session...' : 'Initializing...'
+        });
 
         try {
             const wallet = await getWallet();
@@ -122,7 +137,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             };
 
             // 0. Client-Side Access Control Check
-            if (!isRetry) setStatus('Checking permissions...');
+            if (!isRetry) setPlayerState({ type: 'decrypting', message: 'Checking permissions...' });
             // Note: We skip client-side check if it's a UUID because we trust Lit Action will handle it 
             // and we might not have the RealCID yet.
 
@@ -131,7 +146,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid);
 
             if (isUuid) {
-                if (!isRetry) setStatus('Resolving Video Metadata...');
+                if (!isRetry) setPlayerState({ type: 'decrypting', message: 'Resolving Video Metadata...' });
                 try {
                     const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
                     const rpcUrl = "/api/near-rpc";
@@ -176,7 +191,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             }
 
             // 1. Fetch Encrypted File from IPFS
-            if (!isRetry) setStatus('Fetching video from IPFS...');
+            if (!isRetry) setPlayerState({ type: 'decrypting', message: 'Fetching video from IPFS...' });
             const metadataResponse = await fetch(`https://gateway.lighthouse.storage/ipfs/${targetCid}`);
             if (!metadataResponse.ok) {
                 throw new Error(`Failed to fetch from IPFS: ${metadataResponse.statusText}`);
@@ -185,7 +200,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             const { ciphertext, dataToEncryptHash, accessControlConditions: storedConditions } = metadata;
 
             // 2. Recover Ethereum Address (needed for MPC fallback)
-            if (!isRetry) setStatus('Recovering Ethereum address...');
+            if (!isRetry) setPlayerState({ type: 'decrypting', message: 'Recovering Ethereum address...' });
             const derivationPath = "lit/pkp-minting"; // Standardized path
             const recoveredAddress = await deriveEthAddress(accountId, derivationPath, wallet);
             console.log('Recovered MPC Address:', recoveredAddress);
@@ -193,99 +208,78 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             // 3. Get Session Signatures
             // PRIORITY: Use PKP if available (signless experience - NO GAS NEEDED!)
             // FALLBACK: Use MPC with Session Keys (requires gas)
-            if (!isRetry) setStatus('Checking authentication method...');
+            // Note: PKP is now minted automatically on wallet connect (WalletProvider)
+            if (!isRetry) setPlayerState({ type: 'decrypting', message: 'Checking authentication method...' });
 
             let sessionSigs;
-            const storedPkp = typeof window !== 'undefined'
-                ? localStorage.getItem(`lit_pkp_${accountId}`)
-                : null;
+            let currentPkpData = pkpData;
 
-            // PKP PATH - Check FIRST before gas (PKP doesn't need gas!)
-            if (storedPkp) {
-                const pkp = JSON.parse(storedPkp);
-                console.log("Found PKP for decryption (signless):", pkp.ethAddress);
+            // WAIT FOR PKP if it's still minting
+            // Trial users MUST wait for PKP (they don't have gas for MPC fallback)
+            if (!currentPkpData && isPKPMinting) {
+                const waitTimeout = isTrial ? 45000 : 30000; // Trial users wait longer
+                console.log(`[IpfsPlayer] PKP minting in progress, waiting up to ${waitTimeout}ms...`);
+                setPlayerState({
+                    type: 'waitingPKP',
+                    message: isTrial ? 'Setting up secure playback (first time only)...' : 'Initializing secure player...'
+                });
 
-                setStatus('Using PKP for signless decryption...');
+                currentPkpData = await waitForPKP(waitTimeout);
+            }
+
+            // PKP PATH - Use pkpData (now possibly waited for)
+            if (currentPkpData) {
+                console.log("Found PKP for decryption (signless):", currentPkpData.ethAddress);
+
+                setPlayerState({ type: 'decrypting', message: 'Using PKP for signless decryption...' });
                 try {
                     // Use inline Lit Action - no pre-signed NEAR data needed
-                    // The Lit Action handles authentication internally
                     sessionSigs = await lit.getSessionSigsWithPKP(
-                        pkp.publicKey,
-                        pkp.ethAddress,
+                        currentPkpData.publicKey,
+                        currentPkpData.ethAddress,
                         accountId
-                        // No NEAR signature params needed for inline Lit Action
                     );
                     console.log("✅ PKP session sigs obtained successfully!");
                 } catch (pkpError: any) {
-                    console.warn("PKP session failed, will try MPC fallback:", pkpError.message);
+                    console.warn("PKP session failed, will try MPC fallback silently:", pkpError.message);
                     sessionSigs = null;
                 }
             }
 
-            // LAZY PKP MINTING - Mint PKP for any account that doesn't have one yet
-            // Uses relay-based minting (gas-free for users)
-            // This eliminates MPC gas costs for all future video plays
-            if (!sessionSigs && !storedPkp) {
-                console.log("🔐 Account without PKP - minting now for signless experience...");
-                setStatus('Setting up signless access (one-time)...');
 
-                try {
-                    // Initialize PKP Manager
-                    const pkpManager = new PKPManager(lit.getLitNodeClient());
-
-                    // Relay-based minting (gas-free for users)
-                    const result = await pkpManager.mintPKPSmart(accountId);
-
-                    // Store PKP for future use
-                    localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify({
-                        publicKey: result.publicKey,
-                        ethAddress: result.ethAddress,
-                        tokenId: result.tokenId
-                    }));
-                    console.log(`✅ PKP minted via ${result.method}:`, result.ethAddress);
-
-                    // Now use the newly minted PKP for this session
-                    setStatus('Using new PKP for signless decryption...');
-                    sessionSigs = await lit.getSessionSigsWithPKP(
-                        result.publicKey,
-                        result.ethAddress,
-                        accountId
-                    );
-                    console.log("✅ First play with new PKP successful!");
-                } catch (pkpMintError: any) {
-                    console.warn("Lazy PKP minting failed, falling back to MPC:", pkpMintError.message);
-                }
-            }
-
-
-            // MPC FALLBACK PATH - Only if PKP failed or unavailable
+            // MPC FALLBACK PATH - Only if PKP failed or unavailable (silent fallback)
+            // For trial users without PKP: show friendly error instead of gas prompt
             if (!sessionSigs) {
-                console.log("PKP unavailable, using MPC fallback");
+                // Trial users should NOT see MPC fallback - they need PKP
+                if (isTrial) {
+                    console.warn("[IpfsPlayer] Trial user without PKP - cannot use MPC fallback");
+                    setPlayerState({ type: 'error', message: "Your trial account is still being set up. Please wait a moment and try again." });
+                    return;
+                }
+
+                console.log("PKP unavailable, using MPC fallback silently");
 
                 // 2.5 Ensure Gas for MPC (Session Key Mode)
-                // We check if the user has enough prepaid gas to cover the MPC signature cost
-                const sessionManager = new SessionManager(accountId);
-                if (await sessionManager.hasSessionKey()) {
-                    const rpcUrl = typeof window !== 'undefined'
-                        ? `${window.location.origin}/api/near-rpc`
-                        : "https://rpc.testnet.near.org";
+                // Use hasSessionKey from React Query hook
+                if (hasSessionKey) {
+                    const sessionManager = new SessionManager(accountId);
+
+                    // Check balance from React Query cache (balance is string in NEAR)
+                    const currentBalance = parseFloat(balance || '0');
 
                     // CHECK GAS - NON BLOCKING
-                    // We use 0.25 NEAR threshold (0.75 was too high for trials)
-                    const hasGas = await sessionManager.hasSufficientGas(rpcUrl, 0.25);
-
-                    if (!hasGas) {
+                    // We use 0.25 NEAR threshold for MPC
+                    if (currentBalance < GAS_CONSTANTS.minMpcBalance) {
                         // STOP FLOW HERE
                         console.warn("Insufficient Gas for MPC. Halting flow to request User TopUp.");
-                        setNeedsTopUp(true);
-                        setLoading(false);
+                        setPlayerState({ type: 'needsTopUp' });
                         return; // Exit function, wait for user click
                     }
                 }
 
                 // Get MPC session signatures
-                console.log("Using MPC for session signatures");
-                setStatus('Getting MPC Session Signatures...');
+                console.log("Using MPC for session signatures (silent fallback)");
+                setPlayerState({ type: 'decrypting', message: 'Getting Session Signatures...' });
                 sessionSigs = await lit.getSessionSigs(
                     wallet,
                     accountId,
@@ -298,7 +292,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             }
 
             // 4. Decrypt
-            if (!isRetry) setStatus('Decrypting video...');
+            if (!isRetry) setPlayerState({ type: 'decrypting', message: 'Decrypting video...' });
 
             // SANITIZATION: Ensure 'chain' exists, remove 'key' (strict schema)
             const sanitizedConditions = storedConditions.map((cond: any) => {
@@ -337,9 +331,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
 
             const decryptedBlob = new Blob([decryptedBytes as any], { type: 'video/mp4' });
             const url = URL.createObjectURL(decryptedBlob);
-            setVideoUrl(url);
-            setStatus('Ready to play!');
-            setLoading(false);
+            setPlayerState({ type: 'playing', videoUrl: url });
 
         } catch (err: any) {
             console.error('Decryption failed:', err);
@@ -360,65 +352,11 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                 }
             }
 
-            setError(err.message || 'Failed to decrypt video');
-            setLoading(false);
+            setPlayerState({ type: 'error', message: err.message || 'Failed to decrypt video' });
         }
-    };
+    }, [accountId, getWallet, pkpData, isPKPMinting, isTrial, hasSessionKey, balance, refetchPKP, cid]);
 
     const handlePlay = () => playVideo(false);
-
-    const checkSpecificAccess = async (viewerId: string, targetCid: string) => {
-        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-        const rpcUrl = "/api/near-rpc";
-        const body = JSON.stringify({
-            jsonrpc: "2.0",
-            id: "dontcare",
-            method: "query",
-            params: {
-                request_type: "call_function",
-                finality: "final",
-                account_id: contractId,
-                method_name: "get_tokens_with_video",
-                args_base64: btoa(JSON.stringify({ account_id: viewerId, limit: 100 })) // Check last 100 tokens
-            }
-        });
-
-        try {
-            const response = await fetch(rpcUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body
-            });
-            const data = await response.json();
-
-            if (data.error) {
-                console.error("RPC Error:", data.error);
-                return false;
-            }
-
-            // Defensive check: ensure result exists and is iterable
-            const resultBytes = data?.result?.result;
-            if (!resultBytes || !Array.isArray(resultBytes)) {
-                console.warn("No result bytes from contract, possibly empty state");
-                return false;
-            }
-
-            const resultString = String.fromCharCode(...resultBytes);
-            // Returns Vec<(Token, Option<VideoMetadata>)>
-            const tokens = JSON.parse(resultString);
-
-            // Check if user owns a token for this specific CID or a Global Access Pass
-            const hasAccess = tokens.some(([token, metadata]: [any, any]) => {
-                if (!metadata) return false;
-                return metadata.encrypted_cid === targetCid || metadata.encrypted_cid === 'ACCESS_PASS';
-            });
-
-            return hasAccess;
-        } catch (e) {
-            console.error("Check Access Error:", e);
-            return false;
-        }
-    };
 
     return (
         <div className="w-full aspect-video bg-slate-900 rounded-lg overflow-hidden relative group">
@@ -450,6 +388,11 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                         <div className="text-center">
                             <Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-primary" />
                             <p className="text-sm text-slate-300">{status}</p>
+                            {waitingForPKP && isTrial && (
+                                <p className="text-xs text-zinc-500 mt-2">
+                                    First-time setup for gasless playback...
+                                </p>
+                            )}
                         </div>
                     ) : (hasAccess === false || error) ? (
                         // SHOW LOCKED SCREEN IF NO ACCESS OR ERROR
@@ -499,6 +442,13 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                                     <Play className="h-5 w-5" />
                                     Decrypt & Play
                                 </Button>
+                                {/* Trial user PKP status hint */}
+                                {isTrial && isPKPMinting && (
+                                    <p className="text-xs text-zinc-400 mt-3 flex items-center justify-center gap-1">
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                        Setting up gasless playback...
+                                    </p>
+                                )}
                             </div>
                         </div>
                     )}
