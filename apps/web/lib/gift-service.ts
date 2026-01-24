@@ -1,11 +1,13 @@
 /**
  * Gift Service - Native Contract-Based Gift Link System
- * 
+ * near-api-js v7 compatible
+ *
  * Replaces Keypom with contract's native Access Key-based gift drops.
  * Uses contract methods: create_gift_drop, claim_gift, claim_gift_and_create_account
  */
 
-import { KeyPair, utils, connect, keyStores } from "near-api-js";
+import { KeyPair, Account, KeyPairSigner, nearToYocto, actions, type KeyPairString } from "near-api-js";
+import { InMemoryKeyStore } from "./keystore-v7";
 import type { WalletSelector } from "@near-wallet-selector/core";
 
 // Contract ID from environment
@@ -96,31 +98,23 @@ export async function createSponsoredTrialDirect(
         const userSecretKey = userKeyPair.toString();
 
         // Parse onboarding key
-        const onboardingKeyPair = KeyPair.fromString(onboardingKeyStr as any);
+        const onboardingKeyPair = KeyPair.fromString(onboardingKeyStr as KeyPairString);
 
-        // Create a key store with the onboarding key
-        const keyStore = new keyStores.InMemoryKeyStore();
-        await keyStore.setKey(NETWORK_ID, NFT_CONTRACT_ID, onboardingKeyPair);
+        // v7: Create Account directly with signer
+        const signer = new KeyPairSigner(onboardingKeyPair);
+        const account = new Account(NFT_CONTRACT_ID, getRpcUrl(), signer);
 
-        // Connect to NEAR
-        const near = await connect({
-            networkId: NETWORK_ID,
-            keyStore,
-            nodeUrl: getRpcUrl(),
-        });
-
-        // Get account object for the contract (signed with onboarding key)
-        const account = await near.account(NFT_CONTRACT_ID);
-
-        // Call create_sponsored_trial_direct
-        const result = await account.functionCall({
-            contractId: NFT_CONTRACT_ID,
-            methodName: "create_sponsored_trial_direct",
-            args: {
-                username,
-                new_public_key: userPublicKey,
-            },
-            gas: BigInt("200000000000000"), // 200 TGas
+        // Call create_sponsored_trial_direct using v7 actions format
+        await account.signAndSendTransaction({
+            receiverId: NFT_CONTRACT_ID,
+            actions: [
+                actions.functionCall(
+                    "create_sponsored_trial_direct",
+                    { username, new_public_key: userPublicKey },
+                    BigInt("200000000000000"), // 200 TGas
+                    BigInt(0) // No deposit
+                )
+            ]
         });
 
         // Determine new account ID
@@ -386,8 +380,8 @@ export async function createGiftLinks(
     const keyPairs = generateKeyPairs(numLinks);
     const publicKeys = keyPairs.map(kp => kp.publicKey);
 
-    // Calculate total deposit
-    const depositPerLink = utils.format.parseNearAmount(DEPOSIT_PER_LINK)!;
+    // v7: Calculate total deposit using nearToYocto (requires number)
+    const depositPerLink = nearToYocto(parseFloat(DEPOSIT_PER_LINK));
     const totalDeposit = (BigInt(depositPerLink) * BigInt(numLinks)).toString();
 
     // Call contract's create_gift_drop
@@ -474,31 +468,23 @@ export async function claimGiftAndCreateAccount(
 ): Promise<{ success: boolean; accountId?: string; error?: string }> {
     try {
         // Parse the secret key
-        const keyPair = KeyPair.fromString(secretKey as any);
+        const keyPair = KeyPair.fromString(secretKey as KeyPairString);
 
-        // Create a key store with the gift key
-        const keyStore = new keyStores.InMemoryKeyStore();
-        await keyStore.setKey(NETWORK_ID, NFT_CONTRACT_ID, keyPair);
+        // v7: Create Account with signer
+        const signer = new KeyPairSigner(keyPair);
+        const account = new Account(NFT_CONTRACT_ID, getRpcUrl(), signer);
 
-        // Connect to NEAR
-        const near = await connect({
-            networkId: NETWORK_ID,
-            keyStore,
-            nodeUrl: getRpcUrl(),
-        });
-
-        // Get account object for the contract (we'll sign as the contract using the access key)
-        const account = await near.account(NFT_CONTRACT_ID);
-
-        // Call claim_gift_and_create_account
-        await account.functionCall({
-            contractId: NFT_CONTRACT_ID,
-            methodName: "claim_gift_and_create_account",
-            args: {
-                new_account_id: newAccountId,
-                new_public_key: newPublicKey,
-            },
-            gas: BigInt("200000000000000"), // 200 TGas
+        // Call claim_gift_and_create_account using v7 actions format
+        await account.signAndSendTransaction({
+            receiverId: NFT_CONTRACT_ID,
+            actions: [
+                actions.functionCall(
+                    "claim_gift_and_create_account",
+                    { new_account_id: newAccountId, new_public_key: newPublicKey },
+                    BigInt("200000000000000"), // 200 TGas
+                    BigInt(0) // No deposit
+                )
+            ]
         });
 
         return {
@@ -522,26 +508,23 @@ export async function claimGiftToExisting(
     receiverId: string
 ): Promise<{ success: boolean; tokenId?: string; error?: string }> {
     try {
-        const keyPair = KeyPair.fromString(secretKey as any);
+        const keyPair = KeyPair.fromString(secretKey as KeyPairString);
 
-        const keyStore = new keyStores.InMemoryKeyStore();
-        await keyStore.setKey(NETWORK_ID, NFT_CONTRACT_ID, keyPair);
+        // v7: Create Account with signer
+        const signer = new KeyPairSigner(keyPair);
+        const account = new Account(NFT_CONTRACT_ID, getRpcUrl(), signer);
 
-        const near = await connect({
-            networkId: NETWORK_ID,
-            keyStore,
-            nodeUrl: getRpcUrl(),
-        });
-
-        const account = await near.account(NFT_CONTRACT_ID);
-
-        const result = await account.functionCall({
-            contractId: NFT_CONTRACT_ID,
-            methodName: "claim_gift",
-            args: {
-                receiver_id: receiverId,
-            },
-            gas: BigInt("100000000000000"), // 100 TGas
+        // v7 actions format for Account.signAndSendTransaction
+        await account.signAndSendTransaction({
+            receiverId: NFT_CONTRACT_ID,
+            actions: [
+                actions.functionCall(
+                    "claim_gift",
+                    { receiver_id: receiverId },
+                    BigInt("100000000000000"), // 100 TGas
+                    BigInt(0) // No deposit
+                )
+            ]
         });
 
         return {
@@ -569,7 +552,7 @@ export function parseGiftLink(url: string): { secretKey: string; publicKey: stri
 
         // If publicKey not provided, derive it from secretKey
         if (!publicKey) {
-            const keyPair = KeyPair.fromString(secretKey as any);
+            const keyPair = KeyPair.fromString(secretKey as KeyPairString);
             return {
                 secretKey,
                 publicKey: keyPair.getPublicKey().toString(),

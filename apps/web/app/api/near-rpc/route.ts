@@ -1,6 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { addCorsHeaders, handleCorsPreflightRequest, checkCors } from '@/lib/cors';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    // CORS check - block disallowed origins
+    const corsBlock = checkCors(request);
+    if (corsBlock) return corsBlock;
+
     try {
         const body = await request.json();
         // Switched to fastnear because rpc.testnet.near.org is deprecated/rate-limited
@@ -15,9 +20,15 @@ export async function POST(request: Request) {
         });
 
         const data = await response.json();
-        return NextResponse.json(data);
+        const res = NextResponse.json(data);
+        return addCorsHeaders(res, request);
     } catch (error) {
         console.error("NEAR RPC Proxy Error:", error);
-        return NextResponse.json({ error: "Failed to fetch from NEAR RPC" }, { status: 500 });
+        const errorRes = NextResponse.json({ error: "Failed to fetch from NEAR RPC" }, { status: 500 });
+        return addCorsHeaders(errorRes, request);
     }
+}
+
+export async function OPTIONS(request: NextRequest) {
+    return handleCorsPreflightRequest(request);
 }

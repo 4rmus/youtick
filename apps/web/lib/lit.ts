@@ -50,18 +50,20 @@ async function withLitErrorHandling<T>(
 
 // Session cache key prefix
 const SESSION_CACHE_KEY = 'lit_session_sigs';
-// P0 Security Fix: Reduced from 30 days to 7 days to minimize XSS token theft window
-const SESSION_CACHE_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 days
+// P0 Security Fix: Reduced from 7 days to 24 hours for mainnet security
+// Shorter expiry minimizes XSS token theft window while maintaining UX
+const SESSION_CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 24 hours
 
 // Operation types for dual caching strategy
 export type SessionOperation = 'upload' | 'view' | 'purchase';
 
 // Session cache helpers
-const CURRENT_NETWORK = "datil-test";
+// P0 Fix: Environment-based network configuration for mainnet readiness
+const CURRENT_NETWORK = process.env.NEXT_PUBLIC_LIT_NETWORK || "datil-test";
 
 const client = new LitNodeClient({
-    litNetwork: "datil-test",
-    debug: true,
+    litNetwork: CURRENT_NETWORK as any,
+    debug: process.env.NODE_ENV !== 'production',
     rpcUrl: typeof window !== 'undefined' ? `${window.location.origin}/api/lit-rpc` : undefined
 });
 
@@ -86,7 +88,7 @@ export function clearSessionCache(accountId: string) {
 /**
  * Dual Session Caching Strategy:
  * - 'upload': Always fresh signature (security - involves payment)
- * - 'view' / 'purchase': Use cached session (30 days - UX optimization)
+ * - 'view' / 'purchase': Use cached session (24 hours - security + UX balance)
  */
 function getCachedSessionSigs(accountId: string, operation: SessionOperation = 'view'): any | null {
     // Upload operations always require fresh signature for security
@@ -129,7 +131,7 @@ function setCachedSessionSigs(accountId: string, sessionSigs: any, operation: Se
         expiresAt: Date.now() + SESSION_CACHE_EXPIRY
     };
     localStorage.setItem(`${SESSION_CACHE_KEY}_${accountId}`, JSON.stringify(cacheData));
-    console.log(`Cached session sigs for ${accountId} (30 days)`);
+    console.log(`Cached session sigs for ${accountId} (24 hours)`);
 }
 
 class Lit {

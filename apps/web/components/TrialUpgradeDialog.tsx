@@ -48,24 +48,27 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
             // Use current trial key to add new Full Access Key
             const trialKeyPair = KeyPair.fromString(storedKey as any);
 
-            // Connect to NEAR
-            const { connect, keyStores } = await import('near-api-js');
-            const keyStore = new keyStores.InMemoryKeyStore();
-            await keyStore.setKey(networkId, accountId, trialKeyPair);
+            // v7: Import Account, KeyPairSigner, PublicKey, and actions
+            const { Account, KeyPairSigner, PublicKey, actions } = await import('near-api-js');
 
-            const near = await connect({
-                networkId,
-                keyStore,
-                nodeUrl: networkId === 'mainnet'
-                    ? 'https://rpc.fastnear.com'
-                    : 'https://test.rpc.fastnear.com',
-            });
+            const rpcUrl = networkId === 'mainnet'
+                ? 'https://rpc.fastnear.com'
+                : 'https://test.rpc.fastnear.com';
 
-            const account = await near.account(accountId);
+            // v7: Create Account with signer
+            const signer = new KeyPairSigner(trialKeyPair);
+            const account = new Account(accountId, rpcUrl, signer);
 
             // Add the new Full Access Key derived from seed phrase
             console.log('Adding Full Access Key:', pk);
-            await account.addKey(pk);
+
+            // v7: Use actions.addFullAccessKey with signAndSendTransaction
+            await account.signAndSendTransaction({
+                receiverId: accountId,
+                actions: [
+                    actions.addFullAccessKey(PublicKey.fromString(pk))
+                ]
+            });
             console.log('✅ Full Access Key added successfully!');
 
             // Now the seed phrase can be used to recover this account

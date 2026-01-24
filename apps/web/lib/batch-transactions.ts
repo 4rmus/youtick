@@ -1,4 +1,5 @@
-import { transactions, utils } from 'near-api-js';
+// lib/batch-transactions.ts - near-api-js v7 compatible
+import { actions, nearToYocto, PublicKey } from 'near-api-js';
 
 /**
  * Batch multiple actions into a single transaction
@@ -29,26 +30,27 @@ export async function batchUploadActions(
         price: string;
     }
 ) {
-    const actions = [
+    // v7: Use actions.functionCall instead of transactions.functionCall
+    const txActions = [
         // Action 1: Mint NFT (no deposit needed, uses prepaid pattern)
-        transactions.functionCall(
+        actions.functionCall(
             'nft_mint_prepaid',
-            Buffer.from(JSON.stringify(videoMetadata)),
+            videoMetadata,
             BigInt('100000000000000'), // 100 TGas
             BigInt('0') // No deposit attached (uses internal balance)
         ),
         // Action 2: Create Event (requires storage deposit)
-        transactions.functionCall(
+        actions.functionCall(
             'create_event',
-            Buffer.from(JSON.stringify(eventMetadata)),
+            eventMetadata,
             BigInt('30000000000000'), // 30 TGas
-            BigInt(utils.format.parseNearAmount('0.1') || '0') // 0.1 NEAR storage deposit
+            BigInt(nearToYocto('0.1')) // v7: Use nearToYocto
         )
     ];
 
     return await wallet.signAndSendTransaction({
         receiverId: contractId,
-        actions: actions
+        actions: txActions
     });
 }
 
@@ -65,36 +67,39 @@ export async function batchInitialSetup(
     sessionKeyPublicKey: string,
     gasAmount: string = '1' // 1 NEAR default
 ) {
+    // v7: Use actions helpers
+    const pubKey = PublicKey.fromString(sessionKeyPublicKey);
+
     // Use signAndSendTransactions (plural) to bundle both into one signature approval if supported by the wallet
     return await wallet.signAndSendTransactions({
         transactions: [
             {
                 receiverId: contractId,
                 actions: [
-                    transactions.functionCall(
+                    actions.functionCall(
                         'deposit_funds',
-                        Buffer.from(JSON.stringify({})),
+                        {},
                         BigInt('30000000000000'), // 30 TGas
-                        BigInt(utils.format.parseNearAmount(gasAmount) || '0')
+                        BigInt(nearToYocto(parseFloat(gasAmount)))
                     )
                 ]
             },
             {
                 receiverId: accountId,
                 actions: [
-                    transactions.addKey(
-                        utils.PublicKey.from(sessionKeyPublicKey),
-                        transactions.functionCallAccessKey(
-                            contractId,
-                            [], // All methods allowed
-                            BigInt(utils.format.parseNearAmount('0.25') || '0') // 0.25 NEAR allowance
-                        )
+                    // v7: Use addFunctionCallAccessKey instead of addKey + functionCallAccessKey
+                    actions.addFunctionCallAccessKey(
+                        pubKey,
+                        contractId,
+                        [], // All methods allowed
+                        BigInt(nearToYocto('0.25')) // 0.25 NEAR allowance
                     )
                 ]
             }
         ]
     });
 }
+
 /**
  * Signless version of batchUploadActions
  * Uses Session Key and internal balance
@@ -147,16 +152,17 @@ export async function createSessionKeyOnly(
     contractId: string,
     sessionKeyPublicKey: string
 ) {
+    const pubKey = PublicKey.fromString(sessionKeyPublicKey);
+
     return await wallet.signAndSendTransaction({
         receiverId: accountId,
         actions: [
-            transactions.addKey(
-                utils.PublicKey.from(sessionKeyPublicKey),
-                transactions.functionCallAccessKey(
-                    contractId,
-                    [], // All methods allowed
-                    BigInt(utils.format.parseNearAmount('0.25') || '0') // 0.25 NEAR allowance for tx fees
-                )
+            // v7: Use addFunctionCallAccessKey
+            actions.addFunctionCallAccessKey(
+                pubKey,
+                contractId,
+                [], // All methods allowed
+                BigInt(nearToYocto('0.25')) // 0.25 NEAR allowance for tx fees
             )
         ]
     });

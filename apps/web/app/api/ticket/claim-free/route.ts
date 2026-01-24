@@ -1,25 +1,31 @@
-import { NextResponse } from "next/server";
-import { connect, keyStores, KeyPair } from "near-api-js";
+import { NextRequest, NextResponse } from "next/server";
+import { Account, KeyPair, KeyPairSigner, actions, type KeyPairString } from "near-api-js";
+import { addCorsHeaders, handleCorsPreflightRequest, checkCors } from '@/lib/cors';
 
 /**
  * Sponsored Free Ticket Claim API
- * 
+ *
  * POST /api/ticket/claim-free
  * Body: { receiver_id: string, encrypted_cid: string }
- * 
+ *
  * Claims a FREE ticket (price=0) with the contract paying storage costs.
  * Works for trial accounts and regular users alike.
  */
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    // CORS check - block disallowed origins
+    const corsBlock = checkCors(request);
+    if (corsBlock) return corsBlock;
+
     try {
         const body = await request.json();
         const { receiver_id, encrypted_cid } = body;
 
         if (!receiver_id || !encrypted_cid) {
-            return NextResponse.json(
+            const errorRes = NextResponse.json(
                 { error: "Missing receiver_id or encrypted_cid" },
                 { status: 400 }
             );
+            return addCorsHeaders(errorRes, request);
         }
 
         // Get relayer credentials
@@ -28,43 +34,36 @@ export async function POST(request: Request) {
 
         if (!relayerAccountId || !relayerPrivateKey) {
             console.error("Missing relayer credentials");
-            return NextResponse.json(
+            const errorRes = NextResponse.json(
                 { error: "Server configuration error: Missing relayer credentials" },
                 { status: 500 }
             );
+            return addCorsHeaders(errorRes, request);
         }
 
         const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "v1.utick.testnet";
         const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || "testnet";
 
-        // Setup keystore
-        const keyStore = new keyStores.InMemoryKeyStore();
-        await keyStore.setKey(
-            networkId,
-            relayerAccountId,
-            KeyPair.fromString(relayerPrivateKey as any)
-        );
+        // v7: Create Account with signer directly
+        const keyPair = KeyPair.fromString(relayerPrivateKey as KeyPairString);
+        const signer = new KeyPairSigner(keyPair);
+        const rpcUrl = networkId === "mainnet"
+            ? "https://rpc.fastnear.com"
+            : "https://test.rpc.fastnear.com";
 
-        // Connect to NEAR
-        const near = await connect({
-            networkId,
-            keyStore,
-            nodeUrl: networkId === "mainnet"
-                ? "https://rpc.fastnear.com"
-                : "https://test.rpc.fastnear.com",
-        });
+        const relayerAccount = new Account(relayerAccountId, rpcUrl, signer);
 
-        const relayerAccount = await near.account(relayerAccountId);
-
-        // Call contract's claim_free_ticket_sponsored
-        const result = await relayerAccount.functionCall({
-            contractId,
-            methodName: "claim_free_ticket_sponsored",
-            args: {
-                receiver_id,
-                encrypted_cid,
-            },
-            gas: BigInt("100000000000000"), // 100 TGas
+        // Call contract's claim_free_ticket_sponsored using v7 actions
+        const result = await relayerAccount.signAndSendTransaction({
+            receiverId: contractId,
+            actions: [
+                actions.functionCall(
+                    "claim_free_ticket_sponsored",
+                    { receiver_id, encrypted_cid },
+                    BigInt("100000000000000"), // 100 TGas
+                    BigInt(0) // No deposit
+                )
+            ]
         });
 
         // Extract token info from result
@@ -72,40 +71,47 @@ export async function POST(request: Request) {
             (log: string) => log.includes("token_id")
         );
 
-        return NextResponse.json({
+        const successRes = NextResponse.json({
             success: true,
             receiver_id,
             transaction_hash: result.transaction.hash,
             token_id: tokenId,
         });
+        return addCorsHeaders(successRes, request);
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Sponsored free ticket claim error:", error);
 
-        if (error.message?.includes("not free")) {
-            return NextResponse.json(
+        let errorRes: NextResponse;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
+        if (errorMessage.includes("not free")) {
+            errorRes = NextResponse.json(
                 { error: "This ticket is not free. Please use the normal purchase flow." },
                 { status: 400 }
             );
-        }
-
-        if (error.message?.includes("Trial pool empty")) {
-            return NextResponse.json(
+        } else if (errorMessage.includes("Trial pool empty")) {
+            errorRes = NextResponse.json(
                 { error: "Trial pool is empty. Please try again later." },
                 { status: 503 }
             );
-        }
-
-        if (error.message?.includes("Event not found")) {
-            return NextResponse.json(
+        } else if (errorMessage.includes("Event not found")) {
+            errorRes = NextResponse.json(
                 { error: "Event not found. Invalid encrypted_cid." },
                 { status: 404 }
             );
+        } else {
+            errorRes = NextResponse.json(
+                { error: errorMessage || "Failed to claim free ticket" },
+                { status: 500 }
+            );
         }
 
-        return NextResponse.json(
-            { error: error.message || "Failed to claim free ticket" },
-            { status: 500 }
-        );
+        return addCorsHeaders(errorRes, request);
     }
+}
+
+// Handle CORS preflight requests
+export async function OPTIONS(request: NextRequest) {
+    return handleCorsPreflightRequest(request);
 }

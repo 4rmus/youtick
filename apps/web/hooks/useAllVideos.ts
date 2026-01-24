@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
-import { connect, keyStores, utils } from 'near-api-js';
+import { yoctoToNear } from 'near-api-js';
+import { getProvider, viewContract } from '@/lib/near';
 import { TokenWithVideo } from './useOwnedTokens';
+import { parseTitleMetadata } from '@/lib/metadata-parser';
+import { NEAR_CONFIG } from '@/lib/constants';
 
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
 
 interface DebugInfo {
     contractId?: string;
@@ -34,28 +37,19 @@ export function useAllVideos() {
             });
 
             try {
-                // Determine the full URL for the proxy
-                const nodeUrl = typeof window !== 'undefined'
-                    ? window.location.origin + rpcUrl
-                    : 'http://localhost:3000' + rpcUrl;
-
-                const near = await connect({
-                    networkId: 'testnet',
-                    nodeUrl,
-                    keyStore: new keyStores.InMemoryKeyStore(),
-                });
-
-                const account = await near.account(NFT_CONTRACT_ID);
+                // v7: Use JsonRpcProvider directly for view calls
+                const provider = getProvider();
 
                 // 1. Fetch list of NFTs
                 console.log("Fetching nft_tokens from index 0...");
                 setDebugInfo((prev) => ({ ...prev, step: 'fetching_tokens' }));
 
-                const events: unknown[] = await account.viewFunction({
-                    contractId: NFT_CONTRACT_ID,
-                    methodName: 'get_events',
-                    args: { limit: 200 } // Increased to show more events
-                });
+                const events = await viewContract<unknown[]>(
+                    provider,
+                    NFT_CONTRACT_ID,
+                    'get_events',
+                    { limit: 200 } // Increased to show more events
+                );
 
                 console.log("Fetched events:", events);
                 setDebugInfo((prev) => ({ ...prev, rawEventCount: events?.length, step: 'transforming_events' }));
@@ -69,33 +63,21 @@ export function useAllVideos() {
                 // effectively treating each Event as a "Virtual Token" for display purposes
                 const eventTokens: TokenWithVideo[] = events.map((item, index) => {
                     const [cid, event] = item as [string, { title: string; description: string; creator_id: string; price: string }];
-                    // Handle "RealCID:::Title" or "RealCID:::ThumbnailCID:::Title" format
-                    let displayTitle = event.title;
-                    let displayMedia = "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png"; // Default placeholder
 
-                    if (displayTitle && displayTitle.includes(':::')) {
-                        const parts = displayTitle.split(':::');
-                        if (parts.length >= 3) {
-                            // Format: RealCID:::ThumbnailCID:::Title
-                            const thumbnailCid = parts[1];
-                            displayTitle = parts.slice(2).join(':::'); // Join rest in case title has :::
-                            displayMedia = `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`;
-                        } else if (parts.length === 2) {
-                            // Format: RealCID:::Title (Legacy)
-                            displayTitle = parts[1];
-                        }
-                    }
+                    // Use centralized metadata parser
+                    const parsed = parseTitleMetadata(event.title);
 
                     // Use actual description from contract, with price as fallback info
-                    const displayDescription = event.description || `NFT ticket - ${utils.format.formatNearAmount(event.price)} NEAR`;
+                    // v7: yoctoToNear expects bigint, convert string from contract
+                    const displayDescription = event.description || `NFT ticket - ${yoctoToNear(BigInt(event.price))} NEAR`;
 
                     return {
                         token_id: `event-${index}`,
                         owner_id: event.creator_id,
                         metadata: {
-                            title: displayTitle,
+                            title: parsed.title,
                             description: displayDescription,
-                            media: displayMedia,
+                            media: parsed.thumbnailUrl,
                             copies: 1
                         },
                         video_metadata: {

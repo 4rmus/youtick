@@ -14,49 +14,27 @@ use near_sdk::{
 use serde::{Deserialize, Serialize};
 
 
-// SECURITY: Unique storage key prefixes prevent collision attacks
-#[derive(BorshStorageKey, BorshSerialize)]
-#[borsh(crate = "near_sdk::borsh")]
-pub enum StorageKey {
-    V2(StorageKeyV2),
-    V3(StorageKeyV3),  // NEW: Fresh storage after state fix
+// V7: Fresh storage keys - must change prefix on every full reset
+pub struct StorageKeyV7(pub &'static [u8]);
+
+impl near_sdk::IntoStorageKey for StorageKeyV7 {
+    fn into_storage_key(self) -> Vec<u8> {
+        self.0.to_vec()
+    }
 }
 
-#[derive(BorshStorageKey, BorshSerialize)]
-#[borsh(crate = "near_sdk::borsh")]
-pub enum StorageKeyV2 {
-    NonFungibleToken,
-    TokenMetadata,
-    Enumeration,
-    Approval,
-    ContractMetadata,
-    VideoMetadata,
-    UserDeposits,
-    Events,
-    GiftDrops,
-}
-
-// V3: Fresh storage keys to fix collection corruption
-#[derive(BorshStorageKey, BorshSerialize)]
-#[borsh(crate = "near_sdk::borsh")]
-pub enum StorageKeyV3 {
-    NonFungibleToken,
-    TokenMetadata,
-    Enumeration,
-    Approval,
-    ContractMetadata,
-    VideoMetadata,
-    UserDeposits,
-    Events,
-    GiftDrops,
-}
-
-// V4: Onboarding system storage keys
-#[derive(BorshStorageKey, BorshSerialize)]
-#[borsh(crate = "near_sdk::borsh")]
-pub enum StorageKeyV4 {
-    OnboardingKeys,      // Authorized public keys for trial creation
-    DailyTrialCounts,    // Daily rate limiting
+impl StorageKeyV7 {
+    pub const NFT: Self = Self(b"n7");
+    pub const TOKEN_METADATA: Self = Self(b"m7");
+    pub const ENUMERATION: Self = Self(b"e7");
+    pub const APPROVAL: Self = Self(b"a7");
+    pub const CONTRACT_METADATA: Self = Self(b"c7");
+    pub const VIDEO_METADATA: Self = Self(b"v7");
+    pub const USER_DEPOSITS: Self = Self(b"d7");
+    pub const EVENTS: Self = Self(b"x7");
+    pub const GIFT_DROPS: Self = Self(b"g7");
+    pub const ONBOARDING_KEYS: Self = Self(b"o7");
+    pub const DAILY_TRIAL_COUNTS: Self = Self(b"t7");
 }
 
 #[near(serializers = [borsh, json])]
@@ -157,35 +135,45 @@ impl Contract {
 
         Self {
             tokens: NonFungibleToken::new(
-                StorageKey::V2(StorageKeyV2::NonFungibleToken),
+                StorageKeyV7::NFT,
                 owner_id,
-                Some(StorageKey::V2(StorageKeyV2::TokenMetadata)),
-                Some(StorageKey::V2(StorageKeyV2::Enumeration)),
-                Some(StorageKey::V2(StorageKeyV2::Approval)),
+                Some(StorageKeyV7::TOKEN_METADATA),
+                Some(StorageKeyV7::ENUMERATION),
+                Some(StorageKeyV7::APPROVAL),
             ),
             metadata: LazyOption::new(
-                StorageKey::V2(StorageKeyV2::ContractMetadata),
+                StorageKeyV7::CONTRACT_METADATA,
                 Some(&metadata),
             ),
-            video_metadata: UnorderedMap::new(StorageKey::V2(StorageKeyV2::VideoMetadata)),
-            user_deposits: LookupMap::new(StorageKey::V2(StorageKeyV2::UserDeposits)),
-            events: UnorderedMap::new(StorageKey::V2(StorageKeyV2::Events)),
+            video_metadata: UnorderedMap::new(StorageKeyV7::VIDEO_METADATA),
+            user_deposits: LookupMap::new(StorageKeyV7::USER_DEPOSITS),
+            events: UnorderedMap::new(StorageKeyV7::EVENTS),
             next_token_id: 0,
-            gift_drops: LookupMap::new(StorageKey::V2(StorageKeyV2::GiftDrops)),
+            gift_drops: LookupMap::new(StorageKeyV7::GIFT_DROPS),
             trial_pool: NearToken::from_yoctonear(0),
-            // V4: Onboarding system
-            onboarding_keys: LookupSet::new(StorageKeyV4::OnboardingKeys),
-            daily_trial_counts: LookupMap::new(StorageKeyV4::DailyTrialCounts),
+            onboarding_keys: LookupSet::new(StorageKeyV7::ONBOARDING_KEYS),
+            daily_trial_counts: LookupMap::new(StorageKeyV7::DAILY_TRIAL_COUNTS),
             onboarding_config: OnboardingConfig::default(),
         }
     }
 
     /// Migration function to reset state with completely new storage keys
     /// This creates a fresh start by using new storage prefixes
+    /// SECURITY: Only the contract account itself can call this function
     #[init(ignore_state)]
-    pub fn migrate_state() -> Self {
-        let owner_id = env::predecessor_account_id();
-        
+    pub fn migrate_state(owner_id: AccountId) -> Self {
+        // SECURITY: Only the contract account can reset state
+        // This is called when state is corrupted and cannot be deserialized
+        let caller = env::predecessor_account_id();
+        let contract_id = env::current_account_id();
+
+        require!(
+            caller == contract_id,
+            "Only contract account can reset state"
+        );
+
+        env::log_str(&format!("State migration initiated, new owner: {}", owner_id));
+
         let metadata = NFTContractMetadata {
             spec: NFT_METADATA_SPEC.to_string(),
             name: "YouTick Video Tickets".to_string(),
@@ -196,28 +184,27 @@ impl Contract {
             reference_hash: None,
         };
 
-        // Using V3 storage keys for fresh state (avoids corrupted V2 enumeration)
+        // Using V5 storage keys with unique string prefixes
         Self {
             tokens: NonFungibleToken::new(
-                StorageKey::V3(StorageKeyV3::NonFungibleToken),
+                StorageKeyV7::NFT,
                 owner_id,
-                Some(StorageKey::V3(StorageKeyV3::TokenMetadata)),
-                Some(StorageKey::V3(StorageKeyV3::Enumeration)),
-                Some(StorageKey::V3(StorageKeyV3::Approval)),
+                Some(StorageKeyV7::TOKEN_METADATA),
+                Some(StorageKeyV7::ENUMERATION),
+                Some(StorageKeyV7::APPROVAL),
             ),
             metadata: LazyOption::new(
-                StorageKey::V3(StorageKeyV3::ContractMetadata),
+                StorageKeyV7::CONTRACT_METADATA,
                 Some(&metadata),
             ),
-            video_metadata: UnorderedMap::new(StorageKey::V3(StorageKeyV3::VideoMetadata)),
-            user_deposits: LookupMap::new(StorageKey::V3(StorageKeyV3::UserDeposits)),
-            events: UnorderedMap::new(StorageKey::V3(StorageKeyV3::Events)),
+            video_metadata: UnorderedMap::new(StorageKeyV7::VIDEO_METADATA),
+            user_deposits: LookupMap::new(StorageKeyV7::USER_DEPOSITS),
+            events: UnorderedMap::new(StorageKeyV7::EVENTS),
             next_token_id: 0,
-            gift_drops: LookupMap::new(StorageKey::V3(StorageKeyV3::GiftDrops)),
+            gift_drops: LookupMap::new(StorageKeyV7::GIFT_DROPS),
             trial_pool: NearToken::from_yoctonear(0),
-            // V4: Onboarding system
-            onboarding_keys: LookupSet::new(StorageKeyV4::OnboardingKeys),
-            daily_trial_counts: LookupMap::new(StorageKeyV4::DailyTrialCounts),
+            onboarding_keys: LookupSet::new(StorageKeyV7::ONBOARDING_KEYS),
+            daily_trial_counts: LookupMap::new(StorageKeyV7::DAILY_TRIAL_COUNTS),
             onboarding_config: OnboardingConfig::default(),
         }
     }
@@ -373,14 +360,14 @@ impl Contract {
     pub fn create_event_prepaid(&mut self, encrypted_cid: String, title: String, description: String, price: U128) {
         let account_id = env::predecessor_account_id();
         let charge_amount = NearToken::from_millinear(100); // 0.1 NEAR for storage
-        
+
         let current_bal = self.user_deposits.get(&account_id).expect("Insufficient prepaid balance for event creation");
         require!(current_bal.as_yoctonear() >= charge_amount.as_yoctonear(), "Insufficient prepaid balance for event creation");
-        
+
         // Deduct balance
         let new_bal = current_bal.saturating_sub(charge_amount);
         self.user_deposits.insert(&account_id, &new_bal);
-        
+
         // Execute creation
         let event = Event {
             title,
@@ -396,43 +383,43 @@ impl Contract {
     /// Purchase a ticket (mint NFT) for an event
     /// - Free tickets (price=0): Contract pays storage, user pays nothing
     /// - Paid tickets: 2% commission to contract, 98% to creator
-    /// 
-    /// IMPORTANT: This function keeps deposits in contract balance and only 
+    ///
+    /// IMPORTANT: This function keeps deposits in contract balance and only
     /// explicitly transfers to creator. No automatic refund to buyer.
     #[payable]
     pub fn buy_ticket(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Token {
         let event = self.events.get(&encrypted_cid)
             .expect("Event not found");
-        
+
         let deposit = env::attached_deposit();
         let required_price = NearToken::from_yoctonear(event.price.0);
         let is_free = required_price.as_yoctonear() == 0;
-        
+
         // Storage cost for NFT (safe upper bound)
         let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
-        
+
         if !is_free {
             // Paid ticket - require full payment plus minimal storage
             let min_deposit = required_price.saturating_add(storage_cost);
             require!(
                 deposit >= min_deposit,
-                &format!("Insufficient deposit. Required: {} yoctoNEAR (price) + {} (storage)", 
+                &format!("Insufficient deposit. Required: {} yoctoNEAR (price) + {} (storage)",
                     event.price.0, storage_cost.as_yoctonear())
             );
-            
+
             // Calculate commission (2% to contract, 98% to creator)
             let commission_rate: u128 = 2;
             let price_yocto = required_price.as_yoctonear();
             let commission = price_yocto * commission_rate / 100;
             let creator_amount = price_yocto - commission;
-            
+
             // Transfer 98% to creator
             // Note: The rest (commission + storage + any excess) stays in contract
             if creator_amount > 0 {
                 Promise::new(event.creator_id.clone()).transfer(NearToken::from_yoctonear(creator_amount));
             }
-            
-            env::log_str(&format!("Ticket sold: {} to creator, {} commission, {} storage", 
+
+            env::log_str(&format!("Ticket sold: {} to creator, {} commission, {} storage",
                 creator_amount, commission, storage_cost.as_yoctonear()));
         } else {
             // Free ticket - just require minimal storage (or contract pays)
@@ -486,41 +473,41 @@ impl Contract {
         let account_id = env::predecessor_account_id();
         let event = self.events.get(&encrypted_cid)
             .expect("Event not found");
-        
+
         let required_price = NearToken::from_yoctonear(event.price.0);
         let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
         let is_free = required_price.as_yoctonear() == 0;
-        
+
         if is_free {
             // FREE TICKET: Contract pays storage, user pays nothing
             env::log_str("Free ticket - contract sponsors storage");
         } else {
             // PAID TICKET: Deduct from user's prepaid balance
             let total_cost = required_price.saturating_add(storage_cost);
-            
+
             let current_bal = self.user_deposits.get(&account_id)
                 .expect("No prepaid balance. Call deposit_funds first.");
             require!(
                 current_bal >= total_cost,
-                &format!("Insufficient prepaid balance. Required: {} yoctoNEAR, Have: {} yoctoNEAR", 
+                &format!("Insufficient prepaid balance. Required: {} yoctoNEAR, Have: {} yoctoNEAR",
                     total_cost.as_yoctonear(), current_bal.as_yoctonear())
             );
-            
+
             // Deduct total cost from user's balance
             let new_bal = current_bal.saturating_sub(total_cost);
             self.user_deposits.insert(&account_id, &new_bal);
-            
+
             // Calculate commission (2% to contract, 98% to creator)
             let commission_rate: u128 = 2;
             let price_yocto = required_price.as_yoctonear();
             let commission = price_yocto * commission_rate / 100;
             let creator_amount = price_yocto - commission;
-            
+
             // Transfer 98% to creator
             if creator_amount > 0 {
                 Promise::new(event.creator_id.clone()).transfer(NearToken::from_yoctonear(creator_amount));
             }
-            
+
             env::log_str(&format!("Prepaid ticket: {} to creator, {} commission", creator_amount, commission));
         }
 
@@ -616,13 +603,13 @@ impl Contract {
     pub fn deposit_funds(&mut self) {
         let amount = env::attached_deposit();
         let account_id = env::predecessor_account_id();
-        
+
         let current_bal = self.user_deposits.get(&account_id).unwrap_or(NearToken::from_yoctonear(0));
         // NearToken addition
         let new_bal = current_bal.saturating_add(amount);
-        
+
         self.user_deposits.insert(&account_id, &new_bal);
-        
+
         env::log_str(&format!("Deposited {} for {}", amount, account_id));
     }
 
@@ -631,12 +618,12 @@ impl Contract {
     #[payable]
     pub fn deposit_funds_for(&mut self, account_id: AccountId) {
         let amount = env::attached_deposit();
-        
+
         let current_bal = self.user_deposits.get(&account_id).unwrap_or(NearToken::from_yoctonear(0));
         let new_bal = current_bal.saturating_add(amount);
-        
+
         self.user_deposits.insert(&account_id, &new_bal);
-        
+
         env::log_str(&format!("Deposited {} for {} (by {})", amount, account_id, env::predecessor_account_id()));
     }
 
@@ -646,15 +633,15 @@ impl Contract {
     pub fn withdraw_funds(&mut self) -> Promise {
         // 1 yocto deposit for security
         require!(env::attached_deposit() >= NearToken::from_yoctonear(1), "Requires 1 yoctoNEAR deposit");
-        
+
         let account_id = env::predecessor_account_id();
         let current_bal = self.user_deposits.get(&account_id).unwrap_or(NearToken::from_yoctonear(0));
-        
+
         require!(current_bal.as_yoctonear() > 0, "No funds to withdraw");
-        
+
         // Remove balance (Effects first)
         self.user_deposits.remove(&account_id);
-        
+
         env::log_str(&format!("Withdrawing {} for {}", current_bal, account_id));
 
         // Transfer funds (Interactions last)
@@ -667,19 +654,19 @@ impl Contract {
     pub fn withdraw_funds_prepaid(&mut self) -> Promise {
         let account_id = env::predecessor_account_id();
         let current_bal = self.user_deposits.get(&account_id).unwrap_or(NearToken::from_yoctonear(0));
-        
+
         require!(current_bal.as_yoctonear() > 0, "No funds to withdraw");
-        
+
         // P0 Security: Limit signless withdrawals to prevent session key abuse
         let max_signless_withdraw = NearToken::from_millinear(100); // 0.1 NEAR
         require!(
             current_bal <= max_signless_withdraw,
             "Amount exceeds signless limit (0.1 NEAR). Use withdraw_funds with wallet signature for larger amounts."
         );
-        
+
         // Remove balance (Effects first)
         self.user_deposits.remove(&account_id);
-        
+
         env::log_str(&format!("Signless withdraw: {} for {}", current_bal, account_id));
 
         // Transfer funds (Interactions last)
@@ -700,29 +687,29 @@ impl Contract {
         video_metadata: VideoMetadata,
     ) -> Promise {
         let account_id = env::predecessor_account_id();
-        
+
         // Estimated storage cost for an NFT (approx 0.1 NEAR is safe upper bound, usually less)
         // We can be more precise, but for now let's use a safe fixed amount.
-        // Standard NFT storage is ~0.01 NEAR. 
-        // Let's charge 0.1 NEAR to be safe and refund the rest? 
+        // Standard NFT storage is ~0.01 NEAR.
+        // Let's charge 0.1 NEAR to be safe and refund the rest?
         // Or just charge a fixed fee.
         // `nft_mint` will refund excess to the *predecessor* (which is the Contract).
         // So the user loses the excess if we don't handle it.
-        
+
         // BETTER: Charge the user exactly what we attach.
         // If `nft_mint` refunds the Contract, we should ideally credit it back to the user's internal balance.
         // But that requires a callback.
-        
+
         // SIMPLIFICATION: Charge a flat fee of 0.1 NEAR.
         let charge_amount = NearToken::from_millinear(100); // 0.1 NEAR
-        
+
         let current_bal = self.user_deposits.get(&account_id).expect("Insufficient prepaid balance");
         require!(current_bal.as_yoctonear() >= charge_amount.as_yoctonear(), "Insufficient prepaid balance");
-        
+
         // Deduct balance
         let new_bal = current_bal.saturating_sub(charge_amount);
         self.user_deposits.insert(&account_id, &new_bal);
-        
+
         // Call nft_mint with attached deposit
         Self::ext(env::current_account_id())
             .with_attached_deposit(charge_amount)
@@ -735,17 +722,17 @@ impl Contract {
         // MPC cost is usually around 0.05 NEAR to 0.2 NEAR depending on network congestion
         // We charge a safe amount.
         let charge_amount = NearToken::from_millinear(250); // 0.25 NEAR
-        
+
         let current_bal = self.user_deposits.get(&account_id).expect("Insufficient prepaid balance for MPC");
         require!(current_bal.as_yoctonear() >= charge_amount.as_yoctonear(), "Insufficient prepaid balance for MPC");
-        
+
         // Deduct balance
         let new_bal = current_bal.saturating_sub(charge_amount);
         self.user_deposits.insert(&account_id, &new_bal);
-        
+
         // MPC Contract ID
         let mpc_contract: AccountId = "v1.signer-prod.testnet".parse().unwrap();
-        
+
         // Call MPC sign
         // Args: { payload: [u8; 32], path: String, key_version: u32 }
         // We need to serialize args.
@@ -783,6 +770,29 @@ impl Contract {
             "Trial pool funded: {} added, total: {}",
             deposit, self.trial_pool
         ));
+    }
+
+    /// Withdraw funds from trial pool (owner only)
+    pub fn withdraw_trial_pool(&mut self, amount: U128) -> Promise {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can withdraw from trial pool"
+        );
+
+        let withdraw_amount = NearToken::from_yoctonear(amount.0);
+        require!(
+            self.trial_pool >= withdraw_amount,
+            "Insufficient trial pool balance"
+        );
+
+        self.trial_pool = self.trial_pool.saturating_sub(withdraw_amount);
+
+        env::log_str(&format!(
+            "Trial pool withdraw: {} removed, remaining: {}",
+            withdraw_amount, self.trial_pool
+        ));
+
+        Promise::new(env::predecessor_account_id()).transfer(withdraw_amount)
     }
 
     /// RELAYER-LESS: Create a sponsored trial account directly from client
@@ -881,29 +891,29 @@ impl Contract {
             username.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'),
             "Username can only contain lowercase letters, numbers, - and _"
         );
-        
+
         // Cost for account creation + initial balance
         let account_cost = NearToken::from_millinear(100); // 0.1 NEAR
-        
+
         require!(
             self.trial_pool >= account_cost,
             "Trial pool empty. Please contact the platform owner."
         );
-        
+
         // Deduct from pool
         self.trial_pool = self.trial_pool.saturating_sub(account_cost);
-        
+
         // Create subaccount ID: {username}.{this_contract}
         let contract_id = env::current_account_id();
         let new_account_id: AccountId = format!("{}.{}", username, contract_id)
             .parse()
             .expect("Invalid account ID format");
-        
+
         env::log_str(&format!(
             "Sponsored trial: {} (pool remaining: {})",
             new_account_id, self.trial_pool
         ));
-        
+
         // Create the subaccount with Full Access Key
         Promise::new(new_account_id)
             .create_account()
@@ -919,7 +929,7 @@ impl Contract {
     /// Claim a FREE ticket - Contract pays storage from trial_pool!
     /// This allows trial accounts and any user to claim free content
     /// without needing any NEAR balance.
-    /// 
+    ///
     /// Can be called by anyone (usually via relayer API)
     pub fn claim_free_ticket_sponsored(
         &mut self,
@@ -928,29 +938,29 @@ impl Contract {
     ) -> Promise {
         let event = self.events.get(&encrypted_cid)
             .expect("Event not found");
-        
+
         // Verify this is actually a free ticket
         require!(
             event.price.0 == 0,
             "This ticket is not free. Use buy_ticket for paid tickets."
         );
-        
+
         // Storage cost for minting
         let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
-        
+
         require!(
             self.trial_pool >= storage_cost,
             "Trial pool empty. Cannot sponsor free ticket claim."
         );
-        
+
         // Deduct from trial pool
         self.trial_pool = self.trial_pool.saturating_sub(storage_cost);
-        
+
         env::log_str(&format!(
             "Sponsored free ticket claim for {} (pool remaining: {})",
             receiver_id, self.trial_pool
         ));
-        
+
         // Call internal minting with storage from contract
         Self::ext(env::current_account_id())
             .with_attached_deposit(storage_cost)
@@ -1016,13 +1026,13 @@ impl Contract {
     ) -> Token {
         let event = self.events.get(&encrypted_cid)
             .expect("Event not found");
-        
+
         // Verify caller is the event creator
         require!(
             env::predecessor_account_id() == event.creator_id,
             "Only event creator can gift tickets"
         );
-        
+
         // Require storage deposit
         let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
         require!(
@@ -1086,30 +1096,30 @@ impl Contract {
     ) {
         let num_keys = public_keys.len() as u32;
         require!(num_keys > 0 && num_keys <= 50, "Must create 1-50 keys");
-        
+
         // Verify event exists
         let event = self.events.get(&event_cid)
             .expect("Event not found");
-        
+
         // Creator must own the event
         require!(
             env::predecessor_account_id() == event.creator_id,
             "Only event creator can create gift drops"
         );
-        
+
         // Cost per claim: account creation + NFT storage + buffer
         let deposit_per_claim = NearToken::from_millinear(150); // 0.15 NEAR
         let total_required = deposit_per_claim.saturating_mul(num_keys as u128);
-        
+
         require!(
             env::attached_deposit() >= total_required,
             &format!("Requires {} NEAR for {} keys", total_required, num_keys)
         );
-        
+
         for pk in public_keys {
             // Store gift drop info mapped to the Public Key
             let pk_str: String = String::from(&pk);
-            
+
             let gift_drop = GiftDrop {
                 creator_id: event.creator_id.clone(),
                 event_cid: event_cid.clone(),
@@ -1117,9 +1127,9 @@ impl Contract {
                 deposit_per_claim: U128(deposit_per_claim.as_yoctonear()),
                 created_at: env::block_timestamp(),
             };
-            
+
             self.gift_drops.insert(&pk_str, &gift_drop);
-            
+
             // Add Function Call Access Key to THIS contract
             // This allows the holder of the Private Key to call claim functions
             // Allowance: 0.05 NEAR for gas fees (enough for claim tx)
@@ -1130,7 +1140,7 @@ impl Contract {
                 "claim_gift,claim_gift_and_create_account".to_string(),
             );
         }
-        
+
         env::log_str(&format!(
             "Gift drop created: {} keys for event {} by {}",
             num_keys, event_cid, event.creator_id
@@ -1146,38 +1156,38 @@ impl Contract {
     ) -> Token {
         // Identify the drop via the Signer's Public Key
         let signer_pk: String = String::from(&env::signer_account_pk());
-        
+
         let mut gift_drop = self.gift_drops.get(&signer_pk)
             .expect("Invalid or already claimed gift key");
-        
+
         require!(gift_drop.remaining_claims > 0, "Gift already claimed");
-        
+
         // Mark as claimed and cleanup
         gift_drop.remaining_claims = 0;
         self.gift_drops.remove(&signer_pk); // Remove from map
-        
+
         // DELETE the Access Key to prevent reuse
         Promise::new(env::current_account_id()).delete_key(
             env::signer_account_pk()
         );
-        
+
         // Get event details for NFT metadata
         let event = self.events.get(&gift_drop.event_cid)
             .expect("Event not found");
-        
+
         // Mint NFT to receiver (Standard logic)
         let token_id = self.next_token_id.to_string();
         self.next_token_id += 1;
-        
+
         let video_metadata = VideoMetadata {
             encrypted_cid: gift_drop.event_cid.clone(),
             duration_seconds: 0,
             event_date: Some(event.created_at),
             content_type: ContentType::Exclusive,
         };
-        
+
         self.video_metadata.insert(&token_id, &video_metadata);
-        
+
         let token_metadata = TokenMetadata {
             title: Some(event.title.clone()),
             description: Some(format!("Gift ticket: {}", event.description)),
@@ -1192,12 +1202,12 @@ impl Contract {
             reference: None,
             reference_hash: None,
         };
-        
+
         env::log_str(&format!(
             "Gift claimed: {} -> {} (event: {})",
             token_id, receiver_id, gift_drop.event_cid
         ));
-        
+
         self.tokens.internal_mint(
             token_id.clone(),
             receiver_id,
@@ -1239,24 +1249,24 @@ impl Contract {
     ) -> Promise {
         // Identify the drop via the Signer's Public Key
         let signer_pk: String = String::from(&env::signer_account_pk());
-        
+
         let mut gift_drop = self.gift_drops.get(&signer_pk)
             .expect("Invalid or already claimed gift key");
-        
+
         require!(gift_drop.remaining_claims > 0, "Gift already claimed");
-        
+
         // Mark as claimed and cleanup
         gift_drop.remaining_claims = 0;
         self.gift_drops.remove(&signer_pk); // Remove from map
-        
+
         // DELETE the Access Key to prevent reuse
         Promise::new(env::current_account_id()).delete_key(
             env::signer_account_pk()
         );
-        
+
         // Account creation costs ~0.1 NEAR + access key storage ~0.0075 NEAR
         let account_creation_cost = NearToken::from_millinear(110); // 0.11 NEAR
-        
+
         env::log_str(&format!(
             "Creating account {} for gift claim (event: {})",
             new_account_id, gift_drop.event_cid
@@ -1266,7 +1276,7 @@ impl Contract {
         // Then callback to mint the NFT
         // Leave 0.01 NEAR for NFT storage in callback
         let nft_storage_cost = NearToken::from_millinear(10); // 0.01 NEAR for NFT storage
-        
+
         Promise::new(new_account_id.clone())
             .create_account()
             .transfer(account_creation_cost)
@@ -1295,25 +1305,25 @@ impl Contract {
             env::promise_results_count() == 1,
             "Expected 1 promise result"
         );
-        
+
         match env::promise_result(0) {
             near_sdk::PromiseResult::Successful(_) => {
                 // Account created successfully, now mint NFT
                 let event = self.events.get(&event_cid)
                     .expect("Event not found");
-                
+
                 let token_id = self.next_token_id.to_string();
                 self.next_token_id += 1;
-                
+
                 let video_metadata = VideoMetadata {
                     encrypted_cid: event_cid.clone(),
                     duration_seconds: 0,
                     event_date: Some(event.created_at),
                     content_type: ContentType::Exclusive,
                 };
-                
+
                 self.video_metadata.insert(&token_id, &video_metadata);
-                
+
                 let token_metadata = TokenMetadata {
                     title: Some(event.title.clone()),
                     description: Some(format!("Gift ticket: {}", event.description)),
@@ -1328,12 +1338,12 @@ impl Contract {
                     reference: None,
                     reference_hash: None,
                 };
-                
+
                 env::log_str(&format!(
                     "Gift NFT minted: {} -> {} (event: {})",
                     token_id, receiver_id, event_cid
                 ));
-                
+
                 self.tokens.internal_mint(
                     token_id.clone(),
                     receiver_id,
@@ -1358,19 +1368,19 @@ impl Contract {
         new_public_key: near_sdk::PublicKey,
     ) -> Promise {
         let caller = env::predecessor_account_id();
-        
+
         // Verify caller is a sub-account of this contract (trial account pattern)
         let contract_id = env::current_account_id().to_string();
         require!(
             caller.to_string().ends_with(&format!(".{}", contract_id)),
             "Only trial sub-accounts can upgrade via this method"
         );
-        
+
         env::log_str(&format!(
             "Upgrading trial account {} with new FAK",
             caller
         ));
-        
+
         // Add Full Access Key to the caller's account
         // This is a cross-contract call where the contract sponsors the gas
         Promise::new(caller)
