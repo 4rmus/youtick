@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, CheckCircle2, AlertCircle, Ticket, ExternalLink, Wallet, User, Play, Sparkles } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageContext";
+import { parseTitleMetadata } from "@/lib/metadata-parser";
 
 const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || "testnet";
 const NFT_CONTRACT = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "v1.utick.testnet";
@@ -48,20 +49,24 @@ function ClaimContent() {
             const fullAccountId = `${newUsername}.${NFT_CONTRACT}`;
 
             try {
-                const { connect, keyStores } = await import("near-api-js");
-                const near = await connect({
-                    networkId: NETWORK_ID,
-                    nodeUrl: NETWORK_ID === "mainnet"
-                        ? "https://rpc.mainnet.near.org"
-                        : "https://test.rpc.fastnear.com",
-                    keyStore: new keyStores.InMemoryKeyStore(),
-                });
+                // v7: Use Account directly to check existence
+                const { Account } = await import("near-api-js");
+                const rpcUrl = NETWORK_ID === "mainnet"
+                    ? "https://rpc.mainnet.near.org"
+                    : "https://test.rpc.fastnear.com";
 
                 try {
-                    const account = await near.account(fullAccountId);
-                    await account.state();
+                    // v7: Use JsonRpcProvider to check account existence
+                    const { JsonRpcProvider } = await import("near-api-js");
+                    const provider = new JsonRpcProvider({ url: rpcUrl });
+                    await provider.query({
+                        request_type: 'view_account',
+                        account_id: fullAccountId,
+                        finality: 'final'
+                    });
                     setAccountCheckStatus("taken");
                 } catch (err: any) {
+                    // Account doesn't exist = available
                     setAccountCheckStatus("available");
                 }
             } catch (err) {
@@ -84,27 +89,22 @@ function ClaimContent() {
             }
 
             try {
-                const { connect, keyStores, KeyPair } = await import("near-api-js");
+                const { KeyPair } = await import("near-api-js");
+                const { getProvider, viewContract } = await import("@/lib/near");
 
                 const formattedKey = secretKey.includes(":") ? secretKey : `ed25519:${secretKey}`;
                 const keyPair = KeyPair.fromString(formattedKey as `ed25519:${string}`);
                 const publicKey = keyPair.getPublicKey().toString();
 
-                const keyStore = new keyStores.InMemoryKeyStore();
-                const near = await connect({
-                    networkId: NETWORK_ID,
-                    nodeUrl: NETWORK_ID === "mainnet"
-                        ? "https://rpc.mainnet.near.org"
-                        : "https://test.rpc.fastnear.com",
-                    keyStore,
-                });
+                // v7: Use JsonRpcProvider directly for view calls
+                const provider = getProvider();
 
-                const account = await near.account(NFT_CONTRACT);
-                const giftData: any = await account.viewFunction({
-                    contractId: NFT_CONTRACT,
-                    methodName: "get_gift_info_full",
-                    args: { public_key: publicKey }
-                });
+                const giftData = await viewContract<{ event_cid: string; creator_id: string } | null>(
+                    provider,
+                    NFT_CONTRACT,
+                    "get_gift_info_full",
+                    { public_key: publicKey }
+                );
 
                 if (!giftData) {
                     setError(t.claim_page?.invalid_or_used || "Bu link geçersiz veya daha önce kullanılmış.");
@@ -113,32 +113,31 @@ function ClaimContent() {
                 }
 
                 // Fetch event details
-                const eventData: any = await account.viewFunction({
-                    contractId: NFT_CONTRACT,
-                    methodName: "get_event",
-                    args: { encrypted_cid: giftData.event_cid }
+                const eventData = await viewContract<{ title?: string } | null>(
+                    provider,
+                    NFT_CONTRACT,
+                    "get_event",
+                    { encrypted_cid: giftData.event_cid }
+                );
+
+                // Parse title and media from event using centralized parser
+                const parsed = parseTitleMetadata(
+                    eventData?.title,
+                    t.claim_page?.exclusive_content || "YouTick Exclusive Content"
+                );
+
+                console.log('[ClaimPage] Parsed metadata:', {
+                    rawTitle: eventData?.title,
+                    thumbnailCid: parsed.thumbnailCid,
+                    thumbnailUrl: parsed.thumbnailUrl,
+                    schemaVersion: parsed.schemaVersion
                 });
 
-                // Parse title and media from event
-                let title = eventData?.title || (t.claim_page?.exclusive_content || "YouTick Exclusive Content");
-                let media = "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png";
-
-                if (title && title.includes(':::')) {
-                    const parts = title.split(':::');
-                    if (parts.length >= 3) {
-                        const thumbnailCid = parts[1];
-                        title = parts.slice(2).join(':::');
-                        media = `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`;
-                    } else if (parts.length === 2) {
-                        title = parts[1];
-                    }
-                }
-
                 setGiftInfo({
-                    eventTitle: title,
+                    eventTitle: parsed.title,
                     creator: giftData.creator_id,
                     eventCid: giftData.event_cid,
-                    media: media,
+                    media: parsed.thumbnailUrl,
                     description: t.claim_page?.ticket_for_content || "Özel içeriğe erişim bileti"
                 });
                 setStep("preview");
@@ -168,41 +167,42 @@ function ClaimContent() {
         setStep("creating-account");
 
         try {
-            const { connect, keyStores, KeyPair, utils } = await import("near-api-js");
+            const { Account, KeyPair, KeyPairSigner, actions } = await import("near-api-js");
+            const { BrowserKeyStore } = await import("@/lib/keystore-v7");
 
             const formattedKey = secretKey!.includes(":") ? secretKey! : `ed25519:${secretKey}`;
             const giftKeyPair = KeyPair.fromString(formattedKey as `ed25519:${string}`);
 
-            const keyStore = new keyStores.InMemoryKeyStore();
-            await keyStore.setKey(NETWORK_ID, NFT_CONTRACT, giftKeyPair);
-
-            const near = await connect({
-                networkId: NETWORK_ID,
-                nodeUrl: NETWORK_ID === "mainnet"
-                    ? "https://rpc.mainnet.near.org"
-                    : "https://test.rpc.fastnear.com",
-                keyStore,
-            });
-
-            const contractAccount = await near.account(NFT_CONTRACT);
+            // v7: Create Account with signer directly
+            const rpcUrl = NETWORK_ID === "mainnet"
+                ? "https://rpc.mainnet.near.org"
+                : "https://test.rpc.fastnear.com";
+            const signer = new KeyPairSigner(giftKeyPair);
+            const contractAccount = new Account(NFT_CONTRACT, rpcUrl, signer);
 
             const newAccountKeyPair = KeyPair.fromRandom("ed25519");
             const newAccountPublicKey = newAccountKeyPair.getPublicKey().toString();
 
             const fullAccountId = `${newUsername.toLowerCase()}.${NFT_CONTRACT}`;
 
-            const result = await contractAccount.functionCall({
-                contractId: NFT_CONTRACT,
-                methodName: "claim_gift_and_create_account",
-                args: {
-                    new_account_id: fullAccountId,
-                    new_public_key: newAccountPublicKey,
-                },
-                gas: BigInt("200000000000000"),
+            // v7: Use signAndSendTransaction with actions
+            const result = await contractAccount.signAndSendTransaction({
+                receiverId: NFT_CONTRACT,
+                actions: [
+                    actions.functionCall(
+                        "claim_gift_and_create_account",
+                        {
+                            new_account_id: fullAccountId,
+                            new_public_key: newAccountPublicKey,
+                        },
+                        BigInt("200000000000000"),
+                        BigInt(0)
+                    )
+                ]
             });
 
-            // Store keys
-            const browserKeyStore = new keyStores.BrowserLocalStorageKeyStore();
+            // Store keys using v7 BrowserKeyStore
+            const browserKeyStore = new BrowserKeyStore();
             await browserKeyStore.setKey(NETWORK_ID, fullAccountId, newAccountKeyPair);
 
             localStorage.setItem("trialAccountId", fullAccountId);
@@ -230,32 +230,29 @@ function ClaimContent() {
         setStep("claiming");
 
         try {
-            const { connect, keyStores, KeyPair } = await import("near-api-js");
+            const { Account, KeyPair, KeyPairSigner, actions } = await import("near-api-js");
 
             const formattedKey = secretKey!.includes(":") ? secretKey! : `ed25519:${secretKey}`;
             const giftKeyPair = KeyPair.fromString(formattedKey as `ed25519:${string}`);
 
-            const keyStore = new keyStores.InMemoryKeyStore();
-            await keyStore.setKey(NETWORK_ID, NFT_CONTRACT, giftKeyPair);
+            // v7: Create Account with signer directly
+            const rpcUrl = NETWORK_ID === "mainnet"
+                ? "https://rpc.mainnet.near.org"
+                : "https://test.rpc.fastnear.com";
+            const signer = new KeyPairSigner(giftKeyPair);
+            const contractAccount = new Account(NFT_CONTRACT, rpcUrl, signer);
 
-            const near = await connect({
-                networkId: NETWORK_ID,
-                nodeUrl: NETWORK_ID === "mainnet"
-                    ? "https://rpc.mainnet.near.org"
-                    : "https://test.rpc.fastnear.com",
-                keyStore,
-            });
-
-            const contractAccount = await near.account(NFT_CONTRACT);
-
-            const result = await contractAccount.functionCall({
-                contractId: NFT_CONTRACT,
-                methodName: "claim_gift",
-                args: {
-                    receiver_id: existingAccountId.trim(),
-                },
-                gas: BigInt("100000000000000"),
-                attachedDeposit: BigInt("10000000000000000000000"),
+            // v7: Use signAndSendTransaction with actions
+            const result = await contractAccount.signAndSendTransaction({
+                receiverId: NFT_CONTRACT,
+                actions: [
+                    actions.functionCall(
+                        "claim_gift",
+                        { receiver_id: existingAccountId.trim() },
+                        BigInt("100000000000000"),
+                        BigInt("10000000000000000000000")
+                    )
+                ]
             });
 
             setClaimedAccountId(existingAccountId.trim());

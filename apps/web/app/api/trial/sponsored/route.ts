@@ -1,34 +1,84 @@
-import { NextResponse } from "next/server";
-import { connect, keyStores, KeyPair } from "near-api-js";
+import { NextResponse, NextRequest } from "next/server";
+import { Account, KeyPair, KeyPairSigner, actions, type KeyPairString } from "near-api-js";
+import { trialAccountLimiter, trialDailyGlobalLimiter } from "@/lib/rate-limiter";
+import { addCorsHeaders, handleCorsPreflightRequest, checkCors } from "@/lib/cors";
 
 /**
  * Sponsored Trial API - Creates trial accounts as subaccounts of the contract
- * 
+ *
  * POST /api/trial/sponsored
  * Body: { username: string, new_public_key: string }
- * 
+ *
  * Creates: {username}.{contract_id} (e.g. "alice.v1.utick.testnet")
+ *
+ * SECURITY: Rate limited to prevent spam account creation
+ * - Per IP: 3 accounts per day
+ * - Global: 100 accounts per day
  */
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    // CORS check
+    const corsBlock = checkCors(request);
+    if (corsBlock) return corsBlock;
+
     try {
+        // Get client IP for rate limiting
+        const forwardedFor = request.headers.get('x-forwarded-for');
+        const clientIp = forwardedFor?.split(',')[0]?.trim() || 'unknown';
+
+        // Rate limit check - per IP (3/day)
+        if (!trialAccountLimiter.checkLimit(clientIp)) {
+            const resetTime = trialAccountLimiter.getResetTime(clientIp);
+            console.log(`[RATE_LIMIT] Trial account blocked for IP ${clientIp} - retry after ${Math.ceil(resetTime / 1000)}s`);
+            const errorRes = NextResponse.json(
+                {
+                    error: "Rate limit exceeded. Maximum 3 trial accounts per day per IP.",
+                    code: "RATE_LIMITED",
+                    retryAfter: Math.ceil(resetTime / 1000)
+                },
+                {
+                    status: 429,
+                    headers: { 'Retry-After': Math.ceil(resetTime / 1000).toString() }
+                }
+            );
+            return addCorsHeaders(errorRes, request);
+        }
+
+        // Global daily limit check (100/day)
+        if (!trialDailyGlobalLimiter.checkAndIncrement()) {
+            console.log(`[RATE_LIMIT] Global trial limit reached (${trialDailyGlobalLimiter.getCount()}/day)`);
+            const errorRes = NextResponse.json(
+                {
+                    error: "Daily trial account limit reached. Please try again tomorrow.",
+                    code: "DAILY_LIMIT_REACHED"
+                },
+                { status: 503 }
+            );
+            return addCorsHeaders(errorRes, request);
+        }
+
         const body = await request.json();
         const { username, new_public_key } = body;
 
         if (!username || !new_public_key) {
-            return NextResponse.json(
+            const errorRes = NextResponse.json(
                 { error: "Missing username or new_public_key" },
                 { status: 400 }
             );
+            return addCorsHeaders(errorRes, request);
         }
 
         // Validate username format (contract will also validate)
         const usernamePattern = /^[a-z0-9_-]{2,32}$/;
         if (!usernamePattern.test(username)) {
-            return NextResponse.json(
+            const errorRes = NextResponse.json(
                 { error: "Username must be 2-32 characters, lowercase letters, numbers, - and _ only" },
                 { status: 400 }
             );
+            return addCorsHeaders(errorRes, request);
         }
+
+        // Audit logging
+        console.log(`[AUDIT] Trial Account Request: username=${username} ip=${clientIp} time=${new Date().toISOString()} daily_remaining=${trialDailyGlobalLimiter.getRemaining()}`);
 
         // Get relayer credentials
         const relayerAccountId = process.env.RELAYER_ACCOUNT_ID;
@@ -48,63 +98,64 @@ export async function POST(request: Request) {
         // The new account will be: {username}.{contractId}
         const newAccountId = `${username}.${contractId}`;
 
-        // Setup keystore
-        const keyStore = new keyStores.InMemoryKeyStore();
-        await keyStore.setKey(
-            networkId,
-            relayerAccountId,
-            KeyPair.fromString(relayerPrivateKey as any)
-        );
+        // v7: Create Account with signer directly
+        const keyPair = KeyPair.fromString(relayerPrivateKey as KeyPairString);
+        const signer = new KeyPairSigner(keyPair);
+        const rpcUrl = networkId === "mainnet"
+            ? "https://rpc.fastnear.com"
+            : "https://test.rpc.fastnear.com";
 
-        // Connect to NEAR
-        const near = await connect({
-            networkId,
-            keyStore,
-            nodeUrl: networkId === "mainnet"
-                ? "https://rpc.fastnear.com"
-                : "https://test.rpc.fastnear.com",
+        const relayerAccount = new Account(relayerAccountId, rpcUrl, signer);
+
+        // Call contract's create_sponsored_trial with username using v7 actions
+        const result = await relayerAccount.signAndSendTransaction({
+            receiverId: contractId,
+            actions: [
+                actions.functionCall(
+                    "create_sponsored_trial",
+                    { username, new_public_key },
+                    BigInt("200000000000000"), // 200 TGas
+                    BigInt(0) // No deposit
+                )
+            ]
         });
 
-        const relayerAccount = await near.account(relayerAccountId);
-
-        // Call contract's create_sponsored_trial with username
-        const result = await relayerAccount.functionCall({
-            contractId,
-            methodName: "create_sponsored_trial",
-            args: {
-                username,
-                new_public_key,
-            },
-            gas: BigInt("200000000000000"), // 200 TGas
-        });
-
-        return NextResponse.json({
+        const successRes = NextResponse.json({
             success: true,
             account_id: newAccountId,
             transaction_hash: result.transaction.hash,
         });
+        return addCorsHeaders(successRes, request);
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Sponsored trial error:", error);
 
+        let errorRes: NextResponse;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
         // Check for specific errors
-        if (error.message?.includes("Trial pool empty")) {
-            return NextResponse.json(
+        if (errorMessage.includes("Trial pool empty")) {
+            errorRes = NextResponse.json(
                 { error: "Trial pool is empty. Please try again later." },
                 { status: 503 }
             );
-        }
-
-        if (error.message?.includes("already exists")) {
-            return NextResponse.json(
+        } else if (errorMessage.includes("already exists")) {
+            errorRes = NextResponse.json(
                 { error: "This username is already taken. Please choose another." },
                 { status: 409 }
             );
+        } else {
+            errorRes = NextResponse.json(
+                { error: errorMessage || "Failed to create trial account" },
+                { status: 500 }
+            );
         }
 
-        return NextResponse.json(
-            { error: error.message || "Failed to create trial account" },
-            { status: 500 }
-        );
+        return addCorsHeaders(errorRes, request);
     }
+}
+
+// Handle CORS preflight requests
+export async function OPTIONS(request: NextRequest) {
+    return handleCorsPreflightRequest(request);
 }

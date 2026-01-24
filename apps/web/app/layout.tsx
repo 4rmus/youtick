@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { WalletProvider } from "@/components/providers/WalletProvider";
+import { QueryProvider } from "@/components/providers/QueryProvider";
 import { Navbar } from "@/components/Navbar";
 import { LanguageProvider } from "@/components/providers/LanguageContext";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
@@ -87,8 +88,9 @@ export default function RootLayout({
         <html lang="en" suppressHydrationWarning>
             <body className={inter.className}>
                 <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
-                    <LanguageProvider>
-                        <WalletProvider>
+                    <QueryProvider>
+                        <LanguageProvider>
+                            <WalletProvider>
                             <div className="min-h-screen bg-background text-foreground">
                                 <Navbar />
                                 <main className="flex-grow">
@@ -98,7 +100,8 @@ export default function RootLayout({
                             <LanguageSwitcher />
                             <div id="wallet-modal-container" />
                         </WalletProvider>
-                    </LanguageProvider>
+                        </LanguageProvider>
+                    </QueryProvider>
                 </ThemeProvider>
             </body>
             <GoogleAnalytics gaId="G-4J9W05MW6W" />

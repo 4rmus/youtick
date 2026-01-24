@@ -1,20 +1,61 @@
-// lib/near.ts
-import { connect, keyStores, transactions } from 'near-api-js';
+// lib/near.ts - near-api-js v7 compatible
+import { Account, JsonRpcProvider, PublicKey } from 'near-api-js';
+import { browserKeyStore, inMemoryKeyStore } from './keystore-v7';
+import { NEAR_CONFIG } from './constants';
+import {
+    getCurrentRpcUrl,
+    getPrimaryRpcUrl,
+    withRpcFailover,
+    RPC_ENDPOINTS
+} from './rpc-failover';
 
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID!;
+// Re-export from constants for backwards compatibility
+const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
+const NETWORK_ID = NEAR_CONFIG.networkId;
 
-export async function getNearConnection() {
-    const near = await connect({
-        networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet',
-        nodeUrl: process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
-            ? 'https://rpc.mainnet.near.org'
-            : 'https://test.rpc.fastnear.com',
-        walletUrl: process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
-            ? 'https://wallet.near.org'
-            : 'https://wallet.testnet.near.org',
-        keyStore: new keyStores.BrowserLocalStorageKeyStore(),
-    });
-    return near;
+// Primary RPC URL (first in list)
+const RPC_URL = getPrimaryRpcUrl();
+
+// v7: viewContract helper since Account.viewFunction doesn't exist
+async function viewContract<T>(
+    provider: JsonRpcProvider,
+    contractId: string,
+    methodName: string,
+    args: Record<string, unknown> = {}
+): Promise<T> {
+    const result = await provider.query({
+        request_type: 'call_function',
+        account_id: contractId,
+        method_name: methodName,
+        args_base64: Buffer.from(JSON.stringify(args)).toString('base64'),
+        finality: 'final',
+    }) as { result: number[] };
+
+    const resultStr = String.fromCharCode(...result.result);
+    return JSON.parse(resultStr) as T;
+}
+
+/**
+ * Get a NEAR Account instance (v7 pattern)
+ * For read-only operations, no signer needed
+ */
+export async function getAccount(accountId: string): Promise<Account> {
+    const signer = await browserKeyStore.getSigner(NETWORK_ID, accountId);
+    return new Account(accountId, RPC_URL, signer || undefined);
+}
+
+/**
+ * Get a read-only NEAR Account (no signer, for view calls)
+ */
+export function getReadOnlyAccount(accountId: string): Account {
+    return new Account(accountId, RPC_URL);
+}
+
+/**
+ * Get JSON RPC Provider for direct queries
+ */
+export function getProvider(): JsonRpcProvider {
+    return new JsonRpcProvider({ url: RPC_URL });
 }
 
 /**
@@ -36,25 +77,19 @@ export async function verifyNftOwnership(
     tokenId: string
 ): Promise<OwnershipResult> {
     try {
-        const near = await connect({
-            networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet',
-            nodeUrl: process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
-                ? 'https://rpc.mainnet.near.org'
-                : 'https://test.rpc.fastnear.com',
-            keyStore: new keyStores.InMemoryKeyStore(), // Use InMemory for server-side
-        });
-
-        const account = await near.account(NFT_CONTRACT_ID);
+        // v7: Use JsonRpcProvider directly for view calls
+        const provider = getProvider();
 
         // Call view function on contract
-        const isOwner = await account.viewFunction({
-            contractId: NFT_CONTRACT_ID,
-            methodName: 'verify_ownership',
-            args: {
+        const isOwner = await viewContract<boolean>(
+            provider,
+            NFT_CONTRACT_ID,
+            'verify_ownership',
+            {
                 account_id: walletAddress,
                 token_id: tokenId,
-            },
-        });
+            }
+        );
 
         return { isOwner: Boolean(isOwner) };
     } catch (error) {
@@ -88,16 +123,14 @@ export async function verifySignature(
     publicKey: string
 ): Promise<boolean> {
     try {
-        const { utils } = await import('near-api-js');
-
         // Convert message to bytes
         const messageBytes = Buffer.from(message);
 
         // Convert signature from base64 to bytes
         const signatureBytes = Buffer.from(signature, 'base64');
 
-        // Create PublicKey instance from the provided public key string
-        const pubKey = utils.PublicKey.from(publicKey);
+        // v7: Create PublicKey instance directly
+        const pubKey = PublicKey.fromString(publicKey);
 
         // Verify the signature
         const isValid = pubKey.verify(messageBytes, signatureBytes);
@@ -109,12 +142,11 @@ export async function verifySignature(
 
         // Additional security: verify the public key belongs to the wallet
         // by checking it's in the wallet's access keys
-        const near = await getNearConnection();
-        const account = await near.account(walletAddress);
-        const accessKeys = await account.getAccessKeys();
+        const account = new Account(walletAddress, RPC_URL);
+        const accessKeyList = await account.getAccessKeyList();
 
-        const keyExists = accessKeys.some(
-            key => key.public_key === publicKey
+        const keyExists = accessKeyList.keys.some(
+            (keyInfo: { public_key: string }) => keyInfo.public_key === publicKey
         );
 
         if (!keyExists) {
@@ -129,4 +161,11 @@ export async function verifySignature(
     }
 }
 
+// Export viewContract helper for view calls
+export { viewContract };
 
+// Export keystore instances for use in other modules
+export { browserKeyStore, inMemoryKeyStore };
+export { NETWORK_ID, RPC_URL, NFT_CONTRACT_ID };
+// Export RPC failover utilities
+export { getCurrentRpcUrl, withRpcFailover, RPC_ENDPOINTS };

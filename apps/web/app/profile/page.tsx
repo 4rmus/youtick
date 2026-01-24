@@ -3,7 +3,7 @@
 import { useWallet } from '@/components/providers/WalletProvider';
 import { useOwnedTokens, TokenWithVideo } from '@/hooks/useOwnedTokens';
 import { useState, useEffect } from 'react';
-import { connect, keyStores } from 'near-api-js';
+import { getProvider, viewContract } from '@/lib/near';
 import { User, Wallet, Ticket, Loader2, ArrowLeft, Gift, Video, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
@@ -34,18 +34,21 @@ export default function ProfilePage() {
         const fetchBalances = async () => {
             setLoadingBalances(true);
             try {
-                const near = await connect({
-                    networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet',
-                    nodeUrl: process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
-                        ? 'https://rpc.mainnet.near.org'
-                        : 'https://test.rpc.fastnear.com',
-                    keyStore: new keyStores.InMemoryKeyStore(),
-                });
+                // v7: Use JsonRpcProvider to get account balance
+                const { JsonRpcProvider } = await import('near-api-js');
+                const rpcUrl = process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
+                    ? 'https://rpc.mainnet.near.org'
+                    : 'https://test.rpc.fastnear.com';
 
-                const account = await near.account(accountId);
-                const balance = await account.getAccountBalance();
-                const balanceInNear = (BigInt(balance.available) / BigInt(10 ** 24)).toString();
-                const decimals = (Number(BigInt(balance.available) % BigInt(10 ** 24)) / 10 ** 24).toFixed(2).substring(2);
+                const provider = new JsonRpcProvider({ url: rpcUrl });
+                const state = await provider.query({
+                    request_type: 'view_account',
+                    account_id: accountId,
+                    finality: 'final'
+                }) as any;
+
+                const balanceInNear = (BigInt(state.amount) / BigInt(10 ** 24)).toString();
+                const decimals = (Number(BigInt(state.amount) % BigInt(10 ** 24)) / 10 ** 24).toFixed(2).substring(2);
                 setWalletBalance(`${balanceInNear}.${decimals}`);
             } catch (error) {
                 console.error('Error fetching balances:', error);
@@ -64,22 +67,16 @@ export default function ProfilePage() {
         const fetchCreatedEvents = async () => {
             setLoadingCreated(true);
             try {
-                const near = await connect({
-                    networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet',
-                    nodeUrl: process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
-                        ? 'https://rpc.mainnet.near.org'
-                        : 'https://test.rpc.fastnear.com',
-                    keyStore: new keyStores.InMemoryKeyStore(),
-                });
-
+                // v7: Use JsonRpcProvider directly for view calls
+                const provider = getProvider();
                 const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || '';
-                const account = await near.account(contractId);
 
-                const events: [string, any][] = await account.viewFunction({
+                const events = await viewContract<[string, any][]>(
+                    provider,
                     contractId,
-                    methodName: 'get_events',
-                    args: { limit: 100 }
-                });
+                    'get_events',
+                    { limit: 100 }
+                );
 
                 const myEvents = events
                     .filter(([_, event]) => event.creator_id === accountId)

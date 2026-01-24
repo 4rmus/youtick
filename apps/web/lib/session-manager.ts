@@ -1,70 +1,29 @@
-import { keyStores, KeyPair, connect, Contract, utils, providers, transactions } from 'near-api-js';
+// lib/session-manager.ts - near-api-js v7 compatible
+import {
+    Account,
+    KeyPair,
+    KeyPairSigner,
+    JsonRpcProvider,
+    actions,
+    nearToYocto,
+    yoctoToNear,
+    type KeyPairString
+} from 'near-api-js';
+import { BrowserKeyStore } from './keystore-v7';
+import { NEAR_CONFIG } from './constants';
+import { getCurrentRpcUrl, withRpcFailover } from './rpc-failover';
 
-const NETWORK_ID = 'testnet';
-const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-
-// RPC Failover Configuration - ordered by priority
-const RPC_ENDPOINTS = [
-    'https://test.rpc.fastnear.com',
-    'https://rpc.testnet.near.org',
-    'https://near-testnet.lava.build',
-];
-
-// Track current working endpoint index
-let currentRpcIndex = 0;
-
-/**
- * Get the current best RPC URL
- */
-function getCurrentRpcUrl(): string {
-    return RPC_ENDPOINTS[currentRpcIndex];
-}
-
-/**
- * Try next RPC endpoint on failure
- */
-function switchToNextRpc(): boolean {
-    const previousIndex = currentRpcIndex;
-    currentRpcIndex = (currentRpcIndex + 1) % RPC_ENDPOINTS.length;
-    console.warn(`RPC failover: ${RPC_ENDPOINTS[previousIndex]} -> ${RPC_ENDPOINTS[currentRpcIndex]}`);
-    return currentRpcIndex !== 0; // Returns false when we've cycled back to start
-}
-
-/**
- * Execute a function with RPC failover
- */
-async function withRpcFailover<T>(fn: (rpcUrl: string) => Promise<T>, maxRetries: number = 3): Promise<T> {
-    let lastError: Error | null = null;
-
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-            return await fn(getCurrentRpcUrl());
-        } catch (e: any) {
-            lastError = e;
-            console.warn(`RPC attempt ${attempt + 1} failed:`, e.message);
-
-            // Only switch RPC if it looks like a network/RPC error
-            if (e.message?.includes('fetch') || e.message?.includes('network') || e.message?.includes('timeout') || e.message?.includes('502')) {
-                switchToNextRpc();
-                // Small delay before retry
-                await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-            } else {
-                // Not an RPC error, don't retry
-                throw e;
-            }
-        }
-    }
-
-    throw lastError || new Error('All RPC endpoints failed');
-}
+// Re-export from constants for backwards compatibility
+const NETWORK_ID = NEAR_CONFIG.networkId;
+const CONTRACT_ID = NEAR_CONFIG.contractId;
 
 export class SessionManager {
-    private keyStore: any;
+    private keyStore: BrowserKeyStore;
     private accountId: string;
 
     constructor(accountId: string) {
         this.accountId = accountId;
-        this.keyStore = new keyStores.BrowserLocalStorageKeyStore();
+        this.keyStore = new BrowserKeyStore();
     }
 
     async hasSessionKey(): Promise<boolean> {
@@ -74,17 +33,13 @@ export class SessionManager {
         // Verify key exists on-chain to avoid stale keys
         try {
             return await withRpcFailover(async (rpcUrl) => {
-                const near = await connect({
-                    networkId: NETWORK_ID,
-                    keyStore: this.keyStore,
-                    nodeUrl: rpcUrl,
-                    walletUrl: 'https://wallet.testnet.near.org',
-                    helperUrl: 'https://helper.testnet.near.org',
-                });
-                const account = await near.account(this.accountId);
-                const accessKeys = await account.getAccessKeys();
+                // v7: Create Account directly with RPC URL
+                const account = new Account(this.accountId, rpcUrl);
+                const accessKeyList = await account.getAccessKeyList();
                 const publicKey = keyPair.getPublicKey().toString();
-                const accessKeyInfo = accessKeys.find(k => k.public_key === publicKey);
+                const accessKeyInfo = accessKeyList.keys.find(
+                    (k: { public_key: string }) => k.public_key === publicKey
+                );
 
                 if (!accessKeyInfo) {
                     console.warn("Session key found locally but not on-chain. Removing.");
@@ -156,7 +111,7 @@ export class SessionManager {
         );
     }
 
-    async saveSessionKey(keyPair: any): Promise<void> {
+    async saveSessionKey(keyPair: KeyPair): Promise<void> {
         await this.keyStore.setKey(NETWORK_ID, this.accountId, keyPair);
     }
 
@@ -166,59 +121,78 @@ export class SessionManager {
             throw new Error("No session key found. Please setup account first.");
         }
 
-        const near = await connect({
-            networkId: NETWORK_ID,
-            keyStore: this.keyStore,
-            nodeUrl: 'https://test.rpc.fastnear.com',
-            walletUrl: 'https://wallet.testnet.near.org',
-            helperUrl: 'https://helper.testnet.near.org',
-        });
-
-        const account = await near.account(this.accountId);
+        // v7: Create Account with signer
+        const signer = new KeyPairSigner(keyPair);
+        const account = new Account(this.accountId, getCurrentRpcUrl(), signer);
 
         // Call contract method using the session key
         // Note: We cannot attach deposit with a FunctionCallKey!
         // This is why we use the Prepaid Proxy pattern.
-        const outcome = await account.functionCall({
-            contractId: CONTRACT_ID,
-            methodName: method,
-            args,
-            gas: BigInt(gas),
-            attachedDeposit: BigInt(0)
+        const outcome = await account.signAndSendTransaction({
+            receiverId: CONTRACT_ID,
+            actions: [
+                actions.functionCall(method, args, BigInt(gas), BigInt(0))
+            ]
         });
 
-        // Parse result
-        const result = providers.getTransactionLastResult(outcome);
-        return result;
+        // v7: Parse result from transaction
+        return this.getTransactionResult(outcome);
     }
 
-    async sendBatchTransaction(actions: any[], gas: string = '300000000000000'): Promise<any> {
+    async sendBatchTransaction(txActions: any[], gas: string = '300000000000000'): Promise<any> {
         const keyPair = await this.keyStore.getKey(NETWORK_ID, this.accountId);
         if (!keyPair) {
             throw new Error("No session key found. Please setup account first.");
         }
 
-        const near = await connect({
-            networkId: NETWORK_ID,
-            keyStore: this.keyStore,
-            nodeUrl: 'https://test.rpc.fastnear.com',
-            walletUrl: 'https://wallet.testnet.near.org',
-            helperUrl: 'https://helper.testnet.near.org',
-        });
-
-        const account = await near.account(this.accountId);
+        // v7: Create Account with signer
+        const signer = new KeyPairSigner(keyPair);
+        const account = new Account(this.accountId, getCurrentRpcUrl(), signer);
 
         const outcome = await account.signAndSendTransaction({
             receiverId: CONTRACT_ID,
-            actions: actions
+            actions: txActions
         });
 
-        const result = providers.getTransactionLastResult(outcome);
-        return result;
+        return this.getTransactionResult(outcome);
     }
+
+    /**
+     * Extract result from transaction outcome (v7 pattern)
+     */
+    private getTransactionResult(outcome: any): any {
+        // v7: Transaction result is in outcome.transaction_outcome or final_execution_outcome
+        if (outcome?.status?.SuccessValue) {
+            const value = outcome.status.SuccessValue;
+            if (value === '') return null;
+            try {
+                return JSON.parse(Buffer.from(value, 'base64').toString());
+            } catch {
+                return value;
+            }
+        }
+
+        // Try to get from receipts
+        if (outcome?.receipts_outcome) {
+            for (const receipt of outcome.receipts_outcome) {
+                if (receipt?.outcome?.status?.SuccessValue) {
+                    const value = receipt.outcome.status.SuccessValue;
+                    if (value === '') continue;
+                    try {
+                        return JSON.parse(Buffer.from(value, 'base64').toString());
+                    } catch {
+                        return value;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
     async getAccountBalance(nodeUrl: string): Promise<number> {
         try {
-            const provider = new providers.JsonRpcProvider({ url: nodeUrl });
+            const provider = new JsonRpcProvider({ url: nodeUrl });
             const res = await provider.query({
                 request_type: 'call_function',
                 account_id: CONTRACT_ID,
@@ -227,7 +201,8 @@ export class SessionManager {
                 finality: 'final',
             }) as any;
             const balString = JSON.parse(Buffer.from(res.result).toString());
-            return parseFloat(utils.format.formatNearAmount(balString));
+            // v7: Use yoctoToNear instead of utils.format.formatNearAmount
+            return parseFloat(yoctoToNear(balString));
         } catch (e) {
             console.warn("Error getting gas balance (maybe not registered?):", e);
             return 0;
@@ -251,31 +226,33 @@ export class SessionManager {
 
     async topUpGas(wallet: any, amount: string) {
         console.log(`Topping up gas: ${amount} NEAR`);
-        const action = transactions.functionCall(
+        // v7: Use actions.functionCall instead of transactions.functionCall
+        const action = actions.functionCall(
             'deposit_funds',
-            Buffer.from(JSON.stringify({})),
+            {},
             BigInt('30000000000000'), // 30 TGas
-            BigInt(utils.format.parseNearAmount(amount) || '0')
+            BigInt(nearToYocto(parseFloat(amount))) // v7: Use nearToYocto with number
         );
 
         await wallet.signAndSendTransaction({
             receiverId: CONTRACT_ID,
-            actions: [action as any]
+            actions: [action]
         });
     }
 
     async withdrawFunds(wallet: any, amount: string) {
         console.log(`Withdrawing funds: ${amount} NEAR`);
-        const action = transactions.functionCall(
+        // v7: Use actions.functionCall
+        const action = actions.functionCall(
             'withdraw_funds',
-            Buffer.from(JSON.stringify({ amount: utils.format.parseNearAmount(amount) || '0' })),
+            { amount: nearToYocto(parseFloat(amount)) },
             BigInt('30000000000000'), // 30 TGas
             BigInt('1') // Attach 1 yocto for security
         );
 
         await wallet.signAndSendTransaction({
             receiverId: CONTRACT_ID,
-            actions: [action as any]
+            actions: [action]
         });
     }
 
@@ -290,3 +267,6 @@ export class SessionManager {
         );
     }
 }
+
+// Export utilities for other modules
+export { getCurrentRpcUrl, withRpcFailover, NETWORK_ID, CONTRACT_ID };

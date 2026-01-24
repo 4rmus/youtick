@@ -1,6 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { addCorsHeaders, handleCorsPreflightRequest, checkCors } from '@/lib/cors';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+    // CORS check - block disallowed origins
+    const corsBlock = checkCors(request);
+    if (corsBlock) return corsBlock;
+
     try {
         const body = await request.json();
         const rpcUrl = 'https://test.rpc.fastnear.com';
@@ -14,9 +19,15 @@ export async function POST(request: Request) {
         });
 
         const data = await response.json();
-        return NextResponse.json(data);
+        const res = NextResponse.json(data);
+        return addCorsHeaders(res, request);
     } catch (error) {
         console.error('RPC Proxy Error:', error);
-        return NextResponse.json({ error: 'Failed to proxy RPC request' }, { status: 500 });
+        const errorRes = NextResponse.json({ error: 'Failed to proxy RPC request' }, { status: 500 });
+        return addCorsHeaders(errorRes, request);
     }
+}
+
+export async function OPTIONS(request: NextRequest) {
+    return handleCorsPreflightRequest(request);
 }
