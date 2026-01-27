@@ -2,7 +2,7 @@ import { memo } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { ArrowRight, Shield, Zap, Lock, Sparkles } from 'lucide-react';
+import { ArrowRight, Shield, Zap, Lock, Sparkles, DollarSign } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { ANIMATION } from '@/lib/constants';
 
@@ -56,9 +56,9 @@ export const HeroSection = memo(({ onDiscoverClick }: HeroSectionProps) => {
 
       <div className="relative z-10 container mx-auto px-4 text-center space-y-8">
         {/* Badge */}
-        <div className="inline-flex items-center gap-2 px-6 py-3 border border-white/20 rounded-full bg-white/5 backdrop-blur-md mb-6 hover:bg-white/10 hover:border-near-green/50 transition-all duration-500 group">
-          <Sparkles className="w-5 h-5 text-near-green group-hover:animate-pulse" />
-          <span className="text-white font-semibold text-sm tracking-wide">{t.landing.hero.badge}</span>
+        <div className="inline-flex items-center gap-2 px-6 py-3 border border-near-green/30 rounded-full bg-near-green/10 backdrop-blur-md mb-6 hover:bg-near-green/20 hover:border-near-green/50 transition-all duration-500 group">
+          <DollarSign className="w-5 h-5 text-near-green group-hover:animate-pulse" />
+          <span className="text-near-green font-semibold text-sm tracking-wide">{t.landing.hero.badge}</span>
         </div>
 
         {/* Title with NEAR Gradient */}
@@ -79,15 +79,15 @@ export const HeroSection = memo(({ onDiscoverClick }: HeroSectionProps) => {
           {t.landing.hero.description}
         </p>
 
-        {/* Value Badges - NEAR Colors */}
+        {/* Value Badges - NEAR Colors - Revenue First */}
         <div className="flex flex-wrap justify-center gap-4 pt-6">
           <div className="flex items-center gap-2 px-5 py-3 bg-near-green/10 border border-near-green/30 rounded-full hover:bg-near-green/20 hover:scale-105 transition-all duration-300 cursor-default">
-            <Shield className="w-5 h-5 text-near-green" />
-            <span className="text-sm font-semibold text-emerald-300">{t.landing.hero.badge_ownership}</span>
+            <DollarSign className="w-5 h-5 text-near-green" />
+            <span className="text-sm font-semibold text-emerald-300">{t.landing.hero.badge_instant_revenue}</span>
           </div>
           <div className="flex items-center gap-2 px-5 py-3 bg-near-purple/10 border border-near-purple/30 rounded-full hover:bg-near-purple/20 hover:scale-105 transition-all duration-300 cursor-default">
-            <Zap className="w-5 h-5 text-near-purple" />
-            <span className="text-sm font-semibold text-violet-300">{t.landing.hero.badge_instant_revenue}</span>
+            <Shield className="w-5 h-5 text-near-purple" />
+            <span className="text-sm font-semibold text-violet-300">{t.landing.hero.badge_ownership}</span>
           </div>
           <div className="flex items-center gap-2 px-5 py-3 bg-near-blue/10 border border-near-blue/30 rounded-full hover:bg-near-blue/20 hover:scale-105 transition-all duration-300 cursor-default">
             <Lock className="w-5 h-5 text-near-blue" />
@@ -95,42 +95,37 @@ export const HeroSection = memo(({ onDiscoverClick }: HeroSectionProps) => {
           </div>
         </div>
 
-        {/* CTAs with NEAR Green */}
+        {/* CTAs - Artist Focus + Free Trial */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center pt-8">
-          <Button
-            size="lg"
-            className={`bg-near-green text-near-black hover:bg-near-green/80 hover:scale-105 text-lg px-10 py-7 rounded-full font-bold shadow-2xl shadow-near-green/30 ${ANIMATION.transition.default}`}
-            onClick={onDiscoverClick}
-          >
-            {t.landing.hero.cta_discover} <ArrowRight className="ml-2 w-6 h-6" />
-          </Button>
-          <Link href="/trial">
-            <Button
-              size="lg"
-              variant="outline"
-              className={`border-near-purple/50 bg-near-purple/10 backdrop-blur-sm text-white hover:bg-near-purple/20 hover:border-near-purple hover:scale-105 text-lg px-10 py-7 rounded-full font-bold ${ANIMATION.transition.default}`}
-            >
-              <Sparkles className="mr-2 w-5 h-5 text-near-purple" />
-              {t.landing.hero.cta_try_free || "Try Free"}
-            </Button>
-          </Link>
           <Link href="/upload">
             <Button
               size="lg"
-              variant="outline"
-              className={`border-white/30 bg-white/5 backdrop-blur-sm text-white hover:bg-white/10 hover:border-near-green/50 hover:scale-105 text-lg px-10 py-7 rounded-full font-bold ${ANIMATION.transition.default}`}
+              className={`bg-near-green text-near-black hover:bg-near-green/80 hover:scale-105 text-lg px-10 py-7 rounded-full font-bold shadow-2xl shadow-near-green/30 ${ANIMATION.transition.default}`}
             >
-              {t.landing.hero.cta_create_event}
+              {t.landing.hero.cta_create_event} <ArrowRight className="ml-2 w-6 h-6" />
             </Button>
           </Link>
+          <Button
+            size="lg"
+            variant="outline"
+            className={`border-white/30 bg-white/5 backdrop-blur-sm text-white hover:bg-white/10 hover:border-near-green/50 hover:scale-105 text-lg px-10 py-7 rounded-full font-bold ${ANIMATION.transition.default}`}
+            onClick={onDiscoverClick}
+          >
+            {t.landing.hero.cta_discover}
+          </Button>
         </div>
 
-        {/* Trial Highlight */}
-        <div className="mt-6 text-center">
-          <p className="text-sm text-zinc-500">
-            <Sparkles className="inline w-4 h-4 mr-1 text-near-purple" />
-            {t.landing.hero.trial_highlight || 'No wallet needed • Watch free content with trial account'}
-          </p>
+        {/* Free Trial CTA - More Prominent */}
+        <div className="mt-8 text-center">
+          <Link href="/trial">
+            <div className="inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-near-purple/20 to-near-blue/20 border border-near-purple/40 rounded-full hover:border-near-purple hover:scale-105 transition-all duration-300 cursor-pointer group">
+              <Sparkles className="w-5 h-5 text-near-purple group-hover:animate-pulse" />
+              <span className="text-white font-semibold">{t.landing.hero.cta_try_free}</span>
+              <span className="text-zinc-400">—</span>
+              <span className="text-zinc-300 text-sm">{t.landing.hero.trial_highlight}</span>
+              <ArrowRight className="w-4 h-4 text-near-purple group-hover:translate-x-1 transition-transform" />
+            </div>
+          </Link>
         </div>
       </div>
     </section>

@@ -23,11 +23,11 @@ export const ValuePropositionSection = memo(() => {
                     {/* Main Value Prop */}
                     <div className="text-center mb-16">
                         <div className="inline-block mb-6">
-                            <div className="text-8xl md:text-9xl font-black text-gradient-concert animate-gradient-flow mb-2" style={{ backgroundSize: '200% 200%' }}>
-                                {t.landing.value_proposition.title}
-                            </div>
-                            <div className="text-zinc-300 text-4xl md:text-5xl font-bold tracking-tight">
+                            <div className="text-zinc-300 text-4xl md:text-5xl font-bold tracking-tight mb-2">
                                 {t.landing.value_proposition.percentage}
+                            </div>
+                            <div className="text-8xl md:text-9xl font-black text-gradient-concert animate-gradient-flow" style={{ backgroundSize: '200% 200%' }}>
+                                {t.landing.value_proposition.title}
                             </div>
                         </div>
 
