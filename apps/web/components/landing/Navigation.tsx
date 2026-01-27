@@ -40,10 +40,10 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
 
   // Landing page navigation links
   const navLinks = [
-    { href: '#pain-points', label: language === 'tr' ? 'Sorunlar' : 'Problems' },
+    { href: '#pain-points', label: t.landing.nav_extra?.problems || 'Problems' },
     { href: '#commission-comparison', label: t.landing.nav.comparison },
     { href: '#features', label: t.landing.nav.features },
-    { href: '#roi-calculator', label: language === 'tr' ? 'Hesaplayıcı' : 'Calculator' },
+    { href: '#roi-calculator', label: t.landing.nav_extra?.calculator || 'Calculator' },
     { href: '#how-it-works', label: t.landing.nav.how_it_works },
   ];
 
@@ -70,14 +70,14 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
                   className="text-near-green hover:text-near-green/80"
                 >
                   <Sparkles className="w-4 h-4 mr-1" />
-                  {language === 'tr' ? 'Ücretsiz Dene' : 'Try Free'}
+                  {t.landing.nav_extra?.try_free || 'Try Free'}
                 </Button>
               </Link>
               <Button
                 variant="ghost" onClick={() => modal?.show()}
                 className="text-zinc-400 hover:text-white"
               >
-                {language === 'tr' ? 'Giriş' : 'Login'}
+                {t.landing.nav_extra?.login || 'Login'}
               </Button>
               <Link href="/upload">
                 <Button className="bg-near-green hover:bg-near-green/80 text-black font-semibold">
@@ -122,7 +122,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
               className="border-near-green/50 text-near-green hover:bg-near-green/10 hover:border-near-green font-semibold px-4"
             >
               <Sparkles className="w-4 h-4 mr-1" />
-              {language === 'tr' ? 'Ücretsiz Dene' : 'Try Free'}
+              {t.landing.nav_extra?.try_free || 'Try Free'}
             </Button>
           </Link>
 
@@ -169,7 +169,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
                 className="w-full border-near-green/50 text-near-green hover:bg-near-green/10 hover:border-near-green font-semibold"
               >
                 <Sparkles className="w-4 h-4 mr-2" />
-                {language === 'tr' ? 'Ücretsiz Dene' : 'Try Free'}
+                {t.landing.nav_extra?.try_free || 'Try Free'}
               </Button>
             </Link>
 
