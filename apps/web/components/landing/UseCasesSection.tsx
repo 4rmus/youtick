@@ -50,7 +50,7 @@ export const UseCasesSection = memo(() => {
                 {/* Physical (Top) */}
                 <div className="p-4 rounded-xl bg-black/40 border border-white/5 backdrop-blur-sm relative opacity-60 group-hover:opacity-80 transition-opacity">
                   <div className="text-zinc-500 font-bold text-[10px] mb-2 uppercase tracking-widest">
-                    Physical
+                    {t.landing.use_cases_labels?.physical || 'Physical'}
                   </div>
                   <p className="text-zinc-400 text-xs leading-relaxed font-medium">
                     {t.landing.use_cases[physicalKey as keyof typeof t.landing.use_cases]}
@@ -67,7 +67,7 @@ export const UseCasesSection = memo(() => {
                   <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-emerald-500/50 to-transparent" />
                   <div className="flex items-center gap-2 mb-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <div className="text-emerald-400 font-bold text-[10px] uppercase tracking-widest">Digital</div>
+                    <div className="text-emerald-400 font-bold text-[10px] uppercase tracking-widest">{t.landing.use_cases_labels?.digital || 'Digital'}</div>
                   </div>
                   <p className="text-zinc-200 text-sm leading-relaxed font-medium">
                     {t.landing.use_cases[digitalKey as keyof typeof t.landing.use_cases]}

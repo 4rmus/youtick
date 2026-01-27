@@ -31,7 +31,7 @@ export const translations = {
                 { title: "Decentralized CDN", desc: "Global delivery via Livepeer network ensures no single point of failure and high performance." },
                 { title: "Creator Control", desc: "Set prices, royalties, and access rules directly on-chain. You own the platform." },
                 { title: "Perpetual Storage", desc: "Content stored on Filecoin with cryptographic proofs of preservation. Never lost." },
-                { title: "97.5% Revenue", desc: "Keep almost everything you earn. We only take a minimal 2.5% protocol fee." },
+                { title: "98% Revenue", desc: "Keep almost everything you earn. We only take a minimal 2% platform fee." },
             ]
         },
         useCases: {
@@ -183,18 +183,18 @@ export const translations = {
                 name: "youtick"
             },
             hero: {
-                badge: "The Decentralized Stage",
-                title_line1: "Your Decentralized",
-                title_line2: "Digital Stage",
-                subtitle: "Powered by NEAR Protocol, Lighthouse Storage, and Lit Protocol.",
-                description: "Own 100% of your content with Decentralized Storage, Cryptographic Encryption, and NFTs. Experience the power of Web3 securely and easily on the youtick stage.",
-                badge_no_censorship: "Censorship Resistant",
-                badge_ownership: "True Ownership",
-                badge_instant_revenue: "98% Revenue Share",
-                cta_discover: "Explore Events",
-                cta_create_event: "Start Creating",
-                cta_try_free: "Try Free",
-                trial_highlight: "No wallet needed • Watch free content with trial account"
+                badge: "98% of Every Sale Goes to You",
+                title_line1: "Your Art,",
+                title_line2: "Your Earnings",
+                subtitle: "Sell your concerts and films directly to fans. No studios, no middlemen.",
+                description: "Every ticket sold means 98% in your pocket, instantly. Your music and films deserve better than a 45% platform cut.",
+                badge_ownership: "Your Art Lives Forever",
+                badge_instant_revenue: "98% Direct to You",
+                badge_no_censorship: "You Set the Rules",
+                cta_discover: "Start Selling",
+                cta_create_event: "Upload Your Work",
+                cta_try_free: "Watch Free",
+                trial_highlight: "Create a free account in 30 seconds and start watching now"
             },
             nav: {
                 home: "Home",
@@ -218,24 +218,24 @@ export const translations = {
                 volume_value: "$10M+"
             },
             features: {
-                title: "Why youtick?",
-                subtitle: "Revolutionary features that will change the future of streaming.",
-                nft_gated_title: "True Ownership",
-                nft_gated_desc: "Tickets are assets, not permissions. Resellable, transferable, and permanent on the NEAR blockchain.",
-                revenue_share_title: "98% Revenue Share",
-                revenue_share_desc: "Lowest fees in the industry. Keep almost everything you earn compared to 45-55% on Web2 platforms.",
-                near_speed_title: "Lightning Fast",
-                near_speed_desc: "Built on NEAR Protocol with 100,000 TPS capacity. Instant transactions, minimal fees.",
-                true_ownership_title: "Signless Experience",
-                true_ownership_desc: "Upload videos and watch content without endless wallet popups. Session Keys enable seamless signless transactions.",
-                instant_payment_title: "Instant Payment",
-                instant_payment_desc: "Revenue goes directly to your wallet. No delays, no middlemen, no waiting.",
-                event_centric_title: "Event-Centric Design",
-                event_centric_desc: "Optimized UI/UX specifically for concerts, cinema, and workshops.",
-                gift_tickets_title: "Gift Tickets",
-                gift_tickets_desc: "Share ticket links with anyone. No wallet needed to claim.",
-                trial_accounts_title: "Try Before You Buy",
-                trial_accounts_desc: "New users can explore the platform without a wallet. Frictionless onboarding, upgrade when ready."
+                title: "Built for Artists",
+                subtitle: "Everything you need to sell your work directly to fans—nothing you don't.",
+                nft_gated_title: "Your Content is Protected",
+                nft_gated_desc: "Only paying customers can watch. Your work stays secure with digital ticket verification.",
+                revenue_share_title: "98% is Yours",
+                revenue_share_desc: "The lowest fees anywhere. Traditional platforms take 45-55%. We take just 2%.",
+                near_speed_title: "Instant Transactions",
+                near_speed_desc: "Sales process in seconds. No waiting for bank transfers or payment processing.",
+                true_ownership_title: "Simple Upload Process",
+                true_ownership_desc: "Upload your video, set your price, start selling. No technical knowledge required.",
+                instant_payment_title: "Get Paid Immediately",
+                instant_payment_desc: "Every sale hits your wallet instantly. No 30-day waits, no minimum thresholds.",
+                event_centric_title: "Made for Concerts & Films",
+                event_centric_desc: "Purpose-built for musicians and filmmakers. Not another generic video platform.",
+                gift_tickets_title: "Easy Fan Sharing",
+                gift_tickets_desc: "Let fans gift your content to friends. New audiences discover your work effortlessly.",
+                trial_accounts_title: "Free Content Available",
+                trial_accounts_desc: "Viewers can watch free content instantly. No barriers to discovering your work."
             },
             comparison: {
                 title: "Traditional Systems vs youtick",
@@ -252,17 +252,17 @@ export const translations = {
                 proof_of_ownership: "Proof of Ownership"
             },
             use_cases: {
-                title: "Digital Stage Experience",
-                subtitle: "Physical events meet digital excellence. The best of both worlds.",
-                concerts_title: "Concert Experience",
-                concerts_physical: "Physical: Ticket ($50) → Attend → Photos → Souvenir",
-                concerts_digital: "Digital: NFT Ticket (0.5 NEAR) → 4K Stream → Backstage Content → Token-Gated Chat → Permanent Collection → Value Growth Potential",
-                cinema_title: "Cinema Premiere",
-                cinema_physical: "Physical: Ticket ($30) → Theater → Q&A → Poster",
-                cinema_digital: "Digital: Limited NFT (0.3 NEAR) → Premium Stream → Live Q&A (NFT Holders) → Digital Poster → Production Content → Resale Market",
-                workshop_title: "Workshop/Masterclass",
-                workshop_physical: "Physical: Registration ($200) → Attend → Notes → Certificate",
-                workshop_digital: "Digital: NFT Pass (2 NEAR) → Live Stream + Q&A → Exclusive Materials → Blockchain Certificate → Lifetime Access → On-Chain Credential"
+                title: "Your Stage, Your Rules",
+                subtitle: "Musicians and filmmakers are already selling directly to their fans. Join them.",
+                concerts_title: "For Musicians",
+                concerts_physical: "Traditional: Concert recording sits in an archive. No income after the show ends.",
+                concerts_digital: "With YouTick: Sell your concert recordings as digital tickets. Fans pay once, watch forever. You earn 98% from every sale, instantly.",
+                cinema_title: "For Filmmakers",
+                cinema_physical: "Traditional: Studios take most profits. Distribution deals favor everyone but you.",
+                cinema_digital: "With YouTick: Release your film directly to your audience. Set your own price. Keep 98% of every ticket. No middlemen, no gatekeepers.",
+                workshop_title: "And More...",
+                workshop_physical: "Traditional: Course platforms take 30-50%. Your expertise, their profit.",
+                workshop_digital: "Masterclasses, documentaries, exclusive content—sell anything directly to your fans with the same 98% revenue share."
             },
             how_it_works: {
                 title: "How It Works?",
@@ -275,10 +275,10 @@ export const translations = {
                 step3_desc: "Get your NFT ticket and prove your ownership on blockchain."
             },
             cta: {
-                title_line1: "Join the",
-                title_line2: "Future of youtick",
-                subtitle: "Create your first event or discover existing events. Experience blockchain-based video streaming easily.",
-                start_exploring: "Start Exploring"
+                title_line1: "Your Independent",
+                title_line2: "Digital Stage",
+                subtitle: "For filmmakers and musicians. Upload your concert recording or film today. Every sale goes directly to you—no waiting, no approvals, no middlemen.",
+                start_exploring: "Upload Your First Work"
             },
             footer: {
                 copyright: "© 2025 youtick. All rights reserved.",
@@ -290,17 +290,17 @@ export const translations = {
                 support: "Support"
             },
             pain_points: {
-                title: "Artist Pain Points",
-                subtitle: "Traditional platforms extract value. We return it.",
-                revenue_title: "Revenue Inequity",
-                revenue_web2: "Spotify: $0.003-0.005 per stream. YouTube: 55% cut. Ticketmaster: 25-30% commission.",
-                revenue_youtick: "98% revenue to artist. Instant payment. No bank delays.",
-                censorship_title: "Censorship Risk",
-                censorship_web2: "Content can be demonetized, removed, or geo-restricted anytime.",
-                censorship_youtick: "IPFS storage. Decentralized. Censorship-proof. Permanent.",
-                fan_title: "Fan Disconnection",
-                fan_web2: "Platforms own fan data. No direct contact. Followers belong to platform.",
-                fan_youtick: "NFT holders identified by wallet. Direct relationship. Artist controls communication."
+                title: "Where Does Your Money Go?",
+                subtitle: "Traditional platforms take almost half. We believe artists deserve better.",
+                revenue_title: "Your Hard Work, Their Profit",
+                revenue_web2: "Streaming platforms pay fractions of a cent. Ticket giants take 25-30%. Video platforms keep 45% of ad revenue.",
+                revenue_youtick: "Every $100 from your fans → $98 goes directly to you. No waiting, no approvals.",
+                censorship_title: "Your Art at Their Mercy",
+                censorship_web2: "One algorithm change and your income vanishes. Region blocks. Sudden demonetization. No explanation.",
+                censorship_youtick: "Your content stored permanently in a global network. No one can remove it. Ever.",
+                fan_title: "They Own Your Audience",
+                fan_web2: "Platforms control who sees your work. They own your follower list. You're just renting access to your own fans.",
+                fan_youtick: "Your ticket buyers are YOUR customers. Direct connection. You own the relationship."
             },
             discover: {
                 scanning_blockchain: "Scanning Blockchain...",
@@ -314,16 +314,16 @@ export const translations = {
                 access_pass: "Access Pass"
             },
             value_proposition: {
-                title: "Zero",
-                percentage: "Streaming & Server",
-                subtitle: "Cost",
-                description: "Forget AWS bills and 50% platform deductions. With our 'Encrypted File' architecture, pay once for decentralized storage (~$4/GB) and keep it forever. No monthly streaming fees.",
-                instant: "Instant Payment",
-                instant_desc: "Direct to wallet",
-                no_middlemen: "No Middlemen",
-                no_middlemen_desc: "You own everything",
-                full_control: "Full Control",
-                full_control_desc: "Set your own prices"
+                title: "%98",
+                percentage: "of Every Ticket Sale",
+                subtitle: "Goes to You",
+                description: "No monthly fees. No revenue sharing schemes. Upload once, earn forever. Your concert recordings and films generate income for years—and you keep almost all of it.",
+                instant: "Paid Instantly",
+                instant_desc: "Money hits your wallet the moment someone buys",
+                no_middlemen: "No Gatekeepers",
+                no_middlemen_desc: "No labels, no studios, no approval needed",
+                full_control: "Your Prices",
+                full_control_desc: "You decide what your art is worth"
             },
             digital_salon: {
                 title: "The Decentralized Stage",
@@ -368,16 +368,38 @@ export const translations = {
                 comparison_web3_desc: "No specialized nodes. Just encrypted IPFS files. 20% lighter architecture."
             },
             web3_bridge: {
-                title: "Web3 Basitlestirildi",
+                title: "Web3 Simplified",
                 subtitle: "",
-                chain_abstraction: "Zincir Soyutlama",
-                chain_abstraction_desc: "Blockchain ile etkilesime girdiginizi bile anlamadan islem yapin.",
-                storage: "Merkeziyetsiz Depolama",
-                storage_desc: "Icerik IPFS/Filecoin uzerinde saklanir. Kalici, sansursuz ve size ait.",
-                encryption: "Merkeziyetsiz Sifreleme",
-                encryption_desc: "Lit Protocol sayesinde sadece bilet sahipleri sifreyi cozebilir.",
-                fees: "Minimal Ucretler",
-                fees_desc: "Tek seferlik depolama ucreti. Surekli sunucu maliyeti yok. Maksimum kazanc."
+                chain_abstraction: "Chain Abstraction",
+                chain_abstraction_desc: "Interact without even knowing you're using blockchain.",
+                storage: "Decentralized Storage",
+                storage_desc: "Content stored on IPFS/Filecoin. Permanent, censorship-resistant, and yours.",
+                encryption: "Decentralized Encryption",
+                encryption_desc: "Only ticket holders can decrypt, powered by Lit Protocol.",
+                fees: "Minimal Fees",
+                fees_desc: "One-time storage fee. No ongoing server costs. Maximum earnings."
+            },
+            roi_calculator: {
+                title: "Calculate Your Earnings",
+                subtitle: "See how much you'll earn on YouTick.",
+                event_details: "Event Details",
+                ticket_price: "Ticket Price",
+                sales_count: "Sales Count",
+                gross_sales: "Gross Sales",
+                estimated_earnings: "Your Estimated Earnings",
+                best: "BEST",
+                platform_fee: "Platform Fee:",
+                more: "more"
+            },
+            use_cases_labels: {
+                physical: "Physical",
+                digital: "Digital"
+            },
+            nav_extra: {
+                problems: "Problems",
+                calculator: "Calculator",
+                try_free: "Try Free",
+                login: "Login"
             }
         },
         trial_banner: {
@@ -488,7 +510,7 @@ export const translations = {
                 { title: "Merkeziyetsiz CDN", desc: "Livepeer ağı üzerinden küresel dağıtım, tek hata noktası olmamasını ve yüksek performans sağlar." },
                 { title: "Üretici Kontrolü", desc: "Fiyatları, telif haklarını ve erişim kurallarını doğrudan zincir üzerinde belirleyin. Platformun sahibi sizsiniz." },
                 { title: "Kalıcı Depolama", desc: "İçerik Filecoin üzerinde kriptografik koruma kanıtları ile saklanır. Asla kaybolmaz." },
-                { title: "97.5% Gelir", desc: "Kazandığınızın neredeyse tamamı sizde kalır. Biz sadece %2.5 protokol ücreti alıyoruz." },
+                { title: "%98 Gelir", desc: "Kazandığınızın neredeyse tamamı sizde kalır. Biz sadece %2 platform ücreti alıyoruz." },
             ]
         },
         useCases: {
@@ -550,7 +572,7 @@ export const translations = {
                 signless_upload: "Signless Upload",
                 pkp_auto: "PKP otomatik oluşturulacak - imza maliyeti 0",
                 balance_sufficient: "Bakiye yeterli - sadece 1 imza gerekli",
-                balance_low: "Bakiye düşük - top-up için 1 imza gerekli",
+                balance_low: "Bakiye düşük - bakiye yüklemesi için 1 imza gerekli",
                 additional_payment: "Ek Ödeme"
             },
             mpc_fallback: {
@@ -640,18 +662,18 @@ export const translations = {
                 name: "youtick"
             },
             hero: {
-                badge: "Merkeziyetsiz Salon Deneyimi",
-                title_line1: "Merkeziyetsiz",
-                title_line2: "Dijital Sahneniz",
-                subtitle: "Near Protocol, LightHouse Storage ve Lit Protocol ile geliştirildi.",
-                description: "Merkeziyetsiz Depolama, Kriptografik Şifreleme ve NFT'ler ile içeriklerin %100 sahibi olun. Web3'ün gücünü youtick sahnesinde güvenli ve kolay deneyimleyin.",
-                badge_no_censorship: "Sansür Dirençli",
-                badge_ownership: "Gerçek Sahiplik",
-                badge_instant_revenue: "%98 Gelir Payı",
-                cta_discover: "Etkinlikleri Keşfet",
-                cta_create_event: "Oluşturmaya Başla",
-                cta_try_free: "Ücretsiz Dene",
-                trial_highlight: "Cüzdan gerekmez • Deneme hesabıyla ücretsiz içerikleri izleyin"
+                badge: "Her Satışın %98'i Sana",
+                title_line1: "Sanatın Senin,",
+                title_line2: "Kazancın da",
+                subtitle: "Konserlerini ve filmlerini doğrudan hayranlarına sat. Stüdyo yok, aracı yok.",
+                description: "Her bilet satışının %98'i anında cebinde. Müziğin ve filmlerin %45 platform kesintisinden daha iyisini hak ediyor.",
+                badge_ownership: "Eserlerin Sonsuza Dek Yaşar",
+                badge_instant_revenue: "%98 Doğrudan Sana",
+                badge_no_censorship: "Kuralları Sen Koy",
+                cta_discover: "Satışa Başla",
+                cta_create_event: "Eserini Yükle",
+                cta_try_free: "Ücretsiz İzle",
+                trial_highlight: "30 saniyede ücretsiz hesap oluştur, hemen izlemeye başla"
             },
             nav: {
                 home: "Ana Sayfa",
@@ -675,24 +697,24 @@ export const translations = {
                 volume_value: "$10M+"
             },
             features: {
-                title: "Neden youtick?",
-                subtitle: "Streaming'in geleceğini değiştirecek devrimci özellikler.",
-                nft_gated_title: "Gerçek Sahiplik",
-                nft_gated_desc: "Biletler izin değil, varlıktır. Satılabilir, devredilebilir ve NEAR blokzincirinde kalıcıdır.",
-                revenue_share_title: "%98 Gelir Payı",
-                revenue_share_desc: "Sektördeki en düşük ücret. Web2 platformların %45-55'ine kıyasla kazancınızın neredeyse tamamı sizde.",
-                near_speed_title: "Yıldırım Hızı",
-                near_speed_desc: "100,000 TPS kapasiteli NEAR Protocol üzerinde. Anında işlemler, minimum ücretler.",
-                true_ownership_title: "İmzasız Deneyim",
-                true_ownership_desc: "Sürekli cüzdan popup'ları olmadan video yükleyin ve izleyin. Session Key'ler sorunsuz imzasız işlemler sağlar.",
-                instant_payment_title: "Anlık Ödeme",
-                instant_payment_desc: "Gelir doğrudan cüzdana. Gecikme yok, aracı yok, bekleme yok.",
-                event_centric_title: "Etkinlik-Merkezli Tasarım",
-                event_centric_desc: "Konserler, sinema ve workshop'lar için özel optimize edilmiş UI/UX.",
-                gift_tickets_title: "Hediye Biletler",
-                gift_tickets_desc: "Bilet linklerini herkesle paylaşın. Talep için cüzdan gerekmiyor.",
-                trial_accounts_title: "Önce Dene",
-                trial_accounts_desc: "Yeni kullanıcılar cüzdan olmadan platformu keşfedebilir. Sürtünmesiz giriş, hazır olunca yükselt."
+                title: "Sanatçılar İçin Tasarlandı",
+                subtitle: "Eserlerini doğrudan hayranlarına satmak için ihtiyacın olan her şey—gereksiz hiçbir şey yok.",
+                nft_gated_title: "İçeriğin Korunuyor",
+                nft_gated_desc: "Sadece ödeme yapan müşteriler izleyebilir. Eserin dijital bilet doğrulamasıyla güvende.",
+                revenue_share_title: "%98 Senin",
+                revenue_share_desc: "Sektördeki en düşük kesinti. Geleneksel platformlar %45-55 alıyor. Biz sadece %2.",
+                near_speed_title: "Anında İşlem",
+                near_speed_desc: "Satış işlemleri saniyeler içinde. Banka transferi veya ödeme işleme beklemesi yok.",
+                true_ownership_title: "Basit Yükleme",
+                true_ownership_desc: "Videoyu yükle, fiyatı belirle, satışa başla. Teknik bilgi gerektirmez.",
+                instant_payment_title: "Hemen Ödemeni Al",
+                instant_payment_desc: "Her satış anında cüzdanına düşer. 30 gün bekleme yok, minimum eşik yok.",
+                event_centric_title: "Konser ve Film İçin Yapıldı",
+                event_centric_desc: "Müzisyenler ve sinemacılar için özel tasarlandı. Sıradan bir video platformu değil.",
+                gift_tickets_title: "Kolay Hayran Paylaşımı",
+                gift_tickets_desc: "Hayranların içeriğini arkadaşlarına hediye edebilir. Yeni kitleler eserini zahmetsizce keşfeder.",
+                trial_accounts_title: "Ücretsiz İçerik Mevcut",
+                trial_accounts_desc: "İzleyiciler ücretsiz içerikleri anında izleyebilir. Eserini keşfetmenin önünde engel yok."
             },
             comparison: {
                 title: "Geleneksel Sistemler vs youtick",
@@ -709,17 +731,17 @@ export const translations = {
                 proof_of_ownership: "Bilet Sahipliği Kanıtı"
             },
             use_cases: {
-                title: "Merkeziyetsiz Salon Deneyimi",
-                subtitle: "Fiziksel etkinlikler dijital mükemmellikle buluşuyor. İki dünyanın en iyisi.",
-                concerts_title: "Konser Deneyimi",
-                concerts_physical: "Fiziksel: Bilet ($50) → Konsere Git → Fotoğraf → Hatıra",
-                concerts_digital: "Dijital: NFT Bilet (0.5 NEAR) → 4K Stream → Backstage İçerik → Token-Korumalı Chat → Kalıcı Koleksiyon → Değer Artışı Potansiyeli",
-                cinema_title: "Sinema İlk Gösterimi",
-                cinema_physical: "Fiziksel: Bilet ($30) → Sinema → Soru-Cevap → Poster",
-                cinema_digital: "Dijital: Limitli NFT (0.3 NEAR) → Premium Stream → Canlı Soru-Cevap (NFT Sahipleri) → Dijital Poster → Yapım İçeriği → Resale Market",
-                workshop_title: "Workshop/Masterclass",
-                workshop_physical: "Fiziksel: Kayıt ($200) → Katılım → Notlar → Sertifika",
-                workshop_digital: "Dijital: NFT Kartı (2 NEAR) → Canlı Stream + Soru-Cevap → Özel Materyaller → Blockchain Sertifikası → Ömür Boyu Erişim → On-Chain Referans"
+                title: "Sahne Senin, Kurallar Senin",
+                subtitle: "Müzisyenler ve sinemacılar zaten doğrudan hayranlarına satıyor. Sen de katıl.",
+                concerts_title: "Müzisyenler İçin",
+                concerts_physical: "Geleneksel: Konser kaydı arşivde bekliyor. Gösteri bitince gelir de bitiyor.",
+                concerts_digital: "YouTick ile: Konser kayıtlarını dijital bilet olarak sat. Hayranlar bir kez öder, sonsuza dek izler. Her satıştan %98 anında sana.",
+                cinema_title: "Sinemacılar İçin",
+                cinema_physical: "Geleneksel: Stüdyolar kârın çoğunu alıyor. Dağıtım anlaşmaları senden başka herkesi kayırıyor.",
+                cinema_digital: "YouTick ile: Filmini doğrudan izleyicine sun. Fiyatı sen belirle. Her biletin %98'i sende. Aracı yok, kapı bekçisi yok.",
+                workshop_title: "Ve Daha Fazlası...",
+                workshop_physical: "Geleneksel: Kurs platformları %30-50 alıyor. Senin uzmanlığın, onların kârı.",
+                workshop_digital: "Masterclass'lar, belgeseller, özel içerikler—her şeyi aynı %98 gelir payıyla doğrudan hayranlarına sat."
             },
             how_it_works: {
                 title: "Nasıl Çalışır?",
@@ -732,10 +754,10 @@ export const translations = {
                 step3_desc: "NFT biletinizi alın ve blockchain üzerinde sahipliğinizi kanıtlayın."
             },
             cta: {
-                title_line1: "youtick'in",
-                title_line2: "Geleceğine Katılın",
-                subtitle: "İlk etkinliğinizi oluşturun veya mevcut etkinlikleri keşfedin. Blockchain tabanlı video yayıncılığını kolayca deneyimleyin.",
-                start_exploring: "Keşfetmeye Başla"
+                title_line1: "Yönetmenler ve Müzisyenler için",
+                title_line2: "Bağımsız Dijital Sahneniz",
+                subtitle: "Konser kaydını veya filmini bugün yükle. Her satış doğrudan sana—bekleme yok, onay yok, aracı yok.",
+                start_exploring: "İlk Eserini Yükle"
             },
             footer: {
                 copyright: "© 2025 youtick. Tüm hakları saklıdır.",
@@ -747,20 +769,20 @@ export const translations = {
                 support: "Destek"
             },
             pain_points: {
-                title: "Sanatçıların Acı Noktaları",
-                subtitle: "Geleneksel platformlar değer çıkarır. Biz iade ediyoruz.",
-                revenue_title: "Gelir Adaletsizliği",
-                revenue_web2: "Spotify: stream başına $0.003-0.005. YouTube: %55 kesinti. Ticketmaster: %25-30 komisyon.",
-                revenue_youtick: "Gelirin %98'i sanatçıya. Anında ödeme. Banka gecikmesi yok.",
-                censorship_title: "Sansür Riski",
-                censorship_web2: "İçerik her an para kazanamaz hale gelebilir, kaldırılabilir veya bölge kısıtlamasına tabi olabilir.",
-                censorship_youtick: "IPFS depolama. Merkeziyetsiz. Sansüre dayanıklı. Kalıcı.",
-                fan_title: "Hayran Kopukluğu",
-                fan_web2: "Platformlar hayran verisine sahip. Doğrudan iletişim yok. Takipçiler platforma ait.",
-                fan_youtick: "NFT sahipleri cüzdan adresiyle tanımlanır. Doğrudan ilişki. Sanatçı iletişimi kontrol eder."
+                title: "Paran Nereye Gidiyor?",
+                subtitle: "Geleneksel platformlar neredeyse yarısını alıyor. Sanatçılar daha iyisini hak ediyor.",
+                revenue_title: "Senin Emeğin, Onların Kârı",
+                revenue_web2: "Streaming platformları kuruşun kesirleri ödüyor. Bilet devleri %25-30 alıyor. Video platformları reklam gelirinin %45'ini tutuyor.",
+                revenue_youtick: "Hayranlarından gelen her 100₺'nin 98₺'si doğrudan sana. Bekleme yok, onay yok.",
+                censorship_title: "Sanatın Onların İnsafında",
+                censorship_web2: "Bir algoritma değişikliği ve gelirin yok olur. Bölge engellemeleri. Ani para kesintisi. Açıklama yok.",
+                censorship_youtick: "İçeriğin küresel ağda kalıcı olarak saklanır. Kimse silemez. Asla.",
+                fan_title: "Kitlen Onlara Ait",
+                fan_web2: "Platformlar eserini kimin göreceğine karar veriyor. Takipçi listen onlara ait. Sen kendi hayranlarına erişimi kiralıyorsun.",
+                fan_youtick: "Bilet alanlar SENİN müşterilerin. Doğrudan bağlantı. İlişkinin sahibi sensin."
             },
             discover: {
-                scanning_blockchain: "Blockchain Taranıyor...",
+                scanning_blockchain: "Blokzinciri Taranıyor...",
                 failed_to_load: "Videolar yüklenemedi",
                 no_videos_found: "Video Bulunamadı",
                 be_first: "İlk içeriği yükleyen siz olun!",
@@ -771,16 +793,16 @@ export const translations = {
                 access_pass: "Erişim Kartı"
             },
             value_proposition: {
-                title: "Sıfır",
-                percentage: "Yayın ve Sunucu",
-                subtitle: "Maliyeti",
-                description: "AWS faturaları ve %50 platform kesintilerini unutun. 'Şifreli Dosya' mimarimizle, merkeziyetsiz depolama için bir kez ödeyin (~$4/GB) ve sonsuza kadar saklayın. Aylık yayın ücreti yok.",
-                instant: "Anlık Ödeme",
-                instant_desc: "Doğrudan cüzdana",
-                no_middlemen: "Aracı Yok",
-                no_middlemen_desc: "Her şey size ait",
-                full_control: "Tam Kontrol",
-                full_control_desc: "Kendi fiyatınızı belirleyin"
+                title: "%98",
+                percentage: "Her Bilet Satışın",
+                subtitle: "Sana Kalır",
+                description: "Aylık ücret yok. Gelir paylaşım planları yok. Bir kez yükle, sonsuza dek kazan. Konser kayıtların ve filmlerin yıllarca gelir üretir—ve neredeyse tamamı senin.",
+                instant: "Anında Ödeme",
+                instant_desc: "Biri satın aldığı an paran cüzdanında",
+                no_middlemen: "Kapı Bekçisi Yok",
+                no_middlemen_desc: "Plak şirketi yok, stüdyo yok, onay gerekmiyor",
+                full_control: "Senin Fiyatın",
+                full_control_desc: "Sanatının değerini sen belirle"
             },
             digital_salon: {
                 title: "Merkeziyetsiz Salon",
@@ -835,10 +857,32 @@ export const translations = {
                 encryption_desc: "Lit Protocol sayesinde sadece bilet sahipleri şifreyi çözebilir.",
                 fees: "Minimal Ücretler",
                 fees_desc: "Tek seferlik depolama ücreti. Sürekli sunucu maliyeti yok. Maksimum kazanç."
+            },
+            roi_calculator: {
+                title: "Kazancınızı Hesaplayın",
+                subtitle: "YouTick'te ne kadar kazanacağınızı görün.",
+                event_details: "Etkinlik Detayları",
+                ticket_price: "Bilet Fiyatı",
+                sales_count: "Satış Adedi",
+                gross_sales: "Brüt Satış",
+                estimated_earnings: "Tahmini Geliriniz",
+                best: "EN İYİ",
+                platform_fee: "Platform Ücreti:",
+                more: "daha fazla"
+            },
+            use_cases_labels: {
+                physical: "Fiziksel",
+                digital: "Dijital"
+            },
+            nav_extra: {
+                problems: "Sorunlar",
+                calculator: "Hesaplayıcı",
+                try_free: "Ücretsiz Dene",
+                login: "Giriş"
             }
         },
         trial_banner: {
-            using_trial: "Trial hesap kullanıyorsun",
+            using_trial: "Deneme hesabı kullanıyorsun",
             days_remaining: "gün kaldı",
             upgrade_button: "Tam Cüzdana Geç"
         },
@@ -866,9 +910,9 @@ export const translations = {
             ticket_ready: "Biletine şimdi erişebilirsin",
             go_to_ticket: "Bilete Git",
             start_exploring: "Keşfetmeye Başla",
-            error_title: "Bir şeyler yanlış gitti",
+            error_title: "Bir Hata Oluştu",
             try_again: "Tekrar Dene",
-            generating_trial: "Trial oluşturuluyor...",
+            generating_trial: "Deneme hesabı oluşturuluyor...",
             no_gift_link: "Hediye linki bulunamadı. Lütfen geçerli bir hediye linki kullanın veya cüzdanınızı bağlayın.",
             gift_for: "Hediye bilet:"
         },
@@ -905,7 +949,7 @@ export const translations = {
             success_title: "Bilet Alındı! 🎉",
             account_label: "Hesap",
             view_transaction: "İşlemi görüntüle",
-            watch_now: "Hemen İzle",
+            watch_now: "HEMEN İZLE",
             explore_more: "Daha Fazla Keşfet",
             trial_active_msg: "Trial hesabınız aktif! Otomatik giriş yaptınız.",
             error_title: "Bir Hata Oluştu",

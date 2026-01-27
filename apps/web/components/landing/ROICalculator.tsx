@@ -9,7 +9,7 @@ import { useLanguage } from '@/components/providers/LanguageContext';
  * Based on VISUAL_ASSETS_MASTER_PROMPT.md ROI Calculator design.
  */
 export const ROICalculator = memo(() => {
-    const { language } = useLanguage();
+    const { t } = useLanguage();
 
     const [ticketPrice, setTicketPrice] = useState(5);
     const [ticketCount, setTicketCount] = useState(500);
@@ -73,13 +73,11 @@ export const ROICalculator = memo(() => {
                     <div className="flex items-center gap-3 mb-4">
                         <Calculator className="w-8 h-8 text-near-green" />
                         <h2 className="text-3xl md:text-4xl font-black text-white text-left">
-                            {language === 'tr' ? 'Kazancınızı Hesaplayın' : 'Calculate Your Earnings'}
+                            {t.landing.roi_calculator?.title || 'Calculate Your Earnings'}
                         </h2>
                     </div>
                     <p className="text-lg text-zinc-400 text-left">
-                        {language === 'tr'
-                            ? 'YouTick\'te ne kadar kazanacağınızı görün.'
-                            : 'See how much you\'ll earn on YouTick.'}
+                        {t.landing.roi_calculator?.subtitle || "See how much you'll earn on YouTick."}
                     </p>
                 </div>
 
@@ -87,14 +85,14 @@ export const ROICalculator = memo(() => {
                     {/* Input Panel */}
                     <div className="p-8 rounded-2xl bg-zinc-900/50 border border-white/10">
                         <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-2">
-                            📊 {language === 'tr' ? 'Etkinlik Detayları' : 'Event Details'}
+                            📊 {t.landing.roi_calculator?.event_details || 'Event Details'}
                         </h3>
 
                         {/* Ticket Price Slider */}
                         <div className="mb-8">
                             <div className="flex justify-between items-center mb-3">
                                 <label className="text-sm font-medium text-zinc-400">
-                                    {language === 'tr' ? 'Bilet Fiyatı' : 'Ticket Price'}
+                                    {t.landing.roi_calculator?.ticket_price || 'Ticket Price'}
                                 </label>
                                 <span className="text-2xl font-bold text-near-green">
                                     {ticketPrice} NEAR
@@ -118,7 +116,7 @@ export const ROICalculator = memo(() => {
                         <div className="mb-8">
                             <div className="flex justify-between items-center mb-3">
                                 <label className="text-sm font-medium text-zinc-400">
-                                    {language === 'tr' ? 'Satış Adedi' : 'Sales Count'}
+                                    {t.landing.roi_calculator?.sales_count || 'Sales Count'}
                                 </label>
                                 <span className="text-2xl font-bold text-near-purple">
                                     {ticketCount.toLocaleString()}
@@ -143,7 +141,7 @@ export const ROICalculator = memo(() => {
                         <div className="p-4 rounded-xl bg-zinc-800/50 border border-white/5">
                             <div className="flex justify-between items-center">
                                 <span className="text-sm text-zinc-400">
-                                    {language === 'tr' ? 'Brüt Satış' : 'Gross Sales'}
+                                    {t.landing.roi_calculator?.gross_sales || 'Gross Sales'}
                                 </span>
                                 <span className="text-xl font-bold text-white">
                                     {formatNear(calculations.grossSales)} NEAR
@@ -155,7 +153,7 @@ export const ROICalculator = memo(() => {
                     {/* Results Panel */}
                     <div className="p-8 rounded-2xl bg-near-green/5 border border-near-green/20">
                         <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-2">
-                            💰 {language === 'tr' ? 'Tahmini Geliriniz' : 'Your Estimated Earnings'}
+                            💰 {t.landing.roi_calculator?.estimated_earnings || 'Your Estimated Earnings'}
                         </h3>
 
                         {/* YouTick Result - Highlighted */}
@@ -163,7 +161,7 @@ export const ROICalculator = memo(() => {
                             <div className="flex items-center justify-between mb-4">
                                 <span className="text-lg font-bold text-near-green">YouTick</span>
                                 <span className="px-2 py-1 text-xs font-bold bg-near-green/20 text-near-green rounded-full">
-                                    ⭐ {language === 'tr' ? 'EN İYİ' : 'BEST'}
+                                    ⭐ {t.landing.roi_calculator?.best || 'BEST'}
                                 </span>
                             </div>
                             <div className="text-4xl font-black text-near-green mb-2">
@@ -173,7 +171,7 @@ export const ROICalculator = memo(() => {
                                 ≈ {formatUsd(calculations.youtickUsd)}
                             </div>
                             <div className="mt-4 pt-4 border-t border-near-green/20 text-xs text-zinc-500">
-                                {language === 'tr' ? 'Platform Ücreti:' : 'Platform Fee:'} {formatNear(calculations.youtickFee)} NEAR (2%)
+                                {t.landing.roi_calculator?.platform_fee || 'Platform Fee:'} {formatNear(calculations.youtickFee)} NEAR (2%)
                             </div>
                         </div>
 
@@ -184,7 +182,7 @@ export const ROICalculator = memo(() => {
                                 <div className="text-right">
                                     <span className="text-lg font-bold text-zinc-300">{formatNear(calculations.vimeoRevenue)} NEAR</span>
                                     <div className="text-xs text-near-green">
-                                        +{formatNear(calculations.youtickRevenue - calculations.vimeoRevenue)} {language === 'tr' ? 'daha fazla' : 'more'}
+                                        +{formatNear(calculations.youtickRevenue - calculations.vimeoRevenue)} {t.landing.roi_calculator?.more || 'more'}
                                     </div>
                                 </div>
                             </div>
@@ -195,7 +193,7 @@ export const ROICalculator = memo(() => {
                                     <span className="text-lg font-bold text-zinc-300">{formatUsd(calculations.youtubeUsd)}</span>
                                     <div className="text-xs text-near-green flex items-center gap-1">
                                         <TrendingUp className="w-3 h-3" />
-                                        {Math.round(calculations.youtickUsd / Math.max(calculations.youtubeUsd, 1))}x {language === 'tr' ? 'daha fazla' : 'more'}
+                                        {Math.round(calculations.youtickUsd / Math.max(calculations.youtubeUsd, 1))}x {t.landing.roi_calculator?.more || 'more'}
                                     </div>
                                 </div>
                             </div>
@@ -206,7 +204,7 @@ export const ROICalculator = memo(() => {
                                     <span className="text-lg font-bold text-zinc-300">{formatUsd(calculations.spotifyUsd)}</span>
                                     <div className="text-xs text-near-green flex items-center gap-1">
                                         <TrendingUp className="w-3 h-3" />
-                                        {Math.round(calculations.youtickUsd / Math.max(calculations.spotifyUsd, 1))}x {language === 'tr' ? 'daha fazla' : 'more'}
+                                        {Math.round(calculations.youtickUsd / Math.max(calculations.spotifyUsd, 1))}x {t.landing.roi_calculator?.more || 'more'}
                                     </div>
                                 </div>
                             </div>
