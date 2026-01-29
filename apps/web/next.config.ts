@@ -37,12 +37,12 @@ const securityHeaders = [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.lit-protocol.com https://*.litprotocol.com https://www.googletagmanager.com https://www.google-analytics.com",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "img-src 'self' data: blob: https://*.near.org https://*.lighthouse.storage https://ipfs.io https://www.google-analytics.com https://www.googletagmanager.com",
+      "img-src 'self' data: blob: https://*.near.org https://crustipfs.xyz https://*.crustfiles.app https://dweb.link https://w3s.link https://ipfs.io https://www.google-analytics.com https://www.googletagmanager.com",
       "font-src 'self' data: https://fonts.gstatic.com",
       "connect-src 'self' https: wss:",
       "frame-src 'self' https://*.near.org",
       "worker-src 'self' blob:",
-      "media-src 'self' blob: https://*.lighthouse.storage https://ipfs.io",
+      "media-src 'self' blob: https://crustipfs.xyz https://*.crustfiles.app https://dweb.link https://w3s.link https://ipfs.io",
     ].join('; ')
   }
 ];

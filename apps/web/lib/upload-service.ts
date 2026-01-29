@@ -3,9 +3,13 @@
  * Handles video upload operations including encryption, IPFS storage, and NFT minting
  *
  * Extracted from UploadForm.tsx to reduce complexity and enable reuse
+ *
+ * Storage Provider: Crust Network (W3Auth)
+ * - 100% client-side uploads via Session Key authentication
+ * - No server proxy required (fully decentralized)
  */
 
-import { uploadFile } from './lighthouse';
+import { uploadFile as crustUploadFile } from './crust';
 import { lit } from './lit';
 import { SessionManager } from './session-manager';
 import { batchUploadActionsSignless } from './batch-transactions';
@@ -67,32 +71,31 @@ export interface UploadContext {
     onStatusUpdate?: (status: string) => void;
 }
 
-interface UploadResponse {
-    data: Array<{ Hash: string }> | { Hash: string };
-}
-
 // ============================================================================
 // Thumbnail Upload
 // ============================================================================
 
 /**
  * Upload thumbnail to IPFS (public, unencrypted)
+ * Uses Crust W3Auth with Session Key for signless upload
+ *
  * @param thumbnail - Thumbnail blob
+ * @param accountId - NEAR account ID for W3Auth
  * @returns IPFS CID of the uploaded thumbnail
  */
-export async function uploadThumbnail(thumbnail: Blob): Promise<string> {
-    const thumbFile = new File([thumbnail], "thumbnail.jpg", { type: "image/jpeg" });
-    const uploadResponse = await uploadFile(thumbFile) as UploadResponse;
+export async function uploadThumbnail(thumbnail: Blob, accountId: string): Promise<string> {
+    console.log('[Upload] Uploading thumbnail via Crust W3Auth...');
 
-    const thumbHash = Array.isArray(uploadResponse.data)
-        ? uploadResponse.data[0].Hash
-        : uploadResponse.data.Hash;
+    const result = await crustUploadFile(thumbnail, accountId, {
+        filename: 'thumbnail.jpg'
+    });
 
-    if (!thumbHash) {
-        throw new Error('Thumbnail upload succeeded but no hash returned');
+    if (!result.cid) {
+        throw new Error('Thumbnail upload succeeded but no CID returned');
     }
 
-    return thumbHash;
+    console.log('[Upload] Thumbnail CID:', result.cid);
+    return result.cid;
 }
 
 // ============================================================================
@@ -104,12 +107,12 @@ export async function uploadThumbnail(thumbnail: Blob): Promise<string> {
  * Tries PKP first (signless), falls back to MPC
  *
  * @param context - Upload context with wallet and account info
- * @param lighthouseEthAddress - Ethereum address for Lighthouse auth
+ * @param mpcEthAddress - MPC-derived Ethereum address for Lit session (optional with PKP)
  * @returns Session signatures for Lit Protocol
  */
 export async function getSessionSignatures(
     context: UploadContext,
-    lighthouseEthAddress: string
+    mpcEthAddress: string = ''
 ): Promise<LitSessionSigs> {
     const { accountId, wallet, sessionManager, pkpData, onStatusUpdate } = context;
 
@@ -162,7 +165,7 @@ export async function getSessionSignatures(
     const sessionSigs = await lit.getSessionSigs(
         wallet,
         accountId,
-        lighthouseEthAddress,
+        mpcEthAddress,
         signWithSessionKey,
         undefined,
         undefined,
@@ -221,7 +224,7 @@ export async function encryptAndUpload(
         sessionSigs
     );
 
-    onStatusUpdate?.('Uploading encrypted video to IPFS...');
+    onStatusUpdate?.('Uploading encrypted video to Crust IPFS...');
 
     // Create metadata blob with encryption info
     const encryptedContent = {
@@ -231,20 +234,19 @@ export async function encryptAndUpload(
     };
 
     const metadataBlob = new Blob([JSON.stringify(encryptedContent)], { type: 'application/json' });
-    const encryptedFile = new File([metadataBlob], file.name + ".json", { type: "application/json" });
 
-    // Upload to IPFS
-    const uploadResponse = await uploadFile(encryptedFile) as UploadResponse;
+    // Upload to Crust IPFS via W3Auth (signless, client-side)
+    console.log('[Upload] Uploading encrypted content via Crust W3Auth...');
+    const uploadResult = await crustUploadFile(metadataBlob, accountId, {
+        filename: `${file.name}.encrypted.json`
+    });
 
-    const fileHash = Array.isArray(uploadResponse.data)
-        ? uploadResponse.data[0].Hash
-        : uploadResponse.data.Hash;
-
-    if (!fileHash) {
-        throw new Error('Upload succeeded but no file hash returned');
+    if (!uploadResult.cid) {
+        throw new Error('Upload succeeded but no CID returned');
     }
 
-    console.log('Encrypted File CID:', fileHash);
+    console.log('[Upload] Encrypted File CID:', uploadResult.cid);
+    const fileHash = uploadResult.cid;
 
     return {
         ciphertext,
@@ -347,7 +349,8 @@ export interface FullUploadParams {
     thumbnail: Blob | null;
     metadata: UploadMetadata;
     context: UploadContext;
-    lighthouseEthAddress: string;
+    /** MPC-derived ETH address for Lit Protocol (optional - PKP is preferred) */
+    mpcEthAddress?: string;
     onStepComplete?: (step: string) => void;
     onStatusUpdate?: (status: string) => void;
 }
@@ -362,6 +365,10 @@ export interface FullUploadResult {
  * Execute full upload flow
  * Coordinates all steps: thumbnail, session, encrypt, upload, mint
  *
+ * Storage: Crust Network (W3Auth with Session Key)
+ * - 100% client-side, signless uploads
+ * - No server proxy required
+ *
  * @param params - Upload parameters
  * @returns Upload result with all CIDs
  */
@@ -371,23 +378,28 @@ export async function executeFullUpload(params: FullUploadParams): Promise<FullU
         thumbnail,
         metadata,
         context,
-        lighthouseEthAddress,
+        mpcEthAddress,
         onStepComplete,
         onStatusUpdate
     } = params;
 
-    // Step 1: Upload thumbnail
+    console.log('[DECENTRALIZATION_METRIC] upload_flow_start', {
+        accountId: context.accountId,
+        storage: 'crust_w3auth'
+    });
+
+    // Step 1: Upload thumbnail via Crust W3Auth (signless)
     let thumbnailCid: string | null = null;
     if (thumbnail) {
-        onStatusUpdate?.('Uploading thumbnail...');
-        thumbnailCid = await uploadThumbnail(thumbnail);
-        console.log('Thumbnail uploaded CID:', thumbnailCid);
+        onStatusUpdate?.('Uploading thumbnail to Crust IPFS...');
+        thumbnailCid = await uploadThumbnail(thumbnail, context.accountId);
+        console.log('[Upload] Thumbnail uploaded CID:', thumbnailCid);
     }
     onStepComplete?.('thumbnail');
 
-    // Step 2: Get session signatures
-    onStatusUpdate?.('Getting session signatures...');
-    const sessionSigs = await getSessionSignatures(context, lighthouseEthAddress);
+    // Step 2: Get Lit Protocol session signatures
+    onStatusUpdate?.('Getting Lit session signatures...');
+    const sessionSigs = await getSessionSignatures(context, mpcEthAddress);
     onStepComplete?.('session');
 
     // Step 3: Encrypt and upload video

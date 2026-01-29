@@ -146,33 +146,6 @@ function getPKPFromStorage(accountId: string): PKPData | null {
 }
 
 /**
- * Get Lighthouse auth message and sign it
- *
- * Convenience function that handles the full Lighthouse auth flow.
- * @param ethAddress - Ethereum address to get auth message for (required by Lighthouse API)
- */
-export async function signLighthouseAuth(
-    accountId: string,
-    ethAddress: string,
-    pkpData?: PKPData | null,
-    wallet?: any
-): Promise<SigningResult> {
-    // Get auth message from Lighthouse (requires ETH address as query param)
-    const response = await fetch(`https://api.lighthouse.storage/api/auth/get_message?publicKey=${ethAddress}`, {
-        method: 'GET'
-    });
-
-    if (!response.ok) {
-        throw new Error('Failed to get Lighthouse auth message');
-    }
-
-    const message = await response.text();
-    console.log('[Signing] Lighthouse auth message:', message);
-
-    return signMessage(message, accountId, pkpData, wallet);
-}
-
-/**
  * Check if PKP is available for an account
  */
 export function hasPKP(accountId: string): boolean {

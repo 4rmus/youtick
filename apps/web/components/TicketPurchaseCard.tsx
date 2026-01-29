@@ -228,11 +228,15 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-near-purple/10 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
 
             {/* Image Container */}
-            <div className="aspect-video relative overflow-hidden">
+            <div className="aspect-video relative overflow-hidden bg-zinc-800">
                 <img
-                    src={eventDetails.media}
+                    src={eventDetails.media || '/placeholder-video.svg'}
                     alt="Ticket Preview"
                     className="w-full h-full object-cover scale-105 blur-sm opacity-60 group-hover:opacity-80 transition-all duration-700"
+                    onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.src = '/placeholder-video.svg';
+                    }}
                 />
 
                 {/* Gradient Overlay */}

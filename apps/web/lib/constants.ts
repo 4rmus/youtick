@@ -50,11 +50,43 @@ export const LIT_CONFIG = {
 } as const;
 
 /**
- * IPFS / Lighthouse Configuration
+ * Crust Network Configuration
+ * W3Auth-based decentralized IPFS storage
+ *
+ * Upload: crustipfs.xyz (W3Auth required)
+ * Retrieval: ipfs.io preferred (faster, global availability)
+ *
+ * @see https://wiki.crust.network/docs/en/buildIPFSW3AuthPin
+ */
+export const CRUST_CONFIG = {
+    /** W3Auth Upload Endpoint (supports NEAR wallet signatures) */
+    uploadEndpoint: 'https://crustipfs.xyz',
+
+    /** Primary Retrieval Gateway (ipfs.io is faster and more reliable) */
+    primaryGateway: 'https://ipfs.io/ipfs',
+
+    /** Backup gateways for failover (in priority order) */
+    backupGateways: [
+        'https://dweb.link/ipfs',
+        'https://w3s.link/ipfs',
+        'https://crustipfs.xyz/ipfs',
+        'https://gw.crustfiles.app/ipfs'
+    ],
+
+    /** W3Auth Chain Type for NEAR Protocol */
+    chainType: 'near' as const,
+
+    /** Feature flag - Crust is the default and only storage provider */
+    enabled: process.env.NEXT_PUBLIC_USE_CRUST !== 'false', // Default: true
+} as const;
+
+/**
+ * IPFS Configuration
+ * Uses ipfs.io as primary gateway for best availability
  */
 export const IPFS_CONFIG = {
-    /** Lighthouse Gateway URL */
-    gatewayUrl: 'https://gateway.lighthouse.storage/ipfs',
+    /** Primary Gateway URL - ipfs.io for speed and reliability */
+    gatewayUrl: 'https://ipfs.io/ipfs',
 
     /** Default placeholder image - uses a minimal data URI for guaranteed availability */
     placeholderImage: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjIyNSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjMTgxODFiIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IiM3MTcxN2YiIGZvbnQtZmFtaWx5PSJzeXN0ZW0tdWkiIGZvbnQtc2l6ZT0iMjQiPvCfjqwgVmlkZW88L3RleHQ+PC9zdmc+',
@@ -123,7 +155,6 @@ export const API_ENDPOINTS = {
     relayerMint: '/api/relayer/mint',
     trialSponsored: '/api/trial/sponsored',
     ticketClaimFree: '/api/ticket/claim-free',
-    lighthouseUpload: '/api/lighthouse/upload',
 } as const;
 
 // Type exports

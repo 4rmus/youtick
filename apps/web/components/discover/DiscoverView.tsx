@@ -102,6 +102,11 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
                         src={token.metadata.media}
                         alt={token.metadata.title}
                         className="w-full h-full object-cover scale-105 group-hover:scale-110 transition-transform duration-700 ease-out"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          target.style.display = 'none';
+                          target.parentElement?.classList.add('bg-zinc-800');
+                        }}
                       />
                     ) : (
                       <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-zinc-800/50 to-zinc-900/50">
