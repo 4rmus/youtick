@@ -16,11 +16,14 @@ export async function getNearPrice(): Promise<number> {
     }
 }
 
-export const LIGHTHOUSE_STORAGE_COST_PER_GB = 4.00; // $4 per GB
+// Crust Network storage is free for pinning via W3Auth
+// We only charge gas costs for NEAR transactions
+export const STORAGE_COST_PER_GB = 0; // Crust W3Auth is free
 
 export function calculateStorageFee(fileSizeInBytes: number, nearPrice: number): string {
+    // Crust storage is free - only NEAR gas costs apply
     const fileSizeInGB = fileSizeInBytes / (1024 * 1024 * 1024);
-    const costInUSD = fileSizeInGB * LIGHTHOUSE_STORAGE_COST_PER_GB;
+    const costInUSD = fileSizeInGB * STORAGE_COST_PER_GB;
 
     // Add small buffer (e.g. 5%) to cover fluctuation
     const costWithBuffer = costInUSD * 1.05;

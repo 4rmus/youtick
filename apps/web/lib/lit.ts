@@ -591,7 +591,7 @@ class Lit {
 
     /**
      * Sign an arbitrary message using PKP (signless, no MPC cost!)
-     * This enables gas-free Lighthouse auth signing.
+     * This enables gas-free auth signing for decentralized services.
      * 
      * @param pkpPublicKey - PKP's public key
      * @param pkpEthAddress - PKP's ETH address

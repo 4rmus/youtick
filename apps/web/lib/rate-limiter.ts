@@ -122,8 +122,8 @@ export const pkpMintLimiter = new RateLimiter({
 /**
  * Video Upload Rate Limiter
  *
- * Lighthouse storage has costs, prevent abuse while allowing creators
- * to upload multiple videos in reasonable time
+ * Crust W3Auth storage is free, but we rate limit to prevent abuse
+ * and ensure fair usage across all creators.
  *
  * Limit: 10 uploads per hour
  */

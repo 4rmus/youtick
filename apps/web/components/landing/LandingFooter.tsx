@@ -28,7 +28,7 @@ export const LandingFooter = memo(() => {
               <span>+</span>
               <span className="text-zinc-500">Lit Protocol</span>
               <span>•</span>
-              <span className="text-zinc-500">Lighthouse</span>
+              <span className="text-zinc-500">Crust Network</span>
             </div>
           </div>
 
@@ -63,7 +63,7 @@ export const LandingFooter = memo(() => {
         {/* Bottom Bar */}
         <div className="mt-12 pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-xs text-zinc-600 text-left">
-            {t.landing.footer.built_on_prefix} NEAR Protocol, Lighthouse & Lit Protocol.
+            {t.landing.footer.built_on_prefix} NEAR Protocol, Crust Network & Lit Protocol.
           </p>
           <div className="flex items-center gap-6 text-xs text-zinc-600">
             <a href="#" className="hover:text-zinc-400 transition-colors">Privacy</a>

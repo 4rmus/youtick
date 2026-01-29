@@ -8,7 +8,8 @@ import { Loader2, Play, Lock, Ticket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SessionManager } from '@/lib/session-manager';
 import { useNFTOwnership, useSessionState } from '@/lib/hooks/useSessionState';
-import { GAS_CONSTANTS } from '@/lib/constants';
+import { GAS_CONSTANTS, IPFS_CONFIG } from '@/lib/constants';
+import { fetchWithRace } from '@/lib/crust';
 
 interface IpfsPlayerProps {
     cid: string;
@@ -190,9 +191,10 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                 }
             }
 
-            // 1. Fetch Encrypted File from IPFS
+            // 1. Fetch Encrypted File from IPFS (with multi-gateway race)
             if (!isRetry) setPlayerState({ type: 'decrypting', message: 'Fetching video from IPFS...' });
-            const metadataResponse = await fetch(`https://gateway.lighthouse.storage/ipfs/${targetCid}`);
+            // Use multi-gateway race for fastest retrieval
+            const metadataResponse = await fetchWithRace(targetCid);
             if (!metadataResponse.ok) {
                 throw new Error(`Failed to fetch from IPFS: ${metadataResponse.statusText}`);
             }

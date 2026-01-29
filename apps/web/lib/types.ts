@@ -298,13 +298,6 @@ export interface ApiErrorResponse {
  */
 export type ApiResponse<T = unknown> = ApiSuccessResponse<T> | ApiErrorResponse;
 
-/**
- * Lighthouse upload response
- */
-export interface LighthouseUploadResponse {
-    data: Array<{ Hash: string; Name: string; Size: string }> | { Hash: string; Name: string; Size: string };
-}
-
 // ============================================================================
 // Session & Storage Types
 // ============================================================================

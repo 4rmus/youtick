@@ -284,7 +284,7 @@ export const translations = {
                 copyright: "© 2025 youtick. All rights reserved.",
                 description: "Empowering artists with true ownership and instant payments.",
                 built_on_prefix: "Built on",
-                built_on_tech: "NEAR Protocol, Lighthouse & Lit Protocol.",
+                built_on_tech: "NEAR Protocol, Crust Network & Lit Protocol.",
                 privacy: "Privacy",
                 terms: "Terms",
                 support: "Support"
@@ -763,7 +763,7 @@ export const translations = {
                 copyright: "© 2025 youtick. Tüm hakları saklıdır.",
                 description: "Sanatçılara gerçek sahiplik ve anlık ödemeler sunuyoruz.",
                 built_on_prefix: "Altyapısı:",
-                built_on_tech: "NEAR Protocol, Lighthouse ve Lit Protocol",
+                built_on_tech: "NEAR Protocol, Crust Network ve Lit Protocol",
                 privacy: "Gizlilik",
                 terms: "Şartlar",
                 support: "Destek"

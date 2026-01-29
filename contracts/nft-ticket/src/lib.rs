@@ -5,36 +5,35 @@ use near_contract_standards::non_fungible_token::{
 };
 
 use near_sdk::{
-    borsh::{BorshDeserialize, BorshSerialize},
     collections::{LazyOption, UnorderedMap, LookupMap, LookupSet},
     env, near, require,
     json_types::U128,
-    AccountId, BorshStorageKey, NearToken, PanicOnDefault, Promise, PromiseOrValue, PublicKey,
+    AccountId, NearToken, PanicOnDefault, Promise, PromiseOrValue, PublicKey,
 };
-use serde::{Deserialize, Serialize};
+use std::num::NonZeroU128;
 
 
-// V7: Fresh storage keys - must change prefix on every full reset
-pub struct StorageKeyV7(pub &'static [u8]);
+// V8: Fresh storage keys - must change prefix on every full reset
+pub struct StorageKeyV8(pub &'static [u8]);
 
-impl near_sdk::IntoStorageKey for StorageKeyV7 {
+impl near_sdk::IntoStorageKey for StorageKeyV8 {
     fn into_storage_key(self) -> Vec<u8> {
         self.0.to_vec()
     }
 }
 
-impl StorageKeyV7 {
-    pub const NFT: Self = Self(b"n7");
-    pub const TOKEN_METADATA: Self = Self(b"m7");
-    pub const ENUMERATION: Self = Self(b"e7");
-    pub const APPROVAL: Self = Self(b"a7");
-    pub const CONTRACT_METADATA: Self = Self(b"c7");
-    pub const VIDEO_METADATA: Self = Self(b"v7");
-    pub const USER_DEPOSITS: Self = Self(b"d7");
-    pub const EVENTS: Self = Self(b"x7");
-    pub const GIFT_DROPS: Self = Self(b"g7");
-    pub const ONBOARDING_KEYS: Self = Self(b"o7");
-    pub const DAILY_TRIAL_COUNTS: Self = Self(b"t7");
+impl StorageKeyV8 {
+    pub const NFT: Self = Self(b"n8");
+    pub const TOKEN_METADATA: Self = Self(b"m8");
+    pub const ENUMERATION: Self = Self(b"e8");
+    pub const APPROVAL: Self = Self(b"a8");
+    pub const CONTRACT_METADATA: Self = Self(b"c8");
+    pub const VIDEO_METADATA: Self = Self(b"v8");
+    pub const USER_DEPOSITS: Self = Self(b"d8");
+    pub const EVENTS: Self = Self(b"x8");
+    pub const GIFT_DROPS: Self = Self(b"g8");
+    pub const ONBOARDING_KEYS: Self = Self(b"o8");
+    pub const DAILY_TRIAL_COUNTS: Self = Self(b"t8");
 }
 
 #[near(serializers = [borsh, json])]
@@ -135,24 +134,24 @@ impl Contract {
 
         Self {
             tokens: NonFungibleToken::new(
-                StorageKeyV7::NFT,
+                StorageKeyV8::NFT,
                 owner_id,
-                Some(StorageKeyV7::TOKEN_METADATA),
-                Some(StorageKeyV7::ENUMERATION),
-                Some(StorageKeyV7::APPROVAL),
+                Some(StorageKeyV8::TOKEN_METADATA),
+                Some(StorageKeyV8::ENUMERATION),
+                Some(StorageKeyV8::APPROVAL),
             ),
             metadata: LazyOption::new(
-                StorageKeyV7::CONTRACT_METADATA,
+                StorageKeyV8::CONTRACT_METADATA,
                 Some(&metadata),
             ),
-            video_metadata: UnorderedMap::new(StorageKeyV7::VIDEO_METADATA),
-            user_deposits: LookupMap::new(StorageKeyV7::USER_DEPOSITS),
-            events: UnorderedMap::new(StorageKeyV7::EVENTS),
+            video_metadata: UnorderedMap::new(StorageKeyV8::VIDEO_METADATA),
+            user_deposits: LookupMap::new(StorageKeyV8::USER_DEPOSITS),
+            events: UnorderedMap::new(StorageKeyV8::EVENTS),
             next_token_id: 0,
-            gift_drops: LookupMap::new(StorageKeyV7::GIFT_DROPS),
+            gift_drops: LookupMap::new(StorageKeyV8::GIFT_DROPS),
             trial_pool: NearToken::from_yoctonear(0),
-            onboarding_keys: LookupSet::new(StorageKeyV7::ONBOARDING_KEYS),
-            daily_trial_counts: LookupMap::new(StorageKeyV7::DAILY_TRIAL_COUNTS),
+            onboarding_keys: LookupSet::new(StorageKeyV8::ONBOARDING_KEYS),
+            daily_trial_counts: LookupMap::new(StorageKeyV8::DAILY_TRIAL_COUNTS),
             onboarding_config: OnboardingConfig::default(),
         }
     }
@@ -187,24 +186,24 @@ impl Contract {
         // Using V5 storage keys with unique string prefixes
         Self {
             tokens: NonFungibleToken::new(
-                StorageKeyV7::NFT,
+                StorageKeyV8::NFT,
                 owner_id,
-                Some(StorageKeyV7::TOKEN_METADATA),
-                Some(StorageKeyV7::ENUMERATION),
-                Some(StorageKeyV7::APPROVAL),
+                Some(StorageKeyV8::TOKEN_METADATA),
+                Some(StorageKeyV8::ENUMERATION),
+                Some(StorageKeyV8::APPROVAL),
             ),
             metadata: LazyOption::new(
-                StorageKeyV7::CONTRACT_METADATA,
+                StorageKeyV8::CONTRACT_METADATA,
                 Some(&metadata),
             ),
-            video_metadata: UnorderedMap::new(StorageKeyV7::VIDEO_METADATA),
-            user_deposits: LookupMap::new(StorageKeyV7::USER_DEPOSITS),
-            events: UnorderedMap::new(StorageKeyV7::EVENTS),
+            video_metadata: UnorderedMap::new(StorageKeyV8::VIDEO_METADATA),
+            user_deposits: LookupMap::new(StorageKeyV8::USER_DEPOSITS),
+            events: UnorderedMap::new(StorageKeyV8::EVENTS),
             next_token_id: 0,
-            gift_drops: LookupMap::new(StorageKeyV7::GIFT_DROPS),
+            gift_drops: LookupMap::new(StorageKeyV8::GIFT_DROPS),
             trial_pool: NearToken::from_yoctonear(0),
-            onboarding_keys: LookupSet::new(StorageKeyV7::ONBOARDING_KEYS),
-            daily_trial_counts: LookupMap::new(StorageKeyV7::DAILY_TRIAL_COUNTS),
+            onboarding_keys: LookupSet::new(StorageKeyV8::ONBOARDING_KEYS),
+            daily_trial_counts: LookupMap::new(StorageKeyV8::DAILY_TRIAL_COUNTS),
             onboarding_config: OnboardingConfig::default(),
         }
     }
@@ -245,9 +244,9 @@ impl Contract {
         // Add Function Call Access Key to contract
         // Allowance: 1 NEAR for gas (enough for many trial creations)
         // Restricted to: create_sponsored_trial_direct only
-        Promise::new(env::current_account_id()).add_access_key(
+        Promise::new(env::current_account_id()).add_access_key_allowance(
             public_key,
-            NearToken::from_near(1), // 1 NEAR allowance
+            near_sdk::Allowance::Limited(NonZeroU128::new(NearToken::from_near(1).as_yoctonear()).unwrap()),
             env::current_account_id(),
             "create_sponsored_trial_direct".to_string(),
         )
@@ -416,11 +415,23 @@ impl Contract {
             // Transfer 98% to creator
             // Note: The rest (commission + storage + any excess) stays in contract
             if creator_amount > 0 {
-                Promise::new(event.creator_id.clone()).transfer(NearToken::from_yoctonear(creator_amount));
+                Promise::new(event.creator_id.clone())
+                    .transfer(NearToken::from_yoctonear(creator_amount))
+                    .detach();
             }
 
             env::log_str(&format!("Ticket sold: {} to creator, {} commission, {} storage",
                 creator_amount, commission, storage_cost.as_yoctonear()));
+
+            // Refund excess deposit to buyer
+            let total_used = required_price.saturating_add(storage_cost);
+            if deposit > total_used {
+                let refund = deposit.saturating_sub(total_used);
+                Promise::new(env::predecessor_account_id())
+                    .transfer(refund)
+                    .detach();
+                env::log_str(&format!("Refunded {} excess to buyer", refund.as_yoctonear()));
+            }
         } else {
             // Free ticket - just require minimal storage (or contract pays)
             require!(
@@ -430,39 +441,8 @@ impl Contract {
             env::log_str("Free ticket minted");
         }
 
-        // Mint the NFT
-        let token_id = self.next_token_id.to_string();
-        self.next_token_id += 1;
-
-        let video_metadata = VideoMetadata {
-            encrypted_cid: encrypted_cid.clone(),
-            duration_seconds: 0,
-            event_date: Some(event.created_at),
-            content_type: ContentType::Exclusive,
-        };
-
-        self.video_metadata.insert(&token_id, &video_metadata);
-
-        let token_metadata = TokenMetadata {
-            title: Some(event.title.clone()),
-            description: Some(event.description.clone()),
-            media: None,
-            media_hash: None,
-            copies: Some(1),
-            issued_at: None,
-            expires_at: None,
-            starts_at: None,
-            updated_at: None,
-            extra: None,
-            reference: None,
-            reference_hash: None,
-        };
-
-        self.tokens.internal_mint(
-            token_id.clone(),
-            receiver_id,
-            Some(token_metadata),
-        )
+        // Mint the NFT using helper
+        self.internal_mint_ticket(receiver_id, &event, encrypted_cid, false)
     }
 
     /// Purchase a ticket using prepaid balance (Callable via Session Key)
@@ -505,7 +485,9 @@ impl Contract {
 
             // Transfer 98% to creator
             if creator_amount > 0 {
-                Promise::new(event.creator_id.clone()).transfer(NearToken::from_yoctonear(creator_amount));
+                Promise::new(event.creator_id.clone())
+                    .transfer(NearToken::from_yoctonear(creator_amount))
+                    .detach();
             }
 
             env::log_str(&format!("Prepaid ticket: {} to creator, {} commission", creator_amount, commission));
@@ -525,22 +507,44 @@ impl Contract {
         let event = self.events.get(&encrypted_cid)
             .expect("Event not found");
 
-        // Mint the NFT (storage paid by attached deposit from contract)
+        // Mint the NFT using helper (storage paid by attached deposit from contract)
+        self.internal_mint_ticket(receiver_id, &event, encrypted_cid, false)
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════
+    // MINTING FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Internal helper to mint a ticket NFT
+    /// Consolidates duplicated minting logic across buy_ticket, claim_gift, etc.
+    fn internal_mint_ticket(
+        &mut self,
+        receiver_id: AccountId,
+        event: &Event,
+        event_cid: String,
+        is_gift: bool,
+    ) -> Token {
         let token_id = self.next_token_id.to_string();
         self.next_token_id += 1;
 
         let video_metadata = VideoMetadata {
-            encrypted_cid: encrypted_cid.clone(),
+            encrypted_cid: event_cid.clone(),
             duration_seconds: 0,
             event_date: Some(event.created_at),
             content_type: ContentType::Exclusive,
         };
-
         self.video_metadata.insert(&token_id, &video_metadata);
+
+        let description = if is_gift {
+            format!("Gift ticket: {}", event.description)
+        } else {
+            event.description.clone()
+        };
 
         let token_metadata = TokenMetadata {
             title: Some(event.title.clone()),
-            description: Some(event.description.clone()),
+            description: Some(description),
             media: None,
             media_hash: None,
             copies: Some(1),
@@ -553,17 +557,8 @@ impl Contract {
             reference_hash: None,
         };
 
-        self.tokens.internal_mint(
-            token_id.clone(),
-            receiver_id,
-            Some(token_metadata),
-        )
+        self.tokens.internal_mint(token_id.clone(), receiver_id, Some(token_metadata))
     }
-
-
-    // ═══════════════════════════════════════════════════════════════
-    // MINTING FUNCTIONS
-    // ═══════════════════════════════════════════════════════════════
 
     /// Mint a new video NFT ticket
     /// SECURITY: Requires 1 yoctoNEAR deposit to prevent accidental calls
@@ -1133,12 +1128,14 @@ impl Contract {
             // Add Function Call Access Key to THIS contract
             // This allows the holder of the Private Key to call claim functions
             // Allowance: 0.05 NEAR for gas fees (enough for claim tx)
-            Promise::new(env::current_account_id()).add_access_key(
-                pk,
-                NearToken::from_millinear(50), // 0.05 NEAR allowance
-                env::current_account_id(),
-                "claim_gift,claim_gift_and_create_account".to_string(),
-            );
+            Promise::new(env::current_account_id())
+                .add_access_key_allowance(
+                    pk,
+                    near_sdk::Allowance::Limited(NonZeroU128::new(NearToken::from_millinear(50).as_yoctonear()).unwrap()),
+                    env::current_account_id(),
+                    "claim_gift,claim_gift_and_create_account".to_string(),
+                )
+                .detach();
         }
 
         env::log_str(&format!(
@@ -1167,52 +1164,21 @@ impl Contract {
         self.gift_drops.remove(&signer_pk); // Remove from map
 
         // DELETE the Access Key to prevent reuse
-        Promise::new(env::current_account_id()).delete_key(
-            env::signer_account_pk()
-        );
+        Promise::new(env::current_account_id())
+            .delete_key(env::signer_account_pk())
+            .detach();
 
         // Get event details for NFT metadata
         let event = self.events.get(&gift_drop.event_cid)
             .expect("Event not found");
 
-        // Mint NFT to receiver (Standard logic)
-        let token_id = self.next_token_id.to_string();
-        self.next_token_id += 1;
-
-        let video_metadata = VideoMetadata {
-            encrypted_cid: gift_drop.event_cid.clone(),
-            duration_seconds: 0,
-            event_date: Some(event.created_at),
-            content_type: ContentType::Exclusive,
-        };
-
-        self.video_metadata.insert(&token_id, &video_metadata);
-
-        let token_metadata = TokenMetadata {
-            title: Some(event.title.clone()),
-            description: Some(format!("Gift ticket: {}", event.description)),
-            media: None,
-            media_hash: None,
-            copies: Some(1),
-            issued_at: None,
-            expires_at: None,
-            starts_at: None,
-            updated_at: None,
-            extra: None,
-            reference: None,
-            reference_hash: None,
-        };
-
         env::log_str(&format!(
-            "Gift claimed: {} -> {} (event: {})",
-            token_id, receiver_id, gift_drop.event_cid
+            "Gift claimed: -> {} (event: {})",
+            receiver_id, gift_drop.event_cid
         ));
 
-        self.tokens.internal_mint(
-            token_id.clone(),
-            receiver_id,
-            Some(token_metadata),
-        )
+        // Mint NFT using helper (is_gift = true for "Gift ticket:" prefix)
+        self.internal_mint_ticket(receiver_id, &event, gift_drop.event_cid, true)
     }
 
     /// View function: Check if a gift key is valid
@@ -1260,9 +1226,9 @@ impl Contract {
         self.gift_drops.remove(&signer_pk); // Remove from map
 
         // DELETE the Access Key to prevent reuse
-        Promise::new(env::current_account_id()).delete_key(
-            env::signer_account_pk()
-        );
+        Promise::new(env::current_account_id())
+            .delete_key(env::signer_account_pk())
+            .detach();
 
         // Account creation costs ~0.1 NEAR + access key storage ~0.0075 NEAR
         let account_creation_cost = NearToken::from_millinear(110); // 0.11 NEAR
@@ -1301,54 +1267,20 @@ impl Contract {
         event_cid: String,
     ) -> Token {
         // Check if account creation succeeded
-        require!(
-            env::promise_results_count() == 1,
-            "Expected 1 promise result"
-        );
-
+        #[allow(deprecated)]
         match env::promise_result(0) {
             near_sdk::PromiseResult::Successful(_) => {
                 // Account created successfully, now mint NFT
                 let event = self.events.get(&event_cid)
                     .expect("Event not found");
 
-                let token_id = self.next_token_id.to_string();
-                self.next_token_id += 1;
-
-                let video_metadata = VideoMetadata {
-                    encrypted_cid: event_cid.clone(),
-                    duration_seconds: 0,
-                    event_date: Some(event.created_at),
-                    content_type: ContentType::Exclusive,
-                };
-
-                self.video_metadata.insert(&token_id, &video_metadata);
-
-                let token_metadata = TokenMetadata {
-                    title: Some(event.title.clone()),
-                    description: Some(format!("Gift ticket: {}", event.description)),
-                    media: None,
-                    media_hash: None,
-                    copies: Some(1),
-                    issued_at: None,
-                    expires_at: None,
-                    starts_at: None,
-                    updated_at: None,
-                    extra: None,
-                    reference: None,
-                    reference_hash: None,
-                };
-
                 env::log_str(&format!(
-                    "Gift NFT minted: {} -> {} (event: {})",
-                    token_id, receiver_id, event_cid
+                    "Gift NFT minted: -> {} (event: {})",
+                    receiver_id, event_cid
                 ));
 
-                self.tokens.internal_mint(
-                    token_id.clone(),
-                    receiver_id,
-                    Some(token_metadata),
-                )
+                // Mint NFT using helper (is_gift = true for "Gift ticket:" prefix)
+                self.internal_mint_ticket(receiver_id, &event, event_cid, true)
             }
             _ => {
                 env::panic_str("Account creation failed. The account may already exist.");

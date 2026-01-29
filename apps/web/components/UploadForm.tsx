@@ -2,12 +2,11 @@
 
 import React, { useState } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { uploadFile } from '@/lib/lighthouse';
+import { uploadFile } from '@/lib/crust';
 import { lit, LIT_ACTION_CID } from '@/lib/lit';
 import { SessionManager } from '@/lib/session-manager';
 import { batchUploadActionsSignless } from '@/lib/batch-transactions';
 import { generateVideoThumbnail } from '@/lib/video-utils';
-import lighthouse from '@lighthouse-web3/sdk';
 import { ethers } from 'ethers';
 import { nearToYocto } from 'near-api-js';
 import { Input } from "@/components/ui/input"
@@ -21,19 +20,16 @@ import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { GiftLinkGenerator } from './GiftLinkGenerator';
 import { useSessionState, useAccountBalance } from '@/lib/hooks/useSessionState';
-import { signLighthouseAuth } from '@/lib/signing';
+import { IPFS_CONFIG } from '@/lib/constants';
 
 
 const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
 
-interface UploadResponse {
-    data: Array<{ Hash: string }> | { Hash: string };
-}
-
-interface MPCSignature {
-    big_r: { affine_point: string };
-    s: { scalar: string };
-    recovery_id: number;
+// Crust upload result interface
+interface CrustUploadResult {
+    cid: string;
+    size: number;
+    name?: string;
 }
 
 export function UploadForm() {
@@ -151,30 +147,35 @@ export function UploadForm() {
         }
     };
 
-    // Helper function to process the signature and continue with upload/access conditions/minting
-    const processSignatureAndUpload = async (mpcSignature: MPCSignature, messageToSign: string, lighthouseEthAddress: string, storageFee: string, sessionManager: SessionManager) => {
+    // Helper function to process the upload with Crust W3Auth
+    // Crust handles auth via Session Key automatically (signless)
+    const processSignatureAndUpload = async (storageFee: string, sessionManager: SessionManager, mpcAddress: string) => {
         if (!file || !accountId) {
             throw new Error("Missing file, accountId, or selector for upload process.");
         }
 
         try {
             const wallet = await getWallet();
+            console.log('[DECENTRALIZATION_METRIC] upload_process_start', {
+                accountId,
+                storage: 'crust_w3auth',
+                mpcAddress
+            });
 
-            // 0. Upload Thumbnail first (Public)
+            // 0. Upload Thumbnail first (Public) via Crust W3Auth
             let thumbnailCid: string | null = null; // No default placeholder - will use v1 format if no thumbnail
             if (thumbnail) {
                 updateStep('thumbnail', 'loading');
-                setStatus('Uploading thumbnail...');
-                const thumbFile = new File([thumbnail], "thumbnail.jpg", { type: "image/jpeg" });
-                const thumbUpload = await uploadFile(thumbFile) as UploadResponse;
+                setStatus('Uploading thumbnail to Crust IPFS...');
 
-                const thumbHash = Array.isArray(thumbUpload.data)
-                    ? thumbUpload.data[0].Hash
-                    : thumbUpload.data.Hash;
+                // Upload via Crust W3Auth (signless, client-side)
+                const thumbResult = await uploadFile(thumbnail, accountId, {
+                    filename: 'thumbnail.jpg'
+                }) as CrustUploadResult;
 
-                if (thumbHash) {
-                    thumbnailCid = thumbHash;
-                    console.log('Thumbnail uploaded CID:', thumbnailCid);
+                if (thumbResult.cid) {
+                    thumbnailCid = thumbResult.cid;
+                    console.log('[Crust] Thumbnail uploaded CID:', thumbnailCid);
                     updateStep('thumbnail', 'complete');
                 } else {
                     updateStep('thumbnail', 'complete');
@@ -242,7 +243,7 @@ export function UploadForm() {
                 sessionSignatures = await lit.getSessionSigs(
                     wallet,
                     accountId,
-                    lighthouseEthAddress,
+                    mpcAddress, // MPC-derived ETH address for Lit Protocol
                     signWithSessionKey,
                     undefined, // ACC (optional)
                     undefined, // hash (optional)
@@ -291,9 +292,9 @@ export function UploadForm() {
 
             updateStep('encrypt', 'complete');
             updateStep('upload', 'loading');
-            setStatus('Uploading encrypted backup to IPFS...');
+            setStatus('Uploading encrypted content to Crust IPFS...');
 
-            // 5. Upload to Lighthouse (Regular upload)
+            // 5. Upload to Crust IPFS via W3Auth (signless, client-side)
             // We need to upload a JSON containing ciphertext + metadata to allow decryption later.
             const encryptedContent = {
                 ciphertext,
@@ -302,21 +303,19 @@ export function UploadForm() {
             };
 
             const metadataBlob = new Blob([JSON.stringify(encryptedContent)], { type: 'application/json' });
-            const encryptedFile = new File([metadataBlob], file.name + ".json", { type: "application/json" });
 
-            // 5. Upload to Lighthouse (Regular upload)
-            const uploadResponse = await uploadFile(encryptedFile) as UploadResponse;
+            // Upload via Crust W3Auth (signless, client-side)
+            console.log('[Crust] Uploading encrypted content...');
+            const uploadResult = await uploadFile(metadataBlob, accountId, {
+                filename: `${file.name}.encrypted.json`
+            }) as CrustUploadResult;
 
-            // Extract file hash
-            const fileHash = Array.isArray(uploadResponse.data)
-                ? uploadResponse.data[0].Hash
-                : uploadResponse.data.Hash;
-
-            if (!fileHash) {
-                throw new Error('Upload succeeded but no file hash returned');
+            if (!uploadResult.cid) {
+                throw new Error('Upload succeeded but no CID returned');
             }
 
-            console.log('Encrypted File CID:', fileHash);
+            const fileHash = uploadResult.cid;
+            console.log('[Crust] Encrypted File CID:', fileHash);
 
             updateStep('upload', 'complete');
             setStatus('Upload Complete! CID: ' + fileHash);
@@ -334,8 +333,9 @@ export function UploadForm() {
                     : `${fileHash}:::${title || file.name}`;
 
                 // Construct full IPFS Gateway URL for media (empty string if no thumbnail)
+                // Uses Crust gateway from IPFS_CONFIG
                 const mediaUrl = thumbnailCid
-                    ? `https://gateway.lighthouse.storage/ipfs/${thumbnailCid}`
+                    ? `${IPFS_CONFIG.gatewayUrl}/${thumbnailCid}`
                     : '';
 
                 const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
@@ -419,28 +419,21 @@ export function UploadForm() {
         }
     };
 
+    // Retry handler - simplified for Crust W3Auth
+    // With Crust W3Auth, auth is signless via Session Key, so retry is simpler
     const handleRetrySign = async () => {
-        if (!pendingMessage || !recoveredAddr) return;
+        if (!recoveredAddr) return;
 
         try {
             setRetryStep('none');
-            setStatus('Requesting Signature for Upload...');
-            const wallet = await getWallet();
-
-            // 3. Sign the REAL message (Retry)
-            console.log('Step 2 (Retry): Signing real auth message...');
-            const { signWithMPC } = await import('@/lib/chain-signatures');
-            const mpcSignature = await signWithMPC(wallet, accountId!, 'lit/pkp-minting', pendingMessage) as any;
+            setStatus('Retrying upload with Crust W3Auth...');
 
             const sessionManager = new SessionManager(accountId!);
-            await processSignatureAndUpload(mpcSignature, pendingMessage, recoveredAddr, verifiedStorageFee, sessionManager);
+            // Crust W3Auth handles auth automatically via Session Key
+            await processSignatureAndUpload(verifiedStorageFee, sessionManager, recoveredAddr);
         } catch (error: any) {
             console.error('Retry failed:', error);
             setStatus(`Retry failed: ${error.message}`);
-            // If blocked again, show button again
-            if (error.message && error.message.includes('Popup window blocked')) {
-                setRetryStep('sign_auth');
-            }
         }
     };
 
@@ -532,35 +525,19 @@ export function UploadForm() {
             setStatus('Verifying Identity & Preparing Session...');
 
             // Derive MPC address (mathematical derivation - no gas cost)
+            // Still needed for Lit Protocol session signatures
             const recoveredAddress = await deriveEthAddress(CONTRACT_ID, derivationPath);
             console.log('Identity Verified. MPC Address:', recoveredAddress);
             updateStep('session', 'complete');
 
-            // --- STEP 3: Sign Lighthouse Auth using unified signing (PKP-first, silent MPC fallback) ---
-            setStatus('Authenticating with Storage Network...');
+            // --- STEP 3: Crust W3Auth (Signless) ---
+            // With Crust W3Auth, authentication happens automatically during upload
+            // using the Session Key stored in localStorage. No separate auth step needed!
+            setStatus('Ready for decentralized upload via Crust W3Auth...');
+            console.log('[Crust] W3Auth will use Session Key for signless authentication');
 
-            // Use the unified signing module for PKP-first with silent MPC fallback
-            const signingResult = await signLighthouseAuth(accountId, recoveredAddress, pkpData, wallet);
-            console.log(`✅ Lighthouse auth signed via ${signingResult.method}`);
-
-            // Convert to MPC-compatible format for processSignatureAndUpload
-            const sig = ethers.Signature.from(signingResult.signature);
-            const mpcSignature: MPCSignature = {
-                big_r: { affine_point: "04" + sig.r.substring(2) + sig.r.substring(2) },
-                s: { scalar: sig.s.substring(2) },
-                recovery_id: sig.v - 27
-            };
-
-            // Get the same auth message for processSignatureAndUpload
-            const authMessageResponse = await lighthouse.getAuthMessage(recoveredAddress);
-            const messageToSign = authMessageResponse.data.message;
-
-            if (!messageToSign) {
-                throw new Error('Failed to get auth message from Lighthouse');
-            }
-
-            // Continue with upload using the obtained signature
-            await processSignatureAndUpload(mpcSignature, messageToSign, signingResult.address, storageFee, sessionManager);
+            // Continue with upload - Crust W3Auth handles auth automatically
+            await processSignatureAndUpload(storageFee, sessionManager, recoveredAddress);
 
         } catch (error: any) {
             console.error('Upload failed:', error);

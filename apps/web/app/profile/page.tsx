@@ -84,7 +84,7 @@ export default function ProfilePage() {
                         cid,
                         ...event,
                         media: event.title.includes(':::') && event.title.split(':::').length >= 2
-                            ? `https://gateway.lighthouse.storage/ipfs/${event.title.split(':::')[1]}`
+                            ? `https://ipfs.io/ipfs/${event.title.split(':::')[1]}`
                             : "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png",
                         title: event.title.includes(':::') ? event.title.split(':::').pop() : event.title
                     }));
@@ -263,7 +263,15 @@ export default function ProfilePage() {
                                                 <div className="flex gap-3 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900 transition-all">
                                                     <div className="w-20 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-800">
                                                         {media && !media.includes('token.png') ? (
-                                                            <img src={media} alt={title} className="w-full h-full object-cover" />
+                                                            <img
+                                                                src={media}
+                                                                alt={title}
+                                                                className="w-full h-full object-cover"
+                                                                onError={(e) => {
+                                                                    const target = e.target as HTMLImageElement;
+                                                                    target.style.display = 'none';
+                                                                }}
+                                                            />
                                                         ) : (
                                                             <div className="w-full h-full flex items-center justify-center">
                                                                 <Video className="w-5 h-5 text-zinc-600" />
@@ -323,7 +331,15 @@ export default function ProfilePage() {
                                         <Link href={`/watch?cid=${event.cid}`} className="block">
                                             <div className="flex gap-3 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900 transition-all">
                                                 <div className="w-20 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-800">
-                                                    <img src={event.media} alt={event.title} className="w-full h-full object-cover" />
+                                                    <img
+                                                        src={event.media || '/placeholder-video.svg'}
+                                                        alt={event.title}
+                                                        className="w-full h-full object-cover"
+                                                        onError={(e) => {
+                                                            const target = e.target as HTMLImageElement;
+                                                            target.src = '/placeholder-video.svg';
+                                                        }}
+                                                    />
                                                 </div>
                                                 <div className="flex-1 min-w-0">
                                                     <h4 className="text-sm font-medium text-white truncate">{event.title}</h4>
@@ -379,7 +395,15 @@ export default function ProfilePage() {
                                 className="w-full flex gap-3 p-3 rounded-xl bg-zinc-800/50 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800 transition-all text-left"
                             >
                                 <div className="w-16 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-700">
-                                    <img src={event.media} alt={event.title} className="w-full h-full object-cover" />
+                                    <img
+                                        src={event.media || '/placeholder-video.svg'}
+                                        alt={event.title}
+                                        className="w-full h-full object-cover"
+                                        onError={(e) => {
+                                            const target = e.target as HTMLImageElement;
+                                            target.src = '/placeholder-video.svg';
+                                        }}
+                                    />
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <h4 className="text-sm font-medium text-white truncate">{event.title}</h4>
@@ -410,7 +434,15 @@ export default function ProfilePage() {
                     {selectedEventForGift && (
                         <div className="mt-4 w-full flex gap-4 p-4 rounded-xl bg-zinc-800/50 border border-zinc-700">
                             <div className="w-24 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-700">
-                                <img src={selectedEventForGift.media} alt={selectedEventForGift.title} className="w-full h-full object-cover" />
+                                <img
+                                    src={selectedEventForGift.media || '/placeholder-video.svg'}
+                                    alt={selectedEventForGift.title}
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => {
+                                        const target = e.target as HTMLImageElement;
+                                        target.src = '/placeholder-video.svg';
+                                    }}
+                                />
                             </div>
                             <div className="flex-1 min-w-0">
                                 <h4 className="text-sm font-semibold text-white truncate">{selectedEventForGift.title}</h4>
