@@ -9,7 +9,7 @@ on:
 env:
   # Public vars (Updated for current config)
   NEXT_PUBLIC_NEAR_NETWORK: testnet
-  NEXT_PUBLIC_NFT_CONTRACT_ID: v1.utick.testnet
+  NEXT_PUBLIC_NFT_CONTRACT_ID: v3.utick.testnet
   NEXT_PUBLIC_LIT_ACTION_IPFS_CID: Qmc6cLer2fmtuzNFhdtBoZvM1gCzX9s8gbc8wzWdizeuJe
   NEXT_PUBLIC_LIT_CAPACITY_TOKEN_ID: 354131
 
@@ -69,7 +69,7 @@ jobs:
             echo "Creating .env.local..."
             cat <<EOF > .env.local
             NEXT_PUBLIC_NEAR_NETWORK=testnet
-            NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
+            NEXT_PUBLIC_NFT_CONTRACT_ID=v3.utick.testnet
             NEXT_PUBLIC_LIT_ACTION_IPFS_CID=Qmc6cLer2fmtuzNFhdtBoZvM1gCzX9s8gbc8wzWdizeuJe
             NEXT_PUBLIC_LIT_CAPACITY_TOKEN_ID=354131
             LIT_DELEGATION_WALLET_PRIVATE_KEY=${{ secrets.LIT_DELEGATION_WALLET_PRIVATE_KEY }}
