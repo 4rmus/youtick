@@ -7,6 +7,10 @@ import { TicketPurchaseCard } from '@/components/TicketPurchaseCard';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { Loader2, ArrowLeft, Play, Share2, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { NEAR_CONFIG } from '@/lib/constants';
+import { getProvider, viewContract } from '@/lib/near';
+import { parseTitleMetadata } from '@/lib/metadata-parser';
+import { NovaThumbnail } from '@/components/NovaThumbnail';
 
 interface EventDetails {
     title: string;
@@ -28,42 +32,29 @@ export default function TicketPage() {
     const [verifyingAccess, setVerifyingAccess] = useState(false);
     const [hasAccess, setHasAccess] = useState(false);
 
-    // 1. Fetch Event Details
+    // 1. Fetch Event Details (direct RPC, no server proxy)
     useEffect(() => {
         const fetchEvent = async () => {
             if (!cid) return;
             try {
-                // Determine contract ID
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+                const contractId = NEAR_CONFIG.contractId;
+                const provider = getProvider();
 
-                // Fetch event metadata
-                const res = await fetch('/api/near-rpc', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        jsonrpc: "2.0",
-                        id: "dontcare",
-                        method: "query",
-                        params: {
-                            request_type: "call_function",
-                            finality: "final",
-                            account_id: contractId,
-                            method_name: "get_event",
-                            args_base64: btoa(JSON.stringify({ encrypted_cid: cid }))
-                        }
-                    })
-                });
+                const eventData = await viewContract<{
+                    title: string;
+                    description: string;
+                    media?: string;
+                    price: string;
+                    owner_id: string;
+                }>(provider, contractId, 'get_event', { encrypted_cid: cid });
 
-                const data = await res.json();
-
-                if (data.result?.result) {
-                    const resultStr = String.fromCharCode(...data.result.result);
-                    const eventData = JSON.parse(resultStr);
+                if (eventData) {
                     console.log("Event fetched:", eventData);
+                    const parsed = parseTitleMetadata(eventData.title, 'Untitled Event');
                     setEvent({
-                        title: eventData.title?.split(':::')[1] || eventData.title || 'Untitled Event',
+                        title: parsed.title,
                         description: eventData.description || 'No description available',
-                        media: eventData.media || '',
+                        media: parsed.thumbnailUrl || eventData.media || '',
                         price: eventData.price || '0',
                         owner_id: eventData.owner_id
                     });
@@ -80,35 +71,24 @@ export default function TicketPage() {
         fetchEvent();
     }, [cid]);
 
-    // 2. Check Ownership (Redirect if owned)
+    // 2. Check Ownership (Redirect if owned) - direct RPC
     useEffect(() => {
         const checkAccess = async () => {
             if (!accountId || !cid) return;
             setVerifyingAccess(true);
             try {
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-                const res = await fetch('/api/near-rpc', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        jsonrpc: "2.0",
-                        id: "dontcare",
-                        method: "query",
-                        params: {
-                            request_type: "call_function",
-                            finality: "final",
-                            account_id: contractId,
-                            method_name: "get_tokens_with_video",
-                            args_base64: btoa(JSON.stringify({ account_id: accountId, limit: 50 }))
-                        }
-                    })
+                const contractId = NEAR_CONFIG.contractId;
+                const provider = getProvider();
+
+                const tokens = await viewContract<
+                    Array<[any, { encrypted_cid: string } | null]>
+                >(provider, contractId, 'get_tokens_with_video', {
+                    account_id: accountId,
+                    limit: 50
                 });
 
-                const data = await res.json();
-                if (data.result?.result) {
-                    const str = String.fromCharCode(...data.result.result);
-                    const tokens = JSON.parse(str);
-                    const owns = tokens.some(([_, meta]: [any, any]) =>
+                if (tokens) {
+                    const owns = tokens.some(([_, meta]) =>
                         meta && (meta.encrypted_cid === cid || meta.encrypted_cid === 'ACCESS_PASS')
                     );
 
@@ -144,7 +124,7 @@ export default function TicketPage() {
             {/* Background Image Layer */}
             {event?.media && (
                 <div className="absolute inset-0 z-[-1]">
-                    <img src={event.media} alt="" className="w-full h-full object-cover opacity-40 blur-3xl scale-125 transform" />
+                    <NovaThumbnail url={event.media} alt="" className="w-full h-full object-cover opacity-40 blur-3xl scale-125 transform" />
                     <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-black/30" />
                 </div>
             )}

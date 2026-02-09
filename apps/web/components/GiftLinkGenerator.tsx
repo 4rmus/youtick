@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Copy, Check, Download, Link2 } from "lucide-react";
 import { useWallet } from "@/components/providers/WalletProvider";
+import { NEAR_CONFIG } from "@/lib/constants";
 
 interface GiftLinkGeneratorProps {
     eventCid: string;
@@ -33,7 +34,7 @@ export function GiftLinkGenerator({
                 // v7: Use JsonRpcProvider directly for view calls
                 const { getProvider, viewContract } = await import("@/lib/near");
                 const provider = getProvider();
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+                const contractId = NEAR_CONFIG.contractId;
 
                 const event = await viewContract<{ price: string }>(
                     provider,
@@ -75,7 +76,7 @@ export function GiftLinkGenerator({
             const publicKeys = keyPairs.map(kp => kp.getPublicKey().toString());
             const secretKeys = keyPairs.map(kp => kp.toString().replace("ed25519:", ""));
 
-            const NFT_CONTRACT = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "v1.utick.testnet";
+            const NFT_CONTRACT = NEAR_CONFIG.contractId;
             const DEPOSIT_PER_TICKET = "150000000000000000000000";
             const totalDeposit = (BigInt(DEPOSIT_PER_TICKET) * BigInt(ticketCount)).toString();
 

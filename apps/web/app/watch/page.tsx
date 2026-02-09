@@ -10,6 +10,7 @@ import { useLanguage } from '@/components/providers/LanguageContext';
 
 import { Button } from "@/components/ui/button";
 import { Search, Ticket, Loader2 } from "lucide-react";
+import { NovaThumbnail } from "@/components/NovaThumbnail";
 
 export default function WatchPage() {
     return (
@@ -175,7 +176,7 @@ function WatchContent() {
                                         {/* Thumbnail Area */}
                                         <div className="aspect-video bg-zinc-950 relative overflow-hidden">
                                             {media && !media.includes('token.png') && (
-                                                <img src={media} alt={title} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
+                                                <NovaThumbnail url={media} alt={title} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
                                             )}
                                             {isActive && (
                                                 <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">

@@ -10,9 +10,9 @@ import { NEAR_CONFIG } from './constants';
 
 // RPC Endpoints - ordered by priority
 export const MAINNET_RPC_ENDPOINTS = [
-    'https://rpc.mainnet.near.org',
     'https://free.rpc.fastnear.com',
     'https://near-mainnet.lava.build',
+    'https://rpc.mainnet.near.org',
     'https://rpc.mainnet.pagoda.co',
 ];
 
@@ -71,6 +71,7 @@ function isRpcError(error: Error): boolean {
         message.includes('fetch') ||
         message.includes('network') ||
         message.includes('timeout') ||
+        message.includes('429') ||
         message.includes('502') ||
         message.includes('503') ||
         message.includes('504') ||

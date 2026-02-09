@@ -11,6 +11,7 @@ import { useLanguage } from '@/components/providers/LanguageContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { GiftLinkGenerator } from "@/components/GiftLinkGenerator";
 import { TrialUpgradeDialog } from "@/components/TrialUpgradeDialog";
+import { NovaThumbnail } from "@/components/NovaThumbnail";
 
 export default function ProfilePage() {
     const { t } = useLanguage();
@@ -263,14 +264,10 @@ export default function ProfilePage() {
                                                 <div className="flex gap-3 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900 transition-all">
                                                     <div className="w-20 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-800">
                                                         {media && !media.includes('token.png') ? (
-                                                            <img
-                                                                src={media}
+                                                            <NovaThumbnail
+                                                                url={media}
                                                                 alt={title}
                                                                 className="w-full h-full object-cover"
-                                                                onError={(e) => {
-                                                                    const target = e.target as HTMLImageElement;
-                                                                    target.style.display = 'none';
-                                                                }}
                                                             />
                                                         ) : (
                                                             <div className="w-full h-full flex items-center justify-center">

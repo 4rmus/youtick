@@ -2,6 +2,7 @@ import { NextResponse, NextRequest } from "next/server";
 import { Account, KeyPair, KeyPairSigner, actions, type KeyPairString } from "near-api-js";
 import { trialAccountLimiter, trialDailyGlobalLimiter } from "@/lib/rate-limiter";
 import { addCorsHeaders, handleCorsPreflightRequest, checkCors } from "@/lib/cors";
+import { NEAR_CONFIG } from "@/lib/constants";
 
 /**
  * Sponsored Trial API - Creates trial accounts as subaccounts of the contract
@@ -9,7 +10,7 @@ import { addCorsHeaders, handleCorsPreflightRequest, checkCors } from "@/lib/cor
  * POST /api/trial/sponsored
  * Body: { username: string, new_public_key: string }
  *
- * Creates: {username}.{contract_id} (e.g. "alice.v1.utick.testnet")
+ * Creates: {username}.{contract_id} (e.g. "alice.youtick-prod-v1.near")
  *
  * SECURITY: Rate limited to prevent spam account creation
  * - Per IP: 3 accounts per day
@@ -77,6 +78,18 @@ export async function POST(request: NextRequest) {
             return addCorsHeaders(errorRes, request);
         }
 
+        // Validate public key format (NEAR ed25519 keys: "ed25519:" + 43-44 base58 chars)
+        const publicKeyPattern = /^ed25519:[1-9A-HJ-NP-Za-km-z]{43,44}$/;
+        if (!publicKeyPattern.test(new_public_key)) {
+            return addCorsHeaders(
+                NextResponse.json(
+                    { error: "Invalid public key format. Expected ed25519:..." },
+                    { status: 400 }
+                ),
+                request
+            );
+        }
+
         // Audit logging
         console.log(`[AUDIT] Trial Account Request: username=${username} ip=${clientIp} time=${new Date().toISOString()} daily_remaining=${trialDailyGlobalLimiter.getRemaining()}`);
 
@@ -92,8 +105,8 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "v1.utick.testnet";
-        const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || "testnet";
+        const contractId = NEAR_CONFIG.contractId;
+        const networkId = NEAR_CONFIG.networkId;
 
         // The new account will be: {username}.{contractId}
         const newAccountId = `${username}.${contractId}`;

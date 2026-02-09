@@ -8,7 +8,10 @@ export async function POST(request: NextRequest) {
 
     try {
         const body = await request.json();
-        const rpcUrl = 'https://test.rpc.fastnear.com';
+        const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
+        const rpcUrl = networkId === 'mainnet'
+            ? 'https://free.rpc.fastnear.com'
+            : 'https://test.rpc.fastnear.com';
 
         const response = await fetch(rpcUrl, {
             method: 'POST',

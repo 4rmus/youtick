@@ -2,13 +2,11 @@
 
 import React, { useState } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { uploadFile } from '@/lib/crust';
-import { lit, LIT_ACTION_CID } from '@/lib/lit';
+import { uploadFile as novaUploadFile, uploadPublicThumbnail, uploadFreeVideo } from '@/lib/nova';
 import { SessionManager } from '@/lib/session-manager';
 import { batchUploadActionsSignless } from '@/lib/batch-transactions';
 import { generateVideoThumbnail } from '@/lib/video-utils';
-import { ethers } from 'ethers';
-import { nearToYocto } from 'near-api-js';
+import { actions, nearToYocto } from 'near-api-js';
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -20,21 +18,13 @@ import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { GiftLinkGenerator } from './GiftLinkGenerator';
 import { useSessionState, useAccountBalance } from '@/lib/hooks/useSessionState';
-import { IPFS_CONFIG } from '@/lib/constants';
+import { NEAR_CONFIG } from '@/lib/constants';
 
-
-const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-
-// Crust upload result interface
-interface CrustUploadResult {
-    cid: string;
-    size: number;
-    name?: string;
-}
+const CONTRACT_ID = NEAR_CONFIG.contractId;
 
 export function UploadForm() {
     const { t } = useLanguage();
-    const { selector, accountId, getWallet, pkpData, isPKPMinting } = useWallet();
+    const { selector, accountId, getWallet } = useWallet();
 
     // React Query hooks for session state (cached, deduplicated)
     const { hasSessionKey, isSessionKeyLoading, refetchSessionKey } = useSessionState(accountId);
@@ -61,22 +51,22 @@ export function UploadForm() {
     ]);
 
     // Retry state for popup blocked scenarios
-    const [retryStep, setRetryStep] = useState<'none' | 'sign_auth' | 'pkp_link'>('none');
-    const [pendingMessage, setPendingMessage] = useState<string | null>(null);
-    const [recoveredAddr, setRecoveredAddr] = useState<string | null>(null);
+    const [retryStep, setRetryStep] = useState<'none' | 'sign_auth'>('none');
     const [verifiedStorageFee, setVerifiedStorageFee] = useState<string>('0');
 
     // Cost Receipt State
     const [estimatedStorageFee, setEstimatedStorageFee] = useState('0');
     const [payAmount, setPayAmount] = useState('0');
 
+    // Nova group fee state (dynamic, fetched when file is selected)
+    const [novaGroupFee, setNovaGroupFee] = useState<number>(0);
+
     // Gas Top-Up State (derived from React Query)
     const gasBalance = parseFloat(balanceData || '0');
-    const REQUIRED_GAS = 0.5; // MPC (0.25) + NFT (0.1) + Event (0.1)
+    const REQUIRED_GAS = 0.25; // NFT (0.1) + Event (0.1) + buffer (0.05)
 
     // Calculate if top-up is needed based on cached data
-    const hasPkp = !!pkpData;
-    const minRequired = hasPkp ? 0.2 : REQUIRED_GAS;
+    const minRequired = REQUIRED_GAS;
     const needsTopUp = hasSessionKey === true && gasBalance < minRequired;
 
     // Track the generated UUID for gifting
@@ -102,14 +92,16 @@ export function UploadForm() {
         };
     }, []);
 
-    // Recalculate pay amount when storage fee or balance changes
+    // Recalculate pay amount when storage fee, balance, or nova fee changes
     React.useEffect(() => {
         const fee = parseFloat(estimatedStorageFee) || 0;
-        // Session key costs: MPC (0.25) + NFT mint (0.1) + Event (0.1) = 0.45 NEAR
-        // Using 0.5 NEAR for safety margin
-        const totalNeeded = fee + 0.5;
+        const isFree = parseFloat(price) === 0 || price === '';
+        // Session key costs: NFT mint (0.1) + Event (0.1) + buffer = 0.3 NEAR
+        // For paid videos, add Nova group registration fee
+        const novaFee = isFree ? 0 : novaGroupFee;
+        const totalNeeded = fee + 0.3 + novaFee;
         setPayAmount(totalNeeded > 0 ? totalNeeded.toFixed(4) : '0');
-    }, [estimatedStorageFee, gasBalance]);
+    }, [estimatedStorageFee, gasBalance, price, novaGroupFee]);
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -117,15 +109,26 @@ export function UploadForm() {
 
             setFile(selectedFile);
 
-            // Calculate estimated storage fee immediately
+            // Calculate storage fee
             try {
                 const { getNearPrice, calculateStorageFee } = await import('@/lib/price');
                 const nearPrice = await getNearPrice();
                 const fee = calculateStorageFee(selectedFile.size, nearPrice);
                 setEstimatedStorageFee(fee);
-                // PKP minting now happens automatically in WalletProvider on connect
+                console.log('[UploadForm] Storage fee:', fee, 'NEAR');
             } catch (err) {
-                console.error("Error calculating fee:", err);
+                console.error('[UploadForm] Error calculating storage fee:', err);
+            }
+
+            // Fetch Nova group registration fee (independent of storage fee)
+            try {
+                console.log('[UploadForm] Fetching Nova group fee...');
+                const { getRegisterGroupFee } = await import('@/lib/nova/costs');
+                const novaFee = await getRegisterGroupFee();
+                setNovaGroupFee(novaFee);
+                console.log('[UploadForm] Nova group fee:', novaFee, 'NEAR');
+            } catch (err) {
+                console.error('[UploadForm] Error fetching Nova group fee:', err);
             }
 
             // Generate thumbnail
@@ -147,9 +150,9 @@ export function UploadForm() {
         }
     };
 
-    // Helper function to process the upload with Crust W3Auth
-    // Crust handles auth via Session Key automatically (signless)
-    const processSignatureAndUpload = async (storageFee: string, sessionManager: SessionManager, mpcAddress: string) => {
+    // Helper function to process the upload with NOVA
+    // NOVA handles TEE-based encryption automatically
+    const processSignatureAndUpload = async (storageFee: string, sessionManager: SessionManager) => {
         if (!file || !accountId) {
             throw new Error("Missing file, accountId, or selector for upload process.");
         }
@@ -158,188 +161,94 @@ export function UploadForm() {
             const wallet = await getWallet();
             console.log('[DECENTRALIZATION_METRIC] upload_process_start', {
                 accountId,
-                storage: 'crust_w3auth',
-                mpcAddress
+                storage: 'nova_tee_encryption'
             });
 
-            // 0. Upload Thumbnail first (Public) via Crust W3Auth
-            let thumbnailCid: string | null = null; // No default placeholder - will use v1 format if no thumbnail
+            // 0. Upload Thumbnail (Public) via Nova Public Groups
+            let thumbnailUrl: string | null = null;
             if (thumbnail) {
                 updateStep('thumbnail', 'loading');
-                setStatus('Uploading thumbnail to Crust IPFS...');
+                setStatus('Uploading thumbnail to Nova...');
 
-                // Upload via Crust W3Auth (signless, client-side)
-                const thumbResult = await uploadFile(thumbnail, accountId, {
-                    filename: 'thumbnail.jpg'
-                }) as CrustUploadResult;
+                try {
+                    const thumbResult = await uploadPublicThumbnail(
+                        thumbnail,
+                        accountId
+                    );
 
-                if (thumbResult.cid) {
-                    thumbnailCid = thumbResult.cid;
-                    console.log('[Crust] Thumbnail uploaded CID:', thumbnailCid);
-                    updateStep('thumbnail', 'complete');
-                } else {
+                    if (thumbResult.novaUrl) {
+                        thumbnailUrl = thumbResult.novaUrl;
+                        console.log('[Thumbnail] Nova URL:', thumbnailUrl);
+                        console.log('[Thumbnail] CID:', thumbResult.cid);
+                        updateStep('thumbnail', 'complete');
+                    } else {
+                        updateStep('thumbnail', 'complete');
+                    }
+                } catch (thumbError) {
+                    console.error('[Thumbnail] Upload failed:', thumbError);
+                    // Continue without thumbnail
                     updateStep('thumbnail', 'complete');
                 }
             } else {
                 updateStep('thumbnail', 'complete');
             }
 
-            // 1. Get Session Signatures
-            // Try PKP first (signless), fallback to MPC if unavailable
-            setStatus('Getting Session Signatures...');
-
-            let sessionSignatures: any;
-
-            // Check if we have PKP for signless experience
-            const cachedPkp = localStorage.getItem(`lit_pkp_${accountId}`);
-            let pkp: { publicKey: string; ethAddress: string } | null = null;
-
-            if (cachedPkp) {
-                try {
-                    pkp = JSON.parse(cachedPkp);
-                    console.log("Found PKP for signless upload:", pkp?.ethAddress);
-                } catch (e) {
-                    console.warn("Error parsing cached PKP:", e);
-                }
-            }
-
-            if (pkp) {
-                // ⚡ PKP-based signless session sigs (no MPC cost!)
-                try {
-                    console.log("🔐 Using PKP for signless upload session...");
-                    setStatus('Using PKP for signless authentication...');
-
-                    sessionSignatures = await lit.getSessionSigsWithPKP(
-                        pkp.publicKey,
-                        pkp.ethAddress,
-                        accountId,
-                        undefined // capacityDelegationAuthSig (optional, will be fetched)
-                    );
-
-                    console.log("✅ PKP session sigs obtained for upload!");
-                } catch (pkpError: any) {
-                    console.warn("PKP session failed, falling back to MPC:", pkpError.message);
-                    pkp = null; // Force MPC fallback
-                }
-            }
-
-            if (!pkp || !sessionSignatures) {
-                // MPC FALLBACK (uses Session Key) - requires gas for MPC signature
-                console.log("Using Session Key + MPC for upload (fallback)...");
-                setStatus('Signing with Session Key (MPC)...');
-
-                const signWithSessionKey = async (w: any, accId: string, path: string, msg: string) => {
-                    console.log("Using Session Key for MPC signature...");
-                    const messageHash = ethers.hashMessage(msg);
-                    const payload = Array.from(ethers.getBytes(messageHash));
-
-                    return await sessionManager.callMethod('sign_with_mpc', {
-                        payload,
-                        path,
-                        key_version: 0
-                    });
-                };
-
-                sessionSignatures = await lit.getSessionSigs(
-                    wallet,
-                    accountId,
-                    mpcAddress, // MPC-derived ETH address for Lit Protocol
-                    signWithSessionKey,
-                    undefined, // ACC (optional)
-                    undefined, // hash (optional)
-                    'lit/pkp-minting' // derivationPath
-                );
-            }
-
-            // 2. Encrypt with Lit Protocol using Session Keys
+            // 1. Encrypt & Upload with NOVA (TEE-based encryption)
             updateStep('encrypt', 'loading');
-            setStatus('Encrypting file with Lit Protocol...');
+            setStatus('Encrypting video with NOVA TEE...');
 
-            // 4. Encrypt file with Lit Protocol
-            // Generate a UUID to serve as the Content Identifier for Access Control
-            // This UUID will be stored in the contract's video_metadata.encrypted_cid field (repurposing it as an ID key)
-            // The Real IPFS CID will be stored in the Title for now.
+            // Generate a UUID to serve as the Access Control identifier
+            // This UUID will be used as the key in the contract
             const videoUuid = crypto.randomUUID();
             console.log("Generated Video UUID for Access Control:", videoUuid);
             setGeneratedVideoUuid(videoUuid);
             setLastUploadedTitle(title || file.name);
 
-            // Use Lit Action to check NEAR NFT ownership on-chain
-            // Import the secure ACC helper
-            const { createAccessControlConditions } = await import('@/lib/access-conditions');
-
-            const accessControlConditions = createAccessControlConditions({
-                videoUuid,
-                uploaderAccountId: accountId,
-                useSecureNearCheck: true // Enable NEAR NFT verification
-            });
-
-            // Store nearAccountId and targetCid for later use in decryption
-            // These will be passed as jsParams to the Lit Action
-            const litActionParams = {
-                targetCid: videoUuid,
-                nearAccountId: accountId
-            };
-            console.log("Lit Action params for decryption:", litActionParams);
-
-            const { ciphertext, dataToEncryptHash } = await lit.encryptFile(
-                file,
-                accessControlConditions,
-                undefined, // No authSig needed if using sessionSigs
-                'ethereum', // Chain for encryption (Lit uses ETH signatures usually)
-                sessionSignatures
-            );
-
-            updateStep('encrypt', 'complete');
+            // Upload to NOVA (handles encryption via TEE automatically)
             updateStep('upload', 'loading');
-            setStatus('Uploading encrypted content to Crust IPFS...');
+            setStatus('Uploading to NOVA decentralized storage...');
 
-            // 5. Upload to Crust IPFS via W3Auth (signless, client-side)
-            // We need to upload a JSON containing ciphertext + metadata to allow decryption later.
-            const encryptedContent = {
-                ciphertext,
-                dataToEncryptHash,
-                accessControlConditions
-            };
+            const isFreeVideo = parseFloat(price) === 0 || price === '';
+            let novaCid: string;
+            let novaGroupId: string;
 
-            const metadataBlob = new Blob([JSON.stringify(encryptedContent)], { type: 'application/json' });
-
-            // Upload via Crust W3Auth (signless, client-side)
-            console.log('[Crust] Uploading encrypted content...');
-            const uploadResult = await uploadFile(metadataBlob, accountId, {
-                filename: `${file.name}.encrypted.json`
-            }) as CrustUploadResult;
-
-            if (!uploadResult.cid) {
-                throw new Error('Upload succeeded but no CID returned');
+            if (isFreeVideo) {
+                // Free video: reuse creator's public group (saves ~0.64 NEAR)
+                console.log('[NOVA] Uploading free video to public group (no new group cost)...');
+                const result = await uploadFreeVideo(file, accountId, { filename: file.name });
+                novaCid = result.cid;
+                novaGroupId = result.groupId;
+            } else {
+                // Paid video: create new per-video group for granular access control
+                console.log('[NOVA] Uploading paid video with TEE encryption (new group)...');
+                const result = await novaUploadFile(file, accountId, { filename: file.name });
+                novaCid = result.cid;
+                novaGroupId = result.groupId;
             }
 
-            const fileHash = uploadResult.cid;
-            console.log('[Crust] Encrypted File CID:', fileHash);
+            console.log('[NOVA] Upload complete - CID:', novaCid, 'GroupID:', novaGroupId);
 
+            updateStep('encrypt', 'complete');
             updateStep('upload', 'complete');
-            setStatus('Upload Complete! CID: ' + fileHash);
+            setStatus('NOVA Upload Complete! CID: ' + novaCid);
 
 
-            // 6. Mint Ticket + Refund + Create Event (BATCH - Signless!)
+            // 6. Mint Ticket + Create Event (BATCH - Signless!)
             updateStep('mint', 'loading');
             setStatus(`Paying Fee (${storageFee} NEAR) & Minting Ticket...`);
             try {
-                // Construct Title with RealCID for Player to parse
-                // Schema v2: "RealCID:::ThumbnailCID:::Title" (with thumbnail)
-                // Schema v1: "RealCID:::Title" (without thumbnail)
-                const eventTitle = thumbnailCid
-                    ? `${fileHash}:::${thumbnailCid}:::${title || file.name}`
-                    : `${fileHash}:::${title || file.name}`;
+                // Construct Title with NovaCID for Player to parse
+                // Schema: "NovaCID:::ThumbnailURL:::Title" (with thumbnail)
+                // or "NovaCID:::Title" (without thumbnail)
+                // ThumbnailURL can be nova:// URL or legacy IPFS URL
+                const eventTitle = thumbnailUrl
+                    ? `${novaCid}:::${thumbnailUrl}:::${title || file.name}`
+                    : `${novaCid}:::${title || file.name}`;
 
-                // Construct full IPFS Gateway URL for media (empty string if no thumbnail)
-                // Uses Crust gateway from IPFS_CONFIG
-                const mediaUrl = thumbnailCid
-                    ? `${IPFS_CONFIG.gatewayUrl}/${thumbnailCid}`
-                    : '';
+                // Use nova:// URL for media (empty string if no thumbnail)
+                const mediaUrl = thumbnailUrl || '';
 
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-                // v7: Use nearToYocto
+                const contractId = NEAR_CONFIG.contractId;
                 const priceYocto = nearToYocto(parseFloat(price) || 0);
 
                 // Prepare metadata for batch transaction
@@ -352,26 +261,26 @@ export function UploadForm() {
                         copies: 1
                     },
                     video_metadata: {
-                        encrypted_cid: videoUuid, // The UUID
+                        encrypted_cid: videoUuid, // UUID (access control key)
                         duration_seconds: 0,
-                        content_type: 'Exclusive'
+                        content_type: 'Exclusive',
+                        nova_group_id: novaGroupId, // NOVA group for access control
+                        storage_type: 'Nova' as const // Using NOVA TEE encryption
                     }
                 };
 
-                // Debug: Log what we're sending to contract
                 console.log('📝 Video metadata being sent to contract:', videoMetadata);
 
                 const eventMetadata = {
-                    encrypted_cid: videoUuid, // Key is UUID
+                    encrypted_cid: videoUuid, // UUID key
                     title: eventTitle,
                     description: description || 'No description provided',
-                    // v7: nearToYocto returns bigint, contract expects string
                     price: priceYocto.toString()
                 };
 
                 // Use signless batch transaction
                 setStatus('Minting Ticket...');
-                console.log("Using Session Key for signless final publication...");
+                console.log("Using Session Key for signless publication...");
 
                 await batchUploadActionsSignless(
                     sessionManager,
@@ -379,10 +288,13 @@ export function UploadForm() {
                     eventMetadata
                 );
 
-                // Step 1: Mint complete
                 updateStep('mint', 'complete');
 
-                // Step 2: Event complete (with small delay for visual feedback)
+                // NOVA group ID is already included in video_metadata
+                // No separate set_nova_group call needed - contract stores it during nft_mint
+                console.log(`[NOVA] Group ID ${novaGroupId} stored with NFT via video_metadata`);
+
+                // Event complete
                 await new Promise(resolve => setTimeout(resolve, 500));
                 updateStep('event', 'loading');
                 await new Promise(resolve => setTimeout(resolve, 500));
@@ -419,18 +331,15 @@ export function UploadForm() {
         }
     };
 
-    // Retry handler - simplified for Crust W3Auth
-    // With Crust W3Auth, auth is signless via Session Key, so retry is simpler
+    // Retry handler - simplified for NOVA
+    // NOVA handles auth and encryption automatically
     const handleRetrySign = async () => {
-        if (!recoveredAddr) return;
-
         try {
             setRetryStep('none');
-            setStatus('Retrying upload with Crust W3Auth...');
+            setStatus('Retrying NOVA upload...');
 
             const sessionManager = new SessionManager(accountId!);
-            // Crust W3Auth handles auth automatically via Session Key
-            await processSignatureAndUpload(verifiedStorageFee, sessionManager, recoveredAddr);
+            await processSignatureAndUpload(verifiedStorageFee, sessionManager);
         } catch (error: any) {
             console.error('Retry failed:', error);
             setStatus(`Retry failed: ${error.message}`);
@@ -457,87 +366,137 @@ export function UploadForm() {
             const wallet = await getWallet();
             const sessionManager = new SessionManager(accountId);
 
-            // --- PRE-CHECK: Session Key Status (from React Query cache) ---
+            // Check Session Key Status
             const sessionKeyExists = hasSessionKey === true;
             console.log("Session key status:", sessionKeyExists ? "EXISTS" : "NEEDS CREATION");
 
-            // --- STEP 1: CALCULATE STORAGE FEE (Use pre-calculated state) ---
+            // Calculate Storage Fee
             const storageFee = estimatedStorageFee;
             setVerifiedStorageFee(storageFee);
 
             console.log(`Video Size: ${file.size} bytes. Fee: ${storageFee} NEAR`);
 
-            // --- STEP 2: DYNAMIC GAS CHECK (Every upload) ---
-            const { deriveEthAddress } = await import('@/lib/chain-signatures');
-            const derivationPath = 'lit/pkp-minting';
-
+            // Check Gas Balance
             updateStep('session', 'loading');
             setStatus('Checking gas balance...');
 
-            // PKP is now minted automatically on wallet connect (WalletProvider)
-            // We just use the cached pkpData from context
-            const hasPkpNow = !!pkpData;
-            console.log(`📊 PKP Status: ${hasPkpNow ? 'Available' : 'Pending/None'} (minting: ${isPKPMinting})`);
+            // Minimum prepaid balance for session key operations:
+            // NFT (0.1) + Event (0.1) + buffer (0.05) = 0.25 NEAR
+            // Nova group registration is a separate platform cost for paid videos
+            const currentMinRequired = 0.25;
 
-            // Calculate minimum required:
-            // With PKP: NFT (0.1) + Event (0.1) = 0.2 NEAR
-            // Without PKP (MPC fallback): MPC (0.25) + NFT (0.1) + Event (0.1) = 0.45 NEAR
-            const currentMinRequired = hasPkpNow ? 0.2 : 0.5;
+            console.log(`📊 Gas Check: Balance=${gasBalance}, Required=${currentMinRequired}`);
 
-            console.log(`📊 Gas Check: Balance=${gasBalance}, Required=${currentMinRequired}, HasPKP=${hasPkpNow}`);
+            // --- Determine Nova funding need for paid videos ---
+            const isFreeVideo = parseFloat(price) === 0 || price === '';
+            console.log(`[UploadForm] Video type: ${isFreeVideo ? 'FREE' : 'PAID'}, price=${price}`);
 
+            let novaFundAmount = 0;
+            let novaAccountIdForFunding = '';
+
+            if (!isFreeVideo) {
+                console.log('[UploadForm] Checking Nova platform balance for group registration...');
+                const { canRegisterNewGroup: canRegister, getRegisterGroupFee: getFee } = await import('@/lib/nova/costs');
+                const novaCanRegister = await canRegister();
+                console.log('[UploadForm] Nova can register new group:', novaCanRegister);
+
+                if (!novaCanRegister) {
+                    const fee = await getFee();
+                    novaFundAmount = Math.round((fee + 0.05) * 100) / 100; // fee + buffer, rounded
+                    novaAccountIdForFunding = process.env.NEXT_PUBLIC_NOVA_ACCOUNT_ID || '';
+
+                    if (!novaAccountIdForFunding) {
+                        throw new Error('Nova account ID not configured. Set NEXT_PUBLIC_NOVA_ACCOUNT_ID.');
+                    }
+                    console.log(`[UploadForm] Nova funding needed: ${novaFundAmount} NEAR → ${novaAccountIdForFunding}`);
+                }
+            }
+
+            // --- Build and send ALL wallet transactions in one batch (single popup) ---
             if (!sessionKeyExists) {
-                // First time user - create session key with appropriate deposit
+                // First time user: session key + gas deposit + (optional) Nova funding
                 setStatus('Setting up Session Key...');
+                const depositAmount = 0.3;
 
-                // Deposit amount based on PKP status:
-                // - PKP available: 0.3 NEAR (NFT + Event + buffer)
-                // - PKP unavailable: 1.0 NEAR (MPC + NFT + Event + safety margin)
-                const depositAmount = hasPkpNow ? '0.3' : '1.0';
+                console.log(`Creating session key (depositing ${depositAmount} NEAR)...`);
 
-                if (!hasPkpNow) {
-                    console.log(`⚠️ PKP unavailable - using silent MPC fallback with ${depositAmount} NEAR deposit`);
-                } else {
-                    console.log(`Creating session key (PKP available - depositing ${depositAmount} NEAR)...`);
+                // Build transaction list
+                const sessionPublicKey = await sessionManager.generateSessionKeyPair();
+                const { batchInitialSetupWithNovaFunding } = await import('@/lib/batch-transactions');
+                await batchInitialSetupWithNovaFunding(
+                    wallet, accountId, CONTRACT_ID,
+                    sessionPublicKey,
+                    depositAmount.toString(),
+                    novaFundAmount > 0 ? { receiverId: novaAccountIdForFunding, amount: novaFundAmount } : undefined
+                );
+
+                refetchSessionKey();
+                console.log("Session key created!" + (novaFundAmount > 0 ? ` + Nova funded (${novaFundAmount} NEAR)` : ''));
+
+            } else if (gasBalance < currentMinRequired || novaFundAmount > 0) {
+                // Returning user: gas top-up and/or Nova funding in one batch
+                const topUpAmount = gasBalance < currentMinRequired
+                    ? Math.ceil((currentMinRequired - gasBalance + 0.1) * 10) / 10
+                    : 0;
+
+                if (topUpAmount > 0) {
+                    setStatus(`Gas balance low (${gasBalance.toFixed(2)} NEAR). Topping up...`);
+                    console.log(`⛽ Topping up gas: Current=${gasBalance}, Required=${currentMinRequired}, TopUp=${topUpAmount}`);
+                }
+                if (novaFundAmount > 0) {
+                    setStatus(topUpAmount > 0 ? 'Topping up gas + funding Nova...' : 'Funding Nova group registration...');
+                    console.log(`[NOVA] Funding platform account (${novaAccountIdForFunding}) with ${novaFundAmount} NEAR`);
                 }
 
-                await sessionManager.createSessionKey(wallet, depositAmount);
-                // Refetch session key status in React Query cache
-                refetchSessionKey();
-                console.log("Session key created!");
-            } else if (gasBalance < currentMinRequired) {
-                // Returning user with insufficient balance - top up
-                const topUpAmount = hasPkpNow
-                    ? Math.ceil((currentMinRequired - gasBalance + 0.1) * 10) / 10
-                    : 1.0; // 1 NEAR for MPC fallback
+                // Build transactions list
+                const txList: Array<{ receiverId: string; actions: any[] }> = [];
 
-                setStatus(`Gas balance low (${gasBalance.toFixed(2)} NEAR). Topping up ${topUpAmount} NEAR...`);
-                console.log(`⛽ Topping up gas: Current=${gasBalance}, Required=${currentMinRequired}, TopUp=${topUpAmount}`);
+                if (topUpAmount > 0) {
+                    txList.push({
+                        receiverId: CONTRACT_ID,
+                        actions: [
+                            actions.functionCall(
+                                'deposit_funds', {},
+                                BigInt('30000000000000'),
+                                nearToYocto(topUpAmount)
+                            )
+                        ]
+                    });
+                }
 
-                await sessionManager.topUpGas(wallet, topUpAmount.toString());
-                // Refetch balance in React Query cache
-                refetchBalance();
-                console.log(`✅ Gas topped up by ${topUpAmount} NEAR`);
+                if (novaFundAmount > 0) {
+                    txList.push({
+                        receiverId: novaAccountIdForFunding,
+                        actions: [actions.transfer(nearToYocto(novaFundAmount))]
+                    });
+                }
+
+                if (txList.length > 0) {
+                    await wallet.signAndSendTransactions({ transactions: txList });
+                }
+
+                if (topUpAmount > 0) refetchBalance();
+                console.log(`✅ Wallet batch complete (${txList.length} tx)`);
+
             } else {
                 console.log(`✅ Gas balance sufficient: ${gasBalance} >= ${currentMinRequired}`);
             }
 
-            setStatus('Verifying Identity & Preparing Session...');
+            // Invalidate Nova balance cache if we just funded the platform
+            if (novaFundAmount > 0) {
+                const { invalidateBalanceCache } = await import('@/lib/nova/costs');
+                invalidateBalanceCache();
+            }
 
-            // Derive MPC address (mathematical derivation - no gas cost)
-            // Still needed for Lit Protocol session signatures
-            const recoveredAddress = await deriveEthAddress(CONTRACT_ID, derivationPath);
-            console.log('Identity Verified. MPC Address:', recoveredAddress);
+            setStatus('Session ready for NOVA upload...');
             updateStep('session', 'complete');
 
-            // --- STEP 3: Crust W3Auth (Signless) ---
-            // With Crust W3Auth, authentication happens automatically during upload
-            // using the Session Key stored in localStorage. No separate auth step needed!
-            setStatus('Ready for decentralized upload via Crust W3Auth...');
-            console.log('[Crust] W3Auth will use Session Key for signless authentication');
+            // --- STEP 3: NOVA Upload (TEE-based encryption) ---
+            setStatus('Ready for NOVA decentralized upload...');
+            console.log('[NOVA] Starting TEE-encrypted upload...');
 
-            // Continue with upload - Crust W3Auth handles auth automatically
-            await processSignatureAndUpload(storageFee, sessionManager, recoveredAddress);
+            // Continue with NOVA upload
+            await processSignatureAndUpload(storageFee, sessionManager);
 
         } catch (error: any) {
             console.error('Upload failed:', error);
@@ -556,32 +515,24 @@ export function UploadForm() {
                     <p className="text-muted-foreground text-sm">{t.upload_page.description}</p>
                 </div>
                 {/* Verified Badge - Same width as preview (2/5) */}
-                <div className={`lg:col-span-2 px-4 py-2 rounded-xl border flex items-center gap-3 ${pkpData
-                    ? 'bg-amber-500/10 border-amber-500/30'
-                    : hasSessionKey
+                <div className={`lg:col-span-2 px-4 py-2 rounded-xl border flex items-center gap-3 ${hasSessionKey
                         ? 'bg-blue-500/10 border-blue-500/30'
                         : 'bg-zinc-900/50 border-white/5'}`}>
-                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${pkpData
-                        ? 'bg-amber-500/20 border border-amber-500/50'
-                        : hasSessionKey
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${hasSessionKey
                             ? 'bg-blue-500/20 border border-blue-500/50'
                             : 'bg-zinc-800 border border-zinc-700'}`}>
-                        {pkpData ? (
-                            <CheckCircle2 className="w-4 h-4 text-amber-400" />
-                        ) : hasSessionKey ? (
+                        {hasSessionKey ? (
                             <CheckCircle2 className="w-4 h-4 text-blue-400" />
-                        ) : isPKPMinting ? (
-                            <Loader2 className="w-4 h-4 text-zinc-400 animate-spin" />
                         ) : (
                             <div className="w-3 h-3 rounded-full border-2 border-zinc-500 border-dashed animate-pulse" />
                         )}
                     </div>
                     <div className="flex-1 min-w-0">
-                        <p className={`text-xs font-bold ${pkpData ? 'text-amber-300' : hasSessionKey ? 'text-blue-300' : 'text-zinc-300'}`}>
-                            {pkpData ? '⚡ PKP Verified' : hasSessionKey ? '✓ Session Key Active' : isPKPMinting ? 'Setting up PKP...' : 'Pending Verification'}
+                        <p className={`text-xs font-bold ${hasSessionKey ? 'text-blue-300' : 'text-zinc-300'}`}>
+                            {hasSessionKey ? '✓ Session Key Active' : 'Pending Verification'}
                         </p>
                         <p className="text-[10px] text-zinc-500 truncate">
-                            {pkpData ? 'Signless uploads & playback' : hasSessionKey ? 'Session key enabled' : isPKPMinting ? 'Background setup in progress' : 'Complete first upload'}
+                            {hasSessionKey ? 'Session key enabled' : 'Complete first upload'}
                         </p>
                     </div>
                 </div>
@@ -712,22 +663,6 @@ export function UploadForm() {
                             </Alert>
                         )}
 
-                        {retryStep === 'pkp_link' && (
-                            <Alert className="border-blue-500/50 bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                                <AlertCircle className="h-4 w-4" />
-                                <AlertTitle>One-Click Setup Blocked</AlertTitle>
-                                <AlertDescription className="flex flex-col gap-2">
-                                    <p>Your browser blocked the setup popup. Click below to enable faster future uploads.</p>
-                                    <Button
-                                        onClick={handleUpload}
-                                        variant="outline"
-                                        className="w-full border-blue-500/50 hover:bg-blue-500/20"
-                                    >
-                                        Try Setup Again
-                                    </Button>
-                                </AlertDescription>
-                            </Alert>
-                        )}
                     </CardContent>
 
                     {/* Cost Receipt Section - shown when file is selected */}
@@ -738,24 +673,16 @@ export function UploadForm() {
                                 currentBalance={balanceData || '0'}
                                 payAmount={payAmount}
                                 loading={isBalanceLoading}
-                                hasPKP={!!pkpData}
                                 gasBalance={gasBalance}
                                 requiredGas={REQUIRED_GAS}
                                 needsTopUp={needsTopUp}
                                 isFirstUpload={!hasSessionKey}
+                                isFreeVideo={parseFloat(price) === 0 || price === ''}
+                                novaGroupFee={novaGroupFee}
                             />
                         </div>
                     )}
 
-                    {/* Loading indicator while PKP is being minted in background */}
-                    {file && isPKPMinting && !pkpData && (
-                        <div className="px-6 pb-2">
-                            <div className="rounded-lg border border-white/10 bg-black/20 p-4 flex items-center justify-center gap-2">
-                                <Loader2 className="h-4 w-4 animate-spin text-green-400" />
-                                <span className="text-sm text-zinc-400">Setting up PKP for signless upload...</span>
-                            </div>
-                        </div>
-                    )}
 
                     <CardFooter>
                         <Button

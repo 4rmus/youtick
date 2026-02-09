@@ -20,20 +20,19 @@
                     │               │               │
                     ▼               ▼               ▼
 ┌──────────────────────┐ ┌──────────────────┐ ┌──────────────────────┐
-│    NEAR PROTOCOL     │ │   LIT PROTOCOL   │ │   IPFS/LIGHTHOUSE    │
+│    NEAR PROTOCOL     │ │  NOVA PROTOCOL   │ │      IPFS            │
 │                      │ │                  │ │                      │
-│ • Wallet Connection  │ │ • PKP Management │ │ • Encrypted Storage  │
-│ • NFT Minting        │ │ • Encryption     │ │ • CID Addressing     │
-│ • Payment Processing │ │ • Access Control │ │ • Perpetual Storage  │
-│ • Session Keys       │ │ • Lit Actions    │ │                      │
-│ • Chain Signatures   │ │                  │ │                      │
+│ • Wallet Connection  │ │ • TEE Encryption │ │ • Encrypted Storage  │
+│ • NFT Minting        │ │ • Group Access   │ │ • CID Addressing     │
+│ • Payment Processing │ │ • Key Management │ │ • Perpetual Storage  │
+│ • Session Keys       │ │ • Shade Agent    │ │                      │
 └──────────────────────┘ └──────────────────┘ └──────────────────────┘
          │                        │                      │
          └────────────────────────┼──────────────────────┘
                                   │
                     ┌─────────────▼─────────────┐
                     │      SMART CONTRACT       │
-                    │    v1.utick.testnet       │
+                    │   youtick-prod-v1.near    │
                     │                           │
                     │ • NEP-171 NFT Standard    │
                     │ • Event Management        │
@@ -66,10 +65,10 @@
 ```typescript
 // Connection Configuration
 const near = {
-  networkId: "testnet",
-  nodeUrl: "https://test.rpc.fastnear.com",
-  walletUrl: "https://testnet.mynearwallet.com",
-  contractId: "v1.utick.testnet"
+  networkId: "mainnet",
+  nodeUrl: "https://free.rpc.fastnear.com",
+  walletUrl: "https://app.mynearwallet.com",
+  contractId: "youtick-prod-v1.near"
 };
 ```
 
@@ -79,30 +78,30 @@ const near = {
 - Payment processing (98% creator, 2% platform)
 - Session key management for signless UX
 
-#### Lit Protocol Integration
+#### Nova Protocol Integration
 ```typescript
-// Lit Network Configuration
-const litConfig = {
-  network: "datil-dev",  // Testnet
-  chain: "ethereum",
-  authMethods: ["near"],
-  pkpMinting: "relay" | "direct"
+// Nova Network Configuration
+const novaConfig = {
+  networkId: "mainnet",
+  contractId: "nova-sdk.near",
 };
 ```
 
 **Responsibilities:**
-- Client-side encryption (AES-256-GCM)
-- Programmable Key Pairs (PKP)
-- Access Control Conditions (ACC)
-- Lit Actions for on-chain verification
+- TEE-based encryption (AES-256-GCM)
+- Group-based access control
+- Shade Agent key management
+- Automatic key rotation on member changes
 
-#### IPFS/Lighthouse Integration
+#### IPFS Integration
 ```typescript
-// Lighthouse Configuration
-const lighthouseConfig = {
-  apiKey: process.env.LIGHTHOUSE_API_KEY,
-  gateway: "https://gateway.lighthouse.storage",
-  encryption: "lit"  // Use Lit for encryption, not Lighthouse native
+// IPFS Gateway Configuration
+const ipfsConfig = {
+  gateway: "https://gateway.pinata.cloud/ipfs",
+  fallbackGateways: [
+    "https://ipfs.io/ipfs",
+    "https://dweb.link/ipfs"
+  ]
 };
 ```
 
@@ -113,7 +112,7 @@ const lighthouseConfig = {
 
 ### Layer 3: Smart Contract (Blockchain)
 
-**Contract**: `v1.utick.testnet`
+**Contract**: `youtick-prod-v1.near`
 **Language**: Rust (NEAR SDK 5.1.0)
 **Standard**: NEP-171 (NFT)
 
@@ -123,6 +122,7 @@ pub struct Event {
     pub title: String,
     pub description: String,
     pub encrypted_cid: String,
+    pub nova_group_id: String,  // Nova access group
     pub price: U128,
     pub creator: AccountId,
     pub tickets_sold: u64,
@@ -130,6 +130,7 @@ pub struct Event {
 
 pub struct VideoMetadata {
     pub encrypted_cid: String,
+    pub nova_group_id: String,
     pub thumbnail_cid: Option<String>,
     pub duration_seconds: Option<u64>,
 }
@@ -142,23 +143,23 @@ pub struct VideoMetadata {
 ```
 ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
 │  Select  │───▶│  Create  │───▶│ Encrypt  │───▶│  Upload  │───▶│   Mint   │
-│  Video   │    │ Session  │    │  (Lit)   │    │  (IPFS)  │    │   NFT    │
+│  Video   │    │  Group   │    │  (Nova)  │    │  (IPFS)  │    │   NFT    │
 └──────────┘    └──────────┘    └──────────┘    └──────────┘    └──────────┘
      │               │               │               │               │
-     │         MPC Derivation   AES-256-GCM    Returns CID      On-Chain
-     │         (Chain Sig)                                      Event Created
+     │          Nova Group       AES-256-GCM    Returns CID      On-Chain
+     │          Creation         via TEE                         Event Created
 ```
 
 ### Video Watch Flow
 
 ```
 ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│  Request │───▶│  Check   │───▶│ Verify   │───▶│ Decrypt  │───▶│  Stream  │
-│  Watch   │    │   NFT    │    │  (Lit)   │    │  Video   │    │  Video   │
+│  Request │───▶│  Check   │───▶│  Verify  │───▶│ Decrypt  │───▶│  Stream  │
+│  Watch   │    │   NFT    │    │  (Nova)  │    │  Video   │    │  Video   │
 └──────────┘    └──────────┘    └──────────┘    └──────────┘    └──────────┘
      │               │               │               │               │
-     │          Contract View    Lit Action      IPFS Fetch      Browser
-     │          nft_tokens()     Ownership       + Decrypt       Playback
+     │          Contract View    Shade Agent      IPFS Fetch      Browser
+     │          nft_tokens()     Membership       + Decrypt       Playback
 ```
 
 ### Payment Flow
@@ -187,9 +188,9 @@ Buyer pays 5 NEAR
 | Layer | Security Measure |
 |-------|------------------|
 | Transport | HTTPS everywhere |
-| Storage | AES-256-GCM encryption |
-| Access | NFT ownership verification |
-| Keys | MPC (no single point of failure) |
+| Storage | AES-256-GCM encryption via Nova TEE |
+| Access | NFT ownership + Nova group membership |
+| Keys | TEE isolation (no single point of failure) |
 | Sessions | 7-day max, scoped permissions |
 
 ## Scalability
@@ -199,7 +200,7 @@ Buyer pays 5 NEAR
 | Concurrent Users | ~1,000 | Limited by RPC rate limits |
 | Storage | Unlimited | IPFS scales horizontally |
 | Transactions | ~1,000 TPS | NEAR Protocol limit |
-| Video Size | 100MB recommended | Lighthouse limit |
+| Video Size | 100MB recommended | Gateway limit |
 
 ---
 

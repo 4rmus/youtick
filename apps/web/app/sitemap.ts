@@ -1,7 +1,8 @@
 import { MetadataRoute } from 'next';
+import { NEAR_CONFIG } from '@/lib/constants';
 
 // Contract configuration
-const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+const CONTRACT_ID = NEAR_CONFIG.contractId;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     const baseUrl = 'https://youtick.net';
@@ -42,7 +43,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         // For now, we'll return static pages only
         // Uncomment and adapt this when ready:
         /*
-        const response = await fetch(`https://rpc.testnet.near.org`, {
+        const rpcUrl = NEAR_CONFIG.networkId === 'mainnet' ? 'https://rpc.mainnet.near.org' : 'https://rpc.testnet.near.org';
+        const response = await fetch(rpcUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

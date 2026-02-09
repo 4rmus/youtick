@@ -1,31 +1,11 @@
 'use client';
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { SessionManager, getCurrentRpcUrl } from '../session-manager';
 import { getProvider, viewContract } from '../near';
+import { NEAR_CONFIG } from '../constants';
 
-const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-
-// Types
-export interface PKPData {
-    publicKey: string;
-    ethAddress: string;
-    tokenId: string;
-}
-
-// Helper: Get PKP from localStorage
-function getPKPFromStorage(accountId: string): PKPData | null {
-    if (typeof window === 'undefined') return null;
-    const cached = localStorage.getItem(`lit_pkp_${accountId}`);
-    if (cached) {
-        try {
-            return JSON.parse(cached) as PKPData;
-        } catch {
-            return null;
-        }
-    }
-    return null;
-}
+const CONTRACT_ID = NEAR_CONFIG.contractId;
 
 // Helper: Get account balance from contract
 async function getAccountBalance(accountId: string): Promise<string> {
@@ -76,20 +56,6 @@ export function useAccountBalance(accountId: string | null) {
         enabled: !!accountId,
         staleTime: 30 * 1000, // 30 seconds fresh
         gcTime: 5 * 60 * 1000, // 5 minute cache
-    });
-}
-
-/**
- * Hook: Get user's PKP data from localStorage
- * - PKP doesn't change, so staleTime is Infinity
- */
-export function usePKPData(accountId: string | null) {
-    return useQuery({
-        queryKey: ['pkp', accountId],
-        queryFn: () => getPKPFromStorage(accountId!),
-        enabled: !!accountId,
-        staleTime: Infinity, // PKP never goes stale
-        gcTime: Infinity, // Keep forever
     });
 }
 
@@ -159,19 +125,16 @@ export function useIsCreator(accountId: string | null, cid: string | null) {
 export function useSessionState(accountId: string | null) {
     const sessionKeyQuery = useSessionKey(accountId);
     const balanceQuery = useAccountBalance(accountId);
-    const pkpQuery = usePKPData(accountId);
 
     return {
         // Data
         hasSessionKey: sessionKeyQuery.data ?? null,
         balance: balanceQuery.data ?? null,
-        pkpData: pkpQuery.data ?? null,
 
         // Loading states
         isLoading: sessionKeyQuery.isLoading || balanceQuery.isLoading,
         isSessionKeyLoading: sessionKeyQuery.isLoading,
         isBalanceLoading: balanceQuery.isLoading,
-        isPKPLoading: pkpQuery.isLoading,
 
         // Ready state
         isReady: !sessionKeyQuery.isLoading && !balanceQuery.isLoading,
@@ -183,40 +146,7 @@ export function useSessionState(accountId: string | null) {
         // Refetch functions
         refetchSessionKey: sessionKeyQuery.refetch,
         refetchBalance: balanceQuery.refetch,
-        refetchPKP: pkpQuery.refetch,
     };
-}
-
-/**
- * Hook: PKP Minting mutation
- * - Tracks loading/error state
- * - Updates cache on success
- */
-export function usePKPMint() {
-    const queryClient = useQueryClient();
-
-    return useMutation({
-        mutationFn: async (accountId: string) => {
-            const { lit } = await import('../lit');
-            const { PKPManager } = await import('../pkp');
-
-            await lit.connect();
-            const pkpManager = new PKPManager(lit.getLitNodeClient());
-            return pkpManager.mintPKPSmart(accountId);
-        },
-        onSuccess: (data, accountId) => {
-            // Update PKP cache
-            const pkpData: PKPData = {
-                publicKey: data.publicKey,
-                ethAddress: data.ethAddress,
-                tokenId: data.tokenId,
-            };
-            queryClient.setQueryData(['pkp', accountId], pkpData);
-
-            // Also save to localStorage
-            localStorage.setItem(`lit_pkp_${accountId}`, JSON.stringify(pkpData));
-        },
-    });
 }
 
 /**
@@ -229,11 +159,9 @@ export function useInvalidateSession() {
         if (accountId) {
             queryClient.invalidateQueries({ queryKey: ['sessionKey', accountId] });
             queryClient.invalidateQueries({ queryKey: ['balance', accountId] });
-            queryClient.invalidateQueries({ queryKey: ['pkp', accountId] });
         } else {
             queryClient.invalidateQueries({ queryKey: ['sessionKey'] });
             queryClient.invalidateQueries({ queryKey: ['balance'] });
-            queryClient.invalidateQueries({ queryKey: ['pkp'] });
         }
     };
 }

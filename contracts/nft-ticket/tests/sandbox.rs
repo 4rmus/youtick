@@ -1,7 +1,7 @@
 use near_workspaces::{types::NearToken, Account, Contract};
 use serde_json::json;
 
-const WASM_FILEPATH: &str = "./target/wasm32-unknown-unknown/release/youtick_nft.wasm";
+const WASM_FILEPATH: &str = "./target/near/youtick_nft.wasm";
 
 async fn init() -> anyhow::Result<(Contract, Account, Account)> {
     let worker = near_workspaces::sandbox().await?;
@@ -722,6 +722,239 @@ async fn test_signless_withdraw_limit() -> anyhow::Result<()> {
     Ok(())
 }
 
+// ═══════════════════════════════════════════════════════════════
+// COMMISSION POOL TESTS
+// ═══════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_commission_pool_tracking() -> anyhow::Result<()> {
+    let (contract, owner, buyer) = init().await?;
+
+    // Verify commission pool starts at 0
+    let pool: String = contract
+        .view("get_commission_pool")
+        .args_json(json!({}))
+        .await?
+        .json()?;
+    assert_eq!(pool, "0");
+
+    // Check initial trial pool
+    let trial_pool_before: String = contract
+        .view("get_trial_pool_balance")
+        .args_json(json!({}))
+        .await?
+        .json()?;
+    let trial_pool_before_val: u128 = trial_pool_before.parse()?;
+
+    // Create event with 10 NEAR price
+    owner
+        .call(contract.id(), "create_event")
+        .args_json(json!({
+            "encrypted_cid": "QmCommPoolTest",
+            "title": "Commission Pool Test",
+            "description": "Testing commission pool tracking",
+            "price": "10000000000000000000000000"  // 10 NEAR
+        }))
+        .deposit(NearToken::from_millinear(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Buy ticket (2% commission = 0.2 NEAR, split 50/50)
+    buyer
+        .call(contract.id(), "buy_ticket")
+        .args_json(json!({
+            "receiver_id": buyer.id(),
+            "encrypted_cid": "QmCommPoolTest"
+        }))
+        .deposit(NearToken::from_near(11))
+        .gas(near_workspaces::types::Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Commission pool should have 0.1 NEAR (50% of 0.2 NEAR commission)
+    let commission_pool: String = contract
+        .view("get_commission_pool")
+        .args_json(json!({}))
+        .await?
+        .json()?;
+    let commission_val: u128 = commission_pool.parse()?;
+    assert_eq!(commission_val, 100_000_000_000_000_000_000_000); // 0.1 NEAR
+
+    // Trial pool should have gained 0.1 NEAR
+    let trial_pool_after: String = contract
+        .view("get_trial_pool_balance")
+        .args_json(json!({}))
+        .await?
+        .json()?;
+    let trial_pool_after_val: u128 = trial_pool_after.parse()?;
+    let trial_pool_gained = trial_pool_after_val - trial_pool_before_val;
+    assert_eq!(trial_pool_gained, 100_000_000_000_000_000_000_000); // 0.1 NEAR
+
+    println!("✅ Commission pool tracking test passed");
+    println!("   Commission pool: {} yocto", commission_val);
+    println!("   Trial pool gained: {} yocto", trial_pool_gained);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_commission_pool_prepaid() -> anyhow::Result<()> {
+    let (contract, owner, buyer) = init().await?;
+
+    // Create event with 10 NEAR price
+    owner
+        .call(contract.id(), "create_event")
+        .args_json(json!({
+            "encrypted_cid": "QmCommPrepaidTest",
+            "title": "Prepaid Commission Test",
+            "description": "Testing commission pool with prepaid",
+            "price": "10000000000000000000000000"  // 10 NEAR
+        }))
+        .deposit(NearToken::from_millinear(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Deposit funds
+    buyer
+        .call(contract.id(), "deposit_funds")
+        .args_json(json!({}))
+        .deposit(NearToken::from_near(15))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Buy with prepaid
+    buyer
+        .call(contract.id(), "buy_ticket_prepaid")
+        .args_json(json!({
+            "receiver_id": buyer.id(),
+            "encrypted_cid": "QmCommPrepaidTest"
+        }))
+        .gas(near_workspaces::types::Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Commission pool should have 0.1 NEAR
+    let commission_pool: String = contract
+        .view("get_commission_pool")
+        .args_json(json!({}))
+        .await?
+        .json()?;
+    let commission_val: u128 = commission_pool.parse()?;
+    assert_eq!(commission_val, 100_000_000_000_000_000_000_000); // 0.1 NEAR
+
+    println!("✅ Commission pool prepaid test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_withdraw_commission() -> anyhow::Result<()> {
+    let (contract, owner, buyer) = init().await?;
+
+    // Create event and buy to generate commission
+    owner
+        .call(contract.id(), "create_event")
+        .args_json(json!({
+            "encrypted_cid": "QmWithdrawCommTest",
+            "title": "Withdraw Commission Test",
+            "description": "Testing commission withdrawal",
+            "price": "10000000000000000000000000"
+        }))
+        .deposit(NearToken::from_millinear(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    buyer
+        .call(contract.id(), "buy_ticket")
+        .args_json(json!({
+            "receiver_id": buyer.id(),
+            "encrypted_cid": "QmWithdrawCommTest"
+        }))
+        .deposit(NearToken::from_near(11))
+        .gas(near_workspaces::types::Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Owner withdraws commission
+    let owner_before = owner.view_account().await?.balance;
+
+    owner
+        .call(contract.id(), "withdraw_commission")
+        .args_json(json!({
+            "amount": "100000000000000000000000"  // 0.1 NEAR
+        }))
+        .gas(near_workspaces::types::Gas::from_tgas(50))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Verify commission pool is now 0
+    let pool: String = contract
+        .view("get_commission_pool")
+        .args_json(json!({}))
+        .await?
+        .json()?;
+    assert_eq!(pool, "0");
+
+    // Verify owner received the funds (approximately, minus gas)
+    let owner_after = owner.view_account().await?.balance;
+    let gained = owner_after.as_yoctonear() as i128 - owner_before.as_yoctonear() as i128;
+    assert!(gained > 90_000_000_000_000_000_000_000, "Owner should receive ~0.1 NEAR");
+
+    println!("✅ Withdraw commission test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_withdraw_commission_not_owner() -> anyhow::Result<()> {
+    let (contract, owner, buyer) = init().await?;
+
+    // Create event and buy to generate commission
+    owner
+        .call(contract.id(), "create_event")
+        .args_json(json!({
+            "encrypted_cid": "QmNotOwnerTest",
+            "title": "Not Owner Test",
+            "description": "Testing unauthorized withdrawal",
+            "price": "10000000000000000000000000"
+        }))
+        .deposit(NearToken::from_millinear(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    buyer
+        .call(contract.id(), "buy_ticket")
+        .args_json(json!({
+            "receiver_id": buyer.id(),
+            "encrypted_cid": "QmNotOwnerTest"
+        }))
+        .deposit(NearToken::from_near(11))
+        .gas(near_workspaces::types::Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Non-owner tries to withdraw - should fail
+    let result = buyer
+        .call(contract.id(), "withdraw_commission")
+        .args_json(json!({
+            "amount": "100000000000000000000000"
+        }))
+        .gas(near_workspaces::types::Gas::from_tgas(50))
+        .transact()
+        .await?;
+
+    assert!(result.is_failure());
+    println!("✅ Withdraw commission not owner test passed (correctly rejected)");
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_signless_withdraw_within_limit() -> anyhow::Result<()> {
     let (contract, _, buyer) = init().await?;
@@ -754,5 +987,289 @@ async fn test_signless_withdraw_within_limit() -> anyhow::Result<()> {
     assert_eq!(balance, "0");
 
     println!("✅ Signless withdraw within limit test passed");
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PURCHASE LOG TESTS
+// ═══════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_purchase_log_on_buy_ticket() -> anyhow::Result<()> {
+    let (contract, owner, buyer) = init().await?;
+
+    // Create event with 1 NEAR price
+    owner
+        .call(contract.id(), "create_event")
+        .args_json(json!({
+            "encrypted_cid": "QmLogTest",
+            "title": "Log Test",
+            "description": "Testing purchase log",
+            "price": "1000000000000000000000000"
+        }))
+        .deposit(NearToken::from_millinear(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Buy ticket
+    buyer
+        .call(contract.id(), "buy_ticket")
+        .args_json(json!({
+            "receiver_id": buyer.id(),
+            "encrypted_cid": "QmLogTest"
+        }))
+        .deposit(NearToken::from_millinear(1010))
+        .gas(near_workspaces::types::Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Verify purchase log was created
+    let log: Option<serde_json::Value> = contract
+        .view("get_purchase_log")
+        .args_json(json!({"purchase_id": 0}))
+        .await?
+        .json()?;
+
+    assert!(log.is_some(), "Purchase log should exist");
+    let log = log.unwrap();
+    assert_eq!(log["buyer_id"], buyer.id().to_string());
+    assert_eq!(log["creator_id"], owner.id().to_string());
+    assert_eq!(log["event_cid"], "QmLogTest");
+    assert_eq!(log["token_id"], "0");
+    assert_eq!(log["price"], "1000000000000000000000000");
+    assert_eq!(log["purchase_type"], "Direct");
+
+    // Verify creator_amount is 98% and commission is 2%
+    let creator_amount: u128 = log["creator_amount"].as_str().unwrap().parse()?;
+    let commission: u128 = log["commission_amount"].as_str().unwrap().parse()?;
+    assert_eq!(creator_amount, 980_000_000_000_000_000_000_000); // 0.98 NEAR
+    assert_eq!(commission, 20_000_000_000_000_000_000_000);      // 0.02 NEAR
+
+    println!("✅ Purchase log on buy_ticket test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_purchase_log_on_prepaid() -> anyhow::Result<()> {
+    let (contract, owner, buyer) = init().await?;
+
+    // Create event
+    owner
+        .call(contract.id(), "create_event")
+        .args_json(json!({
+            "encrypted_cid": "QmPrepaidLogTest",
+            "title": "Prepaid Log Test",
+            "description": "Testing prepaid purchase log",
+            "price": "500000000000000000000000"
+        }))
+        .deposit(NearToken::from_millinear(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Deposit funds
+    buyer
+        .call(contract.id(), "deposit_funds")
+        .args_json(json!({}))
+        .deposit(NearToken::from_near(1))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Buy with prepaid
+    buyer
+        .call(contract.id(), "buy_ticket_prepaid")
+        .args_json(json!({
+            "receiver_id": buyer.id(),
+            "encrypted_cid": "QmPrepaidLogTest"
+        }))
+        .gas(near_workspaces::types::Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Verify purchase log
+    let log: Option<serde_json::Value> = contract
+        .view("get_purchase_log")
+        .args_json(json!({"purchase_id": 0}))
+        .await?
+        .json()?;
+
+    assert!(log.is_some(), "Purchase log should exist");
+    let log = log.unwrap();
+    assert_eq!(log["purchase_type"], "Prepaid");
+    assert_eq!(log["price"], "500000000000000000000000");
+
+    println!("✅ Purchase log on prepaid test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_purchase_log_free_ticket() -> anyhow::Result<()> {
+    let (contract, owner, buyer) = init().await?;
+
+    // Create free event
+    owner
+        .call(contract.id(), "create_event")
+        .args_json(json!({
+            "encrypted_cid": "QmFreeLogTest",
+            "title": "Free Log Test",
+            "description": "Testing free ticket log",
+            "price": "0"
+        }))
+        .deposit(NearToken::from_millinear(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Buy free ticket
+    buyer
+        .call(contract.id(), "buy_ticket")
+        .args_json(json!({
+            "receiver_id": buyer.id(),
+            "encrypted_cid": "QmFreeLogTest"
+        }))
+        .deposit(NearToken::from_millinear(10))
+        .gas(near_workspaces::types::Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Verify purchase log with zeroed amounts
+    let log: Option<serde_json::Value> = contract
+        .view("get_purchase_log")
+        .args_json(json!({"purchase_id": 0}))
+        .await?
+        .json()?;
+
+    assert!(log.is_some());
+    let log = log.unwrap();
+    assert_eq!(log["purchase_type"], "Free");
+    assert_eq!(log["price"], "0");
+    assert_eq!(log["creator_amount"], "0");
+    assert_eq!(log["commission_amount"], "0");
+
+    println!("✅ Purchase log free ticket test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_purchase_log_pagination() -> anyhow::Result<()> {
+    let (contract, owner, buyer) = init().await?;
+
+    // Create event
+    owner
+        .call(contract.id(), "create_event")
+        .args_json(json!({
+            "encrypted_cid": "QmPaginationTest",
+            "title": "Pagination Test",
+            "description": "Testing log pagination",
+            "price": "100000000000000000000000"
+        }))
+        .deposit(NearToken::from_millinear(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Buy 3 tickets
+    for _ in 0..3 {
+        buyer
+            .call(contract.id(), "buy_ticket")
+            .args_json(json!({
+                "receiver_id": buyer.id(),
+                "encrypted_cid": "QmPaginationTest"
+            }))
+            .deposit(NearToken::from_millinear(110))
+            .gas(near_workspaces::types::Gas::from_tgas(300))
+            .transact()
+            .await?
+            .into_result()?;
+    }
+
+    // Get all logs
+    let all_logs: Vec<serde_json::Value> = contract
+        .view("get_purchase_logs")
+        .args_json(json!({}))
+        .await?
+        .json()?;
+
+    assert_eq!(all_logs.len(), 3, "Should have 3 purchase logs");
+
+    // Get with limit=2
+    let limited_logs: Vec<serde_json::Value> = contract
+        .view("get_purchase_logs")
+        .args_json(json!({"limit": 2}))
+        .await?
+        .json()?;
+
+    assert_eq!(limited_logs.len(), 2, "Should return only 2 logs with limit");
+
+    // Get with from_index=2
+    let offset_logs: Vec<serde_json::Value> = contract
+        .view("get_purchase_logs")
+        .args_json(json!({"from_index": 2}))
+        .await?
+        .json()?;
+
+    assert_eq!(offset_logs.len(), 1, "Should return 1 log from index 2");
+
+    println!("✅ Purchase log pagination test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_purchase_count() -> anyhow::Result<()> {
+    let (contract, owner, buyer) = init().await?;
+
+    // Verify starts at 0
+    let count: u64 = contract
+        .view("get_purchase_count")
+        .args_json(json!({}))
+        .await?
+        .json()?;
+
+    assert_eq!(count, 0);
+
+    // Create event
+    owner
+        .call(contract.id(), "create_event")
+        .args_json(json!({
+            "encrypted_cid": "QmCountTest",
+            "title": "Count Test",
+            "description": "Testing purchase count",
+            "price": "100000000000000000000000"
+        }))
+        .deposit(NearToken::from_millinear(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Buy 4 tickets
+    for _ in 0..4 {
+        buyer
+            .call(contract.id(), "buy_ticket")
+            .args_json(json!({
+                "receiver_id": buyer.id(),
+                "encrypted_cid": "QmCountTest"
+            }))
+            .deposit(NearToken::from_millinear(110))
+            .gas(near_workspaces::types::Gas::from_tgas(300))
+            .transact()
+            .await?
+            .into_result()?;
+    }
+
+    // Verify count is 4
+    let count: u64 = contract
+        .view("get_purchase_count")
+        .args_json(json!({}))
+        .await?
+        .json()?;
+
+    assert_eq!(count, 4);
+
+    println!("✅ Purchase count test passed");
     Ok(())
 }

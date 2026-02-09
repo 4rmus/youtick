@@ -1,13 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from "@/components/ui/button";
-import { Loader2, Ticket, AlertCircle, Play } from "lucide-react";
-import { actions, KeyPair, PublicKey, yoctoToNear, nearToYocto } from 'near-api-js';
+import { Loader2, Ticket, AlertCircle, Play, ChevronDown, ChevronUp } from "lucide-react";
+import { actions, KeyPair, KeyPairSigner, Account, PublicKey, yoctoToNear, nearToYocto, type KeyPairString } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
 import { SessionManager } from '@/lib/session-manager';
 import { useSessionState, useIsCreator } from '@/lib/hooks/useSessionState';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { NEAR_CONFIG } from '@/lib/constants';
+import { NovaThumbnail } from './NovaThumbnail';
+import { addBuyerToNovaGroup } from '@/lib/nova/post-purchase';
 
 interface TicketPurchaseCardProps {
     cid: string;
@@ -23,7 +25,7 @@ interface EventDetails {
 }
 
 export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: TicketPurchaseCardProps) {
-    const { selector, accountId, getWallet, pkpData } = useWallet();
+    const { selector, accountId, getWallet } = useWallet();
 
     // React Query hooks for cached state
     const { hasSessionKey, refetchSessionKey } = useSessionState(accountId);
@@ -33,6 +35,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     const [actionLoading, setActionLoading] = useState(false);
     const [eventDetails, setEventDetails] = useState<EventDetails | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [showCostBreakdown, setShowCostBreakdown] = useState(false);
 
     // Initial Load: Fetch Event Details
     // Note: Session key check is now handled by useSessionState hook (React Query)
@@ -77,32 +80,99 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         init();
     }, [cid]);
 
-    // Claim FREE Ticket (Sponsored by Contract)
+    // Claim FREE Ticket (Direct via onboarding key or session key - 100% decentralized)
     const handleFreeTicketClaim = async () => {
         if (!accountId || !eventDetails) return;
         setActionLoading(true);
         setError(null);
         try {
-            console.log("Claiming free ticket via sponsored API...");
+            const contractId = NEAR_CONFIG.contractId;
+            const networkId = NEAR_CONFIG.networkId;
 
-            const response = await fetch('/api/ticket/claim-free', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+            // Try direct claim via onboarding key first (decentralized, signless)
+            const onboardingKeyStr = localStorage.getItem(`onboarding_key:${contractId}`);
+
+            if (onboardingKeyStr) {
+                console.log("[DECENTRALIZATION] Claiming free ticket via onboarding key (direct)...");
+                const onboardingKeyPair = KeyPair.fromString(onboardingKeyStr as KeyPairString);
+                const signer = new KeyPairSigner(onboardingKeyPair);
+                const { getCurrentRpcUrl } = await import('@/lib/rpc-failover');
+                const account = new Account(contractId, getCurrentRpcUrl(), signer);
+
+                await account.signAndSendTransaction({
+                    receiverId: contractId,
+                    actions: [
+                        actions.functionCall(
+                            "claim_free_ticket_direct",
+                            { receiver_id: accountId, encrypted_cid: cid },
+                            BigInt("100000000000000"), // 100 TGas
+                            BigInt(0)
+                        )
+                    ]
+                });
+
+                console.log("[DECENTRALIZATION] Free ticket claimed via onboarding key");
+            } else if (hasSessionKey) {
+                // Signless fallback: use session key + buy_ticket_prepaid (free = 0 NEAR)
+                console.log("[DECENTRALIZATION] Claiming free ticket via session key (signless)...");
+                const sessionManager = new SessionManager(accountId);
+                await sessionManager.callMethod('buy_ticket_prepaid', {
                     receiver_id: accountId,
                     encrypted_cid: cid
-                })
-            });
+                }, '100000000000000');
+                console.log("[DECENTRALIZATION] Free ticket claimed via session key");
+            } else {
+                // Last resort: wallet-signed buy_ticket with price=0
+                // Also bundle session key creation for future signless playback
+                console.log("No onboarding/session key, claiming free ticket via wallet...");
+                const wallet = await getWallet();
+                const sessionManager = new SessionManager(accountId);
 
-            const data = await response.json();
+                const transactionsList = [];
 
-            if (!response.ok) {
-                throw new Error(data.error || 'Failed to claim free ticket');
+                // Bundle session key creation (same pattern as handlePurchase)
+                const keyPair = KeyPair.fromRandom('ed25519');
+                const publicKey = keyPair.getPublicKey().toString();
+                await sessionManager.saveSessionKey(keyPair);
+
+                const pubKey = PublicKey.fromString(publicKey);
+                transactionsList.push({
+                    receiverId: accountId,
+                    actions: [
+                        actions.addFunctionCallAccessKey(
+                            pubKey,
+                            contractId,
+                            [],
+                            BigInt(nearToYocto(0.25))
+                        )
+                    ]
+                });
+
+                // Free ticket claim transaction
+                transactionsList.push({
+                    receiverId: contractId,
+                    actions: [
+                        actions.functionCall(
+                            'buy_ticket',
+                            { receiver_id: accountId, encrypted_cid: cid },
+                            BigInt('100000000000000'),
+                            BigInt(nearToYocto(0.01))
+                        )
+                    ]
+                });
+
+                await wallet.signAndSendTransactions({ transactions: transactionsList });
+                refetchSessionKey();
+                console.log("Free ticket claimed via wallet (with session key)");
             }
 
-            console.log("✅ Free ticket claimed:", data);
+            // Add buyer to Nova group for video access (await completion before redirect)
+            try {
+                await addBuyerToNovaGroup(cid, accountId);
+            } catch (err) {
+                console.error('[Nova Post-Purchase] Group add failed — user may need manual grant:', err);
+            }
 
-            // PKP minting is now handled automatically by WalletProvider on connect
             if (onPurchaseSuccess) onPurchaseSuccess();
 
         } catch (e: any) {
@@ -155,8 +225,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             const STORAGE_COST = nearToYocto(0.01);
             const priceYocto = nearToYocto(parseFloat(eventDetails.price));
 
-            // Total deposit: ticket price + storage + 1N buffer for gas
-            const totalDeposit = BigInt(priceYocto) + BigInt(STORAGE_COST) + BigInt(nearToYocto(1));
+            // Total deposit: ticket price + storage + small buffer for gas
+            // buy_ticket_prepaid only needs price + 0.01 NEAR storage on-chain
+            const totalDeposit = BigInt(priceYocto) + BigInt(STORAGE_COST) + BigInt(nearToYocto(0.01));
 
             // Step 1: Deposit all funds to prepaid balance
             // v7: Use actions.functionCall
@@ -195,7 +266,13 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             // Refetch session key status in React Query cache
             if (hasSessionKey === false) refetchSessionKey();
 
-            // PKP minting is now handled automatically by WalletProvider on connect
+            // Add buyer to Nova group for video access (await completion before redirect)
+            try {
+                await addBuyerToNovaGroup(cid, accountId);
+            } catch (err) {
+                console.error('[Nova Post-Purchase] Group add failed — user may need manual grant:', err);
+            }
+
             if (onPurchaseSuccess) onPurchaseSuccess();
 
         } catch (e) {
@@ -229,14 +306,11 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             {/* Image Container */}
             <div className="aspect-video relative overflow-hidden bg-zinc-800">
-                <img
-                    src={eventDetails.media || '/placeholder-video.svg'}
+                <NovaThumbnail
+                    url={eventDetails.media}
                     alt="Ticket Preview"
                     className="w-full h-full object-cover scale-105 blur-sm opacity-60 group-hover:opacity-80 transition-all duration-700"
-                    onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        target.src = '/placeholder-video.svg';
-                    }}
+                    fallbackUrl="/placeholder-video.svg"
                 />
 
                 {/* Gradient Overlay */}
@@ -252,113 +326,120 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         )}
                     </div>
                 </div>
-
-                {/* Top Badges Row */}
-                <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
-                    {isCreator ? (
-                        <div className="px-3 py-1.5 rounded-lg bg-green-500/90 backdrop-blur-sm border border-green-400/30 shadow-lg">
-                            <span className="text-[10px] font-bold text-white tracking-wider uppercase">✨ Creator Access</span>
-                        </div>
-                    ) : (
-                        <div className="px-3 py-1.5 rounded-lg bg-red-500/90 backdrop-blur-sm border border-red-400/30 shadow-lg">
-                            <span className="text-[10px] font-bold text-white tracking-wider uppercase">🔒 Access Required</span>
-                        </div>
-                    )}
-
-                    <div className={`px-3 py-1.5 rounded-lg backdrop-blur-sm border shadow-lg ${isFree || isCreator
-                        ? 'bg-near-green/90 border-near-green/30'
-                        : 'bg-zinc-800 border-zinc-600'
-                        }`}>
-                        {isCreator ? (
-                            <span className="text-[10px] font-bold text-near-black tracking-wider uppercase">Owner</span>
-                        ) : isFree ? (
-                            <span className="text-[10px] font-bold text-near-black tracking-wider uppercase">✨ Free Ticket</span>
-                        ) : (
-                            <span className="text-[10px] font-bold text-white tracking-wider">{eventDetails.price} NEAR</span>
-                        )}
-                    </div>
-                </div>
             </div>
 
-            {/* Content Section */}
-            <div className="p-5 relative">
-                <h4 className="font-bold text-white text-lg leading-tight line-clamp-1 mb-2">
+            {/* Content */}
+            <div className="relative p-6 space-y-4">
+                {/* Title */}
+                <h3 className="text-xl font-bold text-white line-clamp-2 leading-tight">
                     {eventDetails.title}
-                </h4>
+                </h3>
 
-                <p className="text-sm text-zinc-400 line-clamp-2 mb-4 leading-relaxed">
-                    {isCreator
-                        ? "You are the creator of this event. You can watch it directly without purchasing a ticket."
-                        : "Purchase this ticket NFT to unlock permanent access to exclusive content."}
-                </p>
+                {/* Price Tag */}
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-near-green/20 flex items-center justify-center">
+                            <span className="text-near-green font-bold text-sm">Ⓝ</span>
+                        </div>
+                        <div>
+                            <p className="text-2xl font-bold text-white">
+                                {isFree ? 'FREE' : `${priceNear.toFixed(2)}`}
+                            </p>
+                            {!isFree && <p className="text-xs text-zinc-500">NEAR</p>}
+                        </div>
+                    </div>
 
-                {error && (
-                    <div className="flex items-center gap-2 text-red-400 text-xs bg-red-950/30 p-2.5 rounded-lg mb-4 border border-red-900/50">
-                        <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                        {error}
+                    {/* Creator Badge */}
+                    {isCreator && (
+                        <span className="px-3 py-1 text-xs font-medium bg-near-green/20 text-near-green rounded-full border border-near-green/30">
+                            Your Content
+                        </span>
+                    )}
+                </div>
+
+                {/* Cost Breakdown (paid tickets only) */}
+                {!isFree && !isCreator && (
+                    <div className="rounded-lg border border-white/10 bg-black/20 overflow-hidden">
+                        <button
+                            type="button"
+                            onClick={() => setShowCostBreakdown(!showCostBreakdown)}
+                            className="w-full flex items-center justify-between px-3 py-2 text-xs text-zinc-400 hover:text-zinc-300 transition-colors"
+                        >
+                            <span>Total wallet cost: ~{(priceNear + 0.02 + (hasSessionKey === false ? 0.25 : 0)).toFixed(2)} Ⓝ</span>
+                            {showCostBreakdown ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                        </button>
+                        {showCostBreakdown && (
+                            <div className="px-3 pb-2 space-y-1 text-[11px] text-zinc-500 border-t border-white/5 pt-2">
+                                <div className="flex justify-between">
+                                    <span>Ticket price</span>
+                                    <span className="font-mono">{priceNear.toFixed(2)} Ⓝ</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>NFT storage deposit</span>
+                                    <span className="font-mono">0.01 Ⓝ</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>Gas buffer</span>
+                                    <span className="font-mono">0.01 Ⓝ</span>
+                                </div>
+                                {hasSessionKey === false && (
+                                    <div className="flex justify-between text-zinc-400">
+                                        <span>Session key deposit (one-time)</span>
+                                        <span className="font-mono">0.25 Ⓝ</span>
+                                    </div>
+                                )}
+                                <div className="flex justify-between font-medium text-zinc-300 border-t border-white/5 pt-1 mt-1">
+                                    <span>Total</span>
+                                    <span className="font-mono">{(priceNear + 0.02 + (hasSessionKey === false ? 0.25 : 0)).toFixed(2)} Ⓝ</span>
+                                </div>
+                                <p className="text-[10px] text-zinc-600 pt-1">
+                                    Excess deposit is refunded by the contract.
+                                </p>
+                            </div>
+                        )}
                     </div>
                 )}
 
-                {/* Divider */}
-                <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent mb-4" />
-
-                {/* Creator Row */}
-                <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                        <div className="relative">
-                            <div className="w-9 h-9 rounded-xl bg-zinc-700 p-0.5">
-                                <div className="w-full h-full rounded-[10px] bg-zinc-900 flex items-center justify-center">
-                                    <span className="text-xs font-bold text-white">
-                                        {eventDetails.uploader ? eventDetails.uploader.substring(0, 2).toUpperCase() : "??"}
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="flex flex-col">
-                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Creator</span>
-                            <span className="text-xs text-zinc-300 font-medium truncate max-w-[120px]">
-                                {eventDetails.uploader || "Unknown"}
-                            </span>
-                        </div>
+                {/* Error Message */}
+                {error && (
+                    <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+                        <AlertCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
+                        <p className="text-sm text-red-400">{error}</p>
                     </div>
+                )}
 
-                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-                        <div className="w-2 h-2 rounded-full bg-near-green animate-pulse" />
-                        <span className="text-[10px] text-zinc-400 font-medium">NFT Ticket</span>
-                    </div>
-                </div>
+                {/* Action Button */}
+                {!isCreator && (
+                    <Button
+                        onClick={isFree ? handleFreeTicketClaim : handlePurchase}
+                        disabled={actionLoading}
+                        className="w-full h-12 bg-gradient-to-r from-near-green to-emerald-500 hover:from-near-green/90 hover:to-emerald-500/90 text-near-black font-bold text-base rounded-xl shadow-lg shadow-near-green/20 transition-all duration-300"
+                    >
+                        {actionLoading ? (
+                            <>
+                                <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                                Processing...
+                            </>
+                        ) : (
+                            <>
+                                <Ticket className="h-5 w-5 mr-2" />
+                                {isFree ? 'Claim Free Ticket' : `Buy Ticket • ${priceNear.toFixed(2)} Ⓝ`}
+                            </>
+                        )}
+                    </Button>
+                )}
 
-                {/* Purchase Button */}
-                <Button
-                    onClick={isCreator ? () => window.location.href = `/watch?cid=${cid}` : isFree ? handleFreeTicketClaim : handlePurchase}
-                    disabled={(!isCreator && (actionLoading || !accountId))}
-                    className={`w-full font-bold py-3 shadow-lg border-0 ${isCreator
-                        ? "bg-near-green hover:bg-near-green/80 text-near-black shadow-near-green/20"
-                        : "bg-near-green text-near-black hover:bg-near-green/80"
-                        }`}
-                >
-                    {actionLoading && !isCreator ? (
-                        <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            {hasSessionKey === false ? "Initializing..." : "Processing..."}
-                        </>
-                    ) : isCreator ? (
-                        <>
-                            <Play className="mr-2 h-4 w-4" />
-                            Watch Now
-                        </>
-                    ) : (
-                        <>
-                            <Ticket className="mr-2 h-4 w-4" />
-                            {isFree ? "Claim Free Ticket" : hasSessionKey === false ? `Buy & Setup (${eventDetails.price} NEAR)` : `Buy Ticket (${eventDetails.price} NEAR)`}
-                        </>
-                    )}
-                </Button>
+                {/* Creator Watch Button */}
+                {isCreator && (
+                    <Button
+                        onClick={() => window.location.href = `/watch?cid=${cid}`}
+                        className="w-full h-12 bg-gradient-to-r from-zinc-700 to-zinc-600 hover:from-zinc-600 hover:to-zinc-500 text-white font-bold text-base rounded-xl"
+                    >
+                        <Play className="h-5 w-5 mr-2" />
+                        Watch Your Video
+                    </Button>
+                )}
             </div>
-
-            {/* Bottom Shine Effect */}
-            <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
         </div>
     );
 }

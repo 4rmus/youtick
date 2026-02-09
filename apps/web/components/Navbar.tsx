@@ -11,8 +11,8 @@ import { Menu, X, User, LogOut, Sparkles } from 'lucide-react';
 import { Branding } from '@/components/landing/Branding';
 
 export function Navbar() {
-    const { modal, accountId, selector, getWallet } = useWallet();
-    const { language, setLanguage, t } = useLanguage();
+    const { modal, accountId, getWallet } = useWallet();
+    const { language, t } = useLanguage();
     const [mounted, setMounted] = useState(false);
     const pathname = usePathname();
     const [isMenuOpen, setIsMenuOpen] = useState(false);

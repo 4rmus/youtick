@@ -2,22 +2,22 @@
 
 > **Decentralized Video-on-Demand Platform on NEAR Protocol**
 
-YouTick is a Web3-native VOD platform where creators upload encrypted videos to IPFS and monetize through NFT-gated access. Built with NEAR Protocol, Lit Protocol, and Lighthouse Storage.
+YouTick is a Web3-native VOD platform where creators upload encrypted videos to IPFS and monetize through NFT-gated access. Built with NEAR Protocol and Nova Protocol for TEE-based encryption.
 
 ![NEAR](https://img.shields.io/badge/Blockchain-NEAR%20Protocol-blue)
-![IPFS](https://img.shields.io/badge/Storage-IPFS%20(Lighthouse)-yellow)
-![Lit](https://img.shields.io/badge/Encryption-Lit%20Protocol-orange)
+![IPFS](https://img.shields.io/badge/Storage-IPFS-yellow)
+![Nova](https://img.shields.io/badge/Encryption-Nova%20Protocol-purple)
 ![Next.js](https://img.shields.io/badge/Frontend-Next.js%2016-black)
 
-## 🌟 Why YouTick?
+## Why YouTick?
 
 ### True Digital Ownership
 Traditional platforms give you a "viewing right" that can be revoked anytime. YouTick gives you an **NFT ticket** that sits in your wallet forever. You can transfer it, sell it on secondary markets, or keep it as a collectible.
 
 ### Frictionless Web3 UX
-Most dApps suffer from \"Signature Fatigue\" – endless wallet pop-ups. YouTick uses **Session Keys with Chain Signatures (MPC)** to create a seamless experience:
+Most dApps suffer from "Signature Fatigue" – endless wallet pop-ups. YouTick uses **Session Keys** to create a seamless experience:
 - **First upload** → One signature to create Session Key
-- **Subsequent uploads** → Fully signless (Session Key enables MPC calls)
+- **Subsequent uploads** → Fully signless
 - **Video playback** → Signless decryption for ticket holders
 
 ### Creator-First Economics
@@ -27,21 +27,21 @@ Most dApps suffer from \"Signature Fatigue\" – endless wallet pop-ups. YouTick
 
 ### Censorship-Resistant Infrastructure
 - Content stored on **IPFS** (distributed, persistent)
-- Encryption via **Lit Protocol** (decentralized key management)
+- Encryption via **Nova Protocol** (TEE-based key management)
 - Access rights on **NEAR blockchain** (immutable)
 - Even if the frontend goes down, your content and access rights persist
 
-## ✨ Features
+## Features
 
-- **Decentralized Storage** – Videos encrypted client-side and stored on IPFS via Lighthouse
+- **Decentralized Storage** – Videos encrypted client-side and stored on IPFS
 - **NFT-Gated Access** – Only ticket (NFT) holders can decrypt and watch content
-- **Session Key Uploads** – Chain Signatures enable seamless batch transactions with progress tracking
+- **Session Key Uploads** – Seamless batch transactions with progress tracking
 - **Pay-Per-View Events** – Create ticketed events with custom NEAR pricing
-- **MPC Integration** – Secure NEAR↔Ethereum address derivation for Lit Protocol
-- **🎁 Gift Tickets** – Create shareable gift links for your videos; recipients can claim NFT tickets
-- **👤 Trial Accounts** – New users can claim gifts without a NEAR wallet; automatic sub-account creation
+- **TEE Encryption** – Secure encryption via Nova's Shade Agent (Phala Network)
+- **Gift Tickets** – Create shareable gift links for your videos; recipients can claim NFT tickets
+- **Trial Accounts** – New users can claim gifts without a NEAR wallet; automatic sub-account creation
 
-## 🏗 Architecture
+## Architecture
 
 ```mermaid
 graph TB
@@ -51,29 +51,28 @@ graph TB
     end
 
     subgraph NEAR["Blockchain (NEAR Protocol)"]
-        CONTRACT[NFT Contract<br/>v1.utick.testnet]
+        CONTRACT[NFT Contract<br/>youtick-prod-v1.near]
         WALLET[Wallet Selector]
         SESSION[Session Keys]
     end
 
     subgraph Services["Decentralized Services"]
-        LIT[Lit Protocol<br/>Encryption + ACCs]
-        IPFS[Lighthouse/IPFS<br/>Video Storage]
-        MPC[Chain Signatures<br/>MPC Address]
+        NOVA[Nova Protocol<br/>TEE Encryption]
+        IPFS[IPFS<br/>Video Storage]
+        SHADE[Shade Agent<br/>Key Management]
     end
 
     UI --> LIB
     LIB --> WALLET --> CONTRACT
-    LIB --> LIT
+    LIB --> NOVA
     LIB --> IPFS
-    LIB --> MPC
-    SESSION --> CONTRACT
-    CONTRACT -.->|ownership check| LIT
+    NOVA --> SHADE
+    CONTRACT -.->|ownership check| NOVA
 ```
 
-> 📚 **Detailed Documentation**: See [docs/](./docs/) for comprehensive technical guides.
+> **Detailed Documentation**: See [docs/](./docs/) for comprehensive technical guides.
 
-## 🛠 Tech Stack
+## Tech Stack
 
 | Layer | Technology | Version |
 |-------|------------|---------|
@@ -81,19 +80,18 @@ graph TB
 | UI Framework | React | 19.2.3 |
 | Styling | Tailwind CSS | 4.x |
 | Language | TypeScript | 5.x |
-| Blockchain | NEAR Protocol | Testnet |
+| Blockchain | NEAR Protocol | Mainnet |
 | Smart Contract | Rust (NEAR SDK) | 5.1.0 |
-| Encryption | Lit Protocol | 7.3.1 (Datil Dev) |
-| Storage | Lighthouse / IPFS | 0.4.3 |
+| Encryption | Nova Protocol | TEE |
+| Storage | IPFS (Pinata) | - |
 | Wallet | NEAR Wallet Selector | 10.1.2 |
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
 - Node.js 18+
-- NEAR Testnet Wallet ([mynearwallet.com](https://testnet.mynearwallet.com))
-- Lighthouse API Key ([lighthouse.storage](https://lighthouse.storage))
+- NEAR Wallet ([mynearwallet.com](https://app.mynearwallet.com))
 
 ### Installation
 
@@ -108,7 +106,7 @@ npm install
 
 # Configure environment
 cp .env.example .env.local
-# Edit .env.local with your API keys
+# Edit .env.local with your settings
 
 # Start dev server
 npm run dev
@@ -121,18 +119,22 @@ Open [http://localhost:3000](http://localhost:3000)
 Create `apps/web/.env.local`:
 
 ```env
-NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
-NEXT_PUBLIC_LIT_ACTION_IPFS_CID=your_lit_action_cid
-LIT_DELEGATION_WALLET_PRIVATE_KEY=0x...         # Ethereum key for Lit PKP minting
-LIGHTHOUSE_API_KEY=your_lighthouse_api_key
-RELAYER_ACCOUNT_ID=your-relayer.testnet         # For sponsored transactions
-RELAYER_PRIVATE_KEY=ed25519:...                 # NEAR key for relayer
+# Network
+NEXT_PUBLIC_NEAR_NETWORK=mainnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick-prod-v1.near
+
+# Nova Protocol
+NEXT_PUBLIC_NOVA_NETWORK=mainnet
+NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk.near
+NEXT_PUBLIC_NOVA_API_KEY=
+NEXT_PUBLIC_NOVA_ACCOUNT_ID=
+
+# Relayer (Optional - for sponsored transactions)
+RELAYER_ACCOUNT_ID=relayer.youtick-prod-v1.near
+RELAYER_PRIVATE_KEY=ed25519:...
 ```
 
-```
-
-## 📖 Usage
+## Usage
 
 ### Upload Video
 
@@ -140,8 +142,8 @@ RELAYER_PRIVATE_KEY=ed25519:...                 # NEAR key for relayer
 2. Go to `/upload`
 3. Select video, enter title/description/price
 4. Click "Upload Video" – progress UI shows each step:
-   - Session Setup (Chain Signatures)
-   - Address Recovery (MPC)
+   - Session Setup
+   - Nova Group Creation
    - File Encryption & Upload
    - NFT Minting
 5. Video is encrypted, uploaded to IPFS, and NFT minted
@@ -149,13 +151,13 @@ RELAYER_PRIVATE_KEY=ed25519:...                 # NEAR key for relayer
 ### Watch Video
 
 1. Browse `/discover`
-2. Purchase ticket (0.5+ NEAR)
+2. Purchase ticket (costs NEAR)
 3. Open `/watch` – video auto-decrypts for ticket holders
 
 ### Gift Tickets
 
 1. Go to `/profile`
-2. Click "Hediye Et" (Gift) button
+2. Click "Gift" button
 3. Select the video you want to gift
 4. Choose how many gift links to create
 5. Share the generated links – recipients can claim tickets
@@ -163,7 +165,7 @@ RELAYER_PRIVATE_KEY=ed25519:...                 # NEAR key for relayer
 ### Trial Accounts (for Gift Recipients)
 
 1. Open a gift link (e.g., `/claim?secret=...`)
-2. Choose "Yeni Hesap" (New Account)
+2. Choose "New Account"
 3. Enter a username – a sub-account is created automatically
 4. Ticket is claimed and you're logged in instantly
 
@@ -171,7 +173,7 @@ RELAYER_PRIVATE_KEY=ed25519:...                 # NEAR key for relayer
 
 View balances and owned tickets at `/profile`
 
-## 🏗 Project Structure
+## Project Structure
 
 ```text
 youtick-mvp/
@@ -181,15 +183,16 @@ youtick-mvp/
 │       ├── components/      # React components
 │       ├── hooks/           # Custom hooks
 │       └── lib/             # Utilities & services
+│           └── nova/        # Nova SDK integration
 ├── contracts/
 │   └── nft-ticket/          # NEAR smart contract
 │       └── src/lib.rs       # Contract source code
 └── docs/                    # Detailed technical documentation
 ```
 
-## 🔧 Smart Contract
+## Smart Contract
 
-Deployed to: `v1.utick.testnet`
+Deployed to: `youtick-prod-v1.near`
 
 ### Key Functions
 
@@ -216,18 +219,18 @@ wasm-opt -Oz -o target/.../youtick_nft_opt.wasm \
              target/.../youtick_nft.wasm
 
 # Deploy
-near deploy YOUR_ACCOUNT.testnet target/.../youtick_nft_opt.wasm \
-     --initFunction new --initArgs '{"owner_id":"YOUR_ACCOUNT.testnet"}'
+near deploy YOUR_ACCOUNT.near target/.../youtick_nft_opt.wasm \
+     --initFunction new --initArgs '{"owner_id":"YOUR_ACCOUNT.near"}'
 ```
 
-## 🔐 Security
+## Security
 
 - **Client-side encryption**: Videos never leave browser unencrypted
 - **NFT ownership verification**: On-chain proof required for decryption
-- **MPC signatures**: Secure cross-chain address derivation via NEAR Chain Signatures
-- **Lit Protocol ACCs**: Programmable access control conditions
+- **TEE key management**: Keys isolated in Trusted Execution Environment (Phala)
+- **Nova group access**: Programmable access control via group membership
 
-## 💰 Cost Advantage
+## Cost Advantage
 
 YouTick operates on a **Zero-Server Economy**:
 - No monthly AWS/server bills
@@ -235,31 +238,31 @@ YouTick operates on a **Zero-Server Economy**:
 - Costs scale linearly with usage
 - Compare: Traditional video platforms cost thousands monthly
 
-## 🧪 Testing
+## Testing
 
 ```bash
 # View contract metadata
-near view v1.utick.testnet nft_metadata '{}'
+near view youtick-prod-v1.near nft_metadata '{}'
 
 # List tokens
-near view v1.utick.testnet nft_tokens '{"from_index":"0","limit":10}'
+near view youtick-prod-v1.near nft_tokens '{"from_index":"0","limit":10}'
 
 # Get event details
-near view v1.utick.testnet get_event '{"encrypted_cid":"VIDEO_CID"}'
+near view youtick-prod-v1.near get_event '{"encrypted_cid":"VIDEO_CID"}'
 ```
 
-## 📄 License
+## License
 
 MIT License
 
-## 🔗 Links
+## Links
 
 - [NEAR Protocol](https://near.org)
-- [Lit Protocol](https://litprotocol.com)
-- [Lighthouse Storage](https://lighthouse.storage)
+- [Nova Protocol](https://nova.ai)
+- [Phala Network](https://phala.network)
 
 ---
 
-**Contract**: `v1.utick.testnet` | **Network**: Testnet
+**Contract**: `youtick-prod-v1.near` | **Network**: Mainnet
 
 *"Own Your Content. Own Your Audience. Own Your Revenue."*

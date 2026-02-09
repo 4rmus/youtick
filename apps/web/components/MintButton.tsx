@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Loader2, Coins, Ticket } from "lucide-react";
 import { actions, yoctoToNear, nearToYocto } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
+import { NEAR_CONFIG } from '@/lib/constants';
 
 interface MintButtonProps {
     cid?: string;
@@ -21,7 +22,7 @@ export function MintButton({ cid }: MintButtonProps) {
         const fetchPrice = async () => {
             setLoadingPrice(true);
             try {
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+                const contractId = NEAR_CONFIG.contractId;
                 // v7: Use JsonRpcProvider directly for view calls
                 const provider = getProvider();
 
@@ -51,7 +52,7 @@ export function MintButton({ cid }: MintButtonProps) {
         setMinting(true);
         try {
             const wallet = await getWallet();
-            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+            const contractId = NEAR_CONFIG.contractId;
 
             // SALES FLOW: Buy Ticket
             if (cid && price) {

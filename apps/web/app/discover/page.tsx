@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { useAllVideos } from '@/hooks/useAllVideos';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { useLanguage } from '@/components/providers/LanguageContext';
+import { NovaThumbnail } from '@/components/NovaThumbnail';
 
 export default function DiscoverPage() {
     const { tokens, loading, error, debugInfo } = useAllVideos();
@@ -80,9 +81,9 @@ export default function DiscoverPage() {
 
                                         {/* Thumbnail */}
                                         <div className="aspect-video relative overflow-hidden">
-                                            {token.metadata?.media && token.metadata.media.startsWith("http") ? (
-                                                <img
-                                                    src={token.metadata.media}
+                                            {token.metadata?.media && (token.metadata.media.startsWith("http") || token.metadata.media.startsWith("nova://")) ? (
+                                                <NovaThumbnail
+                                                    url={token.metadata.media}
                                                     alt={token.metadata.title}
                                                     className="w-full h-full object-cover scale-105 group-hover:scale-110 transition-transform duration-700 ease-out"
                                                 />

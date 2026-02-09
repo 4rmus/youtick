@@ -132,7 +132,7 @@ async hasSessionKey(): Promise<boolean>
 // Create new session key with gas deposit
 async createSessionKey(wallet: any, gasAmount: string = '1'): Promise<void>
 
-// Create minimal session key (for PKP users)
+// Create minimal session key (for users with existing balance)
 async createSessionKeyMinimal(wallet: any): Promise<void>
 
 // Save existing key pair
@@ -195,10 +195,10 @@ if (!hasKey) {
 }
 ```
 
-### Minimal Setup (PKP Users)
+### Minimal Setup (Existing Users)
 
 ```typescript
-// For users with PKP (less gas needed)
+// For users with existing balance (less gas needed)
 await sessionManager.createSessionKeyMinimal(wallet);
 // Deposits 0.5 NEAR (MPC + mint + event margin)
 ```
@@ -427,5 +427,5 @@ export { getCurrentRpcUrl, withRpcFailover, NETWORK_ID, CONTRACT_ID };
 ## Related Documentation
 
 - [Smart Contract](./smart-contract.md) - Prepaid methods
-- [Lit Protocol](./lit-protocol.md) - Session sigs
+- [Nova Protocol](./nova-protocol.md) - TEE encryption
 - [User Flows](../guides/user-flows.md) - End-to-end flows

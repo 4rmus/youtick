@@ -9,20 +9,20 @@ YouTick implements a multi-layer security model:
 | Layer | Protection | Implementation |
 |-------|------------|----------------|
 | **Transport** | HTTPS | All communications encrypted |
-| **Storage** | AES-256-GCM | Client-side encryption via Lit |
+| **Storage** | AES-256-GCM | TEE-based encryption via Nova |
 | **Access** | NFT Ownership | On-chain verification |
-| **Keys** | MPC | NEAR Chain Signatures |
+| **Keys** | TEE Isolation | Shade Agent key management |
 | **Sessions** | Time-limited | 7-day max, scoped permissions |
 
 ## Client-Side Encryption
 
-Videos are encrypted **in the browser** before upload. The server never sees unencrypted content.
+Videos are encrypted **in the browser** before upload via Nova SDK. The server never sees unencrypted content.
 
 ```
 User Browser                    Server/IPFS
     │                               │
     │ 1. Select Video               │
-    │ 2. Generate Key (Lit)         │
+    │ 2. Create Nova Group          │
     │ 3. Encrypt (AES-256-GCM)      │
     │ 4. Upload Encrypted ─────────▶│
     │                               │
@@ -30,9 +30,10 @@ User Browser                    Server/IPFS
 ```
 
 **Key Points:**
-- Encryption key is derived from Lit Protocol PKP
-- Only wallet owner can request decryption
+- Encryption keys are managed by Nova's Shade Agent (TEE)
+- Only group members can request decryption
 - IPFS stores only encrypted blobs
+- Keys never leave the TEE environment
 
 ## NFT Ownership Verification
 
@@ -42,7 +43,7 @@ User Browser                    Server/IPFS
 // Smart contract method
 pub fn verify_ownership(&self, account_id: AccountId, cid: String) -> bool {
     let tokens = self.nft_tokens_for_owner(account_id.clone(), None, None);
-    
+
     tokens.iter().any(|token| {
         if let Some(video_meta) = &token.video_metadata {
             video_meta.encrypted_cid == cid
@@ -53,28 +54,18 @@ pub fn verify_ownership(&self, account_id: AccountId, cid: String) -> bool {
 }
 ```
 
-### Lit Action Verification
+### Nova Group Verification
 
-```javascript
-// Executed on Lit nodes
-const verifyOwnership = async (nearContract, accountId, cid) => {
-  const response = await Lit.Actions.call({
-    url: "https://test.rpc.fastnear.com",
-    method: "POST",
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      method: "query",
-      params: {
-        request_type: "call_function",
-        account_id: nearContract,
-        method_name: "verify_ownership",
-        args_base64: btoa(JSON.stringify({ account_id: accountId, cid }))
-      }
-    })
-  });
-  
-  return JSON.parse(response.body).result.result;
-};
+```typescript
+// Verify membership before decryption
+const hasAccess = await nova.verifyMembership({
+  groupId: videoGroupId,
+  accountId: viewerAccountId
+});
+
+if (!hasAccess) {
+  throw new Error('Not authorized to view this content');
+}
 ```
 
 ## Session Key Security
@@ -97,20 +88,46 @@ const sessionKeyPermissions = {
 async function validateSession(): Promise<boolean> {
   const session = getStoredSession();
   if (!session) return false;
-  
+
   // Check if key still exists on-chain
   const accessKeys = await near.viewAccessKeyList(accountId);
   const keyExists = accessKeys.some(
     key => key.public_key === session.publicKey
   );
-  
+
   if (!keyExists) {
     clearStoredSession();
     return false;
   }
-  
+
   return true;
 }
+```
+
+## Nova TEE Security
+
+### Shade Agent Guarantees
+
+| Property | Description |
+|----------|-------------|
+| **Confidentiality** | Code and data encrypted in memory |
+| **Integrity** | Tamper-evident execution |
+| **Attestation** | Cryptographic proof of correct execution |
+| **Isolation** | Separated from host OS and other enclaves |
+
+### Key Rotation
+
+Nova automatically rotates keys when members are removed:
+
+```typescript
+// When ticket is transferred
+await nova.removeMember({
+  groupId: videoGroupId,
+  memberId: previousOwnerAccountId
+});
+
+// Key is automatically rotated
+// Previous owner can no longer decrypt
 ```
 
 ## API Security
@@ -128,27 +145,12 @@ const ratelimit = new Ratelimit({
 export async function POST(request: Request) {
   const ip = request.headers.get("x-forwarded-for");
   const { success } = await ratelimit.limit(ip);
-  
+
   if (!success) {
     return Response.json({ error: "Rate limited" }, { status: 429 });
   }
-  
+
   // Process request...
-}
-```
-
-### JWT Token Validation
-
-```typescript
-// For premium features
-import { verify } from "jsonwebtoken";
-
-function validateAccessToken(token: string): AccessClaims {
-  try {
-    return verify(token, process.env.JWT_SECRET) as AccessClaims;
-  } catch {
-    throw new Error("Invalid or expired token");
-  }
 }
 ```
 
@@ -169,14 +171,14 @@ function validateAccessToken(token: string): AccessClaims {
 
 - [ ] Monitor contract storage growth
 - [ ] Check for unusual transaction patterns
-- [ ] Verify Lit Action CID hasn't changed
+- [ ] Verify Nova group integrity
 - [ ] Audit session key creations
 
 ## Threat Model
 
 | Threat | Likelihood | Impact | Mitigation |
 |--------|------------|--------|------------|
-| Key extraction | Low | Critical | MPC (no single point) |
+| Key extraction | Low | Critical | TEE isolation (no single point) |
 | Content theft | Low | High | Client-side encryption |
 | Session hijacking | Medium | Medium | Short expiry, scoped permissions |
 | Contract exploit | Low | Critical | Audit, upgrade mechanism |
@@ -192,12 +194,12 @@ function validateAccessToken(token: string): AccessClaims {
 3. Notify affected users
 4. Deploy new contract version
 
-### If Lit Action Compromised
+### If Nova Group Compromised
 
-1. Unpint compromised CID from IPFS
-2. Deploy new Lit Action
-3. Update frontend to use new CID
-4. Regenerate session signatures
+1. Rotate group key immediately
+2. Remove unauthorized members
+3. Verify all current member access
+4. Monitor for unusual decryption requests
 
 ---
 

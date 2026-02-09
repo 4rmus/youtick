@@ -29,13 +29,13 @@
 │  │                      Core Libraries                             │     │
 │  │                                                                 │     │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐     │     │
-│  │  │  Crust      │  │  Lit        │  │  Session Manager    │     │     │
-│  │  │  (Storage)  │  │  (Encrypt)  │  │  (NEAR Session Key) │     │     │
+│  │  │  Nova SDK   │  │   IPFS      │  │  Session Manager    │     │     │
+│  │  │ (Encrypt)   │  │  (Storage)  │  │  (NEAR Session Key) │     │     │
 │  │  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘     │     │
 │  │         │                │                    │                 │     │
 │  │  ┌──────┴──────┐  ┌──────┴──────┐  ┌─────────┴─────────┐       │     │
-│  │  │ W3Auth      │  │ PKP Manager │  │ Chain Signatures  │       │     │
-│  │  │ (Auth)      │  │ (PKP Mint)  │  │ (MPC Derivation)  │       │     │
+│  │  │ Shade Agent │  │ Multi-GW    │  │ Signless Txns     │       │     │
+│  │  │ (TEE Keys)  │  │ (Failover)  │  │ (Function Keys)   │       │     │
 │  │  └─────────────┘  └─────────────┘  └───────────────────┘       │     │
 │  └─────────────────────────────────────────────────────────────────┘     │
 │                                                                          │
@@ -45,23 +45,21 @@
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                        Decentralized Services                             │
 ├───────────────────┬───────────────────┬──────────────────────────────────┤
-│   NEAR Protocol   │   Crust / IPFS    │      Lit Protocol                │
+│   NEAR Protocol   │       IPFS        │      Nova Protocol               │
 │                   │                   │                                   │
 │ ┌───────────────┐ │ ┌───────────────┐ │ ┌─────────────────────────────┐  │
-│ │ NFT Contract  │ │ │ IPFS Gateway  │ │ │ Lit Nodes (Datil-Test)      │  │
-│ │ (v1.utick)    │ │ │ (crustipfs)   │ │ │ - Encryption/Decryption     │  │
-│ │               │ │ │               │ │ │ - Access Control Conditions │  │
-│ │ - Events      │ │ │ Upload:       │ │ │ - PKP Management            │  │
-│ │ - Tickets     │ │ │ crustipfs.xyz │ │ │ - Session Signatures        │  │
-│ │ - Prepaid     │ │ │               │ │ └─────────────────────────────┘  │
-│ │ - Gifts       │ │ │ Retrieval:    │ │                                   │
-│ │ - Trials      │ │ │ ipfs.io       │ │ ┌─────────────────────────────┐  │
-│ └───────────────┘ │ │ dweb.link     │ │ │ MPC Signer (testnet)        │  │
-│                   │ │ w3s.link      │ │ │ - ETH Address Derivation    │  │
-│ ┌───────────────┐ │ │ crustipfs.xyz │ │ │ - Cross-chain Signatures    │  │
-│ │ MPC Contract  │ │ └───────────────┘ │ └─────────────────────────────┘  │
-│ │ (v1.signer)   │ │                   │                                   │
-│ └───────────────┘ │                   │                                   │
+│ │ NFT Contract  │ │ │ IPFS Gateways │ │ │ Shade Agent (Phala TEE)     │  │
+│ │ (v1.utick)    │ │ │               │ │ │ - AES-256-GCM Encryption    │  │
+│ │               │ │ │ Upload:       │ │ │ - Group-based Access        │  │
+│ │ - Events      │ │ │ Pinata        │ │ │ - Automatic Key Rotation    │  │
+│ │ - Tickets     │ │ │               │ │ │ - NEAR Auth Verification    │  │
+│ │ - Prepaid     │ │ │ Retrieval:    │ │ └─────────────────────────────┘  │
+│ │ - Gifts       │ │ │ ipfs.io       │ │                                   │
+│ │ - Trials      │ │ │ dweb.link     │ │ ┌─────────────────────────────┐  │
+│ └───────────────┘ │ │ pinata.cloud  │ │ │ Nova Contract (testnet)     │  │
+│                   │ └───────────────┘ │ │ - Group Management          │  │
+│                   │                   │ │ - Member Access Control     │  │
+│                   │                   │ └─────────────────────────────┘  │
 └───────────────────┴───────────────────┴──────────────────────────────────┘
 ```
 
@@ -77,9 +75,8 @@
 | Blockchain | NEAR Protocol | Testnet | Smart Contract, Payments |
 | Blockchain | near-api-js | 7.x | NEAR SDK |
 | Contract | Rust + NEAR SDK | 5.1.0 | Smart Contract |
-| Storage | Crust Network | W3Auth | Decentralized IPFS |
-| Encryption | Lit Protocol | 7.3.1 | Access Control, PKP |
-| Signing | NEAR Chain Signatures | MPC | Cross-chain Operations |
+| Storage | IPFS | Pinata | Decentralized video storage |
+| Encryption | Nova Protocol | TEE | Shade Agent key management |
 
 ---
 
@@ -91,13 +88,12 @@ All operations run client-side:
 
 | Operation | Method | Server Required |
 |-----------|--------|-----------------|
-| Upload | Crust W3Auth + Session Key | No |
+| Upload | Nova encrypt + IPFS | No |
 | Retrieval | Multi-gateway failover | No |
-| Encryption | Lit Protocol SDK | No |
+| Encryption | Nova SDK (TEE) | No |
 | NFT Minting | Session Key | No |
 | Payments | NEAR smart contract | No |
 | Trial Creation | Onboarding Key | No (fallback only) |
-| PKP Minting | NEAR MPC Chain Signatures | No |
 
 ### Signless UX
 
@@ -113,13 +109,14 @@ Session Keys enable transactions without wallet popups:
 
 ### Token-Gated Access
 
-NFT ownership gates content access:
+NFT ownership gates content access via Nova groups:
 
 ```
-1. Creator uploads encrypted video
-2. Buyer purchases NFT ticket
-3. Contract verifies ownership
-4. Lit decrypts content for owner
+1. Creator uploads → Nova encrypts video
+2. Creator creates Nova group for video
+3. Buyer purchases NFT ticket
+4. Contract adds buyer to Nova group
+5. Nova decrypts content for group member
 ```
 
 ---
@@ -141,12 +138,9 @@ apps/web/
 │   ├── VideoPlayer.tsx     # Player component
 │   └── landing/            # Landing page sections
 └── lib/
-    ├── crust/              # Storage module
-    ├── lit.ts              # Encryption
+    ├── nova/               # Nova SDK integration
     ├── session-manager.ts  # Session keys
-    ├── chain-signatures.ts # MPC
-    ├── gift-service.ts     # Gift system
-    └── access-conditions.ts # Lit ACCs
+    └── gift-service.ts     # Gift system
 ```
 
 ### Contract Layer
@@ -163,10 +157,8 @@ contracts/nft-ticket/
 
 | Library | File | Purpose |
 |---------|------|---------|
-| Crust | `lib/crust/` | IPFS upload/retrieval |
-| Lit | `lib/lit.ts` | Encrypt/decrypt |
+| Nova | `lib/nova/` | Encrypt/decrypt via TEE |
 | Session | `lib/session-manager.ts` | Signless transactions |
-| MPC | `lib/chain-signatures.ts` | ETH address derivation |
 | Gift | `lib/gift-service.ts` | Gift link system |
 
 ---
@@ -179,13 +171,13 @@ contracts/nft-ticket/
 Creator → UploadForm
     │
     ▼
-[Lit Protocol] ── Encrypt video with ACC
+[Nova SDK] ── Create group, encrypt video
     │
     ▼
-[Crust/IPFS] ── Upload encrypted blob (W3Auth)
+[IPFS] ── Upload encrypted blob
     │
     ▼
-[NEAR Contract] ── create_event_prepaid(cid, price)
+[NEAR Contract] ── create_event_prepaid(cid, groupId, price)
     │
     ▼
 Event listed on platform
@@ -200,10 +192,10 @@ Viewer → IpfsPlayer
 [NEAR Contract] ── verify_ownership(account_id)
     │
     ▼
-[Crust/IPFS] ── Fetch encrypted video (gateway race)
+[IPFS] ── Fetch encrypted video (gateway failover)
     │
     ▼
-[Lit Protocol] ── Decrypt with session sigs
+[Nova SDK] ── Verify membership, decrypt via Shade Agent
     │
     ▼
 Stream decrypted video
@@ -224,7 +216,10 @@ Buyer → EventCard
 [Contract] ── 98% → Creator, 2% → Platform
     │
     ▼
-NFT minted to buyer
+[Nova SDK] ── Add buyer to video group
+    │
+    ▼
+NFT minted to buyer, immediate access
 ```
 
 ---
@@ -234,17 +229,16 @@ NFT minted to buyer
 | Contract | Network | Address |
 |----------|---------|---------|
 | NFT Ticket | Testnet | `v1.utick.testnet` |
-| MPC Signer | Testnet | `v1.signer-prod.testnet` |
+| Nova | Testnet | `nova.testnet` |
 
 ---
 
 ## Related Documentation
 
 - [Smart Contract](./smart-contract.md) - Contract architecture
-- [Crust Storage](./crust-storage.md) - Storage module
-- [Lit Protocol](./lit-protocol.md) - Encryption system
+- [Nova Protocol](./nova-protocol.md) - Encryption system
+- [Shade Agent](./shade-agent.md) - TEE key management
 - [Session Keys](./session-keys.md) - Signless UX
-- [Chain Signatures](./chain-signatures.md) - MPC operations
 
 ---
 

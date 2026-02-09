@@ -8,8 +8,7 @@
 |-------------|---------|-------|
 | Node.js | 18.0+ | Recommended: 20.x LTS |
 | npm | 9.0+ | Comes with Node.js |
-| NEAR Wallet | - | [testnet.mynearwallet.com](https://testnet.mynearwallet.com) |
-| Lighthouse API Key | - | [lighthouse.storage](https://lighthouse.storage) |
+| NEAR Wallet | - | [mynearwallet.com](https://app.mynearwallet.com) |
 
 ## Installation
 
@@ -37,19 +36,17 @@ Edit `.env.local` with your credentials:
 
 ```env
 # Network Configuration
-NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
+NEXT_PUBLIC_NEAR_NETWORK=mainnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick-prod-v1.near
 
-# Lit Protocol
-NEXT_PUBLIC_LIT_ACTION_IPFS_CID=your_lit_action_cid
-NEXT_PUBLIC_LIT_CAPACITY_TOKEN_ID=your_capacity_token
-LIT_DELEGATION_WALLET_PRIVATE_KEY=0x...
-
-# Storage
-LIGHTHOUSE_API_KEY=your_lighthouse_api_key
+# Nova Protocol
+NEXT_PUBLIC_NOVA_NETWORK=mainnet
+NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk.near
+NEXT_PUBLIC_NOVA_API_KEY=
+NEXT_PUBLIC_NOVA_ACCOUNT_ID=
 
 # Relayer (Optional - for sponsored transactions)
-RELAYER_ACCOUNT_ID=relayer.v1.utick.testnet
+RELAYER_ACCOUNT_ID=relayer.youtick-prod-v1.near
 RELAYER_PRIVATE_KEY=ed25519:...
 ```
 
@@ -96,9 +93,9 @@ youtick-mvp/
 │       ├── components/      # React components
 │       ├── hooks/           # Custom hooks
 │       └── lib/             # Business logic
-│           ├── lit.ts       # Lit Protocol
+│           ├── nova/        # Nova Protocol
 │           ├── near.ts      # NEAR integration
-│           └── lighthouse.ts # IPFS storage
+│           └── session-manager.ts # Session Keys
 ├── contracts/
 │   └── nft-ticket/          # NEAR smart contract
 │       └── src/lib.rs       # Rust contract
@@ -118,8 +115,8 @@ cargo build --target wasm32-unknown-unknown --release
 cargo test           # Run contract tests
 
 # View Contract
-near view v1.utick.testnet nft_metadata '{}'
-near view v1.utick.testnet get_event '{"encrypted_cid":"YOUR_CID"}'
+near view youtick-prod-v1.near nft_metadata '{}'
+near view youtick-prod-v1.near get_event '{"encrypted_cid":"YOUR_CID"}'
 ```
 
 ## Troubleshooting
@@ -130,13 +127,14 @@ near view v1.utick.testnet get_event '{"encrypted_cid":"YOUR_CID"}'
 localStorage.clear()
 ```
 
-### Lit Protocol Errors
-- Check if `LIT_DELEGATION_WALLET_PRIVATE_KEY` is set
-- Verify Lit Action CID is correct and pinned
+### Nova Protocol Errors
+- Check Nova API key configuration
+- Verify network configuration matches (mainnet)
 
 ### IPFS Upload Timeout
-- Check `LIGHTHOUSE_API_KEY` is valid
+- Check network connectivity
 - Verify file size is under 100MB for testing
+- Try alternate IPFS gateway
 
 ---
 

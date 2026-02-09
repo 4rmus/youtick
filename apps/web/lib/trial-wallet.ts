@@ -2,9 +2,9 @@
 import { Account, KeyPair, KeyPairSigner, type KeyPairString } from "near-api-js";
 import { BrowserKeyStore } from "./keystore-v7";
 
-const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet';
+const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
 const RPC_URL = NETWORK_ID === 'mainnet'
-    ? 'https://rpc.mainnet.near.org'
+    ? 'https://free.rpc.fastnear.com'
     : 'https://test.rpc.fastnear.com';
 
 /**
