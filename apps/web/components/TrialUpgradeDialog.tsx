@@ -38,7 +38,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
             const { seedPhrase: phrase, publicKey: pk, secretKey } = generateSeedPhrase();
 
             // Get stored trial key from localStorage
-            const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet';
+            const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
             const storedKey = localStorage.getItem(`near-api-js:keystore:${accountId}:${networkId}`);
 
             if (!storedKey) {
@@ -290,7 +290,12 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
 
                             <Button
                                 className="w-full bg-purple-600 hover:bg-purple-700"
-                                onClick={() => window.open('https://wallet.testnet.near.org/create', '_blank')}
+                                onClick={() => {
+                                    const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
+                                    window.open(networkId === 'mainnet'
+                                        ? 'https://app.mynearwallet.com/create'
+                                        : 'https://testnet.mynearwallet.com/create', '_blank');
+                                }}
                             >
                                 MyNearWallet'ta Hesap Oluştur
                                 <ExternalLink className="w-4 h-4 ml-2" />

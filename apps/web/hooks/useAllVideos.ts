@@ -9,7 +9,6 @@ const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
 
 interface DebugInfo {
     contractId?: string;
-    rpcUrl?: string;
     step?: string;
     rawEventCount?: number;
     finalCount?: number;
@@ -27,12 +26,9 @@ export function useAllVideos() {
         const fetchVideos = async () => {
             setLoading(true);
             setError(null);
-            // Use local proxy to avoid CORS issues on localhost
-            const rpcUrl = '/api/near-rpc';
 
             setDebugInfo({
                 contractId: NFT_CONTRACT_ID,
-                rpcUrl,
                 step: 'init'
             });
 

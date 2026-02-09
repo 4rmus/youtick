@@ -35,7 +35,6 @@ apps/web/
 │   │       └── page.tsx    # Purchase page
 │   └── api/                # API routes
 │       ├── near-rpc/
-│       ├── lighthouse/upload/
 │       └── video/access/
 ├── components/
 │   ├── IpfsPlayer.tsx      # Decrypted video player
@@ -45,19 +44,16 @@ apps/web/
 │   └── ui/                 # Reusable UI components
 ├── hooks/
 │   ├── useNear.ts          # NEAR wallet hook
-│   ├── useLit.ts           # Lit Protocol hook
+│   ├── useNova.ts          # Nova Protocol hook
 │   └── useSession.ts       # Session key management
 ├── lib/
 │   ├── near.ts             # NEAR configuration
-│   ├── lit.ts              # Lit Protocol service
-│   ├── lighthouse.ts       # IPFS uploads
+│   ├── nova/               # Nova SDK integration
 │   ├── session-manager.ts  # Session keys
-│   ├── chain-signatures.ts # MPC signing
-│   └── access-conditions.ts # Lit ACCs
+│   └── gift-service.ts     # Gift system
 └── public/
     └── locales/            # i18n files
-        ├── en.json
-        └── tr.json
+        └── en.json
 ```
 
 ## Key Components
@@ -71,40 +67,36 @@ Handles the complete upload workflow:
 async function handleUpload(file: File, metadata: EventMetadata) {
   setStep("session");
   const sessionKey = await setupSession();
-  
-  setStep("address");
-  const ethAddress = await deriveEthAddress(accountId);
-  
+
+  setStep("group");
+  const groupId = await nova.createGroup({ name: `video-${uuid}` });
+
   setStep("encrypt");
-  const encrypted = await encryptVideo(file, ethAddress);
-  
-  setStep("upload");
-  const cid = await uploadToIPFS(encrypted.ciphertext);
-  
+  const result = await nova.uploadFile({ groupId, file });
+
   setStep("mint");
-  await mintNFT(cid, metadata);
-  
+  await mintNFT(result.cid, groupId, metadata);
+
   setStep("complete");
 }
 ```
 
 **Progress States:**
 1. `session` - Creating session key
-2. `address` - Deriving MPC address
-3. `encrypt` - Encrypting video
-4. `upload` - Uploading to IPFS
-5. `mint` - Minting NFT
-6. `complete` - Success
+2. `group` - Creating Nova group
+3. `encrypt` - Encrypting and uploading video
+4. `mint` - Minting NFT
+5. `complete` - Success
 
 ### IpfsPlayer.tsx
 
 Decrypted video player for ticket holders:
 
 ```typescript
-function IpfsPlayer({ eventCid }: { eventCid: string }) {
+function IpfsPlayer({ eventCid, groupId }: { eventCid: string, groupId: string }) {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
+
   useEffect(() => {
     async function loadVideo() {
       // 1. Check ownership
@@ -113,23 +105,36 @@ function IpfsPlayer({ eventCid }: { eventCid: string }) {
         setError("You don't own a ticket for this video");
         return;
       }
-      
-      // 2. Fetch encrypted content
-      const encrypted = await fetchFromIPFS(eventCid);
-      
-      // 3. Decrypt
-      const decrypted = await decryptVideo(encrypted, sessionSigs, eventCid);
-      
+
+      // 2. Verify Nova membership
+      const isMember = await nova.verifyMembership({ groupId, accountId });
+      if (!isMember) {
+        setError("Not authorized to view this content");
+        return;
+      }
+
+      // 3. Download and decrypt via Nova
+      const decryptedVideo = await nova.downloadFile({
+        groupId,
+        cid: eventCid,
+        accountId
+      });
+
       // 4. Create blob URL
-      setVideoUrl(URL.createObjectURL(decrypted));
+      setVideoUrl(URL.createObjectURL(decryptedVideo));
     }
-    
+
     loadVideo();
-  }, [eventCid]);
-  
+
+    // Cleanup
+    return () => {
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+    };
+  }, [eventCid, groupId]);
+
   if (error) return <ErrorDisplay message={error} />;
   if (!videoUrl) return <LoadingSpinner />;
-  
+
   return <video src={videoUrl} controls />;
 }
 ```
@@ -142,23 +147,42 @@ function IpfsPlayer({ eventCid }: { eventCid: string }) {
 export function useNear() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [accountId, setAccountId] = useState<string | null>(null);
-  
+
   async function signIn() {
     const selector = await setupWalletSelector(nearConfig);
     const wallet = await selector.wallet("my-near-wallet");
     const accounts = await wallet.signIn({ contractId: CONTRACT_ID });
-    
+
     setWallet(wallet);
     setAccountId(accounts[0].accountId);
   }
-  
+
   async function signOut() {
     await wallet?.signOut();
     setWallet(null);
     setAccountId(null);
   }
-  
+
   return { wallet, accountId, signIn, signOut };
+}
+```
+
+### useNova.ts
+
+```typescript
+export function useNova() {
+  const [nova, setNova] = useState<NovaSDK | null>(null);
+
+  useEffect(() => {
+    const sdk = new NovaSDK({
+      networkId: 'testnet',
+      contractId: 'nova.testnet',
+      shadeAgentUrl: 'https://shade-testnet.phala.network'
+    });
+    setNova(sdk);
+  }, []);
+
+  return nova;
 }
 ```
 
@@ -167,42 +191,19 @@ export function useNear() {
 ```typescript
 export function useSession(wallet: Wallet) {
   const [hasSession, setHasSession] = useState(false);
-  
+
   async function setupSession() {
     const manager = new SessionManager();
     await manager.createSession(wallet);
     setHasSession(true);
   }
-  
+
   async function signWithSession(method: string, args: object) {
     const manager = new SessionManager();
     return manager.signWithSession(method, args);
   }
-  
+
   return { hasSession, setupSession, signWithSession };
-}
-```
-
-## Internationalization
-
-YouTick supports Turkish and English:
-
-```typescript
-// hooks/useLocale.ts
-export function useLocale() {
-  const [locale, setLocale] = useState("en");
-  const [messages, setMessages] = useState<Record<string, string>>({});
-  
-  useEffect(() => {
-    import(`../public/locales/${locale}.json`)
-      .then(setMessages);
-  }, [locale]);
-  
-  function t(key: string): string {
-    return messages[key] || key;
-  }
-  
-  return { locale, setLocale, t };
 }
 ```
 
@@ -216,36 +217,43 @@ async function withRetry<T>(
   maxRetries = 3
 ): Promise<T> {
   let lastError: Error;
-  
+
   for (let i = 0; i < maxRetries; i++) {
     try {
       return await fn();
     } catch (error) {
       lastError = error as Error;
-      
+
       // Exponential backoff
       await delay(Math.pow(2, i) * 1000);
     }
   }
-  
+
   throw lastError!;
 }
 ```
 
-### Popup Blocked Handler
+### Nova Error Handler
 
 ```typescript
-async function handleRetrySign() {
-  // For MPC operations that might fail due to popup blocking
+import { NovaError, ErrorCode } from 'nova-sdk-js';
+
+async function handleNovaOperation() {
   try {
-    const result = await signWithMPC(wallet, payload);
-    return result;
+    await nova.downloadFile({ groupId, cid, accountId });
   } catch (error) {
-    if (error.message.includes("popup")) {
-      // Show manual retry button
-      showRetryButton();
+    if (error instanceof NovaError) {
+      switch (error.code) {
+        case ErrorCode.UNAUTHORIZED:
+          showPurchasePrompt();
+          break;
+        case ErrorCode.SHADE_AGENT_ERROR:
+          await retryWithBackoff(() => nova.downloadFile({ groupId, cid, accountId }));
+          break;
+        default:
+          toast.error('An unexpected error occurred');
+      }
     }
-    throw error;
   }
 }
 ```
@@ -262,25 +270,35 @@ const IpfsPlayer = dynamic(() => import("./IpfsPlayer"), {
 });
 ```
 
-### Session Caching
+### Nova SDK Singleton
 
 ```typescript
-// Cache session signatures for 7 days
-const SESSION_CACHE_KEY = "lit_session_cache";
-const SESSION_EXPIRY = 7 * 24 * 60 * 60 * 1000;
+// lib/nova/index.ts
+let novaInstance: NovaSDK | null = null;
 
-function getCachedSession(): SessionSigs | null {
-  const cached = localStorage.getItem(SESSION_CACHE_KEY);
-  if (!cached) return null;
-  
-  const { sigs, timestamp } = JSON.parse(cached);
-  if (Date.now() - timestamp > SESSION_EXPIRY) {
-    localStorage.removeItem(SESSION_CACHE_KEY);
-    return null;
+export function getNovaSDK(): NovaSDK {
+  if (!novaInstance) {
+    novaInstance = new NovaSDK({
+      networkId: process.env.NEXT_PUBLIC_NOVA_NETWORK,
+      contractId: process.env.NEXT_PUBLIC_NOVA_CONTRACT_ID,
+      shadeAgentUrl: process.env.NEXT_PUBLIC_NOVA_SHADE_AGENT_URL
+    });
   }
-  
-  return sigs;
+  return novaInstance;
 }
+```
+
+### Resource Cleanup
+
+```typescript
+// Clean up blob URLs after video playback
+useEffect(() => {
+  return () => {
+    if (videoUrl) {
+      URL.revokeObjectURL(videoUrl);
+    }
+  };
+}, [videoUrl]);
 ```
 
 ## Development Commands

@@ -6,11 +6,13 @@ import { useWallet } from '@/components/providers/WalletProvider';
 import { yoctoToNear } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
+import { NovaThumbnail } from '@/components/NovaThumbnail';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { MintButton } from '@/components/MintButton';
 import { Loader2, Play, Ticket, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
+import { NEAR_CONFIG } from '@/lib/constants';
 
 export default function TicketPage() {
     return (
@@ -39,7 +41,7 @@ function TicketContent() {
         const fetchData = async () => {
             setLoading(true);
             try {
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+                const contractId = NEAR_CONFIG.contractId;
 
                 // v7: Use JsonRpcProvider directly for view calls
                 const provider = getProvider();
@@ -123,8 +125,8 @@ function TicketContent() {
                         <>
                             {parsed.thumbnailCid ? (
                                 <div className="mx-auto w-full aspect-video rounded-lg overflow-hidden border border-zinc-800 relative group">
-                                    <img
-                                        src={parsed.thumbnailUrl}
+                                    <NovaThumbnail
+                                        url={parsed.thumbnailUrl}
                                         alt={parsed.title}
                                         className="w-full h-full object-cover"
                                     />

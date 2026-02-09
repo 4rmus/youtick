@@ -41,19 +41,18 @@ export const ErrorCodes = {
     ACCOUNT_EXISTS: 'ACCOUNT_EXISTS',
     ACCOUNT_NOT_FOUND: 'ACCOUNT_NOT_FOUND',
 
-    // Lit Protocol
-    LIT_ERROR: 'LIT_ERROR',
+    // Nova Protocol (TEE Encryption)
+    NOVA_ERROR: 'NOVA_ERROR',
     ENCRYPTION_FAILED: 'ENCRYPTION_FAILED',
     DECRYPTION_FAILED: 'DECRYPTION_FAILED',
-    PKP_MINTING_FAILED: 'PKP_MINTING_FAILED',
-    SESSION_SIGS_FAILED: 'SESSION_SIGS_FAILED',
+    GROUP_CREATION_FAILED: 'GROUP_CREATION_FAILED',
     ACCESS_DENIED: 'ACCESS_DENIED',
-    CAPABILITY_ERROR: 'CAPABILITY_ERROR',
+    TEE_UNAVAILABLE: 'TEE_UNAVAILABLE',
 
-    // IPFS / Crust Storage
+    // IPFS Storage
     UPLOAD_FAILED: 'UPLOAD_FAILED',
     IPFS_FETCH_FAILED: 'IPFS_FETCH_FAILED',
-    CRUST_ERROR: 'CRUST_ERROR',
+    IPFS_ERROR: 'IPFS_ERROR',
 
     // Validation
     VALIDATION_ERROR: 'VALIDATION_ERROR',
@@ -178,9 +177,9 @@ function detectErrorCode(error: Error): ErrorCode | null {
         return ErrorCodes.ACCOUNT_EXISTS;
     }
 
-    // Lit Protocol errors
-    if (message.includes('capability') || message.includes('sessionSigs')) {
-        return ErrorCodes.CAPABILITY_ERROR;
+    // Nova Protocol errors
+    if (message.includes('tee') || message.includes('shade agent')) {
+        return ErrorCodes.TEE_UNAVAILABLE;
     }
     if (message.includes('access') && message.includes('denied')) {
         return ErrorCodes.ACCESS_DENIED;
@@ -190,6 +189,9 @@ function detectErrorCode(error: Error): ErrorCode | null {
     }
     if (message.includes('encrypt')) {
         return ErrorCodes.ENCRYPTION_FAILED;
+    }
+    if (message.includes('group') && message.includes('fail')) {
+        return ErrorCodes.GROUP_CREATION_FAILED;
     }
 
     // Upload errors
@@ -210,7 +212,7 @@ function isRetryableByCode(code: ErrorCode): boolean {
         ErrorCodes.RPC_ERROR,
         ErrorCodes.RPC_TIMEOUT,
         ErrorCodes.SESSION_EXPIRED,
-        ErrorCodes.CAPABILITY_ERROR,
+        ErrorCodes.TEE_UNAVAILABLE,
     ];
     return retryableCodes.includes(code);
 }

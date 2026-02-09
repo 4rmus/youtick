@@ -9,26 +9,25 @@ YouTick uses NEAR Protocol as its primary blockchain layer, handling:
 - NFT ticket minting and transfers
 - Payment processing with 98/2 split
 - Session keys for signless transactions
-- Chain Signatures for cross-chain MPC
 
 ## Configuration
 
 ```typescript
 // lib/near.ts
 export const nearConfig = {
-  networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || "testnet",
-  contractId: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "v1.utick.testnet",
-  
+  networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || "mainnet",
+  contractId: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "youtick-prod-v1.near",
+
   // RPC Endpoints with failover
   nodeUrls: [
-    "https://test.rpc.fastnear.com",
-    "https://rpc.testnet.near.org",
-    "https://near-testnet.lava.build"
+    "https://free.rpc.fastnear.com",
+    "https://rpc.mainnet.near.org",
+    "https://near-mainnet.lava.build"
   ],
-  
-  walletUrl: "https://testnet.mynearwallet.com",
-  helperUrl: "https://helper.testnet.near.org",
-  explorerUrl: "https://testnet.nearblocks.io"
+
+  walletUrl: "https://app.mynearwallet.com",
+  helperUrl: "https://helper.mainnet.near.org",
+  explorerUrl: "https://nearblocks.io"
 };
 ```
 
@@ -41,13 +40,13 @@ import { setupWalletSelector } from "@near-wallet-selector/core";
 import { setupMyNearWallet } from "@near-wallet-selector/my-near-wallet";
 
 const selector = await setupWalletSelector({
-  network: "testnet",
+  network: "mainnet",
   modules: [setupMyNearWallet()]
 });
 
 const wallet = await selector.wallet("my-near-wallet");
 const accounts = await wallet.signIn({
-  contractId: "v1.utick.testnet",
+  contractId: "youtick-prod-v1.near",
   methodNames: [] // Full access
 });
 ```
@@ -90,7 +89,7 @@ const event = await contract.get_event({
 ```typescript
 // Example: Buy a ticket
 await wallet.signAndSendTransaction({
-  receiverId: "v1.utick.testnet",
+  receiverId: "youtick-prod-v1.near",
   actions: [{
     type: "FunctionCall",
     params: {
@@ -150,11 +149,11 @@ export class SessionManager {
 
 ## Chain Signatures (MPC)
 
-NEAR Chain Signatures enable cross-chain signing for Lit Protocol:
+NEAR Chain Signatures enable cross-chain signing for Nova Protocol:
 
 ```typescript
 // lib/chain-signatures.ts
-const MPC_CONTRACT = "v1.signer-prod.testnet";
+const MPC_CONTRACT = "v1.signer-prod.near";
 
 export async function deriveEthAddress(
   nearAccountId: string,
@@ -219,4 +218,4 @@ try {
 
 ---
 
-**Previous**: [← Architecture](./03-architecture.md) | **Next**: [Lit Protocol →](./05-lit-protocol.md)
+**Previous**: [← Architecture](./03-architecture.md) | **Next**: [Nova Protocol →](./05-nova-protocol.md)

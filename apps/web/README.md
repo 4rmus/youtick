@@ -12,8 +12,7 @@ Next.js frontend for the YouTick decentralized video platform.
 |-------|----------|
 | Architecture Overview | [docs/architecture/overview.md](../../docs/architecture/overview.md) |
 | Smart Contract | [docs/architecture/smart-contract.md](../../docs/architecture/smart-contract.md) |
-| Crust Storage | [docs/architecture/crust-storage.md](../../docs/architecture/crust-storage.md) |
-| Lit Protocol | [docs/architecture/lit-protocol.md](../../docs/architecture/lit-protocol.md) |
+| Nova Protocol | [docs/architecture/nova-protocol.md](../../docs/architecture/nova-protocol.md) |
 | Session Keys | [docs/architecture/session-keys.md](../../docs/architecture/session-keys.md) |
 | Chain Signatures | [docs/architecture/chain-signatures.md](../../docs/architecture/chain-signatures.md) |
 | User Flows | [docs/guides/user-flows.md](../../docs/guides/user-flows.md) |
@@ -41,18 +40,14 @@ Create `.env.local` (see [.env.example](.env.example) for template):
 NEXT_PUBLIC_NEAR_NETWORK=testnet
 NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
 
-# Required - Lit Protocol
-NEXT_PUBLIC_LIT_NETWORK=datil-test
-NEXT_PUBLIC_LIT_ACTION_IPFS_CID=your_lit_action_cid
-NEXT_PUBLIC_LIT_CAPACITY_TOKEN_ID=your_capacity_token_id
-LIT_DELEGATION_WALLET_PRIVATE_KEY=0x...
+# Required - Nova Protocol (TEE Encryption)
+NEXT_PUBLIC_NOVA_NETWORK=testnet
+NEXT_PUBLIC_NOVA_CONTRACT_ID=nova.testnet
+NEXT_PUBLIC_NOVA_SHADE_AGENT_URL=https://shade-testnet.phala.network
 
 # Optional - Trial Accounts
 RELAYER_ACCOUNT_ID=your-relayer.testnet
 RELAYER_PRIVATE_KEY=ed25519:...
-
-# Note: Crust W3Auth uses NEAR Session Key signatures
-# No API keys required for IPFS storage
 ```
 
 ## Project Structure
@@ -76,13 +71,12 @@ hooks/            # Custom React hooks
   └── useNearWallet.ts
 
 lib/              # Utilities & services
-  ├── crust/      # Crust Network IPFS storage
+  ├── nova/       # Nova Protocol TEE encryption
   │   ├── index.ts        # Module entry point
   │   ├── types.ts        # Type definitions
-  │   ├── w3auth.ts       # W3Auth token generation
-  │   ├── client.ts       # Upload client
-  │   └── gateway.ts      # Multi-gateway failover
-  ├── lit.ts              # Lit Protocol encryption
+  │   ├── auth.ts         # Session Key authentication
+  │   ├── client.ts       # Upload/download client
+  │   └── groups.ts       # Group-based access control
   ├── session-manager.ts  # NEAR Session Keys (signless)
   ├── chain-signatures.ts # NEAR MPC (ETH address derivation)
   ├── gift-service.ts     # Gift link system
@@ -93,9 +87,8 @@ lib/              # Utilities & services
 
 | Component | Description |
 |-----------|-------------|
-| `UploadForm` | Video upload with Lit encryption & Crust IPFS |
-| `IpfsPlayer` | Decrypted video playback with multi-gateway |
-| `VideoPlayer` | Video player with Lit decryption |
+| `UploadForm` | Video upload with Nova TEE encryption |
+| `IpfsPlayer` | Decrypted video playback with Nova |
 | `TicketPurchaseCard` | Event ticket purchasing |
 | `WalletSelector` | NEAR wallet connection |
 
@@ -106,8 +99,8 @@ lib/              # Utilities & services
 - **Tailwind CSS 4** for styling
 - **near-api-js v7** for NEAR blockchain
 - **@near-wallet-selector** for wallet integration
-- **Lit Protocol SDK 7.3.1** for encryption
-- **Crust Network** for decentralized IPFS storage (W3Auth)
+- **Nova Protocol** for TEE-based encryption
+- **IPFS** for decentralized video storage
 
 ## Decentralization
 
@@ -115,9 +108,9 @@ All core operations run client-side:
 
 | Operation | Method |
 |-----------|--------|
-| Video Encryption | Lit Protocol (client-side) |
-| IPFS Upload | Crust W3Auth (Session Key signed) |
+| Video Encryption | Nova Protocol TEE (client-side) |
+| IPFS Upload | Nova SDK (encrypted storage) |
 | IPFS Retrieval | Multi-gateway failover |
 | NFT Minting | NEAR contract (prepaid balance) |
-| PKP Minting | NEAR MPC Chain Signatures |
 | Payments | On-chain (98% creator, 2% platform) |
+| Access Control | Nova Group-based (instant revocation) |

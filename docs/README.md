@@ -29,8 +29,8 @@ cd contracts/nft-ticket && cargo near build
 |----------|-------------|
 | [Overview](./architecture/overview.md) | System architecture and technology stack |
 | [Smart Contract](./architecture/smart-contract.md) | NFT ticket contract (Rust/NEAR) |
-| [Crust Storage](./architecture/crust-storage.md) | Decentralized IPFS storage module |
-| [Lit Protocol](./architecture/lit-protocol.md) | Encryption and access control |
+| [Nova Protocol](./architecture/nova-protocol.md) | TEE-based encryption system |
+| [Shade Agent](./architecture/shade-agent.md) | TEE key management |
 | [Session Keys](./architecture/session-keys.md) | Signless transaction management |
 | [Chain Signatures](./architecture/chain-signatures.md) | NEAR MPC for cross-chain operations |
 
@@ -39,6 +39,7 @@ cd contracts/nft-ticket && cargo near build
 | Document | Description |
 |----------|-------------|
 | [User Flows](./guides/user-flows.md) | Upload, watch, purchase, gift flows |
+| [Nova SDK](./guides/nova-sdk.md) | Nova SDK integration guide |
 
 ### API Reference
 
@@ -46,7 +47,7 @@ cd contracts/nft-ticket && cargo near build
 |----------|-------------|
 | [Contract Methods](./api/contract-methods.md) | Smart contract function reference |
 
-### Legacy Docs (Numbered)
+### Main Docs (Numbered)
 
 | Document | Description | Audience |
 |----------|-------------|----------|
@@ -54,8 +55,7 @@ cd contracts/nft-ticket && cargo near build
 | [02 Quick Start](./02-quick-start.md) | Getting started guide | Developers |
 | [03 Architecture](./03-architecture.md) | System architecture and design | Architects |
 | [04 NEAR Integration](./04-near-integration.md) | NEAR Protocol smart contracts | Blockchain Devs |
-| [05 Lit Protocol](./05-lit-protocol.md) | Encryption and access control | Backend Devs |
-| [06 IPFS & Lighthouse](./06-ipfs-lighthouse.md) | Decentralized storage (deprecated) | Backend Devs |
+| [05 Nova Protocol](./05-nova-protocol.md) | TEE-based encryption and access control | Backend Devs |
 | [07 Smart Contracts](./07-smart-contracts.md) | Contract specifications | Contract Devs |
 | [08 Security](./08-security.md) | Security patterns and audit | Security Engineers |
 | [09 Frontend](./09-frontend.md) | Next.js implementation | Frontend Devs |
@@ -67,7 +67,7 @@ cd contracts/nft-ticket && cargo near build
 
 | Feature | Description | Decentralized |
 |---------|-------------|---------------|
-| Token-Gated Content | Videos encrypted with Lit Protocol | Yes |
+| Token-Gated Content | Videos encrypted with Nova TEE | Yes |
 | Signless UX | Session Keys enable popup-free transactions | Yes |
 | Gift Links | Share content via Access Key drops | Yes |
 | Trial Accounts | Sponsored onboarding (no crypto required) | Yes |
@@ -83,8 +83,8 @@ cd contracts/nft-ticket && cargo near build
 | Frontend | React | 19.2.3 | UI Components |
 | Blockchain | NEAR Protocol | Testnet | Smart Contract, Payments |
 | Blockchain | NEAR SDK (Rust) | 5.1.0 | Contract Development |
-| Storage | Crust Network | W3Auth | Decentralized IPFS |
-| Encryption | Lit Protocol | 7.3.1 | Access Control, PKP |
+| Encryption | Nova Protocol | TEE | Shade Agent key management |
+| Storage | IPFS | Pinata | Decentralized video storage |
 | Signing | NEAR MPC | Chain Signatures | Cross-chain Operations |
 
 ---
@@ -97,8 +97,7 @@ youtick-demo/
 │   ├── app/                  # Next.js App Router pages
 │   ├── components/           # React components
 │   └── lib/                  # Core business logic
-│       ├── crust/            # IPFS storage module
-│       ├── lit.ts            # Encryption
+│       ├── nova/             # Nova encryption module
 │       ├── session-manager.ts # Session keys
 │       └── chain-signatures.ts # MPC
 ├── contracts/                # Smart contracts
@@ -123,9 +122,9 @@ youtick-demo/
 ## Reading Order
 
 1. **Newcomers**: [Overview](./architecture/overview.md) → [User Flows](./guides/user-flows.md)
-2. **Frontend Devs**: [Session Keys](./architecture/session-keys.md) → [Lit Protocol](./architecture/lit-protocol.md)
+2. **Frontend Devs**: [Session Keys](./architecture/session-keys.md) → [Nova Protocol](./architecture/nova-protocol.md)
 3. **Contract Devs**: [Smart Contract](./architecture/smart-contract.md) → [Contract Methods](./api/contract-methods.md)
-4. **Integrators**: [Crust Storage](./architecture/crust-storage.md) → [Chain Signatures](./architecture/chain-signatures.md)
+4. **Integrators**: [Nova SDK](./guides/nova-sdk.md) → [Shade Agent](./architecture/shade-agent.md)
 
 ---
 
@@ -135,13 +134,13 @@ YouTick is 100% decentralized with no server dependencies:
 
 | Component | Technology | Method |
 |-----------|------------|--------|
-| Storage | Crust Network | W3Auth + Session Keys |
-| Encryption | Lit Protocol | Client-side |
+| Storage | IPFS (Pinata) | Gateway failover |
+| Encryption | Nova Protocol | TEE Shade Agent |
 | Payments | NEAR Protocol | Smart contract |
 | Cross-chain | NEAR MPC | Chain Signatures |
 
-See [Crust Storage](./architecture/crust-storage.md) for implementation details.
+See [Nova Protocol](./architecture/nova-protocol.md) for implementation details.
 
 ---
 
-*Last Updated: January 2026*
+*Last Updated: February 2025*

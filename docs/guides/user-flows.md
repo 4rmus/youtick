@@ -34,21 +34,19 @@
 │     └── No key? → Wallet popup (one-time)                       │
 │           │                                                      │
 │           ▼                                                      │
-│  3. Generate Access Control Conditions                          │
-│     └── Based on video CID (will-be-minted)                     │
+│  3. Create Nova Group for video                                 │
+│     └── nova.createGroup({ name: `video-${uuid}` })             │
 │           │                                                      │
 │           ▼                                                      │
-│  4. Lit Protocol Encryption                                     │
-│     └── encryptFile(video, ACC, sessionSigs)                    │
+│  4. Nova Protocol Encryption                                    │
+│     └── nova.uploadFile(video, groupId)                         │
 │           │                                                      │
 │           ▼                                                      │
-│  5. Crust IPFS Upload                                           │
-│     ├── Generate W3Auth token (Session Key)                     │
-│     └── uploadFile(encryptedBlob, accountId)                    │
+│  5. Returns encrypted CID from IPFS                             │
 │           │                                                      │
 │           ▼                                                      │
 │  6. Create Event on Contract                                    │
-│     └── create_event_prepaid(cid, title, price)                 │
+│     └── create_event_prepaid(cid, groupId, title, price)        │
 │           │                                                      │
 │           ▼                                                      │
 │  7. Event listed on platform                                    │
@@ -67,31 +65,34 @@ async function uploadVideo(file: File, title: string, price: string) {
         await sessionManager.createSessionKey(wallet, '1');
     }
 
-    // 2. Get session signatures for Lit
-    const ethAddress = await deriveEthAddress(accountId, 'lit/pkp-minting');
-    const sessionSigs = await lit.getSessionSigs(
-        wallet, accountId, ethAddress, signWithMPC
-    );
+    // 2. Create Nova group for this video
+    const groupResult = await nova.createGroup({
+        name: `video-${crypto.randomUUID()}`,
+        members: [accountId],
+        metadata: { videoTitle: title }
+    });
 
-    // 3. Encrypt video
-    const acc = createAccessConditions(accountId);
-    const { ciphertext, dataToEncryptHash } = await lit.encryptFile(
-        file, acc, null, 'ethereum', sessionSigs
-    );
+    // 3. Encrypt and upload via Nova
+    const uploadResult = await nova.uploadFile({
+        groupId: groupResult.groupId,
+        file: file,
+        metadata: {
+            fileName: file.name,
+            mimeType: file.type
+        },
+        onProgress: (progress) => setUploadProgress(progress)
+    });
 
-    // 4. Upload to Crust
-    const encryptedBlob = new Blob([ciphertext]);
-    const { cid } = await uploadFile(encryptedBlob, accountId);
-
-    // 5. Create event
+    // 4. Create event on contract
     await sessionManager.callMethod('create_event_prepaid', {
-        encrypted_cid: cid,
+        encrypted_cid: uploadResult.cid,
+        nova_group_id: groupResult.groupId,
         title,
         description: 'Video description',
         price: nearToYocto(parseFloat(price))
     });
 
-    return cid;
+    return uploadResult.cid;
 }
 ```
 
@@ -120,24 +121,19 @@ async function uploadVideo(file: File, title: string, price: string) {
 │     │           └── Show purchase option                        │
 │     │                                                            │
 │     ▼                                                            │
-│  3. Fetch encrypted video from IPFS                             │
-│     └── fetchWithRace(cid) or fetchWithFailover(cid)            │
+│  3. Verify Nova group membership                                │
+│     └── nova.verifyMembership({ groupId, accountId })           │
 │           │                                                      │
 │           ▼                                                      │
-│  4. Get/Cache Lit Session Sigs                                  │
-│     ├── Cached? → Use cached (24hr)                             │
-│     └── Not cached? → getSessionSigs() or getSessionSigsWithPKP()│
+│  4. Download and decrypt via Nova                               │
+│     └── nova.downloadFile({ groupId, cid, accountId })          │
 │           │                                                      │
 │           ▼                                                      │
-│  5. Decrypt with Lit                                            │
-│     └── decryptFile(ciphertext, hash, ACC, sessionSigs)         │
+│  5. Create playable blob                                        │
+│     └── URL.createObjectURL(decryptedVideo)                     │
 │           │                                                      │
 │           ▼                                                      │
-│  6. Create playable blob                                        │
-│     └── new Blob([decryptedBytes], { type: 'video/mp4' })       │
-│           │                                                      │
-│           ▼                                                      │
-│  7. Stream video to player                                      │
+│  6. Stream video to player                                      │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -145,39 +141,34 @@ async function uploadVideo(file: File, title: string, price: string) {
 ### Code Example
 
 ```typescript
-async function watchVideo(cid: string) {
+async function watchVideo(cid: string, groupId: string) {
     // 1. Check ownership
     const hasAccess = await checkOwnership(accountId, cid);
     if (!hasAccess) {
         throw new Error('Purchase required');
     }
 
-    // 2. Fetch encrypted video (parallel gateway race)
-    const response = await fetchWithRace(cid, {
-        timeout: 10000,
-        maxGateways: 3
+    // 2. Verify Nova membership
+    const isMember = await nova.verifyMembership({
+        groupId: groupId,
+        accountId: accountId
     });
-    const encryptedData = await response.arrayBuffer();
 
-    // 3. Get session signatures (cached if possible)
-    const sessionSigs = pkpInfo
-        ? await lit.getSessionSigsWithPKP(pkpInfo.publicKey, pkpInfo.ethAddress, accountId)
-        : await lit.getSessionSigs(wallet, accountId, ethAddress, signWithMPC);
+    if (!isMember) {
+        throw new Error('Not authorized to view this content');
+    }
 
-    // 4. Decrypt
-    const acc = createAccessConditions(accountId);
-    const decrypted = await lit.decryptFile(
-        encryptedData.ciphertext,
-        encryptedData.dataToEncryptHash,
-        acc,
-        null,
-        'ethereum',
-        sessionSigs
-    );
+    // 3. Download and decrypt via Nova
+    const decryptedVideo = await nova.downloadFile({
+        groupId: groupId,
+        cid: cid,
+        accountId: accountId
+    });
 
-    // 5. Create playable URL
-    const blob = new Blob([decrypted], { type: 'video/mp4' });
-    return URL.createObjectURL(blob);
+    // 4. Create playable URL
+    const videoUrl = URL.createObjectURL(decryptedVideo);
+
+    return videoUrl;
 }
 ```
 
@@ -216,10 +207,14 @@ async function watchVideo(cid: string) {
 │     └── 2%  → Platform                                          │
 │                   │                                              │
 │                   ▼                                              │
-│  4. NFT minted to buyer                                         │
+│  4. Add buyer to Nova group                                     │
+│     └── nova.addMember({ groupId, memberId: buyer })            │
 │                   │                                              │
 │                   ▼                                              │
-│  5. Immediate access to content                                 │
+│  5. NFT minted to buyer                                         │
+│                   │                                              │
+│                   ▼                                              │
+│  6. Immediate access to content                                 │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -227,7 +222,7 @@ async function watchVideo(cid: string) {
 ### Code Example
 
 ```typescript
-async function purchaseTicket(eventCid: string) {
+async function purchaseTicket(eventCid: string, groupId: string) {
     const sessionManager = new SessionManager(accountId);
 
     // Check if can use signless
@@ -259,6 +254,13 @@ async function purchaseTicket(eventCid: string) {
             ]
         });
     }
+
+    // Add buyer to Nova group for decryption access
+    await nova.addMember({
+        groupId: groupId,
+        memberId: accountId,
+        role: 'member'
+    });
 }
 ```
 
@@ -368,10 +370,14 @@ async function createGifts(eventCid: string, count: number) {
 │        └────────┬────────┘                                       │
 │                 │                                                │
 │                 ▼                                                │
-│  5. Access key deleted (one-time use)                           │
+│  5. Add recipient to Nova group                                 │
+│     └── nova.addMember({ groupId, memberId: recipient })        │
 │                 │                                                │
 │                 ▼                                                │
-│  6. NFT in recipient's wallet                                   │
+│  6. Access key deleted (one-time use)                           │
+│                 │                                                │
+│                 ▼                                                │
+│  7. NFT in recipient's wallet + video access                    │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -416,6 +422,13 @@ async function claimGift(url: string, hasAccount: boolean, newUsername?: string)
             newKeyPair.toString()
         );
     }
+
+    // 4. Add to Nova group for video access
+    await nova.addMember({
+        groupId: giftInfo.novaGroupId,
+        memberId: hasAccount ? accountId : `${newUsername}.${CONTRACT_ID}`,
+        role: 'member'
+    });
 }
 ```
 
@@ -499,6 +512,5 @@ async function createTrialAccount(username: string) {
 
 - [Smart Contract](../architecture/smart-contract.md) - Contract methods
 - [Session Keys](../architecture/session-keys.md) - Signless setup
-- [Lit Protocol](../architecture/lit-protocol.md) - Encryption
-- [Gift System](./gift-system.md) - Detailed gift guide
-- [Trial Accounts](./trial-accounts.md) - Detailed trial guide
+- [Nova Protocol](../architecture/nova-protocol.md) - Encryption
+- [Nova SDK](./nova-sdk.md) - SDK integration guide

@@ -8,11 +8,12 @@
 
 import { KeyPair, Account, KeyPairSigner, nearToYocto, actions, type KeyPairString } from "near-api-js";
 import { InMemoryKeyStore } from "./keystore-v7";
-import type { WalletSelector } from "@near-wallet-selector/core";
 
-// Contract ID from environment
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "youtick-v4.testnet";
-const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || "testnet";
+import { NEAR_CONFIG } from './constants';
+
+// Contract ID from centralized config
+const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
+const NETWORK_ID = NEAR_CONFIG.networkId;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
 // Cost per gift link (account creation + NFT storage + buffer)
@@ -407,7 +408,7 @@ export async function createGiftLinks(
     const links: GiftLinkResult[] = keyPairs.map(kp => ({
         publicKey: kp.publicKey,
         secretKey: kp.secretKey,
-        link: `${APP_URL}/claim?key=${encodeURIComponent(kp.secretKey)}&pk=${encodeURIComponent(kp.publicKey)}`,
+        link: `${APP_URL}/claim#key=${encodeURIComponent(kp.secretKey)}`,
     }));
 
     return links;

@@ -5,6 +5,7 @@ import { Play, Ticket, Loader2 } from 'lucide-react';
 import { useAllVideos } from '@/hooks/useAllVideos';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { Navigation } from '@/components/landing/Navigation';
+import { NovaThumbnail } from '@/components/NovaThumbnail';
 import { COLORS, ANIMATION } from '@/lib/constants';
 
 interface DiscoverViewProps {
@@ -97,16 +98,11 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
 
                   {/* Thumbnail */}
                   <div className="aspect-video relative overflow-hidden">
-                    {token.metadata?.media && (token.metadata.media.startsWith('http') || token.metadata.media.startsWith('data:')) ? (
-                      <img
-                        src={token.metadata.media}
-                        alt={token.metadata.title}
+                    {token.metadata?.media ? (
+                      <NovaThumbnail
+                        url={token.metadata.media}
+                        alt={token.metadata.title || ''}
                         className="w-full h-full object-cover scale-105 group-hover:scale-110 transition-transform duration-700 ease-out"
-                        onError={(e) => {
-                          const target = e.target as HTMLImageElement;
-                          target.style.display = 'none';
-                          target.parentElement?.classList.add('bg-zinc-800');
-                        }}
                       />
                     ) : (
                       <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-zinc-800/50 to-zinc-900/50">

@@ -2,7 +2,7 @@
  * YouTick Constants
  *
  * This file contains:
- * 1. Application Configuration (NEAR, Lit, IPFS, etc.)
+ * 1. Application Configuration (NEAR, Nova, IPFS)
  * 2. Design System Constants (colors, layout, animation)
  */
 
@@ -14,70 +14,22 @@
  * NEAR Protocol Configuration
  */
 export const NEAR_CONFIG = {
-    /** NFT Contract ID (e.g., v1.utick.testnet) */
-    contractId: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet',
+    /** NFT Contract ID (e.g., youtick-prod-v1.near) */
+    contractId: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'youtick-prod-v1.near',
 
     /** Network ID (testnet or mainnet) */
-    networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet',
-
-    /** MPC Contract ID for Chain Signatures */
-    mpcContractId: process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
-        ? 'v1.signer'
-        : 'v1.signer-prod.testnet',
+    networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet',
 } as const;
 
 /**
- * Lit Protocol Configuration
+ * Onboarding Key Configuration (Decentralized Trial Creation)
+ * This is a Function Call Access Key restricted to:
+ * - create_sponsored_trial_direct
+ * - claim_free_ticket_direct
  */
-export const LIT_CONFIG = {
-    /** Lit Network */
-    network: 'datil-test' as const,
-
-    /** Chronicle Yellowstone Chain ID */
-    chainId: 175188,
-
-    /** Chronicle Yellowstone RPC URL */
-    rpcUrl: process.env.CHRONICLE_YELLOWSTONE_RPC || 'https://yellowstone-rpc.litprotocol.com',
-
-    /** Lit Action IPFS CID for ownership verification */
-    litActionCid: process.env.NEXT_PUBLIC_LIT_ACTION_IPFS_CID || '',
-
-    /** Capacity Credit Token ID for delegation */
-    capacityTokenId: process.env.NEXT_PUBLIC_LIT_CAPACITY_TOKEN_ID || '',
-
-    /** Session cache duration (7 days in milliseconds) */
-    sessionCacheDuration: 7 * 24 * 60 * 60 * 1000,
-} as const;
-
-/**
- * Crust Network Configuration
- * W3Auth-based decentralized IPFS storage
- *
- * Upload: crustipfs.xyz (W3Auth required)
- * Retrieval: ipfs.io preferred (faster, global availability)
- *
- * @see https://wiki.crust.network/docs/en/buildIPFSW3AuthPin
- */
-export const CRUST_CONFIG = {
-    /** W3Auth Upload Endpoint (supports NEAR wallet signatures) */
-    uploadEndpoint: 'https://crustipfs.xyz',
-
-    /** Primary Retrieval Gateway (ipfs.io is faster and more reliable) */
-    primaryGateway: 'https://ipfs.io/ipfs',
-
-    /** Backup gateways for failover (in priority order) */
-    backupGateways: [
-        'https://dweb.link/ipfs',
-        'https://w3s.link/ipfs',
-        'https://crustipfs.xyz/ipfs',
-        'https://gw.crustfiles.app/ipfs'
-    ],
-
-    /** W3Auth Chain Type for NEAR Protocol */
-    chainType: 'near' as const,
-
-    /** Feature flag - Crust is the default and only storage provider */
-    enabled: process.env.NEXT_PUBLIC_USE_CRUST !== 'false', // Default: true
+export const ONBOARDING_CONFIG = {
+    /** Onboarding key (ed25519 private key, restricted scope) */
+    secretKey: process.env.NEXT_PUBLIC_ONBOARDING_KEY || '',
 } as const;
 
 /**
@@ -111,8 +63,9 @@ export const GAS_CONSTANTS = {
     /** Storage deposit for NFT minting (0.01 NEAR in yocto) */
     storageCost: '10000000000000000000000',
 
-    /** Minimum prepaid balance for MPC operations */
-    minMpcBalance: 0.25,
+    /** Minimum prepaid balance for session key operations (NFT mint + Event creation + buffer) */
+    /** Nova group registration (~0.67 NEAR) is a separate platform cost, charged for paid videos */
+    minNovaBalance: 0.25,
 
     /** Default session key allowance */
     sessionKeyAllowance: 0.25,
@@ -122,9 +75,6 @@ export const GAS_CONSTANTS = {
  * Rate Limiting Constants
  */
 export const RATE_LIMITS = {
-    /** PKP mint limit per account per day */
-    pkpMintPerDay: 5,
-
     /** Upload limit per account per hour */
     uploadPerHour: 10,
 
@@ -146,20 +96,8 @@ export const METADATA_SCHEMA = {
     formatVersion: 2,
 } as const;
 
-/**
- * API Endpoints (internal)
- */
-export const API_ENDPOINTS = {
-    nearRpc: '/api/near-rpc',
-    litRpc: '/api/lit-rpc',
-    relayerMint: '/api/relayer/mint',
-    trialSponsored: '/api/trial/sponsored',
-    ticketClaimFree: '/api/ticket/claim-free',
-} as const;
-
 // Type exports
 export type NetworkId = 'testnet' | 'mainnet';
-export type LitNetwork = typeof LIT_CONFIG.network;
 
 // ============================================================================
 // DESIGN SYSTEM CONSTANTS

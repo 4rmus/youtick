@@ -46,7 +46,7 @@ fi
 echo ""
 echo "2. Verifying MCP server directories..."
 MCP_DIR="$PROJECT_ROOT/mcp-servers"
-if [ -d "$MCP_DIR/near-cli" ] && [ -d "$MCP_DIR/lighthouse" ]; then
+if [ -d "$MCP_DIR/near-cli" ]; then
     print_status "MCP server directories found"
 else
     print_error "MCP server directories not found."
@@ -65,14 +65,6 @@ else
     print_warning "near-cli-mcp npm install failed (may need manual intervention)"
 fi
 
-echo "   Installing lighthouse-mcp..."
-cd "$MCP_DIR/lighthouse"
-if npm install --silent 2>/dev/null; then
-    print_status "lighthouse-mcp dependencies installed"
-else
-    print_warning "lighthouse-mcp npm install failed (may need manual intervention)"
-fi
-
 cd "$PROJECT_ROOT"
 
 # 4. Build MCP servers
@@ -85,14 +77,6 @@ if npm run build --silent 2>/dev/null; then
     print_status "near-cli-mcp built successfully"
 else
     print_warning "near-cli-mcp build failed (TypeScript compilation)"
-fi
-
-echo "   Building lighthouse-mcp..."
-cd "$MCP_DIR/lighthouse"
-if npm run build --silent 2>/dev/null; then
-    print_status "lighthouse-mcp built successfully"
-else
-    print_warning "lighthouse-mcp build failed (TypeScript compilation)"
 fi
 
 cd "$PROJECT_ROOT"
@@ -115,12 +99,6 @@ if [ -f "$ENV_FILE" ]; then
     print_status ".env.local found"
 
     # Check for required variables
-    if grep -q "LIGHTHOUSE_API_KEY" "$ENV_FILE"; then
-        print_status "LIGHTHOUSE_API_KEY is set"
-    else
-        print_warning "LIGHTHOUSE_API_KEY not found in .env.local"
-    fi
-
     if grep -q "NEXT_PUBLIC_NFT_CONTRACT_ID" "$ENV_FILE"; then
         print_status "NEXT_PUBLIC_NFT_CONTRACT_ID is set"
     else
@@ -155,7 +133,6 @@ done
 echo ""
 echo "MCP Servers:"
 echo "  - near-cli-mcp: $MCP_DIR/near-cli/dist/index.js"
-echo "  - lighthouse-mcp: $MCP_DIR/lighthouse/dist/index.js"
 
 echo ""
 echo "Sub-Agents (in .claude/agents.md):"
@@ -164,14 +141,14 @@ echo "  - @frontend (React/Next.js)"
 echo "  - @web3 (Protocol integration)"
 echo "  - @security (Security audit)"
 echo "  - @devops (Deployment)"
-echo "  - @lit (Lit Protocol)"
+echo "  - @nova (Nova Protocol)"
 
 echo ""
 echo "========================================"
 echo " Next Steps"
 echo "========================================"
 echo ""
-echo "1. Set LIGHTHOUSE_API_KEY in .env.local (if not set)"
+echo "1. Set NEXT_PUBLIC_NOVA_API_KEY in .env.local (if not set)"
 echo "2. Run 'near login' to authenticate NEAR CLI"
 echo "3. Configure MCP servers in Claude Code settings:"
 echo ""
@@ -182,11 +159,6 @@ echo '       "near-cli": {'
 echo '         "command": "node",'
 echo '         "args": ["'$MCP_DIR'/near-cli/dist/index.js"],'
 echo '         "env": { "NEAR_ENV": "testnet" }'
-echo '       },'
-echo '       "lighthouse": {'
-echo '         "command": "node",'
-echo '         "args": ["'$MCP_DIR'/lighthouse/dist/index.js"],'
-echo '         "env": { "LIGHTHOUSE_API_KEY": "your_api_key" }'
 echo '       }'
 echo '     }'
 echo '   }'

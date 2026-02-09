@@ -13,7 +13,7 @@ NEAR Chain Signatures enable:
 
 - **ETH Address Derivation**: Get deterministic ETH addresses from NEAR accounts
 - **Cross-Chain Signing**: Sign EVM transactions using NEAR
-- **PKP Compatibility**: Use derived addresses with Lit Protocol
+- **Nova Compatibility**: Use for signing operations with Nova Protocol
 
 ---
 
@@ -29,7 +29,7 @@ NEAR Chain Signatures enable:
 │  │ user.testnet │                                               │
 │  └──────┬───────┘                                               │
 │         │                                                        │
-│         │ Derivation Path: "lit/pkp-minting"                    │
+│         │ Derivation Path: "nova/signing"                         │
 │         │                                                        │
 │         ▼                                                        │
 │  ┌──────────────────────────────────────────┐                   │
@@ -148,7 +148,7 @@ When using the proxy contract pattern (e.g., calling MPC via nft-ticket contract
 // - path: "{userAccount}/{derivationPath}"
 
 const CONTRACT_ID = 'v1.utick.testnet';
-const compositePath = `${accountId}/${path}`; // "user.testnet/lit/pkp-minting"
+const compositePath = `${accountId}/${path}`; // "user.testnet/nova/signing"
 const derivedKey = deriveChildKey(masterKey, CONTRACT_ID, compositePath);
 ```
 
@@ -229,7 +229,7 @@ export class MPCSigner extends ethers.AbstractSigner {
     constructor(
         wallet: any,
         nearAccountId: string,
-        derivationPath: string = 'lit/pkp-minting',
+        derivationPath: string = 'nova/signing',
         provider?: ethers.Provider
     )
 
@@ -254,7 +254,7 @@ export class MPCSignerV5 extends ethers5.Signer {
     constructor(
         wallet: any,
         nearAccountId: string,
-        derivationPath: string = 'lit/pkp-minting',
+        derivationPath: string = 'nova/signing',
         provider?: ethers5.providers.Provider
     )
 
@@ -277,7 +277,7 @@ import { deriveEthAddress } from '@/lib/chain-signatures';
 // No gas cost - mathematical derivation
 const ethAddress = await deriveEthAddress(
     accountId,
-    'lit/pkp-minting'
+    'nova/signing'
 );
 console.log('ETH Address:', ethAddress);
 ```
@@ -291,7 +291,7 @@ import { signWithMPC } from '@/lib/chain-signatures';
 const signature = await signWithMPC(
     wallet,
     accountId,
-    'lit/pkp-minting',
+    'nova/signing',
     'Sign this message'
 );
 ```
@@ -305,7 +305,7 @@ import { ethers } from 'ethers';
 const signer = new MPCSigner(
     wallet,
     accountId,
-    'lit/pkp-minting',
+    'nova/signing',
     provider
 );
 
@@ -371,9 +371,8 @@ localStorage.setItem(cacheKey, address);
 |-----------|----------|
 | Address Derivation | Free (view call) |
 | MPC Sign | ~0.1 NEAR |
-| PKP Sign (Lit) | Free (after setup) |
 
-**Recommendation**: Use address derivation for setup, PKP for ongoing signing.
+**Recommendation**: Use address derivation for setup, MPC for ongoing signing.
 
 ---
 
@@ -391,6 +390,6 @@ NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
 
 ## Related Documentation
 
-- [Lit Protocol](./lit-protocol.md) - Using derived addresses with Lit
+- [Nova Protocol](./nova-protocol.md) - TEE encryption system
 - [Session Keys](./session-keys.md) - Signless operations
-- [Smart Contract](./smart-contract.md) - sign_with_mpc proxy method
+- [Smart Contract](./smart-contract.md) - Contract methods

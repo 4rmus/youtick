@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Play, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { useAllVideos } from '@/hooks/useAllVideos';
 import { Button } from '@/components/ui/button';
+import { NovaThumbnail } from '@/components/NovaThumbnail';
 
 export const StartSlider = memo(() => {
     const { tokens, loading } = useAllVideos();
@@ -95,10 +96,10 @@ export const StartSlider = memo(() => {
 
                                     {/* Thumbnail */}
                                     <div className="aspect-video relative overflow-hidden bg-zinc-800">
-                                        {token.metadata?.media && token.metadata.media.startsWith("http") ? (
-                                            <img
-                                                src={token.metadata.media}
-                                                alt={token.metadata.title}
+                                        {token.metadata?.media ? (
+                                            <NovaThumbnail
+                                                url={token.metadata.media}
+                                                alt={token.metadata.title || ''}
                                                 className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                                             />
                                         ) : (

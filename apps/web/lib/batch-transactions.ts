@@ -1,12 +1,14 @@
 // lib/batch-transactions.ts - near-api-js v7 compatible
 import { actions, nearToYocto, PublicKey } from 'near-api-js';
+import type { WalletInstance } from './types';
+import type { SessionManager } from './session-manager';
 
 /**
  * Batch multiple actions into a single transaction
  * This reduces multiple signatures into one
  */
 export async function batchUploadActions(
-    wallet: any,
+    wallet: WalletInstance,
     contractId: string,
     accountId: string,
     videoMetadata: {
@@ -21,6 +23,8 @@ export async function batchUploadActions(
             encrypted_cid: string;
             duration_seconds: number;
             content_type: string;
+            nova_group_id?: string | null;
+            storage_type: 'Nova';
         };
     },
     eventMetadata: {
@@ -61,7 +65,7 @@ export async function batchUploadActions(
  * 2. addKey goes to the USER's account
  */
 export async function batchInitialSetup(
-    wallet: any,
+    wallet: WalletInstance,
     accountId: string,
     contractId: string,
     sessionKeyPublicKey: string,
@@ -101,11 +105,61 @@ export async function batchInitialSetup(
 }
 
 /**
+ * Batch initial setup with optional Nova platform funding.
+ * Bundles gas deposit + session key + (optional) Nova NEAR transfer into one wallet popup.
+ */
+export async function batchInitialSetupWithNovaFunding(
+    wallet: WalletInstance,
+    accountId: string,
+    contractId: string,
+    sessionKeyPublicKey: string,
+    gasAmount: string = '1',
+    novaFunding?: { receiverId: string; amount: number }
+) {
+    const pubKey = PublicKey.fromString(sessionKeyPublicKey);
+
+    const transactions: Array<{ receiverId: string; actions: any[] }> = [
+        {
+            receiverId: contractId,
+            actions: [
+                actions.functionCall(
+                    'deposit_funds',
+                    {},
+                    BigInt('30000000000000'),
+                    BigInt(nearToYocto(parseFloat(gasAmount)))
+                )
+            ]
+        },
+        {
+            receiverId: accountId,
+            actions: [
+                actions.addFunctionCallAccessKey(
+                    pubKey,
+                    contractId,
+                    [],
+                    BigInt(nearToYocto('0.25'))
+                )
+            ]
+        }
+    ];
+
+    // Add Nova funding transaction if needed
+    if (novaFunding && novaFunding.amount > 0) {
+        transactions.push({
+            receiverId: novaFunding.receiverId,
+            actions: [actions.transfer(nearToYocto(novaFunding.amount))]
+        });
+    }
+
+    return await wallet.signAndSendTransactions({ transactions });
+}
+
+/**
  * Signless version of batchUploadActions
  * Uses Session Key and internal balance
  */
 export async function batchUploadActionsSignless(
-    sessionManager: any,
+    sessionManager: SessionManager,
     videoMetadata: {
         receiver_id: string;
         token_metadata: {
@@ -118,6 +172,8 @@ export async function batchUploadActionsSignless(
             encrypted_cid: string;
             duration_seconds: number;
             content_type: string;
+            nova_group_id?: string | null;
+            storage_type: 'Nova';
         };
     },
     eventMetadata: {
@@ -143,11 +199,11 @@ export async function batchUploadActionsSignless(
 }
 
 /**
- * Create session key only (no deposit) for PKP users
- * PKP users don't need prepaid gas - they pay directly
+ * Create session key only (no deposit)
+ * Useful for users who already have sufficient balance
  */
 export async function createSessionKeyOnly(
-    wallet: any,
+    wallet: WalletInstance,
     accountId: string,
     contractId: string,
     sessionKeyPublicKey: string

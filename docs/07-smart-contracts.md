@@ -68,7 +68,7 @@ near view v1.utick.testnet nft_metadata '{}'
   "name": "YouTick Tickets",
   "symbol": "YTCK",
   "icon": null,
-  "base_uri": "https://gateway.lighthouse.storage/ipfs/",
+  "base_uri": null,
   "reference": null
 }
 ```
@@ -266,4 +266,4 @@ cargo test
 
 ---
 
-**Previous**: [← IPFS & Lighthouse](./06-ipfs-lighthouse.md) | **Next**: [Security →](./08-security.md)
+**Previous**: [← NEAR Integration](./04-near-integration.md) | **Next**: [Security →](./08-security.md)

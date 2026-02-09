@@ -40,7 +40,7 @@ pub fn create_event(
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `encrypted_cid` | String | Lit-encrypted IPFS CID |
+| `encrypted_cid` | String | Nova-encrypted IPFS CID |
 | `title` | String | Event title |
 | `description` | String | Event description |
 | `price` | U128 | Price in yoctoNEAR (0 = free) |

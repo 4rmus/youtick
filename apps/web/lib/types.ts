@@ -149,81 +149,19 @@ export interface NFTEvent {
 }
 
 // ============================================================================
-// Lit Protocol Types
+// Nova Protocol Types (TEE-based encryption)
+// ============================================================================
+
+// Nova types are defined in lib/nova/types.ts
+
+// ============================================================================
+// Storage Types
 // ============================================================================
 
 /**
- * PKP (Programmable Key Pair) data
- * Used for signless transactions with Lit Protocol
+ * Video storage provider type
  */
-export interface PKPData {
-    /** PKP public key */
-    publicKey: string;
-    /** Derived Ethereum address */
-    ethAddress: string;
-    /** PKP Token ID (on Chronicle) */
-    tokenId?: string;
-}
-
-/**
- * Lit Protocol session signatures
- */
-export interface LitSessionSigs {
-    [nodeAddress: string]: {
-        sig: string;
-        derivedVia: string;
-        signedMessage: string;
-        address: string;
-        algo: string;
-    };
-}
-
-/**
- * Lit Protocol access control condition
- */
-export interface LitAccessControlCondition {
-    conditionType: 'evmBasic' | 'evmContract' | 'solRpc' | 'cosmos' | 'litAction';
-    contractAddress?: string;
-    functionName?: string;
-    functionParams?: string[];
-    functionAbi?: Record<string, unknown>;
-    chain?: string;
-    returnValueTest: {
-        key?: string;
-        comparator: string;
-        value: string;
-    };
-    // Lit Action specific
-    code?: string;
-    ipfsId?: string;
-    jsParams?: Record<string, unknown>;
-}
-
-/**
- * Encryption result from Lit Protocol
- */
-export interface EncryptionResult {
-    ciphertext: string;
-    dataToEncryptHash: string;
-    accessControlConditions: LitAccessControlCondition[];
-}
-
-// ============================================================================
-// Chain Signatures (MPC) Types
-// ============================================================================
-
-/**
- * MPC signature result
- */
-export interface MPCSignature {
-    big_r: {
-        affine_point: string;
-    };
-    s: {
-        scalar: string;
-    };
-    recovery_id: number;
-}
+export type StorageType = 'Nova';
 
 // ============================================================================
 // Wallet Types
@@ -266,8 +204,6 @@ export interface WalletContextType {
     getWallet: () => Promise<WalletInstance>;
     signOut: () => Promise<void>;
     isTrial: boolean;
-    pkpData: PKPData | null;
-    isPKPMinting: boolean;
 }
 
 // ============================================================================
@@ -309,15 +245,6 @@ export interface CachedSession {
     accountId: string;
     createdAt: number;
     expiresAt: number;
-    sessionSigs?: LitSessionSigs;
-}
-
-/**
- * Cached PKP data in localStorage
- */
-export interface CachedPKP extends PKPData {
-    createdAt: number;
-    accountId: string;
 }
 
 // ============================================================================
@@ -384,16 +311,3 @@ export function isFunctionCallPermission(
     return typeof permission === 'object' && 'FunctionCall' in permission;
 }
 
-/**
- * Check if PKP data is valid
- */
-export function isValidPKPData(data: unknown): data is PKPData {
-    if (!data || typeof data !== 'object') return false;
-    const pkp = data as PKPData;
-    return (
-        typeof pkp.publicKey === 'string' &&
-        typeof pkp.ethAddress === 'string' &&
-        pkp.publicKey.length > 0 &&
-        pkp.ethAddress.length > 0
-    );
-}

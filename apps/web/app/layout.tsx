@@ -8,6 +8,7 @@ import { LanguageProvider } from "@/components/providers/LanguageContext";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { GoogleAnalytics } from "@next/third-parties/google";
+import { OnboardingKeyInit } from "@/components/OnboardingKeyInit";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -27,7 +28,8 @@ export const metadata: Metadata = {
         'video on demand',
         'dApp',
         'blockchain streaming',
-        'Lit Protocol',
+        'Nova Protocol',
+        'TEE encryption',
         'IPFS video',
         'encrypted video',
     ],
@@ -91,6 +93,7 @@ export default function RootLayout({
                     <QueryProvider>
                         <LanguageProvider>
                             <WalletProvider>
+                            <OnboardingKeyInit />
                             <div className="min-h-screen bg-background text-foreground">
                                 <Navbar />
                                 <main className="flex-grow">

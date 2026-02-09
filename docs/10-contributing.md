@@ -73,7 +73,7 @@ Examples:
 feat(upload): add progress indicator for encryption
 fix(player): resolve decryption timeout on slow networks
 docs(readme): update installation instructions
-refactor(lit): simplify PKP minting flow
+refactor(nova): simplify TEE encryption flow
 ```
 
 Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
