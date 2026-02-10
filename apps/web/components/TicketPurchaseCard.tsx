@@ -25,7 +25,7 @@ interface EventDetails {
 }
 
 export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: TicketPurchaseCardProps) {
-    const { selector, accountId, getWallet } = useWallet();
+    const { accountId, getWallet } = useWallet();
 
     // React Query hooks for cached state
     const { hasSessionKey, refetchSessionKey } = useSessionState(accountId);

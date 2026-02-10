@@ -11,7 +11,7 @@ import { Menu, X, User, LogOut, Sparkles } from 'lucide-react';
 import { Branding } from '@/components/landing/Branding';
 
 export function Navbar() {
-    const { modal, accountId, signOut } = useWallet();
+    const { connect, accountId, signOut } = useWallet();
     const { language, t } = useLanguage();
     const [mounted, setMounted] = useState(false);
     const pathname = usePathname();
@@ -23,7 +23,7 @@ export function Navbar() {
     }, []);
 
     const handleSignIn = () => {
-        modal?.show();
+        connect();
     };
 
     const handleSignOut = async () => {

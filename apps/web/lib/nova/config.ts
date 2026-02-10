@@ -168,10 +168,14 @@ export function getSdkOptions() {
  * the config changes via `setNovaConfig()`.
  */
 let _sdkInstance: import('nova-sdk-js').NovaSdk | null = null;
+let _sdkLoadPromise: Promise<typeof import('nova-sdk-js')> | null = null;
 
-export function getNovaSdk(): import('nova-sdk-js').NovaSdk {
+export async function getNovaSdk(): Promise<import('nova-sdk-js').NovaSdk> {
   if (!_sdkInstance) {
-    const { NovaSdk } = require('nova-sdk-js') as typeof import('nova-sdk-js');
+    if (!_sdkLoadPromise) {
+      _sdkLoadPromise = import('nova-sdk-js');
+    }
+    const { NovaSdk } = await _sdkLoadPromise;
     const novaAccountId = getNovaAccountId();
     _sdkInstance = new NovaSdk(novaAccountId, getSdkOptions());
   }
@@ -181,6 +185,7 @@ export function getNovaSdk(): import('nova-sdk-js').NovaSdk {
 /** Reset the cached SDK instance (called automatically on config change) */
 export function resetNovaSdk(): void {
   _sdkInstance = null;
+  _sdkLoadPromise = null;
 }
 
 /**
@@ -199,7 +204,7 @@ export function resetNovaSdk(): void {
  * @returns The group_id (same as groupName)
  */
 export async function createNovaGroup(groupName: string): Promise<string> {
-  const sdk = getNovaSdk();
+  const sdk = await getNovaSdk();
   const MAX_RETRIES = 3;
   const RETRY_DELAYS = [3000, 5000, 8000]; // Escalating delays for NEAR finality
 

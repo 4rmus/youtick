@@ -121,7 +121,7 @@ function uploadReducer(state: UploadState, action: UploadAction): UploadState {
 
 export function UploadForm() {
     const { t } = useLanguage();
-    const { selector, accountId, getWallet } = useWallet();
+    const { accountId, getWallet } = useWallet();
 
     // React Query hooks for session state (cached, deduplicated)
     const { hasSessionKey, isSessionKeyLoading, refetchSessionKey } = useSessionState(accountId);

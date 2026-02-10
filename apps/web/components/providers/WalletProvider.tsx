@@ -1,110 +1,115 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { setupWalletSelector } from '@near-wallet-selector/core';
-import { setupMyNearWallet } from '@near-wallet-selector/my-near-wallet';
-import { setupModal } from '@near-wallet-selector/modal-ui-js';
-import type { WalletSelector, AccountState } from '@near-wallet-selector/core';
-import type { WalletSelectorModal } from '@near-wallet-selector/modal-ui-js';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import { NearConnector } from '@hot-labs/near-connect';
 import type { WalletInstance } from '@/lib/types';
-import '@near-wallet-selector/modal-ui-js/styles.css';
 
 interface WalletContextValue {
-    selector: WalletSelector | null;
-    modal: WalletSelectorModal | null;
-    accounts: Array<AccountState>;
     accountId: string | null;
     isTrial: boolean;
     getWallet: () => Promise<WalletInstance>;
     signOut: () => Promise<void>;
+    connect: () => Promise<void>;
+    isReady: boolean;
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
 
 export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [selector, setSelector] = useState<WalletSelector | null>(null);
-    const [modal, setModal] = useState<WalletSelectorModal | null>(null);
-    const [accounts, setAccounts] = useState<Array<AccountState>>([]);
+    const connectorRef = useRef<NearConnector | null>(null);
+    const [accountId, setAccountId] = useState<string | null>(null);
     const [trialAccountId, setTrialAccountId] = useState<string | null>(null);
+    const [isReady, setIsReady] = useState(false);
 
-    // Initial setup
     useEffect(() => {
         // Check for trial account
-        if (typeof window !== "undefined") {
-            const storedTrial = localStorage.getItem("trialAccountId");
+        if (typeof window !== 'undefined') {
+            const storedTrial = localStorage.getItem('trialAccountId');
             if (storedTrial) {
                 setTrialAccountId(storedTrial);
             }
         }
 
-        setupWalletSelector({
-            network: (process.env.NEXT_PUBLIC_NEAR_NETWORK as 'testnet' | 'mainnet') || 'mainnet',
-            modules: [setupMyNearWallet()],
-        })
-            .then((selector) => {
-                setSelector(selector);
-                setAccounts(selector.store.getState().accounts);
+        const network = (process.env.NEXT_PUBLIC_NEAR_NETWORK as 'testnet' | 'mainnet') || 'mainnet';
 
-                const modal = setupModal(selector, {
-                    contractId: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || '',
-                });
-                setModal(modal);
+        const connector = new NearConnector({
+            network,
+            excludedWallets: [
+                'intear-wallet',
+                'nightly',
+                'unity-wallet',
+                'okx-wallet',
+            ],
+        });
+
+        connectorRef.current = connector;
+
+        connector.on('wallet:signIn', async ({ accounts }) => {
+            if (accounts && accounts.length > 0) {
+                setAccountId(accounts[0].accountId);
+            }
+        });
+
+        connector.on('wallet:signOut', async () => {
+            setAccountId(null);
+        });
+
+        // Auto-reconnect existing session
+        connector.wallet()
+            .then(async (wallet) => {
+                const accounts = await wallet.getAccounts();
+                if (accounts.length > 0) {
+                    setAccountId(accounts[0].accountId);
+                }
             })
-            .catch((err) => {
-                console.error('Failed to setup wallet selector', err);
+            .catch(() => {
+                // No existing session
+            })
+            .finally(() => {
+                setIsReady(true);
             });
     }, []);
 
-    // Subscribe to wallet selector changes
-    useEffect(() => {
-        if (!selector) {
-            return;
-        }
+    // Determine active account (Wallet > Trial Account)
+    const activeAccountId = accountId || trialAccountId;
+    const isTrial = !accountId && !!trialAccountId;
 
-        const subscription = selector.store.observable.subscribe((state) => {
-            setAccounts(state.accounts);
-        });
-
-        return () => subscription.unsubscribe();
-    }, [selector]);
-
-    // Determine active account (Wallet Selector > Trial Account)
-    const walletAccountId = accounts.find((account) => account.active)?.accountId || null;
-    const activeAccountId = walletAccountId || trialAccountId;
-    const isTrial = !walletAccountId && !!trialAccountId;
-
-    const getWallet = async (): Promise<WalletInstance> => {
+    const getWallet = useCallback(async (): Promise<WalletInstance> => {
         if (isTrial && trialAccountId) {
             const { TrialWallet } = await import('@/lib/trial-wallet');
             return new TrialWallet(trialAccountId) as unknown as WalletInstance;
         }
-        if (selector) {
-            return selector.wallet() as unknown as WalletInstance;
+        if (connectorRef.current) {
+            return connectorRef.current.wallet() as unknown as Promise<WalletInstance>;
         }
-        throw new Error("No wallet connected");
-    };
+        throw new Error('No wallet connected');
+    }, [isTrial, trialAccountId]);
 
-    const signOut = async (): Promise<void> => {
+    const signOut = useCallback(async (): Promise<void> => {
         if (isTrial && trialAccountId) {
             const { TrialWallet } = await import('@/lib/trial-wallet');
             const trialWallet = new TrialWallet(trialAccountId);
             await trialWallet.signOut();
             setTrialAccountId(null);
-        } else if (selector) {
-            const wallet = await selector.wallet();
-            await wallet.signOut();
+        } else if (connectorRef.current) {
+            await connectorRef.current.disconnect();
         }
-    };
+    }, [isTrial, trialAccountId]);
+
+    const connect = useCallback(async (): Promise<void> => {
+        if (connectorRef.current) {
+            await connectorRef.current.connect();
+        }
+    }, []);
 
     return (
         <WalletContext.Provider value={{
-            selector,
-            modal,
-            accounts,
             accountId: activeAccountId,
             isTrial,
             getWallet,
             signOut,
+            connect,
+            isReady,
         }}>
             {children}
         </WalletContext.Provider>

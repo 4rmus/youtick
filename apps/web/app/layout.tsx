@@ -101,7 +101,6 @@ export default function RootLayout({
                                 </main>
                             </div>
                             <LanguageSwitcher />
-                            <div id="wallet-modal-container" />
                         </WalletProvider>
                         </LanguageProvider>
                     </QueryProvider>

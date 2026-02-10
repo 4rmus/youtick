@@ -7,6 +7,13 @@
  *
  * All file I/O is wrapped in try/catch for graceful degradation — if
  * persistence fails, the limiter falls back to in-memory only.
+ *
+ * Limitation: /tmp/ is ephemeral on serverless platforms (Vercel, AWS Lambda).
+ * For production at scale, consider migrating to Upstash Redis or similar.
+ * Current mitigations:
+ * - File-based persistence survives Next.js hot restarts
+ * - Contract sync on cold start restores global trial count
+ * - Per-IP limits are best-effort (acceptable for anti-spam)
  */
 
 import * as fs from 'fs';
@@ -183,7 +190,11 @@ class RateLimiter {
 class DailyGlobalLimiter {
     private count: number = 0;
     private lastReset: number = Date.now();
+    private lastSync: number = 0;
     private maxDaily: number;
+    private syncing: boolean = false;
+
+    private static readonly SYNC_INTERVAL_MS = 5 * 60 * 1000; // Re-sync every 5 minutes
 
     constructor(maxDaily: number) {
         this.maxDaily = maxDaily;
@@ -208,6 +219,14 @@ class DailyGlobalLimiter {
         if (now - this.lastReset > oneDayMs) {
             this.count = 0;
             this.lastReset = now;
+        }
+
+        // Periodic re-sync from contract (non-blocking)
+        if (isServer && !this.syncing && now - this.lastSync > DailyGlobalLimiter.SYNC_INTERVAL_MS) {
+            this.syncing = true;
+            this.syncFromContract()
+                .catch(() => {})
+                .finally(() => { this.syncing = false; });
         }
 
         if (this.count >= this.maxDaily) {
@@ -271,10 +290,11 @@ class DailyGlobalLimiter {
         }
     }
 
-    /** Sync count from NEAR contract on cold start */
+    /** Sync count from NEAR contract (on cold start and periodically) */
     private async syncFromContract(): Promise<void> {
         if (!isServer) return;
         try {
+            this.lastSync = Date.now();
             const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'youtick-prod-v1.near';
             const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
 

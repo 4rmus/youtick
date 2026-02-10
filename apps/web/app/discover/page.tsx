@@ -9,7 +9,7 @@ import { useLanguage } from '@/components/providers/LanguageContext';
 import { NovaThumbnail } from '@/components/NovaThumbnail';
 
 export default function DiscoverPage() {
-    const { tokens, loading, error, debugInfo } = useAllVideos();
+    const { tokens, loading, error, hasNextPage, isFetchingNextPage, fetchNextPage } = useAllVideos();
     const { accountId } = useWallet();
     const { t } = useLanguage();
 
@@ -46,12 +46,6 @@ export default function DiscoverPage() {
                         <p className="text-2xl font-bold mb-4">{t.discover_page.no_videos}</p>
                         <p className="text-gray-400">{t.discover_page.be_first}</p>
 
-                        {/* Debug Info */}
-                        <div className="mt-8 p-4 bg-zinc-900 mx-auto max-w-md rounded text-left text-xs font-mono text-zinc-500 overflow-auto">
-                            <p className="font-bold text-zinc-300 mb-2">{t.discover_page.debug_info}</p>
-                            <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
-                        </div>
-
                         <Link href="/upload" className="mt-8 inline-block">
                             <Button variant="outline" className="border-red-600 text-red-100 hover:bg-red-900/50">
                                 {t.discover_page.upload_now}
@@ -59,6 +53,7 @@ export default function DiscoverPage() {
                         </Link>
                     </div>
                 ) : (
+                    <div className="space-y-8">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {tokens.map((token) => {
                             const isVideo = !!token.video_metadata?.encrypted_cid;
@@ -179,6 +174,24 @@ export default function DiscoverPage() {
                                 </Link>
                             );
                         })}
+                    </div>
+
+                    {hasNextPage && (
+                        <div className="flex justify-center pt-4">
+                            <Button
+                                onClick={() => fetchNextPage()}
+                                disabled={isFetchingNextPage}
+                                variant="outline"
+                                className="border-white/20 text-zinc-300 hover:bg-white/5"
+                            >
+                                {isFetchingNextPage ? (
+                                    <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading...</>
+                                ) : (
+                                    'Load More'
+                                )}
+                            </Button>
+                        </div>
+                    )}
                     </div>
                 )}
             </div>

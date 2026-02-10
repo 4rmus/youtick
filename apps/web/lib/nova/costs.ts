@@ -72,7 +72,7 @@ export async function getRegisterGroupFee(): Promise<number> {
   }
 
   try {
-    const sdk = getCostsSdk();
+    const sdk = await getCostsSdk();
 
     const feeYocto: bigint = await sdk.estimateFee('register_group');
     const feeNear = yoctoToNear(feeYocto);
@@ -106,7 +106,7 @@ export async function getNovaPlatformBalance(): Promise<number> {
   }
 
   try {
-    const sdk = getCostsSdk();
+    const sdk = await getCostsSdk();
 
     const balanceYocto: string = await sdk.getBalance();
     const balanceNear = yoctoToNear(balanceYocto);

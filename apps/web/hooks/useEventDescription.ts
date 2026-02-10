@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { getProvider, viewContract } from '@/lib/near';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { NEAR_CONFIG } from '@/lib/constants';
@@ -13,57 +13,48 @@ interface EventData {
     created_at: number;
 }
 
-export function useEventDescription(encrypted_cid: string | null) {
-    const [description, setDescription] = useState<string | null>(null);
-    const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
-    const [creatorId, setCreatorId] = useState<string | null>(null);
-    const [loading, setLoading] = useState(false);
-
-    useEffect(() => {
-        if (!encrypted_cid || encrypted_cid === 'ACCESS_PASS') {
-            setDescription(null);
-            setThumbnailUrl(null);
-            return;
-        }
-
-        const fetchDescription = async () => {
-            setLoading(true);
-            try {
-                // v7: Use JsonRpcProvider directly for view calls
-                const provider = getProvider();
-
-                const event = await viewContract<EventData | null>(
-                    provider,
-                    NFT_CONTRACT_ID,
-                    'get_event',
-                    { encrypted_cid }
-                );
-
-                if (event) {
-                    if (event.description) {
-                        setDescription(event.description);
-                    }
-                    if (event.creator_id) {
-                        setCreatorId(event.creator_id);
-                    }
-
-                    // Use centralized metadata parser for thumbnail extraction
-                    const parsed = parseTitleMetadata(event.title);
-
-                    if (parsed.thumbnailCid) {
-                        setThumbnailUrl(parsed.thumbnailUrl);
-                    }
-                }
-            } catch (error) {
-                console.error('Error fetching event description:', error);
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        fetchDescription();
-    }, [encrypted_cid]);
-
-    return { description, thumbnailUrl, creatorId, loading };
+interface EventDescription {
+    description: string | null;
+    thumbnailUrl: string | null;
+    creatorId: string | null;
 }
 
+async function fetchEventDescription(encrypted_cid: string): Promise<EventDescription> {
+    const provider = getProvider();
+
+    const event = await viewContract<EventData | null>(
+        provider,
+        NFT_CONTRACT_ID,
+        'get_event',
+        { encrypted_cid }
+    );
+
+    if (!event) {
+        return { description: null, thumbnailUrl: null, creatorId: null };
+    }
+
+    const parsed = parseTitleMetadata(event.title);
+
+    return {
+        description: event.description || null,
+        thumbnailUrl: parsed.thumbnailCid ? (parsed.thumbnailUrl ?? null) : null,
+        creatorId: event.creator_id || null,
+    };
+}
+
+export function useEventDescription(encrypted_cid: string | null) {
+    const query = useQuery({
+        queryKey: ['eventDescription', encrypted_cid],
+        queryFn: () => fetchEventDescription(encrypted_cid!),
+        enabled: !!encrypted_cid && encrypted_cid !== 'ACCESS_PASS',
+        staleTime: 5 * 60 * 1000,   // 5 minutes fresh (event data rarely changes)
+        gcTime: 10 * 60 * 1000,     // 10 minute cache
+    });
+
+    return {
+        description: query.data?.description ?? null,
+        thumbnailUrl: query.data?.thumbnailUrl ?? null,
+        creatorId: query.data?.creatorId ?? null,
+        loading: query.isLoading,
+    };
+}
