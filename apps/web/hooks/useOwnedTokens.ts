@@ -56,7 +56,6 @@ export function useOwnedTokens() {
                 const provider = getProvider();
 
                 // Call the contract method that returns tokens + video metadata
-                console.log("useOwnedTokens: Fetching from contract:", NFT_CONTRACT_ID, "for account:", accountId);
                 const result = await viewContract<[any, any][]>(
                     provider,
                     NFT_CONTRACT_ID,
@@ -87,17 +86,6 @@ export function useOwnedTokens() {
                         ? token.metadata.media
                         : parsed.thumbnailUrl;
 
-                    console.log('[useOwnedTokens] Token metadata:', {
-                        tokenId: token.token_id,
-                        rawTitle: token.metadata?.title,
-                        originalMedia: token.metadata?.media,
-                        originalMediaValid,
-                        parsedThumbnailCid: parsed.thumbnailCid,
-                        parsedThumbnailUrl: parsed.thumbnailUrl,
-                        displayMedia,
-                        schemaVersion: parsed.schemaVersion
-                    });
-
                     return {
                         ...token,
                         metadata: {
@@ -111,15 +99,16 @@ export function useOwnedTokens() {
 
                 setTokens(mappedTokens.reverse());
 
-            } catch (err: any) {
+            } catch (err: unknown) {
                 console.error("Error fetching tokens:", err);
+                const errMsg = err instanceof Error ? err.message : '';
                 // Handle contract state inconsistency (common after migration)
-                if (err.message?.includes('inconsistent state')) {
+                if (errMsg.includes('inconsistent state')) {
                     console.warn("Contract state may have been reset. Returning empty token list.");
                     setTokens([]);
                     setError(null); // Don't show error to user - just show empty list
                 } else {
-                    setError(err.message || "Failed to fetch tokens");
+                    setError(errMsg || "Failed to fetch tokens");
                 }
             } finally {
                 setLoading(false);

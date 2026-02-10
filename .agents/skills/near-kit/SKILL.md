@@ -1,6 +1,29 @@
 ---
 name: near-kit
-description: TypeScript library for NEAR Protocol blockchain interaction. Use this skill when writing code that interacts with NEAR Protocol, including viewing contract data, calling contract methods, sending NEAR tokens, building transactions, creating type-safe contract wrappers, integrating wallets (Wallet Selector, HOT Connect), React hooks and providers (@near-kit/react), managing keys, testing with sandbox, meta-transactions (NEP-366), and message signing (NEP-413).
+description: >
+  TypeScript library for NEAR Protocol blockchain interaction. Use when writing code that interacts
+  with NEAR Protocol, including viewing contract data, calling contract methods, sending NEAR tokens,
+  building transactions, creating type-safe contract wrappers, integrating wallets (Wallet Selector,
+  HOT Connect), React hooks and providers (@near-kit/react), managing keys, testing with sandbox,
+  meta-transactions (NEP-366), and message signing (NEP-413).
+version: 1.0.0
+license: MIT
+platforms:
+  - claude
+  - gemini
+  - openai
+  - markdown
+tags:
+  - near-protocol
+  - near-kit
+  - typescript
+  - react
+  - wallet-selector
+  - web3
+  - transactions
+metadata:
+  author: near
+  version: "1.0.0"
 ---
 
 # near-kit

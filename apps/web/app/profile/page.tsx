@@ -12,6 +12,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { GiftLinkGenerator } from "@/components/GiftLinkGenerator";
 import { TrialUpgradeDialog } from "@/components/TrialUpgradeDialog";
 import { NovaThumbnail } from "@/components/NovaThumbnail";
+import type { NFTEvent } from '@/lib/types';
+
+interface CreatedEvent extends NFTEvent {
+    cid: string;
+    media: string;
+}
+
+interface AccountState {
+    amount: string;
+}
 
 export default function ProfilePage() {
     const { t } = useLanguage();
@@ -21,12 +31,12 @@ export default function ProfilePage() {
     const [loadingBalances, setLoadingBalances] = useState(false);
 
     // Created Events State
-    const [createdEvents, setCreatedEvents] = useState<any[]>([]);
+    const [createdEvents, setCreatedEvents] = useState<CreatedEvent[]>([]);
     const [loadingCreated, setLoadingCreated] = useState(false);
 
     // Gift Modal State
     const [showGiftModal, setShowGiftModal] = useState(false);
-    const [selectedEventForGift, setSelectedEventForGift] = useState<any | null>(null);
+    const [selectedEventForGift, setSelectedEventForGift] = useState<CreatedEvent | null>(null);
 
     // Fetch wallet balance
     useEffect(() => {
@@ -46,7 +56,7 @@ export default function ProfilePage() {
                     request_type: 'view_account',
                     account_id: accountId,
                     finality: 'final'
-                }) as any;
+                }) as AccountState;
 
                 const balanceInNear = (BigInt(state.amount) / BigInt(10 ** 24)).toString();
                 const decimals = (Number(BigInt(state.amount) % BigInt(10 ** 24)) / 10 ** 24).toFixed(2).substring(2);
@@ -72,7 +82,7 @@ export default function ProfilePage() {
                 const provider = getProvider();
                 const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || '';
 
-                const events = await viewContract<[string, any][]>(
+                const events = await viewContract<[string, NFTEvent][]>(
                     provider,
                     contractId,
                     'get_events',
@@ -80,14 +90,14 @@ export default function ProfilePage() {
                 );
 
                 const myEvents = events
-                    .filter(([_, event]) => event.creator_id === accountId)
+                    .filter(([, event]) => event.creator_id === accountId)
                     .map(([cid, event]) => ({
                         cid,
                         ...event,
                         media: event.title.includes(':::') && event.title.split(':::').length >= 2
                             ? `https://ipfs.io/ipfs/${event.title.split(':::')[1]}`
                             : "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png",
-                        title: event.title.includes(':::') ? event.title.split(':::').pop() : event.title
+                        title: event.title.includes(':::') ? (event.title.split(':::').pop() ?? event.title) : event.title
                     }));
 
                 setCreatedEvents(myEvents);

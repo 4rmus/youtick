@@ -1,468 +1,301 @@
 # Shade Agent Reference
 
-Complete reference for Nova's TEE-based key management system.
+Complete reference for Nova's TEE-based key management system (Shade Agent v2.2).
 
 ## Overview
 
-The Shade Agent is a Trusted Execution Environment (TEE) service running on Phala Network that:
-- Generates and stores encryption keys securely
-- Verifies user membership via NEAR smart contract
-- Provides keys only to authorized users
-- Performs automatic key rotation on membership changes
+The Shade Agent is Nova's Trusted Execution Environment (TEE) secured key management service. It runs as a Next.js application deployed as a Docker container on Phala Cloud, handling all encryption key lifecycle operations inside hardware-level secure enclaves.
+
+**Key principle:** Plaintext data and encryption keys never travel together.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                      Phala Network TEE                          │
+│                     Phala Cloud TEE                              │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │                    Shade Agent                            │  │
-│  │                                                           │  │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐  │  │
-│  │  │    Key      │  │  NEAR       │  │   Encryption    │  │  │
-│  │  │   Store     │  │  Verifier   │  │    Engine      │  │  │
-│  │  │             │  │             │  │                 │  │  │
-│  │  │ AES-256-GCM │  │ Contract    │  │ Client-side    │  │  │
-│  │  │   Keys      │  │  Queries    │  │  Key Delivery   │  │  │
-│  │  └─────────────┘  └─────────────┘  └─────────────────┘  │  │
-│  │                                                           │  │
-│  └──────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │              Shade Agent v2.2 (Next.js)                   │   │
+│  │                                                           │   │
+│  │  ┌───────────────┐  ┌───────────────┐  ┌─────────────┐  │   │
+│  │  │  Encrypted    │  │    Token      │  │    Key       │  │   │
+│  │  │  SQLite DB    │  │  Verifier     │  │  Operations  │  │   │
+│  │  │               │  │               │  │              │  │   │
+│  │  │  AES-256-CBC  │  │  ed25519 sig  │  │  generate    │  │   │
+│  │  │  with TEE-    │  │  SHA256       │  │  get         │  │   │
+│  │  │  derived key  │  │  nonce check  │  │  rotate      │  │   │
+│  │  └───────────────┘  └───────────────┘  └─────────────┘  │   │
+│  │                                                           │   │
+│  │  Docker Container on Phala Cloud                          │   │
+│  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
-│  Hardware Isolation: Intel SGX / ARM TrustZone                  │
-│  Memory Encryption: Sealed Storage                               │
-│  Remote Attestation: Verifiable Execution                        │
+│  Hardware Isolation: TEE Enclave                                 │
+│  Storage: Encrypted SQLite (AES-256-CBC, TEE-derived secret)    │
+│  Attestation: Remote attestation with approved code hashes       │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Security Model
+## Technology Stack
 
-### Zero-Knowledge Design
+| Component | Technology |
+|-----------|-----------|
+| Application | Next.js |
+| Deployment | Docker container on Phala Cloud |
+| Key Storage | Encrypted SQLite database |
+| Storage Encryption | AES-256-CBC with TEE-derived AES-256-CBC secret |
+| TEE Platform | Phala Cloud hardware enclaves |
+| API Path | `/api/key-management` |
 
-1. **Keys Never On-Chain**: Encryption keys exist only within the TEE
-2. **No Key Exposure**: Keys are never sent in plaintext over the network
-3. **Membership Verification**: Access is verified against NEAR contract state
-4. **Forward Secrecy**: Key rotation ensures past access doesn't grant future access
+## API Endpoints
 
-### TEE Guarantees
+All key management operations are exposed under `/api/key-management`:
 
-| Property | Description |
-|----------|-------------|
-| **Confidentiality** | Code and data are encrypted in memory |
-| **Integrity** | Tamper-evident execution |
-| **Attestation** | Cryptographic proof of correct execution |
-| **Isolation** | Separated from host OS and other enclaves |
+### generate_key
 
-### Encryption Specifications
+Generates a new encryption key for a group. Called when a new group is registered.
 
-- **Algorithm**: AES-256-GCM
-- **Key Derivation**: HKDF with SHA-256
-- **Nonce**: 12-byte random per encryption
-- **Auth Tag**: 16-byte GCM authentication tag
-
-## API Reference
-
-### Base URL
-
-```
-Production: https://shade.phala.network
-Testnet: https://shade-testnet.phala.network
-```
-
-### Endpoints
-
-#### GET /health
-
-Health check endpoint.
-
-```bash
-curl https://shade.phala.network/health
+**Request:**
+```json
+{
+  "group_id": "my-secure-files",
+  "owner": "alice.nova-sdk.near"
+}
 ```
 
 **Response:**
 ```json
 {
-  "status": "healthy",
-  "version": "1.0.0",
-  "tee_status": "active",
-  "attestation_valid": true
+  "key": "<base64-encoded-32-byte-AES-key>",
+  "checksum": "<checksum-for-on-chain-verification>"
 }
 ```
 
-#### POST /keys/request
+**Behavior:**
+- Generates a 32-byte random key (base64 encoded)
+- Stores the key in the encrypted SQLite database
+- Returns a checksum that gets recorded on the NEAR contract via `update_checksum()`
 
-Request encryption key for a group.
+### get_key
 
-```bash
-curl -X POST https://shade.phala.network/keys/request \
-  -H "Content-Type: application/json" \
-  -d '{
-    "group_id": "group-abc123",
-    "account_id": "alice.near",
-    "signature": "ed25519:...",
-    "timestamp": 1704067200000,
-    "public_key": "ed25519:..."
-  }'
-```
+Retrieves the encryption key for a group. Requires a valid token obtained via the NEAR contract's `claim_token()` function.
 
-**Request Body:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `group_id` | string | Nova group identifier |
-| `account_id` | string | NEAR account requesting access |
-| `signature` | string | Ed25519 signature of request |
-| `timestamp` | number | Unix timestamp (ms) |
-| `public_key` | string | Client's ephemeral public key |
-
-**Response (Success):**
+**Request:**
 ```json
 {
-  "encrypted_key": "base64...",
-  "key_version": 3,
-  "expires_at": 1704070800000,
-  "attestation": {
-    "quote": "base64...",
-    "report": "base64..."
-  }
+  "group_id": "my-secure-files",
+  "token": "<token-from-claim_token>"
 }
-```
-
-**Response (Unauthorized):**
-```json
-{
-  "error": "UNAUTHORIZED",
-  "message": "Account is not a member of this group"
-}
-```
-
-#### POST /keys/rotate
-
-Trigger key rotation for a group.
-
-```bash
-curl -X POST https://shade.phala.network/keys/rotate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "group_id": "group-abc123",
-    "reason": "member_removed",
-    "callback_url": "https://rpc.near.org",
-    "contract_id": "nova.near",
-    "signature": "ed25519:..."
-  }'
-```
-
-**Request Body:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `group_id` | string | Group to rotate |
-| `reason` | string | Rotation reason |
-| `callback_url` | string | NEAR RPC for callback |
-| `contract_id` | string | Nova contract ID |
-| `signature` | string | Contract signature |
-
-**Response:**
-```json
-{
-  "new_version": 4,
-  "rotation_id": "rot-xyz789",
-  "status": "completed"
-}
-```
-
-#### GET /keys/status/:group_id
-
-Get key status for a group.
-
-```bash
-curl https://shade.phala.network/keys/status/group-abc123
 ```
 
 **Response:**
 ```json
 {
-  "group_id": "group-abc123",
-  "key_version": 3,
-  "created_at": 1704067200000,
-  "last_rotated": 1704153600000,
-  "rotation_count": 2,
-  "algorithm": "AES-256-GCM"
+  "key": "<base64-encoded-AES-key>",
+  "checksum": "<current-checksum>"
 }
 ```
 
-#### GET /attestation
+**Verification Process:**
+1. Validates the token (ed25519 signature on SHA256 of payload)
+2. Checks nonce has not been used (replay protection)
+3. Verifies timestamp is within 5-minute window
+4. Confirms group membership via NEAR contract
+5. Returns the encryption key only if all checks pass
 
-Get TEE attestation report.
+### rotate_key
 
-```bash
-curl https://shade.phala.network/attestation
+Rotates the encryption key for a group. Automatically triggered when a member is revoked.
+
+**Request:**
+```json
+{
+  "group_id": "my-secure-files"
+}
 ```
 
 **Response:**
 ```json
 {
-  "platform": "phala-tee-v2",
-  "enclave_hash": "sha256:...",
-  "quote": "base64...",
-  "report": "base64...",
-  "timestamp": 1704067200000,
-  "valid_until": 1704153600000
+  "success": true,
+  "new_key_hash": "<hash-of-new-key>",
+  "checksum": "<updated-checksum>"
 }
 ```
 
-## Key Request Flow
+**Behavior:**
+- Generates a new encryption key
+- Replaces the old key in the encrypted SQLite database
+- Updates the on-chain checksum via `update_checksum()` on the NEAR contract
+- After rotation, the revoked member cannot obtain the new key
 
-### Step-by-Step Process
+## Token Verification
 
-```
-┌─────────┐     ┌─────────┐     ┌─────────────┐     ┌──────────┐
-│ Client  │     │  Shade  │     │    NEAR     │     │   IPFS   │
-│  (SDK)  │     │  Agent  │     │  Contract   │     │          │
-└────┬────┘     └────┬────┘     └──────┬──────┘     └────┬─────┘
-     │               │                 │                  │
-     │ 1. Generate   │                 │                  │
-     │    ephemeral  │                 │                  │
-     │    keypair    │                 │                  │
-     │               │                 │                  │
-     │ 2. Sign       │                 │                  │
-     │    request    │                 │                  │
-     │               │                 │                  │
-     │ 3. Request ──▶│                 │                  │
-     │    key        │                 │                  │
-     │               │ 4. Verify ─────▶│                  │
-     │               │    membership   │                  │
-     │               │                 │                  │
-     │               │◀───── 5. ───────│                  │
-     │               │    Confirm      │                  │
-     │               │                 │                  │
-     │◀── 6. ────────│                 │                  │
-     │    Encrypted  │                 │                  │
-     │    key        │                 │                  │
-     │               │                 │                  │
-     │ 7. Decrypt    │                 │                  │
-     │    with       │                 │                  │
-     │    ephemeral  │                 │                  │
-     │               │                 │                  │
-     │ 8. Use key ───────────────────────────────────────▶│
-     │    to decrypt │                 │                  │
-     │    file       │                 │                  │
-     │               │                 │                  │
-```
+The Shade Agent verifies tokens using a multi-step process:
 
-### Code Example
+### Signature Verification
+- Tokens contain an ed25519 signature over SHA256(payload)
+- The payload includes: `{ group_id, user_id, nonce, timestamp }`
+- Signature is verified against the user's NEAR public key
 
-```typescript
-// 1. Generate ephemeral keypair
-const ephemeralKeypair = await crypto.generateKeyPair('x25519');
+### Replay Protection
+- Each token contains a unique nonce
+- Used nonces are tracked on the NEAR contract
+- The Shade Agent checks `get_nonce_validity()` before accepting a token
 
-// 2. Create signed request
-const timestamp = Date.now();
-const message = `${groupId}:${accountId}:${timestamp}`;
-const signature = await nearAccount.sign(message);
+### Timestamp Freshness
+- Tokens include a timestamp
+- The Shade Agent rejects tokens older than 5 minutes
+- Prevents capture-and-replay of old tokens
 
-// 3. Request key from Shade Agent
-const response = await fetch(`${shadeAgentUrl}/keys/request`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    group_id: groupId,
-    account_id: accountId,
-    signature: signature,
-    timestamp: timestamp,
-    public_key: ephemeralKeypair.publicKey
-  })
-});
+## Key Storage
 
-const { encrypted_key, attestation } = await response.json();
+### Encrypted SQLite Database
 
-// 4. Verify attestation (optional but recommended)
-const isValid = await verifyAttestation(attestation);
-
-// 5. Decrypt the key using ephemeral private key
-const decryptionKey = await crypto.deriveKey(
-  ephemeralKeypair.privateKey,
-  encrypted_key
-);
-
-// 6. Use key to decrypt file content
-const decryptedContent = await crypto.decrypt(
-  encryptedFileData,
-  decryptionKey
-);
-```
-
-## Key Rotation
-
-### Automatic Triggers
-
-Key rotation is automatically triggered when:
-
-1. **Member Removed**: Ensures removed member loses access
-2. **Role Downgraded**: Admin → Member triggers rotation
-3. **Security Event**: Suspicious activity detected
-4. **Scheduled**: Optional periodic rotation
-
-### Rotation Process
+Keys are stored in an SQLite database that is encrypted with a TEE-derived secret:
 
 ```
-┌─────────┐     ┌─────────────┐     ┌─────────────┐     ┌──────────┐
-│  NEAR   │     │    Shade    │     │   Existing  │     │   New    │
-│Contract │     │    Agent    │     │   Members   │     │   Key    │
-└────┬────┘     └──────┬──────┘     └──────┬──────┘     └────┬─────┘
-     │                 │                   │                  │
-     │ 1. Remove ─────▶│                   │                  │
-     │    member       │                   │                  │
-     │                 │                   │                  │
-     │                 │ 2. Generate ──────────────────────────▶
-     │                 │    new key        │                  │
-     │                 │                   │                  │
-     │                 │ 3. Increment ────▶│                  │
-     │                 │    version        │                  │
-     │                 │                   │                  │
-     │◀── 4. ──────────│                   │                  │
-     │    Callback     │                   │                  │
-     │    new_version  │                   │                  │
-     │                 │                   │                  │
-     │                 │                   │ 5. Next request  │
-     │                 │                   │    gets new key  │
-     │                 │                   │◀─────────────────│
-     │                 │                   │                  │
+SQLite DB (inside TEE)
+├── Encryption: AES-256-CBC
+├── Key derivation: TEE-derived AES-256-CBC secret
+├── Contents:
+│   ├── Group keys (32-byte AES keys, base64)
+│   ├── Key metadata
+│   └── Rotation history
+└── Access: Only within TEE boundary
 ```
 
-### Forward Secrecy Guarantees
+**Security Properties:**
+- The database encryption key is derived from the TEE's hardware-sealed secret
+- If the database file is extracted from the container, it cannot be decrypted without the TEE
+- Keys are never stored in plaintext, even within the TEE's encrypted database
 
-After rotation:
-- **Old files**: Still accessible with old key (stored in version map)
-- **New files**: Encrypted with new key
-- **Removed member**: Cannot get new key
-- **Remaining members**: Seamless access to all files
+## TEE Security Properties
 
-## Attestation Verification
+### Code Hash Verification
+The NEAR contract stores approved code hashes via `approve_shade_code_hash()`. Only Shade Agent instances running approved, audited code can register as workers. This ensures:
+- No modified or malicious code can access encryption keys
+- Every deployed instance is verified against known-good builds
+- Updates require explicit approval on-chain
 
-### Verifying TEE Attestation
+### Remote Attestation
+Each Shade Agent worker provides attestation proofs during registration via `register_shade_worker()`:
+- Proves the code is running inside a genuine TEE enclave
+- Verifiable by any party against the NEAR contract
+- Attestation is cryptographically bound to the specific code hash
 
-```typescript
-import { verifyPhalaTeeAttestation } from 'phala-attestation';
+### Checksum Verification
+Every response from the Shade Agent includes a checksum:
+- Clients can verify responses against `get_group_checksum()` on the NEAR contract
+- Prevents man-in-the-middle attacks between client and TEE
+- Ensures the TEE state matches the on-chain recorded state
 
-async function verifyShadeAgent(attestation: Attestation): Promise<boolean> {
-  // 1. Verify the attestation quote
-  const quoteValid = await verifyPhalaTeeAttestation({
-    quote: attestation.quote,
-    report: attestation.report,
-    expectedMrEnclave: EXPECTED_SHADE_AGENT_HASH
-  });
+### Redundancy
+Multiple TEE worker instances can run the same approved code hash:
+- Provides high availability for key management operations
+- All workers share the same encrypted database
+- No single point of failure for key operations
 
-  if (!quoteValid) {
-    throw new Error('Invalid TEE attestation');
-  }
+## Data Flow Patterns
 
-  // 2. Check attestation freshness
-  const now = Date.now();
-  if (attestation.timestamp < now - 3600000) { // 1 hour
-    throw new Error('Stale attestation');
-  }
+### Upload Flow (Encryption)
 
-  // 3. Verify enclave identity
-  if (attestation.enclave_hash !== EXPECTED_SHADE_AGENT_HASH) {
-    throw new Error('Unknown enclave');
-  }
-
-  return true;
-}
+```
+Client SDK          Shade Agent (TEE)         IPFS          NEAR Contract
+    |                      |                    |                 |
+    | 1. prepare_upload    |                    |                 |
+    |--------------------->|                    |                 |
+    |                      |                    |                 |
+    | 2. Encryption key    |                    |                 |
+    |<---------------------|                    |                 |
+    |                      |                    |                 |
+    | 3. Encrypt locally   |                    |                 |
+    |    (AES-256-GCM)     |                    |                 |
+    |                      |                    |                 |
+    | 4. finalize_upload   |                    |                 |
+    |--------------------->|                    |                 |
+    |                      | 5. Store to IPFS   |                 |
+    |                      |------------------->|                 |
+    |                      |                    |                 |
+    |                      | 6. Record on NEAR  |                 |
+    |                      |------------------------------------>|
+    |                      |                    |                 |
+    | 7. {cid, trans_id,   |                    |                 |
+    |     file_hash}       |                    |                 |
+    |<---------------------|                    |                 |
 ```
 
-### Expected Enclave Hashes
+### Retrieve Flow (Decryption)
 
-| Version | Environment | MrEnclave Hash |
-|---------|-------------|----------------|
-| v1.0.0 | Mainnet | `sha256:abc123...` |
-| v1.0.0 | Testnet | `sha256:def456...` |
+```
+Client SDK          Shade Agent (TEE)         IPFS          NEAR Contract
+    |                      |                    |                 |
+    | 1. prepare_retrieve  |                    |                 |
+    |--------------------->|                    |                 |
+    |                      | 2. Fetch from IPFS |                 |
+    |                      |------------------->|                 |
+    |                      |<-------------------|                 |
+    |                      |                    |                 |
+    | 3. Encryption key +  |                    |                 |
+    |    encrypted data    |                    |                 |
+    |<---------------------|                    |                 |
+    |                      |                    |                 |
+    | 4. Decrypt locally   |                    |                 |
+    |    (AES-256-GCM)     |                    |                 |
+    |                      |                    |                 |
+    | 5. Plaintext data    |                    |                 |
+```
 
-## Error Handling
+### Key Rotation Flow (on Member Revocation)
 
-### Error Codes
-
-| Code | Description | Resolution |
-|------|-------------|------------|
-| `UNAUTHORIZED` | Not a group member | Verify membership |
-| `GROUP_NOT_FOUND` | Group doesn't exist | Check group_id |
-| `INVALID_SIGNATURE` | Signature verification failed | Re-sign request |
-| `TIMESTAMP_EXPIRED` | Request too old | Use current timestamp |
-| `KEY_ROTATION_IN_PROGRESS` | Rotation ongoing | Retry after delay |
-| `TEE_UNAVAILABLE` | TEE service down | Retry with backoff |
-| `ATTESTATION_FAILED` | Attestation invalid | Contact support |
-
-### Retry Strategy
-
-```typescript
-async function requestKeyWithRetry(params: KeyRequestParams): Promise<Key> {
-  const maxRetries = 3;
-  const baseDelay = 1000;
-
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await requestKey(params);
-    } catch (error) {
-      if (error.code === 'KEY_ROTATION_IN_PROGRESS') {
-        await sleep(baseDelay * Math.pow(2, i));
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw new Error('Max retries exceeded');
-}
+```
+SDK / Contract          Shade Agent (TEE)         NEAR Contract
+    |                          |                        |
+    | 1. revokeGroupMember()   |                        |
+    |-------------------------------------------------->|
+    |                          |                        |
+    |                          | 2. Rotation triggered  |
+    |                          |<-----------------------|
+    |                          |                        |
+    |                          | 3. Generate new key    |
+    |                          |                        |
+    |                          | 4. Store new key       |
+    |                          |    in encrypted SQLite  |
+    |                          |                        |
+    |                          | 5. update_checksum()   |
+    |                          |----------------------->|
+    |                          |                        |
+    | Revoked member can no    |                        |
+    | longer claim tokens or   |                        |
+    | obtain the new key       |                        |
 ```
 
 ## Security Best Practices
 
-### Client-Side
+### For Application Developers
 
-1. **Always verify attestation** before trusting keys
-2. **Use ephemeral keypairs** for key exchange
-3. **Don't cache keys** longer than necessary
-4. **Clear sensitive data** from memory after use
+1. **Always verify checksums** - After receiving a key from the Shade Agent, verify the checksum against `getGroupChecksum()` on the NEAR contract
+2. **Use fresh nonces** - Generate cryptographically random nonces for each token claim
+3. **Handle 5-minute windows** - Ensure your clock is synchronized; tokens expire after 5 minutes
+4. **Don't cache keys long-term** - Request fresh keys for each operation when practical
+5. **Clear sensitive memory** - Zero encryption keys from memory after use
 
-### Integration
+### Security Guarantees
 
-1. **HTTPS only** for all Shade Agent communication
-2. **Pin TLS certificates** in production
-3. **Validate all responses** before processing
-4. **Implement proper error handling**
+| Property | Guarantee |
+|----------|-----------|
+| Key isolation | Keys exist only within TEE boundary |
+| Storage encryption | SQLite encrypted with TEE-derived secret |
+| Code verification | Only approved code hashes can run |
+| Replay protection | Nonces tracked on-chain, single-use |
+| Time-bound tokens | 5-minute validity window |
+| Membership verification | Checked against NEAR contract state |
+| Checksum verification | TEE responses verifiable on-chain |
 
-### Key Storage
+### What the Shade Agent Cannot See
 
-1. **Never persist encryption keys** to disk
-2. **Use secure memory** where available
-3. **Zero memory** after key use
-4. **Rely on Shade Agent** as the key source
-
-## Monitoring
-
-### Health Monitoring
-
-```typescript
-async function monitorShadeAgent() {
-  const health = await fetch(`${shadeAgentUrl}/health`);
-  const status = await health.json();
-
-  if (status.status !== 'healthy') {
-    alert('Shade Agent unhealthy');
-  }
-
-  if (!status.attestation_valid) {
-    alert('TEE attestation invalid');
-  }
-}
-```
-
-### Metrics Available
-
-- Key request latency
-- Rotation frequency
-- Error rates by type
-- Attestation verification status
+The Shade Agent operates on a need-to-know basis:
+- **Has access to:** Encryption keys per group, key metadata
+- **Does NOT see:** File contents (encrypted on IPFS), file CIDs, file metadata
+- **Queries NEAR for:** Group membership, nonce validity, authorization

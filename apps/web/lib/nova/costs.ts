@@ -6,7 +6,7 @@
  * with a 10-minute cache to avoid excessive RPC calls.
  */
 
-import { hasApiKey, getNovaSdk, isSimulationAllowed } from './config';
+import { hasApiKey, getNovaSdk } from './config';
 
 /** Fallback fee if estimateFee fails (conservative estimate in NEAR) */
 const FALLBACK_REGISTER_GROUP_FEE = 0.70;
@@ -68,10 +68,6 @@ export async function getRegisterGroupFee(): Promise<number> {
   }
 
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      return FALLBACK_REGISTER_GROUP_FEE;
-    }
-    console.warn('[NOVA Costs] API key not configured - using fallback fee');
     return FALLBACK_REGISTER_GROUP_FEE;
   }
 
@@ -80,8 +76,6 @@ export async function getRegisterGroupFee(): Promise<number> {
 
     const feeYocto: bigint = await sdk.estimateFee('register_group');
     const feeNear = yoctoToNear(feeYocto);
-
-    console.log('[NOVA Costs] register_group fee:', feeNear, 'NEAR');
 
     feeCache = {
       feeYocto,
@@ -108,10 +102,6 @@ export async function getNovaPlatformBalance(): Promise<number> {
   }
 
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      return 0;
-    }
-    console.warn('[NOVA Costs] API key not configured - returning 0 balance');
     return 0;
   }
 
@@ -120,8 +110,6 @@ export async function getNovaPlatformBalance(): Promise<number> {
 
     const balanceYocto: string = await sdk.getBalance();
     const balanceNear = yoctoToNear(balanceYocto);
-
-    console.log('[NOVA Costs] Platform balance:', balanceNear, 'NEAR');
 
     balanceCache = {
       balanceYocto,
@@ -142,7 +130,6 @@ export async function getNovaPlatformBalance(): Promise<number> {
  */
 export function invalidateBalanceCache(): void {
   balanceCache = null;
-  console.log('[NOVA Costs] Balance cache invalidated');
 }
 
 /**
@@ -158,13 +145,6 @@ export async function canRegisterNewGroup(): Promise<boolean> {
 
   const required = fee * 1.05;
   const canRegister = balance >= required;
-
-  console.log('[NOVA Costs] Can register group:', canRegister, {
-    fee,
-    balance,
-    required,
-  });
-
   return canRegister;
 }
 

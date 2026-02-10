@@ -37,12 +37,12 @@ const securityHeaders = [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "img-src 'self' data: blob: https://*.near.org https://dweb.link https://w3s.link https://ipfs.io https://gateway.pinata.cloud https://www.google-analytics.com https://www.googletagmanager.com",
+      "img-src 'self' data: blob: https://*.near.org https://crustipfs.xyz https://ipfs.io https://dweb.link https://*.dweb.link https://trustless-gateway.link https://4everland.io https://gateway.lighthouse.storage https://w3s.link https://*.w3s.link https://gw.crustfiles.app https://www.google-analytics.com https://www.googletagmanager.com",
       "font-src 'self' data: https://fonts.gstatic.com",
-      "connect-src 'self' https://rpc.mainnet.near.org https://rpc.testnet.near.org https://free.rpc.fastnear.com https://test.rpc.fastnear.com https://rpc.fastnear.com https://near.lava.build https://near-mainnet.lava.build https://*.near.org wss://*.near.org https://testnet.mynearwallet.com https://app.mynearwallet.com https://ipfs.io https://dweb.link https://w3s.link https://gateway.pinata.cloud https://shade-agent.nova.network https://gateway.nova.network https://nova-mcp.fastmcp.app https://api.coingecko.com https://nova-sdk.com https://www.google-analytics.com https://www.googletagmanager.com",
+      "connect-src 'self' https://rpc.mainnet.near.org https://rpc.testnet.near.org https://free.rpc.fastnear.com https://test.rpc.fastnear.com https://rpc.fastnear.com https://near.lava.build https://near-mainnet.lava.build https://*.near.org wss://*.near.org https://testnet.mynearwallet.com https://app.mynearwallet.com https://crustipfs.xyz https://gw.crustfiles.app https://ipfs.io https://dweb.link https://*.dweb.link https://trustless-gateway.link https://4everland.io https://gateway.lighthouse.storage https://w3s.link https://shade-agent.nova.network https://gateway.nova.network https://nova-mcp.fastmcp.app https://api.coingecko.com https://nova-sdk.com https://crust.webapi.subscan.io https://pin.crustcode.com https://www.google-analytics.com https://www.googletagmanager.com",
       "frame-src 'self' https://*.near.org https://wallet.near.org https://app.mynearwallet.com https://testnet.mynearwallet.com",
       "worker-src 'self' blob:",
-      "media-src 'self' blob: https://dweb.link https://w3s.link https://ipfs.io https://gateway.pinata.cloud",
+      "media-src 'self' blob: https://crustipfs.xyz https://gw.crustfiles.app https://ipfs.io https://dweb.link https://*.dweb.link https://trustless-gateway.link https://4everland.io https://gateway.lighthouse.storage https://w3s.link",
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",
@@ -60,12 +60,10 @@ const nextConfig: NextConfig = {
       : false,
   },
 
-  // Increase body size limit for large file uploads via Nova SDK.
-  // The SDK sends encrypted file data as base64 JSON to /api/finalize-upload
-  // which can exceed the default 1MB limit.
+  // Body size limits for Nova proxy (now only small JSON: auth, group mgmt, key storage)
   experimental: {
     serverActions: {
-      bodySizeLimit: '200mb',
+      bodySizeLimit: '10mb',
     },
   },
 
@@ -79,23 +77,8 @@ const nextConfig: NextConfig = {
     ];
   },
 
-  // Rewrite upload-heavy endpoints directly to the upstream server.
-  // This bypasses the route handler's body parsing layer, avoiding
-  // 413 Payload Too Large errors for large encrypted file uploads.
-  // Auth headers (Authorization, X-Account-Id) from the browser request
-  // are forwarded automatically by the rewrite proxy.
-  async rewrites() {
-    return {
-      beforeFiles: [
-        {
-          source: '/api/nova-proxy/api/finalize-upload',
-          destination: 'https://nova-mcp.fastmcp.app/api/finalize-upload',
-        },
-      ],
-      afterFiles: [],
-      fallback: [],
-    };
-  },
+  // No rewrites needed — Nova proxy only handles small JSON (auth, groups, keys).
+  // Large file uploads go directly to Crust via the client.
 };
 
 export default nextConfig;

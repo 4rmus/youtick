@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Loader2, CheckCircle2, AlertCircle, Ticket, ExternalLink, Wallet, User, Play, Sparkles } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageContext";
 import { parseTitleMetadata } from "@/lib/metadata-parser";
-import { NEAR_CONFIG } from "@/lib/constants";
+import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from "@/lib/constants";
 import { getCurrentRpcUrl } from "@/lib/rpc-failover";
 import { addBuyerToNovaGroup } from "@/lib/nova/post-purchase";
 import { NovaThumbnail } from "@/components/NovaThumbnail";
@@ -85,7 +85,7 @@ function ClaimContent() {
                         finality: 'final'
                     });
                     setAccountCheckStatus("taken");
-                } catch (err: any) {
+                } catch {
                     // Account doesn't exist = available
                     setAccountCheckStatus("available");
                 }
@@ -146,13 +146,6 @@ function ClaimContent() {
                     t.claim_page?.exclusive_content || "YouTick Exclusive Content"
                 );
 
-                console.log('[ClaimPage] Parsed metadata:', {
-                    rawTitle: eventData?.title,
-                    thumbnailCid: parsed.thumbnailCid,
-                    thumbnailUrl: parsed.thumbnailUrl,
-                    schemaVersion: parsed.schemaVersion
-                });
-
                 setGiftInfo({
                     eventTitle: parsed.title,
                     creator: giftData.creator_id,
@@ -161,7 +154,7 @@ function ClaimContent() {
                     description: t.claim_page?.ticket_for_content || "Özel içeriğe erişim bileti"
                 });
                 setStep("preview");
-            } catch (err: any) {
+            } catch (err: unknown) {
                 console.error("Gift validation error:", err);
                 setError(t.claim_page?.gift_info_failed || "Hediye bilgisi alınamadı. Link geçersiz olabilir.");
                 setStep("error");
@@ -205,7 +198,7 @@ function ClaimContent() {
                             new_account_id: fullAccountId,
                             new_public_key: newAccountPublicKey,
                         },
-                        BigInt("200000000000000"),
+                        GAS_CONSTANTS.highGas,
                         BigInt(0)
                     )
                 ]
@@ -226,12 +219,13 @@ function ClaimContent() {
             setClaimedAccountId(fullAccountId);
             setTxHash(result.transaction.hash);
             setStep("success");
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("Create account error:", err);
+            const errMsg = err instanceof Error ? err.message : '';
             let errorMsg = t.claim_page?.account_create_failed || "Hesap oluşturulamadı.";
-            if (err.message?.includes("already claimed")) {
+            if (errMsg.includes("already claimed")) {
                 errorMsg = t.claim_page?.invalid_or_used || "Bu hediye linki daha önce kullanılmış.";
-            } else if (err.message?.includes("account already exists")) {
+            } else if (errMsg.includes("account already exists")) {
                 errorMsg = t.claim_page?.username_taken || "Bu hesap adı zaten kullanılıyor.";
             }
             setError(errorMsg);
@@ -264,8 +258,8 @@ function ClaimContent() {
                     actions.functionCall(
                         "claim_gift",
                         { receiver_id: existingAccountId.trim() },
-                        BigInt("100000000000000"),
-                        BigInt("10000000000000000000000")
+                        GAS_CONSTANTS.mediumGas,
+                        DEPOSIT_CONSTANTS.smallStorageDeposit
                     )
                 ]
             });
@@ -278,12 +272,13 @@ function ClaimContent() {
             setClaimedAccountId(existingAccountId.trim());
             setTxHash(result.transaction.hash);
             setStep("success");
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("Claim to existing error:", err);
+            const errMsg = err instanceof Error ? err.message : '';
             let errorMsg = t.claim_page?.transfer_failed || "Bilet aktarılamadı.";
-            if (err.message?.includes("already claimed")) {
+            if (errMsg.includes("already claimed")) {
                 errorMsg = t.claim_page?.invalid_or_used || "Bu hediye linki daha önce kullanılmış.";
-            } else if (err.message?.includes("Invalid")) {
+            } else if (errMsg.includes("Invalid")) {
                 errorMsg = t.claim_page?.invalid_link || "Geçersiz hediye linki.";
             }
             setError(errorMsg);

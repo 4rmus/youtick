@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock constants before importing
 vi.mock('@/lib/constants', () => ({
   IPFS_CONFIG: {
-    gatewayUrl: 'https://gateway.pinata.cloud/ipfs',
+    gatewayUrl: 'https://crustipfs.xyz/ipfs',
     placeholderImage: '/placeholder.svg'
   },
   METADATA_SCHEMA: {
@@ -63,7 +63,7 @@ describe('Metadata Parser', () => {
         const validCid = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
         const result = parseTitleMetadata(`QmReal:::${validCid}:::Title`);
 
-        expect(result.thumbnailUrl).toContain('gateway.pinata.cloud');
+        expect(result.thumbnailUrl).toContain('crustipfs.xyz');
         expect(result.thumbnailUrl).toContain(validCid);
       });
     });
@@ -228,7 +228,7 @@ describe('Metadata Parser', () => {
       const validCid = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
       const result = buildThumbnailUrl(validCid);
 
-      expect(result).toContain('gateway.pinata.cloud');
+      expect(result).toContain('crustipfs.xyz');
     });
 
     it('should return Nova URL as-is', () => {

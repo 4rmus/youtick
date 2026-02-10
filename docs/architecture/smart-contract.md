@@ -3,7 +3,7 @@
 > NFT Ticket Contract on NEAR Protocol
 
 **Location**: `contracts/nft-ticket/src/lib.rs`
-**Contract ID**: `v1.utick.testnet`
+**Contract ID**: `youtick-prod-v1.near`
 **Standard**: NEP-171 (NFT)
 
 ---
@@ -42,7 +42,7 @@ Attached to each NFT token:
 
 ```rust
 pub struct VideoMetadata {
-    pub encrypted_cid: String,       // Lit-encrypted IPFS CID
+    pub encrypted_cid: String,       // Nova-encrypted IPFS CID
     pub duration_seconds: u32,
     pub event_date: Option<u64>,
     pub content_type: ContentType,
@@ -287,7 +287,7 @@ near_contract_standards::impl_non_fungible_token_approval!(Contract, tokens);
 ### Create Event
 
 ```bash
-near call v1.utick.testnet create_event \
+near call youtick-prod-v1.near create_event \
   '{"encrypted_cid":"Qm...","title":"Concert","description":"Live show","price":"1000000000000000000000000"}' \
   --accountId creator.testnet --deposit 0.1
 ```
@@ -295,7 +295,7 @@ near call v1.utick.testnet create_event \
 ### Buy Ticket
 
 ```bash
-near call v1.utick.testnet buy_ticket \
+near call youtick-prod-v1.near buy_ticket \
   '{"receiver_id":"buyer.testnet","encrypted_cid":"Qm..."}' \
   --accountId buyer.testnet --deposit 1.01
 ```
@@ -303,14 +303,14 @@ near call v1.utick.testnet buy_ticket \
 ### Check Ownership
 
 ```bash
-near view v1.utick.testnet verify_ownership \
+near view youtick-prod-v1.near verify_ownership \
   '{"account_id":"buyer.testnet","token_id":"42"}'
 ```
 
 ### Fund Trial Pool
 
 ```bash
-near call v1.utick.testnet fund_trial_pool '{}' \
+near call youtick-prod-v1.near fund_trial_pool '{}' \
   --accountId owner.testnet --deposit 10
 ```
 
@@ -339,5 +339,5 @@ pub fn migrate_state(owner_id: AccountId) -> Self {
 
 - [Contract Methods API](../api/contract-methods.md)
 - [Session Keys](./session-keys.md)
-- [Gift System Guide](../guides/gift-system.md)
-- [Trial Accounts Guide](../guides/trial-accounts.md)
+- [User Flows](../guides/user-flows.md)
+- [Nova Protocol](./nova-protocol.md)

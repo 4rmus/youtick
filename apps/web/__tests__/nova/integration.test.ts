@@ -5,7 +5,17 @@
  * - Upload → Group Creation → Access Control → Fetch
  * - Gift System Simulation
  * - Multi-user Scenarios
+ *
+ * Uses SDK mock — no simulation fallbacks.
  */
+
+// Set API key flag BEFORE importing any nova modules
+process.env.NEXT_PUBLIC_NOVA_API_KEY = 'enabled';
+process.env.NEXT_PUBLIC_NOVA_ACCOUNT_ID = 'test.nova-sdk.near';
+
+// Install SDK mock BEFORE any nova imports
+import { installNovaSdkMock } from '../mocks/nova-sdk';
+installNovaSdkMock();
 
 import {
   uploadFile,
@@ -23,33 +33,7 @@ import {
   hasValidNovaAuthToken
 } from '../../lib/nova/auth';
 import { initializeNOVA, getNovaStatus } from '../../lib/nova';
-import * as nacl from 'tweetnacl';
-
-// Mock BrowserKeyStore to avoid near-api-js import issues
-const BrowserKeyStore = {
-  getKey: async (accountId: string): Promise<any> => null
-};
-
-// Mock Session Key
-class MockSessionKey {
-  private keypair: nacl.SignKeyPair;
-
-  constructor() {
-    this.keypair = nacl.sign.keyPair();
-  }
-
-  getPublicKey(): { toString: () => string } {
-    const base64 = Buffer.from(this.keypair.publicKey).toString('base64');
-    return {
-      toString: () => `ed25519:${base64}`
-    };
-  }
-
-  async sign(message: Uint8Array): Promise<{ signature: Uint8Array }> {
-    const signature = nacl.sign.detached(message, this.keypair.secretKey);
-    return { signature };
-  }
-}
+import { setNovaConfig } from '../../lib/nova/config';
 
 // Mock localStorage
 const mockLocalStorage = new Map<string, string>();
@@ -62,21 +46,6 @@ global.localStorage = {
   key: (index: number) => null
 } as any;
 
-// Setup mock Session Keys for multiple accounts
-async function setupMockSessionKeys(accountIds: string[]) {
-  const keys = new Map<string, MockSessionKey>();
-
-  for (const accountId of accountIds) {
-    keys.set(accountId, new MockSessionKey());
-  }
-
-  BrowserKeyStore.getKey = async (accountId: string) => {
-    return keys.get(accountId) as any || null;
-  };
-
-  return keys;
-}
-
 // Test suite
 async function runIntegrationTests() {
   console.log('\n🧪 NOVA Integration Tests\n');
@@ -84,12 +53,13 @@ async function runIntegrationTests() {
   let passed = 0;
   let failed = 0;
 
+  setNovaConfig({ apiKey: 'enabled', novaAccountId: 'test.nova-sdk.near' });
+
   // Test 1: Complete Upload → Group → Fetch Flow
   try {
     console.log('\n📋 Test 1: Complete Upload → Group → Fetch Flow');
 
     const creator = 'creator.testnet';
-    await setupMockSessionKeys([creator]);
     clearNovaAuthCache();
 
     // Step 1: Upload video
@@ -107,7 +77,7 @@ async function runIntegrationTests() {
 
     // Step 2: Verify creator can fetch
     console.log('  2️⃣ Verifying creator access...');
-    const fetchedData = await fetchFile(uploadResult.cid, creator, { groupId: uploadResult.groupId });
+    const fetchedData = await fetchFile(uploadResult.cid, creator, { groupId: uploadResult.groupId, keyCid: uploadResult.keyCid });
     if (!(fetchedData instanceof Uint8Array)) {
       throw new Error('Fetch failed');
     }
@@ -134,7 +104,6 @@ async function runIntegrationTests() {
 
     const creator = 'creator.testnet';
     const buyer = 'buyer.testnet';
-    await setupMockSessionKeys([creator, buyer]);
     clearNovaAuthCache();
 
     // Step 1: Creator uploads video
@@ -150,7 +119,7 @@ async function runIntegrationTests() {
 
     // Step 3: Buyer can now access video
     console.log('  3️⃣ Buyer accesses video...');
-    const buyerData = await fetchFile(uploadResult.cid, buyer, { groupId: uploadResult.groupId });
+    const buyerData = await fetchFile(uploadResult.cid, buyer, { groupId: uploadResult.groupId, keyCid: uploadResult.keyCid });
     if (!(buyerData instanceof Uint8Array)) {
       throw new Error('Buyer fetch failed');
     }
@@ -179,7 +148,6 @@ async function runIntegrationTests() {
 
     const creator = 'creator.testnet';
     const giftRecipient = 'gift-recipient.testnet';
-    await setupMockSessionKeys([creator, giftRecipient]);
     clearNovaAuthCache();
 
     // Step 1: Creator uploads video
@@ -195,7 +163,7 @@ async function runIntegrationTests() {
 
     // Step 3: Recipient can access video
     console.log('  3️⃣ Recipient accesses gifted video...');
-    const recipientData = await fetchFile(uploadResult.cid, giftRecipient, { groupId: uploadResult.groupId });
+    const recipientData = await fetchFile(uploadResult.cid, giftRecipient, { groupId: uploadResult.groupId, keyCid: uploadResult.keyCid });
     if (!(recipientData instanceof Uint8Array)) {
       throw new Error('Recipient fetch failed');
     }
@@ -213,7 +181,6 @@ async function runIntegrationTests() {
     console.log('📋 Test 4: Metadata Upload Flow');
 
     const creator = 'creator.testnet';
-    await setupMockSessionKeys([creator]);
     clearNovaAuthCache();
 
     // Step 1: Upload video
@@ -294,7 +261,6 @@ async function runIntegrationTests() {
     console.log('📋 Test 6: Multi-Account Token Caching');
 
     const accounts = ['user1.testnet', 'user2.testnet', 'user3.testnet'];
-    await setupMockSessionKeys(accounts);
     clearNovaAuthCache();
 
     // Generate tokens for all accounts

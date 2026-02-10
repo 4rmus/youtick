@@ -2,7 +2,7 @@ import { NextResponse, NextRequest } from "next/server";
 import { Account, KeyPair, KeyPairSigner, actions, type KeyPairString } from "near-api-js";
 import { trialAccountLimiter, trialDailyGlobalLimiter } from "@/lib/rate-limiter";
 import { addCorsHeaders, handleCorsPreflightRequest, checkCors } from "@/lib/cors";
-import { NEAR_CONFIG } from "@/lib/constants";
+import { NEAR_CONFIG, GAS_CONSTANTS } from "@/lib/constants";
 
 /**
  * Sponsored Trial API - Creates trial accounts as subaccounts of the contract
@@ -90,17 +90,33 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Audit logging
+        // Audit logging (never log credentials or full key material)
         console.log(`[AUDIT] Trial Account Request: username=${username} ip=${clientIp} time=${new Date().toISOString()} daily_remaining=${trialDailyGlobalLimiter.getRemaining()}`);
 
-        // Get relayer credentials
+        // Get relayer credentials from environment
+        // SECURITY: These should be migrated to a secret manager (e.g. Vercel encrypted env vars,
+        // AWS Secrets Manager, or HashiCorp Vault) for production deployments.
+        // Current mitigation: server-side only (not prefixed with NEXT_PUBLIC_), rate-limited endpoint.
         const relayerAccountId = process.env.RELAYER_ACCOUNT_ID;
         const relayerPrivateKey = process.env.RELAYER_PRIVATE_KEY;
 
         if (!relayerAccountId || !relayerPrivateKey) {
-            console.error("Missing relayer credentials:", { relayerAccountId: !!relayerAccountId, relayerPrivateKey: !!relayerPrivateKey });
+            // Log presence/absence only - never log actual key values
+            console.error("[SECURITY] Missing relayer credentials:", {
+                hasAccountId: !!relayerAccountId,
+                hasPrivateKey: !!relayerPrivateKey,
+            });
             return NextResponse.json(
-                { error: "Server configuration error: Missing relayer credentials" },
+                { error: "Server configuration error" },
+                { status: 500 }
+            );
+        }
+
+        // Validate key format before use
+        if (!relayerPrivateKey.startsWith('ed25519:')) {
+            console.error("[SECURITY] Invalid relayer key format - expected ed25519: prefix");
+            return NextResponse.json(
+                { error: "Server configuration error" },
                 { status: 500 }
             );
         }
@@ -127,7 +143,7 @@ export async function POST(request: NextRequest) {
                 actions.functionCall(
                     "create_sponsored_trial",
                     { username, new_public_key },
-                    BigInt("200000000000000"), // 200 TGas
+                    GAS_CONSTANTS.highGas, // 200 TGas
                     BigInt(0) // No deposit
                 )
             ]
@@ -141,25 +157,27 @@ export async function POST(request: NextRequest) {
         return addCorsHeaders(successRes, request);
 
     } catch (error: unknown) {
-        console.error("Sponsored trial error:", error);
+        // Log full error server-side for debugging, but never expose to client
+        console.error("[SECURITY] Sponsored trial error:", error);
 
         let errorRes: NextResponse;
         const errorMessage = error instanceof Error ? error.message : String(error);
 
-        // Check for specific errors
+        // Return safe, user-facing error messages only
         if (errorMessage.includes("Trial pool empty")) {
             errorRes = NextResponse.json(
-                { error: "Trial pool is empty. Please try again later." },
+                { error: "Trial pool is empty. Please try again later.", code: "TRIAL_POOL_EMPTY" },
                 { status: 503 }
             );
         } else if (errorMessage.includes("already exists")) {
             errorRes = NextResponse.json(
-                { error: "This username is already taken. Please choose another." },
+                { error: "This username is already taken. Please choose another.", code: "USERNAME_TAKEN" },
                 { status: 409 }
             );
         } else {
+            // Never leak internal error messages to clients
             errorRes = NextResponse.json(
-                { error: errorMessage || "Failed to create trial account" },
+                { error: "Failed to create trial account. Please try again.", code: "TRIAL_CREATE_FAILED" },
                 { status: 500 }
             );
         }

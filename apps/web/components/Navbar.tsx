@@ -11,7 +11,7 @@ import { Menu, X, User, LogOut, Sparkles } from 'lucide-react';
 import { Branding } from '@/components/landing/Branding';
 
 export function Navbar() {
-    const { modal, accountId, getWallet } = useWallet();
+    const { modal, accountId, signOut } = useWallet();
     const { language, t } = useLanguage();
     const [mounted, setMounted] = useState(false);
     const pathname = usePathname();
@@ -28,8 +28,7 @@ export function Navbar() {
 
     const handleSignOut = async () => {
         try {
-            const wallet = await getWallet();
-            await wallet.signOut();
+            await signOut();
             window.location.reload();
         } catch (e) {
             console.error("Failed to sign out:", e);

@@ -11,7 +11,7 @@
 import { NovaConfig, NovaError } from './types';
 
 /** Default IPFS gateway for public content (thumbnails, previews) */
-const DEFAULT_IPFS_GATEWAY = 'https://gateway.pinata.cloud/ipfs';
+const DEFAULT_IPFS_GATEWAY = 'https://crustipfs.xyz/ipfs';
 
 /**
  * Default NOVA configuration
@@ -48,10 +48,6 @@ export function setNovaConfig(config: Partial<NovaConfig>): void {
   // Invalidate cached SDK instance so it picks up new config
   _sdkInstance = null;
 
-  console.log('[NOVA Config] Configuration updated:', {
-    network: currentConfig.network,
-    hasApiKey: !!currentConfig.apiKey,
-  });
 }
 
 /**
@@ -60,7 +56,6 @@ export function setNovaConfig(config: Partial<NovaConfig>): void {
 export function resetNovaConfig(): void {
   currentConfig = { ...DEFAULT_CONFIG };
   _sdkInstance = null;
-  console.log('[NOVA Config] Configuration reset to defaults');
 }
 
 /**
@@ -116,7 +111,7 @@ export function getApiKey(): string {
   const config = getNovaConfig();
 
   if (!config.apiKey) {
-    throw new NovaError('INVALID_CONFIG', 'NOVA API key not configured. Set NEXT_PUBLIC_NOVA_API_KEY environment variable.');
+    throw new NovaError('INVALID_CONFIG', 'NOVA API key not configured. Set NOVA_API_KEY (server) and NEXT_PUBLIC_NOVA_API_KEY=enabled (client).');
   }
 
   return config.apiKey;
@@ -144,29 +139,18 @@ export function getExpectedEnclaveHash(): string | undefined {
 }
 
 /**
- * Check if simulation mode is allowed
- *
- * Simulation is only allowed in non-production environments.
- * In production, all Nova operations require a real API key.
- *
- * @returns true if simulation is allowed (dev/test)
- */
-export function isSimulationAllowed(): boolean {
-  return process.env.NODE_ENV !== 'production';
-}
-
-/**
  * Get Nova SDK constructor options with CORS proxy URLs.
  *
  * Nova SDK's authUrl (nova-sdk.com) and mcpUrl (nova-mcp.fastmcp.app)
  * don't support CORS from browser origins. We route them through
  * our Next.js API route at /api/nova-proxy/[...path].
  */
-export function getSdkOptions(apiKey?: string) {
-  const config = getNovaConfig();
+export function getSdkOptions() {
   const proxyBase = '/api/nova-proxy';
   return {
-    apiKey: apiKey || config.apiKey,
+    // Real API key is injected server-side by the proxy route.
+    // Pass a placeholder so the SDK's internal auth checks don't skip.
+    apiKey: hasApiKey() ? 'proxy-injected' : undefined,
     authUrl: proxyBase,
     mcpUrl: proxyBase,
   };
@@ -188,9 +172,8 @@ let _sdkInstance: import('nova-sdk-js').NovaSdk | null = null;
 export function getNovaSdk(): import('nova-sdk-js').NovaSdk {
   if (!_sdkInstance) {
     const { NovaSdk } = require('nova-sdk-js') as typeof import('nova-sdk-js');
-    const config = getNovaConfig();
     const novaAccountId = getNovaAccountId();
-    _sdkInstance = new NovaSdk(novaAccountId, getSdkOptions(config.apiKey));
+    _sdkInstance = new NovaSdk(novaAccountId, getSdkOptions());
   }
   return _sdkInstance;
 }
@@ -198,6 +181,54 @@ export function getNovaSdk(): import('nova-sdk-js').NovaSdk {
 /** Reset the cached SDK instance (called automatically on config change) */
 export function resetNovaSdk(): void {
   _sdkInstance = null;
+}
+
+/**
+ * Create a Nova group via SDK's registerGroup().
+ *
+ * registerGroup() calls the MCP `register_group` tool which handles both:
+ * 1. On-chain group creation (nova-sdk.near smart contract)
+ * 2. TEE group registration (Shade Agent)
+ *
+ * The MCP tool can fail with "Group does not exist on-chain" even when the
+ * on-chain transaction succeeded (race condition between NEAR finality and
+ * the TEE verification query). Retrying after a short delay resolves this
+ * because the group is now visible on-chain for the TEE check.
+ *
+ * @param groupName - Name/ID for the group
+ * @returns The group_id (same as groupName)
+ */
+export async function createNovaGroup(groupName: string): Promise<string> {
+  const sdk = getNovaSdk();
+  const MAX_RETRIES = 3;
+  const RETRY_DELAYS = [3000, 5000, 8000]; // Escalating delays for NEAR finality
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      await sdk.registerGroup(groupName);
+      return groupName;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const isOnChainError = errorMessage.includes('does not exist on-chain');
+
+      if (isOnChainError && attempt < MAX_RETRIES - 1) {
+        const delay = RETRY_DELAYS[attempt];
+        console.warn(
+          `[NOVA Config] registerGroup attempt ${attempt + 1}/${MAX_RETRIES} failed ` +
+          `(on-chain propagation delay). Retrying in ${delay}ms...`
+        );
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+
+      // Final attempt or non-retryable error
+      console.error('[NOVA Config] registerGroup failed after retries:', { groupName, attempt: attempt + 1, error: errorMessage });
+      throw error;
+    }
+  }
+
+  // Unreachable, but satisfies TypeScript
+  throw new NovaError('GROUP_CREATE_FAILED', `Failed to create group ${groupName} after ${MAX_RETRIES} attempts`);
 }
 
 /**
@@ -251,7 +282,6 @@ export const NOVA_CONSTANTS = {
 // Initialize configuration on module load
 try {
   validateNovaConfig();
-  console.log('[NOVA Config] Configuration validated successfully');
 } catch (error: unknown) {
   if (error instanceof NovaError) {
     console.warn('[NOVA Config] Configuration validation failed:', error.message);

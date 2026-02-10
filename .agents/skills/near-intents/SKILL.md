@@ -1,6 +1,26 @@
 ---
 name: near-intents
-description: Cross-chain token swap integration using NEAR Intents 1Click API. Use when building swap widgets, bridge interfaces, or multi-chain transfers across EVM, Solana, NEAR, TON, Stellar, and Tron.
+description: >
+  Cross-chain token swap integration using NEAR Intents 1Click API. Use when building swap widgets,
+  bridge interfaces, or multi-chain transfers across EVM, Solana, NEAR, TON, Stellar, and Tron.
+version: 1.0.0
+license: MIT
+platforms:
+  - claude
+  - gemini
+  - openai
+  - markdown
+tags:
+  - near-protocol
+  - cross-chain
+  - token-swap
+  - intents
+  - bridge
+  - defi
+  - multi-chain
+metadata:
+  author: near
+  version: "1.0.0"
 ---
 
 # NEAR Intents Integration

@@ -4,7 +4,6 @@ import { TrialOnboarding } from "@/components/TrialOnboarding";
 
 export default function TrialPage() {
     const handleTrialCreated = (accountId: string) => {
-        console.log("Trial account created:", accountId);
         // Store in localStorage for session persistence
         if (typeof window !== "undefined") {
             localStorage.setItem("trialAccountId", accountId);

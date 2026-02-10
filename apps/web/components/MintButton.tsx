@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Loader2, Coins, Ticket } from "lucide-react";
 import { actions, yoctoToNear, nearToYocto } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
-import { NEAR_CONFIG } from '@/lib/constants';
+import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from '@/lib/constants';
 
 interface MintButtonProps {
     cid?: string;
@@ -65,7 +65,7 @@ export function MintButton({ cid }: MintButtonProps) {
                         receiver_id: accountId,
                         encrypted_cid: cid
                     },
-                    BigInt('30000000000000'), // 30 Tgas
+                    GAS_CONSTANTS.smallGas, // 30 Tgas
                     BigInt(depositYocto) + BigInt('12000000000000000000000') // Price + 0.012 NEAR (Storage + commission buffer)
                 );
 
@@ -95,8 +95,8 @@ export function MintButton({ cid }: MintButtonProps) {
                 const action = actions.functionCall(
                     'nft_mint',
                     args,
-                    BigInt('300000000000000'), // 300 Tgas
-                    BigInt('100000000000000000000000') // 0.1 NEAR
+                    GAS_CONSTANTS.standardGas, // 300 Tgas
+                    DEPOSIT_CONSTANTS.storageDeposit // 0.1 NEAR
                 );
 
                 await wallet.signAndSendTransaction({

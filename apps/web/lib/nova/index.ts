@@ -1,7 +1,7 @@
 /**
  * NOVA Secure File-Sharing Module
  *
- * 100% client-side, TEE-based encryption and group-based access control.
+ * Client-side, TEE-based encryption and group-based access control.
  *
  * Features:
  * - Session Key authentication (signless)
@@ -55,7 +55,6 @@ import {
   getGatewayUrl,
   getApiKey,
   hasApiKey,
-  isSimulationAllowed,
   getNovaAccountId,
   getNovaSdk,
   resetNovaSdk,
@@ -73,13 +72,12 @@ export {
   getGatewayUrl,
   getApiKey,
   hasApiKey,
-  isSimulationAllowed,
   getNovaAccountId,
   getNovaSdk,
   resetNovaSdk,
   getExpectedEnclaveHash,
   NOVA_CONSTANTS
-};
+} from './config';
 
 // ============================================================================
 // Authentication Exports
@@ -101,7 +99,7 @@ export {
   getCachedToken,
   refreshNovaAuthToken,
   getTokenExpiry
-};
+} from './auth';
 
 // ============================================================================
 // Client Exports (Upload/Download)
@@ -123,7 +121,7 @@ export {
   checkFileExists,
   uploadFiles,
   uploadJson
-};
+} from './client';
 
 // ============================================================================
 // Group Management Exports
@@ -143,7 +141,7 @@ export {
   isGroupMember,
   getGroupMembers,
   getGroup
-};
+} from './groups';
 
 // ============================================================================
 // Public Group Exports (for thumbnails)
@@ -169,14 +167,28 @@ export {
   isPublicGroup,
   parseNovaUrl,
   createNovaUrl,
-  isNovaUrlCheck,
+  isNovaUrl as isNovaUrlCheck,
   joinPublicGroup,
   uploadPublicThumbnail,
   fetchPublicThumbnail,
   uploadFreeVideo
-};
+} from './public-groups';
 
-export type { PublicThumbnailResult };
+export type { PublicThumbnailResult } from './public-groups';
+
+// ============================================================================
+// Key Storage Exports (Hybrid Crust+Nova flow)
+// ============================================================================
+
+import {
+  storeEncryptionKey,
+  retrieveEncryptionKey
+} from './key-storage';
+
+export {
+  storeEncryptionKey,
+  retrieveEncryptionKey
+} from './key-storage';
 
 // ============================================================================
 // Cost Estimation Exports
@@ -196,7 +208,7 @@ export {
   canRegisterNewGroup,
   getNovaFeeSummary,
   invalidateBalanceCache
-};
+} from './costs';
 
 export type { NovaFeeSummary } from './costs';
 
@@ -220,7 +232,7 @@ export {
   getCachedAttestation,
   invalidateAttestationCache,
   isAttestationStale
-};
+} from './attestation';
 
 // ============================================================================
 // Module Info
@@ -260,10 +272,6 @@ export const NOVA_MODULE_INFO = {
 export function initializeNOVA(): boolean {
   try {
     validateNovaConfig();
-    console.log('[NOVA] Module initialized successfully');
-    console.log('[NOVA] Version:', NOVA_VERSION);
-    console.log('[NOVA] Network:', getNovaConfig().network);
-    console.log('[NOVA] API Key configured:', hasApiKey());
     return true;
   } catch (error: unknown) {
     console.error('[NOVA] Module initialization failed:', error);

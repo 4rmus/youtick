@@ -30,7 +30,7 @@ Nova is YouTick's privacy-first, decentralized video encryption system combining
 │   │    ▼                         ▼                         ▼        │   │
 │   │ ┌──────────┐          ┌──────────────┐           ┌──────────┐  │   │
 │   │ │   NEAR   │◀────────▶│    Shade     │           │   IPFS   │  │   │
-│   │ │ Protocol │          │    Agent     │           │ (Pinata) │  │   │
+│   │ │ Protocol │          │    Agent     │           │ (Crust)  │  │   │
 │   │ │          │          │    (TEE)     │           │          │  │   │
 │   │ │ - NFT    │          │              │           │ Encrypted│  │   │
 │   │ │ - Groups │          │ Key Manager  │           │  Videos  │  │   │
@@ -118,8 +118,8 @@ Trusted Execution Environment for secure key management.
 │          └── keys: HashMap<Version, AES256Key>              │
 │                                                              │
 │  contract_verifier: NearContractVerifier                    │
-│    └── contract_id: "v1.utick.testnet"                      │
-│    └── rpc_url: "https://rpc.testnet.near.org"              │
+│    └── contract_id: "youtick-prod-v1.near"                      │
+│    └── rpc_url: "https://rpc.mainnet.near.org"              │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -347,4 +347,4 @@ Distributed storage for encrypted video content.
 - [Shade Agent Details](./shade-agent.md) - TEE key management
 - [Session Keys](./session-keys.md) - Authentication flow
 - [Smart Contract](./smart-contract.md) - Contract architecture
-- [Security Guide](../08-security.md) - Security best practices
+- [Security Guide](../security.md) - Security best practices

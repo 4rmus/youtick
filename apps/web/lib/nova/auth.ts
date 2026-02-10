@@ -1,15 +1,13 @@
 /**
  * NOVA Authentication Module
  *
- * Handles NOVA authentication using NEAR Session Keys (signless).
+ * Handles NOVA authentication via SDK-managed session tokens.
+ * The Nova SDK manages its own auth lifecycle — no NEAR signature needed.
  */
 
-import { BrowserKeyStore } from '../keystore-v7';
-import { NovaAuthToken, NovaError, NovaAuthRequest, NovaAuthResponse } from './types';
-import { NOVA_CONSTANTS, hasApiKey, getApiKey, isSimulationAllowed } from './config';
+import { NovaAuthToken, NovaError, NovaAuthResponse } from './types';
+import { NOVA_CONSTANTS, hasApiKey, getNovaSdk } from './config';
 import { verifyAttestation, getCachedAttestation } from './attestation';
-import { NEAR_CONFIG } from '../constants';
-import * as crypto from 'crypto';
 
 /**
  * Token cache (in-memory)
@@ -19,82 +17,41 @@ import * as crypto from 'crypto';
 const tokenCache = new Map<string, NovaAuthToken>();
 
 /**
- * Generate NOVA authentication token using NEAR Session Key (signless)
+ * Generate NOVA authentication token via SDK-managed session
  *
- * This is the CRITICAL function that enables signless UX.
+ * The Nova SDK handles auth internally via API key + session tokens.
+ * No NEAR signature is needed — the SDK manages its own lifecycle.
  *
  * @param accountId - NEAR account ID
  * @returns NovaAuthToken with expiry
- * @throws NovaError if Session Key missing or auth fails
+ * @throws NovaError if auth fails or API key missing
  */
 export async function generateNovaAuthToken(
   accountId: string
 ): Promise<NovaAuthToken> {
-  console.log('[NOVA Auth] Generating auth token for:', accountId);
-
   // 1. Check cache first
   const cached = getFromCache(accountId);
   if (cached && !isExpired(cached)) {
-    console.log('[NOVA Auth] Using cached token (expires in', (cached.expiresAt - Date.now()) / 1000, 'seconds)');
     return cached;
   }
 
   try {
-    // 2. Retrieve Session Key from localStorage
-    const keyStore = new BrowserKeyStore();
-    const sessionKey = await keyStore.getKey(NEAR_CONFIG.networkId, accountId);
+    // 2. Authenticate via SDK session
+    const authResponse = await authenticateWithNOVA();
 
-    if (!sessionKey) {
-      throw new NovaError(
-        'NO_SESSION_KEY',
-        'Session Key not found in localStorage. Please create a Session Key first.'
-      );
-    }
-
-    console.log('[NOVA Auth] Session Key retrieved from localStorage');
-
-    // 3. Generate NOVA nonce (timestamp-based + randomness)
-    const nonce = generateNonce();
-    console.log('[NOVA Auth] Nonce generated:', nonce);
-
-    // 4. Sign nonce with Session Key
-    const message = Buffer.from(nonce);
-    const signature = await sessionKey.sign(message);
-    const signatureHex = Buffer.from(signature.signature).toString('hex');
-
-    console.log('[NOVA Auth] Signature created with Session Key');
-    console.log('[NOVA Auth] Signature length:', signatureHex.length, 'chars (64 bytes)');
-
-    // 5. Prepare authentication request
-    const authRequest: NovaAuthRequest = {
-      accountId,
-      signature: signatureHex,
-      publicKey: sessionKey.getPublicKey().toString(),
-      nonce,
-      chainType: 'near'
-    };
-
-    // 6. Authenticate with NOVA TEE
-    // NOTE: This is where actual NOVA SDK call would happen
-    // For now, we create a simulated token until API key is available
-    const authResponse = await authenticateWithNOVA(authRequest);
-
-    // 6b. Non-blocking attestation verification
+    // 3. Non-blocking attestation verification
     const attestResult = await verifyAttestation().catch((err: Error) => {
       console.warn('[NOVA Auth] Attestation check skipped:', err.message);
       return null;
     });
 
     if (attestResult && !attestResult.verified) {
-      // Only warn loudly for real failures, not "endpoint not available"
-      if (attestResult.error?.includes('not available')) {
-        console.log('[NOVA Auth] TEE attestation endpoint not yet deployed — skipped');
-      } else {
+      if (!attestResult.error?.includes('not available')) {
         console.warn('[NOVA Auth] TEE attestation did not pass:', attestResult.error);
       }
     }
 
-    // 7. Create token object
+    // 4. Create token object
     const cachedAttest = getCachedAttestation();
     const token: NovaAuthToken = {
       authToken: authResponse.token,
@@ -103,12 +60,12 @@ export async function generateNovaAuthToken(
       teeAttestation: cachedAttest?.attestation ?? authResponse.attestation
     };
 
-    // 8. Cache token
+    // 5. Cache token
     tokenCache.set(accountId, token);
 
     console.log('[DECENTRALIZATION_METRIC] nova_auth_token_generated', {
       accountId,
-      method: 'session_key',
+      method: 'sdk_session',
       signless: true,
       expiresIn: NOVA_CONSTANTS.AUTH_TOKEN_CACHE_DURATION / 1000 + 's'
     });
@@ -136,63 +93,40 @@ export async function generateNovaAuthToken(
 }
 
 /**
- * Authenticate with NOVA Shade Agent
+ * Authenticate via Nova SDK session token
  *
- * TODO: Replace with actual NOVA SDK call when API key available
+ * The SDK manages its own session token lifecycle via API key.
+ * authStatus() validates the current session; refreshToken() renews it.
  *
- * @param request - Authentication request
  * @returns Authentication response
  */
-async function authenticateWithNOVA(request: NovaAuthRequest): Promise<NovaAuthResponse> {
-  // Check if API key is configured
+async function authenticateWithNOVA(): Promise<NovaAuthResponse> {
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new NovaError('INVALID_CONFIG', 'Nova API key required in production. Set NEXT_PUBLIC_NOVA_API_KEY.');
-    }
-    console.warn('[NOVA Auth] API key not configured - using simulated authentication');
-    console.warn('[NOVA Auth] Set NEXT_PUBLIC_NOVA_API_KEY for real authentication');
-
-    // Return simulated token for development
-    return {
-      token: `SIMULATED_TOKEN_${request.signature.substring(0, 16)}`,
-      expiresAt: Date.now() + NOVA_CONSTANTS.AUTH_TOKEN_CACHE_DURATION,
-      attestation: 'SIMULATED_ATTESTATION'
-    };
+    throw new NovaError(
+      'INVALID_CONFIG',
+      'Nova API key not configured. Set NOVA_API_KEY (server) and NEXT_PUBLIC_NOVA_API_KEY=enabled (client).'
+    );
   }
 
-  // TODO: Actual NOVA SDK authentication
-  // const novaClient = new NovaClient({
-  //   network: getNovaConfig().network,
-  //   apiKey: getApiKey()
-  // });
-  //
-  // const response = await novaClient.authenticate(request);
-  // return response;
+  const sdk = getNovaSdk();
 
-  // For now, return simulated response even with API key
-  // This will be replaced with actual SDK call
-  console.log('[NOVA Auth] Authenticating with NOVA Shade Agent...');
-  console.log('[NOVA Auth] Account:', request.accountId);
-  console.log('[NOVA Auth] Public Key:', request.publicKey);
-  console.log('[NOVA Auth] Nonce:', request.nonce);
+  // SDK manages its own session token lifecycle.
+  // authStatus() validates the current session and triggers a refresh if needed.
+  const status = await sdk.authStatus();
+
+  if (!status.authenticated) {
+    await sdk.refreshToken();
+    const retryStatus = await sdk.authStatus();
+    if (!retryStatus.authenticated) {
+      throw new NovaError('AUTH_FAILED', 'Nova SDK authentication failed after token refresh');
+    }
+  }
 
   return {
-    token: `JWT_TOKEN_${request.signature.substring(0, 32)}`,
+    token: `nova-session-${Date.now()}`,
     expiresAt: Date.now() + NOVA_CONSTANTS.AUTH_TOKEN_CACHE_DURATION,
-    attestation: `TEE_ATTESTATION_${Date.now()}`
+    attestation: undefined,
   };
-}
-
-/**
- * Generate NOVA-compatible nonce
- *
- * Format: {timestamp}-{32-char-hex-random}
- */
-function generateNonce(): string {
-  const timestamp = Date.now();
-  const randomBytes = crypto.randomBytes(16);
-  const randomHex = randomBytes.toString('hex');
-  return `${timestamp}-${randomHex}`;
 }
 
 /**
@@ -203,10 +137,8 @@ function generateNonce(): string {
 export function clearNovaAuthCache(accountId?: string): void {
   if (accountId) {
     tokenCache.delete(accountId);
-    console.log('[NOVA Auth] Cache cleared for:', accountId);
   } else {
     tokenCache.clear();
-    console.log('[NOVA Auth] All cached tokens cleared');
   }
 }
 

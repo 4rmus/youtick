@@ -14,7 +14,8 @@
 
 import { generateNovaAuthToken } from './auth';
 import { NovaError, NovaUploadResult, UploadProgress } from './types';
-import { hasApiKey, getNovaSdk, getNovaAccountId, NOVA_CONSTANTS, isSimulationAllowed } from './config';
+import { hasApiKey, getNovaSdk, getNovaAccountId, NOVA_CONSTANTS, createNovaGroup } from './config';
+import { uploadToCrust, getGatewayUrl as getCrustGatewayUrl, fetchFromGateways, pinOnCrust } from '../crust';
 
 // Local storage key for caching public group IDs
 const PUBLIC_GROUP_CACHE_KEY = 'nova_public_groups';
@@ -159,7 +160,6 @@ function invalidatePublicGroupCache(creatorAccountId: string): void {
     if (cache[creatorAccountId]) {
       delete cache[creatorAccountId];
       localStorage.setItem(PUBLIC_GROUP_CACHE_KEY, JSON.stringify(cache));
-      console.log('[NOVA Public Groups] Cache invalidated for:', creatorAccountId);
     }
   } catch {
     // Ignore cache errors
@@ -197,24 +197,15 @@ function cachePublicGroup(creatorAccountId: string, groupId: string): void {
  * @returns Public group ID
  */
 export async function getOrCreatePublicGroup(creatorAccountId: string): Promise<string> {
-  console.log('[NOVA Public Groups] Getting/creating public group for:', creatorAccountId);
-
   const groupId = getPublicGroupId(creatorAccountId);
 
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new NovaError('INVALID_CONFIG', 'Nova API key required in production. Set NEXT_PUBLIC_NOVA_API_KEY.');
-    }
-    console.warn('[NOVA Public Groups] API key not configured - simulating group creation');
-    console.log('[NOVA Public Groups] Simulated public group:', groupId);
-    cachePublicGroup(creatorAccountId, groupId);
-    return groupId;
+    throw new NovaError('INVALID_CONFIG', 'Nova API key required. Set NOVA_API_KEY.');
   }
 
   // Check cache first
   const cachedGroupId = getCachedPublicGroup(creatorAccountId);
   if (cachedGroupId) {
-    console.log('[NOVA Public Groups] Using cached group:', cachedGroupId);
     return cachedGroupId;
   }
 
@@ -233,26 +224,25 @@ export async function getOrCreatePublicGroup(creatorAccountId: string): Promise<
     }
 
     if (groupExists) {
-      console.log('[NOVA Public Groups] Public group already exists on-chain:', groupId);
       cachePublicGroup(creatorAccountId, groupId);
       return groupId;
     }
 
-    // Register new public group on-chain
-    console.log('[NOVA Public Groups] Creating new public group:', groupId);
-    await sdk.registerGroup(groupId);
+    // Create new public group on-chain + TEE via nova_create_group MCP tool
+    const assignedGroupId = await createNovaGroup(groupId);
 
-    console.log('[NOVA Public Groups] Public group created successfully:', groupId);
+    // Use the assigned group ID (may differ from requested name)
+    const finalGroupId = assignedGroupId || groupId;
     console.log('[DECENTRALIZATION_METRIC] nova_public_group_created', {
-      groupId,
+      groupId: finalGroupId,
       owner: creatorAccountId,
       type: 'thumbnail_public'
     });
 
     // Only cache after successful on-chain registration
-    cachePublicGroup(creatorAccountId, groupId);
+    cachePublicGroup(creatorAccountId, finalGroupId);
 
-    return groupId;
+    return finalGroupId;
 
   } catch (error: unknown) {
     console.error('[NOVA Public Groups] Failed to create public group:', error);
@@ -278,15 +268,8 @@ export async function joinPublicGroup(groupId: string, accountId: string): Promi
     throw new NovaError('GROUP_ADD_FAILED', 'Cannot auto-join non-public groups');
   }
 
-  console.log('[NOVA Public Groups] Joining public group:', { groupId, accountId });
-
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new NovaError('INVALID_CONFIG', 'Nova API key required in production. Set NEXT_PUBLIC_NOVA_API_KEY.');
-    }
-    console.warn('[NOVA Public Groups] API key not configured - simulating join');
-    console.log('[NOVA Public Groups] Simulated: Joined', groupId);
-    return;
+    throw new NovaError('INVALID_CONFIG', 'Nova API key required. Set NOVA_API_KEY.');
   }
 
   try {
@@ -296,7 +279,6 @@ export async function joinPublicGroup(groupId: string, accountId: string): Promi
     // This is a special case where any user can add themselves
     await sdk.addGroupMember(groupId, accountId);
 
-    console.log('[NOVA Public Groups] Successfully joined public group:', groupId);
     console.log('[DECENTRALIZATION_METRIC] nova_public_group_joined', {
       groupId,
       member: accountId
@@ -306,7 +288,6 @@ export async function joinPublicGroup(groupId: string, accountId: string): Promi
     // If already a member, that's fine
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (errorMessage.includes('already') || errorMessage.includes('exists')) {
-      console.log('[NOVA Public Groups] Already a member of:', groupId);
       return;
     }
 
@@ -332,12 +313,6 @@ export async function uploadPublicThumbnail(
   creatorAccountId: string,
   onProgress?: (progress: UploadProgress) => void
 ): Promise<PublicThumbnailResult> {
-  console.log('[NOVA Public Groups] Uploading public thumbnail...', {
-    size: file.size,
-    type: file.type,
-    creatorAccountId
-  });
-
   // Validate file size
   if (file.size > NOVA_CONSTANTS.MAX_FILE_SIZE) {
     throw new NovaError(
@@ -346,52 +321,24 @@ export async function uploadPublicThumbnail(
     );
   }
 
-  // SIMULATION MODE: When API key not configured, use placeholder
-  // This allows testing without a real Nova backend
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new NovaError('INVALID_CONFIG', 'Nova API key required in production. Set NEXT_PUBLIC_NOVA_API_KEY.');
-    }
-    console.warn('[NOVA Public Groups] API key not configured - using placeholder for thumbnail');
-
-    // Simulate progress
-    if (onProgress) {
-      for (let i = 0; i <= 100; i += 25) {
-        onProgress({ loaded: (file.size * i) / 100, total: file.size, percentage: i });
-        await new Promise(r => setTimeout(r, 50));
-      }
-    }
-
-    const simulatedGroupId = `public_thumbs_${creatorAccountId.replace(/\./g, '_')}`;
-    // Use placeholder image for simulation mode - this works across page reloads
-    const placeholderUrl = '/placeholder-video.svg';
-
-    console.log('[NOVA Public Groups] Simulation: Using placeholder image');
-
-    return {
-      cid: 'simulation-placeholder',
-      groupId: simulatedGroupId,
-      size: file.size,
-      teeEncrypted: false,
-      novaUrl: placeholderUrl,
-      gatewayUrl: placeholderUrl
-    };
+    throw new NovaError('INVALID_CONFIG', 'Nova API key required. Set NOVA_API_KEY.');
   }
 
   try {
     // 1. Get or create public group
     const groupId = await getOrCreatePublicGroup(creatorAccountId);
-    console.log('[NOVA Public Groups] Using public group:', groupId);
 
-    // 2. Upload to NOVA (SDK handles auth via session token internally)
-    const uploadResult = await uploadToPublicGroup(file, groupId, creatorAccountId, onProgress);
+    // 2. Upload directly to Crust IPFS (thumbnails don't need TEE encryption)
+    const crustResult = await uploadToCrust(file, creatorAccountId, {
+      onProgress: onProgress ? (p) => onProgress({ loaded: p.loaded, total: p.total, percentage: p.percentage }) : undefined,
+    });
+    const uploadResult = { cid: crustResult.cid };
 
     // 4. Create nova:// URL
     const novaUrl = createNovaUrl(groupId, uploadResult.cid);
-    const gatewayUrl = `https://gateway.pinata.cloud/ipfs/${uploadResult.cid}`;
+    const gatewayUrl = getCrustGatewayUrl(uploadResult.cid);
 
-    console.log('[NOVA Public Groups] Thumbnail uploaded successfully');
-    console.log('[NOVA Public Groups] Nova URL:', novaUrl);
     console.log('[DECENTRALIZATION_METRIC] nova_public_thumbnail_uploaded', {
       creatorAccountId,
       cid: uploadResult.cid,
@@ -436,29 +383,7 @@ async function uploadToPublicGroup(
   filename?: string
 ): Promise<{ cid: string }> {
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new NovaError('INVALID_CONFIG', 'Nova API key required in production. Set NEXT_PUBLIC_NOVA_API_KEY.');
-    }
-    console.warn('[NOVA Public Groups] API key not configured - simulating upload');
-
-    // Simulate upload with progress
-    if (onProgress) {
-      for (let i = 0; i <= 100; i += 20) {
-        const loaded = (file.size * i) / 100;
-        onProgress({
-          loaded,
-          total: file.size,
-          percentage: i
-        });
-        await sleep(50);
-      }
-    }
-
-    // Return simulated CID
-    const simulatedCid = `Qm${Math.random().toString(36).substring(2, 46).toUpperCase()}`;
-    console.log('[NOVA Public Groups] Simulated upload complete:', simulatedCid);
-
-    return { cid: simulatedCid };
+    throw new NovaError('INVALID_CONFIG', 'Nova API key required. Set NOVA_API_KEY.');
   }
 
   const sdk = getNovaSdk();
@@ -467,20 +392,9 @@ async function uploadToPublicGroup(
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  console.log('[NOVA Public Groups] Uploading to public group...', {
-    groupId,
-    size: file.size
-  });
-
   try {
     // Upload file to public group
     const result = await sdk.upload(groupId, buffer, filename || 'thumbnail.jpg');
-
-    console.log('[NOVA Public Groups] Upload successful:', {
-      cid: result.cid,
-      transId: result.trans_id
-    });
-
     return { cid: result.cid };
 
   } catch (error: unknown) {
@@ -493,23 +407,15 @@ async function uploadToPublicGroup(
       // Invalidate stale cache
       invalidatePublicGroupCache(accountId);
 
-      // Try to register the group on-chain
+      // Try to create the group on-chain + TEE
       try {
-        console.log('[NOVA Public Groups] Re-registering group on-chain:', groupId);
-        await sdk.registerGroup(groupId);
-        console.log('[NOVA Public Groups] Group re-registered successfully, retrying upload...');
+        await createNovaGroup(groupId);
 
         // Cache after successful registration
         cachePublicGroup(accountId, groupId);
 
         // Retry the upload
         const result = await sdk.upload(groupId, buffer, filename || 'thumbnail.jpg');
-
-        console.log('[NOVA Public Groups] Retry upload successful:', {
-          cid: result.cid,
-          transId: result.trans_id
-        });
-
         return { cid: result.cid };
       } catch (retryError: unknown) {
         console.error('[NOVA Public Groups] Retry after re-registration also failed:', retryError);
@@ -546,68 +452,23 @@ export async function fetchPublicThumbnail(
   // Negative cache: skip Nova SDK if this URL failed recently
   const failedAt = FETCH_FAIL_CACHE.get(novaUrl);
   if (failedAt && Date.now() - failedAt < FETCH_FAIL_TTL) {
-    console.log('[NOVA Public Groups] Skipping (cached failure), falling back to gateway:', parsed.cid);
-    const gatewayUrl = `https://gateway.pinata.cloud/ipfs/${parsed.cid}`;
-    const response = await fetch(gatewayUrl);
-    if (response.ok) {
+      try {
+      const response = await fetchFromGateways(parsed.cid);
       return response.blob();
-    }
-    throw new NovaError('FETCH_FAILED', `Cached failure for ${novaUrl}, gateway also unavailable`);
-  }
-
-  console.log('[NOVA Public Groups] Fetching public thumbnail:', parsed);
-
-  // Note: We skip joinPublicGroup here intentionally.
-  // The platform's Nova account (used by sdk.retrieve) is already a group member.
-  // Calling addGroupMember for each viewer causes nonce conflicts (500 errors)
-  // and is unnecessary for reading from public groups.
-
-  if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new NovaError('INVALID_CONFIG', 'Nova API key required in production. Set NEXT_PUBLIC_NOVA_API_KEY.');
-    }
-    // Fallback to IPFS gateway for simulation
-    const gatewayUrl = `https://gateway.pinata.cloud/ipfs/${parsed.cid}`;
-    console.log('[NOVA Public Groups] Simulated: Fetching from gateway:', gatewayUrl);
-
-    const response = await fetch(gatewayUrl);
-    if (!response.ok) {
-      throw new NovaError('FETCH_FAILED', `Gateway fetch failed: ${response.status}`);
-    }
-
-    return response.blob();
-  }
-
-  try {
-    const sdk = getNovaSdk();
-
-    // Retrieve from public group
-    const result = await sdk.retrieve(parsed.groupId, parsed.cid);
-
-    console.log('[NOVA Public Groups] Fetch successful:', result.data.byteLength, 'bytes');
-
-    // Convert Buffer to Uint8Array for Blob compatibility
-    const data = new Uint8Array(result.data);
-    return new Blob([data], { type: 'image/jpeg' });
-
-  } catch (error: unknown) {
-    console.error('[NOVA Public Groups] SDK fetch failed:', error);
-
-    // Cache this failure to prevent hammering upstream
-    FETCH_FAIL_CACHE.set(novaUrl, Date.now());
-
-    // Fallback to IPFS gateway
-    const gatewayUrl = `https://gateway.pinata.cloud/ipfs/${parsed.cid}`;
-    console.log('[NOVA Public Groups] Falling back to gateway:', gatewayUrl);
-
-    try {
-      const response = await fetch(gatewayUrl);
-      if (response.ok) {
-        return response.blob();
-      }
     } catch {
-      // Gateway also failed
+      throw new NovaError('FETCH_FAILED', `Cached failure for ${novaUrl}, gateways also unavailable`);
     }
+  }
+
+  // Public thumbnails are uploaded directly to Crust IPFS (not encrypted via Nova TEE).
+  // Nova SDK retrieve() fails because Nova's internal Pinata gateway doesn't have the content.
+  // Fetch directly from Crust gateways instead.
+  try {
+    const response = await fetchFromGateways(parsed.cid);
+    return response.blob();
+  } catch (error: unknown) {
+    // Cache this failure to prevent hammering gateways
+    FETCH_FAIL_CACHE.set(novaUrl, Date.now());
 
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new NovaError('FETCH_FAILED', `Failed to fetch public thumbnail: ${errorMessage}`, error instanceof Error ? error : undefined);
@@ -630,11 +491,6 @@ export async function uploadFreeVideo(
   creatorAccountId: string,
   options?: { filename?: string; onProgress?: (progress: UploadProgress) => void }
 ): Promise<NovaUploadResult> {
-  console.log('[NOVA Public Groups] Uploading free video to public group...', {
-    size: file.size,
-    creatorAccountId
-  });
-
   // Validate file size
   if (file.size > NOVA_CONSTANTS.MAX_FILE_SIZE) {
     throw new NovaError(
@@ -643,52 +499,31 @@ export async function uploadFreeVideo(
     );
   }
 
-  // SIMULATION MODE
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new NovaError('INVALID_CONFIG', 'Nova API key required in production. Set NEXT_PUBLIC_NOVA_API_KEY.');
-    }
-    console.warn('[NOVA Public Groups] API key not configured - simulating free video upload');
-
-    if (options?.onProgress) {
-      for (let i = 0; i <= 100; i += 25) {
-        options.onProgress({ loaded: (file.size * i) / 100, total: file.size, percentage: i });
-        await new Promise(r => setTimeout(r, 50));
-      }
-    }
-
-    const simulatedGroupId = getPublicGroupId(creatorAccountId);
-    const simulatedCid = `Qm${Math.random().toString(36).substring(2, 46).toUpperCase()}`;
-
-    console.log('[NOVA Public Groups] Simulation: Free video uploaded to public group:', simulatedGroupId);
-
-    return {
-      cid: simulatedCid,
-      groupId: simulatedGroupId,
-      size: file.size,
-      teeEncrypted: true
-    };
+    throw new NovaError('INVALID_CONFIG', 'Nova API key required. Set NOVA_API_KEY.');
   }
 
   try {
-    const groupId = await getOrCreatePublicGroup(creatorAccountId);
-    console.log('[NOVA Public Groups] Using public group for free video:', groupId);
+    const groupId = getPublicGroupId(creatorAccountId);
 
-    const result = await uploadToPublicGroup(file, groupId, creatorAccountId, options?.onProgress, options?.filename);
+    // Free videos: upload directly to Crust without encryption
+    // No Nova group fee (~0.64 NEAR saved), no TEE overhead
+    const crustResult = await uploadToCrust(file, creatorAccountId, {
+      onProgress: options?.onProgress,
+    });
 
-    console.log('[NOVA Public Groups] Free video uploaded successfully:', result.cid);
-    console.log('[DECENTRALIZATION_METRIC] nova_free_video_uploaded', {
+    console.log('[DECENTRALIZATION_METRIC] crust_free_video_uploaded', {
       creatorAccountId,
-      cid: result.cid,
+      cid: crustResult.cid,
       groupId,
       size: file.size
     });
 
     return {
-      cid: result.cid,
+      cid: crustResult.cid,
       groupId,
       size: file.size,
-      teeEncrypted: true
+      teeEncrypted: false
     };
   } catch (error: unknown) {
     console.error('[NOVA Public Groups] Free video upload failed:', error);
@@ -706,9 +541,3 @@ export async function uploadFreeVideo(
   }
 }
 
-/**
- * Sleep helper
- */
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}

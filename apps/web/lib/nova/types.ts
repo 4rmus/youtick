@@ -31,6 +31,8 @@ export interface NovaUploadResult {
   size: number;
   /** Whether file was encrypted with TEE */
   teeEncrypted: boolean;
+  /** CID of the AES key stored in Nova (Crust+Nova hybrid flow) */
+  keyCid: string;
 }
 
 /**
@@ -83,6 +85,8 @@ export interface NovaUploadOptions {
 export interface NovaFetchOptions {
   /** NOVA group ID (required for authorization) */
   groupId: string;
+  /** CID of AES key in Nova (Crust+Nova hybrid flow) */
+  keyCid: string;
   /** Request timeout (milliseconds) */
   timeout?: number;
   /** Whether to verify TEE attestation */

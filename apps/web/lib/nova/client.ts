@@ -13,9 +13,14 @@ import {
   NovaError,
   UploadProgress
 } from './types';
-import { NOVA_CONSTANTS, getGatewayUrl, hasApiKey, getNovaSdk, isSimulationAllowed } from './config';
+import { NOVA_CONSTANTS, getGatewayUrl, hasApiKey, getNovaSdk, createNovaGroup } from './config';
 import { canRegisterNewGroup, getRegisterGroupFee, getNovaPlatformBalance } from './costs';
 import { verifyAttestation } from './attestation';
+import { uploadToCrust, fetchFromGateways, pinOnCrust } from '../crust';
+import { queryStorageStatus } from '../crust/storage-status';
+import { placeStorageOrder } from '../crust/storage-order';
+import { generateEncryptionKey, encryptFile, decryptFile } from '../crypto/aes-gcm';
+import { storeEncryptionKey, retrieveEncryptionKey } from './key-storage';
 
 /**
  * Upload file to NOVA with automatic TEE encryption
@@ -33,13 +38,6 @@ export async function uploadFile(
   accountId: string,
   options?: NovaUploadOptions
 ): Promise<NovaUploadResult> {
-  console.log('[NOVA Upload] Starting upload...', {
-    size: file.size,
-    type: file.type,
-    accountId,
-    filename: options?.filename
-  });
-
   // Validate file size
   if (file.size > NOVA_CONSTANTS.MAX_FILE_SIZE) {
     throw new NovaError(
@@ -51,7 +49,6 @@ export async function uploadFile(
   try {
     // 1. Generate auth token (signless via Session Key)
     const authToken = await generateNovaAuthToken(accountId);
-    console.log('[NOVA Upload] Auth token generated');
 
     // 1b. Opt-in attestation verification
     if (options?.verifyAttestation) {
@@ -62,7 +59,6 @@ export async function uploadFile(
           `TEE attestation failed before upload: ${attestResult.error}`
         );
       }
-      console.log('[NOVA Upload] TEE attestation verified');
     }
 
     // 2. Upload to NOVA (auto-encrypts with TEE, creates group)
@@ -77,9 +73,42 @@ export async function uploadFile(
       signless: true
     });
 
+    // Non-blocking Crust pin (fire-and-forget)
+    pinOnCrust(uploadResult.cid, accountId).then(result => {
+      console.log('[DECENTRALIZATION_METRIC] crust_pin_success', {
+        cid: uploadResult.cid, status: result.status
+      });
+    }).catch(err => {
+      console.warn('[CRUST] Non-blocking pin failed:', err instanceof Error ? err.message : String(err));
+      console.log('[DECENTRALIZATION_METRIC] crust_pin_failed', {
+        cid: uploadResult.cid, error: err instanceof Error ? err.message : String(err)
+      });
+    });
+
+    // Non-blocking: Place Crust storage order for on-chain persistence
+    placeStorageOrder(uploadResult.cid, file.size, accountId).then(orderResult => {
+      console.log('[DECENTRALIZATION_METRIC] crust_storage_order_result', {
+        cid: uploadResult.cid, status: orderResult.status, requestId: orderResult.requestId
+      });
+    }).catch(err => {
+      console.warn('[CRUST] Non-blocking storage order failed:', err instanceof Error ? err.message : String(err));
+    });
+
+    // Non-blocking: Query Crust chain storage status
+    queryStorageStatus(uploadResult.cid).then(status => {
+      console.log('[DECENTRALIZATION_METRIC] crust_storage_status', {
+        cid: uploadResult.cid,
+        replicas: status.replicas,
+        hasStorageOrder: status.hasStorageOrder,
+      });
+    }).catch(() => {
+      // Storage status query is purely informational
+    });
+
     return {
       cid: uploadResult.cid,
       groupId: uploadResult.groupId,
+      keyCid: uploadResult.keyCid,
       size: file.size,
       teeEncrypted: true
     };
@@ -112,44 +141,24 @@ export async function uploadFile(
  * @param options - Upload options
  * @returns Upload result with CID
  */
+/**
+ * Hybrid upload: Client-side AES encrypt → Crust storage → Nova key store
+ *
+ * Instead of sending the entire file through Nova (which causes 413 errors),
+ * we encrypt client-side, upload the binary to Crust, and only store the
+ * tiny AES key (~44 bytes) in Nova for TEE-protected access control.
+ */
 async function uploadToNOVA(
   file: Blob,
   authToken: string,
   accountId: string,
   options?: NovaUploadOptions
-): Promise<{ cid: string; groupId: string }> {
+): Promise<{ cid: string; groupId: string; keyCid?: string }> {
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new NovaError('INVALID_CONFIG', 'Nova API key required in production. Set NEXT_PUBLIC_NOVA_API_KEY.');
-    }
-    console.warn('[NOVA Upload] API key not configured - simulating upload');
-
-    // Simulate upload with progress
-    if (options?.onProgress) {
-      for (let i = 0; i <= 100; i += 10) {
-        const loaded = (file.size * i) / 100;
-        options.onProgress({
-          loaded,
-          total: file.size,
-          percentage: i
-        });
-        await sleep(100);
-      }
-    }
-
-    // Return simulated CID (real IPFS CID format)
-    const simulatedCid = `Qm${Math.random().toString(36).substring(2, 46).toUpperCase()}`;
-    const simulatedGroupId = `group_${Date.now()}`;
-    console.log('[NOVA Upload] Simulated upload complete:', simulatedCid);
-
-    return { cid: simulatedCid, groupId: simulatedGroupId };
+    throw new NovaError('INVALID_CONFIG', 'Nova API key required. Set NOVA_API_KEY.');
   }
 
   try {
-    const sdk = getNovaSdk();
-
-    // Generate group ID from CID (will be known after upload)
-    const filename = options?.filename || 'video.mp4';
     const tempGroupId = `video_${Date.now()}`;
 
     // Pre-flight: check if Nova platform has enough balance for group registration
@@ -164,40 +173,41 @@ async function uploadToNOVA(
       );
     }
 
-    // Register group first
-    console.log('[NOVA Upload] Registering group:', tempGroupId);
-    await sdk.registerGroup(tempGroupId);
+    // 1. Create Nova group (for access control)
+    const groupId = await createNovaGroup(tempGroupId);
 
-    // Convert Blob to Buffer
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    // 1b. Add uploader as group member (group is owned by the Nova platform account,
+    // so the uploader must be explicitly added to access their own content)
+    const sdk = getNovaSdk();
+    await sdk.addGroupMember(groupId, accountId);
 
-    // Upload file to NOVA
-    console.log('[NOVA Upload] Uploading file to NOVA...', {
-      size: file.size,
-      filename,
-      groupId: tempGroupId
+    // 2. Client-side AES-256-GCM encryption
+    const aesKey = await generateEncryptionKey();
+    const plainBytes = new Uint8Array(await file.arrayBuffer());
+    const encrypted = await encryptFile(plainBytes, aesKey);
+
+    // 3. Upload encrypted binary to Crust (no base64 inflation!)
+    const encryptedBlob = new Blob([encrypted.buffer as ArrayBuffer], { type: 'application/octet-stream' });
+    const crustResult = await uploadToCrust(encryptedBlob, accountId, {
+      onProgress: options?.onProgress,
     });
 
-    const result = await sdk.upload(tempGroupId, buffer, filename);
-
-    console.log('[NOVA Upload] Upload successful:', {
-      cid: result.cid,
-      transId: result.trans_id,
-      fileHash: result.file_hash
-    });
+    // 4. Store tiny AES key in Nova (TEE-protected, ~44 bytes)
+    const keyCid = await storeEncryptionKey(groupId, aesKey, accountId);
 
     return {
-      cid: result.cid,
-      groupId: tempGroupId
+      cid: crustResult.cid,
+      groupId,
+      keyCid,
     };
 
   } catch (error: unknown) {
-    console.error('[NOVA Upload] SDK upload failed:', error);
+    console.error('[NOVA Upload] Hybrid upload failed:', error);
+
+    if (error instanceof NovaError) throw error;
 
     const errorMessage = error instanceof Error ? error.message : String(error);
 
-    // Map NOVA SDK errors to our error types
     if (errorMessage.includes('balance') || errorMessage.includes('cost') || errorMessage.includes('Insufficient')) {
       throw new NovaError(
         'UPLOAD_FAILED',
@@ -211,7 +221,7 @@ async function uploadToNOVA(
       throw new NovaError('UPLOAD_FAILED', 'NOVA account not found - create one at nova-sdk.com');
     }
 
-    throw new NovaError('UPLOAD_FAILED', `NOVA SDK upload failed: ${errorMessage}`, error instanceof Error ? error : undefined);
+    throw new NovaError('UPLOAD_FAILED', `Hybrid upload failed: ${errorMessage}`, error instanceof Error ? error : undefined);
   }
 }
 
@@ -231,8 +241,6 @@ export async function fetchFile(
   accountId: string,
   options: NovaFetchOptions
 ): Promise<Uint8Array> {
-  console.log('[NOVA Fetch] Fetching file...', { cid, accountId, groupId: options.groupId });
-
   if (!options?.groupId) {
     throw new NovaError('FETCH_FAILED', 'groupId is required in fetch options');
   }
@@ -240,7 +248,6 @@ export async function fetchFile(
   try {
     // 1. Generate auth token
     const authToken = await generateNovaAuthToken(accountId);
-    console.log('[NOVA Fetch] Auth token generated');
 
     // 1b. Opt-in attestation verification
     if (options?.verifyAttestation) {
@@ -251,10 +258,9 @@ export async function fetchFile(
           `TEE attestation failed before fetch: ${attestResult.error}`
         );
       }
-      console.log('[NOVA Fetch] TEE attestation verified');
     }
 
-    // 2. Fetch from NOVA (auto-decrypts with TEE if authorized)
+    // 2. Fetch encrypted data from Crust, decrypt with Nova key
     const decryptedData = await fetchFromNOVA(
       cid,
       authToken.authToken,
@@ -300,78 +306,39 @@ export async function fetchFile(
 }
 
 /**
- * Fetch from NOVA IPFS with real SDK integration
+ * Fetch and decrypt file via Crust+Nova hybrid flow.
  *
- * @param cid - IPFS CID
- * @param authToken - NOVA auth token (not used directly - SDK manages auth)
- * @param requester - NEAR account requesting access
- * @param groupId - NOVA group ID for the file
- * @param options - Fetch options
- * @returns Decrypted file data
+ * Fetch encrypted binary from Crust → retrieve AES key from Nova TEE → decrypt client-side.
  */
 async function fetchFromNOVA(
   cid: string,
   authToken: string,
   requester: string,
   groupId: string,
-  options?: NovaFetchOptions
+  options: NovaFetchOptions
 ): Promise<Uint8Array> {
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new NovaError('INVALID_CONFIG', 'Nova API key required in production. Set NEXT_PUBLIC_NOVA_API_KEY.');
-    }
-    console.warn('[NOVA Fetch] API key not configured - simulating fetch');
-
-    // Return simulated decrypted data
-    const simulatedData = new TextEncoder().encode(
-      `SIMULATED_DECRYPTED_VIDEO_DATA_FOR_${cid}_REQUESTED_BY_${requester}`
-    );
-
-    console.log('[NOVA Fetch] Simulated fetch complete:', simulatedData.byteLength, 'bytes');
-    return simulatedData;
+    throw new NovaError('INVALID_CONFIG', 'Nova API key required. Set NOVA_API_KEY.');
   }
 
   try {
-    const sdk = getNovaSdk();
+    // 1. Retrieve AES key from Nova (TEE-protected)
+    const aesKey = await retrieveEncryptionKey(groupId, options.keyCid, requester);
 
-    // Check authorization first
-    const isAuthorized = await sdk.isAuthorized(groupId, requester);
-    if (!isAuthorized) {
-      throw new NovaError('ACCESS_DENIED', `Account ${requester} not authorized for group ${groupId}`);
-    }
+    // 2. Fetch encrypted binary from Crust gateways
+    const response = await fetchFromGateways(cid);
+    const encryptedBuffer = await response.arrayBuffer();
+    const encrypted = new Uint8Array(encryptedBuffer);
 
-    console.log('[NOVA Fetch] Retrieving file from NOVA...', {
-      cid,
-      groupId,
-      requester
-    });
+    // 3. Decrypt client-side
+    const decrypted = await decryptFile(encrypted, aesKey);
 
-    // Retrieve and decrypt file
-    const result = await sdk.retrieve(groupId, cid);
-
-    console.log('[NOVA Fetch] Retrieval successful:', {
-      size: result.data.byteLength,
-      ipfsHash: result.ipfs_hash
-    });
-
-    // Convert Buffer to Uint8Array
-    return new Uint8Array(result.data);
-
+    return decrypted;
   } catch (error: unknown) {
-    console.error('[NOVA Fetch] SDK retrieval failed:', error);
+    if (error instanceof NovaError) throw error;
 
-    const errorMessage = error instanceof Error ? error.message : String(error);
-
-    // Map NOVA SDK errors to our error types
-    if (errorMessage.includes('not authorized')) {
-      throw new NovaError('ACCESS_DENIED', `Not authorized to access ${cid}`);
-    }
-
-    if (errorMessage.includes('not found')) {
-      throw new NovaError('NOT_FOUND', `File ${cid} not found on NOVA IPFS`);
-    }
-
-    throw new NovaError('FETCH_FAILED', `NOVA SDK retrieval failed: ${errorMessage}`, error instanceof Error ? error : undefined);
+    const msg = error instanceof Error ? error.message : String(error);
+    throw new NovaError('FETCH_FAILED', `Fetch failed: ${msg}`, error instanceof Error ? error : undefined);
   }
 }
 
@@ -419,8 +386,6 @@ export async function uploadFiles(
   accountId: string,
   options?: NovaUploadOptions
 ): Promise<NovaUploadResult[]> {
-  console.log('[NOVA Upload] Uploading', files.length, 'files in parallel');
-
   const uploadPromises = files.map((file, index) =>
     uploadFile(file, accountId, {
       ...options,
@@ -430,7 +395,6 @@ export async function uploadFiles(
 
   try {
     const results = await Promise.all(uploadPromises);
-    console.log('[NOVA Upload] All files uploaded successfully');
     return results;
   } catch (error: unknown) {
     console.error('[NOVA Upload] Batch upload failed:', error);
@@ -461,13 +425,3 @@ export async function uploadJson(
   });
 }
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/**
- * Sleep helper for simulations
- */
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}

@@ -2,6 +2,7 @@
  * Metadata Parser Module
  * Centralized parsing of YouTick's title metadata encoding
  *
+ * Schema v4: RealCID:::ThumbnailURL:::KeyCID:::Title (Paid videos with encryption key)
  * Schema v3: RealCID:::ThumbnailURL:::Title (Nova URLs)
  * Schema v2: RealCID:::ThumbnailCID:::Title (Legacy IPFS)
  * Schema v1: RealCID:::Title (Legacy)
@@ -32,6 +33,15 @@ function isNovaUrl(str: string | null | undefined): boolean {
  */
 function isDirectUrl(str: string | null | undefined): boolean {
     return typeof str === 'string' && (str.startsWith('http://') || str.startsWith('https://'));
+}
+
+/**
+ * Check if a string looks like a CID (starts with Qm/ba and has reasonable length)
+ * Used to detect keyCid in the 4-segment title format
+ */
+function isValidCidLike(str: string | null | undefined): boolean {
+    if (!str || str.trim() === '') return false;
+    return (str.startsWith('Qm') || str.startsWith('ba')) && str.length >= 20;
 }
 
 /**
@@ -150,7 +160,26 @@ export function parseTitleMetadata(
 
     const parts = rawTitle.split(delimiter);
 
-    if (parts.length >= 3) {
+    if (parts.length >= 4 && isValidCidLike(parts[2])) {
+        // v4 Format: RealCID:::ThumbnailRef:::KeyCID:::Title (paid videos with encryption key)
+        const realCid = parts[0];
+        const thumbnailRef = parts[1];
+        // parts[2] is keyCid (encryption key CID) — not displayed
+        const title = parts.slice(3).join(delimiter); // Handle titles with ::: in them
+
+        const hasValidThumbnail = isValidThumbnailRef(thumbnailRef);
+        const thumbnailUrl = resolveThumbnailUrl(thumbnailRef, gatewayUrl, placeholderImage);
+        const schemaVersion = isNovaUrl(thumbnailRef) ? 3 : 2;
+
+        return {
+            title: title || fallbackTitle,
+            thumbnailCid: hasValidThumbnail ? thumbnailRef : null,
+            thumbnailUrl,
+            realCid,
+            rawTitle,
+            schemaVersion: schemaVersion as 1 | 2 | 3,
+        };
+    } else if (parts.length >= 3) {
         // v2/v3 Format: RealCID:::ThumbnailRef:::Title
         // ThumbnailRef can be:
         // - nova://{groupId}/{cid} (v3 Nova URL)

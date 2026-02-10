@@ -1,17 +1,12 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { parseNovaUrl, isPublicGroup, fetchPublicThumbnail } from '@/lib/nova';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { parseNovaUrl, isPublicGroup } from '@/lib/nova';
 import { isNovaUrl, isIpfsUrl } from '@/lib/nova/types';
-import { useWallet } from '@/components/providers/WalletProvider';
+import { getGatewayUrl, getGatewayUrls, fetchFromGateways } from '@/lib/crust';
 
-// Module-level cache: store regular URLs directly, store Blobs for nova:// URLs
-// Blobs are cached so each component mount can create its own revocable object URL
+// Module-level cache: store resolved URLs to avoid repeated resolution
 const resolvedUrlCache = new Map<string, string>();
-const blobCache = new Map<string, Blob>();
-// Negative cache: track failed Nova fetches to avoid retrying on every re-render (60s TTL)
-const failCache = new Map<string, number>();
-const FAIL_CACHE_TTL = 60_000;
 
 interface NovaThumbnailProps {
   /** URL to display - supports nova:// and legacy IPFS URLs */
@@ -53,7 +48,6 @@ export function NovaThumbnail({
   onLoad,
   onError
 }: NovaThumbnailProps) {
-  const { accountId } = useWallet();
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -62,16 +56,10 @@ export function NovaThumbnail({
    * Get display URL from various URL formats
    */
   const resolveUrl = useCallback(async (inputUrl: string): Promise<string> => {
-    // Check non-blob URL cache first
+    // Check URL cache first
     const cached = resolvedUrlCache.get(inputUrl);
     if (cached) {
       return cached;
-    }
-
-    // Check blob cache — create a fresh object URL from cached blob
-    const cachedBlob = blobCache.get(inputUrl);
-    if (cachedBlob) {
-      return URL.createObjectURL(cachedBlob);
     }
 
     let resolved: string;
@@ -83,30 +71,22 @@ export function NovaThumbnail({
         throw new Error('Invalid nova:// URL format');
       }
 
-      // For public groups, try to fetch via Nova
-      if (isPublicGroup(parsed.groupId)) {
-        // Skip Nova if this URL failed recently
-        const failedAt = failCache.get(inputUrl);
-        const recentlyFailed = failedAt && Date.now() - failedAt < FAIL_CACHE_TTL;
-
-        if (!recentlyFailed) {
-          try {
-            const blob = await fetchPublicThumbnail(inputUrl, accountId || undefined);
-            blobCache.set(inputUrl, blob);
-            return URL.createObjectURL(blob);
-          } catch (err) {
-            console.warn('[NovaThumbnail] Nova fetch failed, falling back to gateway');
-            failCache.set(inputUrl, Date.now());
-          }
+      // Try Crust POST API first — content is guaranteed available (no propagation delay).
+      // Public IPFS gateways may not have newly pinned content yet.
+      try {
+        const response = await fetchFromGateways(parsed.cid, { timeout: 10_000 });
+        const blob = await response.blob();
+        if (blob.size > 0) {
+          const blobUrl = URL.createObjectURL(blob);
+          resolvedUrlCache.set(inputUrl, blobUrl);
+          return blobUrl;
         }
-
-        resolved = `https://gateway.pinata.cloud/ipfs/${parsed.cid}`;
-        resolvedUrlCache.set(inputUrl, resolved);
-        return resolved;
+      } catch {
+        // Crust API and all gateways failed via fetch — fall back to <img> gateway chain
       }
 
-      // For non-public groups, try direct gateway
-      resolved = `https://gateway.pinata.cloud/ipfs/${parsed.cid}`;
+      // Fallback: use public gateway URL for <img src> (browser handles GET natively)
+      resolved = getGatewayUrl(parsed.cid);
       resolvedUrlCache.set(inputUrl, resolved);
       return resolved;
     }
@@ -125,10 +105,10 @@ export function NovaThumbnail({
     }
 
     // Assume it's a CID
-    resolved = `https://gateway.pinata.cloud/ipfs/${urlStr}`;
+    resolved = getGatewayUrl(urlStr);
     resolvedUrlCache.set(inputUrl, resolved);
     return resolved;
-  }, [accountId]);
+  }, []);
 
   /**
    * Load image from URL
@@ -141,21 +121,16 @@ export function NovaThumbnail({
     }
 
     let cancelled = false;
-    let objectUrl: string | null = null;
 
     const loadImage = async () => {
       setLoading(true);
       setError(null);
+      gatewayIndexRef.current = 0;
 
       try {
         const resolvedUrl = await resolveUrl(url);
 
         if (cancelled) return;
-
-        // Keep track of blob URLs for cleanup
-        if (resolvedUrl.startsWith('blob:')) {
-          objectUrl = resolvedUrl;
-        }
 
         setImageUrl(resolvedUrl);
         setLoading(false);
@@ -175,23 +150,37 @@ export function NovaThumbnail({
 
     return () => {
       cancelled = true;
-      // Clean up blob URLs
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
     };
   }, [url, fallbackUrl, resolveUrl, onError]);
 
+  // Track gateway fallback attempts per URL
+  const gatewayIndexRef = useRef(0);
+
   /**
-   * Handle image load error
+   * Handle image load error - try next gateway before giving up
    */
   const handleImageError = useCallback(() => {
-    console.warn('[NovaThumbnail] Image failed to load, using fallback');
+    // If this was a gateway URL, try the next one
+    if (url && isNovaUrl(url)) {
+      const parsed = parseNovaUrl(url);
+      if (parsed) {
+        const allGateways = getGatewayUrls(parsed.cid);
+        gatewayIndexRef.current++;
+        if (gatewayIndexRef.current < allGateways.length) {
+          const nextUrl = allGateways[gatewayIndexRef.current];
+          console.warn(`[NovaThumbnail] Gateway failed, trying next: ${nextUrl}`);
+          setImageUrl(nextUrl);
+          return;
+        }
+      }
+    }
+
+    console.warn('[NovaThumbnail] All gateways failed, using fallback');
     setImageUrl(fallbackUrl);
     const err = new Error('Image failed to load');
     setError(err);
     onError?.(err);
-  }, [fallbackUrl, onError]);
+  }, [url, fallbackUrl, onError]);
 
   /**
    * Handle successful image load
@@ -239,7 +228,6 @@ export function useNovaThumbnailUrl(url: string | null | undefined): {
   loading: boolean;
   error: Error | null;
 } {
-  const { accountId } = useWallet();
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -251,66 +239,24 @@ export function useNovaThumbnailUrl(url: string | null | undefined): {
       return;
     }
 
-    let cancelled = false;
-
-    const resolve = async () => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        // Nova URL
-        if (isNovaUrl(url)) {
-          const parsed = parseNovaUrl(url);
-          if (!parsed) {
-            throw new Error('Invalid nova:// URL');
-          }
-
-          // Try Nova fetch for public groups
-          if (isPublicGroup(parsed.groupId)) {
-            const failedAt = failCache.get(url);
-            const recentlyFailed = failedAt && Date.now() - failedAt < FAIL_CACHE_TTL;
-
-            if (!recentlyFailed) {
-              try {
-                const blob = await fetchPublicThumbnail(url, accountId || undefined);
-                if (!cancelled) {
-                  setResolvedUrl(URL.createObjectURL(blob));
-                  setLoading(false);
-                }
-                return;
-              } catch {
-                failCache.set(url, Date.now());
-                // Fallback to gateway
-              }
-            }
-          }
-
-          if (!cancelled) {
-            setResolvedUrl(`https://gateway.pinata.cloud/ipfs/${parsed.cid}`);
-            setLoading(false);
-          }
-          return;
-        }
-
-        // IPFS or direct URL
-        if (!cancelled) {
-          setResolvedUrl(url);
-          setLoading(false);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err : new Error(String(err)));
-          setLoading(false);
-        }
+    // Nova URL → resolve to gateway URL
+    if (isNovaUrl(url)) {
+      const parsed = parseNovaUrl(url);
+      if (!parsed) {
+        setError(new Error('Invalid nova:// URL'));
+        setLoading(false);
+        return;
       }
-    };
 
-    resolve();
+      setResolvedUrl(getGatewayUrl(parsed.cid));
+      setLoading(false);
+      return;
+    }
 
-    return () => {
-      cancelled = true;
-    };
-  }, [url, accountId]);
+    // IPFS or direct URL
+    setResolvedUrl(url);
+    setLoading(false);
+  }, [url]);
 
   return { resolvedUrl, loading, error };
 }

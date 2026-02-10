@@ -25,11 +25,6 @@ export async function addBuyerToNovaGroup(
   buyerAccountId: string
 ): Promise<void> {
   try {
-    console.log('[Nova Post-Purchase] Adding buyer to group...', {
-      eventCid,
-      buyerAccountId
-    });
-
     const provider = getProvider();
     const contractId = NEAR_CONFIG.contractId;
 
@@ -87,10 +82,6 @@ export async function addBuyerToNovaGroup(
     await new Promise(resolve => setTimeout(resolve, 1500));
     await addGroupMember(novaGroupId, buyerAccountId, creatorId);
 
-    console.log('[Nova Post-Purchase] Buyer added to Nova group:', {
-      groupId: novaGroupId,
-      buyer: buyerAccountId
-    });
     console.log(`[DECENTRALIZATION_METRIC] {"operation":"post_purchase_nova","buyer":"${buyerAccountId}","groupId":"${novaGroupId}","timestamp":${Date.now()}}`);
 
   } catch (error) {

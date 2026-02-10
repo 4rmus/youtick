@@ -49,7 +49,6 @@ export default function TicketPage() {
                 }>(provider, contractId, 'get_event', { encrypted_cid: cid });
 
                 if (eventData) {
-                    console.log("Event fetched:", eventData);
                     const parsed = parseTitleMetadata(eventData.title, 'Untitled Event');
                     setEvent({
                         title: parsed.title,

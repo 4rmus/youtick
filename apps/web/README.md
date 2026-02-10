@@ -2,7 +2,7 @@
 
 Next.js frontend for the YouTick decentralized video platform.
 
-> **100% Client-Side Decentralization** - No server dependencies for core operations.
+> **Client-Side Decentralization** - No server dependencies for core operations.
 
 > For comprehensive documentation, see the [docs/](../../docs/) folder.
 

@@ -1,7 +1,22 @@
 ---
 name: near-ai
-description: NEAR AI agent development and integration. Use when building AI agents on NEAR, integrating AI models, creating agent workflows, or implementing AI-powered dApps on NEAR Protocol.
+description: >
+  NEAR AI agent development and integration. Use when building AI agents on NEAR, integrating
+  AI models, creating agent workflows, or implementing AI-powered dApps on NEAR Protocol.
+version: 1.0.0
 license: MIT
+platforms:
+  - claude
+  - gemini
+  - openai
+  - markdown
+tags:
+  - near-protocol
+  - ai-agents
+  - near-ai
+  - machine-learning
+  - decentralized-ai
+  - web3
 metadata:
   author: near
   version: "1.0.0"
