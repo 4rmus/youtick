@@ -29,7 +29,7 @@ function TicketContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const cid = searchParams.get('cid');
-    const { selector, modal, accountId } = useWallet();
+    const { connect, accountId } = useWallet();
 
     const [loading, setLoading] = useState(true);
     const [event, setEvent] = useState<(NFTEvent & { active?: boolean }) | null>(null);
@@ -188,7 +188,7 @@ function TicketContent() {
                             <Button
                                 className="w-full bg-blue-500/10 text-blue-500 border border-blue-500/20 hover:bg-blue-500/20"
                                 variant="outline"
-                                onClick={() => modal?.show()}
+                                onClick={() => connect()}
                             >
                                 Connect Wallet to Check Access
                             </Button>

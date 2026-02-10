@@ -108,7 +108,7 @@ async function authenticateWithNOVA(): Promise<NovaAuthResponse> {
     );
   }
 
-  const sdk = getNovaSdk();
+  const sdk = await getNovaSdk();
 
   // SDK manages its own session token lifecycle.
   // authStatus() validates the current session and triggers a refresh if needed.

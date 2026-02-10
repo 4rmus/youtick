@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { yoctoToNear } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
 import { TokenWithVideo } from './useOwnedTokens';
@@ -6,98 +6,83 @@ import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { NEAR_CONFIG } from '@/lib/constants';
 
 const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
+const PAGE_SIZE = 24;
 
-interface DebugInfo {
-    contractId?: string;
-    step?: string;
-    rawEventCount?: number;
-    finalCount?: number;
-    error?: string;
+interface EventsPage {
+    tokens: TokenWithVideo[];
+    nextOffset: number | null;
+    total: number;
+}
+
+async function fetchEventsPage(offset: number): Promise<EventsPage> {
+    const provider = getProvider();
+
+    // Fetch one extra to detect if there's a next page
+    const events = await viewContract<unknown[]>(
+        provider,
+        NFT_CONTRACT_ID,
+        'get_events',
+        { from_index: offset.toString(), limit: PAGE_SIZE + 1 }
+    );
+
+    if (!events || events.length === 0) {
+        return { tokens: [], nextOffset: null, total: 0 };
+    }
+
+    const hasMore = events.length > PAGE_SIZE;
+    const pageEvents = hasMore ? events.slice(0, PAGE_SIZE) : events;
+
+    const eventTokens: TokenWithVideo[] = pageEvents.map((item, index) => {
+        const [cid, event] = item as [string, { title: string; description: string; creator_id: string; price: string }];
+
+        const parsed = parseTitleMetadata(event.title);
+        const displayDescription = event.description || `NFT ticket - ${yoctoToNear(BigInt(event.price))} NEAR`;
+
+        return {
+            token_id: `event-${offset + index}`,
+            owner_id: event.creator_id,
+            metadata: {
+                title: parsed.title,
+                description: displayDescription,
+                media: parsed.thumbnailUrl,
+                copies: 1
+            },
+            video_metadata: {
+                encrypted_cid: cid,
+                duration_seconds: 0,
+                content_type: "Exclusive",
+                price: event.price
+            }
+        };
+    });
+
+    return {
+        tokens: eventTokens.reverse(),
+        nextOffset: hasMore ? offset + PAGE_SIZE : null,
+        total: pageEvents.length,
+    };
 }
 
 export function useAllVideos() {
-    const [tokens, setTokens] = useState<TokenWithVideo[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const query = useInfiniteQuery({
+        queryKey: ['allVideos'],
+        queryFn: ({ pageParam }) => fetchEventsPage(pageParam),
+        initialPageParam: 0,
+        getNextPageParam: (lastPage) => lastPage.nextOffset,
+        staleTime: 30 * 1000,
+        gcTime: 5 * 60 * 1000,
+    });
 
-    const [debugInfo, setDebugInfo] = useState<DebugInfo>({});
+    // Flatten all pages into a single token array
+    const tokens = query.data?.pages.flatMap((page) => page.tokens) ?? [];
 
-    useEffect(() => {
-        const fetchVideos = async () => {
-            setLoading(true);
-            setError(null);
-
-            setDebugInfo({
-                contractId: NFT_CONTRACT_ID,
-                step: 'init'
-            });
-
-            try {
-                // v7: Use JsonRpcProvider directly for view calls
-                const provider = getProvider();
-
-                // 1. Fetch list of NFTs
-                setDebugInfo((prev) => ({ ...prev, step: 'fetching_tokens' }));
-
-                const events = await viewContract<unknown[]>(
-                    provider,
-                    NFT_CONTRACT_ID,
-                    'get_events',
-                    { limit: 200 } // Increased to show more events
-                );
-
-                setDebugInfo((prev) => ({ ...prev, rawEventCount: events?.length, step: 'transforming_events' }));
-
-                if (!events || events.length === 0) {
-                    setTokens([]);
-                    return;
-                }
-
-                // Transform Events into the structure expected by the UI (TokenWithVideo)
-                // effectively treating each Event as a "Virtual Token" for display purposes
-                const eventTokens: TokenWithVideo[] = events.map((item, index) => {
-                    const [cid, event] = item as [string, { title: string; description: string; creator_id: string; price: string }];
-
-                    // Use centralized metadata parser
-                    const parsed = parseTitleMetadata(event.title);
-
-                    // Use actual description from contract, with price as fallback info
-                    // v7: yoctoToNear expects bigint, convert string from contract
-                    const displayDescription = event.description || `NFT ticket - ${yoctoToNear(BigInt(event.price))} NEAR`;
-
-                    return {
-                        token_id: `event-${index}`,
-                        owner_id: event.creator_id,
-                        metadata: {
-                            title: parsed.title,
-                            description: displayDescription,
-                            media: parsed.thumbnailUrl,
-                            copies: 1
-                        },
-                        video_metadata: {
-                            encrypted_cid: cid,
-                            duration_seconds: 0,
-                            content_type: "Exclusive",
-                            price: event.price // Store price separately
-                        }
-                    };
-                });
-
-                setTokens(eventTokens.reverse());
-                setDebugInfo((prev) => ({ ...prev, finalCount: eventTokens.length, step: 'complete' }));
-
-            } catch (err) {
-                const error = err as Error;
-                console.error("Error fetching all videos:", error);
-                setError(error.message || "Failed to fetch videos");
-                setDebugInfo((prev) => ({ ...prev, error: error.message }));
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        fetchVideos();
-    }, []);
-
-    return { tokens, loading, error, debugInfo };
+    return {
+        tokens,
+        loading: query.isLoading,
+        error: query.error?.message ?? null,
+        hasNextPage: query.hasNextPage,
+        isFetchingNextPage: query.isFetchingNextPage,
+        fetchNextPage: query.fetchNextPage,
+        refetch: query.refetch,
+    };
 }

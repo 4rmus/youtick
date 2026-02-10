@@ -14,7 +14,7 @@ interface DiscoverViewProps {
 
 export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
   const { t } = useLanguage();
-  const { tokens, loading, error, debugInfo } = useAllVideos();
+  const { tokens, loading, error } = useAllVideos();
 
   // Loading State
   if (loading) {
@@ -50,12 +50,6 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
         <div className="text-center py-24 text-white">
           <p className="text-2xl font-bold mb-4">{t.landing.discover.no_videos_found}</p>
           <p className="text-gray-400">{t.landing.discover.be_first}</p>
-
-          {/* Debug Info */}
-          <div className="mt-8 p-4 bg-zinc-900 mx-auto max-w-md rounded text-left text-xs font-mono text-zinc-500 overflow-auto">
-            <p className="font-bold text-zinc-300 mb-2">Debug Info:</p>
-            <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
-          </div>
 
           <Link href="/upload" className="mt-8 inline-block">
             <Button variant="outline" className="border-white text-white hover:bg-white/10">

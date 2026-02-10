@@ -32,7 +32,7 @@ export async function storeEncryptionKey(
     throw new NovaError('INVALID_CONFIG', 'Nova API key required. Set NOVA_API_KEY.');
   }
 
-  const sdk = getNovaSdk();
+  const sdk = await getNovaSdk();
   const keyBuffer = Buffer.from(aesKeyB64, 'utf-8');
   const MAX_RETRIES = 3;
   const RETRY_DELAYS = [2000, 4000, 6000];
@@ -87,7 +87,7 @@ export async function retrieveEncryptionKey(
   }
 
   try {
-    const sdk = getNovaSdk();
+    const sdk = await getNovaSdk();
 
     // Verify authorization first
     const isAuthorized = await sdk.isAuthorized(groupId, accountId);

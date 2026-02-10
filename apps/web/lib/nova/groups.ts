@@ -65,7 +65,7 @@ async function createGroupViaNOVA(
   }
 
   try {
-    const sdk = getNovaSdk();
+    const sdk = await getNovaSdk();
 
     // Create group on-chain + TEE via nova_create_group MCP tool
     const requestedGroupId = params.name.replace(/\s+/g, '_').toLowerCase();
@@ -155,7 +155,7 @@ async function addMemberViaNOVA(
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const sdk = getNovaSdk();
+      const sdk = await getNovaSdk();
       await sdk.addGroupMember(groupId, newMember);
       return;
 
@@ -201,8 +201,17 @@ export async function isGroupMember(
     return isMember;
 
   } catch (error: unknown) {
-    console.error('[NOVA Groups] Membership check failed:', error);
-    // Return false on error (TEE will be authoritative anyway)
+    // Distinguish "not a member" (expected) from network/SDK errors
+    if (error instanceof NovaError) {
+      if (error.code === 'ACCESS_DENIED' || error.code === 'NOT_FOUND') {
+        // Expected: user is not a member or group doesn't exist
+        return false;
+      }
+      // Unexpected SDK error — log and return false (TEE is authoritative)
+      console.error(`[NOVA Groups] Membership check error (${error.code}):`, error.message);
+    } else {
+      console.error('[NOVA Groups] Membership check network error:', error);
+    }
     return false;
   }
 }
@@ -219,11 +228,22 @@ async function checkMembershipViaNOVA(
   }
 
   try {
-    const sdk = getNovaSdk();
+    const sdk = await getNovaSdk();
     return await sdk.isAuthorized(groupId, accountId);
-  } catch (error) {
-    console.error('[NOVA Groups] Membership check failed:', error);
-    return false; // TEE will be authoritative anyway
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // "not authorized" / "not found" → membership denial, not an error
+    if (errorMessage.includes('not authorized') || errorMessage.includes('not found')) {
+      return false;
+    }
+
+    // Network/RPC errors → propagate as NovaError for caller to handle
+    throw new NovaError(
+      'NETWORK_ERROR',
+      `Membership check failed: ${errorMessage}`,
+      error instanceof Error ? error : undefined
+    );
   }
 }
 

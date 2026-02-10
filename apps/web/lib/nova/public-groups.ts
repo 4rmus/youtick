@@ -213,7 +213,7 @@ export async function getOrCreatePublicGroup(creatorAccountId: string): Promise<
     // Generate auth token for creator
     await generateNovaAuthToken(creatorAccountId);
 
-    const sdk = getNovaSdk();
+    const sdk = await getNovaSdk();
 
     // Try to check if group already exists on-chain
     let groupExists = false;
@@ -273,7 +273,7 @@ export async function joinPublicGroup(groupId: string, accountId: string): Promi
   }
 
   try {
-    const sdk = getNovaSdk();
+    const sdk = await getNovaSdk();
 
     // For public groups, the SDK should allow self-registration
     // This is a special case where any user can add themselves
@@ -386,7 +386,7 @@ async function uploadToPublicGroup(
     throw new NovaError('INVALID_CONFIG', 'Nova API key required. Set NOVA_API_KEY.');
   }
 
-  const sdk = getNovaSdk();
+  const sdk = await getNovaSdk();
 
   // Convert Blob to Buffer
   const arrayBuffer = await file.arrayBuffer();

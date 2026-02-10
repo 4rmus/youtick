@@ -187,23 +187,13 @@ export interface WalletInstance {
 /**
  * Wallet context type for useWallet hook
  */
-/**
- * Wallet selector type (opaque - from @near-wallet-selector/core)
- */
-export type WalletSelector = unknown;
-
-/**
- * Modal type (opaque - from @near-wallet-selector/modal-ui)
- */
-export type WalletModal = unknown;
-
 export interface WalletContextType {
-    selector: WalletSelector;
-    modal: WalletModal;
     accountId: string | null;
+    isTrial: boolean;
     getWallet: () => Promise<WalletInstance>;
     signOut: () => Promise<void>;
-    isTrial: boolean;
+    connect: () => Promise<void>;
+    isReady: boolean;
 }
 
 // ============================================================================

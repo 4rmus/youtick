@@ -11,7 +11,7 @@ interface MintButtonProps {
 }
 
 export function MintButton({ cid }: MintButtonProps) {
-    const { selector, accountId, getWallet } = useWallet();
+    const { accountId, getWallet } = useWallet();
     const [minting, setMinting] = useState(false);
     const [price, setPrice] = useState<string | null>(null);
     const [loadingPrice, setLoadingPrice] = useState(false);

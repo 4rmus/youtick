@@ -178,7 +178,7 @@ async function uploadToNOVA(
 
     // 1b. Add uploader as group member (group is owned by the Nova platform account,
     // so the uploader must be explicitly added to access their own content)
-    const sdk = getNovaSdk();
+    const sdk = await getNovaSdk();
     await sdk.addGroupMember(groupId, accountId);
 
     // 2. Client-side AES-256-GCM encryption
