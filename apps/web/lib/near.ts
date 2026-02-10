@@ -1,5 +1,5 @@
 // lib/near.ts - near-api-js v7 compatible
-import { Account, JsonRpcProvider, PublicKey } from 'near-api-js';
+import { Account, FailoverRpcProvider, JsonRpcProvider, PublicKey } from 'near-api-js';
 import { browserKeyStore, inMemoryKeyStore } from './keystore-v7';
 import { NEAR_CONFIG } from './constants';
 import {
@@ -13,12 +13,17 @@ import {
 const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
 const NETWORK_ID = NEAR_CONFIG.networkId;
 
-// Primary RPC URL (first in list)
+// Primary RPC URL (first in list) - used for Account instances that need a single URL
 const RPC_URL = getPrimaryRpcUrl();
+
+// Failover provider with all RPC endpoints for resilient queries
+const failoverProvider = new FailoverRpcProvider(
+    RPC_ENDPOINTS.map(url => new JsonRpcProvider({ url }))
+);
 
 // v7: viewContract helper since Account.viewFunction doesn't exist
 async function viewContract<T>(
-    provider: JsonRpcProvider,
+    provider: JsonRpcProvider | FailoverRpcProvider,
     contractId: string,
     methodName: string,
     args: Record<string, unknown> = {}
@@ -52,10 +57,11 @@ export function getReadOnlyAccount(accountId: string): Account {
 }
 
 /**
- * Get JSON RPC Provider for direct queries
+ * Get JSON RPC Provider with automatic failover across all RPC endpoints.
+ * Uses near-api-js v7 FailoverRpcProvider for resilient queries.
  */
-export function getProvider(): JsonRpcProvider {
-    return new JsonRpcProvider({ url: RPC_URL });
+export function getProvider(): FailoverRpcProvider {
+    return failoverProvider;
 }
 
 /**
@@ -142,7 +148,7 @@ export async function verifySignature(
 
         // Additional security: verify the public key belongs to the wallet
         // by checking it's in the wallet's access keys
-        const account = new Account(walletAddress, RPC_URL);
+        const account = new Account(walletAddress, getCurrentRpcUrl());
         const accessKeyList = await account.getAccessKeyList();
 
         const keyExists = accessKeyList.keys.some(
@@ -169,3 +175,5 @@ export { browserKeyStore, inMemoryKeyStore };
 export { NETWORK_ID, RPC_URL, NFT_CONTRACT_ID };
 // Export RPC failover utilities
 export { getCurrentRpcUrl, withRpcFailover, RPC_ENDPOINTS };
+// Export failover provider type for consumers that need it
+export { FailoverRpcProvider };

@@ -6,6 +6,7 @@ import { setupMyNearWallet } from '@near-wallet-selector/my-near-wallet';
 import { setupModal } from '@near-wallet-selector/modal-ui-js';
 import type { WalletSelector, AccountState } from '@near-wallet-selector/core';
 import type { WalletSelectorModal } from '@near-wallet-selector/modal-ui-js';
+import type { WalletInstance } from '@/lib/types';
 import '@near-wallet-selector/modal-ui-js/styles.css';
 
 interface WalletContextValue {
@@ -14,7 +15,8 @@ interface WalletContextValue {
     accounts: Array<AccountState>;
     accountId: string | null;
     isTrial: boolean;
-    getWallet: () => Promise<any>;
+    getWallet: () => Promise<WalletInstance>;
+    signOut: () => Promise<void>;
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -71,15 +73,27 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const activeAccountId = walletAccountId || trialAccountId;
     const isTrial = !walletAccountId && !!trialAccountId;
 
-    const getWallet = async () => {
+    const getWallet = async (): Promise<WalletInstance> => {
         if (isTrial && trialAccountId) {
             const { TrialWallet } = await import('@/lib/trial-wallet');
-            return new TrialWallet(trialAccountId);
+            return new TrialWallet(trialAccountId) as unknown as WalletInstance;
         }
         if (selector) {
-            return selector.wallet();
+            return selector.wallet() as unknown as WalletInstance;
         }
         throw new Error("No wallet connected");
+    };
+
+    const signOut = async (): Promise<void> => {
+        if (isTrial && trialAccountId) {
+            const { TrialWallet } = await import('@/lib/trial-wallet');
+            const trialWallet = new TrialWallet(trialAccountId);
+            await trialWallet.signOut();
+            setTrialAccountId(null);
+        } else if (selector) {
+            const wallet = await selector.wallet();
+            await wallet.signOut();
+        }
     };
 
     return (
@@ -90,6 +104,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             accountId: activeAccountId,
             isTrial,
             getWallet,
+            signOut,
         }}>
             {children}
         </WalletContext.Provider>

@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { fetchFile } from '@/lib/nova';
 import { hasApiKey } from '@/lib/nova/config';
 import { NovaError } from '@/lib/nova/types';
+import { fetchFromGateways } from '@/lib/crust';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Loader2, Play, Lock, Ticket, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -39,6 +40,19 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
     const [playerState, setPlayerState] = useState<PlayerState>(initialState);
     const videoRef = useRef<HTMLVideoElement>(null);
 
+    // Track blob URL for cleanup
+    const blobUrlRef = useRef<string | null>(null);
+
+    // Revoke blob URL on unmount or when player state changes away from playing
+    useEffect(() => {
+        return () => {
+            if (blobUrlRef.current) {
+                URL.revokeObjectURL(blobUrlRef.current);
+                blobUrlRef.current = null;
+            }
+        };
+    }, []);
+
     // Derived states from state machine
     const videoUrl = playerState.type === 'playing' ? playerState.videoUrl : null;
     const loading = playerState.type === 'decrypting';
@@ -65,13 +79,15 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             let novaCid = cid;
             let novaGroupId: string | null = null;
 
+            let keyCid: string | undefined;
+
             if (isUuid) {
                 setPlayerState({ type: 'decrypting', message: 'Resolving Video Metadata...' });
                 try {
                     const contractId = NEAR_CONFIG.contractId;
                     const provider = getProvider();
 
-                    // Get event to extract NOVA CID from title (direct RPC, no server proxy)
+                    // Get event to extract CID from title (direct RPC, no server proxy)
                     const event = await viewContract<{
                         title: string;
                         price: string;
@@ -79,15 +95,21 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                     }>(provider, contractId, 'get_event', { encrypted_cid: cid });
 
                     if (event && event.title && event.title.includes(':::')) {
-                        // Extract NovaCID from "NovaCID:::ThumbnailCID:::Title"
                         const parts = event.title.split(':::');
-                        novaCid = parts[0];
-                        console.log("Resolved UUID", cid, "to NOVA CID", novaCid);
+                        if (parts.length === 4) {
+                            // New paid: "CID:::Thumbnail:::KeyCID:::Title"
+                            novaCid = parts[0];
+                            keyCid = parts[2];
+                        } else if (parts.length === 3) {
+                            // Free or legacy: "CID:::Thumbnail:::Title"
+                            novaCid = parts[0];
+                        } else {
+                            // Legacy 2-segment: "CID:::Title"
+                            novaCid = parts[0];
+                        }
                     }
 
-                    // Get NOVA group ID by finding the token with matching encrypted_cid
-                    // Note: video_metadata is keyed by auto-incremented token_id, not UUID
-                    // So we use get_nova_videos(creator_id) and match by encrypted_cid
+                    // Get NOVA group ID and storage type
                     if (event?.creator_id) {
                         const novaVideos = await viewContract<[string, { encrypted_cid: string; nova_group_id: string | null }][]>(
                             provider, contractId, 'get_nova_videos', { account_id: event.creator_id }
@@ -95,7 +117,6 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                         const match = novaVideos?.find(([, meta]) => meta.encrypted_cid === cid);
                         novaGroupId = match ? match[1].nova_group_id : null;
                     }
-                    console.log("Resolved NOVA group ID:", novaGroupId);
                 } catch (e) {
                     console.error("Error resolving metadata:", e);
                     throw new Error("Failed to resolve video metadata");
@@ -104,7 +125,6 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
 
             // Check for simulation mode (no Nova API key)
             if (!hasApiKey()) {
-                console.log('[IpfsPlayer] Simulation mode active - video playback not available');
                 setPlayerState({
                     type: 'error',
                     message: 'SIMULATION_MODE'
@@ -112,32 +132,48 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                 return;
             }
 
-            if (!novaGroupId) {
-                throw new Error("No NOVA group ID found - video may not be uploaded correctly");
+            // 2. Fetch video based on keyCid presence
+            //    keyCid present  → paid video (encrypted, needs Nova decrypt)
+            //    keyCid absent   → free video (unencrypted, raw fetch from Crust)
+            let videoData: Uint8Array;
+
+            if (keyCid) {
+                // Paid video: decrypt via Crust data + Nova key
+                if (!novaGroupId) {
+                    throw new Error("No NOVA group ID found - video may not be uploaded correctly");
+                }
+
+                setPlayerState({ type: 'decrypting', message: 'Decrypting video...' });
+
+                videoData = await fetchFile(novaCid, accountId, {
+                    groupId: novaGroupId,
+                    keyCid,
+                });
+            } else {
+                // Free video: fetch raw (unencrypted) from Crust gateways
+                setPlayerState({ type: 'decrypting', message: 'Fetching video from IPFS...' });
+                const response = await fetchFromGateways(novaCid);
+                const buffer = await response.arrayBuffer();
+                videoData = new Uint8Array(buffer);
             }
 
-            // 2. Fetch video from NOVA (with TEE decryption)
-            setPlayerState({ type: 'decrypting', message: 'Fetching video from NOVA...' });
-            console.log(`[NOVA] Fetching CID ${novaCid} from group ${novaGroupId}`);
-
-            const videoData = await fetchFile(novaCid, accountId, {
-                groupId: novaGroupId
-            });
-
             // 3. Create video URL (convert to ArrayBuffer for Blob)
+            // Revoke previous blob URL if any
+            if (blobUrlRef.current) {
+                URL.revokeObjectURL(blobUrlRef.current);
+            }
             const arrayBuffer = new Uint8Array(videoData).buffer;
             const videoBlob = new Blob([arrayBuffer], { type: 'video/mp4' });
             const url = URL.createObjectURL(videoBlob);
+            blobUrlRef.current = url;
             setPlayerState({ type: 'playing', videoUrl: url });
 
-            console.log('[NOVA] Video ready for playback!');
-
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error('Playback failed:', err);
             if (err instanceof NovaError && err.code === 'NO_SESSION_KEY') {
                 setPlayerState({ type: 'needs-session-key' });
             } else {
-                setPlayerState({ type: 'error', message: err.message || 'Failed to load video' });
+                setPlayerState({ type: 'error', message: err instanceof Error ? err.message : 'Failed to load video' });
             }
         }
     }, [accountId, cid]);
@@ -151,9 +187,9 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             await sessionManager.createSessionKey(wallet, '0.5');
             // Session key created, auto-retry playback
             await playVideo(true);
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error('Session key creation failed:', err);
-            setPlayerState({ type: 'error', message: err.message || 'Failed to create session key' });
+            setPlayerState({ type: 'error', message: err instanceof Error ? err.message : 'Failed to create session key' });
         }
     }, [accountId, getWallet, playVideo]);
 

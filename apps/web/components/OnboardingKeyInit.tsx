@@ -21,14 +21,59 @@ export function OnboardingKeyInit() {
 
         if (existing !== key) {
             localStorage.setItem(storageKey, key);
-            console.log('[DECENTRALIZATION] Onboarding key initialized');
         }
+
+        // Validate key is still usable (non-blocking)
+        validateOnboardingKey(key).catch(() => {});
 
         // Non-blocking: monitor trial pool health
         monitorTrialPool().catch(() => {});
     }, []);
 
     return null;
+}
+
+/**
+ * Validate that the onboarding key is still a valid access key on the contract.
+ * If invalid, remove from localStorage so gift-service doesn't use a stale key.
+ */
+async function validateOnboardingKey(secretKey: string): Promise<void> {
+    try {
+        const { KeyPair } = await import('near-api-js');
+        const keyPair = KeyPair.fromString(secretKey as import('near-api-js').KeyPairString);
+        const publicKey = keyPair.getPublicKey().toString();
+
+        const rpcUrl = getCurrentRpcUrl();
+        const contractId = NEAR_CONFIG.contractId;
+
+        const response = await fetch(rpcUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 'onboarding-key-check',
+                method: 'query',
+                params: {
+                    request_type: 'view_access_key',
+                    finality: 'final',
+                    account_id: contractId,
+                    public_key: publicKey,
+                },
+            }),
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            console.warn('[ONBOARDING_KEY] Key no longer valid on contract, removing from localStorage');
+            localStorage.removeItem(`onboarding_key:${contractId}`);
+            console.log('[DECENTRALIZATION_METRIC] onboarding_key_invalid');
+        } else {
+            console.log('[DECENTRALIZATION_METRIC] onboarding_key_valid');
+        }
+    } catch {
+        // Non-blocking: validation failure doesn't affect operation
+    }
 }
 
 /**
@@ -71,8 +116,6 @@ async function monitorTrialPool(): Promise<void> {
     const poolYocto = typeof poolBalanceRaw === 'string' ? BigInt(poolBalanceRaw) : BigInt(0);
     const poolNear = Number(poolYocto) / 1e24;
     const count = typeof dailyCount === 'number' ? dailyCount : 0;
-
-    console.log(`[ONBOARDING_MONITOR] Pool: ${poolNear.toFixed(2)} NEAR, Daily: ${count}/100`);
 
     if (poolNear < 1) {
         console.warn('[ONBOARDING_MONITOR] WARNING: Trial pool balance < 1 NEAR — new trials may fail');

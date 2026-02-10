@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Copy, Check, Download, Link2 } from "lucide-react";
 import { useWallet } from "@/components/providers/WalletProvider";
-import { NEAR_CONFIG } from "@/lib/constants";
+import { actions as nearActions } from "near-api-js";
+import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from "@/lib/constants";
 
 interface GiftLinkGeneratorProps {
     eventCid: string;
@@ -77,22 +78,18 @@ export function GiftLinkGenerator({
             const secretKeys = keyPairs.map(kp => kp.toString().replace("ed25519:", ""));
 
             const NFT_CONTRACT = NEAR_CONFIG.contractId;
-            const DEPOSIT_PER_TICKET = "150000000000000000000000";
-            const totalDeposit = (BigInt(DEPOSIT_PER_TICKET) * BigInt(ticketCount)).toString();
+            const totalDeposit = (DEPOSIT_CONSTANTS.giftDepositPerLink * BigInt(ticketCount)).toString();
 
             await wallet.signAndSendTransaction({
                 receiverId: NFT_CONTRACT,
-                actions: [{
-                    functionCall: {
-                        methodName: "create_gift_drop",
-                        args: Buffer.from(JSON.stringify({
-                            event_cid: eventCid,
-                            public_keys: publicKeys,
-                        })),
-                        gas: "200000000000000",
-                        deposit: totalDeposit,
-                    }
-                } as any]
+                actions: [
+                    nearActions.functionCall(
+                        "create_gift_drop",
+                        { event_cid: eventCid, public_keys: publicKeys },
+                        GAS_CONSTANTS.highGas,
+                        BigInt(totalDeposit)
+                    )
+                ]
             });
 
             const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
@@ -102,9 +99,9 @@ export function GiftLinkGenerator({
 
             setLinks(claimLinks);
             onLinksGenerated?.(claimLinks);
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("Failed to generate gift links:", err);
-            setError(err.message || "Link oluşturulamadı");
+            setError(err instanceof Error ? err.message : "Link oluşturulamadı");
         } finally {
             setGenerating(false);
         }

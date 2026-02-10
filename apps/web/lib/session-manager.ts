@@ -7,11 +7,12 @@ import {
     actions,
     nearToYocto,
     yoctoToNear,
+    TypedError,
     type KeyPairString,
     type Action
 } from 'near-api-js';
 import { BrowserKeyStore } from './keystore-v7';
-import { NEAR_CONFIG } from './constants';
+import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from './constants';
 import { getCurrentRpcUrl, withRpcFailover } from './rpc-failover';
 import type { WalletInstance } from './types';
 
@@ -79,7 +80,11 @@ export class SessionManager {
                 return true;
             });
         } catch (e) {
-            console.warn("Error checking session key on-chain (network issue?). Assuming local key is valid.", e);
+            if (e instanceof TypedError) {
+                console.warn(`[SessionManager] TypedError checking session key (${e.type}):`, e.message);
+            } else {
+                console.warn("Error checking session key on-chain (network issue?). Assuming local key is valid.", e);
+            }
             // Fallback: if we have a local key but can't check chain, assume it's valid to allow progress.
             // If it's actually invalid, the subsequent transaction will fail, which is handled.
             return true;
@@ -145,7 +150,7 @@ export class SessionManager {
         await this.keyStore.setKey(NETWORK_ID, this.accountId, keyPair);
     }
 
-    async callMethod(method: string, args: Record<string, unknown>, gas: string = '300000000000000'): Promise<unknown> {
+    async callMethod(method: string, args: Record<string, unknown>, gas: string = GAS_CONSTANTS.standardGas.toString()): Promise<unknown> {
         const keyPair = await this.keyStore.getKey(NETWORK_ID, this.accountId);
         if (!keyPair) {
             throw new Error("No session key found. Please setup account first.");
@@ -155,21 +160,34 @@ export class SessionManager {
         const signer = new KeyPairSigner(keyPair);
         const account = new Account(this.accountId, getCurrentRpcUrl(), signer);
 
-        // Call contract method using the session key
-        // Note: We cannot attach deposit with a FunctionCallKey!
-        // This is why we use the Prepaid Proxy pattern.
-        const outcome = await account.signAndSendTransaction({
-            receiverId: CONTRACT_ID,
-            actions: [
-                actions.functionCall(method, args, BigInt(gas), BigInt(0))
-            ]
-        });
+        // Retry on nonce errors (TypedError from near-api-js v7)
+        const MAX_NONCE_RETRIES = 2;
+        for (let attempt = 0; attempt <= MAX_NONCE_RETRIES; attempt++) {
+            try {
+                const outcome = await account.signAndSendTransaction({
+                    receiverId: CONTRACT_ID,
+                    actions: [
+                        actions.functionCall(method, args, BigInt(gas), BigInt(0))
+                    ]
+                });
+                return this.getTransactionResult(outcome as unknown as TransactionOutcomeRaw);
+            } catch (error) {
+                const isNonceError = error instanceof TypedError &&
+                    (error.type === 'InvalidNonce' || error.message.includes('nonce'));
 
-        // v7: Parse result from transaction
-        return this.getTransactionResult(outcome as unknown as TransactionOutcomeRaw);
+                if (isNonceError && attempt < MAX_NONCE_RETRIES) {
+                    console.warn(`[SessionManager] Nonce error on attempt ${attempt + 1}, retrying...`);
+                    await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+                    continue;
+                }
+                throw error;
+            }
+        }
+
+        throw new Error("Exhausted nonce retries");
     }
 
-    async sendBatchTransaction(txActions: Action[], gas: string = '300000000000000'): Promise<unknown> {
+    async sendBatchTransaction(txActions: Action[], gas: string = GAS_CONSTANTS.standardGas.toString()): Promise<unknown> {
         const keyPair = await this.keyStore.getKey(NETWORK_ID, this.accountId);
         if (!keyPair) {
             throw new Error("No session key found. Please setup account first.");
@@ -234,33 +252,34 @@ export class SessionManager {
             // v7: Use yoctoToNear instead of utils.format.formatNearAmount
             return parseFloat(yoctoToNear(balString));
         } catch (e) {
-            console.warn("Error getting gas balance (maybe not registered?):", e);
+            if (e instanceof TypedError) {
+                console.warn(`[SessionManager] TypedError getting balance (${e.type}):`, e.message);
+            } else {
+                console.warn("Error getting gas balance (maybe not registered?):", e);
+            }
             return 0;
         }
     }
 
     async hasSufficientGas(nodeUrl: string, minAmount: number = 1.0): Promise<boolean> {
         const currentBalance = await this.getAccountBalance(nodeUrl);
-        console.log(`Current Prepaid Gas Balance: ${currentBalance} NEAR, Required: ${minAmount}`);
         return currentBalance >= minAmount;
     }
 
     async ensureGas(wallet: WalletInstance, nodeUrl: string, minAmount: number = 1.0): Promise<void> {
         const sufficient = await this.hasSufficientGas(nodeUrl, minAmount);
         if (!sufficient) {
-            console.log(`Low gas, triggering Top Up...`);
             // Deposit 1 NEAR if low
             await this.topUpGas(wallet, '1');
         }
     }
 
     async topUpGas(wallet: WalletInstance, amount: string) {
-        console.log(`Topping up gas: ${amount} NEAR`);
         // v7: Use actions.functionCall instead of transactions.functionCall
         const action = actions.functionCall(
             'deposit_funds',
             {},
-            BigInt('30000000000000'), // 30 TGas
+            GAS_CONSTANTS.smallGas,
             BigInt(nearToYocto(parseFloat(amount))) // v7: Use nearToYocto with number
         );
 
@@ -271,13 +290,12 @@ export class SessionManager {
     }
 
     async withdrawFunds(wallet: WalletInstance, amount: string) {
-        console.log(`Withdrawing funds: ${amount} NEAR`);
         // v7: Use actions.functionCall
         const action = actions.functionCall(
             'withdraw_funds',
             { amount: nearToYocto(parseFloat(amount)) },
-            BigInt('30000000000000'), // 30 TGas
-            BigInt('1') // Attach 1 yocto for security
+            GAS_CONSTANTS.smallGas,
+            DEPOSIT_CONSTANTS.oneYocto
         );
 
         await wallet.signAndSendTransaction({
@@ -287,13 +305,12 @@ export class SessionManager {
     }
 
     async withdrawFundsSilent(amount: string) {
-        console.log(`Withdrawing funds silently (Session Key): ${amount} NEAR`);
         // Uses Session Key -> No User Signature required!
         // Uses withdraw_funds_prepaid which doesn't require 1 yocto deposit
         return await this.callMethod(
             'withdraw_funds_prepaid',
             {},
-            '30000000000000'
+            GAS_CONSTANTS.smallGas.toString()
         );
     }
 }

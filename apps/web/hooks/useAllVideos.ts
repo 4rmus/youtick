@@ -37,7 +37,6 @@ export function useAllVideos() {
                 const provider = getProvider();
 
                 // 1. Fetch list of NFTs
-                console.log("Fetching nft_tokens from index 0...");
                 setDebugInfo((prev) => ({ ...prev, step: 'fetching_tokens' }));
 
                 const events = await viewContract<unknown[]>(
@@ -47,7 +46,6 @@ export function useAllVideos() {
                     { limit: 200 } // Increased to show more events
                 );
 
-                console.log("Fetched events:", events);
                 setDebugInfo((prev) => ({ ...prev, rawEventCount: events?.length, step: 'transforming_events' }));
 
                 if (!events || events.length === 0) {

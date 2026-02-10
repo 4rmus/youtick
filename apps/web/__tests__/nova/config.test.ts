@@ -11,11 +11,9 @@ import {
   resetNovaConfig,
   validateNovaConfig,
   isNovaConfigured,
-  getShadeAgentUrl,
   getGatewayUrl,
   getApiKey,
   hasApiKey,
-  NOVA_ENDPOINTS,
   NOVA_CONSTANTS
 } from '../../lib/nova/config';
 import { NovaError } from '../../lib/nova/types';
@@ -34,8 +32,6 @@ describe('NOVA Configuration', () => {
       const config = getNovaConfig();
 
       expect(config.network).toBeDefined();
-      expect(config.shadeAgentUrl).toBeDefined();
-      expect(config.gatewayUrl).toBeDefined();
     });
 
     it('should have valid network value', () => {
@@ -63,7 +59,6 @@ describe('NOVA Configuration', () => {
       const updatedConfig = getNovaConfig();
 
       expect(updatedConfig.network).toBe(originalConfig.network);
-      expect(updatedConfig.shadeAgentUrl).toBe(originalConfig.shadeAgentUrl);
       expect(updatedConfig.apiKey).toBe('new-key');
     });
   });
@@ -110,14 +105,6 @@ describe('NOVA Configuration', () => {
   });
 
   describe('URL Retrieval', () => {
-    it('should return valid Shade Agent URL', () => {
-      const url = getShadeAgentUrl();
-
-      expect(url).toBeDefined();
-      expect(typeof url).toBe('string');
-      expect(url.startsWith('http')).toBe(true);
-    });
-
     it('should return valid Gateway URL', () => {
       const url = getGatewayUrl();
 
@@ -143,21 +130,6 @@ describe('NOVA Configuration', () => {
       setNovaConfig({ apiKey: 'my-api-key' });
       expect(getApiKey()).toBe('my-api-key');
       expect(hasApiKey()).toBe(true);
-    });
-  });
-
-  describe('Network Endpoints', () => {
-    it('should have endpoints for both networks', () => {
-      expect(NOVA_ENDPOINTS.testnet).toBeDefined();
-      expect(NOVA_ENDPOINTS.mainnet).toBeDefined();
-    });
-
-    it('should have shade agent endpoint for testnet', () => {
-      expect(NOVA_ENDPOINTS.testnet.shadeAgent).toBeDefined();
-    });
-
-    it('should have gateway endpoint for mainnet', () => {
-      expect(NOVA_ENDPOINTS.mainnet.gateway).toBeDefined();
     });
   });
 

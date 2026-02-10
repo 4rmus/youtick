@@ -49,12 +49,6 @@ export function useEventDescription(encrypted_cid: string | null) {
 
                     // Use centralized metadata parser for thumbnail extraction
                     const parsed = parseTitleMetadata(event.title);
-                    console.log('[useEventDescription] Parsed metadata:', {
-                        rawTitle: event.title,
-                        thumbnailCid: parsed.thumbnailCid,
-                        thumbnailUrl: parsed.thumbnailUrl,
-                        schemaVersion: parsed.schemaVersion
-                    });
 
                     if (parsed.thumbnailCid) {
                         setThumbnailUrl(parsed.thumbnailUrl);

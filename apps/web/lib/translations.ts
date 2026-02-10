@@ -28,9 +28,9 @@ export const translations = {
             items: [
                 { title: "NFT Tickets", desc: "Verifiable ownership, transferable access, and secondary market enabled. Fans own their access." },
                 { title: "Encrypted Storage", desc: "Content is protected with threshold encryption. Only NFT holders can decrypt and view." },
-                { title: "Decentralized CDN", desc: "Global delivery via Livepeer network ensures no single point of failure and high performance." },
+                { title: "Decentralized CDN", desc: "Global delivery via IPFS and Crust Network ensures no single point of failure and high performance." },
                 { title: "Creator Control", desc: "Set prices, royalties, and access rules directly on-chain. You own the platform." },
-                { title: "Perpetual Storage", desc: "Content stored on Filecoin with cryptographic proofs of preservation. Never lost." },
+                { title: "Perpetual Storage", desc: "Content stored on IPFS via Crust Network with decentralized pinning guarantees. Never lost." },
                 { title: "98% Revenue", desc: "Keep almost everything you earn. We only take a minimal 2% platform fee." },
             ]
         },
@@ -108,7 +108,7 @@ export const translations = {
         },
         watch_page: {
             title: "Watch Secure Content",
-            description: "Decentralized, encrypted streaming. Only NFT holders can watch.",
+            description: "Encrypted, secure streaming. Only NFT holders can watch.",
             select_video: "Select a Video",
             select_video_desc: "Choose a video from your library below to start watching securely.",
             browse_new: "Browse New Content",
@@ -162,8 +162,8 @@ export const translations = {
             subtitle: "Our journey to revolutionizing video streaming.",
             phases: [
                 { year: "2026 Q1", title: "Fast Auth", desc: "Seamless email/social login integration. Auto-wallet creation for zero-friction onboarding." },
-                { year: "2026 Q2", title: "Mainnet Migration", desc: "NEAR Mainnet launch. Production-ready infrastructure with full decentralization." },
-                { year: "2026 Q3", title: "Live Broadcast", desc: "Decentralized live streaming with real-time token gating and chat." },
+                { year: "2026 Q2", title: "Mainnet Migration", desc: "NEAR Mainnet launch. Production-ready infrastructure." },
+                { year: "2026 Q3", title: "Live Broadcast", desc: "Distributed live streaming with real-time token gating and chat." },
                 { year: "2026 Q4", title: "DAO Governance", desc: "Community-driven platform decisions, treasury management, and protocol upgrades." },
             ]
         },
@@ -315,8 +315,8 @@ export const translations = {
                 full_control_desc: "You decide what your art is worth"
             },
             digital_salon: {
-                title: "The Decentralized Stage",
-                subtitle: "Recreating the magic of physical events in a decentralized digital world.",
+                title: "The Digital Stage",
+                subtitle: "Recreating the magic of physical events in a digital world.",
                 physical: "Physical Event",
                 digital: "youtick",
                 ticket: "Ticket Purchase",
@@ -345,7 +345,7 @@ export const translations = {
                 creator_first_desc: "98% revenue share and complete control over your content.",
                 near_ecosystem: "NEAR Ecosystem",
                 near_ecosystem_desc: "Low fees, high performance, and seamless user experience.",
-                decentralization: "Full Decentralization",
+                decentralization: "Decentralized Architecture",
                 decentralization_desc: "No central servers. True user ownership and censorship resistance.",
                 gift_tickets: "Gift Tickets",
                 gift_tickets_desc: "Share ticket links with anyone. No wallet needed to claim.",
@@ -361,9 +361,9 @@ export const translations = {
                 subtitle: "",
                 chain_abstraction: "Chain Abstraction",
                 chain_abstraction_desc: "Interact without even knowing you're using blockchain.",
-                storage: "Decentralized Storage",
-                storage_desc: "Content stored on IPFS/Filecoin. Permanent, censorship-resistant, and yours.",
-                encryption: "Decentralized Encryption",
+                storage: "Distributed Storage",
+                storage_desc: "Content stored on IPFS via Crust Network. Permanent, censorship-resistant, and yours.",
+                encryption: "Secure Encryption",
                 encryption_desc: "Only ticket holders can decrypt, secured by Nova.",
                 fees: "Minimal Fees",
                 fees_desc: "One-time storage fee. No ongoing server costs. Maximum earnings."
@@ -496,9 +496,9 @@ export const translations = {
             items: [
                 { title: "NFT Biletler", desc: "Doğrulanabilir sahiplik, devredilebilir erişim ve ikincil pazar. Hayranlar erişim hakkına sahip olur." },
                 { title: "Şifreli Depolama", desc: "İçerik eşik şifreleme ile korunur. Yalnızca NFT sahipleri şifreyi çözüp izleyebilir." },
-                { title: "Merkeziyetsiz CDN", desc: "Livepeer ağı üzerinden küresel dağıtım, tek hata noktası olmamasını ve yüksek performans sağlar." },
+                { title: "Dağıtık CDN", desc: "IPFS ve Crust Network üzerinden küresel dağıtım, tek hata noktası olmamasını ve yüksek performans sağlar." },
                 { title: "Üretici Kontrolü", desc: "Fiyatları, telif haklarını ve erişim kurallarını doğrudan zincir üzerinde belirleyin. Platformun sahibi sizsiniz." },
-                { title: "Kalıcı Depolama", desc: "İçerik Filecoin üzerinde kriptografik koruma kanıtları ile saklanır. Asla kaybolmaz." },
+                { title: "Kalıcı Depolama", desc: "İçerik Crust Network ile IPFS üzerinde kalıcı pinleme garantisi ile saklanır. Asla kaybolmaz." },
                 { title: "%98 Gelir", desc: "Kazandığınızın neredeyse tamamı sizde kalır. Biz sadece %2 platform ücreti alıyoruz." },
             ]
         },
@@ -519,7 +519,7 @@ export const translations = {
         },
         upload: {
             title: "Başlamaya Hazır mısınız?",
-            subtitle: "İlk videonuzu bugün merkeziyetsiz ağa yükleyin.",
+            subtitle: "İlk videonuzu bugün dağıtık ağa yükleyin.",
         },
         upload_page: {
             title: "İçerik Yükle",
@@ -576,7 +576,7 @@ export const translations = {
         },
         watch_page: {
             title: "Güvenli İçerik İzle",
-            description: "Merkeziyetsiz, şifreli yayın. Sadece NFT sahipleri izleyebilir.",
+            description: "Şifreli güvenli yayın. Sadece NFT sahipleri izleyebilir.",
             select_video: "Bir Video Seçin",
             select_video_desc: "Güvenli bir şekilde izlemeye başlamak için kütüphanenizden bir video seçin.",
             browse_new: "Yeni İçeriklere Göz At",
@@ -630,8 +630,8 @@ export const translations = {
             subtitle: "Video yayıncılığında devrim yaratma yolculuğumuz.",
             phases: [
                 { year: "2026 Q1", title: "Fast Auth (Hızlı Giriş)", desc: "Sorunsuz email/sosyal giriş entegrasyonu. Sıfır sürtünme için otomatik cüzdan oluşturma." },
-                { year: "2026 Q2", title: "Mainnet Geçişi", desc: "NEAR Mainnet lansmanı. Tam merkeziyetsizlik ile üretime hazır altyapı." },
-                { year: "2026 Q3", title: "Canlı Yayın", desc: "Gerçek zamanlı token kontrolü ve sohbet ile merkeziyetsiz canlı yayın." },
+                { year: "2026 Q2", title: "Mainnet Geçişi", desc: "NEAR Mainnet lansmanı. Üretime hazır altyapı." },
+                { year: "2026 Q3", title: "Canlı Yayın", desc: "Gerçek zamanlı token kontrolü ve sohbet ile dağıtık canlı yayın." },
                 { year: "2026 Q4", title: "DAO Yönetişimi", desc: "Topluluk odaklı platform kararları, hazine yönetimi ve protokol güncellemeleri." },
             ]
         },
@@ -783,8 +783,8 @@ export const translations = {
                 full_control_desc: "Sanatının değerini sen belirle"
             },
             digital_salon: {
-                title: "Merkeziyetsiz Salon",
-                subtitle: "Fiziksel etkinliklerin büyüsünü merkeziyetsiz dijital dünyada yeniden yaratıyoruz.",
+                title: "Dijital Sahne",
+                subtitle: "Fiziksel etkinliklerin büyüsünü dijital dünyada yeniden yaratıyoruz.",
                 physical: "Fiziksel Etkinlik",
                 digital: "youtick",
                 ticket: "Bilet Satın Alma",
@@ -813,7 +813,7 @@ export const translations = {
                 creator_first_desc: "%98 gelir payı ve içeriğiniz üzerinde tam kontrol.",
                 near_ecosystem: "NEAR Ekosistemi",
                 near_ecosystem_desc: "Düşük ücretler, yüksek performans ve kusursuz kullanıcı deneyimi.",
-                decentralization: "Tam Merkeziyetsizlik",
+                decentralization: "Merkeziyetsiz Mimari",
                 decentralization_desc: "Merkezi sunucu yok. Gerçek kullanıcı sahipliği ve sansür direnci.",
                 gift_tickets: "Hediye Biletler",
                 gift_tickets_desc: "Bilet linklerini herkesle paylaşın. Talep için cüzdan gerekmiyor.",
@@ -829,9 +829,9 @@ export const translations = {
                 subtitle: "",
                 chain_abstraction: "Zincir Soyutlama",
                 chain_abstraction_desc: "Blockchain ile etkileşime girdiğinizi bile anlamadan işlem yapın.",
-                storage: "Merkeziyetsiz Depolama",
-                storage_desc: "İçerik IPFS/Filecoin üzerinde saklanır. Kalıcı, sansürsüz ve size ait.",
-                encryption: "Merkeziyetsiz Şifreleme",
+                storage: "Dağıtık Depolama",
+                storage_desc: "İçerik Crust Network ile IPFS üzerinde saklanır. Kalıcı, sansürsüz ve size ait.",
+                encryption: "Güvenli Şifreleme",
                 encryption_desc: "Nova ile sadece bilet sahipleri şifreyi çözebilir.",
                 fees: "Minimal Ücretler",
                 fees_desc: "Tek seferlik depolama ücreti. Sürekli sunucu maliyeti yok. Maksimum kazanç."

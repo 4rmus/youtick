@@ -1,13 +1,30 @@
 ---
 name: near-api-js
-description: >-
-  Guide for developing with near-api-js v7 - the JavaScript/TypeScript library for NEAR blockchain interaction. 
-  Use when: (1) building apps that interact with NEAR blockchain, (2) creating/signing transactions, 
-  (3) calling smart contracts, (4) managing accounts and keys, (5) working with NEAR RPC API, 
-  (6) handling FT/NFT tokens on NEAR, (7) using NEAR cryptographic operations (KeyPair, signing), 
-  (8) converting between NEAR units (yocto, gas), (9) gasless/meta transactions with relayers,
-  (10) wallet integration and session management, (11) NEP-413 message signing for authentication,
-  (12) storage deposit management for FT contracts. Triggers on any NEAR blockchain development tasks.
+description: >
+  Guide for developing with near-api-js v7 - the JavaScript/TypeScript library for NEAR blockchain interaction.
+  Use when building apps that interact with NEAR blockchain, creating/signing transactions, calling smart
+  contracts, managing accounts and keys, working with NEAR RPC API, handling FT/NFT tokens, using NEAR
+  cryptographic operations, gasless/meta transactions with relayers, wallet integration and session management,
+  NEP-413 message signing, or storage deposit management for FT contracts.
+version: 1.0.0
+license: MIT
+platforms:
+  - claude
+  - gemini
+  - openai
+  - markdown
+tags:
+  - near-protocol
+  - near-api-js
+  - javascript
+  - typescript
+  - blockchain
+  - web3
+  - transactions
+  - smart-contracts
+metadata:
+  author: near
+  version: "1.0.0"
 ---
 
 # near-api-js Skill

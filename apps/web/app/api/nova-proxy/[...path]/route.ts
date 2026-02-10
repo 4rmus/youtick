@@ -16,24 +16,47 @@ import { NextRequest, NextResponse } from 'next/server';
 const AUTH_BASE = 'https://nova-sdk.com';
 const MCP_BASE = 'https://nova-mcp.fastmcp.app';
 
+/** Server-only API key — never exposed to the client bundle */
+const SERVER_API_KEY = process.env.NOVA_API_KEY;
+
+/** Strict allowlist of Nova API paths this proxy handles */
+const ALLOWED_PATHS = new Set([
+  '/api/auth/session-token',
+  '/api/auth/verify',
+  '/tools/register_group',
+  '/tools/add_group_member',
+  '/tools/revoke_group_member',
+  '/tools/prepare_upload',
+  '/api/finalize-upload',
+  '/tools/prepare_retrieve',
+  '/tools/auth_status',
+  '/attestation',
+]);
+
 const MAX_RETRIES = 3;
 const RETRYABLE_STATUSES = new Set([502, 503, 504, 429]);
 const BACKOFF_MS = [500, 1000, 2000];
 
+/** Headers that must never appear in logs */
+const SENSITIVE_HEADERS = new Set(['x-api-key', 'authorization', 'x-session-token']);
+
+/** Sanitize response body for logging - strip potential credential leakage */
+function sanitizeLogBody(body: string, maxLen = 500): string {
+  let sanitized = body.slice(0, maxLen);
+  // Redact anything that looks like an API key or token value
+  sanitized = sanitized.replace(
+    /("(?:api[_-]?key|token|authorization|secret|password|x-api-key)"\s*:\s*)"[^"]*"/gi,
+    '$1"[REDACTED]"'
+  );
+  // Redact Bearer tokens
+  sanitized = sanitized.replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]');
+  return sanitized;
+}
+
 /** Path-based timeout configuration (ms) */
 function getTimeout(subpath: string): number {
   if (subpath.startsWith('/api/auth/')) return 10_000;   // auth: 10s
-  if (isUploadPath(subpath)) return 120_000; // upload/finalize: 2 min
-  return 30_000; // default: 30s
-}
-
-/** Detect upload-related paths that may carry large binary bodies */
-function isUploadPath(subpath: string): boolean {
-  return (
-    subpath.includes('/upload') ||
-    subpath.includes('/finalize') ||
-    subpath.includes('/file')
-  );
+  return 30_000; // default: 30s (all Nova proxy requests are small JSON now)
 }
 
 /** Fetch with retry, timeout, and error differentiation */
@@ -113,9 +136,15 @@ export async function GET(
   try {
     const { path } = await params;
     const subpath = '/' + path.join('/');
+
+    if (!ALLOWED_PATHS.has(subpath)) {
+      return errorResponse('PATH_NOT_ALLOWED', `Proxy path not allowed: ${subpath}`, 404, false, Date.now() - start);
+    }
+
     const timeoutMs = getTimeout(subpath);
 
-    const targetUrl = subpath.startsWith('/api/auth/')
+    const isAuthPath = subpath.startsWith('/api/auth/') || subpath === '/attestation';
+    const targetUrl = isAuthPath
       ? `${AUTH_BASE}${subpath}`
       : `${MCP_BASE}${subpath}`;
 
@@ -125,6 +154,11 @@ export async function GET(
     for (const key of ['authorization', 'x-api-key', 'x-session-token', 'x-account-id']) {
       const value = request.headers.get(key);
       if (value) headers[key] = value;
+    }
+
+    // Inject real API key server-side (overrides any client-sent key)
+    if (SERVER_API_KEY) {
+      headers['x-api-key'] = SERVER_API_KEY;
     }
 
     const response = await fetchWithRetry(
@@ -138,7 +172,7 @@ export async function GET(
 
     if (response.status >= 400) {
       console.error(
-        `[Nova Proxy GET] ${subpath} → ${response.status} (${durationMs}ms) Body: ${data.slice(0, 500)}`,
+        `[Nova Proxy GET] ${subpath} → ${response.status} (${durationMs}ms) Body: ${sanitizeLogBody(data)}`,
       );
     } else {
       console.log(
@@ -156,7 +190,8 @@ export async function GET(
     });
   } catch (error) {
     const durationMs = Date.now() - start;
-    console.error('[Nova Proxy GET] Error after retries:', error);
+    // Log error type only - never log full error which may contain headers/credentials
+    console.error('[Nova Proxy GET] Error after retries:', error instanceof Error ? error.message : 'Unknown error');
 
     if (
       error instanceof DOMException &&
@@ -205,9 +240,15 @@ export async function POST(
   try {
     const { path } = await params;
     const subpath = '/' + path.join('/');
+
+    if (!ALLOWED_PATHS.has(subpath)) {
+      return errorResponse('PATH_NOT_ALLOWED', `Proxy path not allowed: ${subpath}`, 404, false, Date.now() - start);
+    }
+
     const timeoutMs = getTimeout(subpath);
 
-    const targetUrl = subpath.startsWith('/api/auth/')
+    const isAuthPath = subpath.startsWith('/api/auth/') || subpath === '/attestation';
+    const targetUrl = isAuthPath
       ? `${AUTH_BASE}${subpath}`
       : `${MCP_BASE}${subpath}`;
 
@@ -221,54 +262,30 @@ export async function POST(
       if (value) headers[key] = value;
     }
 
-    // Forward content-length for binary uploads
-    const contentLength = request.headers.get('content-length');
-    if (contentLength) {
-      headers['content-length'] = contentLength;
+    // Inject real API key server-side (overrides any client-sent key)
+    if (SERVER_API_KEY) {
+      headers['x-api-key'] = SERVER_API_KEY;
     }
 
-    let response: Response;
-
-    if (isUploadPath(subpath)) {
-      // Upload paths: stream the body directly to avoid body size limits.
-      // ReadableStream can only be consumed once so no retry for uploads.
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-      try {
-        response = await fetch(targetUrl, {
-          method: 'POST',
-          headers,
-          body: request.body,
-          signal: controller.signal,
-          // @ts-expect-error -- duplex required for streaming request bodies
-          duplex: 'half',
-        });
-        clearTimeout(timer);
-      } catch (err) {
-        clearTimeout(timer);
-        throw err;
-      }
-    } else {
-      // Non-upload paths: buffer body as text (small JSON payloads), retry on failure
-      const body = await request.text();
-      response = await fetchWithRetry(
-        targetUrl,
-        { method: 'POST', headers, body },
-        timeoutMs,
-      );
-    }
+    // All Nova proxy POST requests are small JSON now (auth, group mgmt, key storage).
+    // Large file uploads go directly to Crust via the client.
+    const body = await request.text();
+    const response = await fetchWithRetry(
+      targetUrl,
+      { method: 'POST', headers, body },
+      timeoutMs,
+    );
 
     const data = await response.text();
     const durationMs = Date.now() - start;
 
     if (response.status >= 400) {
       console.error(
-        `[Nova Proxy] ${subpath} → ${response.status} (${durationMs}ms) Body: ${data.slice(0, 500)}`,
+        `[Nova Proxy POST] ${subpath} → ${response.status} (${durationMs}ms) Body: ${sanitizeLogBody(data)}`,
       );
     } else {
       console.log(
-        `[Nova Proxy] ${subpath} → ${response.status} (${durationMs}ms)`,
+        `[Nova Proxy POST] ${subpath} → ${response.status} (${durationMs}ms)`,
       );
     }
 
@@ -282,7 +299,8 @@ export async function POST(
     });
   } catch (error) {
     const durationMs = Date.now() - start;
-    console.error('[Nova Proxy] Error after retries:', error);
+    // Log error type only - never log full error which may contain headers/credentials
+    console.error('[Nova Proxy POST] Error after retries:', error instanceof Error ? error.message : 'Unknown error');
 
     // Differentiate error types
     if (

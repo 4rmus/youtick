@@ -20,9 +20,9 @@ pnpm add nova-sdk-js
 import { NovaSDK } from 'nova-sdk-js';
 
 const nova = new NovaSDK({
-  networkId: 'testnet', // or 'mainnet'
-  contractId: 'nova.testnet',
-  shadeAgentUrl: 'https://shade-testnet.phala.network'
+  networkId: 'mainnet', // or 'mainnet'
+  contractId: 'nova-sdk.near',
+  shadeAgentUrl: 'https://shade.phala.network'
 });
 ```
 
@@ -35,15 +35,15 @@ import { NovaSDK } from 'nova-sdk-js';
 // Use existing NEAR connection from YouTick
 const keyStore = new keyStores.BrowserLocalStorageKeyStore();
 const nearConnection = await connect({
-  networkId: 'testnet',
+  networkId: 'mainnet',
   keyStore,
-  nodeUrl: 'https://rpc.testnet.near.org'
+  nodeUrl: 'https://rpc.mainnet.near.org'
 });
 
 const nova = new NovaSDK({
-  networkId: 'testnet',
-  contractId: 'nova.testnet',
-  shadeAgentUrl: 'https://shade-testnet.phala.network',
+  networkId: 'mainnet',
+  contractId: 'nova-sdk.near',
+  shadeAgentUrl: 'https://shade.phala.network',
   nearConnection
 });
 ```

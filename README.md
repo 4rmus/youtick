@@ -83,7 +83,7 @@ graph TB
 | Blockchain | NEAR Protocol | Mainnet |
 | Smart Contract | Rust (NEAR SDK) | 5.1.0 |
 | Encryption | Nova Protocol | TEE |
-| Storage | IPFS (Pinata) | - |
+| Storage | IPFS (Crust Network) | - |
 | Wallet | NEAR Wallet Selector | 10.1.2 |
 
 ## Quick Start

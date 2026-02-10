@@ -1,199 +1,148 @@
 ---
 name: nova
-description: Nova - Privacy-first decentralized file sharing on NEAR Protocol with TEE-secured encryption, IPFS storage, and on-chain access control
-version: 1.0.0
-author: Claude Code Skill Generator
+description: >
+  Privacy-first decentralized file sharing on NEAR Protocol with TEE-secured encryption via
+  Shade Agent v2.2 on Phala Cloud, IPFS storage, and on-chain access control. Use when working
+  with Nova SDK (nova-sdk-js or nova-sdk-rs), NovaSdk class, encryptData/decryptData/computeHash,
+  nova-sdk.near or nova-sdk-6.testnet contracts, token claims, nonce verification, TEE attestation,
+  group-based encrypted file access, or Nova MCP server integration at nova-mcp.fastmcp.app.
+version: 2.0.0
+license: MIT
+platforms:
+  - claude
+  - gemini
+  - openai
+  - markdown
+tags:
+  - nova
+  - near-protocol
+  - ipfs
+  - tee-encryption
+  - shade-agent
+  - phala-cloud
+  - privacy
+  - file-sharing
+  - aes-256-gcm
+  - decentralized
+  - mcp-server
 source: https://github.com/jcarbonnell/nova
+metadata:
+  author: nova-sdk
+  version: "2.0.0"
 ---
 
 # Nova Skill
 
-Nova is a privacy-first, decentralized file-sharing system built on NEAR Protocol. It combines Trusted Execution Environment (TEE) secured key management via Shade Agents on Phala Network, IPFS storage, and on-chain access control to provide zero-knowledge encrypted file sharing.
+Nova is a privacy-first, decentralized file-sharing system built on NEAR Protocol. It combines Trusted Execution Environment (TEE) secured key management via Shade Agent v2.2 on Phala Cloud, IPFS storage (via Pinata), and on-chain access control to provide encrypted file sharing where plaintext and encryption keys never travel together.
 
 ## When to Use This Skill
 
 This skill should be triggered when:
-- Working with Nova SDK (JavaScript/TypeScript or Rust)
+- Working with Nova SDK (`nova-sdk-js` or `nova-sdk-rs`)
 - Building decentralized file sharing applications on NEAR
 - Implementing encrypted group-based file access
 - Integrating Nova MCP server with AI assistants
-- Managing NEAR-based access control for files
 - Working with Shade Agents for TEE-secured key management
 - Implementing IPFS-based encrypted storage
-- Debugging Nova smart contracts or SDK issues
-- Learning about privacy-preserving file sharing architectures
+- Using `NovaSdk` class, `encryptData`, `decryptData`, `computeHash`
+- Interacting with `nova-sdk.near` or `nova-sdk-6.testnet` contracts
+- Working with token claims, nonce verification, or TEE attestation
 
 ## Quick Reference
 
 ### Initialize Nova SDK (JavaScript)
 
-**Basic SDK Setup:**
 ```typescript
-import { NovaSDK } from 'nova-sdk-js';
+import { NovaSdk } from 'nova-sdk-js';
 
-const nova = new NovaSDK({
-  networkId: 'testnet', // or 'mainnet'
-  contractId: 'nova.testnet',
-  shadeAgentUrl: 'https://shade.phala.network'
+// Mainnet
+const sdk = new NovaSdk('alice.nova-sdk.near', {
+  apiKey: process.env.NOVA_API_KEY,
+});
+
+// Testnet
+const sdk = new NovaSdk('alice.nova-sdk-6.testnet', {
+  apiKey: process.env.NOVA_API_KEY,
+  rpcUrl: 'https://rpc.testnet.near.org',
+  contractId: 'nova-sdk-6.testnet',
 });
 ```
 
-### Create a New Group
+### Register a Group
 
-**Group Creation with Members:**
 ```typescript
-const groupId = await nova.createGroup({
-  name: 'My Private Group',
-  members: [
-    'alice.near',
-    'bob.near',
-    'carol.near'
-  ],
-  metadata: {
-    description: 'Secure document sharing group'
-  }
-});
-console.log(`Group created: ${groupId}`);
+// Creates group on NEAR, triggers key generation in Shade Agent TEE
+// Cost: ~0.05-0.1 NEAR
+await sdk.registerGroup('confidential-docs');
 ```
 
 ### Upload Encrypted File
 
-**File Upload Flow:**
 ```typescript
-const file = new File(['Hello Nova!'], 'secret.txt', { type: 'text/plain' });
+import fs from 'fs';
 
-const uploadResult = await nova.uploadFile({
-  groupId: 'group-123',
-  file: file,
-  metadata: {
-    fileName: 'secret.txt',
-    mimeType: 'text/plain'
-  }
-});
+const fileData = fs.readFileSync('./secret-report.pdf');
+const result = await sdk.upload('confidential-docs', fileData, 'secret-report.pdf');
 
-console.log(`File CID: ${uploadResult.cid}`);
-console.log(`Encrypted with key from Shade Agent`);
+console.log('IPFS CID:', result.cid);
+console.log('Transaction ID:', result.trans_id);
+console.log('File Hash:', result.file_hash);
 ```
 
-### Download and Decrypt File
+### Retrieve and Decrypt File
 
-**File Retrieval:**
 ```typescript
-const decryptedFile = await nova.downloadFile({
-  groupId: 'group-123',
-  cid: 'QmXyz...',
-  accountId: 'alice.near'
-});
-
-// File is automatically decrypted if user is authorized
-const content = await decryptedFile.text();
+const { data } = await sdk.retrieve('confidential-docs', result.cid);
+fs.writeFileSync('./decrypted-report.pdf', data);
 ```
 
 ### Manage Group Members
 
-**Add/Remove Members:**
 ```typescript
-// Add a new member
-await nova.addMember({
-  groupId: 'group-123',
-  memberId: 'david.near',
-  role: 'member' // or 'admin'
-});
+// Add a member (~0.001 NEAR)
+await sdk.addGroupMember('confidential-docs', 'bob.nova-sdk.near');
 
-// Remove a member (triggers automatic key rotation)
-await nova.removeMember({
-  groupId: 'group-123',
-  memberId: 'bob.near'
-});
+// Revoke a member (triggers automatic key rotation) (~0.001 NEAR)
+await sdk.revokeGroupMember('confidential-docs', 'bob.nova-sdk.near');
 ```
 
 ### Check Authorization
 
-**Verify Access Rights:**
 ```typescript
-const isAuthorized = await nova.verifyMembership({
-  groupId: 'group-123',
-  accountId: 'alice.near'
-});
-
-if (isAuthorized) {
+const authorized = await sdk.isAuthorized('confidential-docs', 'bob.nova-sdk.near');
+if (authorized) {
   // User can access group files
-  const files = await nova.listGroupFiles('group-123');
 }
 ```
 
-### MCP Server Integration
+### Query Group Info
 
-**Claude Desktop Configuration:**
-```json
-{
-  "mcpServers": {
-    "nova": {
-      "command": "npx",
-      "args": ["nova-mcp-server"],
-      "env": {
-        "NEAR_ACCOUNT_ID": "your-account.near",
-        "NEAR_PRIVATE_KEY": "ed25519:...",
-        "NOVA_CONTRACT_ID": "nova.near",
-        "SHADE_AGENT_URL": "https://shade.phala.network"
-      }
-    }
-  }
-}
+```typescript
+const owner = await sdk.getGroupOwner('confidential-docs');
+const checksum = await sdk.getGroupChecksum('confidential-docs');
+const transactions = await sdk.getTransactionsForGroup('confidential-docs');
 ```
 
-### Smart Contract Interaction (Rust)
+### Encryption Functions
 
-**Direct Contract Calls:**
+```typescript
+import { encryptData, decryptData, computeHash } from 'nova-sdk-js';
+
+// AES-256-GCM encryption
+const encrypted = await encryptData(plaintext, keyB64);
+const decrypted = await decryptData(encrypted, keyB64);
+
+// SHA-256 hashing
+const hash = computeHash(data);
+```
+
+### Rust SDK
+
 ```rust
-use nova_sdk_rs::{NovaClient, GroupConfig};
-
-let client = NovaClient::new(
-    "nova.testnet",
-    near_account,
-    "https://shade.phala.network"
-)?;
-
-// Create group via contract
-let group_id = client.create_group(GroupConfig {
-    name: "Rust Group".to_string(),
-    members: vec!["alice.near".parse()?],
-}).await?;
-```
-
-### Transaction History
-
-**Query Group Transactions:**
-```typescript
-const history = await nova.getGroupHistory({
-  groupId: 'group-123',
-  limit: 50,
-  offset: 0
-});
-
-for (const tx of history.transactions) {
-  console.log(`${tx.type}: ${tx.actor} at ${tx.timestamp}`);
-  // Output: "FILE_UPLOAD: alice.near at 2024-01-15T..."
-}
-```
-
-### Error Handling Pattern
-
-**Comprehensive Error Handling:**
-```typescript
-try {
-  await nova.uploadFile({ groupId, file });
-} catch (error) {
-  if (error.code === 'UNAUTHORIZED') {
-    console.error('Not a member of this group');
-  } else if (error.code === 'SHADE_AGENT_ERROR') {
-    console.error('Key management service unavailable');
-  } else if (error.code === 'IPFS_ERROR') {
-    console.error('Storage service error');
-  } else {
-    throw error;
-  }
-}
+sdk.register_group("my-secure-files").await?;
+sdk.add_group_member("my-secure-files", "bob.nova-sdk.near").await?;
+sdk.revoke_group_member("my-secure-files", "bob.nova-sdk.near").await?;
+let status = sdk.auth_status("my-secure-files").await?;
 ```
 
 ## Architecture Overview
@@ -205,20 +154,20 @@ try {
 │                                                                  │
 │  ┌──────────┐    ┌──────────────┐    ┌───────────────────┐     │
 │  │  Client  │───▶│  Nova SDK    │───▶│  NEAR Contract    │     │
-│  │  (App)   │    │  (JS/Rust)   │    │  (Access Control) │     │
+│  │  (App)   │    │  (JS/Rust)   │    │  nova-sdk.near    │     │
 │  └──────────┘    └──────────────┘    └───────────────────┘     │
 │       │                │                       │                │
 │       │                ▼                       │                │
 │       │         ┌──────────────┐               │                │
 │       │         │ Shade Agent  │◀──────────────┘                │
-│       │         │   (TEE)      │  Verify membership             │
-│       │         │ Key Manager  │                                │
+│       │         │  v2.2 (TEE)  │  Token verification            │
+│       │         │ Phala Cloud  │  + key management               │
 │       │         └──────────────┘                                │
 │       │                │                                        │
 │       │                ▼ Encryption keys                        │
 │       │         ┌──────────────┐                                │
 │       └────────▶│    IPFS      │  Encrypted file storage        │
-│                 │   Storage    │                                │
+│                 │  (Pinata)    │                                │
 │                 └──────────────┘                                │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
@@ -226,57 +175,78 @@ try {
 
 ## Key Concepts
 
-### Zero-Knowledge Architecture
-Nova implements a zero-knowledge design where encryption keys never appear on-chain. The NEAR smart contract only manages group membership and access control, while the Shade Agent (running in a TEE) handles all cryptographic operations.
+### Token Claim Flow (NEAR <-> TEE Bridge)
 
-### Shade Agent
-A Trusted Execution Environment (TEE) based service running on Phala Network that:
-- Generates and stores encryption keys securely
-- Verifies user membership via NEAR contract
-- Provides keys only to authorized users
-- Performs automatic key rotation on member removal
+The central mechanism for secure key distribution:
+1. Client generates payload: `{ group_id, user_id, nonce, timestamp }`
+2. Client signs with ed25519 over SHA256(payload)
+3. Client calls `claim_token()` on NEAR contract
+4. Contract verifies: signature, nonce uniqueness, timestamp (5-min window), membership
+5. Returns token -> client presents to Shade Agent -> TEE returns encryption key
 
-### Group-Based Access
-Files are encrypted per-group, not per-user. All members of a group share the same encryption key, managed by the Shade Agent. This enables efficient multi-party access without key proliferation.
+### Shade Agent (TEE)
 
-### Forward Secrecy
-When a member is removed from a group, the Shade Agent automatically rotates the encryption key. Previously uploaded files remain accessible to remaining members, but new files use the new key.
+Shade Agent v2.2 is a Next.js app deployed as Docker on Phala Cloud:
+- Encrypted SQLite database inside TEE (AES-256-CBC with TEE-derived secret)
+- API at `/api/key-management`: `generate_key`, `get_key`, `rotate_key`
+- Token verification: ed25519 on SHA256(payload), nonce replay protection, 5-min timestamps
+- Automatic key rotation when members are revoked
 
-### IPFS Storage
-Files are stored on IPFS after client-side encryption. The CID (Content Identifier) is stored on-chain as part of the group's file registry.
+### Encryption
 
-## MCP Server Tools
+| Context | Algorithm |
+|---------|-----------|
+| SDK file encryption | AES-256-GCM (`encryptData` / `decryptData`) |
+| Shade Agent key storage | AES-256-CBC (encrypted SQLite) |
+| MCP Server operations | AES-256-CBC (server-side) |
+| File integrity | SHA-256 (`computeHash`) |
+| Token signatures | ed25519 |
 
-Nova provides 11+ MCP tools for AI assistant integration:
+**Critical invariant:** Plaintext and encryption keys never travel together.
 
-| Tool | Description |
-|------|-------------|
-| `nova_create_group` | Create a new sharing group |
-| `nova_add_member` | Add member to group |
-| `nova_remove_member` | Remove member from group |
-| `nova_upload_file` | Upload and encrypt file |
-| `nova_download_file` | Download and decrypt file |
-| `nova_list_groups` | List user's groups |
-| `nova_list_files` | List files in a group |
-| `nova_get_group_info` | Get group details |
-| `nova_verify_membership` | Check user authorization |
-| `nova_get_history` | Get transaction history |
-| `nova_rotate_key` | Manually rotate group key |
+### Upload/Retrieve Flows
+
+- **Upload:** `prepare_upload` -> TEE key -> encrypt locally (AES-256-GCM) -> `finalize_upload` -> IPFS + NEAR -> `{ cid, trans_id, file_hash }`
+- **Retrieve:** validate CID -> `prepare_retrieve` -> TEE key + encrypted data -> decrypt locally (AES-256-GCM) -> `{ data, ipfs_hash, group_id }`
+
+### NEAR Protocol Integration
+
+- Contracts: `nova-sdk.near` (mainnet), `nova-sdk-6.testnet` (testnet)
+- On-chain: group registry, member auth, token claims, TEE worker management, nonce tracking
+- Off-chain (TEE): key generation, storage, rotation, distribution
+- Events: `NovaEvent::Registered`, `NovaEvent::Revoked`, `NovaEvent::FeeCollected`
+
+## MCP Server
+
+Nova provides a public MCP server for AI assistant integration:
+
+- **URL:** `https://nova-mcp.fastmcp.app/mcp`
+- **Role:** Auth + Signing Proxy with JWT session tokens
+- **Encryption:** AES-256-CBC (server-side, differs from SDK's AES-256-GCM)
+- **Supports:** Group management, member management, file upload/retrieve, queries
+
+## Transaction Costs
+
+| Operation | Cost |
+|-----------|------|
+| Register group | ~0.05-0.1 NEAR |
+| Add member | ~0.001 NEAR |
+| Revoke member | ~0.001 NEAR |
+| Upload file | ~0.01 NEAR |
+| View functions | Free |
 
 ## Reference Files
 
 This skill includes comprehensive documentation in `references/`:
 
 - **index.md** - Overview and navigation guide
-- **sdk-javascript.md** - Complete JavaScript/TypeScript SDK reference
+- **sdk-javascript.md** - Complete `NovaSdk` JavaScript/TypeScript SDK reference
 - **sdk-rust.md** - Rust SDK documentation
-- **smart-contract.md** - NEAR smart contract API
-- **shade-agent.md** - TEE key management details
+- **smart-contract.md** - NEAR smart contract API (`claim_token`, `approve_shade_code_hash`, etc.)
+- **shade-agent.md** - TEE key management details (Shade Agent v2.2)
 - **mcp-server.md** - MCP integration guide
-- **architecture.md** - System design and security model
+- **architecture.md** - System design, data flows, and security model
 - **tutorials.md** - Step-by-step implementation guides
-
-Use `view` to read specific reference files when detailed information is needed.
 
 ## Working with This Skill
 
@@ -287,65 +257,40 @@ Use `view` to read specific reference files when detailed information is needed.
 
 ### For SDK Integration
 1. Use `references/sdk-javascript.md` for frontend/Node.js applications
-2. Use `references/sdk-rust.md` for backend services or WASM
-3. Check error handling patterns in the quick reference
+2. Use `references/sdk-rust.md` for backend services
+3. Key methods: `registerGroup()`, `upload()`, `retrieve()`, `addGroupMember()`, `revokeGroupMember()`
+
+### For TEE and Encryption Understanding
+1. Study `references/shade-agent.md` for Shade Agent v2.2 TEE details
+2. Read `references/smart-contract.md` for the `claim_token()` mechanism
+3. Check `references/architecture.md` for encryption specifications
 
 ### For AI Assistant Integration
-1. Review `references/mcp-server.md` for tool configuration
-2. Set up environment variables correctly
-3. Test with simple operations before complex workflows
-
-### For Smart Contract Development
-1. Study `references/smart-contract.md` for contract interface
-2. Understand the access control model
-3. Follow NEAR development best practices
+1. Review `references/mcp-server.md` for the public MCP server
+2. Follow `references/tutorials.md` MCP integration section
 
 ## Security Considerations
 
-1. **Never expose private keys** - Use environment variables or secure key management
-2. **Verify group membership** - Always check authorization before sensitive operations
-3. **Handle key rotation** - Understand that removing members triggers re-encryption
-4. **TEE Trust Model** - Security relies on Phala Network's TEE guarantees
-5. **Client-side encryption** - Files are encrypted before leaving the client
-
-## Common Patterns
-
-### Secure File Sharing Workflow
-```typescript
-// 1. Create a group
-const groupId = await nova.createGroup({ name: 'Project X', members: ['alice.near'] });
-
-// 2. Add team members
-await nova.addMember({ groupId, memberId: 'bob.near' });
-
-// 3. Upload project files
-await nova.uploadFile({ groupId, file: projectDoc });
-
-// 4. Team members can access
-const doc = await nova.downloadFile({ groupId, cid, accountId: 'bob.near' });
-```
-
-### Membership Management
-```typescript
-// Offboard a team member securely
-await nova.removeMember({ groupId, memberId: 'contractor.near' });
-// Key is automatically rotated - contractor loses access
-
-// Verify the removal
-const members = await nova.getGroupMembers(groupId);
-assert(!members.includes('contractor.near'));
-```
+1. **Plaintext/key separation** - Plaintext and encryption keys never travel together
+2. **ed25519 signatures** - All token claims are cryptographically signed
+3. **Nonce replay protection** - Each token claim requires a unique, single-use nonce
+4. **5-minute timestamp windows** - Tokens expire after 5 minutes
+5. **TEE code verification** - Only approved code hashes can run in Shade Agent
+6. **Checksum verification** - TEE responses verifiable against on-chain state
+7. **Automatic key rotation** - Revoking a member triggers immediate key rotation
+8. **Use environment variables** for API keys - never hardcode them
 
 ## Resources
 
 ### Official Links
+- Documentation: https://nova-25.gitbook.io/nova-docs/
 - GitHub: https://github.com/jcarbonnell/nova
-- NEAR Protocol: https://near.org
-- Phala Network: https://phala.network
+- Website: https://nova-sdk.com
+- MCP Server: https://nova-mcp.fastmcp.app/mcp
+- Twitter: https://x.com/nova_sdk
+- Telegram: https://t.me/nova_sdk
 
 ### Related Technologies
-- NEAR SDK: https://docs.near.org
+- NEAR Protocol: https://near.org
+- Phala Network: https://phala.network
 - IPFS: https://docs.ipfs.tech
-- Phala TEE: https://wiki.phala.network
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>

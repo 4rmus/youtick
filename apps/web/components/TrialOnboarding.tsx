@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Sparkles, Wallet, ArrowRight, CheckCircle2, AlertCircle, Gift } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageContext";
-import { KeyPair } from "near-api-js";
+import { KeyPair, type KeyPairString } from "near-api-js";
 import { claimGiftAndCreateAccount, validateGiftLink, getGiftEventInfo, createSponsoredTrial } from "@/lib/gift-service";
 
 interface TrialOnboardingProps {
@@ -76,7 +76,7 @@ export function TrialOnboarding({ onTrialCreated, onConnectWallet }: TrialOnboar
             try {
                 // Derive public key from secret key
                 const keyString = secretKey.startsWith("ed25519:") ? secretKey : `ed25519:${secretKey}`;
-                const keyPair = KeyPair.fromString(keyString as any);
+                const keyPair = KeyPair.fromString(keyString as KeyPairString);
                 const publicKey = keyPair.getPublicKey().toString();
 
                 // Validate the gift link
@@ -98,7 +98,7 @@ export function TrialOnboarding({ onTrialCreated, onConnectWallet }: TrialOnboar
                     eventTitle: eventInfo?.title,
                 });
                 setIsValidating(false);
-            } catch (e: any) {
+            } catch (e: unknown) {
                 console.error("Error parsing gift link:", e);
                 setError("Invalid gift link format");
                 setStep("error");
@@ -163,9 +163,9 @@ export function TrialOnboarding({ onTrialCreated, onConnectWallet }: TrialOnboar
                 setError(result.error || "Account creation failed");
                 setStep("username");
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("Account creation error:", err);
-            setError(err.message || "An error occurred");
+            setError(err instanceof Error ? err.message : "An error occurred");
             setStep("username");
         }
     };

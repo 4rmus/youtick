@@ -6,7 +6,7 @@
 
 import { generateNovaAuthToken } from './auth';
 import { NovaGroup, NovaError, CreateGroupParams } from './types';
-import { hasApiKey, getNovaSdk, isSimulationAllowed } from './config';
+import { hasApiKey, getNovaSdk, createNovaGroup } from './config';
 
 /**
  * Create NOVA group for content access control
@@ -18,22 +18,13 @@ import { hasApiKey, getNovaSdk, isSimulationAllowed } from './config';
  * @throws NovaError if group creation fails
  */
 export async function createGroup(params: CreateGroupParams): Promise<string> {
-  console.log('[NOVA Groups] Creating group...', {
-    name: params.name,
-    owner: params.owner,
-    members: params.members.length,
-    cid: params.cid
-  });
-
   try {
     // 1. Generate auth token for owner
     const authToken = await generateNovaAuthToken(params.owner);
 
-    // 2. Create group via NOVA API
-    // TODO: Replace with actual NOVA SDK call when API key available
+    // 2. Create group via NOVA SDK
     const groupId = await createGroupViaNOVA(params, authToken.authToken);
 
-    console.log('[NOVA Groups] Group created successfully:', groupId);
     console.log('[DECENTRALIZATION_METRIC] nova_group_created', {
       groupId,
       owner: params.owner,
@@ -70,39 +61,21 @@ async function createGroupViaNOVA(
   authToken: string
 ): Promise<string> {
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new NovaError('INVALID_CONFIG', 'Nova API key required in production. Set NEXT_PUBLIC_NOVA_API_KEY.');
-    }
-    console.warn('[NOVA Groups] API key not configured - simulating group creation');
-
-    // Return simulated group ID
-    const groupId = `GROUP_${Date.now()}_${params.cid.substring(0, 8)}`;
-    console.log('[NOVA Groups] Simulated group created:', groupId);
-
-    return groupId;
+    throw new NovaError('INVALID_CONFIG', 'Nova API key required. Set NOVA_API_KEY.');
   }
 
   try {
     const sdk = getNovaSdk();
 
-    // Register group with NOVA
-    const groupId = params.name.replace(/\s+/g, '_').toLowerCase();
+    // Create group on-chain + TEE via nova_create_group MCP tool
+    const requestedGroupId = params.name.replace(/\s+/g, '_').toLowerCase();
 
-    console.log('[NOVA Groups] Registering group:', groupId);
-    const transId = await sdk.registerGroup(groupId);
+    const groupId = await createNovaGroup(requestedGroupId);
 
-    console.log('[NOVA Groups] Group registered:', {
-      groupId,
-      transId,
-      owner: params.owner
-    });
-
-    // Add members to group
+    // Add all members to group (including the content owner, since the
+    // Nova group is owned by the platform account, not the NEAR user)
     for (const member of params.members) {
-      if (member !== params.owner) { // Owner already has access
-        await sdk.addGroupMember(groupId, member);
-        console.log('[NOVA Groups] Added member:', member);
-      }
+      await sdk.addGroupMember(groupId, member);
     }
 
     return groupId;
@@ -136,12 +109,6 @@ export async function addGroupMember(
   newMember: string,
   owner: string
 ): Promise<void> {
-  console.log('[NOVA Groups] Adding member to group...', {
-    groupId,
-    newMember,
-    owner
-  });
-
   try {
     // 1. Generate auth token for owner
     const authToken = await generateNovaAuthToken(owner);
@@ -149,7 +116,6 @@ export async function addGroupMember(
     // 2. Add member via NOVA SDK
     await addMemberViaNOVA(groupId, newMember, authToken.authToken, owner);
 
-    console.log('[NOVA Groups] Member added successfully');
     console.log('[DECENTRALIZATION_METRIC] nova_group_member_added', {
       groupId,
       newMember,
@@ -181,19 +147,8 @@ async function addMemberViaNOVA(
   owner: string
 ): Promise<void> {
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new NovaError('INVALID_CONFIG', 'Nova API key required in production. Set NEXT_PUBLIC_NOVA_API_KEY.');
-    }
-    console.warn('[NOVA Groups] API key not configured - simulating member addition');
-    console.log('[NOVA Groups] Simulated: Added', newMember, 'to', groupId);
-    return;
+    throw new NovaError('INVALID_CONFIG', 'Nova API key required. Set NOVA_API_KEY.');
   }
-
-  console.log('[NOVA Groups] Adding member via SDK:', {
-    groupId,
-    newMember,
-    owner
-  });
 
   const MAX_RETRIES = 3;
   const RETRY_DELAYS = [2000, 4000, 8000]; // Escalating delays for nonce propagation
@@ -201,14 +156,7 @@ async function addMemberViaNOVA(
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const sdk = getNovaSdk();
-      const transId = await sdk.addGroupMember(groupId, newMember);
-
-      console.log('[NOVA Groups] Member added successfully:', {
-        transId,
-        newMember,
-        groupId,
-        attempt: attempt + 1
-      });
+      await sdk.addGroupMember(groupId, newMember);
       return;
 
     } catch (error: unknown) {
@@ -247,17 +195,9 @@ export async function isGroupMember(
   groupId: string,
   accountId: string
 ): Promise<boolean> {
-  console.log('[NOVA Groups] Checking group membership...', {
-    groupId,
-    accountId
-  });
-
   try {
     // Query NOVA API (no auth needed for membership check)
-    // TODO: Replace with actual NOVA SDK call when API key available
     const isMember = await checkMembershipViaNOVA(groupId, accountId);
-
-    console.log('[NOVA Groups] Membership check result:', isMember);
     return isMember;
 
   } catch (error: unknown) {
@@ -275,11 +215,7 @@ async function checkMembershipViaNOVA(
   accountId: string
 ): Promise<boolean> {
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new NovaError('INVALID_CONFIG', 'Nova API key required in production. Set NEXT_PUBLIC_NOVA_API_KEY.');
-    }
-    console.warn('[NOVA Groups] API key not configured - simulating membership check');
-    return true; // Dev only
+    throw new NovaError('INVALID_CONFIG', 'Nova API key required. Set NOVA_API_KEY.');
   }
 
   try {
@@ -303,20 +239,12 @@ export async function getGroupMembers(
   groupId: string,
   owner: string
 ): Promise<string[]> {
-  console.log('[NOVA Groups] Getting group members...', {
-    groupId,
-    owner
-  });
-
   try {
     // 1. Generate auth token for owner
     const authToken = await generateNovaAuthToken(owner);
 
     // 2. Query members via NOVA API
-    // TODO: Replace with actual NOVA SDK call when API key available
     const members = await getMembersViaNOVA(groupId, authToken.authToken);
-
-    console.log('[NOVA Groups] Retrieved', members.length, 'members');
     return members;
 
   } catch (error: unknown) {
@@ -343,11 +271,7 @@ async function getMembersViaNOVA(
   authToken: string
 ): Promise<string[]> {
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new NovaError('INVALID_CONFIG', 'Nova API key required in production. Set NEXT_PUBLIC_NOVA_API_KEY.');
-    }
-    console.warn('[NOVA Groups] API key not configured - simulating member query');
-    return []; // Simulation: no members
+    throw new NovaError('INVALID_CONFIG', 'Nova API key required. Set NOVA_API_KEY.');
   }
 
   // Nova SDK does not expose a getGroupMembers method.
@@ -367,11 +291,9 @@ export async function getGroup(
   groupId: string,
   owner: string
 ): Promise<NovaGroup> {
-  console.log('[NOVA Groups] Getting group metadata...', { groupId, owner });
-
   const members = await getGroupMembers(groupId, owner);
 
-  // TODO: Get full metadata from NOVA API
+  // Nova SDK doesn't expose full group metadata; construct from available data
   return {
     groupId,
     name: `Group ${groupId}`,

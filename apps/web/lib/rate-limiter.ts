@@ -309,9 +309,6 @@ class DailyGlobalLimiter {
                 // Use the higher of file count vs contract count
                 if (contractCount > this.count) {
                     this.count = contractCount;
-                    console.log(
-                        `[RateLimiter] Synced daily trial count from contract: ${contractCount}`,
-                    );
                 }
             }
         } catch {
@@ -321,19 +318,6 @@ class DailyGlobalLimiter {
 }
 
 // Pre-configured rate limiters for different endpoints
-
-/**
- * Video Upload Rate Limiter
- *
- * IPFS W3Auth storage is free, but we rate limit to prevent abuse
- * and ensure fair usage across all creators.
- *
- * Limit: 10 uploads per hour
- */
-export const uploadLimiter = new RateLimiter({
-    windowMs: 60 * 60 * 1000,  // 1 hour
-    maxRequests: 10            // 10 uploads per hour
-}, 'upload');
 
 // Trial account creation limiter (per IP)
 // Prevents spam account creation

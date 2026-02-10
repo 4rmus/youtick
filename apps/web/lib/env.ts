@@ -20,7 +20,6 @@ export function validateEnv() {
     );
   }
 
-  // console.log('✅ Environment variables validated successfully');
 }
 
 /**

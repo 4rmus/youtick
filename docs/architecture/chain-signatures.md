@@ -3,7 +3,7 @@
 > NEAR Chain Signatures for Cross-Chain Operations
 
 **Location**: `apps/web/lib/chain-signatures.ts`
-**MPC Contract**: `v1.signer-prod.testnet`
+**MPC Contract**: `v1.signer-prod.near`
 
 ---
 
@@ -26,7 +26,7 @@ NEAR Chain Signatures enable:
 │                                                                  │
 │  ┌──────────────┐                                               │
 │  │ NEAR Account │                                               │
-│  │ user.testnet │                                               │
+│  │ user.near │                                               │
 │  └──────┬───────┘                                               │
 │         │                                                        │
 │         │ Derivation Path: "nova/signing"                         │
@@ -147,8 +147,8 @@ When using the proxy contract pattern (e.g., calling MPC via nft-ticket contract
 // - accountId: CONTRACT_ID (not user's account)
 // - path: "{userAccount}/{derivationPath}"
 
-const CONTRACT_ID = 'v1.utick.testnet';
-const compositePath = `${accountId}/${path}`; // "user.testnet/nova/signing"
+const CONTRACT_ID = 'youtick-prod-v1.near';
+const compositePath = `${accountId}/${path}`; // "user.near/nova/signing"
 const derivedKey = deriveChildKey(masterKey, CONTRACT_ID, compositePath);
 ```
 
@@ -380,10 +380,10 @@ localStorage.setItem(cacheKey, address);
 
 ```env
 # MPC Contract (default included)
-NEXT_PUBLIC_MPC_CONTRACT=v1.signer-prod.testnet
+NEXT_PUBLIC_MPC_CONTRACT=v1.signer-prod.near
 
 # Contract ID (required for derivation path)
-NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick-prod-v1.near
 ```
 
 ---

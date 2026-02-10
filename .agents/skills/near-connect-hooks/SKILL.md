@@ -1,6 +1,27 @@
 ---
 name: near-connect-hooks
-description: React hooks for NEAR Protocol wallet integration using @hot-labs/near-connect. Use when building React/Next.js apps that need NEAR wallet connection, smart contract calls (view and change methods), token transfers, access key management, or NEP-413 message signing. Triggers on queries about NEAR wallet hooks, NearProvider setup, useNearWallet hook, or NEAR dApp React integration.
+description: >
+  React hooks for NEAR Protocol wallet integration using @hot-labs/near-connect. Use when building
+  React/Next.js apps that need NEAR wallet connection, smart contract calls (view and change methods),
+  token transfers, access key management, or NEP-413 message signing. Triggers on queries about
+  NEAR wallet hooks, NearProvider setup, useNearWallet hook, or NEAR dApp React integration.
+version: 1.0.0
+license: MIT
+platforms:
+  - claude
+  - gemini
+  - openai
+  - markdown
+tags:
+  - near-protocol
+  - react-hooks
+  - near-connect
+  - nextjs
+  - wallet-integration
+  - web3
+metadata:
+  author: hot-labs
+  version: "1.0.0"
 ---
 
 # near-connect-hooks

@@ -1,604 +1,269 @@
 # Nova Smart Contract Reference
 
-Complete reference for the Nova NEAR smart contract API.
+Complete reference for the Nova NEAR smart contract.
 
 ## Contract Overview
 
-The Nova smart contract manages:
-- Group creation and configuration
-- Member access control
-- File registry (CID mappings)
-- Transaction logging
-- Authorization verification for Shade Agent
+The Nova smart contract is the on-chain backbone of the Nova system, managing group registry, member authorization, TEE worker registration, token claims, and transaction logging.
 
-**Contract ID**:
-- Testnet: `nova.testnet`
-- Mainnet: `nova.near`
+**Contract IDs:**
+- Mainnet: `nova-sdk.near`
+- Testnet: `nova-sdk-6.testnet`
 
-## Contract Interface
+**Language:** Rust with `near-sdk`
 
-### View Methods
+## Contract State
 
-View methods are free to call and don't require a transaction.
+The contract tracks the following state:
 
-#### get_group
+| State | Description |
+|-------|-------------|
+| **Groups** | Group registry with ownership and membership |
+| **Members** | Member mappings per group |
+| **Transactions** | Immutable transaction audit trails |
+| **TEE Workers** | Approved Shade Agent worker registrations |
+| **Used Nonces** | Nonce tracking for replay attack prevention |
+| **Fees** | Fee collection and management |
+| **Ownership Indexes** | Fast lookup of groups by owner |
+| **Member Indexes** | Fast lookup of groups by member |
 
-Returns group information.
+## Contract Functions
 
-```rust
-pub fn get_group(&self, group_id: String) -> Option<GroupView> {
-    // Returns None if group doesn't exist
-}
-```
+### TEE Management
 
-**Response:**
-```json
-{
-  "id": "group-abc123",
-  "name": "Engineering Team",
-  "owner": "alice.near",
-  "member_count": 5,
-  "file_count": 12,
-  "created_at": 1704067200000,
-  "metadata": {
-    "description": "Internal documentation"
-  }
-}
-```
+#### approve_shade_code_hash
 
-#### get_groups_for_account
-
-Lists all groups an account belongs to.
+Approves a Shade Agent code hash. Only TEE workers running approved code can register with the contract.
 
 ```rust
-pub fn get_groups_for_account(
-    &self,
-    account_id: AccountId,
-    from_index: Option<u64>,
-    limit: Option<u64>
-) -> Vec<GroupView>
+pub fn approve_shade_code_hash(&mut self, code_hash: String)
 ```
 
-**Parameters:**
-- `account_id`: NEAR account ID
-- `from_index`: Pagination offset (default: 0)
-- `limit`: Max results (default: 50, max: 100)
+**Purpose:** Ensures that only verified, audited TEE code can participate in key management. The contract maintains a list of approved code hashes that represent trusted Shade Agent builds.
 
-#### get_group_members
+#### register_shade_worker
 
-Returns all members of a group.
+Registers a TEE worker with the contract after attestation verification.
 
 ```rust
-pub fn get_group_members(&self, group_id: String) -> Vec<MemberView>
+pub fn register_shade_worker(
+    &mut self,
+    worker_id: AccountId,
+    attestation: Vec<u8>
+)
 ```
 
-**Response:**
-```json
-[
-  {
-    "account_id": "alice.near",
-    "role": "owner",
-    "joined_at": 1704067200000
-  },
-  {
-    "account_id": "bob.near",
-    "role": "member",
-    "joined_at": 1704153600000
-  }
-]
-```
+**Purpose:** Allows a Shade Agent instance to register itself as a valid key management worker. The attestation proves the worker is running approved code inside a genuine TEE enclave. Multiple workers can run the same code hash for redundancy.
 
-#### is_member
+### Checksum Management
 
-Checks if an account is a member of a group.
+#### update_checksum
+
+Updates the checksum for a group's encryption state.
 
 ```rust
-pub fn is_member(&self, group_id: String, account_id: AccountId) -> bool
+pub fn update_checksum(&mut self, group_id: String, checksum: String)
 ```
 
-#### get_member_role
+**Purpose:** Called by the Shade Agent to update the on-chain checksum after key operations (generation, rotation). This allows clients to verify TEE responses against the on-chain state.
 
-Returns the role of a member in a group.
+#### get_group_checksum
+
+Returns the current checksum for a group (view function, free to call).
 
 ```rust
-pub fn get_member_role(
-    &self,
+pub fn get_group_checksum(&self, group_id: String) -> Option<String>
+```
+
+**Purpose:** Enables clients to verify that TEE responses match the on-chain recorded state. Every response from the Shade Agent includes a checksum that can be verified against this value.
+
+### Token Claim (Core NEAR-TEE Bridge)
+
+#### claim_token
+
+The central mechanism bridging NEAR Protocol and the Shade Agent TEE. This is how authorized users obtain access tokens to retrieve encryption keys.
+
+```rust
+pub fn claim_token(
+    &mut self,
     group_id: String,
-    account_id: AccountId
-) -> Option<MemberRole>
+    payload_b64: String,
+    signature_hex: String
+) -> String
 ```
 
-**Returns:** `"owner"`, `"admin"`, `"member"`, or `null`
+**Flow:**
+1. Client generates payload: `{ group_id, user_id, nonce, timestamp }`
+2. Client signs payload with ed25519 key over SHA256(payload)
+3. Client calls `claim_token()` on the NEAR contract
+4. Contract verifies:
+   - **Signature validity** (ed25519 verification)
+   - **Nonce uniqueness** (prevents replay attacks)
+   - **Timestamp freshness** (5-minute window)
+   - **Group membership** (caller is authorized)
+5. Contract marks nonce as used
+6. Returns a token string
+7. Client presents token to Shade Agent TEE
+8. TEE verifies token and returns the encryption key
 
-#### get_group_files
+```
+Client                    NEAR Contract              Shade Agent (TEE)
+  |                            |                           |
+  | 1. Generate payload        |                           |
+  |    {group_id, user_id,     |                           |
+  |     nonce, timestamp}      |                           |
+  |                            |                           |
+  | 2. Sign with ed25519       |                           |
+  |                            |                           |
+  | 3. claim_token() -------->|                           |
+  |                            | 4. Verify:                |
+  |                            |    - signature            |
+  |                            |    - nonce (unique)       |
+  |                            |    - timestamp (5min)     |
+  |                            |    - membership           |
+  |                            |                           |
+  | <---- 5. Return token -----|                           |
+  |                            |                           |
+  | 6. Present token ---------------------------------->  |
+  |                            |                           | 7. Verify token
+  | <------------------------------ 8. Encryption key -----|
+  |                            |                           |
+```
 
-Lists files in a group.
+#### get_nonce_validity
+
+Checks whether a nonce has been used for a given group and user (view function, free to call).
 
 ```rust
-pub fn get_group_files(
-    &self,
-    group_id: String,
-    from_index: Option<u64>,
-    limit: Option<u64>
-) -> Vec<FileView>
-```
-
-**Response:**
-```json
-[
-  {
-    "cid": "QmXyz...",
-    "file_name": "report.pdf",
-    "mime_type": "application/pdf",
-    "size": 1048576,
-    "uploaded_by": "alice.near",
-    "uploaded_at": 1704240000000
-  }
-]
-```
-
-#### get_file
-
-Returns information about a specific file.
-
-```rust
-pub fn get_file(&self, group_id: String, cid: String) -> Option<FileView>
-```
-
-#### get_group_history
-
-Returns transaction history for a group.
-
-```rust
-pub fn get_group_history(
+pub fn get_nonce_validity(
     &self,
     group_id: String,
-    from_index: Option<u64>,
-    limit: Option<u64>
-) -> Vec<TransactionView>
-```
-
-#### get_key_version
-
-Returns the current encryption key version for a group.
-
-```rust
-pub fn get_key_version(&self, group_id: String) -> Option<u64>
-```
-
-#### verify_authorization
-
-Verifies if an account can access a group's encryption key.
-Used by Shade Agent for authorization.
-
-```rust
-pub fn verify_authorization(
-    &self,
-    group_id: String,
-    account_id: AccountId,
-    signature: String,
-    timestamp: u64
+    user_id: String,
+    nonce: String
 ) -> bool
 ```
 
-### Change Methods
-
-Change methods require a transaction and may cost gas.
-
-#### create_group
-
-Creates a new sharing group.
-
-```rust
-#[payable]
-pub fn create_group(
-    &mut self,
-    name: String,
-    members: Option<Vec<AccountId>>,
-    metadata: Option<String>
-) -> String // Returns group_id
-```
-
-**Required Deposit:** 0.1 NEAR (for storage)
-
-**Example Call:**
-```bash
-near call nova.testnet create_group \
-  '{"name": "My Group", "members": ["bob.near"]}' \
-  --accountId alice.near \
-  --deposit 0.1
-```
-
-#### add_member
-
-Adds a member to a group.
-
-```rust
-#[payable]
-pub fn add_member(
-    &mut self,
-    group_id: String,
-    member_id: AccountId,
-    role: Option<String>
-) -> bool
-```
-
-**Required Deposit:** 0.01 NEAR (for storage)
-
-**Authorization:** Owner or Admin only
-
-#### remove_member
-
-Removes a member from a group.
-
-```rust
-pub fn remove_member(
-    &mut self,
-    group_id: String,
-    member_id: AccountId
-) -> bool
-```
-
-**Authorization:** Owner or Admin only (cannot remove owner)
-
-**Side Effect:** Triggers key rotation notification
-
-#### update_member_role
-
-Updates a member's role.
-
-```rust
-pub fn update_member_role(
-    &mut self,
-    group_id: String,
-    member_id: AccountId,
-    new_role: String
-) -> bool
-```
-
-**Authorization:** Owner only
-
-**Valid Roles:** `"admin"`, `"member"`
-
-#### register_file
-
-Registers a file in the group's registry.
-
-```rust
-#[payable]
-pub fn register_file(
-    &mut self,
-    group_id: String,
-    cid: String,
-    file_name: String,
-    mime_type: String,
-    size: u64,
-    metadata: Option<String>
-) -> bool
-```
-
-**Required Deposit:** Variable based on metadata size
-
-**Authorization:** Any group member
-
-#### unregister_file
-
-Removes a file from the group's registry.
-
-```rust
-pub fn unregister_file(
-    &mut self,
-    group_id: String,
-    cid: String
-) -> bool
-```
-
-**Authorization:** File uploader, Admin, or Owner
-
-#### increment_key_version
-
-Increments the key version (for key rotation tracking).
-
-```rust
-pub fn increment_key_version(&mut self, group_id: String) -> u64
-```
-
-**Authorization:** Called by Shade Agent callback
-
-#### delete_group
-
-Deletes a group and all associated data.
-
-```rust
-pub fn delete_group(&mut self, group_id: String) -> bool
-```
-
-**Authorization:** Owner only
-
-**Returns:** Storage deposit to owner
-
-## Data Structures
-
-### GroupView
-
-```rust
-pub struct GroupView {
-    pub id: String,
-    pub name: String,
-    pub owner: AccountId,
-    pub member_count: u64,
-    pub file_count: u64,
-    pub created_at: u64,
-    pub metadata: Option<serde_json::Value>,
-}
-```
-
-### MemberView
-
-```rust
-pub struct MemberView {
-    pub account_id: AccountId,
-    pub role: MemberRole,
-    pub joined_at: u64,
-}
-
-pub enum MemberRole {
-    Owner,
-    Admin,
-    Member,
-}
-```
-
-### FileView
-
-```rust
-pub struct FileView {
-    pub cid: String,
-    pub file_name: String,
-    pub mime_type: String,
-    pub size: u64,
-    pub uploaded_by: AccountId,
-    pub uploaded_at: u64,
-    pub metadata: Option<serde_json::Value>,
-}
-```
-
-### TransactionView
-
-```rust
-pub struct TransactionView {
-    pub id: String,
-    pub tx_type: TransactionType,
-    pub actor: AccountId,
-    pub target: Option<String>,
-    pub timestamp: u64,
-    pub metadata: Option<serde_json::Value>,
-}
-
-pub enum TransactionType {
-    GroupCreated,
-    MemberAdded,
-    MemberRemoved,
-    FileUploaded,
-    FileDeleted,
-    KeyRotated,
-    RoleChanged,
-    GroupDeleted,
-}
-```
-
-## Storage Model
-
-### Storage Costs
-
-| Operation | Approximate Cost |
-|-----------|-----------------|
-| Create Group | 0.1 NEAR |
-| Add Member | 0.01 NEAR |
-| Register File | 0.005-0.02 NEAR |
-| Update Metadata | Variable |
-
-### Storage Refunds
-
-When removing members or deleting groups, storage deposits are refunded to the original depositor.
+**Purpose:** Allows clients to check nonce validity before submitting a token claim, avoiding wasted gas on already-used nonces.
 
 ## Events
 
-The contract emits NEP-297 standard events:
+The contract emits events that can be consumed by indexers and off-chain services:
 
-### GroupCreated
+| Event | Trigger | Data |
+|-------|---------|------|
+| `NovaEvent::Registered` | New group registered or member added | Group ID, account details |
+| `NovaEvent::Revoked` | Member revoked from group | Group ID, revoked account |
+| `NovaEvent::FeeCollected` | Fee collected for an operation | Amount, operation type |
 
-```json
-{
-  "standard": "nova",
-  "version": "1.0.0",
-  "event": "group_created",
-  "data": {
-    "group_id": "group-abc123",
-    "owner": "alice.near",
-    "name": "Engineering Team"
-  }
-}
+## Transaction Costs
+
+| Operation | Approximate Cost |
+|-----------|-----------------|
+| Register Group | ~0.05-0.1 NEAR |
+| Add Group Member | ~0.001 NEAR |
+| Revoke Group Member | ~0.001 NEAR |
+| Claim Token | Gas only |
+| View functions | Free |
+
+## Security Model
+
+### Replay Protection
+- Every `claim_token()` call requires a unique nonce
+- Used nonces are permanently stored on-chain
+- Clients should generate cryptographically random nonces
+
+### Timestamp Freshness
+- Token claims are valid within a 5-minute window
+- Prevents capturing and replaying old signed requests
+
+### TEE Verification
+- Only workers with approved code hashes can register
+- Attestation data is verified during worker registration
+- On-chain checksums allow clients to verify TEE responses
+
+### Access Control
+- Group owners control membership
+- Member revocation triggers key rotation in the Shade Agent
+- The contract is the single source of truth for authorization
+
+## Interacting via SDK
+
+### JavaScript SDK
+
+```typescript
+import { NovaSdk } from 'nova-sdk-js';
+
+// Mainnet
+const sdk = new NovaSdk('alice.nova-sdk.near', {
+  apiKey: process.env.NOVA_API_KEY,
+});
+
+// Testnet
+const sdk = new NovaSdk('alice.nova-sdk-6.testnet', {
+  apiKey: process.env.NOVA_API_KEY,
+  rpcUrl: 'https://rpc.testnet.near.org',
+  contractId: 'nova-sdk-6.testnet',
+});
+
+// Group operations (these interact with the contract)
+await sdk.registerGroup('my-secure-files');
+await sdk.addGroupMember(groupId, 'bob.nova-sdk.near');
+await sdk.revokeGroupMember(groupId, 'bob.nova-sdk.near');
+const authorized = await sdk.isAuthorized(groupId, 'bob.nova-sdk.near');
+const owner = await sdk.getGroupOwner(groupId);
+const checksum = await sdk.getGroupChecksum(groupId);
+const txns = await sdk.getTransactionsForGroup(groupId);
 ```
 
-### MemberAdded
-
-```json
-{
-  "standard": "nova",
-  "version": "1.0.0",
-  "event": "member_added",
-  "data": {
-    "group_id": "group-abc123",
-    "member_id": "bob.near",
-    "role": "member",
-    "added_by": "alice.near"
-  }
-}
-```
-
-### MemberRemoved
-
-```json
-{
-  "standard": "nova",
-  "version": "1.0.0",
-  "event": "member_removed",
-  "data": {
-    "group_id": "group-abc123",
-    "member_id": "bob.near",
-    "removed_by": "alice.near"
-  }
-}
-```
-
-### FileRegistered
-
-```json
-{
-  "standard": "nova",
-  "version": "1.0.0",
-  "event": "file_registered",
-  "data": {
-    "group_id": "group-abc123",
-    "cid": "QmXyz...",
-    "file_name": "report.pdf",
-    "uploaded_by": "alice.near"
-  }
-}
-```
-
-### KeyRotationRequested
-
-```json
-{
-  "standard": "nova",
-  "version": "1.0.0",
-  "event": "key_rotation_requested",
-  "data": {
-    "group_id": "group-abc123",
-    "reason": "member_removed",
-    "triggered_by": "alice.near"
-  }
-}
-```
-
-## Cross-Contract Calls
-
-### Shade Agent Callback
-
-The contract receives callbacks from the Shade Agent:
+### Rust SDK
 
 ```rust
-pub fn on_key_rotated(
-    &mut self,
-    group_id: String,
-    new_version: u64
-) -> bool
+sdk.register_group("my-secure-files").await?;
+sdk.add_group_member(group_id, user_id).await?;
+sdk.revoke_group_member(group_id, user_id).await?;
+let status = sdk.auth_status(group_id).await?;
 ```
 
-**Authorization:** Shade Agent account only
-
-## Error Codes
-
-| Code | Description |
-|------|-------------|
-| `E001` | Group not found |
-| `E002` | Not authorized |
-| `E003` | Already a member |
-| `E004` | Not a member |
-| `E005` | Cannot remove owner |
-| `E006` | File not found |
-| `E007` | Insufficient deposit |
-| `E008` | Invalid metadata |
-| `E009` | Group name too long |
-| `E010` | Max members exceeded |
-
-## CLI Examples
-
-### Using NEAR CLI
+### NEAR CLI
 
 ```bash
-# Create a group
-near call nova.testnet create_group \
-  '{"name": "Project Alpha", "members": ["bob.near", "carol.near"]}' \
-  --accountId alice.near \
+# Register a group
+near call nova-sdk-6.testnet register_group \
+  '{"group_id": "my-project"}' \
+  --accountId alice.nova-sdk-6.testnet \
   --deposit 0.1
 
-# Add a member
-near call nova.testnet add_member \
-  '{"group_id": "group-abc123", "member_id": "david.near", "role": "member"}' \
-  --accountId alice.near \
-  --deposit 0.01
+# Check group checksum
+near view nova-sdk-6.testnet get_group_checksum \
+  '{"group_id": "my-project"}'
 
-# Check membership
-near view nova.testnet is_member \
-  '{"group_id": "group-abc123", "account_id": "bob.near"}'
-
-# List group files
-near view nova.testnet get_group_files \
-  '{"group_id": "group-abc123", "limit": 10}'
-
-# Register a file
-near call nova.testnet register_file \
-  '{"group_id": "group-abc123", "cid": "QmXyz...", "file_name": "doc.pdf", "mime_type": "application/pdf", "size": 1048576}' \
-  --accountId alice.near \
-  --deposit 0.01
-
-# Remove a member (triggers key rotation)
-near call nova.testnet remove_member \
-  '{"group_id": "group-abc123", "member_id": "bob.near"}' \
-  --accountId alice.near
+# Check nonce validity
+near view nova-sdk-6.testnet get_nonce_validity \
+  '{"group_id": "my-project", "user_id": "alice.nova-sdk-6.testnet", "nonce": "abc123"}'
 ```
 
-### Using near-api-js
+## Contract Architecture
 
-```javascript
-import { connect, Contract, keyStores } from 'near-api-js';
-
-const near = await connect({
-  networkId: 'testnet',
-  keyStore: new keyStores.BrowserLocalStorageKeyStore(),
-  nodeUrl: 'https://rpc.testnet.near.org'
-});
-
-const account = await near.account('alice.near');
-const contract = new Contract(account, 'nova.testnet', {
-  viewMethods: [
-    'get_group',
-    'get_groups_for_account',
-    'get_group_members',
-    'is_member',
-    'get_group_files'
-  ],
-  changeMethods: [
-    'create_group',
-    'add_member',
-    'remove_member',
-    'register_file',
-    'unregister_file',
-    'delete_group'
-  ]
-});
-
-// Create group
-const groupId = await contract.create_group(
-  { name: 'My Group', members: ['bob.near'] },
-  '300000000000000', // gas
-  '100000000000000000000000' // 0.1 NEAR deposit
-);
-
-// Check membership
-const isMember = await contract.is_member({
-  group_id: groupId,
-  account_id: 'bob.near'
-});
 ```
-
-## Security Considerations
-
-1. **Authorization Checks**: All change methods verify caller authorization
-2. **Signature Verification**: Authorization for Shade Agent uses cryptographic signatures
-3. **Replay Protection**: Timestamp validation prevents replay attacks
-4. **Storage Safety**: Deposits prevent spam and ensure data persistence
-5. **Owner Immutability**: Group owner cannot be changed or removed
+nova-sdk.near / nova-sdk-6.testnet
+├── Group Registry
+│   ├── Group ownership
+│   ├── Member lists
+│   └── Member authorization checks
+├── TEE Worker Registry
+│   ├── Approved code hashes
+│   ├── Worker registrations
+│   └── Attestation verification
+├── Token Claim System
+│   ├── Signature verification (ed25519)
+│   ├── Nonce tracking (replay prevention)
+│   ├── Timestamp validation (5-min window)
+│   └── Token generation
+├── Checksum Management
+│   ├── Per-group checksums
+│   └── TEE state verification
+├── Transaction Log
+│   └── Immutable audit trail
+└── Fee Management
+    └── Operation fee collection
+```

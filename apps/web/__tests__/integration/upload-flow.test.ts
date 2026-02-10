@@ -13,7 +13,7 @@ vi.mock('@/lib/constants', () => ({
   NFT_CONTRACT_ID: 'test-contract.testnet',
   NETWORK_ID: 'testnet',
   IPFS_CONFIG: {
-    gatewayUrl: 'https://gateway.pinata.cloud/ipfs',
+    gatewayUrl: 'https://crustipfs.xyz/ipfs',
     placeholderImage: '/placeholder.svg'
   },
   METADATA_SCHEMA: {
@@ -247,15 +247,12 @@ describe('Upload Flow Integration', () => {
       const prepareFormData = (file: { name: string; content: string }) => {
         const formData = new Map<string, any>();
         formData.set('file', file);
-        formData.set('pinataMetadata', JSON.stringify({ name: file.name }));
-        formData.set('pinataOptions', JSON.stringify({ cidVersion: 1 }));
         return formData;
       };
 
       const form = prepareFormData({ name: 'video.mp4', content: 'test' });
 
       expect(form.has('file')).toBe(true);
-      expect(form.has('pinataMetadata')).toBe(true);
     });
 
     it('should validate CID format from IPFS response', () => {

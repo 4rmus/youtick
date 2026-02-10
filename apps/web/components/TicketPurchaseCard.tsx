@@ -7,7 +7,7 @@ import { getProvider, viewContract } from '@/lib/near';
 import { SessionManager } from '@/lib/session-manager';
 import { useSessionState, useIsCreator } from '@/lib/hooks/useSessionState';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
-import { NEAR_CONFIG } from '@/lib/constants';
+import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
 import { NovaThumbnail } from './NovaThumbnail';
 import { addBuyerToNovaGroup } from '@/lib/nova/post-purchase';
 
@@ -80,7 +80,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         init();
     }, [cid]);
 
-    // Claim FREE Ticket (Direct via onboarding key or session key - 100% decentralized)
+    // Claim FREE Ticket (Direct via onboarding key or session key - decentralized)
     const handleFreeTicketClaim = async () => {
         if (!accountId || !eventDetails) return;
         setActionLoading(true);
@@ -93,7 +93,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             const onboardingKeyStr = localStorage.getItem(`onboarding_key:${contractId}`);
 
             if (onboardingKeyStr) {
-                console.log("[DECENTRALIZATION] Claiming free ticket via onboarding key (direct)...");
                 const onboardingKeyPair = KeyPair.fromString(onboardingKeyStr as KeyPairString);
                 const signer = new KeyPairSigner(onboardingKeyPair);
                 const { getCurrentRpcUrl } = await import('@/lib/rpc-failover');
@@ -105,26 +104,22 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         actions.functionCall(
                             "claim_free_ticket_direct",
                             { receiver_id: accountId, encrypted_cid: cid },
-                            BigInt("100000000000000"), // 100 TGas
+                            GAS_CONSTANTS.mediumGas, // 100 TGas
                             BigInt(0)
                         )
                     ]
                 });
 
-                console.log("[DECENTRALIZATION] Free ticket claimed via onboarding key");
             } else if (hasSessionKey) {
                 // Signless fallback: use session key + buy_ticket_prepaid (free = 0 NEAR)
-                console.log("[DECENTRALIZATION] Claiming free ticket via session key (signless)...");
                 const sessionManager = new SessionManager(accountId);
                 await sessionManager.callMethod('buy_ticket_prepaid', {
                     receiver_id: accountId,
                     encrypted_cid: cid
-                }, '100000000000000');
-                console.log("[DECENTRALIZATION] Free ticket claimed via session key");
+                }, GAS_CONSTANTS.mediumGas.toString());
             } else {
                 // Last resort: wallet-signed buy_ticket with price=0
                 // Also bundle session key creation for future signless playback
-                console.log("No onboarding/session key, claiming free ticket via wallet...");
                 const wallet = await getWallet();
                 const sessionManager = new SessionManager(accountId);
 
@@ -155,7 +150,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         actions.functionCall(
                             'buy_ticket',
                             { receiver_id: accountId, encrypted_cid: cid },
-                            BigInt('100000000000000'),
+                            GAS_CONSTANTS.mediumGas,
                             BigInt(nearToYocto(0.01))
                         )
                     ]
@@ -163,7 +158,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
                 await wallet.signAndSendTransactions({ transactions: transactionsList });
                 refetchSessionKey();
-                console.log("Free ticket claimed via wallet (with session key)");
             }
 
             // Add buyer to Nova group for video access (await completion before redirect)
@@ -175,9 +169,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             if (onPurchaseSuccess) onPurchaseSuccess();
 
-        } catch (e: any) {
+        } catch (e: unknown) {
             console.error("Free ticket claim failed:", e);
-            setError(e.message || "Failed to claim free ticket");
+            setError(e instanceof Error ? e.message : "Failed to claim free ticket");
         } finally {
             setActionLoading(false);
         }
@@ -197,7 +191,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             // Prepare Session Key Transaction if missing
             if (hasSessionKey === false) {
-                console.log("No session key found. Adding Initialization to transactions...");
                 // v7: Use KeyPair directly
                 const keyPair = KeyPair.fromRandom('ed25519');
                 const publicKey = keyPair.getPublicKey().toString();
@@ -235,7 +228,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 actions.functionCall(
                     'deposit_funds',
                     {},
-                    BigInt('30000000000000'),
+                    GAS_CONSTANTS.smallGas,
                     totalDeposit
                 )
             );
@@ -248,7 +241,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         receiver_id: accountId,
                         encrypted_cid: cid
                     },
-                    BigInt('50000000000000'),
+                    BigInt('50000000000000'), // 50 TGas (not in standard constants)
                     BigInt('0')
                 )
             );
@@ -258,7 +251,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 actions: purchaseActions
             });
 
-            console.log(`Sending bundled transactions (${transactionsList.length} txs)...`);
             await wallet.signAndSendTransactions({
                 transactions: transactionsList
             });

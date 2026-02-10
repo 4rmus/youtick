@@ -13,6 +13,7 @@ import { MintButton } from '@/components/MintButton';
 import { Loader2, Play, Ticket, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { NEAR_CONFIG } from '@/lib/constants';
+import type { NFTEvent } from '@/lib/types';
 
 export default function TicketPage() {
     return (
@@ -31,7 +32,7 @@ function TicketContent() {
     const { selector, modal, accountId } = useWallet();
 
     const [loading, setLoading] = useState(true);
-    const [event, setEvent] = useState<any>(null);
+    const [event, setEvent] = useState<(NFTEvent & { active?: boolean }) | null>(null);
     const [hasAccess, setHasAccess] = useState(false);
     const [checkingAccess, setCheckingAccess] = useState(false);
 
@@ -48,7 +49,7 @@ function TicketContent() {
 
                 // 1. Fetch Event Details
                 try {
-                    const eventData = await viewContract<any>(
+                    const eventData = await viewContract<NFTEvent & { active?: boolean }>(
                         provider,
                         contractId,
                         'get_event',
@@ -63,7 +64,7 @@ function TicketContent() {
                 if (accountId) {
                     setCheckingAccess(true);
                     try {
-                        const ownedTokens = await viewContract<any[]>(
+                        const ownedTokens = await viewContract<[string, { encrypted_cid: string; nova_group_id?: string | null }][]>(
                             provider,
                             contractId,
                             'get_tokens_with_video',
@@ -71,10 +72,8 @@ function TicketContent() {
                         );
 
                         if (accountId && ownedTokens.length > 0 && cid) {
-                            const isOwner = ownedTokens.some(t => {
-                                const metadata = t[1];
-                                const match = metadata && metadata.encrypted_cid === cid;
-                                return match;
+                            const isOwner = ownedTokens.some(([, metadata]) => {
+                                return metadata && metadata.encrypted_cid === cid;
                             });
                             setHasAccess(isOwner);
                         } else {
@@ -114,12 +113,6 @@ function TicketContent() {
                 {(() => {
                     // Use centralized metadata parser
                     const parsed = parseTitleMetadata(event?.title, "Exclusive Event");
-                    console.log('[TicketPage] Parsed metadata:', {
-                        rawTitle: event?.title,
-                        thumbnailCid: parsed.thumbnailCid,
-                        thumbnailUrl: parsed.thumbnailUrl,
-                        schemaVersion: parsed.schemaVersion
-                    });
 
                     return (
                         <>
@@ -166,7 +159,7 @@ function TicketContent() {
                                 <span>Event Price</span>
                                 <span className="font-mono text-zinc-300">
                                     {event?.price
-                                        ? `${yoctoToNear(event.price)} NEAR`
+                                        ? `${yoctoToNear(BigInt(event.price))} NEAR`
                                         : "Free / Legacy"}
                                 </span>
                             </div>

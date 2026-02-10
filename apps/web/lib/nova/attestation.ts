@@ -16,7 +16,6 @@ import {
 import {
   NOVA_CONSTANTS,
   hasApiKey,
-  isSimulationAllowed,
   getExpectedEnclaveHash,
 } from './config';
 
@@ -52,20 +51,7 @@ let endpointUnavailableUntil = 0;
  */
 export async function fetchAttestation(): Promise<TEEAttestation> {
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      throw new Error('Nova API key required in production for attestation fetch');
-    }
-
-    console.warn('[NOVA Attestation] API key not configured — returning simulated attestation');
-    const now = Date.now();
-    return {
-      platform: 'simulation',
-      enclave_hash: 'SIMULATED_ENCLAVE_HASH',
-      quote: 'SIMULATED_QUOTE',
-      report: 'SIMULATED_REPORT',
-      timestamp: now,
-      valid_until: now + NOVA_CONSTANTS.ATTESTATION_MAX_AGE,
-    };
+    throw new Error('Nova API key required for attestation fetch. Set NOVA_API_KEY.');
   }
 
   const controller = new AbortController();
@@ -211,15 +197,11 @@ export function verifyAttestationData(
 export async function verifyAttestation(
   options?: AttestationVerifyOptions,
 ): Promise<AttestationVerificationResult> {
-  // Simulation shortcut
   if (!hasApiKey()) {
-    if (!isSimulationAllowed()) {
-      return {
-        verified: false,
-        error: 'Nova API key required in production for attestation verification',
-      };
-    }
-    return { verified: true, platform: 'simulation' };
+    return {
+      verified: false,
+      error: 'Nova API key not configured. Set NOVA_API_KEY.',
+    };
   }
 
   // Return cached result if fresh
@@ -253,12 +235,7 @@ export async function verifyAttestation(
       timestamp: Date.now(),
     };
 
-    if (result.verified) {
-      console.log('[NOVA Attestation] Verification PASSED', {
-        platform: result.platform,
-        enclaveHash: result.enclaveHash,
-      });
-    } else {
+    if (!result.verified) {
       console.warn('[NOVA Attestation] Verification FAILED:', result.error);
     }
 
@@ -307,7 +284,6 @@ export function getCachedAttestation(): AttestationCache | null {
 export function invalidateAttestationCache(): void {
   attestationCache = null;
   endpointUnavailableUntil = 0;
-  console.log('[NOVA Attestation] Cache invalidated');
 }
 
 /**

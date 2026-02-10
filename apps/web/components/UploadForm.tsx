@@ -1,12 +1,12 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useReducer } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { uploadFile as novaUploadFile, uploadPublicThumbnail, uploadFreeVideo } from '@/lib/nova';
 import { SessionManager } from '@/lib/session-manager';
 import { batchUploadActionsSignless } from '@/lib/batch-transactions';
 import { generateVideoThumbnail } from '@/lib/video-utils';
-import { actions, nearToYocto } from 'near-api-js';
+import { actions, nearToYocto, type Action } from 'near-api-js';
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -18,9 +18,106 @@ import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { GiftLinkGenerator } from './GiftLinkGenerator';
 import { useSessionState, useAccountBalance } from '@/lib/hooks/useSessionState';
-import { NEAR_CONFIG } from '@/lib/constants';
+import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
 
 const CONTRACT_ID = NEAR_CONFIG.contractId;
+
+// ── Upload state reducer ──
+
+type StepStatus = 'pending' | 'loading' | 'complete' | 'error';
+
+interface UploadStep {
+    id: string;
+    label: string;
+    status: StepStatus;
+}
+
+const INITIAL_STEPS: UploadStep[] = [
+    { id: 'session', label: 'Preparing Identity', status: 'pending' },
+    { id: 'thumbnail', label: 'Uploading Cover', status: 'pending' },
+    { id: 'encrypt', label: 'Securing Video', status: 'pending' },
+    { id: 'upload', label: 'Finalizing Storage', status: 'pending' },
+    { id: 'mint', label: 'Minting Ticket', status: 'pending' },
+    { id: 'event', label: 'Event Created', status: 'pending' },
+];
+
+interface UploadState {
+    uploading: boolean;
+    status: string;
+    progress: number;
+    steps: UploadStep[];
+    retryStep: 'none' | 'sign_auth';
+    verifiedStorageFee: string;
+    estimatedStorageFee: string;
+    payAmount: string;
+    novaGroupFee: number;
+    generatedVideoUuid: string | null;
+    lastUploadedTitle: string;
+}
+
+const initialUploadState: UploadState = {
+    uploading: false,
+    status: '',
+    progress: 0,
+    steps: INITIAL_STEPS,
+    retryStep: 'none',
+    verifiedStorageFee: '0',
+    estimatedStorageFee: '0',
+    payAmount: '0',
+    novaGroupFee: 0,
+    generatedVideoUuid: null,
+    lastUploadedTitle: '',
+};
+
+type UploadAction =
+    | { type: 'SET_UPLOADING'; payload: boolean }
+    | { type: 'SET_STATUS'; payload: string }
+    | { type: 'SET_PROGRESS'; payload: number }
+    | { type: 'UPDATE_STEP'; payload: { id: string; status: StepStatus } }
+    | { type: 'RESET_STEPS' }
+    | { type: 'SET_RETRY_STEP'; payload: 'none' | 'sign_auth' }
+    | { type: 'SET_VERIFIED_STORAGE_FEE'; payload: string }
+    | { type: 'SET_ESTIMATED_STORAGE_FEE'; payload: string }
+    | { type: 'SET_PAY_AMOUNT'; payload: string }
+    | { type: 'SET_NOVA_GROUP_FEE'; payload: number }
+    | { type: 'SET_VIDEO_UUID'; payload: { uuid: string; title: string } }
+    | { type: 'RESET' };
+
+function uploadReducer(state: UploadState, action: UploadAction): UploadState {
+    switch (action.type) {
+        case 'SET_UPLOADING':
+            return { ...state, uploading: action.payload };
+        case 'SET_STATUS':
+            return { ...state, status: action.payload };
+        case 'SET_PROGRESS':
+            return { ...state, progress: action.payload };
+        case 'UPDATE_STEP':
+            return {
+                ...state,
+                steps: state.steps.map(step =>
+                    step.id === action.payload.id ? { ...step, status: action.payload.status } : step
+                ),
+            };
+        case 'RESET_STEPS':
+            return { ...state, steps: INITIAL_STEPS.map(s => ({ ...s })) };
+        case 'SET_RETRY_STEP':
+            return { ...state, retryStep: action.payload };
+        case 'SET_VERIFIED_STORAGE_FEE':
+            return { ...state, verifiedStorageFee: action.payload };
+        case 'SET_ESTIMATED_STORAGE_FEE':
+            return { ...state, estimatedStorageFee: action.payload };
+        case 'SET_PAY_AMOUNT':
+            return { ...state, payAmount: action.payload };
+        case 'SET_NOVA_GROUP_FEE':
+            return { ...state, novaGroupFee: action.payload };
+        case 'SET_VIDEO_UUID':
+            return { ...state, generatedVideoUuid: action.payload.uuid, lastUploadedTitle: action.payload.title };
+        case 'RESET':
+            return initialUploadState;
+        default:
+            return state;
+    }
+}
 
 export function UploadForm() {
     const { t } = useLanguage();
@@ -30,36 +127,29 @@ export function UploadForm() {
     const { hasSessionKey, isSessionKeyLoading, refetchSessionKey } = useSessionState(accountId);
     const { data: balanceData, isLoading: isBalanceLoading, refetch: refetchBalance } = useAccountBalance(accountId);
 
+    // Form fields
     const [file, setFile] = useState<File | null>(null);
     const [thumbnail, setThumbnail] = useState<Blob | null>(null);
     const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
-    const [uploading, setUploading] = useState(false);
-    const [status, setStatus] = useState('');
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
-    const [price, setPrice] = useState('0'); // Default 0 NEAR
-    const [progress, setProgress] = useState(0);
+    const [price, setPrice] = useState('0');
 
-    // Upload steps tracking
-    const [uploadSteps, setUploadSteps] = useState([
-        { id: 'session', label: 'Preparing Identity', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'thumbnail', label: 'Uploading Cover', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'encrypt', label: 'Securing Video', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'upload', label: 'Finalizing Storage', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'mint', label: 'Minting Ticket', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'event', label: 'Event Created', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' }
-    ]);
+    // Upload state (consolidated)
+    const [us, dispatch] = useReducer(uploadReducer, initialUploadState);
 
-    // Retry state for popup blocked scenarios
-    const [retryStep, setRetryStep] = useState<'none' | 'sign_auth'>('none');
-    const [verifiedStorageFee, setVerifiedStorageFee] = useState<string>('0');
-
-    // Cost Receipt State
-    const [estimatedStorageFee, setEstimatedStorageFee] = useState('0');
-    const [payAmount, setPayAmount] = useState('0');
-
-    // Nova group fee state (dynamic, fetched when file is selected)
-    const [novaGroupFee, setNovaGroupFee] = useState<number>(0);
+    // Convenience aliases for template readability
+    const uploading = us.uploading;
+    const status = us.status;
+    const progress = us.progress;
+    const uploadSteps = us.steps;
+    const retryStep = us.retryStep;
+    const estimatedStorageFee = us.estimatedStorageFee;
+    const payAmount = us.payAmount;
+    const novaGroupFee = us.novaGroupFee;
+    const generatedVideoUuid = us.generatedVideoUuid;
+    const lastUploadedTitle = us.lastUploadedTitle;
+    const verifiedStorageFee = us.verifiedStorageFee;
 
     // Gas Top-Up State (derived from React Query)
     const gasBalance = parseFloat(balanceData || '0');
@@ -69,16 +159,13 @@ export function UploadForm() {
     const minRequired = REQUIRED_GAS;
     const needsTopUp = hasSessionKey === true && gasBalance < minRequired;
 
-    // Track the generated UUID for gifting
-    const [generatedVideoUuid, setGeneratedVideoUuid] = useState<string | null>(null);
-    const [lastUploadedTitle, setLastUploadedTitle] = useState<string>('');
-
-    // Helper function to update step status
-    const updateStep = (stepId: string, status: 'pending' | 'loading' | 'complete' | 'error') => {
-        setUploadSteps(prev => prev.map(step =>
-            step.id === stepId ? { ...step, status } : step
-        ));
+    // Helper functions that dispatch to reducer
+    const updateStep = (stepId: string, stepStatus: StepStatus) => {
+        dispatch({ type: 'UPDATE_STEP', payload: { id: stepId, status: stepStatus } });
     };
+    const setStatus = (msg: string) => dispatch({ type: 'SET_STATUS', payload: msg });
+    const setUploading = (val: boolean) => dispatch({ type: 'SET_UPLOADING', payload: val });
+    const setProgress = (val: number) => dispatch({ type: 'SET_PROGRESS', payload: val });
 
     // Track thumbnail preview for cleanup
     const thumbnailPreviewRef = React.useRef<string | null>(null);
@@ -100,7 +187,7 @@ export function UploadForm() {
         // For paid videos, add Nova group registration fee
         const novaFee = isFree ? 0 : novaGroupFee;
         const totalNeeded = fee + 0.3 + novaFee;
-        setPayAmount(totalNeeded > 0 ? totalNeeded.toFixed(4) : '0');
+        dispatch({ type: 'SET_PAY_AMOUNT', payload: totalNeeded > 0 ? totalNeeded.toFixed(4) : '0' });
     }, [estimatedStorageFee, gasBalance, price, novaGroupFee]);
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -114,19 +201,16 @@ export function UploadForm() {
                 const { getNearPrice, calculateStorageFee } = await import('@/lib/price');
                 const nearPrice = await getNearPrice();
                 const fee = calculateStorageFee(selectedFile.size, nearPrice);
-                setEstimatedStorageFee(fee);
-                console.log('[UploadForm] Storage fee:', fee, 'NEAR');
+                dispatch({ type: 'SET_ESTIMATED_STORAGE_FEE', payload: fee });
             } catch (err) {
                 console.error('[UploadForm] Error calculating storage fee:', err);
             }
 
             // Fetch Nova group registration fee (independent of storage fee)
             try {
-                console.log('[UploadForm] Fetching Nova group fee...');
                 const { getRegisterGroupFee } = await import('@/lib/nova/costs');
                 const novaFee = await getRegisterGroupFee();
-                setNovaGroupFee(novaFee);
-                console.log('[UploadForm] Nova group fee:', novaFee, 'NEAR');
+                dispatch({ type: 'SET_NOVA_GROUP_FEE', payload: novaFee });
             } catch (err) {
                 console.error('[UploadForm] Error fetching Nova group fee:', err);
             }
@@ -178,8 +262,6 @@ export function UploadForm() {
 
                     if (thumbResult.novaUrl) {
                         thumbnailUrl = thumbResult.novaUrl;
-                        console.log('[Thumbnail] Nova URL:', thumbnailUrl);
-                        console.log('[Thumbnail] CID:', thumbResult.cid);
                         updateStep('thumbnail', 'complete');
                     } else {
                         updateStep('thumbnail', 'complete');
@@ -200,9 +282,7 @@ export function UploadForm() {
             // Generate a UUID to serve as the Access Control identifier
             // This UUID will be used as the key in the contract
             const videoUuid = crypto.randomUUID();
-            console.log("Generated Video UUID for Access Control:", videoUuid);
-            setGeneratedVideoUuid(videoUuid);
-            setLastUploadedTitle(title || file.name);
+            dispatch({ type: 'SET_VIDEO_UUID', payload: { uuid: videoUuid, title: title || file.name } });
 
             // Upload to NOVA (handles encryption via TEE automatically)
             updateStep('upload', 'loading');
@@ -211,22 +291,20 @@ export function UploadForm() {
             const isFreeVideo = parseFloat(price) === 0 || price === '';
             let novaCid: string;
             let novaGroupId: string;
+            let keyCid: string | undefined;
 
             if (isFreeVideo) {
-                // Free video: reuse creator's public group (saves ~0.64 NEAR)
-                console.log('[NOVA] Uploading free video to public group (no new group cost)...');
+                // Free video: upload directly to Crust (no encryption, no Nova group fee)
                 const result = await uploadFreeVideo(file, accountId, { filename: file.name });
                 novaCid = result.cid;
                 novaGroupId = result.groupId;
             } else {
-                // Paid video: create new per-video group for granular access control
-                console.log('[NOVA] Uploading paid video with TEE encryption (new group)...');
+                // Paid video: client-side AES encrypt → Crust storage → Nova key store
                 const result = await novaUploadFile(file, accountId, { filename: file.name });
                 novaCid = result.cid;
                 novaGroupId = result.groupId;
+                keyCid = result.keyCid;
             }
-
-            console.log('[NOVA] Upload complete - CID:', novaCid, 'GroupID:', novaGroupId);
 
             updateStep('encrypt', 'complete');
             updateStep('upload', 'complete');
@@ -237,13 +315,20 @@ export function UploadForm() {
             updateStep('mint', 'loading');
             setStatus(`Paying Fee (${storageFee} NEAR) & Minting Ticket...`);
             try {
-                // Construct Title with NovaCID for Player to parse
-                // Schema: "NovaCID:::ThumbnailURL:::Title" (with thumbnail)
-                // or "NovaCID:::Title" (without thumbnail)
-                // ThumbnailURL can be nova:// URL or legacy IPFS URL
-                const eventTitle = thumbnailUrl
-                    ? `${novaCid}:::${thumbnailUrl}:::${title || file.name}`
-                    : `${novaCid}:::${title || file.name}`;
+                // Construct Title with CID for Player to parse
+                // Schema (paid):  "CID:::ThumbnailURL:::KeyCID:::Title" (4 segments)
+                // Schema (free):  "CID:::ThumbnailURL:::Title"          (3 segments)
+                // Schema (legacy): "NovaCID:::Title"                    (2 segments)
+                let eventTitle: string;
+                if (keyCid && thumbnailUrl) {
+                    eventTitle = `${novaCid}:::${thumbnailUrl}:::${keyCid}:::${title || file.name}`;
+                } else if (thumbnailUrl) {
+                    eventTitle = `${novaCid}:::${thumbnailUrl}:::${title || file.name}`;
+                } else if (keyCid) {
+                    eventTitle = `${novaCid}:::${keyCid}:::${title || file.name}`;
+                } else {
+                    eventTitle = `${novaCid}:::${title || file.name}`;
+                }
 
                 // Use nova:// URL for media (empty string if no thumbnail)
                 const mediaUrl = thumbnailUrl || '';
@@ -265,11 +350,9 @@ export function UploadForm() {
                         duration_seconds: 0,
                         content_type: 'Exclusive',
                         nova_group_id: novaGroupId, // NOVA group for access control
-                        storage_type: 'Nova' as const // Using NOVA TEE encryption
+                        storage_type: 'Nova' as const // Contract enum only accepts 'Nova'; actual storage detection via title segment count
                     }
                 };
-
-                console.log('📝 Video metadata being sent to contract:', videoMetadata);
 
                 const eventMetadata = {
                     encrypted_cid: videoUuid, // UUID key
@@ -280,7 +363,6 @@ export function UploadForm() {
 
                 // Use signless batch transaction
                 setStatus('Minting Ticket...');
-                console.log("Using Session Key for signless publication...");
 
                 await batchUploadActionsSignless(
                     sessionManager,
@@ -290,10 +372,6 @@ export function UploadForm() {
 
                 updateStep('mint', 'complete');
 
-                // NOVA group ID is already included in video_metadata
-                // No separate set_nova_group call needed - contract stores it during nft_mint
-                console.log(`[NOVA] Group ID ${novaGroupId} stored with NFT via video_metadata`);
-
                 // Event complete
                 await new Promise(resolve => setTimeout(resolve, 500));
                 updateStep('event', 'loading');
@@ -301,10 +379,10 @@ export function UploadForm() {
                 updateStep('event', 'complete');
                 setStatus('Success! Video Uploaded & Ticket Sales Started!');
 
-            } catch (mintError: any) {
+            } catch (mintError: unknown) {
                 console.error('Minting/Event failed:', mintError);
                 updateStep('mint', 'error');
-                setStatus(`Upload success, but Blockchain actions failed: ${mintError.message}`);
+                setStatus(`Upload success, but Blockchain actions failed: ${mintError instanceof Error ? mintError.message : String(mintError)}`);
             }
 
             // Final success message
@@ -319,14 +397,14 @@ export function UploadForm() {
             setThumbnail(null);
             setThumbnailPreview(null);
 
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('Upload failed:', error);
             // Mark current loading step as error
-            const currentStep = uploadSteps.find(s => s.status === 'loading');
+            const currentStep = us.steps.find(s => s.status === 'loading');
             if (currentStep) {
                 updateStep(currentStep.id, 'error');
             }
-            setStatus(`Upload failed: ${error.message}`);
+            setStatus(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
             setUploading(false);
         }
     };
@@ -335,14 +413,14 @@ export function UploadForm() {
     // NOVA handles auth and encryption automatically
     const handleRetrySign = async () => {
         try {
-            setRetryStep('none');
+            dispatch({ type: 'SET_RETRY_STEP', payload: 'none' });
             setStatus('Retrying NOVA upload...');
 
             const sessionManager = new SessionManager(accountId!);
             await processSignatureAndUpload(verifiedStorageFee, sessionManager);
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('Retry failed:', error);
-            setStatus(`Retry failed: ${error.message}`);
+            setStatus(`Retry failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
 
@@ -360,7 +438,7 @@ export function UploadForm() {
         setProgress(0);
 
         // Reset all steps to pending
-        setUploadSteps(prev => prev.map(step => ({ ...step, status: 'pending' as const })));
+        dispatch({ type: 'RESET_STEPS' });
 
         try {
             const wallet = await getWallet();
@@ -368,13 +446,10 @@ export function UploadForm() {
 
             // Check Session Key Status
             const sessionKeyExists = hasSessionKey === true;
-            console.log("Session key status:", sessionKeyExists ? "EXISTS" : "NEEDS CREATION");
 
             // Calculate Storage Fee
             const storageFee = estimatedStorageFee;
-            setVerifiedStorageFee(storageFee);
-
-            console.log(`Video Size: ${file.size} bytes. Fee: ${storageFee} NEAR`);
+            dispatch({ type: 'SET_VERIFIED_STORAGE_FEE', payload: storageFee });
 
             // Check Gas Balance
             updateStep('session', 'loading');
@@ -385,20 +460,15 @@ export function UploadForm() {
             // Nova group registration is a separate platform cost for paid videos
             const currentMinRequired = 0.25;
 
-            console.log(`📊 Gas Check: Balance=${gasBalance}, Required=${currentMinRequired}`);
-
             // --- Determine Nova funding need for paid videos ---
             const isFreeVideo = parseFloat(price) === 0 || price === '';
-            console.log(`[UploadForm] Video type: ${isFreeVideo ? 'FREE' : 'PAID'}, price=${price}`);
 
             let novaFundAmount = 0;
             let novaAccountIdForFunding = '';
 
             if (!isFreeVideo) {
-                console.log('[UploadForm] Checking Nova platform balance for group registration...');
                 const { canRegisterNewGroup: canRegister, getRegisterGroupFee: getFee } = await import('@/lib/nova/costs');
                 const novaCanRegister = await canRegister();
-                console.log('[UploadForm] Nova can register new group:', novaCanRegister);
 
                 if (!novaCanRegister) {
                     const fee = await getFee();
@@ -408,7 +478,6 @@ export function UploadForm() {
                     if (!novaAccountIdForFunding) {
                         throw new Error('Nova account ID not configured. Set NEXT_PUBLIC_NOVA_ACCOUNT_ID.');
                     }
-                    console.log(`[UploadForm] Nova funding needed: ${novaFundAmount} NEAR → ${novaAccountIdForFunding}`);
                 }
             }
 
@@ -417,8 +486,6 @@ export function UploadForm() {
                 // First time user: session key + gas deposit + (optional) Nova funding
                 setStatus('Setting up Session Key...');
                 const depositAmount = 0.3;
-
-                console.log(`Creating session key (depositing ${depositAmount} NEAR)...`);
 
                 // Build transaction list
                 const sessionPublicKey = await sessionManager.generateSessionKeyPair();
@@ -431,7 +498,6 @@ export function UploadForm() {
                 );
 
                 refetchSessionKey();
-                console.log("Session key created!" + (novaFundAmount > 0 ? ` + Nova funded (${novaFundAmount} NEAR)` : ''));
 
             } else if (gasBalance < currentMinRequired || novaFundAmount > 0) {
                 // Returning user: gas top-up and/or Nova funding in one batch
@@ -441,15 +507,13 @@ export function UploadForm() {
 
                 if (topUpAmount > 0) {
                     setStatus(`Gas balance low (${gasBalance.toFixed(2)} NEAR). Topping up...`);
-                    console.log(`⛽ Topping up gas: Current=${gasBalance}, Required=${currentMinRequired}, TopUp=${topUpAmount}`);
                 }
                 if (novaFundAmount > 0) {
                     setStatus(topUpAmount > 0 ? 'Topping up gas + funding Nova...' : 'Funding Nova group registration...');
-                    console.log(`[NOVA] Funding platform account (${novaAccountIdForFunding}) with ${novaFundAmount} NEAR`);
                 }
 
                 // Build transactions list
-                const txList: Array<{ receiverId: string; actions: any[] }> = [];
+                const txList: Array<{ receiverId: string; actions: Action[] }> = [];
 
                 if (topUpAmount > 0) {
                     txList.push({
@@ -457,7 +521,7 @@ export function UploadForm() {
                         actions: [
                             actions.functionCall(
                                 'deposit_funds', {},
-                                BigInt('30000000000000'),
+                                GAS_CONSTANTS.smallGas,
                                 nearToYocto(topUpAmount)
                             )
                         ]
@@ -476,10 +540,9 @@ export function UploadForm() {
                 }
 
                 if (topUpAmount > 0) refetchBalance();
-                console.log(`✅ Wallet batch complete (${txList.length} tx)`);
 
             } else {
-                console.log(`✅ Gas balance sufficient: ${gasBalance} >= ${currentMinRequired}`);
+                // Gas balance sufficient, no action needed
             }
 
             // Invalidate Nova balance cache if we just funded the platform
@@ -493,14 +556,13 @@ export function UploadForm() {
 
             // --- STEP 3: NOVA Upload (TEE-based encryption) ---
             setStatus('Ready for NOVA decentralized upload...');
-            console.log('[NOVA] Starting TEE-encrypted upload...');
 
             // Continue with NOVA upload
             await processSignatureAndUpload(storageFee, sessionManager);
 
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('Upload failed:', error);
-            setStatus(`Upload failed: ${error.message} `);
+            setStatus(`Upload failed: ${error instanceof Error ? error.message : String(error)} `);
             setUploading(false);
         }
     };
@@ -861,7 +923,7 @@ export function UploadForm() {
                                                 step.status === 'error' ? 'text-red-400' :
                                                     'text-zinc-500'
                                             }`}>
-                                            {(t.upload_page.steps as any)[step.id] || step.label}
+                                            {(t.upload_page.steps as Record<string, string>)[step.id] || step.label}
                                         </span>
                                     </div>
                                 ))}

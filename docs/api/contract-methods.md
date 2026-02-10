@@ -2,7 +2,7 @@
 
 > Complete reference for YouTick NFT contract methods
 
-**Contract**: `v1.utick.testnet`
+**Contract**: `youtick-prod-v1.near`
 **Standard**: NEP-171 (NFT)
 
 ---
@@ -49,7 +49,7 @@ pub fn create_event(
 **Gas**: 30 TGas
 
 ```bash
-near call v1.utick.testnet create_event \
+near call youtick-prod-v1.near create_event \
   '{"encrypted_cid":"Qm...","title":"Concert","description":"Live show","price":"1000000000000000000000000"}' \
   --accountId creator.testnet --deposit 0.1
 ```
@@ -95,7 +95,7 @@ pub fn get_event(&self, encrypted_cid: String) -> Option<Event>
 ```
 
 ```bash
-near view v1.utick.testnet get_event '{"encrypted_cid":"Qm..."}'
+near view youtick-prod-v1.near get_event '{"encrypted_cid":"Qm..."}'
 ```
 
 ---
@@ -135,7 +135,7 @@ pub fn buy_ticket(
 **Revenue Split**: 98% creator, 2% platform
 
 ```bash
-near call v1.utick.testnet buy_ticket \
+near call youtick-prod-v1.near buy_ticket \
   '{"receiver_id":"buyer.testnet","encrypted_cid":"Qm..."}' \
   --accountId buyer.testnet --deposit 1.01
 ```
@@ -225,7 +225,7 @@ pub fn deposit_funds(&mut self)
 ```
 
 ```bash
-near call v1.utick.testnet deposit_funds '{}' \
+near call youtick-prod-v1.near deposit_funds '{}' \
   --accountId user.testnet --deposit 1
 ```
 
@@ -241,7 +241,7 @@ pub fn deposit_funds_for(&mut self, account_id: AccountId)
 ```
 
 ```bash
-near call v1.utick.testnet deposit_funds_for \
+near call youtick-prod-v1.near deposit_funds_for \
   '{"account_id":"recipient.testnet"}' \
   --accountId donor.testnet --deposit 1
 ```
@@ -282,7 +282,7 @@ pub fn get_user_balance(&self, account_id: AccountId) -> U128
 ```
 
 ```bash
-near view v1.utick.testnet get_user_balance '{"account_id":"user.testnet"}'
+near view youtick-prod-v1.near get_user_balance '{"account_id":"user.testnet"}'
 ```
 
 ---
@@ -394,7 +394,7 @@ pub fn fund_trial_pool(&mut self)
 ```
 
 ```bash
-near call v1.utick.testnet fund_trial_pool '{}' \
+near call youtick-prod-v1.near fund_trial_pool '{}' \
   --accountId owner.testnet --deposit 10
 ```
 

@@ -45,7 +45,7 @@ Users only sign once during setup, then enjoy popup-free interactions.
 │           │    │  ┌────────────────────────────┐  │       │     │
 │           │    │  │ ed25519:ABC... (FullAccess)│  │       │     │
 │           │    │  │ ed25519:XYZ... (FunctionCall)│◄───────┘     │
-│           │    │  │   receiver: v1.utick.testnet │              │
+│           │    │  │   receiver: youtick-prod-v1.near │              │
 │           │    │  │   methods: *                  │              │
 │           │    │  └────────────────────────────┘  │              │
 │           │    └──────────────────────────────────┘              │
@@ -297,9 +297,9 @@ Multiple RPC endpoints for reliability:
 // lib/rpc-failover.ts
 
 const RPC_ENDPOINTS = [
-    'https://test.rpc.fastnear.com',    // Primary
-    'https://rpc.testnet.near.org',     // Secondary
-    'https://near-testnet.lava.build'   // Tertiary
+    'https://rpc.fastnear.com',         // Primary
+    'https://rpc.mainnet.near.org',     // Secondary
+    'https://near.lava.build'           // Tertiary
 ];
 
 export async function withRpcFailover<T>(

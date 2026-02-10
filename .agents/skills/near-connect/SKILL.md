@@ -1,6 +1,28 @@
 ---
 name: near-connect
-description: Zero-dependency, lightweight wallet connector for NEAR blockchain using secure sandbox isolation. Use when working with NEAR wallet integration, supporting multiple wallets (HOT, Meteor, Intear, MyNearWallet, Nightly, NEAR Mobile, Unity, OKX, WalletConnect), transaction signing, message signing, or implementing wallet connection features in NEAR dApps. Also use when creating custom wallet integrations or debugging wallet executor scripts.
+description: >
+  Zero-dependency, lightweight wallet connector for NEAR blockchain using secure sandbox isolation.
+  Use when working with NEAR wallet integration, supporting multiple wallets (HOT, Meteor, Intear,
+  MyNearWallet, Nightly, NEAR Mobile, Unity, OKX, WalletConnect), transaction signing, message signing,
+  or implementing wallet connection features in NEAR dApps. Also use when creating custom wallet
+  integrations or debugging wallet executor scripts.
+version: 1.0.0
+license: MIT
+platforms:
+  - claude
+  - gemini
+  - openai
+  - markdown
+tags:
+  - near-protocol
+  - wallet-connector
+  - near-connect
+  - dapp
+  - web3
+  - sandbox-isolation
+metadata:
+  author: hot-labs
+  version: "1.0.0"
 ---
 
 # Near-Connect

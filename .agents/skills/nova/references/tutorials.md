@@ -5,10 +5,11 @@ Step-by-step guides for common Nova use cases.
 ## Table of Contents
 
 1. [Getting Started](#getting-started)
-2. [Building a File Sharing App](#building-a-file-sharing-app)
-3. [Integrating with Claude AI](#integrating-with-claude-ai)
-4. [Team Document Management](#team-document-management)
-5. [Secure Offboarding](#secure-offboarding)
+2. [Encrypted File Sharing Workflow](#encrypted-file-sharing-workflow)
+3. [Token Claim and Encryption Deep Dive](#token-claim-and-encryption-deep-dive)
+4. [Team Management with NEAR Protocol](#team-management-with-near-protocol)
+5. [Secure Member Offboarding](#secure-member-offboarding)
+6. [MCP Server Integration](#mcp-server-integration)
 
 ---
 
@@ -16,9 +17,9 @@ Step-by-step guides for common Nova use cases.
 
 ### Prerequisites
 
-- Node.js 18+ or Rust 1.70+
+- Node.js 18+
 - NEAR testnet account
-- Basic understanding of async/await
+- Nova API key
 
 ### Step 1: Create a NEAR Testnet Account
 
@@ -27,681 +28,459 @@ Step-by-step guides for common Nova use cases.
 npm install -g near-cli
 
 # Create a testnet account
-near create-account your-name.testnet --useFaucet
+near create-account your-name.nova-sdk-6.testnet --useFaucet
 ```
 
 ### Step 2: Install Nova SDK
 
 ```bash
-# JavaScript/TypeScript
 npm install nova-sdk-js
-
-# Or Rust
-cargo add nova-sdk-rs
 ```
 
 ### Step 3: Initialize the SDK
 
 ```typescript
-import { NovaSDK } from 'nova-sdk-js';
-import { keyStores, connect } from 'near-api-js';
+import { NovaSdk } from 'nova-sdk-js';
 
-// Set up NEAR connection
-const keyStore = new keyStores.UnencryptedFileSystemKeyStore(
-  `${process.env.HOME}/.near-credentials`
-);
-
-const nearConfig = {
-  networkId: 'testnet',
-  keyStore,
-  nodeUrl: 'https://rpc.testnet.near.org',
-};
-
-const near = await connect(nearConfig);
-const account = await near.account('your-name.testnet');
-
-// Initialize Nova
-const nova = new NovaSDK({
-  networkId: 'testnet',
-  contractId: 'nova.testnet',
-  shadeAgentUrl: 'https://shade-testnet.phala.network',
-  nearConnection: near
+const sdk = new NovaSdk('your-name.nova-sdk-6.testnet', {
+  apiKey: process.env.NOVA_API_KEY,
+  rpcUrl: 'https://rpc.testnet.near.org',
+  contractId: 'nova-sdk-6.testnet',
 });
 
 console.log('Nova SDK initialized!');
 ```
 
-### Step 4: Create Your First Group
+### Step 4: Register Your First Group
 
 ```typescript
-const group = await nova.createGroup({
-  name: 'My First Group',
-  members: [], // Just you for now
-  metadata: {
-    description: 'Testing Nova'
-  }
-});
-
-console.log(`Group created: ${group.groupId}`);
+await sdk.registerGroup('my-first-group');
+console.log('Group registered on NEAR contract');
+// This also triggers key generation in the Shade Agent TEE
 ```
 
 ### Step 5: Upload a Test File
 
 ```typescript
-// Create a simple text file
-const content = new TextEncoder().encode('Hello, Nova!');
-const file = new Blob([content], { type: 'text/plain' });
+import fs from 'fs';
 
-const result = await nova.uploadFile({
-  groupId: group.groupId,
-  file,
-  metadata: {
-    fileName: 'hello.txt',
-    mimeType: 'text/plain'
-  }
-});
+const content = Buffer.from('Hello, Nova!');
+const result = await sdk.upload('my-first-group', content, 'hello.txt');
 
-console.log(`File uploaded! CID: ${result.cid}`);
+console.log('IPFS CID:', result.cid);
+console.log('Transaction ID:', result.trans_id);
+console.log('File Hash:', result.file_hash);
 ```
 
-### Step 6: Download and Verify
+### Step 6: Retrieve and Verify
 
 ```typescript
-const downloaded = await nova.downloadFile({
-  groupId: group.groupId,
-  cid: result.cid
-});
-
-const text = await downloaded.text();
-console.log(`Downloaded content: ${text}`);
+const { data } = await sdk.retrieve('my-first-group', result.cid);
+console.log('Retrieved:', data.toString());
 // Output: "Hello, Nova!"
 ```
 
 ---
 
-## Building a File Sharing App
-
-### Overview
-
-Build a React application for secure team file sharing.
-
-### Project Setup
-
-```bash
-npx create-react-app nova-share --template typescript
-cd nova-share
-npm install nova-sdk-js @near-wallet-selector/core @near-wallet-selector/my-near-wallet
-```
-
-### App Structure
-
-```
-nova-share/
-├── src/
-│   ├── components/
-│   │   ├── GroupList.tsx
-│   │   ├── FileList.tsx
-│   │   ├── FileUpload.tsx
-│   │   └── MemberManager.tsx
-│   ├── hooks/
-│   │   ├── useNova.ts
-│   │   └── useWallet.ts
-│   ├── contexts/
-│   │   └── NovaContext.tsx
-│   ├── App.tsx
-│   └── index.tsx
-```
-
-### Nova Context Provider
-
-```typescript
-// src/contexts/NovaContext.tsx
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { NovaSDK, Group } from 'nova-sdk-js';
-
-interface NovaContextType {
-  nova: NovaSDK | null;
-  groups: Group[];
-  loading: boolean;
-  createGroup: (name: string, members: string[]) => Promise<string>;
-  uploadFile: (groupId: string, file: File) => Promise<string>;
-  downloadFile: (groupId: string, cid: string) => Promise<Blob>;
-}
-
-const NovaContext = createContext<NovaContextType | null>(null);
-
-export function NovaProvider({ children }: { children: React.ReactNode }) {
-  const [nova, setNova] = useState<NovaSDK | null>(null);
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function init() {
-      // Initialize Nova SDK (see Getting Started)
-      const sdk = new NovaSDK({ /* config */ });
-      setNova(sdk);
-
-      // Load user's groups
-      const userGroups = await sdk.listGroups({});
-      setGroups(userGroups);
-      setLoading(false);
-    }
-    init();
-  }, []);
-
-  const createGroup = async (name: string, members: string[]) => {
-    if (!nova) throw new Error('Nova not initialized');
-    const result = await nova.createGroup({ name, members });
-    setGroups(prev => [...prev, result]);
-    return result.groupId;
-  };
-
-  const uploadFile = async (groupId: string, file: File) => {
-    if (!nova) throw new Error('Nova not initialized');
-    const result = await nova.uploadFile({
-      groupId,
-      file,
-      metadata: { fileName: file.name, mimeType: file.type }
-    });
-    return result.cid;
-  };
-
-  const downloadFile = async (groupId: string, cid: string) => {
-    if (!nova) throw new Error('Nova not initialized');
-    return nova.downloadFile({ groupId, cid });
-  };
-
-  return (
-    <NovaContext.Provider value={{
-      nova, groups, loading, createGroup, uploadFile, downloadFile
-    }}>
-      {children}
-    </NovaContext.Provider>
-  );
-}
-
-export const useNova = () => {
-  const context = useContext(NovaContext);
-  if (!context) throw new Error('useNova must be inside NovaProvider');
-  return context;
-};
-```
-
-### File Upload Component
-
-```typescript
-// src/components/FileUpload.tsx
-import React, { useState, useCallback } from 'react';
-import { useNova } from '../contexts/NovaContext';
-
-interface Props {
-  groupId: string;
-  onUploadComplete: (cid: string) => void;
-}
-
-export function FileUpload({ groupId, onUploadComplete }: Props) {
-  const { uploadFile } = useNova();
-  const [uploading, setUploading] = useState(false);
-  const [progress, setProgress] = useState(0);
-
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (!file) return;
-
-    setUploading(true);
-    try {
-      const cid = await uploadFile(groupId, file);
-      onUploadComplete(cid);
-    } catch (error) {
-      console.error('Upload failed:', error);
-      alert('Upload failed. Please try again.');
-    } finally {
-      setUploading(false);
-    }
-  }, [groupId, uploadFile, onUploadComplete]);
-
-  return (
-    <div
-      onDrop={handleDrop}
-      onDragOver={(e) => e.preventDefault()}
-      style={{
-        border: '2px dashed #ccc',
-        borderRadius: '8px',
-        padding: '40px',
-        textAlign: 'center',
-        cursor: 'pointer'
-      }}
-    >
-      {uploading ? (
-        <p>Uploading... {progress}%</p>
-      ) : (
-        <p>Drop files here to upload (encrypted automatically)</p>
-      )}
-    </div>
-  );
-}
-```
-
-### File List Component
-
-```typescript
-// src/components/FileList.tsx
-import React, { useState, useEffect } from 'react';
-import { useNova } from '../contexts/NovaContext';
-
-interface FileInfo {
-  cid: string;
-  fileName: string;
-  size: number;
-  uploadedBy: string;
-  uploadedAt: number;
-}
-
-interface Props {
-  groupId: string;
-}
-
-export function FileList({ groupId }: Props) {
-  const { nova, downloadFile } = useNova();
-  const [files, setFiles] = useState<FileInfo[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function loadFiles() {
-      if (!nova) return;
-      const result = await nova.listGroupFiles({ groupId });
-      setFiles(result);
-      setLoading(false);
-    }
-    loadFiles();
-  }, [nova, groupId]);
-
-  const handleDownload = async (cid: string, fileName: string) => {
-    const blob = await downloadFile(groupId, cid);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  if (loading) return <p>Loading files...</p>;
-
-  return (
-    <ul>
-      {files.map(file => (
-        <li key={file.cid}>
-          <span>{file.fileName}</span>
-          <span>{(file.size / 1024).toFixed(1)} KB</span>
-          <button onClick={() => handleDownload(file.cid, file.fileName)}>
-            Download
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-```
-
----
-
-## Integrating with Claude AI
-
-### Overview
-
-Set up Nova MCP server for Claude Desktop or Claude Code.
-
-### Step 1: Install MCP Server
-
-```bash
-npm install -g nova-mcp-server
-```
-
-### Step 2: Configure Claude Desktop
-
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "nova": {
-      "command": "npx",
-      "args": ["nova-mcp-server"],
-      "env": {
-        "NEAR_ACCOUNT_ID": "your-account.testnet",
-        "NEAR_PRIVATE_KEY": "ed25519:YOUR_PRIVATE_KEY",
-        "NEAR_NETWORK_ID": "testnet",
-        "NOVA_CONTRACT_ID": "nova.testnet",
-        "SHADE_AGENT_URL": "https://shade-testnet.phala.network"
-      }
-    }
-  }
-}
-```
-
-### Step 3: Test with Claude
-
-```
-You: Create a Nova group called "AI Documents" for my team
-
-Claude: I'll create that group for you now.
-[Uses nova_create_group tool]
-Done! I've created the "AI Documents" group. The group ID is group-xyz789.
-
-You: Upload the file at ~/Documents/report.pdf to that group
-
-Claude: [Uses nova_upload_file tool]
-The file has been encrypted and uploaded. CID: QmAbc123...
-
-You: Who can access files in that group?
-
-Claude: [Uses nova_get_group_info tool]
-Currently, only you (your-account.testnet) have access as the owner.
-Would you like me to add other members?
-```
-
-### Step 4: Claude Code Integration
-
-For Claude Code, add to `.claude/settings.json` in your project:
-
-```json
-{
-  "mcpServers": {
-    "nova": {
-      "command": "npx",
-      "args": ["nova-mcp-server"],
-      "env": {
-        "NEAR_ACCOUNT_ID": "${NEAR_ACCOUNT_ID}",
-        "NEAR_PRIVATE_KEY": "${NEAR_PRIVATE_KEY}",
-        "NEAR_NETWORK_ID": "testnet",
-        "NOVA_CONTRACT_ID": "nova.testnet",
-        "SHADE_AGENT_URL": "https://shade-testnet.phala.network"
-      }
-    }
-  }
-}
-```
-
----
-
-## Team Document Management
+## Encrypted File Sharing Workflow
 
 ### Scenario
 
-Set up secure document sharing for a team with different access levels.
+Share encrypted files with a team, add/remove members, and verify access control.
 
-### Step 1: Create Team Group
+### Step 1: Register a Group and Add Members
 
 ```typescript
-const teamGroup = await nova.createGroup({
-  name: 'Engineering Team',
-  members: [
-    'alice.near',   // Team lead
-    'bob.near',     // Senior dev
-    'carol.near',   // Developer
-    'david.near'    // Junior dev
-  ],
-  metadata: {
-    department: 'Engineering',
-    created: new Date().toISOString()
-  }
+import { NovaSdk } from 'nova-sdk-js';
+import fs from 'fs';
+
+const sdk = new NovaSdk('alice.nova-sdk-6.testnet', {
+  apiKey: process.env.NOVA_API_KEY,
+  rpcUrl: 'https://rpc.testnet.near.org',
+  contractId: 'nova-sdk-6.testnet',
 });
+
+// Register a group (~0.05-0.1 NEAR)
+await sdk.registerGroup('engineering-docs');
+
+// Add team members (~0.001 NEAR each)
+await sdk.addGroupMember('engineering-docs', 'bob.nova-sdk-6.testnet');
+await sdk.addGroupMember('engineering-docs', 'carol.nova-sdk-6.testnet');
 ```
 
-### Step 2: Set Up Roles
+### Step 2: Upload Encrypted Files
 
 ```typescript
-// Make alice an admin
-await nova.updateMemberRole({
-  groupId: teamGroup.groupId,
-  memberId: 'alice.near',
-  newRole: 'admin'
-});
+// Upload architecture document
+const archDoc = fs.readFileSync('./architecture.pdf');
+const archResult = await sdk.upload(
+  'engineering-docs',
+  archDoc,
+  'architecture.pdf'
+);
+console.log('Architecture doc CID:', archResult.cid);
 
-// Make bob an admin
-await nova.updateMemberRole({
-  groupId: teamGroup.groupId,
-  memberId: 'bob.near',
-  newRole: 'admin'
-});
-
-// carol and david remain members
+// Upload API specification
+const apiSpec = fs.readFileSync('./api-spec.yaml');
+const apiResult = await sdk.upload(
+  'engineering-docs',
+  apiSpec,
+  'api-spec.yaml'
+);
+console.log('API spec CID:', apiResult.cid);
 ```
 
-### Step 3: Upload Team Documents
+### Step 3: Verify Authorization
 
 ```typescript
-// Architecture document
-await nova.uploadFile({
-  groupId: teamGroup.groupId,
-  file: architectureDoc,
-  metadata: {
-    fileName: 'architecture.md',
-    category: 'design',
-    version: '1.0'
-  }
-});
+// Check who can access the files
+const aliceAuth = await sdk.isAuthorized(
+  'engineering-docs',
+  'alice.nova-sdk-6.testnet'
+);
+const bobAuth = await sdk.isAuthorized(
+  'engineering-docs',
+  'bob.nova-sdk-6.testnet'
+);
+const daveAuth = await sdk.isAuthorized(
+  'engineering-docs',
+  'dave.nova-sdk-6.testnet'
+);
 
-// API specification
-await nova.uploadFile({
-  groupId: teamGroup.groupId,
-  file: apiSpec,
-  metadata: {
-    fileName: 'api-spec.yaml',
-    category: 'api',
-    version: '2.1'
-  }
-});
+console.log('Alice authorized:', aliceAuth);  // true (owner)
+console.log('Bob authorized:', bobAuth);      // true (member)
+console.log('Dave authorized:', daveAuth);    // false (not a member)
 ```
 
-### Step 4: Member Access Check
+### Step 4: Retrieve and Decrypt
 
 ```typescript
-// Verify all members can access
-async function verifyTeamAccess(groupId: string, members: string[]) {
-  for (const member of members) {
-    const hasAccess = await nova.verifyMembership({
-      groupId,
-      accountId: member
-    });
-    console.log(`${member}: ${hasAccess ? '✓' : '✗'}`);
-  }
-}
+// Any authorized member can retrieve
+const { data } = await sdk.retrieve('engineering-docs', archResult.cid);
+fs.writeFileSync('./downloaded-architecture.pdf', data);
+console.log('File decrypted and saved');
+```
 
-await verifyTeamAccess(teamGroup.groupId, [
-  'alice.near', 'bob.near', 'carol.near', 'david.near'
-]);
-// alice.near: ✓
-// bob.near: ✓
-// carol.near: ✓
-// david.near: ✓
+### Step 5: Check Group Info
+
+```typescript
+const owner = await sdk.getGroupOwner('engineering-docs');
+const checksum = await sdk.getGroupChecksum('engineering-docs');
+const transactions = await sdk.getTransactionsForGroup('engineering-docs');
+
+console.log('Owner:', owner);
+console.log('Current checksum:', checksum);
+console.log('Total transactions:', transactions.length);
 ```
 
 ---
 
-## Secure Offboarding
+## Token Claim and Encryption Deep Dive
+
+### Understanding the Token Claim Flow
+
+The token claim flow is the central mechanism that securely bridges the NEAR blockchain and the Shade Agent TEE. Here's how it works end-to-end.
+
+### How Encryption Keys are Obtained
+
+When you call `sdk.upload()` or `sdk.retrieve()`, the SDK internally performs the token claim flow:
+
+```
+1. SDK generates a payload:
+   { group_id: "engineering-docs",
+     user_id: "alice.nova-sdk-6.testnet",
+     nonce: "<random-unique-value>",
+     timestamp: 1704067200000 }
+
+2. SDK signs the payload:
+   signature = ed25519_sign(SHA256(payload), private_key)
+
+3. SDK calls claim_token() on the NEAR contract:
+   The contract verifies:
+   - ed25519 signature is valid
+   - Nonce has never been used before
+   - Timestamp is within 5-minute window
+   - User is a member of the group
+
+4. Contract returns a token
+
+5. SDK presents the token to the Shade Agent TEE
+
+6. TEE verifies the token and returns the encryption key
+
+7. SDK uses the key for encryption (upload) or decryption (retrieve)
+```
+
+### Using Encryption Functions Directly
+
+You can use the encryption functions independently:
+
+```typescript
+import { encryptData, decryptData, computeHash } from 'nova-sdk-js';
+
+// Encrypt data with a known key
+const plaintext = Buffer.from('Sensitive information');
+const keyB64 = 'base64-encoded-32-byte-key'; // Obtain from Shade Agent
+
+// Encrypt (AES-256-GCM)
+const encrypted = await encryptData(plaintext, keyB64);
+console.log('Encrypted (base64):', encrypted);
+
+// Decrypt
+const decrypted = await decryptData(encrypted, keyB64);
+console.log('Decrypted:', decrypted.toString());
+// Output: "Sensitive information"
+
+// Compute hash for integrity verification
+const hash = computeHash(plaintext);
+console.log('SHA-256 hash:', hash);
+```
+
+### Upload Flow in Detail
+
+When you call `sdk.upload()`, this is what happens internally:
+
+```typescript
+// What sdk.upload('engineering-docs', fileData, 'report.pdf') does:
+
+// 1. prepare_upload -> Shade Agent TEE returns encryption key
+// 2. encryptData(fileData, key) -> AES-256-GCM encryption locally
+// 3. computeHash(fileData) -> SHA-256 hash of plaintext
+// 4. finalize_upload(encryptedData) -> Shade Agent stores to IPFS
+// 5. Transaction recorded on NEAR contract
+// 6. Returns { cid, trans_id, file_hash }
+```
+
+### Retrieve Flow in Detail
+
+When you call `sdk.retrieve()`:
+
+```typescript
+// What sdk.retrieve('engineering-docs', cid) does:
+
+// 1. Validate CID format (Qm* or bafy*)
+// 2. prepare_retrieve -> Shade Agent fetches from IPFS
+// 3. TEE returns encryption key + encrypted data
+// 4. decryptData(encryptedData, key) -> AES-256-GCM decryption locally
+// 5. Returns { data, ipfs_hash, group_id }
+```
+
+### Security Guarantee
+
+The critical security property is that **plaintext data and encryption keys never travel together**:
+- During upload: the SDK gets the key first, encrypts locally, then sends only ciphertext
+- During retrieve: the TEE sends the key and encrypted data, but decryption happens locally
+- The Shade Agent never sees the plaintext content
+
+---
+
+## Team Management with NEAR Protocol
+
+### Scenario
+
+Set up and manage a team with secure document sharing on NEAR Protocol.
+
+### Complete Team Setup
+
+```typescript
+import { NovaSdk } from 'nova-sdk-js';
+
+const sdk = new NovaSdk('team-lead.nova-sdk-6.testnet', {
+  apiKey: process.env.NOVA_API_KEY,
+  rpcUrl: 'https://rpc.testnet.near.org',
+  contractId: 'nova-sdk-6.testnet',
+});
+
+// Step 1: Register the team group
+await sdk.registerGroup('project-alpha');
+
+// Step 2: Add all team members
+const members = [
+  'developer-1.nova-sdk-6.testnet',
+  'developer-2.nova-sdk-6.testnet',
+  'designer.nova-sdk-6.testnet',
+  'pm.nova-sdk-6.testnet',
+];
+
+for (const member of members) {
+  await sdk.addGroupMember('project-alpha', member);
+  console.log(`Added: ${member}`);
+}
+
+// Step 3: Verify everyone has access
+for (const member of members) {
+  const auth = await sdk.isAuthorized('project-alpha', member);
+  console.log(`${member}: ${auth ? 'authorized' : 'NOT authorized'}`);
+}
+
+// Step 4: Upload project documents
+const files = [
+  { path: './prd.pdf', name: 'prd.pdf' },
+  { path: './design-specs.pdf', name: 'design-specs.pdf' },
+  { path: './api-docs.md', name: 'api-docs.md' },
+];
+
+const uploadResults = [];
+for (const file of files) {
+  const data = require('fs').readFileSync(file.path);
+  const result = await sdk.upload('project-alpha', data, file.name);
+  uploadResults.push({ ...file, cid: result.cid });
+  console.log(`Uploaded ${file.name}: ${result.cid}`);
+}
+
+// Step 5: Check the audit trail
+const transactions = await sdk.getTransactionsForGroup('project-alpha');
+console.log(`Total transactions: ${transactions.length}`);
+```
+
+### NEAR Protocol Integration Points
+
+Nova interacts with NEAR at these points:
+
+| SDK Method | NEAR Contract Function | Cost |
+|-----------|----------------------|------|
+| `registerGroup()` | Creates group on-chain | ~0.05-0.1 NEAR |
+| `addGroupMember()` | Adds member to group | ~0.001 NEAR |
+| `revokeGroupMember()` | Revokes member + key rotation | ~0.001 NEAR |
+| `isAuthorized()` | View: checks membership | Free |
+| `getGroupOwner()` | View: returns owner | Free |
+| `getGroupChecksum()` | View: returns TEE checksum | Free |
+| `getTransactionsForGroup()` | View: returns audit trail | Free |
+| `upload()` | Records transaction on-chain | ~0.01 NEAR |
+| `retrieve()` | Token claim via `claim_token()` | Gas only |
+
+### Events on NEAR
+
+The contract emits events consumable by indexers:
+- `NovaEvent::Registered` - New group or member
+- `NovaEvent::Revoked` - Member revoked
+- `NovaEvent::FeeCollected` - Fee collected
+
+---
+
+## Secure Member Offboarding
 
 ### Scenario
 
 Remove a team member while ensuring they lose access to all shared files.
 
-### Step 1: Identify Groups
+### Step 1: Identify the Member's Groups
 
 ```typescript
-// Find all groups the departing member belongs to
-const departingMember = 'david.near';
-const allGroups = await nova.listGroups({});
+// In a real application, you'd query all groups to find
+// which ones the departing member belongs to
+
+const groupsToCheck = ['project-alpha', 'engineering-docs', 'design-team'];
+const departingMember = 'contractor.nova-sdk-6.testnet';
 
 const memberGroups = [];
-for (const group of allGroups) {
-  const isMember = await nova.verifyMembership({
-    groupId: group.id,
-    accountId: departingMember
-  });
-  if (isMember) {
-    memberGroups.push(group);
+for (const groupId of groupsToCheck) {
+  const authorized = await sdk.isAuthorized(groupId, departingMember);
+  if (authorized) {
+    memberGroups.push(groupId);
   }
 }
 
 console.log(`${departingMember} is in ${memberGroups.length} groups`);
 ```
 
-### Step 2: Remove from All Groups
+### Step 2: Revoke from All Groups
 
 ```typescript
-async function offboardMember(memberId: string, groups: Group[]) {
-  const results = [];
-
-  for (const group of groups) {
-    try {
-      await nova.removeMember({
-        groupId: group.id,
-        memberId: memberId
-      });
-      results.push({
-        group: group.name,
-        status: 'removed',
-        keyRotated: true
-      });
-    } catch (error) {
-      results.push({
-        group: group.name,
-        status: 'error',
-        error: error.message
-      });
-    }
+for (const groupId of memberGroups) {
+  try {
+    await sdk.revokeGroupMember(groupId, departingMember);
+    console.log(`Revoked from ${groupId} (key rotation triggered)`);
+  } catch (error) {
+    console.error(`Failed to revoke from ${groupId}:`, error);
   }
-
-  return results;
 }
-
-const offboardResults = await offboardMember(departingMember, memberGroups);
-console.log('Offboarding complete:', offboardResults);
 ```
+
+**What happens on revocation:**
+1. Member is removed from the group on the NEAR contract
+2. `NovaEvent::Revoked` is emitted
+3. Shade Agent TEE automatically rotates the encryption key
+4. New checksum is recorded on-chain via `update_checksum()`
+5. Revoked member can no longer call `claim_token()` for this group
+6. New uploads use the new key; existing encrypted files remain on IPFS
 
 ### Step 3: Verify Removal
 
 ```typescript
-// Confirm the member no longer has access
-for (const group of memberGroups) {
-  const stillMember = await nova.verifyMembership({
-    groupId: group.id,
-    accountId: departingMember
-  });
-
-  if (stillMember) {
-    console.error(`WARNING: ${departingMember} still has access to ${group.name}`);
+for (const groupId of memberGroups) {
+  const stillAuthorized = await sdk.isAuthorized(groupId, departingMember);
+  if (stillAuthorized) {
+    console.error(`WARNING: ${departingMember} still has access to ${groupId}`);
   } else {
-    console.log(`✓ ${departingMember} removed from ${group.name}`);
+    console.log(`Verified: ${departingMember} removed from ${groupId}`);
   }
 }
 ```
 
-### Step 4: Audit Trail
+### Step 4: Audit the Changes
 
 ```typescript
-// Check the transaction history
-for (const group of memberGroups) {
-  const history = await nova.getGroupHistory({
-    groupId: group.id,
-    limit: 5,
-    types: ['MEMBER_REMOVED', 'KEY_ROTATED']
-  });
-
-  console.log(`\n${group.name} recent events:`);
-  for (const tx of history.transactions) {
-    console.log(`  ${tx.type}: ${tx.actor} at ${new Date(tx.timestamp)}`);
+for (const groupId of memberGroups) {
+  const transactions = await sdk.getTransactionsForGroup(groupId);
+  console.log(`\n${groupId} transactions:`);
+  for (const tx of transactions) {
+    console.log(`  ${JSON.stringify(tx)}`);
   }
+
+  // Verify checksum was updated (indicates key rotation happened)
+  const checksum = await sdk.getGroupChecksum(groupId);
+  console.log(`  Current checksum: ${checksum}`);
 }
 ```
 
-### Complete Offboarding Script
+---
 
-```typescript
-import { NovaSDK, Group } from 'nova-sdk-js';
+## MCP Server Integration
 
-async function secureOffboard(
-  nova: NovaSDK,
-  memberId: string
-): Promise<OffboardingReport> {
-  console.log(`Starting secure offboarding for ${memberId}`);
+### Overview
 
-  // 1. Find all groups
-  const allGroups = await nova.listGroups({});
-  const memberGroups: Group[] = [];
+The Nova MCP Server at `https://nova-mcp.fastmcp.app/mcp` enables AI assistants to interact with Nova through natural language.
 
-  for (const group of allGroups) {
-    const isMember = await nova.verifyMembership({
-      groupId: group.id,
-      accountId: memberId
-    });
-    if (isMember) {
-      memberGroups.push(group);
-    }
-  }
+### How It Works
 
-  console.log(`Found ${memberGroups.length} groups to process`);
+The MCP Server is an Auth + Signing Proxy that:
+1. Authenticates via JWT session tokens
+2. Routes operations to the NEAR contract and Shade Agent
+3. Handles encryption server-side using AES-256-CBC
+4. Returns results to the AI assistant
 
-  // 2. Remove from each group
-  const results = [];
-  for (const group of memberGroups) {
-    try {
-      await nova.removeMember({
-        groupId: group.id,
-        memberId: memberId
-      });
+### Example Interactions
 
-      // Key rotation is automatic
-      const keyStatus = await nova.getKeyStatus(group.id);
-
-      results.push({
-        groupId: group.id,
-        groupName: group.name,
-        removed: true,
-        newKeyVersion: keyStatus.keyVersion
-      });
-    } catch (error) {
-      results.push({
-        groupId: group.id,
-        groupName: group.name,
-        removed: false,
-        error: error.message
-      });
-    }
-  }
-
-  // 3. Verify removal
-  const verificationResults = [];
-  for (const result of results) {
-    if (result.removed) {
-      const stillMember = await nova.verifyMembership({
-        groupId: result.groupId,
-        accountId: memberId
-      });
-      verificationResults.push({
-        ...result,
-        verified: !stillMember
-      });
-    }
-  }
-
-  // 4. Generate report
-  return {
-    memberId,
-    timestamp: new Date().toISOString(),
-    groupsProcessed: memberGroups.length,
-    successful: results.filter(r => r.removed).length,
-    failed: results.filter(r => !r.removed).length,
-    details: verificationResults
-  };
-}
-
-// Usage
-const report = await secureOffboard(nova, 'david.near');
-console.log(JSON.stringify(report, null, 2));
 ```
+User: "Create a secure group for the legal team"
+AI:   [Calls registerGroup('legal-team') via MCP]
+      Group 'legal-team' created. You are the owner.
+
+User: "Add alice and bob to the legal team"
+AI:   [Calls addGroupMember('legal-team', 'alice.nova-sdk.near')]
+      [Calls addGroupMember('legal-team', 'bob.nova-sdk.near')]
+      Added alice and bob to the legal-team group.
+
+User: "Upload the contract draft to the legal team group"
+AI:   [Calls upload('legal-team', fileData, 'contract-draft.pdf')]
+      Contract draft encrypted and uploaded. CID: Qm...
+
+User: "Bob left the company, remove his access"
+AI:   [Calls revokeGroupMember('legal-team', 'bob.nova-sdk.near')]
+      Bob has been removed. Encryption key automatically rotated.
+      Bob can no longer access any files in the legal-team group.
+```
+
+### MCP vs SDK Encryption
+
+| Aspect | MCP Server | SDK (Direct) |
+|--------|-----------|-------------|
+| Algorithm | AES-256-CBC | AES-256-GCM |
+| Where encryption happens | Server-side | Client-side |
+| Best for | AI assistants | Applications |
+
+For maximum security, use the SDK directly for client-side encryption. The MCP server is ideal for AI assistant integration where convenience is prioritized.
 
 ---
 
@@ -709,24 +488,29 @@ console.log(JSON.stringify(report, null, 2));
 
 ### Common Issues
 
-**"UNAUTHORIZED" error when uploading:**
-- Verify you are a member of the group
-- Check your NEAR account is connected correctly
+**Authorization errors:**
+- Verify the NEAR account ID is correct (including the `.nova-sdk.near` or `.nova-sdk-6.testnet` suffix)
+- Check that the member has been added to the group
+- Ensure your API key is valid
 
-**"SHADE_AGENT_ERROR":**
-- The TEE service may be temporarily unavailable
-- Retry with exponential backoff
+**Upload/retrieve failures:**
+- Verify you are authorized for the group with `isAuthorized()`
+- Check that the CID format is valid (`Qm*` or `bafy*`)
+- The Shade Agent TEE may be temporarily unavailable; retry after a brief delay
 
-**"IPFS_ERROR":**
-- IPFS gateway may be overloaded
-- Try a different gateway or retry later
+**Token claim failures:**
+- Nonces are single-use; each operation requires a fresh nonce
+- Tokens expire after 5 minutes; ensure clock synchronization
+- Check nonce validity with `get_nonce_validity()` on the contract
 
-**Key rotation taking too long:**
-- Large groups take longer to rotate
-- Wait for the operation to complete before retrying
+**Key rotation delays:**
+- Key rotation is triggered automatically on member revocation
+- The Shade Agent generates a new key and updates the on-chain checksum
+- Verify rotation completed by checking `getGroupChecksum()`
 
 ### Getting Help
 
+- Official Documentation: https://nova-25.gitbook.io/nova-docs/
 - GitHub Issues: https://github.com/jcarbonnell/nova/issues
-- NEAR Discord: https://near.chat
-- Phala Discord: https://discord.gg/phala
+- Twitter: https://x.com/nova_sdk
+- Telegram: https://t.me/nova_sdk

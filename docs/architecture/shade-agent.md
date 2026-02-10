@@ -432,4 +432,4 @@ console.log('[DECENTRALIZATION_METRIC] shade_agent_request', {
 
 - [Nova Protocol](./nova-protocol.md) - System architecture
 - [Session Keys](./session-keys.md) - Authentication flow
-- [Security Guide](../08-security.md) - Security best practices
+- [Security Guide](../security.md) - Security best practices

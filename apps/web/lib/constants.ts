@@ -37,8 +37,8 @@ export const ONBOARDING_CONFIG = {
  * Uses ipfs.io as primary gateway for best availability
  */
 export const IPFS_CONFIG = {
-    /** Primary Gateway URL - ipfs.io for speed and reliability */
-    gatewayUrl: 'https://ipfs.io/ipfs',
+    /** Primary Gateway URL - Crust IPFS for decentralized pinning */
+    gatewayUrl: 'https://crustipfs.xyz/ipfs',
 
     /** Default placeholder image - uses a minimal data URI for guaranteed availability */
     placeholderImage: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjIyNSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjMTgxODFiIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IiM3MTcxN2YiIGZvbnQtZmFtaWx5PSJzeXN0ZW0tdWkiIGZvbnQtc2l6ZT0iMjQiPvCfjqwgVmlkZW88L3RleHQ+PC9zdmc+',
@@ -69,6 +69,23 @@ export const GAS_CONSTANTS = {
 
     /** Default session key allowance */
     sessionKeyAllowance: 0.25,
+} as const;
+
+/**
+ * Deposit Constants (in yoctoNEAR)
+ */
+export const DEPOSIT_CONSTANTS = {
+    /** 1 yoctoNEAR - security deposit for sensitive operations */
+    oneYocto: BigInt('1'),
+
+    /** 0.1 NEAR - standard storage deposit for NFT minting */
+    storageDeposit: BigInt('100000000000000000000000'),
+
+    /** 0.01 NEAR - small storage deposit for ticket purchases */
+    smallStorageDeposit: BigInt('10000000000000000000000'),
+
+    /** 0.15 NEAR - deposit per gift link (account creation + NFT storage + buffer) */
+    giftDepositPerLink: BigInt('150000000000000000000000'),
 } as const;
 
 /**
