@@ -37,6 +37,8 @@ export function useSessionKey(accountId: string | null) {
         queryFn: async () => {
             if (!accountId) return false;
             const sessionManager = new SessionManager(accountId);
+            // Import wallet's function call key if available (created during MyNearWallet sign-in)
+            await sessionManager.importWalletFunctionCallKey();
             return sessionManager.hasSessionKey();
         },
         enabled: !!accountId,

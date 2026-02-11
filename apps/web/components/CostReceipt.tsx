@@ -1,5 +1,5 @@
 import { Separator } from "@/components/ui/separator";
-import { Loader2, Fuel, CheckCircle2, Sparkles } from "lucide-react";
+import { Loader2, Sparkles } from "lucide-react";
 import { useLanguage } from '@/components/providers/LanguageContext';
 
 interface CostReceiptProps {
@@ -15,12 +15,16 @@ interface CostReceiptProps {
     novaGroupFee?: number;
 }
 
+interface CostItem {
+    label: string;
+    amount: number;
+    muted?: boolean;
+}
+
 export function CostReceipt({
     storageFee,
     loading,
     gasBalance = 0,
-    needsTopUp = false,
-    isFirstUpload = false,
     isFreeVideo = true,
     novaGroupFee = 0
 }: CostReceiptProps) {
@@ -28,41 +32,25 @@ export function CostReceipt({
 
     const storageFeeFloat = parseFloat(storageFee) || 0;
 
-    // NOVA-based cost calculation
-    // NFT Mint: 0.10 NEAR
-    // Event Creation: 0.10 NEAR
-    // Nova Group Registration: ~0.67 NEAR (paid videos only, dynamic)
-    const nftMintCost = 0.10;
-    const eventCost = 0.10;
-    const novaGroupCost = isFreeVideo ? 0 : (novaGroupFee || 0.70);
-    const bufferCost = 0.05;
-    const onChainCost = nftMintCost + eventCost + novaGroupCost;
+    // Build dynamic cost items — matches handleUpload's exactPrepaidNeeded
+    const costItems: CostItem[] = [
+        { label: t.upload_page.cost_receipt.storage_fee, amount: storageFeeFloat },
+        { label: t.upload_page.cost_receipt.nft_mint, amount: 0.10 },
+        { label: t.upload_page.cost_receipt.event_creation, amount: 0.10 },
+    ];
 
-    // Session Key Deposit (first upload only): 0.30 NEAR base
-    // For paid videos, add Nova group registration fee
-    const baseSessionDeposit = 0.30;
-    const sessionDeposit = isFirstUpload ? baseSessionDeposit + (isFreeVideo ? 0 : novaGroupCost) : 0;
-
-    // Top-up calculation - minimum required is 0.25 NEAR
-    const minRequired = 0.25;
-    const topUpAmount = needsTopUp && !isFirstUpload
-        ? Math.ceil((minRequired - gasBalance + 0.1) * 10) / 10
-        : 0;
-
-    // Display total
-    let displayTotal = storageFeeFloat;
-
-    if (isFirstUpload) {
-        displayTotal += sessionDeposit;
-    } else {
-        if (topUpAmount > 0) {
-            displayTotal += topUpAmount;
-        }
-        // For paid videos (returning users), Nova group fee is charged via wallet
-        if (!isFreeVideo) {
-            displayTotal += novaGroupCost;
-        }
+    if (!isFreeVideo) {
+        costItems.push({
+            label: 'Nova Group Setup',
+            amount: novaGroupFee || 0.70,
+        });
     }
+
+    const totalCost = costItems.reduce((sum, item) => sum + item.amount, 0);
+
+    // Existing prepaid balance is used as credit — upload flow auto-handles top-up
+    const balanceCredit = Math.min(gasBalance, totalCost);
+    const walletCharge = Math.max(0, totalCost - balanceCredit);
 
     return (
         <div className="rounded-lg border border-white/10 bg-black/20 p-4 space-y-3 mb-4">
@@ -80,117 +68,47 @@ export function CostReceipt({
             </div>
 
             <div className="space-y-2 text-sm">
-                {/* Storage Fee */}
-                <div className="flex justify-between items-center text-zinc-300">
-                    <span>{t.upload_page.cost_receipt.storage_fee}</span>
-                    <span className="font-mono">
-                        {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : `${storageFeeFloat.toFixed(4)} NEAR`}
-                    </span>
-                </div>
-
-                {/* First Upload: Session Deposit with details */}
-                {isFirstUpload && (
-                    <>
-                        <div className="flex justify-between items-center text-zinc-400">
-                            <span className="flex items-center gap-1.5">
-                                <Fuel className="h-3 w-3" />
-                                {t.upload_page.cost_receipt.first_upload_deposit}
-                            </span>
-                            <span className="font-mono">{sessionDeposit.toFixed(2)} NEAR</span>
-                        </div>
-                        <div className="pl-4 text-[10px] text-zinc-500 space-y-0.5">
-                            <div>• {t.upload_page.cost_receipt.nft_mint}: {nftMintCost.toFixed(2)} NEAR</div>
-                            <div>• {t.upload_page.cost_receipt.event_creation}: {eventCost.toFixed(2)} NEAR</div>
-                            {!isFreeVideo && (
-                                <div>• Nova Group Setup: {novaGroupCost.toFixed(2)} NEAR</div>
-                            )}
-                            <div>• {t.upload_page.cost_receipt.security_margin}: {bufferCost.toFixed(2)} NEAR</div>
-                        </div>
-                    </>
-                )}
-
-                {/* Returning User: Prepaid Balance */}
-                {!isFirstUpload && (
-                    <div className="flex justify-between items-center text-zinc-400">
-                        <span className="flex items-center gap-1.5">
-                            <Fuel className="h-3 w-3" />
-                            {t.upload_page.cost_receipt.prepaid_balance}
+                {/* Dynamic cost items */}
+                {costItems.map((item) => (
+                    <div key={item.label} className="flex justify-between items-center text-zinc-300">
+                        <span className={item.muted ? 'text-zinc-500' : ''}>
+                            {item.label}
                         </span>
-                        <span className={`font-mono ${gasBalance >= minRequired ? 'text-green-400' : 'text-amber-400'}`}>
-                            {gasBalance.toFixed(2)} NEAR
+                        <span className="font-mono">
+                            {loading
+                                ? <Loader2 className="h-3 w-3 animate-spin" />
+                                : `${item.amount.toFixed(item.amount < 0.01 && item.amount > 0 ? 4 : 2)} NEAR`
+                            }
                         </span>
                     </div>
-                )}
+                ))}
 
-                {/* Top-up needed */}
-                {!isFirstUpload && topUpAmount > 0 && (
-                    <div className="flex justify-between items-center text-amber-400">
-                        <span className="flex items-center gap-1.5">
-                            <Fuel className="h-3 w-3" />
-                            {t.upload_page.cost_receipt.balance_topup}
-                        </span>
-                        <span className="font-mono">+{topUpAmount.toFixed(2)} NEAR</span>
-                    </div>
-                )}
-
-                {/* Nova Group Registration Fee (paid videos, returning users) */}
-                {!isFirstUpload && !isFreeVideo && (
-                    <div className="flex justify-between items-center text-zinc-300">
-                        <span className="flex items-center gap-1.5">
-                            <Sparkles className="h-3 w-3 text-purple-400" />
-                            Nova Group Setup
-                        </span>
-                        <span className="font-mono">{novaGroupCost.toFixed(2)} NEAR</span>
+                {/* Existing balance credit */}
+                {balanceCredit > 0 && (
+                    <div className="flex justify-between items-center text-green-400">
+                        <span>{t.upload_page.cost_receipt.from_balance}</span>
+                        <span className="font-mono">-{balanceCredit.toFixed(2)} NEAR</span>
                     </div>
                 )}
 
                 <Separator className="bg-white/10" />
 
-                {/* Used from Balance - with breakdown */}
-                {!isFirstUpload && gasBalance > 0 && (
-                    <>
-                        <div className="flex justify-between items-center text-zinc-400 text-xs">
-                            <span>{t.upload_page.cost_receipt.from_balance}</span>
-                            <span className="font-mono">~{(nftMintCost + eventCost).toFixed(2)} NEAR</span>
-                        </div>
-                        <div className="pl-4 text-[10px] text-zinc-500 space-y-0.5">
-                            <div>• {t.upload_page.cost_receipt.nft_mint}: {nftMintCost.toFixed(2)} NEAR</div>
-                            <div>• {t.upload_page.cost_receipt.event_creation}: {eventCost.toFixed(2)} NEAR</div>
-                        </div>
-                    </>
-                )}
-
-                {/* Total */}
+                {/* Total — what user actually pays from wallet */}
                 <div className="flex justify-between items-center font-bold text-white">
-                    <span>
-                        {isFirstUpload || topUpAmount > 0
-                            ? t.upload_page.cost_receipt.total
-                            : t.upload_page.cost_receipt.additional_payment}
-                    </span>
+                    <span>{t.upload_page.cost_receipt.total}</span>
                     <span className="font-mono text-green-400">
-                        {loading ? "..." : displayTotal > 0 ? `${displayTotal.toFixed(4)} NEAR` : "0 NEAR ✓"}
+                        {loading ? "..." : walletCharge > 0 ? `${walletCharge.toFixed(4)} NEAR` : "0 NEAR"}
                     </span>
                 </div>
             </div>
 
-            {/* Status message */}
-            <div className="pt-1">
-                {isFirstUpload ? (
-                    <p className="text-[10px] text-green-500/80 flex items-center gap-1">
-                        <Sparkles className="h-3 w-3" />
-                        NOVA TEE encryption enabled - Signless uploads active
-                    </p>
-                ) : gasBalance >= minRequired ? (
-                    <p className="text-[10px] text-green-500/80 flex items-center gap-1">
-                        <CheckCircle2 className="h-3 w-3" />
-                        {t.upload_page.cost_receipt.balance_sufficient}
-                    </p>
-                ) : (
-                    <p className="text-[10px] text-amber-500/80">
-                        ⚠️ {t.upload_page.cost_receipt.balance_low}
-                    </p>
-                )}
-            </div>
+            {/* Status — signless info, no scary top-up warnings */}
+            <p className="text-[10px] text-zinc-500 pt-1">
+                {walletCharge > 0
+                    ? t.upload_page.cost_receipt.balance_low
+                    : t.upload_page.cost_receipt.balance_sufficient
+                }
+            </p>
         </div>
     );
 }

@@ -34,8 +34,8 @@ export async function storeEncryptionKey(
 
   const sdk = await getNovaSdk();
   const keyBuffer = Buffer.from(aesKeyB64, 'utf-8');
-  const MAX_RETRIES = 3;
-  const RETRY_DELAYS = [2000, 4000, 6000];
+  const MAX_RETRIES = 4;
+  const RETRY_DELAYS = [3000, 5000, 8000, 12000];
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
@@ -43,10 +43,35 @@ export async function storeEncryptionKey(
       return result.cid;
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      const isTransient = msg.includes('not exist') || msg.includes('500') || msg.includes('503') || msg.includes('timeout');
+      const isTransient =
+        msg.includes('not exist') ||
+        msg.includes('500') ||
+        msg.includes('503') ||
+        msg.includes('timeout') ||
+        msg.includes('Key not found') ||
+        msg.includes('key fetch failed') ||
+        msg.includes('Shade key');
 
       if (isTransient && attempt < MAX_RETRIES - 1) {
         const delay = RETRY_DELAYS[attempt];
+
+        // If TEE doesn't know the group key, re-trigger group registration
+        // to complete the TEE part (on-chain part is idempotent via recovery)
+        if (msg.includes('Key not found') || msg.includes('Shade key')) {
+          console.warn(
+            `[Nova KeyStorage] TEE key missing for group "${groupId}". ` +
+            `Re-triggering registerGroup to complete TEE registration...`
+          );
+          try {
+            await sdk.registerGroup(groupId);
+            console.log(`[Nova KeyStorage] registerGroup re-call succeeded for "${groupId}"`);
+          } catch {
+            // Expected: balance error if group already exists on-chain.
+            // TEE registration may still have completed before the error.
+            console.warn(`[Nova KeyStorage] registerGroup re-call threw (expected if on-chain exists), continuing with retry...`);
+          }
+        }
+
         console.warn(
           `[Nova KeyStorage] Upload attempt ${attempt + 1}/${MAX_RETRIES} failed. ` +
           `Retrying in ${delay}ms...`, msg

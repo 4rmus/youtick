@@ -91,8 +91,8 @@ export const translations = {
                 nova_group: "Nova Group Setup",
                 security_margin: "Security Margin",
                 signless_upload: "Signless Upload",
-                balance_sufficient: "Balance sufficient - only 1 signature needed",
-                balance_low: "Balance low - top-up requires 1 signature",
+                balance_sufficient: "Balance sufficient - signless upload ready",
+                balance_low: "Auto top-up via wallet - 1 signature needed",
                 additional_payment: "Additional Payment"
             },
             progress_title: "Upload Progress",
@@ -559,8 +559,8 @@ export const translations = {
                 nova_group: "Nova Grup Kurulumu",
                 security_margin: "Güvenlik Marjı",
                 signless_upload: "İmzasız Yükleme",
-                balance_sufficient: "Bakiye yeterli - sadece 1 imza gerekli",
-                balance_low: "Bakiye düşük - bakiye yüklemesi için 1 imza gerekli",
+                balance_sufficient: "Bakiye yeterli - imzasız yükleme hazır",
+                balance_low: "Cüzdandan otomatik yüklenir - 1 imza gerekli",
                 additional_payment: "Ek Ödeme"
             },
             progress_title: "Yükleme Durumu",

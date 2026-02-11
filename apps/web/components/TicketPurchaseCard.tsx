@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from "@/components/ui/button";
 import { Loader2, Ticket, AlertCircle, Play, ChevronDown, ChevronUp } from "lucide-react";
-import { actions, KeyPair, KeyPairSigner, Account, PublicKey, yoctoToNear, nearToYocto, type KeyPairString } from 'near-api-js';
+import { actions, KeyPair, KeyPairSigner, Account, yoctoToNear, nearToYocto, type KeyPairString } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
 import { SessionManager } from '@/lib/session-manager';
 import { useSessionState, useIsCreator } from '@/lib/hooks/useSessionState';
@@ -36,11 +36,12 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     const [eventDetails, setEventDetails] = useState<EventDetails | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [showCostBreakdown, setShowCostBreakdown] = useState(false);
+    const [novaServiceFee, setNovaServiceFee] = useState(0); // Nova service fee in NEAR
 
     // Initial Load: Fetch Event Details
     // Note: Session key check is now handled by useSessionState hook (React Query)
     useEffect(() => {
-        if (!cid) return;
+        if (!cid || cid.length > 256) return;
 
         const init = async () => {
             setLoading(true);
@@ -67,6 +68,21 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         media: parsed.thumbnailUrl,
                         uploader: event.creator_id
                     });
+
+                    // Query Nova service fee from contract (for paid tickets)
+                    if (BigInt(event.price) > BigInt(0)) {
+                        try {
+                            const novaFeeYocto = await viewContract<string>(
+                                provider, contractId, 'get_nova_service_fee', {}
+                            );
+                            if (novaFeeYocto) {
+                                const feeNear = parseFloat(yoctoToNear(BigInt(novaFeeYocto))) || 0;
+                                setNovaServiceFee(feeNear);
+                            }
+                        } catch {
+                            // Nova fee not configured yet, default to 0
+                        }
+                    }
                 }
 
             } catch (e) {
@@ -87,7 +103,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         setError(null);
         try {
             const contractId = NEAR_CONFIG.contractId;
-            const networkId = NEAR_CONFIG.networkId;
 
             // Try direct claim via onboarding key first (decentralized, signless)
             const onboardingKeyStr = localStorage.getItem(`onboarding_key:${contractId}`);
@@ -118,46 +133,22 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     encrypted_cid: cid
                 }, GAS_CONSTANTS.mediumGas.toString());
             } else {
-                // Last resort: wallet-signed buy_ticket with price=0
-                // Also bundle session key creation for future signless playback
+                // Wallet-signed buy_ticket with price=0
                 const wallet = await getWallet();
-                const sessionManager = new SessionManager(accountId);
 
-                const transactionsList = [];
-
-                // Bundle session key creation (same pattern as handlePurchase)
-                const keyPair = KeyPair.fromRandom('ed25519');
-                const publicKey = keyPair.getPublicKey().toString();
-                await sessionManager.saveSessionKey(keyPair);
-
-                const pubKey = PublicKey.fromString(publicKey);
-                transactionsList.push({
-                    receiverId: accountId,
-                    actions: [
-                        actions.addFunctionCallAccessKey(
-                            pubKey,
-                            contractId,
-                            [],
-                            BigInt(nearToYocto(0.25))
-                        )
-                    ]
+                await wallet.signAndSendTransactions({
+                    transactions: [{
+                        receiverId: contractId,
+                        actions: [
+                            actions.functionCall(
+                                'buy_ticket',
+                                { receiver_id: accountId, encrypted_cid: cid },
+                                GAS_CONSTANTS.mediumGas,
+                                BigInt(nearToYocto(0.01))
+                            )
+                        ]
+                    }]
                 });
-
-                // Free ticket claim transaction
-                transactionsList.push({
-                    receiverId: contractId,
-                    actions: [
-                        actions.functionCall(
-                            'buy_ticket',
-                            { receiver_id: accountId, encrypted_cid: cid },
-                            GAS_CONSTANTS.mediumGas,
-                            BigInt(nearToYocto(0.01))
-                        )
-                    ]
-                });
-
-                await wallet.signAndSendTransactions({ transactions: transactionsList });
-                refetchSessionKey();
             }
 
             // Add buyer to Nova group for video access (await completion before redirect)
@@ -187,43 +178,15 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             const contractId = NEAR_CONFIG.contractId;
             const sessionManager = new SessionManager(accountId);
 
-            const transactionsList = [];
-
-            // Prepare Session Key Transaction if missing
-            if (hasSessionKey === false) {
-                // v7: Use KeyPair directly
-                const keyPair = KeyPair.fromRandom('ed25519');
-                const publicKey = keyPair.getPublicKey().toString();
-
-                await sessionManager.saveSessionKey(keyPair);
-
-                // v7: Use PublicKey.fromString and actions.addFunctionCallAccessKey
-                const pubKey = PublicKey.fromString(publicKey);
-                transactionsList.push({
-                    receiverId: accountId,
-                    actions: [
-                        actions.addFunctionCallAccessKey(
-                            pubKey,
-                            contractId,
-                            [], // All methods allowed
-                            BigInt(nearToYocto(0.25))
-                        )
-                    ]
-                });
-            }
-
-            // Purchase & Deposit Transaction
+            // Build purchase transaction (FunctionCall only — always wallet-compatible)
             const purchaseActions = [];
-            // v7: Use nearToYocto
             const STORAGE_COST = nearToYocto(0.01);
             const priceYocto = nearToYocto(parseFloat(eventDetails.price));
+            const novaFeeYocto = nearToYocto(novaServiceFee);
 
-            // Total deposit: ticket price + storage + small buffer for gas
-            // buy_ticket_prepaid only needs price + 0.01 NEAR storage on-chain
-            const totalDeposit = BigInt(priceYocto) + BigInt(STORAGE_COST) + BigInt(nearToYocto(0.01));
+            // Total deposit: ticket price + storage + gas buffer + nova service fee
+            const totalDeposit = BigInt(priceYocto) + BigInt(STORAGE_COST) + BigInt(nearToYocto(0.01)) + BigInt(novaFeeYocto);
 
-            // Step 1: Deposit all funds to prepaid balance
-            // v7: Use actions.functionCall
             purchaseActions.push(
                 actions.functionCall(
                     'deposit_funds',
@@ -233,7 +196,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 )
             );
 
-            // Step 2: Buy ticket from prepaid balance
             purchaseActions.push(
                 actions.functionCall(
                     'buy_ticket_prepaid',
@@ -241,22 +203,18 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         receiver_id: accountId,
                         encrypted_cid: cid
                     },
-                    BigInt('50000000000000'), // 50 TGas (not in standard constants)
+                    BigInt('50000000000000'), // 50 TGas
                     BigInt('0')
                 )
             );
 
-            transactionsList.push({
+            const purchaseTransaction = {
                 receiverId: contractId,
                 actions: purchaseActions
-            });
+            };
 
-            await wallet.signAndSendTransactions({
-                transactions: transactionsList
-            });
-
-            // Refetch session key status in React Query cache
-            if (hasSessionKey === false) refetchSessionKey();
+            // Session key is created by MyNearWallet during sign-in (no AddKey needed)
+            await wallet.signAndSendTransactions({ transactions: [purchaseTransaction] });
 
             // Add buyer to Nova group for video access (await completion before redirect)
             try {
@@ -350,47 +308,45 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 </div>
 
                 {/* Cost Breakdown (paid tickets only) */}
-                {!isFree && !isCreator && (
-                    <div className="rounded-lg border border-white/10 bg-black/20 overflow-hidden">
-                        <button
-                            type="button"
-                            onClick={() => setShowCostBreakdown(!showCostBreakdown)}
-                            className="w-full flex items-center justify-between px-3 py-2 text-xs text-zinc-400 hover:text-zinc-300 transition-colors"
-                        >
-                            <span>Total wallet cost: ~{(priceNear + 0.02 + (hasSessionKey === false ? 0.25 : 0)).toFixed(2)} Ⓝ</span>
-                            {showCostBreakdown ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                        </button>
-                        {showCostBreakdown && (
-                            <div className="px-3 pb-2 space-y-1 text-[11px] text-zinc-500 border-t border-white/5 pt-2">
-                                <div className="flex justify-between">
-                                    <span>Ticket price</span>
-                                    <span className="font-mono">{priceNear.toFixed(2)} Ⓝ</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>NFT storage deposit</span>
-                                    <span className="font-mono">0.01 Ⓝ</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Gas buffer</span>
-                                    <span className="font-mono">0.01 Ⓝ</span>
-                                </div>
-                                {hasSessionKey === false && (
-                                    <div className="flex justify-between text-zinc-400">
-                                        <span>Session key deposit (one-time)</span>
-                                        <span className="font-mono">0.25 Ⓝ</span>
+                {!isFree && !isCreator && (() => {
+                    const costItems = [
+                        { label: 'Ticket price', amount: priceNear },
+                        { label: 'NFT storage deposit', amount: 0.01 },
+                        { label: 'Gas buffer', amount: 0.01 },
+                        ...(novaServiceFee > 0 ? [{ label: 'Nova encryption fee', amount: novaServiceFee }] : []),
+                    ];
+                    const total = costItems.reduce((sum, item) => sum + item.amount, 0);
+
+                    return (
+                        <div className="rounded-lg border border-white/10 bg-black/20 overflow-hidden">
+                            <button
+                                type="button"
+                                onClick={() => setShowCostBreakdown(!showCostBreakdown)}
+                                className="w-full flex items-center justify-between px-3 py-2 text-xs text-zinc-400 hover:text-zinc-300 transition-colors"
+                            >
+                                <span>Total wallet cost: ~{total.toFixed(2)} Ⓝ</span>
+                                {showCostBreakdown ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                            </button>
+                            {showCostBreakdown && (
+                                <div className="px-3 pb-2 space-y-1 text-[11px] text-zinc-500 border-t border-white/5 pt-2">
+                                    {costItems.map((item) => (
+                                        <div key={item.label} className="flex justify-between">
+                                            <span>{item.label}</span>
+                                            <span className="font-mono">{item.amount.toFixed(2)} Ⓝ</span>
+                                        </div>
+                                    ))}
+                                    <div className="flex justify-between font-medium text-zinc-300 border-t border-white/5 pt-1 mt-1">
+                                        <span>Total</span>
+                                        <span className="font-mono">{total.toFixed(2)} Ⓝ</span>
                                     </div>
-                                )}
-                                <div className="flex justify-between font-medium text-zinc-300 border-t border-white/5 pt-1 mt-1">
-                                    <span>Total</span>
-                                    <span className="font-mono">{(priceNear + 0.02 + (hasSessionKey === false ? 0.25 : 0)).toFixed(2)} Ⓝ</span>
+                                    <p className="text-[10px] text-zinc-600 pt-1">
+                                        Excess deposit is refunded by the contract.
+                                    </p>
                                 </div>
-                                <p className="text-[10px] text-zinc-600 pt-1">
-                                    Excess deposit is refunded by the contract.
-                                </p>
-                            </div>
-                        )}
-                    </div>
-                )}
+                            )}
+                        </div>
+                    );
+                })()}
 
                 {/* Error Message */}
                 {error && (

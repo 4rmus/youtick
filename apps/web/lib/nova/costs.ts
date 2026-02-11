@@ -1,15 +1,17 @@
 /**
  * NOVA Cost Estimation Module
  *
- * Dynamic fee queries for Nova group registration costs.
- * Uses sdk.estimateFee('register_group') and sdk.getBalance()
- * with a 10-minute cache to avoid excessive RPC calls.
+ * Dynamic fee queries for Nova group registration and member addition costs.
+ * Uses sdk.estimateFee() with a 10-minute cache to avoid excessive RPC calls.
  */
 
 import { hasApiKey, getNovaSdk } from './config';
 
 /** Fallback fee if estimateFee fails (conservative estimate in NEAR) */
 const FALLBACK_REGISTER_GROUP_FEE = 0.70;
+
+/** Fallback fee for add_member if estimateFee fails (conservative estimate in NEAR) */
+const FALLBACK_ADD_MEMBER_FEE = 0.005;
 
 /** Cache TTL in milliseconds (10 minutes) */
 const CACHE_TTL = 10 * 60 * 1000;
@@ -21,26 +23,11 @@ interface FeeCache {
   timestamp: number;
 }
 
-/** Cached balance data */
-interface BalanceCache {
-  balanceYocto: string;
-  balanceNear: number;
-  timestamp: number;
-}
-
 let feeCache: FeeCache | null = null;
-let balanceCache: BalanceCache | null = null;
+let addMemberFeeCache: FeeCache | null = null;
 
 /** Reuse the shared SDK singleton from config */
 const getCostsSdk = getNovaSdk;
-
-/** Summary of Nova fee information */
-export interface NovaFeeSummary {
-  registerGroupFee: number;
-  platformBalance: number;
-  canRegister: boolean;
-  deficit: number;
-}
 
 /**
  * Convert yoctoNEAR string/bigint to NEAR number
@@ -91,79 +78,35 @@ export async function getRegisterGroupFee(): Promise<number> {
 }
 
 /**
- * Get the Nova platform account balance
+ * Get the add_member fee from Nova SDK (cached for 10 minutes)
  *
- * @returns Balance in NEAR
+ * @returns Fee in NEAR
  */
-export async function getNovaPlatformBalance(): Promise<number> {
+export async function getAddMemberFee(): Promise<number> {
   // Return cached value if still valid
-  if (balanceCache && Date.now() - balanceCache.timestamp < CACHE_TTL) {
-    return balanceCache.balanceNear;
+  if (addMemberFeeCache && Date.now() - addMemberFeeCache.timestamp < CACHE_TTL) {
+    return addMemberFeeCache.feeNear;
   }
 
   if (!hasApiKey()) {
-    return 0;
+    return FALLBACK_ADD_MEMBER_FEE;
   }
 
   try {
     const sdk = await getCostsSdk();
 
-    const balanceYocto: string = await sdk.getBalance();
-    const balanceNear = yoctoToNear(balanceYocto);
+    const feeYocto: bigint = await sdk.estimateFee('add_member');
+    const feeNear = yoctoToNear(feeYocto);
 
-    balanceCache = {
-      balanceYocto,
-      balanceNear,
+    addMemberFeeCache = {
+      feeYocto,
+      feeNear,
       timestamp: Date.now(),
     };
 
-    return balanceNear;
+    return feeNear;
   } catch (error: unknown) {
-    console.warn('[NOVA Costs] getBalance failed:', error);
-    return 0;
+    console.warn('[NOVA Costs] estimateFee(add_member) failed, using fallback:', error);
+    return FALLBACK_ADD_MEMBER_FEE;
   }
-}
-
-/**
- * Invalidate the balance cache so next call fetches fresh data from chain.
- * Call this after funding the Nova platform account.
- */
-export function invalidateBalanceCache(): void {
-  balanceCache = null;
-}
-
-/**
- * Check if the Nova platform can register a new group
- *
- * @returns true if balance >= fee * 1.05 (5% safety margin)
- */
-export async function canRegisterNewGroup(): Promise<boolean> {
-  const [fee, balance] = await Promise.all([
-    getRegisterGroupFee(),
-    getNovaPlatformBalance(),
-  ]);
-
-  const required = fee * 1.05;
-  const canRegister = balance >= required;
-  return canRegister;
-}
-
-/**
- * Get a combined summary of Nova fees and platform balance
- */
-export async function getNovaFeeSummary(): Promise<NovaFeeSummary> {
-  const [fee, balance] = await Promise.all([
-    getRegisterGroupFee(),
-    getNovaPlatformBalance(),
-  ]);
-
-  const canRegister = balance >= fee * 1.05;
-  const deficit = canRegister ? 0 : fee * 1.05 - balance;
-
-  return {
-    registerGroupFee: fee,
-    platformBalance: balance,
-    canRegister,
-    deficit,
-  };
 }

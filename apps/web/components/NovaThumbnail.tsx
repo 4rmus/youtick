@@ -55,6 +55,8 @@ export function NovaThumbnail({
   /**
    * Get display URL from various URL formats
    */
+  const fetchFailedRef = useRef(false);
+
   const resolveUrl = useCallback(async (inputUrl: string): Promise<string> => {
     // Check URL cache first
     const cached = resolvedUrlCache.get(inputUrl);
@@ -79,10 +81,13 @@ export function NovaThumbnail({
         if (blob.size > 0) {
           const blobUrl = URL.createObjectURL(blob);
           resolvedUrlCache.set(inputUrl, blobUrl);
+          fetchFailedRef.current = false;
           return blobUrl;
         }
       } catch {
-        // Crust API and all gateways failed via fetch — fall back to <img> gateway chain
+        // Crust API and all gateways failed via fetch.
+        // Mark as failed so <img> onError skips redundant gateway cascade.
+        fetchFailedRef.current = true;
       }
 
       // Fallback: use public gateway URL for <img src> (browser handles GET natively)
@@ -157,8 +162,14 @@ export function NovaThumbnail({
   const gatewayIndexRef = useRef(0);
 
   /**
-   * Handle image load error - try next gateway before giving up
+   * Handle image load error - try next gateway before giving up.
+   *
+   * If fetchFromGateways already tried all sources (Crust API + all gateways)
+   * and failed, limit the <img> cascade to 2 attempts to avoid 18+ redundant
+   * requests across thumbnails.
    */
+  const MAX_IMG_GATEWAY_RETRIES = 2;
+
   const handleImageError = useCallback(() => {
     // If this was a gateway URL, try the next one
     if (url && isNovaUrl(url)) {
@@ -166,7 +177,11 @@ export function NovaThumbnail({
       if (parsed) {
         const allGateways = getGatewayUrls(parsed.cid);
         gatewayIndexRef.current++;
-        if (gatewayIndexRef.current < allGateways.length) {
+
+        // If fetchFromGateways already failed all sources, limit <img> retries
+        const maxRetries = fetchFailedRef.current ? MAX_IMG_GATEWAY_RETRIES : allGateways.length;
+
+        if (gatewayIndexRef.current < maxRetries && gatewayIndexRef.current < allGateways.length) {
           const nextUrl = allGateways[gatewayIndexRef.current];
           console.warn(`[NovaThumbnail] Gateway failed, trying next: ${nextUrl}`);
           setImageUrl(nextUrl);
@@ -175,7 +190,7 @@ export function NovaThumbnail({
       }
     }
 
-    console.warn('[NovaThumbnail] All gateways failed, using fallback');
+    console.warn('[NovaThumbnail] All gateways exhausted, using fallback');
     setImageUrl(fallbackUrl);
     const err = new Error('Image failed to load');
     setError(err);

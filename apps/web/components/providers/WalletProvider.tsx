@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { NearConnector } from '@hot-labs/near-connect';
 import type { WalletInstance } from '@/lib/types';
+import { NEAR_CONFIG } from '@/lib/constants';
 
 interface WalletContextValue {
     accountId: string | null;
@@ -32,14 +33,11 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         const network = (process.env.NEXT_PUBLIC_NEAR_NETWORK as 'testnet' | 'mainnet') || 'mainnet';
 
+        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || NEAR_CONFIG.contractId;
+
         const connector = new NearConnector({
             network,
-            excludedWallets: [
-                'intear-wallet',
-                'nightly',
-                'unity-wallet',
-                'okx-wallet',
-            ],
+            signIn: { contractId },
         });
 
         connectorRef.current = connector;
@@ -77,10 +75,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const getWallet = useCallback(async (): Promise<WalletInstance> => {
         if (isTrial && trialAccountId) {
             const { TrialWallet } = await import('@/lib/trial-wallet');
-            return new TrialWallet(trialAccountId) as unknown as WalletInstance;
+            return new TrialWallet(trialAccountId);
         }
         if (connectorRef.current) {
-            return connectorRef.current.wallet() as unknown as Promise<WalletInstance>;
+            return connectorRef.current.wallet();
         }
         throw new Error('No wallet connected');
     }, [isTrial, trialAccountId]);
@@ -98,7 +96,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     const connect = useCallback(async (): Promise<void> => {
         if (connectorRef.current) {
-            await connectorRef.current.connect();
+            await connectorRef.current.connect("mynearwallet");
         }
     }, []);
 

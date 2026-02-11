@@ -37,6 +37,24 @@ const MAX_RETRIES = 3;
 const RETRYABLE_STATUSES = new Set([502, 503, 504, 429]);
 const BACKOFF_MS = [500, 1000, 2000];
 
+/** Simple in-memory rate limiter per IP (resets on server restart) */
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_MAX = 60; // 60 requests per minute per IP
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+
+  entry.count++;
+  return entry.count <= RATE_LIMIT_MAX;
+}
+
 /** Headers that must never appear in logs */
 const SENSITIVE_HEADERS = new Set(['x-api-key', 'authorization', 'x-session-token']);
 
@@ -134,6 +152,12 @@ export async function GET(
   const start = Date.now();
 
   try {
+    // Rate limit check
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    if (!checkRateLimit(clientIp)) {
+      return errorResponse('RATE_LIMITED', 'Too many requests', 429, true, Date.now() - start);
+    }
+
     const { path } = await params;
     const subpath = '/' + path.join('/');
 
@@ -238,6 +262,12 @@ export async function POST(
   const start = Date.now();
 
   try {
+    // Rate limit check
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    if (!checkRateLimit(clientIp)) {
+      return errorResponse('RATE_LIMITED', 'Too many requests', 429, true, Date.now() - start);
+    }
+
     const { path } = await params;
     const subpath = '/' + path.join('/');
 

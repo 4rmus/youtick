@@ -195,10 +195,13 @@ export function resetNovaSdk(): void {
  * 1. On-chain group creation (nova-sdk.near smart contract)
  * 2. TEE group registration (Shade Agent)
  *
- * The MCP tool can fail with "Group does not exist on-chain" even when the
- * on-chain transaction succeeded (race condition between NEAR finality and
- * the TEE verification query). Retrying after a short delay resolves this
- * because the group is now visible on-chain for the TEE check.
+ * Known race condition: The MCP tool can succeed on-chain (consuming the deposit)
+ * but then fail at TEE verification with "Group does not exist on-chain" because
+ * the NEAR RPC hasn't propagated the new state yet. This causes the retry to fail
+ * with a balance error (funds already consumed by the first on-chain call).
+ *
+ * Recovery: On balance errors, we check if the group was actually created on-chain
+ * by the previous attempt. If so, we skip re-registration and return success.
  *
  * @param groupName - Name/ID for the group
  * @returns The group_id (same as groupName)
@@ -215,12 +218,34 @@ export async function createNovaGroup(groupName: string): Promise<string> {
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const isOnChainError = errorMessage.includes('does not exist on-chain');
+      const isBalanceError = errorMessage.includes('balance') && errorMessage.includes('cost');
 
-      if (isOnChainError && attempt < MAX_RETRIES - 1) {
+      // Balance error on retry → previous attempt likely succeeded on-chain
+      // but consumed the deposit. Check if group actually exists before giving up.
+      if (isBalanceError && attempt > 0) {
+        try {
+          const exists = await sdk.isAuthorized(groupName, getNovaAccountId());
+          if (exists) {
+            console.log(
+              `[NOVA Config] registerGroup recovered: group "${groupName}" already exists on-chain ` +
+              `(created by attempt ${attempt}). Waiting for TEE propagation...`
+            );
+            // Wait for TEE to sync with on-chain state before continuing.
+            // The on-chain group exists but TEE may not have registered the key yet.
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            return groupName;
+          }
+        } catch {
+          // isAuthorized failed — group might not exist yet, wait and retry
+        }
+      }
+
+      if ((isOnChainError || isBalanceError) && attempt < MAX_RETRIES - 1) {
         const delay = RETRY_DELAYS[attempt];
         console.warn(
           `[NOVA Config] registerGroup attempt ${attempt + 1}/${MAX_RETRIES} failed ` +
-          `(on-chain propagation delay). Retrying in ${delay}ms...`
+          `(${isBalanceError ? 'balance insufficient — checking previous attempt' : 'on-chain propagation delay'}). ` +
+          `Retrying in ${delay}ms...`
         );
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
@@ -287,6 +312,17 @@ export const NOVA_CONSTANTS = {
 // Initialize configuration on module load
 try {
   validateNovaConfig();
+
+  // Safety check: warn if NEXT_PUBLIC_NOVA_API_KEY contains a real API key
+  // It should only be a flag like "enabled" or "proxy-injected", not the actual secret
+  const publicKey = process.env.NEXT_PUBLIC_NOVA_API_KEY;
+  if (publicKey && publicKey.length > 20 && publicKey !== 'enabled' && publicKey !== 'proxy-injected') {
+    console.warn(
+      '[NOVA Config] WARNING: NEXT_PUBLIC_NOVA_API_KEY appears to contain a real API key. ' +
+      'This value is exposed to the client bundle. Use NOVA_API_KEY (without NEXT_PUBLIC) for the real key ' +
+      'and set NEXT_PUBLIC_NOVA_API_KEY=enabled as a flag only.'
+    );
+  }
 } catch (error: unknown) {
   if (error instanceof NovaError) {
     console.warn('[NOVA Config] Configuration validation failed:', error.message);

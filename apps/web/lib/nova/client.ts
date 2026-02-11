@@ -14,10 +14,10 @@ import {
   UploadProgress
 } from './types';
 import { NOVA_CONSTANTS, getGatewayUrl, hasApiKey, getNovaSdk, createNovaGroup } from './config';
-import { canRegisterNewGroup, getRegisterGroupFee, getNovaPlatformBalance } from './costs';
+import { getRegisterGroupFee } from './costs';
 import { verifyAttestation } from './attestation';
 import { uploadToCrust, fetchFromGateways, pinOnCrust } from '../crust';
-import { queryStorageStatus } from '../crust/storage-status';
+
 import { placeStorageOrder } from '../crust/storage-order';
 import { generateEncryptionKey, encryptFile, decryptFile } from '../crypto/aes-gcm';
 import { storeEncryptionKey, retrieveEncryptionKey } from './key-storage';
@@ -94,21 +94,10 @@ export async function uploadFile(
       console.warn('[CRUST] Non-blocking storage order failed:', err instanceof Error ? err.message : String(err));
     });
 
-    // Non-blocking: Query Crust chain storage status
-    queryStorageStatus(uploadResult.cid).then(status => {
-      console.log('[DECENTRALIZATION_METRIC] crust_storage_status', {
-        cid: uploadResult.cid,
-        replicas: status.replicas,
-        hasStorageOrder: status.hasStorageOrder,
-      });
-    }).catch(() => {
-      // Storage status query is purely informational
-    });
-
     return {
       cid: uploadResult.cid,
       groupId: uploadResult.groupId,
-      keyCid: uploadResult.keyCid,
+      keyCid: uploadResult.keyCid || '',
       size: file.size,
       teeEncrypted: true
     };
@@ -161,19 +150,8 @@ async function uploadToNOVA(
   try {
     const tempGroupId = `video_${Date.now()}`;
 
-    // Pre-flight: check if Nova platform has enough balance for group registration
-    const canRegister = await canRegisterNewGroup();
-    if (!canRegister) {
-      const [fee, balance] = await Promise.all([getRegisterGroupFee(), getNovaPlatformBalance()]);
-      throw new NovaError(
-        'UPLOAD_FAILED',
-        `Nova platform has insufficient balance for group registration. ` +
-        `Required: ~${fee.toFixed(2)} NEAR, Available: ${balance.toFixed(4)} NEAR. ` +
-        `Please contact support or try again later.`
-      );
-    }
-
     // 1. Create Nova group (for access control)
+    // Fee is already transferred to Nova sub-account via fund_nova_platform() before this call
     const groupId = await createNovaGroup(tempGroupId);
 
     // 1b. Add uploader as group member (group is owned by the Nova platform account,
@@ -209,11 +187,11 @@ async function uploadToNOVA(
     const errorMessage = error instanceof Error ? error.message : String(error);
 
     if (errorMessage.includes('balance') || errorMessage.includes('cost') || errorMessage.includes('Insufficient')) {
+      const fee = await getRegisterGroupFee();
       throw new NovaError(
         'UPLOAD_FAILED',
-        'Nova platform has insufficient balance for group registration. ' +
-        'The upload requires ~0.67 NEAR for Nova group setup. ' +
-        'Please try again later or contact support.'
+        `Nova group registration failed. Required: ~${fee.toFixed(2)} NEAR. ` +
+        `Ensure fund_nova_platform() was called before upload.`
       );
     }
 

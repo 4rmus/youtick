@@ -7,6 +7,7 @@
  * - Provide single source of truth for shared types
  */
 
+
 // ============================================================================
 // NEAR Protocol Types
 // ============================================================================
@@ -169,19 +170,25 @@ export type StorageType = 'Nova';
 
 /**
  * Wallet selector instance type
+ *
+ * Uses method syntax (not property syntax) so TypeScript applies bivariant
+ * parameter checking — required because NearWalletBase and TrialWallet use
+ * narrower Action types from different packages.
+ * Return type is `object` to stay compatible with both FinalExecutionOutcome
+ * (NearWalletBase) and RpcTransactionResponse (near-api-js Account).
  */
 export interface WalletInstance {
-    signAndSendTransaction: (params: {
+    signAndSendTransaction(params: {
         receiverId: string;
         actions: unknown[];
-    }) => Promise<TransactionOutcome>;
-    signAndSendTransactions: (params: {
+    }): Promise<object>;
+    signAndSendTransactions(params: {
         transactions: Array<{
             receiverId: string;
             actions: unknown[];
         }>;
-    }) => Promise<TransactionOutcome[]>;
-    getAccounts: () => Promise<Array<{ accountId: string }>>;
+    }): Promise<object[]>;
+    getAccounts(): Promise<Array<{ accountId: string }>>;
 }
 
 /**

@@ -6,7 +6,7 @@ import { uploadFile as novaUploadFile, uploadPublicThumbnail, uploadFreeVideo } 
 import { SessionManager } from '@/lib/session-manager';
 import { batchUploadActionsSignless } from '@/lib/batch-transactions';
 import { generateVideoThumbnail } from '@/lib/video-utils';
-import { actions, nearToYocto, type Action } from 'near-api-js';
+import { actions, nearToYocto } from 'near-api-js';
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -153,10 +153,11 @@ export function UploadForm() {
 
     // Gas Top-Up State (derived from React Query)
     const gasBalance = parseFloat(balanceData || '0');
-    const REQUIRED_GAS = 0.25; // NFT (0.1) + Event (0.1) + buffer (0.05)
+    const REQUIRED_GAS = 0.20; // NFT (0.1) + Event (0.1) — exact cost, no buffer
 
     // Calculate if top-up is needed based on cached data
-    const minRequired = REQUIRED_GAS;
+    const isFreeForTopUp = parseFloat(price) === 0 || price === '';
+    const minRequired = REQUIRED_GAS + (isFreeForTopUp ? 0 : novaGroupFee);
     const needsTopUp = hasSessionKey === true && gasBalance < minRequired;
 
     // Helper functions that dispatch to reducer
@@ -179,16 +180,15 @@ export function UploadForm() {
         };
     }, []);
 
-    // Recalculate pay amount when storage fee, balance, or nova fee changes
+    // Recalculate pay amount when storage fee or nova fee changes
     React.useEffect(() => {
         const fee = parseFloat(estimatedStorageFee) || 0;
         const isFree = parseFloat(price) === 0 || price === '';
-        // Session key costs: NFT mint (0.1) + Event (0.1) + buffer = 0.3 NEAR
-        // For paid videos, add Nova group registration fee
+        // Exact prepaid costs: NFT mint (0.1) + Event (0.1) + Nova group fee (paid only)
         const novaFee = isFree ? 0 : novaGroupFee;
-        const totalNeeded = fee + 0.3 + novaFee;
+        const totalNeeded = fee + 0.20 + novaFee;
         dispatch({ type: 'SET_PAY_AMOUNT', payload: totalNeeded > 0 ? totalNeeded.toFixed(4) : '0' });
-    }, [estimatedStorageFee, gasBalance, price, novaGroupFee]);
+    }, [estimatedStorageFee, price, novaGroupFee]);
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -361,9 +361,9 @@ export function UploadForm() {
                     price: priceYocto.toString()
                 };
 
-                // Use signless batch transaction
                 setStatus('Minting Ticket...');
 
+                // Signless batch transaction (session key)
                 await batchUploadActionsSignless(
                     sessionManager,
                     videoMetadata,
@@ -383,6 +383,7 @@ export function UploadForm() {
                 console.error('Minting/Event failed:', mintError);
                 updateStep('mint', 'error');
                 setStatus(`Upload success, but Blockchain actions failed: ${mintError instanceof Error ? mintError.message : String(mintError)}`);
+                refetchBalance();
             }
 
             // Final success message
@@ -433,6 +434,25 @@ export function UploadForm() {
             return;
         }
 
+        // Input validation
+        if (title.length > 200) {
+            setStatus('Title must be 200 characters or less');
+            return;
+        }
+        if (description.length > 2000) {
+            setStatus('Description must be 2000 characters or less');
+            return;
+        }
+        const priceNum = parseFloat(price);
+        if (priceNum < 0) {
+            setStatus('Price cannot be negative');
+            return;
+        }
+        if (priceNum > 10000) {
+            setStatus('Price cannot exceed 10,000 NEAR');
+            return;
+        }
+
         setUploading(true);
         setStatus('Initializing Upload...');
         setProgress(0);
@@ -444,79 +464,47 @@ export function UploadForm() {
             const wallet = await getWallet();
             const sessionManager = new SessionManager(accountId);
 
-            // Check Session Key Status
             const sessionKeyExists = hasSessionKey === true;
-
-            // Calculate Storage Fee
             const storageFee = estimatedStorageFee;
             dispatch({ type: 'SET_VERIFIED_STORAGE_FEE', payload: storageFee });
 
-            // Check Gas Balance
             updateStep('session', 'loading');
-            setStatus('Checking gas balance...');
 
-            // Minimum prepaid balance for session key operations:
-            // NFT (0.1) + Event (0.1) + buffer (0.05) = 0.25 NEAR
-            // Nova group registration is a separate platform cost for paid videos
-            const currentMinRequired = 0.25;
+            // --- Fetch fresh on-chain balance (React Query cache may be stale) ---
+            const freshBalanceResult = await refetchBalance();
+            const freshBalance = parseFloat(freshBalanceResult.data || '0');
 
-            // --- Determine Nova funding need for paid videos ---
+            // --- Calculate exact required deposit ---
             const isFreeVideo = parseFloat(price) === 0 || price === '';
+            const mintCost = 0.10;   // nft_mint_prepaid charge
+            const eventCost = 0.10;  // create_event_prepaid charge
 
-            let novaFundAmount = 0;
-            let novaAccountIdForFunding = '';
-
+            let novaFee = 0;
             if (!isFreeVideo) {
-                const { canRegisterNewGroup: canRegister, getRegisterGroupFee: getFee } = await import('@/lib/nova/costs');
-                const novaCanRegister = await canRegister();
-
-                if (!novaCanRegister) {
-                    const fee = await getFee();
-                    novaFundAmount = Math.round((fee + 0.05) * 100) / 100; // fee + buffer, rounded
-                    novaAccountIdForFunding = process.env.NEXT_PUBLIC_NOVA_ACCOUNT_ID || '';
-
-                    if (!novaAccountIdForFunding) {
-                        throw new Error('Nova account ID not configured. Set NEXT_PUBLIC_NOVA_ACCOUNT_ID.');
-                    }
-                }
+                const { getRegisterGroupFee } = await import('@/lib/nova/costs');
+                novaFee = await getRegisterGroupFee();
             }
 
-            // --- Build and send ALL wallet transactions in one batch (single popup) ---
+            // Exact deposit: only what the contract methods will deduct
+            const exactPrepaidNeeded = novaFee + mintCost + eventCost;
+
             if (!sessionKeyExists) {
-                // First time user: session key + gas deposit + (optional) Nova funding
-                setStatus('Setting up Session Key...');
-                const depositAmount = 0.3;
-
-                // Build transaction list
-                const sessionPublicKey = await sessionManager.generateSessionKeyPair();
-                const { batchInitialSetupWithNovaFunding } = await import('@/lib/batch-transactions');
-                await batchInitialSetupWithNovaFunding(
-                    wallet, accountId, CONTRACT_ID,
-                    sessionPublicKey,
-                    depositAmount.toString(),
-                    novaFundAmount > 0 ? { receiverId: novaAccountIdForFunding, amount: novaFundAmount } : undefined
-                );
-
+                // First-time user: session key was created by MyNearWallet during sign-in.
+                // Try importing it from the wallet's localStorage.
+                const imported = await sessionManager.importWalletFunctionCallKey();
+                if (!imported) {
+                    throw new Error('Session key not available. Please disconnect and reconnect your wallet.');
+                }
                 refetchSessionKey();
+            }
 
-            } else if (gasBalance < currentMinRequired || novaFundAmount > 0) {
-                // Returning user: gas top-up and/or Nova funding in one batch
-                const topUpAmount = gasBalance < currentMinRequired
-                    ? Math.ceil((currentMinRequired - gasBalance + 0.1) * 10) / 10
-                    : 0;
+            if (freshBalance < exactPrepaidNeeded) {
+                // Returning user: prepaid balance insufficient → top-up (1 wallet popup)
+                const topUpAmount = Math.ceil((exactPrepaidNeeded - freshBalance) * 100) / 100;
+                setStatus(`Topping up prepaid balance (${topUpAmount.toFixed(2)} NEAR)...`);
 
-                if (topUpAmount > 0) {
-                    setStatus(`Gas balance low (${gasBalance.toFixed(2)} NEAR). Topping up...`);
-                }
-                if (novaFundAmount > 0) {
-                    setStatus(topUpAmount > 0 ? 'Topping up gas + funding Nova...' : 'Funding Nova group registration...');
-                }
-
-                // Build transactions list
-                const txList: Array<{ receiverId: string; actions: Action[] }> = [];
-
-                if (topUpAmount > 0) {
-                    txList.push({
+                const txResult = await wallet.signAndSendTransactions({
+                    transactions: [{
                         receiverId: CONTRACT_ID,
                         actions: [
                             actions.functionCall(
@@ -525,45 +513,38 @@ export function UploadForm() {
                                 nearToYocto(topUpAmount)
                             )
                         ]
-                    });
+                    }]
+                });
+                if (!txResult) {
+                    throw new Error('Transaction cancelled or wallet returned no result.');
                 }
-
-                if (novaFundAmount > 0) {
-                    txList.push({
-                        receiverId: novaAccountIdForFunding,
-                        actions: [actions.transfer(nearToYocto(novaFundAmount))]
-                    });
-                }
-
-                if (txList.length > 0) {
-                    await wallet.signAndSendTransactions({ transactions: txList });
-                }
-
-                if (topUpAmount > 0) refetchBalance();
-
-            } else {
-                // Gas balance sufficient, no action needed
+                refetchBalance();
             }
 
-            // Invalidate Nova balance cache if we just funded the platform
-            if (novaFundAmount > 0) {
-                const { invalidateBalanceCache } = await import('@/lib/nova/costs');
-                invalidateBalanceCache();
+            // --- Fund Nova platform (signless, from prepaid balance) ---
+            if (novaFee > 0) {
+                setStatus('Funding Nova group registration...');
+                const amountYocto = nearToYocto(novaFee);
+                await sessionManager.callMethod('fund_nova_platform', {
+                    amount: amountYocto.toString()
+                }, GAS_CONSTANTS.mediumGas.toString());
             }
 
             setStatus('Session ready for NOVA upload...');
             updateStep('session', 'complete');
 
-            // --- STEP 3: NOVA Upload (TEE-based encryption) ---
-            setStatus('Ready for NOVA decentralized upload...');
-
-            // Continue with NOVA upload
+            // --- NOVA Upload (TEE-based encryption) ---
             await processSignatureAndUpload(storageFee, sessionManager);
 
         } catch (error: unknown) {
             console.error('Upload failed:', error);
-            setStatus(`Upload failed: ${error instanceof Error ? error.message : String(error)} `);
+            const msg = error instanceof Error
+                ? error.message
+                : error ? String(error) : 'Transaction cancelled or wallet returned no result.';
+            setStatus(`Upload failed: ${msg}`);
             setUploading(false);
+            // Refresh balance so next upload attempt uses fresh on-chain data
+            refetchBalance();
         }
     };
 
@@ -633,6 +614,8 @@ export function UploadForm() {
                                 value={title}
                                 onChange={(e) => setTitle(e.target.value)}
                                 disabled={uploading || !accountId}
+                                maxLength={200}
+                                aria-required="true"
                             />
                         </div>
 
@@ -647,6 +630,8 @@ export function UploadForm() {
                                 onChange={(e) => setDescription(e.target.value)}
                                 disabled={uploading || !accountId}
                                 className="min-h-[60px] resize-none"
+                                maxLength={2000}
+                                aria-required="true"
                             />
                         </div>
 
@@ -660,10 +645,13 @@ export function UploadForm() {
                                     id="ticket-price"
                                     type="number"
                                     step="0.1"
+                                    min="0"
+                                    max="10000"
                                     placeholder="0"
                                     value={price}
                                     onChange={(e) => setPrice(e.target.value)}
                                     disabled={uploading || !accountId}
+                                    aria-label="Ticket price in NEAR"
                                 />
                             </div>
 
@@ -736,9 +724,6 @@ export function UploadForm() {
                                 payAmount={payAmount}
                                 loading={isBalanceLoading}
                                 gasBalance={gasBalance}
-                                requiredGas={REQUIRED_GAS}
-                                needsTopUp={needsTopUp}
-                                isFirstUpload={!hasSessionKey}
                                 isFreeVideo={parseFloat(price) === 0 || price === ''}
                                 novaGroupFee={novaGroupFee}
                             />
