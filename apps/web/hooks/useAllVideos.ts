@@ -1,4 +1,5 @@
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useState, useMemo, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { yoctoToNear } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
 import { TokenWithVideo } from './useOwnedTokens';
@@ -7,39 +8,30 @@ import { NEAR_CONFIG } from '@/lib/constants';
 
 const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
 const PAGE_SIZE = 24;
+const FETCH_LIMIT = 10000;
 
-interface EventsPage {
-    tokens: TokenWithVideo[];
-    nextOffset: number | null;
-    total: number;
-}
-
-async function fetchEventsPage(offset: number): Promise<EventsPage> {
+async function fetchAllEvents(): Promise<TokenWithVideo[]> {
     const provider = getProvider();
 
-    // Fetch one extra to detect if there's a next page
     const events = await viewContract<unknown[]>(
         provider,
         NFT_CONTRACT_ID,
         'get_events',
-        { from_index: offset.toString(), limit: PAGE_SIZE + 1 }
+        { from_index: "0", limit: FETCH_LIMIT }
     );
 
     if (!events || events.length === 0) {
-        return { tokens: [], nextOffset: null, total: 0 };
+        return [];
     }
 
-    const hasMore = events.length > PAGE_SIZE;
-    const pageEvents = hasMore ? events.slice(0, PAGE_SIZE) : events;
-
-    const eventTokens: TokenWithVideo[] = pageEvents.map((item, index) => {
+    const eventTokens: TokenWithVideo[] = events.map((item, index) => {
         const [cid, event] = item as [string, { title: string; description: string; creator_id: string; price: string }];
 
         const parsed = parseTitleMetadata(event.title);
         const displayDescription = event.description || `NFT ticket - ${yoctoToNear(BigInt(event.price))} NEAR`;
 
         return {
-            token_id: `event-${offset + index}`,
+            token_id: `event-${index}`,
             owner_id: event.creator_id,
             metadata: {
                 title: parsed.title,
@@ -56,33 +48,35 @@ async function fetchEventsPage(offset: number): Promise<EventsPage> {
         };
     });
 
-    return {
-        tokens: eventTokens.reverse(),
-        nextOffset: hasMore ? offset + PAGE_SIZE : null,
-        total: pageEvents.length,
-    };
+    // Reverse globally so newest events appear first
+    return eventTokens.reverse();
 }
 
 export function useAllVideos() {
-    const query = useInfiniteQuery({
+    const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+    const query = useQuery({
         queryKey: ['allVideos'],
-        queryFn: ({ pageParam }) => fetchEventsPage(pageParam),
-        initialPageParam: 0,
-        getNextPageParam: (lastPage) => lastPage.nextOffset,
+        queryFn: fetchAllEvents,
         staleTime: 30 * 1000,
         gcTime: 5 * 60 * 1000,
     });
 
-    // Flatten all pages into a single token array
-    const tokens = query.data?.pages.flatMap((page) => page.tokens) ?? [];
+    const allTokens = query.data ?? [];
+    const tokens = useMemo(() => allTokens.slice(0, visibleCount), [allTokens, visibleCount]);
+    const hasNextPage = visibleCount < allTokens.length;
+
+    const fetchNextPage = useCallback(() => {
+        setVisibleCount(prev => prev + PAGE_SIZE);
+    }, []);
 
     return {
         tokens,
         loading: query.isLoading,
         error: query.error?.message ?? null,
-        hasNextPage: query.hasNextPage,
-        isFetchingNextPage: query.isFetchingNextPage,
-        fetchNextPage: query.fetchNextPage,
+        hasNextPage,
+        isFetchingNextPage: false,
+        fetchNextPage,
         refetch: query.refetch,
     };
 }

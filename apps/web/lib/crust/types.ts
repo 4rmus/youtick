@@ -58,24 +58,6 @@ export interface GatewayConfig {
 }
 
 /**
- * Crust on-chain storage status for a CID
- */
-export interface CrustStorageStatus {
-  /** IPFS CID queried */
-  cid: string;
-  /** Number of storage replicas on Crust chain */
-  replicas: number;
-  /** File size in bytes (as reported by Crust chain) */
-  fileSize: number;
-  /** Block number when storage order expires (0 if no order) */
-  expireAt: number;
-  /** Timestamp of this query */
-  queriedAt: number;
-  /** Whether a storage order exists on-chain */
-  hasStorageOrder: boolean;
-}
-
-/**
  * Result of Crust PSA (Pinning Service API) pin request
  */
 export interface CrustPsaPinResult {

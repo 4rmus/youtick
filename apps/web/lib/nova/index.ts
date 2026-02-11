@@ -196,21 +196,13 @@ export {
 
 import {
   getRegisterGroupFee,
-  getNovaPlatformBalance,
-  canRegisterNewGroup,
-  getNovaFeeSummary,
-  invalidateBalanceCache
+  getAddMemberFee
 } from './costs';
 
 export {
   getRegisterGroupFee,
-  getNovaPlatformBalance,
-  canRegisterNewGroup,
-  getNovaFeeSummary,
-  invalidateBalanceCache
+  getAddMemberFee
 } from './costs';
-
-export type { NovaFeeSummary } from './costs';
 
 // ============================================================================
 // Attestation Exports
@@ -371,10 +363,7 @@ const NOVA = {
   // Cost estimation
   costs: {
     getRegisterGroupFee,
-    getPlatformBalance: getNovaPlatformBalance,
-    canRegisterNewGroup,
-    getSummary: getNovaFeeSummary,
-    invalidateBalanceCache
+    getAddMemberFee
   },
 
   // Attestation

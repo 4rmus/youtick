@@ -35,14 +35,8 @@ export const CRUST_CONSTANTS = {
   /** Duration to mark a gateway as unhealthy (5 minutes) */
   GATEWAY_UNHEALTHY_DURATION: 5 * 60 * 1000,
 
-  /** Crust chain storage status API (Subscan) */
-  STORAGE_STATUS_API: 'https://crust.webapi.subscan.io/api/scan/search',
-
   /** Crust PSA (IPFS Pinning Service API) endpoint */
   PSA_ENDPOINT: 'https://pin.crustcode.com/psa/pins',
-
-  /** Storage status query timeout (10 seconds) */
-  STORAGE_STATUS_TIMEOUT: 10 * 1000,
 } as const;
 
 /**

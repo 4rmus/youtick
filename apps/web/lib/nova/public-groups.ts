@@ -350,6 +350,7 @@ export async function uploadPublicThumbnail(
     return {
       cid: uploadResult.cid,
       groupId,
+      keyCid: '',
       size: file.size,
       teeEncrypted: false, // Public thumbnails are not encrypted
       novaUrl,
@@ -522,6 +523,7 @@ export async function uploadFreeVideo(
     return {
       cid: crustResult.cid,
       groupId,
+      keyCid: '',
       size: file.size,
       teeEncrypted: false
     };

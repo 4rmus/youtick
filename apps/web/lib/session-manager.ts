@@ -8,6 +8,7 @@ import {
     nearToYocto,
     yoctoToNear,
     TypedError,
+    getTransactionLastResult,
     type KeyPairString,
     type Action
 } from 'near-api-js';
@@ -15,23 +16,6 @@ import { BrowserKeyStore } from './keystore-v7';
 import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from './constants';
 import { getCurrentRpcUrl, withRpcFailover } from './rpc-failover';
 import type { WalletInstance } from './types';
-
-/**
- * Raw transaction outcome shape from near-api-js v7.
- * Used internally for parsing transaction results.
- */
-interface TransactionOutcomeRaw {
-    status?: {
-        SuccessValue?: string;
-    };
-    receipts_outcome?: Array<{
-        outcome?: {
-            status?: {
-                SuccessValue?: string;
-            };
-        };
-    }>;
-}
 
 // Re-export from constants for backwards compatibility
 const NETWORK_ID = NEAR_CONFIG.networkId;
@@ -44,6 +28,41 @@ export class SessionManager {
     constructor(accountId: string) {
         this.accountId = accountId;
         this.keyStore = new BrowserKeyStore();
+    }
+
+    /**
+     * Import the function call key that MyNearWallet creates during sign-in.
+     * When NearConnector is configured with signIn: { contractId }, MyNearWallet
+     * automatically adds a function call access key on-chain and stores the
+     * private key in localStorage as 'mynearwallet:functionCallKey'.
+     *
+     * This eliminates the need for an explicit AddKey transaction, which is
+     * broken in @hot-labs/near-connect's MyNearWallet executor (borsh Enum bug).
+     */
+    async importWalletFunctionCallKey(): Promise<boolean> {
+        // Skip if we already have a local key
+        const existing = await this.keyStore.getKey(NETWORK_ID, this.accountId);
+        if (existing) return true;
+
+        if (typeof window === 'undefined') return false;
+
+        const raw = localStorage.getItem('mynearwallet:functionCallKey');
+        if (!raw) return false;
+
+        try {
+            const data = JSON.parse(raw) as {
+                privateKey?: string;
+                contractId?: string;
+                methods?: string[];
+            };
+            if (!data.privateKey || data.contractId !== CONTRACT_ID) return false;
+
+            const keyPair = KeyPair.fromString(data.privateKey as KeyPairString);
+            await this.keyStore.setKey(NETWORK_ID, this.accountId, keyPair);
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     async hasSessionKey(): Promise<boolean> {
@@ -170,7 +189,7 @@ export class SessionManager {
                         actions.functionCall(method, args, BigInt(gas), BigInt(0))
                     ]
                 });
-                return this.getTransactionResult(outcome as unknown as TransactionOutcomeRaw);
+                return getTransactionLastResult(outcome);
             } catch (error) {
                 const isNonceError = error instanceof TypedError &&
                     (error.type === 'InvalidNonce' || error.message.includes('nonce'));
@@ -202,40 +221,7 @@ export class SessionManager {
             actions: txActions
         });
 
-        return this.getTransactionResult(outcome as unknown as TransactionOutcomeRaw);
-    }
-
-    /**
-     * Extract result from transaction outcome (v7 pattern)
-     */
-    private getTransactionResult(outcome: TransactionOutcomeRaw): unknown {
-        // v7: Transaction result is in outcome.transaction_outcome or final_execution_outcome
-        if (outcome?.status?.SuccessValue) {
-            const value = outcome.status.SuccessValue;
-            if (value === '') return null;
-            try {
-                return JSON.parse(Buffer.from(value, 'base64').toString());
-            } catch {
-                return value;
-            }
-        }
-
-        // Try to get from receipts
-        if (outcome?.receipts_outcome) {
-            for (const receipt of outcome.receipts_outcome) {
-                if (receipt?.outcome?.status?.SuccessValue) {
-                    const value = receipt.outcome.status.SuccessValue;
-                    if (value === '') continue;
-                    try {
-                        return JSON.parse(Buffer.from(value, 'base64').toString());
-                    } catch {
-                        return value;
-                    }
-                }
-            }
-        }
-
-        return null;
+        return getTransactionLastResult(outcome);
     }
 
     async getAccountBalance(nodeUrl: string): Promise<number> {

@@ -41,8 +41,5 @@ export {
   verifyCrustAvailability,
 } from './client';
 
-// Storage Status
-export { queryStorageStatus } from './storage-status';
-
 // Storage Orders
 export { placeStorageOrder } from './storage-order';
