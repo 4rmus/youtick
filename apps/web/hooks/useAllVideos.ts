@@ -25,7 +25,7 @@ async function fetchAllEvents(): Promise<TokenWithVideo[]> {
     }
 
     const eventTokens: TokenWithVideo[] = events.map((item, index) => {
-        const [cid, event] = item as [string, { title: string; description: string; creator_id: string; price: string }];
+        const [cid, event] = item as [string, { title: string; description: string; creator_id: string; price: string; price_usd?: number | null }];
 
         const parsed = parseTitleMetadata(event.title);
         const displayDescription = event.description || `NFT ticket - ${yoctoToNear(BigInt(event.price))} NEAR`;
@@ -43,7 +43,8 @@ async function fetchAllEvents(): Promise<TokenWithVideo[]> {
                 encrypted_cid: cid,
                 duration_seconds: 0,
                 content_type: "Exclusive",
-                price: event.price
+                price: event.price,
+                price_usd: event.price_usd ?? null,
             }
         };
     });

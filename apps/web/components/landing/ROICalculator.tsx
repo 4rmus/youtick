@@ -6,12 +6,12 @@ import { useLanguage } from '@/components/providers/LanguageContext';
 
 /**
  * ROICalculator - Interactive calculator showing artist earnings comparison.
- * Based on VISUAL_ASSETS_MASTER_PROMPT.md ROI Calculator design.
+ * All calculations in USD.
  */
 export const ROICalculator = memo(() => {
     const { t } = useLanguage();
 
-    const [ticketPrice, setTicketPrice] = useState(5);
+    const [ticketPrice, setTicketPrice] = useState(5); // USD
     const [ticketCount, setTicketCount] = useState(500);
 
     const calculations = useMemo(() => {
@@ -21,7 +21,7 @@ export const ROICalculator = memo(() => {
         const youtickRevenue = grossSales * 0.98;
         const youtickFee = grossSales * 0.02;
 
-        // YouTube (ad model): ~$1-2 per 1000 views, assume same ticket count as views
+        // YouTube (ad model): ~$1-2 per 1000 views
         const youtubeRevenue = (ticketCount / 1000) * 1.5;
 
         // Vimeo OTT: 90% to artist
@@ -30,13 +30,6 @@ export const ROICalculator = memo(() => {
         // Spotify equivalent: $0.004 per stream
         const spotifyRevenue = ticketCount * 0.004;
 
-        // NEAR to USD approximation
-        const nearToUsd = 10;
-        const youtickUsd = youtickRevenue * nearToUsd;
-        const youtubeUsd = youtubeRevenue;
-        const vimeoUsd = vimeoRevenue * nearToUsd;
-        const spotifyUsd = spotifyRevenue;
-
         return {
             grossSales,
             youtickRevenue,
@@ -44,15 +37,9 @@ export const ROICalculator = memo(() => {
             youtubeRevenue,
             vimeoRevenue,
             spotifyRevenue,
-            youtickUsd,
-            youtubeUsd,
-            vimeoUsd,
-            spotifyUsd,
-            nearToUsd,
         };
     }, [ticketPrice, ticketCount]);
 
-    const formatNear = (value: number) => value.toLocaleString('en-US', { maximumFractionDigits: 0 });
     const formatUsd = (value: number) => value.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 
     return (
@@ -95,20 +82,20 @@ export const ROICalculator = memo(() => {
                                     {t.landing.roi_calculator?.ticket_price || 'Ticket Price'}
                                 </label>
                                 <span className="text-2xl font-bold text-near-green">
-                                    {ticketPrice} NEAR
+                                    ${ticketPrice}
                                 </span>
                             </div>
                             <input
                                 type="range"
                                 min={1}
-                                max={50}
+                                max={100}
                                 value={ticketPrice}
                                 onChange={(e) => setTicketPrice(Number(e.target.value))}
                                 className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-near-green"
                             />
                             <div className="flex justify-between text-xs text-zinc-600 mt-1">
-                                <span>1 NEAR</span>
-                                <span>50 NEAR</span>
+                                <span>$1</span>
+                                <span>$100</span>
                             </div>
                         </div>
 
@@ -144,7 +131,7 @@ export const ROICalculator = memo(() => {
                                     {t.landing.roi_calculator?.gross_sales || 'Gross Sales'}
                                 </span>
                                 <span className="text-xl font-bold text-white">
-                                    {formatNear(calculations.grossSales)} NEAR
+                                    {formatUsd(calculations.grossSales)}
                                 </span>
                             </div>
                         </div>
@@ -165,13 +152,10 @@ export const ROICalculator = memo(() => {
                                 </span>
                             </div>
                             <div className="text-4xl font-black text-near-green mb-2">
-                                {formatNear(calculations.youtickRevenue)} NEAR
-                            </div>
-                            <div className="text-sm text-zinc-400">
-                                ≈ {formatUsd(calculations.youtickUsd)}
+                                {formatUsd(calculations.youtickRevenue)}
                             </div>
                             <div className="mt-4 pt-4 border-t border-near-green/20 text-xs text-zinc-500">
-                                {t.landing.roi_calculator?.platform_fee || 'Platform Fee:'} {formatNear(calculations.youtickFee)} NEAR (2%)
+                                {t.landing.roi_calculator?.platform_fee || 'Platform Fee:'} {formatUsd(calculations.youtickFee)} (2%)
                             </div>
                         </div>
 
@@ -180,9 +164,9 @@ export const ROICalculator = memo(() => {
                             <div className="flex items-center justify-between p-4 rounded-lg bg-zinc-800/30">
                                 <span className="text-sm text-zinc-400">Vimeo OTT</span>
                                 <div className="text-right">
-                                    <span className="text-lg font-bold text-zinc-300">{formatNear(calculations.vimeoRevenue)} NEAR</span>
+                                    <span className="text-lg font-bold text-zinc-300">{formatUsd(calculations.vimeoRevenue)}</span>
                                     <div className="text-xs text-near-green">
-                                        +{formatNear(calculations.youtickRevenue - calculations.vimeoRevenue)} {t.landing.roi_calculator?.more || 'more'}
+                                        +{formatUsd(calculations.youtickRevenue - calculations.vimeoRevenue)} {t.landing.roi_calculator?.more || 'more'}
                                     </div>
                                 </div>
                             </div>
@@ -190,10 +174,10 @@ export const ROICalculator = memo(() => {
                             <div className="flex items-center justify-between p-4 rounded-lg bg-zinc-800/30">
                                 <span className="text-sm text-zinc-400">YouTube</span>
                                 <div className="text-right">
-                                    <span className="text-lg font-bold text-zinc-300">{formatUsd(calculations.youtubeUsd)}</span>
+                                    <span className="text-lg font-bold text-zinc-300">{formatUsd(calculations.youtubeRevenue)}</span>
                                     <div className="text-xs text-near-green flex items-center gap-1">
                                         <TrendingUp className="w-3 h-3" />
-                                        {Math.round(calculations.youtickUsd / Math.max(calculations.youtubeUsd, 1))}x {t.landing.roi_calculator?.more || 'more'}
+                                        {Math.round(calculations.youtickRevenue / Math.max(calculations.youtubeRevenue, 1))}x {t.landing.roi_calculator?.more || 'more'}
                                     </div>
                                 </div>
                             </div>
@@ -201,10 +185,10 @@ export const ROICalculator = memo(() => {
                             <div className="flex items-center justify-between p-4 rounded-lg bg-zinc-800/30">
                                 <span className="text-sm text-zinc-400">Spotify</span>
                                 <div className="text-right">
-                                    <span className="text-lg font-bold text-zinc-300">{formatUsd(calculations.spotifyUsd)}</span>
+                                    <span className="text-lg font-bold text-zinc-300">{formatUsd(calculations.spotifyRevenue)}</span>
                                     <div className="text-xs text-near-green flex items-center gap-1">
                                         <TrendingUp className="w-3 h-3" />
-                                        {Math.round(calculations.youtickUsd / Math.max(calculations.spotifyUsd, 1))}x {t.landing.roi_calculator?.more || 'more'}
+                                        {Math.round(calculations.youtickRevenue / Math.max(calculations.spotifyRevenue, 1))}x {t.landing.roi_calculator?.more || 'more'}
                                     </div>
                                 </div>
                             </div>

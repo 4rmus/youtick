@@ -7,6 +7,7 @@ import { useLanguage } from '@/components/providers/LanguageContext';
 import { Navigation } from '@/components/landing/Navigation';
 import { NovaThumbnail } from '@/components/NovaThumbnail';
 import { COLORS, ANIMATION } from '@/lib/constants';
+import { useNearPrice } from '@/hooks/useNearPrice';
 
 interface DiscoverViewProps {
   onBackClick: () => void;
@@ -15,6 +16,7 @@ interface DiscoverViewProps {
 export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
   const { t } = useLanguage();
   const { tokens, loading, error } = useAllVideos();
+  const { nearToUsdStr } = useNearPrice();
 
   // Loading State
   if (loading) {
@@ -77,6 +79,7 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
             // Get price from video_metadata if available
             const priceYocto = token.video_metadata?.price;
             const priceNear = priceYocto ? parseFloat(priceYocto) / 1e24 : 0;
+            const priceUsdCents = token.video_metadata?.price_usd;
             const isFree = priceNear === 0;
 
             return (
@@ -133,8 +136,10 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
                         }`}>
                         {isFree ? (
                           <span className="text-[9px] font-bold text-white tracking-wider uppercase">✨ Free</span>
+                        ) : priceUsdCents ? (
+                          <span className="text-[9px] font-bold text-white tracking-wider">${(priceUsdCents / 100).toFixed(2)}</span>
                         ) : (
-                          <span className="text-[9px] font-bold text-white tracking-wider">{priceNear.toFixed(2)} NEAR</span>
+                          <span className="text-[9px] font-bold text-white tracking-wider">{nearToUsdStr(priceNear)}</span>
                         )}
                       </div>
                     </div>

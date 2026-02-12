@@ -3,7 +3,6 @@
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useState, useEffect, Suspense } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { yoctoToNear } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { NovaThumbnail } from '@/components/NovaThumbnail';
@@ -13,6 +12,7 @@ import { MintButton } from '@/components/MintButton';
 import { Loader2, Play, Ticket, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { NEAR_CONFIG } from '@/lib/constants';
+import { useNearPrice } from '@/hooks/useNearPrice';
 import type { NFTEvent } from '@/lib/types';
 
 export default function TicketPage() {
@@ -30,6 +30,7 @@ function TicketContent() {
     const router = useRouter();
     const cid = searchParams.get('cid');
     const { connect, accountId } = useWallet();
+    const { yoctoToUsd } = useNearPrice();
 
     const [loading, setLoading] = useState(true);
     const [event, setEvent] = useState<(NFTEvent & { active?: boolean }) | null>(null);
@@ -158,9 +159,11 @@ function TicketContent() {
                             <div className="flex justify-between items-center text-sm text-muted-foreground">
                                 <span>Event Price</span>
                                 <span className="font-mono text-zinc-300">
-                                    {event?.price
-                                        ? `${yoctoToNear(BigInt(event.price))} NEAR`
-                                        : "Free / Legacy"}
+                                    {event?.price_usd
+                                        ? `$${(event.price_usd / 100).toFixed(2)}`
+                                        : event?.price
+                                            ? yoctoToUsd(event.price)
+                                            : "Free / Legacy"}
                                 </span>
                             </div>
                             <div className="flex justify-between items-center text-sm text-muted-foreground">

@@ -6,9 +6,11 @@ import { Play, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { useAllVideos } from '@/hooks/useAllVideos';
 import { Button } from '@/components/ui/button';
 import { NovaThumbnail } from '@/components/NovaThumbnail';
+import { useNearPrice } from '@/hooks/useNearPrice';
 
 export const StartSlider = memo(() => {
     const { tokens, loading } = useAllVideos();
+    const { nearToUsdStr } = useNearPrice();
     const scrollContainerRef = useRef<HTMLDivElement>(null);
 
     const scroll = (direction: 'left' | 'right') => {
@@ -82,6 +84,7 @@ export const StartSlider = memo(() => {
                         const isVideo = !!token.video_metadata?.encrypted_cid;
                         const priceYocto = token.video_metadata?.price;
                         const priceNear = priceYocto ? parseFloat(priceYocto) / 1e24 : 0;
+                        const priceUsdCents = token.video_metadata?.price_usd;
                         const isFree = priceNear === 0;
 
                         return (
@@ -121,7 +124,7 @@ export const StartSlider = memo(() => {
                                                 ? 'bg-gradient-to-r from-[var(--near-blue)] to-[#00D4AA] text-black'
                                                 : 'bg-black/60 text-white border border-white/20'
                                                 }`}>
-                                                {isFree ? 'FREE' : `${priceNear.toFixed(2)} NEAR`}
+                                                {isFree ? 'FREE' : priceUsdCents ? `$${(priceUsdCents / 100).toFixed(2)}` : nearToUsdStr(priceNear)}
                                             </div>
                                         </div>
                                     </div>

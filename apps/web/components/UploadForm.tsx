@@ -19,6 +19,7 @@ import { useLanguage } from '@/components/providers/LanguageContext';
 import { GiftLinkGenerator } from './GiftLinkGenerator';
 import { useSessionState, useAccountBalance } from '@/lib/hooks/useSessionState';
 import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
+import { getNearPrice, usdToNear, formatUsdCents } from '@/lib/price';
 
 const CONTRACT_ID = NEAR_CONFIG.contractId;
 
@@ -133,7 +134,19 @@ export function UploadForm() {
     const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
-    const [price, setPrice] = useState('0');
+    const [priceUsd, setPriceUsd] = useState(''); // USD amount (e.g. "5.00"), empty = free
+    const [nearPrice, setNearPrice] = useState<number>(0); // NEAR/USD rate
+
+    // Derived NEAR price from USD input
+    const priceUsdNum = parseFloat(priceUsd) || 0;
+    const priceNearDerived = nearPrice > 0 ? usdToNear(priceUsdNum, nearPrice) : 0;
+    // Keep 'price' as NEAR string for backward compat with CostReceipt etc.
+    const price = priceUsdNum > 0 ? priceNearDerived.toFixed(6) : '0';
+
+    // Fetch NEAR/USD price on mount
+    React.useEffect(() => {
+        getNearPrice().then(setNearPrice);
+    }, []);
 
     // Upload state (consolidated)
     const [us, dispatch] = useReducer(uploadReducer, initialUploadState);
@@ -354,11 +367,15 @@ export function UploadForm() {
                     }
                 };
 
+                // price_usd in cents (e.g. $5.00 → 500), null if free
+                const priceUsdCents = priceUsdNum > 0 ? Math.round(priceUsdNum * 100) : null;
+
                 const eventMetadata = {
                     encrypted_cid: videoUuid, // UUID key
                     title: eventTitle,
                     description: description || 'No description provided',
-                    price: priceYocto.toString()
+                    price: priceYocto.toString(),
+                    price_usd: priceUsdCents,
                 };
 
                 setStatus('Minting Ticket...');
@@ -395,6 +412,7 @@ export function UploadForm() {
             setFile(null);
             setTitle('');
             setDescription('');
+            setPriceUsd('');
             setThumbnail(null);
             setThumbnailPreview(null);
 
@@ -443,13 +461,12 @@ export function UploadForm() {
             setStatus('Description must be 2000 characters or less');
             return;
         }
-        const priceNum = parseFloat(price);
-        if (priceNum < 0) {
+        if (priceUsdNum < 0) {
             setStatus('Price cannot be negative');
             return;
         }
-        if (priceNum > 10000) {
-            setStatus('Price cannot exceed 10,000 NEAR');
+        if (priceUsdNum > 50000) {
+            setStatus('Price cannot exceed $50,000');
             return;
         }
 
@@ -472,7 +489,7 @@ export function UploadForm() {
 
             // --- Fetch fresh on-chain balance (React Query cache may be stale) ---
             const freshBalanceResult = await refetchBalance();
-            const freshBalance = parseFloat(freshBalanceResult.data || '0');
+            let freshBalance = parseFloat(freshBalanceResult.data || '0');
 
             // --- Calculate exact required deposit ---
             const isFreeVideo = parseFloat(price) === 0 || price === '';
@@ -488,14 +505,25 @@ export function UploadForm() {
             // Exact deposit: only what the contract methods will deduct
             const exactPrepaidNeeded = novaFee + mintCost + eventCost;
 
-            if (!sessionKeyExists) {
-                // First-time user: session key was created by MyNearWallet during sign-in.
-                // Try importing it from the wallet's localStorage.
-                const imported = await sessionManager.importWalletFunctionCallKey();
-                if (!imported) {
-                    throw new Error('Session key not available. Please disconnect and reconnect your wallet.');
-                }
+            // --- Ensure a valid session key exists (local + on-chain) ---
+            // 1. Try importing MyNearWallet's function call key (no-op if key already in keystore)
+            await sessionManager.importWalletFunctionCallKey();
+            // 2. Verify the local key is also registered on-chain.
+            //    hasSessionKey() removes stale local keys that no longer exist on-chain,
+            //    preventing AccessKeyDoesNotExistError at callMethod time.
+            const hasValidKey = await sessionManager.hasSessionKey();
+
+            if (!hasValidKey) {
+                // No valid session key (Meteor wallet, stale/removed key, first use, etc.)
+                // Create a fresh key pair + deposit in one wallet popup.
+                setStatus('Creating session key...');
+                const depositAmount = Math.max(exactPrepaidNeeded, 0.5);
+                await sessionManager.createSessionKey(wallet, depositAmount.toFixed(2));
                 refetchSessionKey();
+
+                // Re-fetch balance since createSessionKey deposited funds
+                const updatedResult = await refetchBalance();
+                freshBalance = parseFloat(updatedResult.data || '0');
             }
 
             if (freshBalance < exactPrepaidNeeded) {
@@ -639,20 +667,29 @@ export function UploadForm() {
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <label htmlFor="ticket-price" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                    {t.upload_page.price}
+                                    Price (USD)
                                 </label>
-                                <Input
-                                    id="ticket-price"
-                                    type="number"
-                                    step="0.1"
-                                    min="0"
-                                    max="10000"
-                                    placeholder="0"
-                                    value={price}
-                                    onChange={(e) => setPrice(e.target.value)}
-                                    disabled={uploading || !accountId}
-                                    aria-label="Ticket price in NEAR"
-                                />
+                                <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
+                                    <Input
+                                        id="ticket-price"
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        max="50000"
+                                        placeholder="0.00"
+                                        value={priceUsd}
+                                        onChange={(e) => setPriceUsd(e.target.value)}
+                                        disabled={uploading || !accountId}
+                                        aria-label="Ticket price in USD"
+                                        className="pl-7"
+                                    />
+                                </div>
+                                {priceUsdNum > 0 && nearPrice > 0 && (
+                                    <p className="text-[11px] text-zinc-500">
+                                        ≈ {priceNearDerived.toFixed(2)} NEAR
+                                    </p>
+                                )}
                             </div>
 
                             <div className="space-y-2">
@@ -798,14 +835,14 @@ export function UploadForm() {
                                 {/* Top Badges Row */}
                                 <div className="absolute top-3 left-3 right-3 flex items-center justify-end">
                                     {/* Price Badge */}
-                                    <div className={`px-3 py-1.5 rounded-lg backdrop-blur-sm border shadow-lg ${parseFloat(price) === 0 || price === ''
+                                    <div className={`px-3 py-1.5 rounded-lg backdrop-blur-sm border shadow-lg ${priceUsdNum === 0
                                         ? 'bg-emerald-500/90 border-emerald-400/30'
                                         : 'bg-black/60 border-white/10'
                                         }`}>
-                                        {parseFloat(price) === 0 || price === '' ? (
+                                        {priceUsdNum === 0 ? (
                                             <span className="text-[10px] font-bold text-white tracking-wider uppercase">✨ Free Ticket</span>
                                         ) : (
-                                            <span className="text-[10px] font-bold text-white tracking-wider">{price} NEAR</span>
+                                            <span className="text-[10px] font-bold text-white tracking-wider">${parseFloat(priceUsd).toFixed(2)}</span>
                                         )}
                                     </div>
                                 </div>

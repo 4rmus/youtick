@@ -12,11 +12,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { GiftLinkGenerator } from "@/components/GiftLinkGenerator";
 import { TrialUpgradeDialog } from "@/components/TrialUpgradeDialog";
 import { NovaThumbnail } from "@/components/NovaThumbnail";
+import { useNearPrice } from '@/hooks/useNearPrice';
 import type { NFTEvent } from '@/lib/types';
 
 interface CreatedEvent extends NFTEvent {
     cid: string;
     media: string;
+    price_usd?: number | null;
 }
 
 interface AccountState {
@@ -26,6 +28,7 @@ interface AccountState {
 export default function ProfilePage() {
     const { t } = useLanguage();
     const { accountId, isTrial } = useWallet();
+    const { yoctoToUsd } = useNearPrice();
     const { tokens, loading: tokensLoading } = useOwnedTokens();
     const [walletBalance, setWalletBalance] = useState<string | null>(null);
     const [loadingBalances, setLoadingBalances] = useState(false);
@@ -94,6 +97,7 @@ export default function ProfilePage() {
                     .map(([cid, event]) => ({
                         cid,
                         ...event,
+                        price_usd: event.price_usd ?? null,
                         media: event.title.includes(':::') && event.title.split(':::').length >= 2
                             ? `https://ipfs.io/ipfs/${event.title.split(':::')[1]}`
                             : "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png",
@@ -351,7 +355,11 @@ export default function ProfilePage() {
                                                 <div className="flex-1 min-w-0">
                                                     <h4 className="text-sm font-medium text-white truncate">{event.title}</h4>
                                                     <p className="text-xs text-zinc-500 mt-0.5">
-                                                        {event.price === "0" ? "Free" : `${Number(BigInt(event.price) / BigInt(10 ** 24)).toFixed(2)} NEAR`}
+                                                        {event.price === "0"
+                                                            ? "Free"
+                                                            : event.price_usd
+                                                                ? `$${(event.price_usd / 100).toFixed(2)}`
+                                                                : yoctoToUsd(event.price)}
                                                     </p>
                                                 </div>
                                                 <div className="flex items-center gap-2">
@@ -415,7 +423,11 @@ export default function ProfilePage() {
                                 <div className="flex-1 min-w-0">
                                     <h4 className="text-sm font-medium text-white truncate">{event.title}</h4>
                                     <p className="text-xs text-zinc-500 mt-0.5">
-                                        {event.price === "0" ? "Free" : `${Number(BigInt(event.price) / BigInt(10 ** 24)).toFixed(2)} NEAR`}
+                                        {event.price === "0"
+                                            ? "Free"
+                                            : event.price_usd
+                                                ? `$${(event.price_usd / 100).toFixed(2)}`
+                                                : yoctoToUsd(event.price)}
                                     </p>
                                 </div>
                             </button>
@@ -457,7 +469,11 @@ export default function ProfilePage() {
                                     Creator: <span className="text-zinc-300">{accountId}</span>
                                 </p>
                                 <p className="text-xs text-zinc-500 mt-0.5">
-                                    {selectedEventForGift.price === "0" ? "Free Event" : `${Number(BigInt(selectedEventForGift.price) / BigInt(10 ** 24)).toFixed(2)} NEAR`}
+                                    {selectedEventForGift.price === "0"
+                                        ? "Free Event"
+                                        : selectedEventForGift.price_usd
+                                            ? `$${(selectedEventForGift.price_usd / 100).toFixed(2)}`
+                                            : yoctoToUsd(selectedEventForGift.price)}
                                 </p>
                             </div>
                         </div>

@@ -127,6 +127,7 @@ export async function batchUploadActionsSignless(
         title: string;
         description: string;
         price: string;
+        price_usd?: number | null;
     }
 ) {
     // We must split these into two transactions because Limited Access Keys (Session Keys)
@@ -138,7 +139,8 @@ export async function batchUploadActionsSignless(
         encrypted_cid: eventMetadata.encrypted_cid,
         title: eventMetadata.title,
         description: eventMetadata.description,
-        price: eventMetadata.price
+        price: eventMetadata.price,
+        price_usd: eventMetadata.price_usd ?? null,
     });
 }
 

@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import "@near-wallet-selector/modal-ui/styles.css";
 import { WalletProvider } from "@/components/providers/WalletProvider";
 import { QueryProvider } from "@/components/providers/QueryProvider";
+import { EvmProvider } from "@/components/providers/EvmProvider";
 import { Navbar } from "@/components/Navbar";
 import { LanguageProvider } from "@/components/providers/LanguageContext";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
@@ -91,6 +93,7 @@ export default function RootLayout({
             <body className={inter.className}>
                 <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
                     <QueryProvider>
+                        <EvmProvider>
                         <LanguageProvider>
                             <WalletProvider>
                             <OnboardingKeyInit />
@@ -103,6 +106,7 @@ export default function RootLayout({
                             <LanguageSwitcher />
                         </WalletProvider>
                         </LanguageProvider>
+                        </EvmProvider>
                     </QueryProvider>
                 </ThemeProvider>
             </body>
