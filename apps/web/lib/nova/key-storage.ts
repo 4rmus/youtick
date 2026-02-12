@@ -50,7 +50,11 @@ export async function storeEncryptionKey(
         msg.includes('timeout') ||
         msg.includes('Key not found') ||
         msg.includes('key fetch failed') ||
-        msg.includes('Shade key');
+        msg.includes('Shade key') ||
+        msg.includes('RPC not available') ||
+        msg.includes('signing account') ||
+        msg.includes('PROXY_TIMEOUT') ||
+        msg.includes('PROXY_NETWORK_ERROR');
 
       if (isTransient && attempt < MAX_RETRIES - 1) {
         const delay = RETRY_DELAYS[attempt];
@@ -114,12 +118,9 @@ export async function retrieveEncryptionKey(
   try {
     const sdk = await getNovaSdk();
 
-    // Verify authorization first
-    const isAuthorized = await sdk.isAuthorized(groupId, accountId);
-    if (!isAuthorized) {
-      throw new NovaError('ACCESS_DENIED', `Account ${accountId} not authorized for group ${groupId}`);
-    }
-
+    // Skip isAuthorized pre-check — sdk.retrieve() enforces auth at TEE level.
+    // The pre-check can return stale results after a recent addGroupMember,
+    // causing false ACCESS_DENIED errors due to TEE propagation delay.
     const result = await sdk.retrieve(groupId, keyCid);
     const aesKeyB64 = Buffer.from(result.data).toString('utf-8');
     return aesKeyB64;
@@ -129,8 +130,8 @@ export async function retrieveEncryptionKey(
     const msg = error instanceof Error ? error.message : String(error);
     console.error('[Nova KeyStorage] Failed to retrieve key:', msg);
 
-    if (msg.includes('not authorized')) {
-      throw new NovaError('ACCESS_DENIED', `Not authorized to access key ${keyCid}`);
+    if (msg.includes('not authorized') || msg.includes('ACCESS_DENIED')) {
+      throw new NovaError('ACCESS_DENIED', `Account ${accountId} not authorized for group ${groupId}`);
     }
     if (msg.includes('not found')) {
       throw new NovaError('NOT_FOUND', `Key ${keyCid} not found`);

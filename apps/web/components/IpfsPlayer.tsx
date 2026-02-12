@@ -4,6 +4,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { fetchFile } from '@/lib/nova';
 import { hasApiKey } from '@/lib/nova/config';
 import { NovaError } from '@/lib/nova/types';
+import { addBuyerToNovaGroup } from '@/lib/nova/post-purchase';
 import { fetchFromGateways } from '@/lib/crust';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Loader2, Play, Lock, Ticket, KeyRound } from 'lucide-react';
@@ -135,7 +136,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             // 2. Fetch video based on keyCid presence
             //    keyCid present  → paid video (encrypted, needs Nova decrypt)
             //    keyCid absent   → free video (unencrypted, raw fetch from Crust)
-            let videoData: Uint8Array;
+            let videoData: Uint8Array = undefined!;
 
             if (keyCid) {
                 // Paid video: decrypt via Crust data + Nova key
@@ -145,10 +146,40 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
 
                 setPlayerState({ type: 'decrypting', message: 'Decrypting video...' });
 
-                videoData = await fetchFile(novaCid, accountId, {
-                    groupId: novaGroupId,
-                    keyCid,
-                });
+                try {
+                    videoData = await fetchFile(novaCid, accountId, {
+                        groupId: novaGroupId,
+                        keyCid,
+                    });
+                } catch (fetchErr) {
+                    // Self-healing: if not authorized, add user to group and retry with escalating delays
+                    const isAccessDenied = fetchErr instanceof NovaError &&
+                        (fetchErr.code === 'ACCESS_DENIED' || fetchErr.message.includes('not authorized'));
+                    if (!isAccessDenied) throw fetchErr;
+
+                    console.log('[IpfsPlayer] Access denied — self-healing group add for:', accountId);
+                    setPlayerState({ type: 'decrypting', message: 'Syncing access rights...' });
+                    await addBuyerToNovaGroup(cid, accountId);
+
+                    // Retry with escalating delays for TEE propagation
+                    const delays = [5000, 8000, 12000];
+                    let lastErr: unknown = fetchErr;
+                    for (const delay of delays) {
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        try {
+                            videoData = await fetchFile(novaCid, accountId, {
+                                groupId: novaGroupId,
+                                keyCid,
+                            });
+                            lastErr = null;
+                            break;
+                        } catch (retryErr) {
+                            lastErr = retryErr;
+                            console.warn(`[IpfsPlayer] Retry after ${delay}ms failed, will try again...`);
+                        }
+                    }
+                    if (lastErr) throw lastErr;
+                }
             } else {
                 // Free video: fetch raw (unencrypted) from Crust gateways
                 setPlayerState({ type: 'decrypting', message: 'Fetching video from IPFS...' });

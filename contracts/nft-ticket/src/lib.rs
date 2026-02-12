@@ -35,6 +35,7 @@ impl StorageKey {
     pub const DAILY_TRIAL_COUNTS: Self = Self(b"t8");
     pub const PURCHASE_LOGS: Self = Self(b"p8");
     pub const EVENT_NOVA_GROUPS: Self = Self(b"ng8");
+    pub const EVENT_PRICE_USD: Self = Self(b"pu8");
 }
 
 #[near(serializers = [borsh, json])]
@@ -45,6 +46,19 @@ pub struct Event {
     pub price: U128,
     pub creator_id: AccountId,
     pub created_at: u64,
+}
+
+/// JSON-only response struct for get_events/get_event.
+/// Includes price_usd from separate LookupMap (not stored in Event borsh).
+#[near(serializers = [json])]
+#[derive(Clone)]
+pub struct EventResponse {
+    pub title: String,
+    pub description: String,
+    pub price: U128,
+    pub creator_id: AccountId,
+    pub created_at: u64,
+    pub price_usd: Option<u128>,
 }
 
 // Custom video metadata for token-gated content
@@ -186,6 +200,28 @@ pub struct OldContractV6 {
     next_purchase_id: u64,
 }
 
+/// Old contract state V7 (before nova_platform_account was added)
+/// Used for state migration from V7 → V8
+#[near(serializers=[borsh])]
+#[derive(PanicOnDefault)]
+pub struct OldContractV7 {
+    tokens: NonFungibleToken,
+    metadata: LazyOption<NFTContractMetadata>,
+    video_metadata: UnorderedMap<TokenId, VideoMetadata>,
+    user_deposits: LookupMap<AccountId, NearToken>,
+    events: UnorderedMap<String, Event>,
+    next_token_id: u64,
+    gift_drops: LookupMap<String, GiftDrop>,
+    trial_pool: NearToken,
+    onboarding_keys: LookupSet<PublicKey>,
+    daily_trial_counts: LookupMap<u64, u32>,
+    onboarding_config: OnboardingConfig,
+    commission_pool: NearToken,
+    purchase_logs: UnorderedMap<u64, PurchaseLog>,
+    next_purchase_id: u64,
+    event_nova_groups: LookupMap<String, String>,
+}
+
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
@@ -213,6 +249,10 @@ pub struct Contract {
     next_purchase_id: u64,
     // V7: Event CID → Nova Group ID mapping for ticket copies
     event_nova_groups: LookupMap<String, String>,
+    // V8: Nova platform auto-funding (already in on-chain state)
+    nova_platform_account: Option<AccountId>,
+    nova_service_fee: NearToken,
+    // NOTE: event_price_usd uses lazy LookupMap (separate storage) to avoid migration.
 }
 
 // SECURITY: Use #[init] to prevent re-initialization attacks
@@ -257,6 +297,8 @@ impl Contract {
             purchase_logs: UnorderedMap::new(StorageKey::PURCHASE_LOGS),
             next_purchase_id: 0,
             event_nova_groups: LookupMap::new(StorageKey::EVENT_NOVA_GROUPS),
+            nova_platform_account: None,
+            nova_service_fee: NearToken::from_yoctonear(0),
         }
     }
 
@@ -284,7 +326,17 @@ impl Contract {
             purchase_logs: old_state.purchase_logs,
             next_purchase_id: old_state.next_purchase_id,
             event_nova_groups: LookupMap::new(StorageKey::EVENT_NOVA_GROUPS),
+            nova_platform_account: None,
+            nova_service_fee: NearToken::from_yoctonear(0),
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // LAZY STORAGE HELPER (event_price_usd stored outside Contract borsh)
+    // ═══════════════════════════════════════════════════════════════
+
+    fn lazy_event_price_usd(&self) -> LookupMap<String, u128> {
+        LookupMap::new(StorageKey::EVENT_PRICE_USD)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -300,6 +352,45 @@ impl Contract {
         let old_id = self.next_token_id;
         self.next_token_id = new_id;
         env::log_str(&format!("next_token_id updated: {} -> {}", old_id, new_id));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // NOVA PLATFORM AUTO-FUNDING ADMIN FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Set Nova platform account (owner only)
+    pub fn set_nova_platform_account(&mut self, account_id: AccountId) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can set Nova platform account"
+        );
+        self.nova_platform_account = Some(account_id.clone());
+        env::log_str(&format!("Nova platform account set to: {}", account_id));
+    }
+
+    /// Set Nova service fee per ticket (owner only, max 0.1 NEAR)
+    pub fn set_nova_service_fee(&mut self, fee: U128) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can set Nova service fee"
+        );
+        let fee_token = NearToken::from_yoctonear(fee.0);
+        require!(
+            fee_token <= NearToken::from_millinear(100),
+            "Nova service fee cannot exceed 0.1 NEAR"
+        );
+        self.nova_service_fee = fee_token;
+        env::log_str(&format!("Nova service fee set to: {} yoctoNEAR", fee.0));
+    }
+
+    /// View: Get Nova platform account
+    pub fn get_nova_platform_account(&self) -> Option<AccountId> {
+        self.nova_platform_account.clone()
+    }
+
+    /// View: Get Nova service fee per ticket
+    pub fn get_nova_service_fee(&self) -> U128 {
+        U128(self.nova_service_fee.as_yoctonear())
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -446,11 +537,17 @@ impl Contract {
     // ═══════════════════════════════════════════════════════════════
 
     #[payable]
-    pub fn create_event(&mut self, encrypted_cid: String, title: String, description: String, price: U128) {
+    pub fn create_event(&mut self, encrypted_cid: String, title: String, description: String, price: U128, price_usd: Option<u128>) {
         let deposit = env::attached_deposit();
         require!(
             deposit >= NearToken::from_millinear(100), // 0.1 NEAR
             "Requires at least 0.1 NEAR deposit to create an event"
+        );
+
+        // SECURITY: Prevent overwriting existing events
+        require!(
+            self.events.get(&encrypted_cid).is_none(),
+            "Event with this CID already exists"
         );
 
         let event = Event {
@@ -462,19 +559,55 @@ impl Contract {
         };
 
         self.events.insert(&encrypted_cid, &event);
+
+        // Store USD price in separate map (backward-compatible)
+        if let Some(usd) = price_usd {
+            self.lazy_event_price_usd().insert(&encrypted_cid, &usd);
+        }
     }
 
-    pub fn get_events(&self, from_index: Option<U128>, limit: Option<u64>) -> Vec<(String, Event)> {
-        self.events.iter().skip(from_index.map(|v| v.0 as usize).unwrap_or(0)).take(limit.unwrap_or(50) as usize).collect()
+    pub fn get_events(&self, from_index: Option<U128>, limit: Option<u64>) -> Vec<(String, EventResponse)> {
+        self.events.iter()
+            .skip(from_index.map(|v| v.0 as usize).unwrap_or(0))
+            .take(limit.unwrap_or(50) as usize)
+            .map(|(cid, event)| {
+                let price_usd = self.lazy_event_price_usd().get(&cid);
+                (cid, EventResponse {
+                    title: event.title,
+                    description: event.description,
+                    price: event.price,
+                    creator_id: event.creator_id,
+                    created_at: event.created_at,
+                    price_usd,
+                })
+            })
+            .collect()
     }
 
-    pub fn get_event(&self, encrypted_cid: String) -> Option<Event> {
-        self.events.get(&encrypted_cid)
+    pub fn get_event(&self, encrypted_cid: String) -> Option<EventResponse> {
+        self.events.get(&encrypted_cid).map(|event| {
+            let price_usd = self.lazy_event_price_usd().get(&encrypted_cid);
+            EventResponse {
+                title: event.title,
+                description: event.description,
+                price: event.price,
+                creator_id: event.creator_id,
+                created_at: event.created_at,
+                price_usd,
+            }
+        })
     }
 
     /// Create an event using prepaid funds (Callable via Session Key)
-    pub fn create_event_prepaid(&mut self, encrypted_cid: String, title: String, description: String, price: U128) {
+    pub fn create_event_prepaid(&mut self, encrypted_cid: String, title: String, description: String, price: U128, price_usd: Option<u128>) {
         let account_id = env::predecessor_account_id();
+
+        // SECURITY: Prevent overwriting existing events
+        require!(
+            self.events.get(&encrypted_cid).is_none(),
+            "Event with this CID already exists"
+        );
+
         let charge_amount = NearToken::from_millinear(100); // 0.1 NEAR for storage
 
         let current_bal = self.user_deposits.get(&account_id).expect("Insufficient prepaid balance for event creation");
@@ -494,6 +627,11 @@ impl Contract {
         };
 
         self.events.insert(&encrypted_cid, &event);
+
+        // Store USD price in separate map (backward-compatible)
+        if let Some(usd) = price_usd {
+            self.lazy_event_price_usd().insert(&encrypted_cid, &usd);
+        }
     }
 
     /// Purchase a ticket (mint NFT) for an event
@@ -519,12 +657,14 @@ impl Contract {
         let mut commission: u128 = 0;
 
         if !is_free {
-            // Paid ticket - require full payment plus minimal storage
-            let min_deposit = required_price.saturating_add(storage_cost);
+            // Paid ticket - require full payment plus storage plus Nova service fee
+            let min_deposit = required_price
+                .saturating_add(storage_cost)
+                .saturating_add(self.nova_service_fee);
             require!(
                 deposit >= min_deposit,
-                &format!("Insufficient deposit. Required: {} yoctoNEAR (price) + {} (storage)",
-                    event.price.0, storage_cost.as_yoctonear())
+                &format!("Insufficient deposit. Required: {} yoctoNEAR (price) + {} (storage) + {} (nova fee)",
+                    event.price.0, storage_cost.as_yoctonear(), self.nova_service_fee.as_yoctonear())
             );
 
             // Calculate commission (2% to contract, 98% to creator)
@@ -547,11 +687,22 @@ impl Contract {
                     .detach();
             }
 
-            env::log_str(&format!("Ticket sold: {} to creator, {} trial_pool, {} commission_pool, {} storage",
-                creator_amount, trial_share, commission_share, storage_cost.as_yoctonear()));
+            // Auto-fund Nova platform account
+            if self.nova_service_fee.as_yoctonear() > 0 {
+                if let Some(ref nova_account) = self.nova_platform_account {
+                    Promise::new(nova_account.clone())
+                        .transfer(self.nova_service_fee)
+                        .detach();
+                }
+            }
+
+            env::log_str(&format!("Ticket sold: {} to creator, {} trial_pool, {} commission_pool, {} storage, {} nova_fee",
+                creator_amount, trial_share, commission_share, storage_cost.as_yoctonear(), self.nova_service_fee.as_yoctonear()));
 
             // Refund excess deposit to buyer
-            let total_used = required_price.saturating_add(storage_cost);
+            let total_used = required_price
+                .saturating_add(storage_cost)
+                .saturating_add(self.nova_service_fee);
             if deposit > total_used {
                 let refund = deposit.saturating_sub(total_used);
                 Promise::new(env::predecessor_account_id())
@@ -608,8 +759,10 @@ impl Contract {
             // FREE TICKET: Contract pays storage, user pays nothing
             env::log_str("Free ticket - contract sponsors storage");
         } else {
-            // PAID TICKET: Deduct from user's prepaid balance
-            let total_cost = required_price.saturating_add(storage_cost);
+            // PAID TICKET: Deduct from user's prepaid balance (including Nova service fee)
+            let total_cost = required_price
+                .saturating_add(storage_cost)
+                .saturating_add(self.nova_service_fee);
 
             let current_bal = self.user_deposits.get(&account_id)
                 .expect("No prepaid balance. Call deposit_funds first.");
@@ -642,8 +795,17 @@ impl Contract {
                     .detach();
             }
 
-            env::log_str(&format!("Prepaid ticket: {} to creator, {} trial_pool, {} commission_pool",
-                creator_amount, trial_share, commission_share));
+            // Auto-fund Nova platform account
+            if self.nova_service_fee.as_yoctonear() > 0 {
+                if let Some(ref nova_account) = self.nova_platform_account {
+                    Promise::new(nova_account.clone())
+                        .transfer(self.nova_service_fee)
+                        .detach();
+                }
+            }
+
+            env::log_str(&format!("Prepaid ticket: {} to creator, {} trial_pool, {} commission_pool, {} nova_fee",
+                creator_amount, trial_share, commission_share, self.nova_service_fee.as_yoctonear()));
         }
 
         // Log purchase for audit trail (use next_token_id as expected token_id)
@@ -783,7 +945,7 @@ impl Contract {
     }
 
     /// Mint a new video NFT ticket
-    /// SECURITY: Requires 1 yoctoNEAR deposit to prevent accidental calls
+    /// SECURITY: Only contract owner can directly mint NFTs
     #[payable]
     pub fn nft_mint(
         &mut self,
@@ -791,6 +953,12 @@ impl Contract {
         token_metadata: TokenMetadata,
         video_metadata: VideoMetadata,
     ) -> Token {
+        // SECURITY: Only owner can directly mint
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only contract owner can directly mint NFTs"
+        );
+
         // SECURITY: Require minimum deposit
         require!(
             env::attached_deposit() >= NearToken::from_yoctonear(1),
@@ -800,13 +968,15 @@ impl Contract {
         let token_id = self.next_token_id.to_string();
         self.next_token_id += 1;
 
-        // Store nova_group_id in event-level mapping for ticket copies
+        // Store nova_group_id in event-level mapping for ticket copies (only if not already set)
         if let Some(ref group_id) = video_metadata.nova_group_id {
-            self.event_nova_groups.insert(&video_metadata.encrypted_cid, group_id);
-            env::log_str(&format!(
-                "Nova group {} indexed for event {}",
-                group_id, video_metadata.encrypted_cid
-            ));
+            if self.event_nova_groups.get(&video_metadata.encrypted_cid).is_none() {
+                self.event_nova_groups.insert(&video_metadata.encrypted_cid, group_id);
+                env::log_str(&format!(
+                    "Nova group {} indexed for event {}",
+                    group_id, video_metadata.encrypted_cid
+                ));
+            }
         }
 
         // Store video metadata
@@ -851,6 +1021,220 @@ impl Contract {
         self.user_deposits.insert(&account_id, &new_bal);
 
         env::log_str(&format!("Deposited {} for {} (by {})", amount, account_id, env::predecessor_account_id()));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // wNEAR DIRECT PURCHASE (Single-popup stablecoin flow)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// NEP-141 ft_on_transfer — called by wrap.near when someone sends wNEAR
+    /// via ft_transfer_call to this contract.
+    ///
+    /// This enables a single-wallet-popup purchase flow for stablecoin payments:
+    /// User swaps USDC→wNEAR via 1Click, then sends wNEAR to this contract.
+    /// The contract unwraps wNEAR to native NEAR and processes the ticket purchase.
+    ///
+    /// msg format: {"action":"buy_ticket","buyer_id":"alice.near","encrypted_cid":"Qm..."}
+    ///
+    /// Returns "0" (all tokens used) on success, or the full amount (refund) on failure.
+    pub fn ft_on_transfer(
+        &mut self,
+        sender_id: AccountId,
+        amount: U128,
+        msg: String,
+    ) -> PromiseOrValue<U128> {
+        // SECURITY: Only accept wNEAR from wrap.near
+        let predecessor = env::predecessor_account_id();
+        require!(
+            predecessor.as_str() == "wrap.near",
+            "Only wNEAR (wrap.near) is accepted"
+        );
+
+        // Parse the message
+        let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap_or_else(|_| {
+            env::panic_str("Invalid JSON message. Expected: {\"action\":\"buy_ticket\",\"buyer_id\":\"...\",\"encrypted_cid\":\"...\"}");
+        });
+
+        let action = parsed.get("action").and_then(|v| v.as_str()).unwrap_or("");
+        require!(action == "buy_ticket", "Unknown action. Only 'buy_ticket' is supported.");
+
+        let buyer_id: AccountId = parsed.get("buyer_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| env::panic_str("Missing buyer_id"))
+            .parse()
+            .unwrap_or_else(|_| env::panic_str("Invalid buyer_id"));
+
+        let encrypted_cid = parsed.get("encrypted_cid")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| env::panic_str("Missing encrypted_cid"))
+            .to_string();
+
+        // SECURITY: sender_id must match buyer_id (prevent buying for others without consent)
+        require!(
+            sender_id == buyer_id,
+            "sender_id must match buyer_id"
+        );
+
+        // Verify event exists and get pricing
+        let event = self.events.get(&encrypted_cid)
+            .unwrap_or_else(|| env::panic_str("Event not found"));
+
+        let required_price = NearToken::from_yoctonear(event.price.0);
+        let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        let is_free = required_price.as_yoctonear() == 0;
+
+        if is_free {
+            // Free tickets don't need wNEAR — refund everything
+            env::log_str("Free ticket — use claim_free_ticket instead. Refunding wNEAR.");
+            return PromiseOrValue::Value(amount); // Refund all
+        }
+
+        // Check wNEAR amount covers price + storage + nova fee
+        let total_cost = required_price
+            .saturating_add(storage_cost)
+            .saturating_add(self.nova_service_fee);
+
+        let received = NearToken::from_yoctonear(amount.0);
+        require!(
+            received >= total_cost,
+            &format!(
+                "Insufficient wNEAR. Need {} yocto (price {} + storage {} + nova {}), got {}",
+                total_cost.as_yoctonear(),
+                required_price.as_yoctonear(),
+                storage_cost.as_yoctonear(),
+                self.nova_service_fee.as_yoctonear(),
+                received.as_yoctonear()
+            )
+        );
+
+        // Unwrap ALL received wNEAR to native NEAR, then process purchase in callback.
+        // near_withdraw on wrap.near burns the wNEAR and sends native NEAR back to this
+        // contract via a Promise::Transfer receipt (processed in the next block).
+        // The callback then handles payment splitting and NFT minting.
+        env::log_str(&format!(
+            "ft_on_transfer: {} wNEAR from {} for event {} (buyer: {})",
+            amount.0, sender_id, encrypted_cid, buyer_id
+        ));
+
+        // Step 1: Call near_withdraw on wrap.near to unwrap wNEAR → native NEAR
+        // Step 2: Callback processes the ticket purchase using the unwrapped NEAR
+        PromiseOrValue::Promise(
+            Promise::new("wrap.near".parse::<AccountId>().unwrap())
+                .function_call(
+                    "near_withdraw".to_string(),
+                    serde_json::json!({ "amount": amount.0.to_string() }).to_string().into_bytes(),
+                    NearToken::from_yoctonear(1), // 1 yoctoNEAR required by wrap.near
+                    near_sdk::Gas::from_tgas(10),
+                )
+                .then(
+                    Self::ext(env::current_account_id())
+                        .with_static_gas(near_sdk::Gas::from_tgas(100))
+                        .on_wnear_unwrap_for_purchase(
+                            buyer_id,
+                            encrypted_cid,
+                            amount,
+                        )
+                )
+        )
+    }
+
+    /// Callback after wNEAR unwrap completes.
+    /// Native NEAR has arrived in the contract's balance.
+    /// Now process the ticket purchase: split payments, mint NFT.
+    #[private]
+    pub fn on_wnear_unwrap_for_purchase(
+        &mut self,
+        buyer_id: AccountId,
+        encrypted_cid: String,
+        wnear_amount: U128,
+    ) -> U128 {
+        // Verify unwrap succeeded
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+
+        if !succeeded {
+            // Unwrap failed — the wNEAR was NOT burned, so wrap.near will handle
+            // the refund via ft_resolve_transfer (returns the full amount).
+            env::panic_str("wNEAR unwrap failed — tokens will be refunded by wrap.near");
+        }
+
+        // Native NEAR is now in the contract's balance.
+        // Process ticket purchase internally (same logic as buy_ticket_prepaid).
+        let event = self.events.get(&encrypted_cid)
+            .unwrap_or_else(|| env::panic_str("Event not found"));
+
+        let required_price = NearToken::from_yoctonear(event.price.0);
+        let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+
+        // Calculate commission (2% to contract, 98% to creator)
+        let commission_rate: u128 = 2;
+        let price_yocto = required_price.as_yoctonear();
+        let commission = price_yocto * commission_rate / 100;
+        let creator_amount = price_yocto - commission;
+
+        // Split commission: 50% trial pool, 50% commission pool
+        let trial_share = commission / 2;
+        let commission_share = commission - trial_share;
+        self.trial_pool = self.trial_pool.saturating_add(NearToken::from_yoctonear(trial_share));
+        self.commission_pool = self.commission_pool.saturating_add(NearToken::from_yoctonear(commission_share));
+
+        // Transfer 98% to creator
+        if creator_amount > 0 {
+            Promise::new(event.creator_id.clone())
+                .transfer(NearToken::from_yoctonear(creator_amount))
+                .detach();
+        }
+
+        // Auto-fund Nova platform
+        if self.nova_service_fee.as_yoctonear() > 0 {
+            if let Some(ref nova_account) = self.nova_platform_account {
+                Promise::new(nova_account.clone())
+                    .transfer(self.nova_service_fee)
+                    .detach();
+            }
+        }
+
+        // Refund excess to buyer (unwrapped NEAR minus total cost)
+        let total_used = required_price
+            .saturating_add(storage_cost)
+            .saturating_add(self.nova_service_fee);
+        let received = NearToken::from_yoctonear(wnear_amount.0);
+        if received > total_used {
+            let refund = received.saturating_sub(total_used);
+            Promise::new(buyer_id.clone())
+                .transfer(refund)
+                .detach();
+            env::log_str(&format!("Refunded {} excess NEAR to {}", refund.as_yoctonear(), buyer_id));
+        }
+
+        env::log_str(&format!(
+            "wNEAR ticket purchase: {} to creator, {} commission, {} nova_fee (buyer: {})",
+            creator_amount, commission, self.nova_service_fee.as_yoctonear(), buyer_id
+        ));
+
+        // Log purchase for audit trail
+        self.log_purchase(
+            buyer_id.clone(),
+            event.creator_id.clone(),
+            encrypted_cid.clone(),
+            self.next_token_id.to_string(),
+            price_yocto,
+            creator_amount,
+            commission,
+            PurchaseType::Prepaid,
+        );
+
+        // Mint NFT with storage deposit from contract balance
+        Self::ext(env::current_account_id())
+            .with_attached_deposit(storage_cost)
+            .buy_ticket_internal(buyer_id, encrypted_cid)
+            .detach();
+
+        // Return "0" to ft_resolve_transfer → all wNEAR was used (no refund needed)
+        U128(0)
     }
 
 
@@ -905,7 +1289,76 @@ impl Contract {
         U128(val.as_yoctonear())
     }
 
+    /// Fund Nova platform account from prepaid balance (Callable via Session Key)
+    /// Used by creators before uploading paid videos to cover group registration costs.
+    /// Includes callback verification: if transfer fails, prepaid balance is refunded.
+    pub fn fund_nova_platform(&mut self, amount: U128) -> Promise {
+        let account_id = env::predecessor_account_id();
+        let nova_account = self.nova_platform_account.clone()
+            .expect("Nova platform account not configured");
+
+        let transfer_amount = NearToken::from_yoctonear(amount.0);
+        require!(transfer_amount <= NearToken::from_near(1), "Exceeds 1 NEAR limit");
+        require!(transfer_amount.as_yoctonear() > 0, "Amount must be > 0");
+
+        let current_bal = self.user_deposits.get(&account_id)
+            .expect("No prepaid balance");
+        require!(current_bal >= transfer_amount, "Insufficient prepaid balance");
+
+        // CEI: Effects before Interactions
+        let new_bal = current_bal.saturating_sub(transfer_amount);
+        self.user_deposits.insert(&account_id, &new_bal);
+
+        env::log_str(&format!(
+            "Nova funding initiated: {} from {} (remaining: {})",
+            transfer_amount, account_id, new_bal
+        ));
+
+        // Transfer with callback verification for automatic refund on failure
+        Promise::new(nova_account).transfer(transfer_amount)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(5))
+                    .on_nova_fund_callback(account_id, amount)
+            )
+    }
+
+    /// Callback to verify Nova funding transfer succeeded.
+    /// If transfer failed (e.g. account deleted), refunds the user's prepaid balance.
+    #[private]
+    pub fn on_nova_fund_callback(&mut self, account_id: AccountId, amount: U128) {
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+
+        if succeeded {
+            env::log_str(&format!(
+                "Nova funding confirmed: {} yoctoNEAR for {}",
+                amount.0, account_id
+            ));
+        } else {
+            // Refund: restore user's prepaid balance
+            let current = self.user_deposits.get(&account_id)
+                .unwrap_or(NearToken::from_yoctonear(0));
+            let refund = NearToken::from_yoctonear(amount.0);
+            self.user_deposits.insert(
+                &account_id,
+                &current.saturating_add(refund)
+            );
+            env::log_str(&format!(
+                "Nova funding FAILED - refunded {} to {}",
+                refund, account_id
+            ));
+        }
+    }
+
     /// Mint NFT using pre-paid funds (Callable via Session Key)
+    ///
+    /// Deducts storage cost from user's prepaid balance, then mints via
+    /// a #[private] internal function (not nft_mint which has an owner guard).
+    /// Includes a callback to refund the user if the mint fails.
     pub fn nft_mint_prepaid(
         &mut self,
         receiver_id: AccountId,
@@ -914,32 +1367,88 @@ impl Contract {
     ) -> Promise {
         let account_id = env::predecessor_account_id();
 
-        // Estimated storage cost for an NFT (approx 0.1 NEAR is safe upper bound, usually less)
-        // We can be more precise, but for now let's use a safe fixed amount.
-        // Standard NFT storage is ~0.01 NEAR.
-        // Let's charge 0.1 NEAR to be safe and refund the rest?
-        // Or just charge a fixed fee.
-        // `nft_mint` will refund excess to the *predecessor* (which is the Contract).
-        // So the user loses the excess if we don't handle it.
-
-        // BETTER: Charge the user exactly what we attach.
-        // If `nft_mint` refunds the Contract, we should ideally credit it back to the user's internal balance.
-        // But that requires a callback.
-
-        // SIMPLIFICATION: Charge a flat fee of 0.1 NEAR.
         let charge_amount = NearToken::from_millinear(100); // 0.1 NEAR
 
         let current_bal = self.user_deposits.get(&account_id).expect("Insufficient prepaid balance");
         require!(current_bal.as_yoctonear() >= charge_amount.as_yoctonear(), "Insufficient prepaid balance");
 
-        // Deduct balance
+        // CEI: Deduct balance (Effects before Interactions)
         let new_bal = current_bal.saturating_sub(charge_amount);
         self.user_deposits.insert(&account_id, &new_bal);
 
-        // Call nft_mint with attached deposit
+        // Call #[private] internal mint (NOT nft_mint which has owner guard)
+        // Then callback to verify success and refund on failure
         Self::ext(env::current_account_id())
             .with_attached_deposit(charge_amount)
-            .nft_mint(receiver_id, token_metadata, video_metadata)
+            .with_static_gas(near_sdk::Gas::from_tgas(30))
+            .nft_mint_internal(receiver_id, token_metadata, video_metadata)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(5))
+                    .on_nft_mint_prepaid_callback(account_id, U128(charge_amount.as_yoctonear()))
+            )
+    }
+
+    /// Internal NFT mint - called via cross-contract call from nft_mint_prepaid
+    /// Uses #[private] instead of owner guard so the contract can call itself
+    #[payable]
+    #[private]
+    pub fn nft_mint_internal(
+        &mut self,
+        receiver_id: AccountId,
+        token_metadata: TokenMetadata,
+        video_metadata: VideoMetadata,
+    ) -> Token {
+        let token_id = self.next_token_id.to_string();
+        self.next_token_id += 1;
+
+        // Store nova_group_id in event-level mapping for ticket copies
+        if let Some(ref group_id) = video_metadata.nova_group_id {
+            if self.event_nova_groups.get(&video_metadata.encrypted_cid).is_none() {
+                self.event_nova_groups.insert(&video_metadata.encrypted_cid, group_id);
+            }
+        }
+
+        // Store video metadata
+        self.video_metadata.insert(&token_id, &video_metadata);
+
+        // Mint NFT using standard
+        self.tokens.internal_mint(
+            token_id,
+            receiver_id,
+            Some(token_metadata),
+        )
+    }
+
+    /// Callback after nft_mint_prepaid XCC completes.
+    /// Refunds user's prepaid balance if the mint failed.
+    #[private]
+    pub fn on_nft_mint_prepaid_callback(&mut self, account_id: AccountId, charge_amount: U128) {
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+
+        if succeeded {
+            env::log_str(&format!(
+                "Prepaid mint confirmed for {}",
+                account_id
+            ));
+        } else {
+            // Refund: restore user's prepaid balance
+            let current = self.user_deposits.get(&account_id)
+                .unwrap_or(NearToken::from_yoctonear(0));
+            let refund = NearToken::from_yoctonear(charge_amount.0);
+            self.user_deposits.insert(
+                &account_id,
+                &current.saturating_add(refund)
+            );
+            env::log_str(&format!(
+                "Prepaid mint FAILED - refunded {} to {}",
+                refund, account_id
+            ));
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1121,6 +1630,12 @@ impl Contract {
         username: String,
         new_public_key: PublicKey,
     ) -> Promise {
+        // SECURITY: Only contract owner can create sponsored trials via relayer method
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can create sponsored trials"
+        );
+
         // Validate username
         require!(
             username.len() >= 2 && username.len() <= 32,
@@ -1197,12 +1712,18 @@ impl Contract {
     /// This allows trial accounts and any user to claim free content
     /// without needing any NEAR balance.
     ///
-    /// Can be called by anyone (usually via relayer API)
+    /// SECURITY: Only contract owner (or relayer) can call this
     pub fn claim_free_ticket_sponsored(
         &mut self,
         receiver_id: AccountId,
         encrypted_cid: String,
     ) -> Promise {
+        // SECURITY: Only owner can trigger sponsored free ticket claims
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can call sponsored free ticket claims"
+        );
+
         let event = self.events.get(&encrypted_cid)
             .expect("Event not found");
 
@@ -1627,19 +2148,29 @@ impl Contract {
     // ═══════════════════════════════════════════════════════════════
 
     /// Set NOVA group ID for existing video (migration helper)
-    /// Only callable by video owner
+    /// Only callable by the original event creator (not just any token holder)
     /// Also stores in event_nova_groups mapping for future ticket copies
     pub fn set_nova_group(&mut self, token_id: TokenId, nova_group_id: String) {
+        let caller = env::predecessor_account_id();
+
         let owner = self.tokens.owner_by_id.get(&token_id)
             .expect("Token not found");
 
         require!(
-            env::predecessor_account_id() == owner,
+            caller == owner,
             "Only token owner can set NOVA group"
         );
 
         let mut metadata = self.video_metadata.get(&token_id)
             .expect("Video metadata not found");
+
+        // SECURITY: Verify caller is the original event creator before modifying event-level mapping
+        if let Some(event) = self.events.get(&metadata.encrypted_cid) {
+            require!(
+                caller == event.creator_id,
+                "Only event creator can set NOVA group for event-level mapping"
+            );
+        }
 
         // Store in event-level mapping for ticket copies
         self.event_nova_groups.insert(&metadata.encrypted_cid, &nova_group_id);

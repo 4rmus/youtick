@@ -7,11 +7,13 @@ import { useAllVideos } from '@/hooks/useAllVideos';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { NovaThumbnail } from '@/components/NovaThumbnail';
+import { useNearPrice } from '@/hooks/useNearPrice';
 
 export default function DiscoverPage() {
     const { tokens, loading, error, hasNextPage, isFetchingNextPage, fetchNextPage } = useAllVideos();
     const { accountId } = useWallet();
     const { t } = useLanguage();
+    const { nearToUsdStr } = useNearPrice();
 
     if (loading) {
         return (
@@ -60,6 +62,7 @@ export default function DiscoverPage() {
                             // Get price from video_metadata if available
                             const priceYocto = token.video_metadata?.price;
                             const priceNear = priceYocto ? parseFloat(priceYocto) / 1e24 : 0;
+                            const priceUsdCents = token.video_metadata?.price_usd;
                             const isFree = priceNear === 0;
                             const isCreator = accountId && token.owner_id === accountId;
 
@@ -119,8 +122,10 @@ export default function DiscoverPage() {
                                                         <span className="text-[9px] font-bold text-white tracking-wider uppercase">✨ Owner</span>
                                                     ) : isFree ? (
                                                         <span className="text-[9px] font-bold text-white tracking-wider uppercase">✨ Free</span>
+                                                    ) : priceUsdCents ? (
+                                                        <span className="text-[9px] font-bold text-white tracking-wider">${(priceUsdCents / 100).toFixed(2)}</span>
                                                     ) : (
-                                                        <span className="text-[9px] font-bold text-white tracking-wider">{priceNear.toFixed(2)} NEAR</span>
+                                                        <span className="text-[9px] font-bold text-white tracking-wider">{nearToUsdStr(priceNear)}</span>
                                                     )}
                                                 </div>
                                             </div>

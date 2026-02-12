@@ -5,6 +5,7 @@ import { Loader2, Coins, Ticket } from "lucide-react";
 import { actions, yoctoToNear, nearToYocto } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
 import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from '@/lib/constants';
+import { useNearPrice } from '@/hooks/useNearPrice';
 
 interface MintButtonProps {
     cid?: string;
@@ -12,8 +13,10 @@ interface MintButtonProps {
 
 export function MintButton({ cid }: MintButtonProps) {
     const { accountId, getWallet } = useWallet();
+    const { nearToUsdStr } = useNearPrice();
     const [minting, setMinting] = useState(false);
     const [price, setPrice] = useState<string | null>(null);
+    const [priceUsdCents, setPriceUsdCents] = useState<number | null>(null);
     const [loadingPrice, setLoadingPrice] = useState(false);
 
     useEffect(() => {
@@ -26,7 +29,7 @@ export function MintButton({ cid }: MintButtonProps) {
                 // v7: Use JsonRpcProvider directly for view calls
                 const provider = getProvider();
 
-                const event = await viewContract<{ price: string }>(
+                const event = await viewContract<{ price: string; price_usd?: number | null }>(
                     provider,
                     contractId,
                     'get_event',
@@ -36,6 +39,7 @@ export function MintButton({ cid }: MintButtonProps) {
                 if (event && event.price) {
                     // v7: yoctoToNear expects bigint, convert string from contract
                     setPrice(yoctoToNear(BigInt(event.price)));
+                    setPriceUsdCents(event.price_usd ?? null);
                 }
             } catch (e) {
                 console.error("Error fetching ticket price:", e);
@@ -132,7 +136,7 @@ export function MintButton({ cid }: MintButtonProps) {
             ) : (
                 <Coins className="h-4 w-4" />
             )}
-            {minting ? "Processing..." : price ? `Buy Ticket (${price} NEAR)` : "Mint Global Access Pass"}
+            {minting ? "Processing..." : price ? (priceUsdCents ? `Buy Ticket ($${(priceUsdCents / 100).toFixed(2)})` : `Buy Ticket (${nearToUsdStr(parseFloat(price))})`) : "Mint Global Access Pass"}
         </Button>
     );
 }

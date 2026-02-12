@@ -118,6 +118,7 @@ export interface VideoMetadata {
     event_date?: number;
     content_type: string;
     price?: string;
+    price_usd?: number | null;
 }
 
 /**
@@ -146,6 +147,7 @@ export interface NFTEvent {
     description: string;
     creator_id: string;
     price: string;
+    price_usd?: number | null;
     created_at?: number;
 }
 
@@ -197,6 +199,8 @@ export interface WalletInstance {
 export interface WalletContextType {
     accountId: string | null;
     isTrial: boolean;
+    /** Active wallet ID: 'my-near-wallet' | 'meteor-wallet' | null */
+    walletType: string | null;
     getWallet: () => Promise<WalletInstance>;
     signOut: () => Promise<void>;
     connect: () => Promise<void>;

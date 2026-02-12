@@ -34,7 +34,7 @@ const ALLOWED_PATHS = new Set([
 ]);
 
 const MAX_RETRIES = 3;
-const RETRYABLE_STATUSES = new Set([502, 503, 504, 429]);
+const RETRYABLE_STATUSES = new Set([500, 502, 503, 504, 429]);
 const BACKOFF_MS = [500, 1000, 2000];
 
 /** Simple in-memory rate limiter per IP (resets on server restart) */

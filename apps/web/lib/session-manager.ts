@@ -31,21 +31,25 @@ export class SessionManager {
     }
 
     /**
-     * Import the function call key that MyNearWallet creates during sign-in.
-     * When NearConnector is configured with signIn: { contractId }, MyNearWallet
-     * automatically adds a function call access key on-chain and stores the
-     * private key in localStorage as 'mynearwallet:functionCallKey'.
+     * Import existing function call key from wallet-selector's localStorage.
      *
-     * This eliminates the need for an explicit AddKey transaction, which is
-     * broken in @hot-labs/near-connect's MyNearWallet executor (borsh Enum bug).
+     * Wallet-specific behavior:
+     * - MyNearWallet (redirect-based): wallet-selector stores the private key in
+     *   localStorage with the standard 'near-api-js:keystore:' prefix (same as our
+     *   BrowserKeyStore). This means getKey() above usually finds it directly.
+     *   The 'mynearwallet:functionCallKey' check is a legacy fallback.
+     * - MeteorWallet (injected): Keys are managed by the browser extension and
+     *   NOT accessible in page localStorage. This method returns false, so
+     *   createSessionKey() is called to generate a dApp-managed key (one popup).
      */
     async importWalletFunctionCallKey(): Promise<boolean> {
-        // Skip if we already have a local key
+        // Skip if we already have a local key (covers wallet-selector's standard keystore)
         const existing = await this.keyStore.getKey(NETWORK_ID, this.accountId);
         if (existing) return true;
 
         if (typeof window === 'undefined') return false;
 
+        // Legacy MyNearWallet format (pre wallet-selector v10 integration)
         const raw = localStorage.getItem('mynearwallet:functionCallKey');
         if (!raw) return false;
 
@@ -81,7 +85,7 @@ export class SessionManager {
                 );
 
                 if (!accessKeyInfo) {
-                    console.warn("Session key found locally but not on-chain. Removing.");
+                    console.warn("[SessionManager] Key found locally but not on-chain. Removing.");
                     await this.keyStore.removeKey(NETWORK_ID, this.accountId);
                     return false;
                 }
@@ -91,9 +95,22 @@ export class SessionManager {
                 // Permission can be 'FullAccess' (string) or object with FunctionCall
                 if (typeof permission === 'object' && 'FunctionCall' in permission) {
                     if (permission.FunctionCall.receiver_id !== CONTRACT_ID) {
-                        console.warn(`Session key found but for wrong contract (${permission.FunctionCall.receiver_id} vs ${CONTRACT_ID}). Removing.`);
+                        console.warn(`[SessionManager] Key for wrong contract (${permission.FunctionCall.receiver_id} vs ${CONTRACT_ID}). Removing.`);
                         await this.keyStore.removeKey(NETWORK_ID, this.accountId);
                         return false;
+                    }
+
+                    // Check remaining allowance — exhausted keys fail silently at callMethod time
+                    const allowance = permission.FunctionCall.allowance;
+                    if (allowance !== null && allowance !== undefined) {
+                        const remaining = BigInt(allowance);
+                        // 0.005 NEAR minimum: enough for ~1-2 function calls (gas cost per 30TGas ≈ 0.003 NEAR)
+                        const MIN_ALLOWANCE = BigInt('5000000000000000000000');
+                        if (remaining < MIN_ALLOWANCE) {
+                            console.warn(`[SessionManager] Key allowance exhausted (${allowance} yocto remaining). Removing for renewal.`);
+                            await this.keyStore.removeKey(NETWORK_ID, this.accountId);
+                            return false;
+                        }
                     }
                 }
                 return true;
@@ -102,7 +119,7 @@ export class SessionManager {
             if (e instanceof TypedError) {
                 console.warn(`[SessionManager] TypedError checking session key (${e.type}):`, e.message);
             } else {
-                console.warn("Error checking session key on-chain (network issue?). Assuming local key is valid.", e);
+                console.warn("[SessionManager] Error checking key on-chain (network issue?). Assuming local key is valid.", e);
             }
             // Fallback: if we have a local key but can't check chain, assume it's valid to allow progress.
             // If it's actually invalid, the subsequent transaction will fail, which is handled.

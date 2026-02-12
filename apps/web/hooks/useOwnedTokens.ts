@@ -20,6 +20,7 @@ interface VideoMetadata {
     event_date?: number;
     content_type: string;
     price?: string;
+    price_usd?: number | null;
 }
 
 export interface TokenWithVideo {

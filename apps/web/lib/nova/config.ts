@@ -219,6 +219,10 @@ export async function createNovaGroup(groupName: string): Promise<string> {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const isOnChainError = errorMessage.includes('does not exist on-chain');
       const isBalanceError = errorMessage.includes('balance') && errorMessage.includes('cost');
+      const isRpcError = errorMessage.includes('RPC not available') ||
+        errorMessage.includes('signing account') ||
+        errorMessage.includes('PROXY_TIMEOUT') ||
+        errorMessage.includes('PROXY_NETWORK_ERROR');
 
       // Balance error on retry → previous attempt likely succeeded on-chain
       // but consumed the deposit. Check if group actually exists before giving up.
@@ -240,11 +244,11 @@ export async function createNovaGroup(groupName: string): Promise<string> {
         }
       }
 
-      if ((isOnChainError || isBalanceError) && attempt < MAX_RETRIES - 1) {
+      if ((isOnChainError || isBalanceError || isRpcError) && attempt < MAX_RETRIES - 1) {
         const delay = RETRY_DELAYS[attempt];
         console.warn(
           `[NOVA Config] registerGroup attempt ${attempt + 1}/${MAX_RETRIES} failed ` +
-          `(${isBalanceError ? 'balance insufficient — checking previous attempt' : 'on-chain propagation delay'}). ` +
+          `(${isRpcError ? 'Nova RPC unavailable' : isBalanceError ? 'balance insufficient — checking previous attempt' : 'on-chain propagation delay'}). ` +
           `Retrying in ${delay}ms...`
         );
         await new Promise(resolve => setTimeout(resolve, delay));
