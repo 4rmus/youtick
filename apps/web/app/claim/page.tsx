@@ -10,6 +10,7 @@ import { parseTitleMetadata } from "@/lib/metadata-parser";
 import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from "@/lib/constants";
 import { getCurrentRpcUrl } from "@/lib/rpc-failover";
 import { addBuyerToNovaGroup } from "@/lib/nova/post-purchase";
+import { pendingAccessQueue } from "@/lib/nova/pending-access-queue";
 import { NovaThumbnail } from "@/components/NovaThumbnail";
 
 const NETWORK_ID = NEAR_CONFIG.networkId;
@@ -213,7 +214,11 @@ function ClaimContent() {
 
             // Non-blocking: Add new account to Nova group for video access
             if (giftInfo?.eventCid) {
-                addBuyerToNovaGroup(giftInfo.eventCid, fullAccountId).catch(err => console.error('[Nova Post-Purchase] Group add failed — user may need manual grant:', err));
+                const eventCid = giftInfo.eventCid;
+                addBuyerToNovaGroup(eventCid, fullAccountId).catch(err => {
+                    console.error('[Nova Post-Purchase] Group add failed:', err);
+                    pendingAccessQueue.add(eventCid, fullAccountId);
+                });
             }
 
             setClaimedAccountId(fullAccountId);
@@ -266,7 +271,11 @@ function ClaimContent() {
 
             // Non-blocking: Add existing account to Nova group for video access
             if (giftInfo?.eventCid) {
-                addBuyerToNovaGroup(giftInfo.eventCid, existingAccountId.trim()).catch(err => console.error('[Nova Post-Purchase] Group add failed — user may need manual grant:', err));
+                const eventCid = giftInfo.eventCid;
+                addBuyerToNovaGroup(eventCid, existingAccountId.trim()).catch(err => {
+                    console.error('[Nova Post-Purchase] Group add failed:', err);
+                    pendingAccessQueue.add(eventCid, existingAccountId.trim());
+                });
             }
 
             setClaimedAccountId(existingAccountId.trim());

@@ -26,8 +26,8 @@ export const CRUST_CONSTANTS = {
   /** W3Auth token cache duration (30 minutes) */
   AUTH_CACHE_DURATION: 30 * 60 * 1000,
 
-  /** Upload timeout (5 minutes) */
-  UPLOAD_TIMEOUT: 5 * 60 * 1000,
+  /** Upload timeout (15 minutes — increased for 500 MB uploads) */
+  UPLOAD_TIMEOUT: 15 * 60 * 1000,
 
   /** Fetch timeout per gateway attempt (30 seconds) */
   FETCH_TIMEOUT: 30 * 1000,

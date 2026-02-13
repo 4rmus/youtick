@@ -11,6 +11,7 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { GoogleAnalytics } from "@next/third-parties/google";
 import { OnboardingKeyInit } from "@/components/OnboardingKeyInit";
+import { NovaAccessSync } from "@/components/NovaAccessSync";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -96,6 +97,7 @@ export default function RootLayout({
                         <EvmProvider>
                         <LanguageProvider>
                             <WalletProvider>
+                            <NovaAccessSync />
                             <OnboardingKeyInit />
                             <div className="min-h-screen bg-background text-foreground">
                                 <Navbar />

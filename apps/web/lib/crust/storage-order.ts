@@ -91,6 +91,62 @@ export async function placeStorageOrder(
 }
 
 /**
+ * Check the status of a Crust storage order
+ *
+ * @param requestId - PSA pin request ID
+ * @param accountId - NEAR account ID (for W3Auth)
+ * @returns Updated status of the storage order
+ */
+export async function checkStorageOrderStatus(
+  requestId: string,
+  accountId: string
+): Promise<CrustPsaPinResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CRUST_CONSTANTS.FETCH_TIMEOUT);
+
+  try {
+    const authToken = await generateW3AuthToken(accountId);
+
+    const response = await fetch(`${CRUST_CONSTANTS.PSA_ENDPOINT}/${requestId}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': authToken.header,
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (!response.ok) {
+      return {
+        requestId,
+        status: 'failed',
+        cid: '',
+        createdAt: Date.now(),
+      };
+    }
+
+    const data = await response.json();
+
+    return {
+      requestId: data.requestid || data.requestId || requestId,
+      status: mapPsaStatus(data.status),
+      cid: data.pin?.cid || '',
+      createdAt: new Date(data.created || Date.now()).getTime(),
+    };
+  } catch (error: unknown) {
+    clearTimeout(timer);
+    console.warn('[CRUST] Storage order status check failed:', error instanceof Error ? error.message : String(error));
+
+    return {
+      requestId,
+      status: 'failed',
+      cid: '',
+      createdAt: Date.now(),
+    };
+  }
+}
+
+/**
  * Map PSA status string to our enum
  */
 function mapPsaStatus(status: string | undefined): CrustPsaPinResult['status'] {

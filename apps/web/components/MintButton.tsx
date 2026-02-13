@@ -18,6 +18,7 @@ export function MintButton({ cid }: MintButtonProps) {
     const [price, setPrice] = useState<string | null>(null);
     const [priceUsdCents, setPriceUsdCents] = useState<number | null>(null);
     const [loadingPrice, setLoadingPrice] = useState(false);
+    const [isBanned, setIsBanned] = useState(false);
 
     useEffect(() => {
         if (!cid) return;
@@ -29,12 +30,17 @@ export function MintButton({ cid }: MintButtonProps) {
                 // v7: Use JsonRpcProvider directly for view calls
                 const provider = getProvider();
 
-                const event = await viewContract<{ price: string; price_usd?: number | null }>(
+                const event = await viewContract<{ price: string; price_usd?: number | null; banned?: boolean }>(
                     provider,
                     contractId,
                     'get_event',
                     { encrypted_cid: cid }
                 );
+
+                if (event?.banned) {
+                    setIsBanned(true);
+                    return;
+                }
 
                 if (event && event.price) {
                     // v7: yoctoToNear expects bigint, convert string from contract
@@ -116,7 +122,7 @@ export function MintButton({ cid }: MintButtonProps) {
         }
     };
 
-    if (!accountId) return null;
+    if (!accountId || isBanned) return null;
 
     if (loadingPrice) {
         return <Button disabled variant="outline" size="sm"><Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading price...</Button>;

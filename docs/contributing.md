@@ -4,104 +4,140 @@ Thank you for your interest in contributing to YouTick. This guide covers everyt
 
 ---
 
+## Quick Start
+
+```bash
+# 1. Fork and clone
+git clone https://github.com/<your-username>/youtick.git
+cd youtick
+
+# 2. Install and configure
+cd apps/web
+npm install
+cp .env.example .env.local
+# Edit .env.local with your configuration
+
+# 3. Start development
+npm run dev
+```
+
+See [Installation Guide](./getting-started/installation.md) for detailed setup instructions.
+
+---
+
 ## Development Setup
 
 ### Prerequisites
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| **Node.js** | 18+ | Frontend development (recommend using `nvm`) |
-| **Rust** | Latest stable | Smart contract development |
-| **NEAR CLI** | Latest | Blockchain interaction (`npm install -g near-cli`) |
-| **NEAR Testnet Wallet** | -- | Testing transactions ([testnet.mynearwallet.com](https://testnet.mynearwallet.com)) |
-
-### Local Development
-
-```bash
-# Clone the repository
-git clone https://github.com/4rmus/youtick-mvp.git
-cd youtick-mvp
-
-# Install frontend dependencies
-cd apps/web
-npm install
-
-# Copy environment template
-cp .env.example .env.local
-# Edit .env.local with your API keys and configuration
-
-# Start development server
-npm run dev
-```
-
-The development server starts at `http://localhost:3000` with hot reload enabled.
+| **Node.js** | 18+ | Frontend development (recommend `nvm`) |
+| **npm** | 9+ | Package management |
+| **Git** | Latest | Version control |
+| **NEAR Testnet Wallet** | -- | Testing transactions |
+| **Rust** | Latest stable | Smart contract development (optional) |
+| **NEAR CLI** | Latest | Blockchain interaction (optional) |
 
 ### Environment Variables
 
-Required variables in `.env.local`:
+Required in `apps/web/.env.local`:
 
 ```env
 # NEAR Protocol
 NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=youtick-prod-v1.near
+NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
 
 # Nova Protocol
-NEXT_PUBLIC_NOVA_NETWORK=mainnet
-NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk.near
+NEXT_PUBLIC_NOVA_NETWORK=testnet
+NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk-6.testnet
 NEXT_PUBLIC_NOVA_API_KEY=your-api-key
 NEXT_PUBLIC_NOVA_ACCOUNT_ID=your-nova-account
+```
 
-# Onboarding (optional, for trial account testing)
-NEXT_PUBLIC_ONBOARDING_KEY=ed25519:...
+See [Configuration Reference](./getting-started/configuration.md) for all variables.
+
+---
+
+## Project Structure
+
+```
+youtick/
+├── apps/web/              # Frontend (Next.js 16 App Router)
+│   ├── app/               # Pages and API routes
+│   ├── components/        # React components (54+)
+│   ├── hooks/             # Custom React hooks
+│   └── lib/               # Business logic
+│       ├── nova/          # Nova Protocol SDK (12 modules)
+│       ├── crust/         # Crust Network storage (7 modules)
+│       └── crypto/        # Encryption utilities
+├── contracts/nft-ticket/  # NEAR smart contract (Rust, V8)
+└── docs/                  # Documentation (you are here)
 ```
 
 ---
 
-## Contract Development
+## Contribution Workflow
 
-### Build and Test
+### 1. Find an Issue
+
+- Browse [open issues](https://github.com/4rmus/youtick/issues) for tasks
+- Issues tagged `good-first-issue` are ideal for new contributors
+- Comment on an issue before starting work to avoid duplicated effort
+
+### 2. Fork and Branch
 
 ```bash
-# Navigate to contract directory
+# Fork the repository on GitHub, then:
+git clone https://github.com/<your-username>/youtick.git
+cd youtick
+git remote add upstream https://github.com/4rmus/youtick.git
+git checkout -b feature/your-feature-name
+```
+
+### 3. Make Changes
+
+- **Components**: Edit files in `apps/web/components/`
+- **Business logic**: Edit files in `apps/web/lib/`
+- **Pages/routes**: Edit files in `apps/web/app/`
+- **Hooks**: Edit or create files in `apps/web/hooks/`
+- **Contract**: Edit `contracts/nft-ticket/src/lib.rs`
+
+### 4. Test Your Changes
+
+```bash
+# Frontend
+cd apps/web
+npm run lint                  # ESLint
+npx tsc --noEmit              # TypeScript check
+npm run build                 # Production build
+npm test                      # Unit tests (Vitest)
+
+# Contract (if modified)
 cd contracts/nft-ticket
-
-# Build the contract
-cargo build --target wasm32-unknown-unknown --release
-
-# Run unit tests
-cargo test
-
-# Lint with clippy
-cargo clippy -- -D warnings
+cargo test                    # Unit tests
+cargo clippy -- -D warnings   # Linting
+cargo fmt --check             # Formatting
 ```
 
-### Deploy to a Dev Account
-
-**IMPORTANT:** Never deploy directly to `youtick-prod-v1.near` or any mainnet account during development. Always use disposable testnet dev accounts.
+### 5. Submit a Pull Request
 
 ```bash
-# Create a temporary dev account
-near create-account dev-$(date +%s).testnet --useFaucet
-
-# Deploy to the dev account
-near deploy dev-xxx.testnet \
-  target/wasm32-unknown-unknown/release/nft_ticket.wasm
-
-# Test contract methods against your dev account
-near view dev-xxx.testnet get_events '{}'
-near call dev-xxx.testnet create_event \
-  '{"encrypted_cid":"test-cid","nova_group_id":"test-group","title":"Test","description":"Test event","price":"1000000000000000000000000"}' \
-  --accountId your-testnet-account.testnet --deposit 0.1
+git push origin feature/your-feature-name
 ```
 
-### Contract Change Workflow
+Open a Pull Request against `main` with a clear description of your changes.
 
-1. Create a testnet dev account
-2. Deploy your changes to the dev account
-3. Test thoroughly against the dev account
-4. Open a PR with your changes and test results
-5. Maintainers review and approve
-6. Production deployment is handled by maintainers
+---
+
+## Branch Naming
+
+| Prefix | Use Case | Example |
+|--------|----------|---------|
+| `feature/` | New features | `feature/batch-gift-links` |
+| `fix/` | Bug fixes | `fix/session-key-expiry` |
+| `docs/` | Documentation | `docs/nova-sdk-guide` |
+| `refactor/` | Code restructuring | `refactor/error-handling` |
+| `test/` | Test additions | `test/upload-flow-e2e` |
 
 ---
 
@@ -113,15 +149,16 @@ near call dev-xxx.testnet create_event \
 - **Functional components** with hooks (no class components)
 - **Named exports** preferred over default exports
 - Follow existing patterns in the codebase for consistency
-- Use the standardized `AppError` class from `@/lib/errors` for error handling
-- Use constants from `@/lib/constants` rather than inline magic values
+- Use TanStack React Query for all blockchain data fetching
+- Use `useWallet()` hook for wallet state access
 
 ### Rust (Smart Contract)
 
-- Run `cargo fmt` before committing to ensure consistent formatting
+- Run `cargo fmt` before committing
 - Run `cargo clippy -- -D warnings` to catch common issues
 - Document all public functions with `///` doc comments
 - Follow NEP standards (NEP-171 for NFT, NEP-141 for FT) where applicable
+- Use V8 storage key prefixes for any new collections
 
 ### Commit Messages
 
@@ -142,38 +179,11 @@ chore(deps): update near-api-js to v7.1
 
 **Types:** `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
 
-**Scopes (optional):** `upload`, `player`, `nova`, `contract`, `session`, `gift`, `trial`, `ui`, `deps`
+**Scopes:** `upload`, `player`, `nova`, `crust`, `contract`, `session`, `gift`, `trial`, `ui`, `deps`
 
 ---
 
-## Pull Request Process
-
-### Steps
-
-1. **Fork** the repository on GitHub
-2. **Create a branch** from `main`:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-3. **Make your changes** with clear, focused commits
-4. **Test your changes** locally (see Testing section below)
-5. **Push** to your fork:
-   ```bash
-   git push origin feature/your-feature-name
-   ```
-6. **Open a Pull Request** against `main` with a clear description
-
-### Branch Naming
-
-| Prefix | Use Case | Example |
-|--------|----------|---------|
-| `feature/` | New features | `feature/batch-gift-links` |
-| `fix/` | Bug fixes | `fix/session-key-expiry` |
-| `docs/` | Documentation only | `docs/nova-sdk-guide` |
-| `refactor/` | Code restructuring | `refactor/error-handling` |
-| `test/` | Test additions | `test/upload-flow-e2e` |
-
-### PR Checklist
+## Pull Request Checklist
 
 Before requesting review, confirm the following:
 
@@ -191,39 +201,39 @@ Before requesting review, confirm the following:
 
 ---
 
-## Testing
+## Contract Development
 
-### Frontend
+### Safety Rules
 
-```bash
-cd apps/web
+Smart contract modifications require extra care due to their on-chain and financial nature:
 
-# ESLint checks
-npm run lint
+1. **Always test on dev accounts** -- never on `youtick-prod-v1.near`
+2. **Consider state migration implications** -- storage layout changes can break existing data
+3. **Document any storage key changes** -- V8 collision-safe prefixes must be maintained
+4. **Use the lazy storage pattern** for new collections to avoid migrations
+5. **Get review from maintainers** before merging any contract changes
+6. **Include test results** in your PR description showing the change works on testnet
 
-# TypeScript type checking
-npx tsc --noEmit
-
-# Production build (catches build-time errors)
-npm run build
-```
-
-### Smart Contract
+### Testing on Testnet
 
 ```bash
+# Create a temporary dev account
+near create-account dev-$(date +%s).testnet --useFaucet
+
+# Build and deploy
 cd contracts/nft-ticket
+cargo build --target wasm32-unknown-unknown --release
+near deploy dev-xxx.testnet \
+  target/wasm32-unknown-unknown/release/nft_ticket.wasm \
+  --initFunction new --initArgs '{"owner_id":"dev-xxx.testnet"}'
 
-# Unit tests
-cargo test
-
-# Linting
-cargo clippy -- -D warnings
-
-# Formatting check
-cargo fmt --check
+# Test contract methods
+near view dev-xxx.testnet nft_metadata '{}'
 ```
 
-### Manual Testing Flows
+---
+
+## Manual Testing Flows
 
 When making changes to user-facing features, test these critical flows locally:
 
@@ -232,40 +242,45 @@ When making changes to user-facing features, test these critical flows locally:
 | **Upload** | Connect wallet, upload video, complete wizard | Session key created, Nova group created, video encrypted, NFT minted |
 | **Watch** | Navigate to owned video, play | Ownership verified, decryption succeeds, video plays |
 | **Purchase** | Navigate to ticket page, buy ticket | Payment processed, Nova group membership added, NFT received |
-| **Gift** | Create gift links, claim as new user | Links generated, gift claimed, trial account created (if applicable) |
+| **Gift** | Create gift links, claim as new user | Links generated, gift claimed, trial account created |
 | **Trial** | Open claim page without wallet, complete onboarding | Sub-account created, onboarding key used, ticket accessible |
 
 ---
 
-## Important Guidelines
+## Decentralization Principles
 
-### Security
-
-- **Never commit API keys or private keys** to the repository
-- Use `.env.local` for all sensitive values (this file is `.gitignore`d)
-- Review your changes for potential security vulnerabilities before submitting
-- Be cautious with any code that handles key material, session tokens, or financial operations
-- See [Security Model](./security.md) for the full security architecture
-
-### Contract Changes
-
-Smart contract modifications require extra care due to their on-chain and financial nature:
-
-1. **Always test on dev accounts first** -- never on `youtick-prod-v1.near`
-2. **Consider state migration implications** -- storage layout changes can break existing data
-3. **Document any storage key changes** -- storage key collisions can cause data loss
-4. **Get review from maintainers** before merging any contract changes
-5. **Include test results** in your PR description showing the change works on testnet
-
-### Decentralization Principles
-
-YouTick aims for decentralization with no server dependencies. When contributing:
+YouTick aims for client-side decentralization with no server dependencies. When contributing:
 
 - **Prefer client-side operations** over server-side API routes
-- **Minimize reliance on centralized services** -- use NEAR RPC failover, Crust multi-gateway, etc.
+- **Use multi-endpoint failover** for NEAR RPC and IPFS gateways
 - **Keep user data on-chain** or in decentralized storage (IPFS/Crust)
-- **Respect user privacy and ownership** -- users control their keys and content
-- **Log decentralization metrics** using `[DECENTRALIZATION_METRIC]` console events for transparency
+- **Respect user privacy** -- users control their keys and content
+- **Non-blocking patterns** -- queue failed operations for retry rather than blocking UX
+
+---
+
+## Contribution Areas
+
+### Good First Issues
+
+- UI improvements and responsive design fixes
+- Translation additions (i18n in `lib/translations.ts`)
+- Test coverage expansion (see [Testing Guide](./testing.md))
+- Documentation improvements
+
+### Intermediate
+
+- New React hooks for contract data
+- IPFS gateway reliability improvements
+- Error handling enhancements
+- Performance optimizations
+
+### Advanced
+
+- Smart contract method additions
+- Nova Protocol integration improvements
+- Cross-chain payment flows (EVM integration)
+- E2E testing with Playwright
 
 ---
 
@@ -273,8 +288,8 @@ YouTick aims for decentralization with no server dependencies. When contributing
 
 - **Questions:** Open an issue on GitHub with the `question` label
 - **Bug Reports:** Open an issue with reproduction steps, browser info, and console output
-- **Feature Proposals:** Open an issue to discuss before implementing (avoids wasted effort)
-- **Architecture Questions:** Review the [Architecture Overview](./architecture/README.md) and [Nova Protocol](./architecture/nova-protocol.md) docs first
+- **Feature Proposals:** Open an issue to discuss before implementing
+- **Architecture Questions:** Review [Architecture Overview](./architecture/README.md) first
 
 ---
 

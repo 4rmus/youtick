@@ -19,7 +19,8 @@ import { verifyAttestation } from './attestation';
 import { uploadToCrust, fetchFromGateways, pinOnCrust } from '../crust';
 
 import { placeStorageOrder } from '../crust/storage-order';
-import { generateEncryptionKey, encryptFile, decryptFile } from '../crypto/aes-gcm';
+import { generateEncryptionKey, decryptFile } from '../crypto/aes-gcm';
+import { isChunkedFormat, decryptFileChunked, encryptFileFromBlob } from '../crypto/aes-ctr-chunked';
 import { storeEncryptionKey, retrieveEncryptionKey } from './key-storage';
 
 /**
@@ -159,10 +160,9 @@ async function uploadToNOVA(
     const sdk = await getNovaSdk();
     await sdk.addGroupMember(groupId, accountId);
 
-    // 2. Client-side AES-256-GCM encryption
+    // 2. Client-side AES-256-CTR chunked encryption (memory-efficient via file.slice())
     const aesKey = await generateEncryptionKey();
-    const plainBytes = new Uint8Array(await file.arrayBuffer());
-    const encrypted = await encryptFile(plainBytes, aesKey);
+    const encrypted = await encryptFileFromBlob(file, aesKey);
 
     // 3. Upload encrypted binary to Crust (no base64 inflation!)
     const encryptedBlob = new Blob([encrypted.buffer as ArrayBuffer], { type: 'application/octet-stream' });
@@ -308,8 +308,13 @@ async function fetchFromNOVA(
     const encryptedBuffer = await response.arrayBuffer();
     const encrypted = new Uint8Array(encryptedBuffer);
 
-    // 3. Decrypt client-side
-    const decrypted = await decryptFile(encrypted, aesKey);
+    // 3. Decrypt client-side (auto-detect format)
+    let decrypted: Uint8Array;
+    if (isChunkedFormat(encrypted)) {
+      decrypted = await decryptFileChunked(encrypted, aesKey);
+    } else {
+      decrypted = await decryptFile(encrypted, aesKey);
+    }
 
     return decrypted;
   } catch (error: unknown) {
