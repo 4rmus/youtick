@@ -72,6 +72,26 @@ export interface CrustPsaPinResult {
 }
 
 /**
+ * Storage order tracking entry
+ */
+export interface StorageOrderTrack {
+  /** IPFS CID */
+  cid: string;
+  /** PSA request ID */
+  requestId: string;
+  /** Current pin status */
+  status: CrustPsaPinResult['status'];
+  /** File size in bytes */
+  fileSize: number;
+  /** NEAR account that placed the order */
+  accountId: string;
+  /** Timestamp when order was placed */
+  placedAt: number;
+  /** Timestamp of last status check */
+  lastChecked: number;
+}
+
+/**
  * Crust error codes
  */
 export type CrustErrorCode =

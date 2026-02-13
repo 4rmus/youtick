@@ -8,6 +8,7 @@ import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
 import { BrowserKeyStore } from '@/lib/keystore-v7';
 import { getProvider, viewContract } from '@/lib/near';
 import { addBuyerToNovaGroup } from '@/lib/nova/post-purchase';
+import { pendingAccessQueue } from '@/lib/nova/pending-access-queue';
 
 interface AccountSetupDialogProps {
     /** Implicit account ID that owns the NFT */
@@ -129,6 +130,7 @@ export function AccountSetupDialog({
                 console.log('[Account Setup] Nova group membership added for:', fullAccountId);
             } catch (err) {
                 console.warn('[Account Setup] Nova group add failed (non-critical):', err);
+                pendingAccessQueue.add(cid, fullAccountId);
             }
 
             // 7. Update localStorage: switch to named account

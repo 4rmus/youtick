@@ -12,6 +12,7 @@ export type {
   CrustPinResult,
   GatewayConfig,
   CrustErrorCode,
+  StorageOrderTrack,
 } from './types';
 export { CrustError } from './types';
 
@@ -42,4 +43,4 @@ export {
 } from './client';
 
 // Storage Orders
-export { placeStorageOrder } from './storage-order';
+export { placeStorageOrder, checkStorageOrderStatus } from './storage-order';

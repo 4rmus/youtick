@@ -10,6 +10,7 @@ import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
 import { NovaThumbnail } from './NovaThumbnail';
 import { addBuyerToNovaGroup } from '@/lib/nova/post-purchase';
+import { pendingAccessQueue } from '@/lib/nova/pending-access-queue';
 import { PaymentMethodSelector } from './PaymentMethodSelector';
 import { useStablecoinPayment } from '@/lib/hooks/useStablecoinPayment';
 import { getTokenConfig, submitDeposit, type PaymentMethod, type ChainId, type SwapQuote } from '@/lib/intents';
@@ -141,6 +142,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 await addBuyerToNovaGroup(cid, implicitId);
             } catch (err) {
                 console.error('[Nova Post-Purchase] Group add failed:', err);
+                pendingAccessQueue.add(cid, implicitId);
             }
 
             setActionLoading(false);
@@ -200,7 +202,14 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     price: string;
                     creator_id: string;
                     price_usd?: number | null;
+                    banned?: boolean;
                 }>(provider, contractId, 'get_event', { encrypted_cid: cid });
+
+                if (event?.banned) {
+                    setError('This event has been banned and tickets cannot be purchased.');
+                    setLoading(false);
+                    return;
+                }
 
                 if (event) {
                     const parsed = parseTitleMetadata(event.title, "Exclusive Content");
@@ -305,6 +314,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 await addBuyerToNovaGroup(cid, accountId);
             } catch (err) {
                 console.error('[Nova Post-Purchase] Group add failed:', err);
+                pendingAccessQueue.add(cid, accountId);
             }
 
             if (onPurchaseSuccess) onPurchaseSuccess();
@@ -369,6 +379,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 await addBuyerToNovaGroup(cid, accountId);
             } catch (err) {
                 console.error('[Nova Post-Purchase] Group add failed:', err);
+                pendingAccessQueue.add(cid, accountId);
             }
 
             if (onPurchaseSuccess) onPurchaseSuccess();
@@ -443,19 +454,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             // Fallback
             usdCents = eventDetails.priceUsdCents ?? Math.round(totalWithSlippage * 100);
         }
-        console.log('[Stablecoin] Calculation:', {
-            ticketPriceNear: priceNear,
-            ticketPriceUsdCents: eventDetails.priceUsdCents,
-            nearPriceUsd: nearPrice,
-            novaServiceFee,
-            contractCost,
-            totalWithSlippage,
-            finalUsdCents: usdCents,
-            finalUsd: `$${(usdCents / 100).toFixed(2)}`,
-            recipient: evmSwapKeypair?.implicitAccountId || accountId,
-            refundAddress: evmAddress,
-        });
-
         // Sanity check: minimum swap amount to avoid dust swaps that won't cover ticket cost
         if (usdCents < 5) {
             setError('Calculated swap amount is too small. NEAR price data may be unavailable. Please try again or pay with NEAR.');
@@ -479,13 +477,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             // For EVM chains (Arbitrum/Base): auto-send ERC-20 via MetaMask
             if (isEvmChain) {
-                console.log('[Stablecoin] 1Click quote:', {
-                    depositAddress: swapQuote.depositAddress,
-                    amountIn: swapQuote.amountIn,
-                    amountInFormatted: swapQuote.amountInFormatted,
-                    amountOut: swapQuote.amountOut,
-                    amountOutFormatted: swapQuote.amountOutFormatted,
-                });
                 await sendEvmToken({
                     tokenSymbol: paymentSelection.method,
                     depositAddress: swapQuote.depositAddress,

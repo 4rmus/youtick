@@ -2,212 +2,158 @@
 
 > **Decentralized Video-on-Demand Platform on NEAR Protocol**
 
-YouTick is a decentralized platform for token-gated video content. Creators upload encrypted videos to IPFS and monetize through NFT-gated access. Viewers purchase NFT tickets that grant permanent, transferable access to content.
+YouTick is an open-source decentralized platform for token-gated video content. Creators upload encrypted videos to IPFS and monetize through NFT-gated access. Viewers purchase NFT tickets that grant permanent, transferable access to encrypted content.
+
+**Contract:** `youtick-prod-v1.near` · **Network:** NEAR Mainnet · **SDK:** NEAR SDK 5.5.0
 
 ---
 
 ## Quick Start
 
 ```bash
-# Install dependencies
+git clone https://github.com/4rmus/youtick.git
+cd youtick/apps/web
 npm install
-
-# Start development server
+cp .env.example .env.local
 npm run dev
-
-# Build smart contract
-cd contracts/nft-ticket && cargo near build
 ```
 
-See [Quick Start Guide](./quick-start.md) for full setup instructions including environment configuration.
+See [Getting Started](./getting-started/installation.md) for the full setup guide.
 
 ---
 
-## Documentation Structure
+## Documentation Map
+
+### Getting Started
+
+| Document | Description |
+|----------|-------------|
+| [Prerequisites](./getting-started/prerequisites.md) | System requirements (Node.js, Rust, NEAR wallet) |
+| [Installation](./getting-started/installation.md) | Clone, install, configure, and run |
+| [Configuration](./getting-started/configuration.md) | Environment variables and network setup |
 
 ### Architecture
 
 | Document | Description |
 |----------|-------------|
-| [Overview](./architecture/README.md) | System architecture, component diagram, data flows |
-| [Smart Contract](./architecture/smart-contract.md) | NFT ticket contract specification (Rust/NEAR SDK 5.1.0) |
+| [System Overview](./architecture/README.md) | Architecture diagram, components, data flows |
+| [Smart Contract](./architecture/smart-contract.md) | V8 contract specification (Rust, NEAR SDK 5.5.0) |
 | [Nova Protocol](./architecture/nova-protocol.md) | TEE-based encryption and group access control |
-| [Shade Agent](./architecture/shade-agent.md) | TEE key management and secure computation |
-| [Session Keys](./architecture/session-keys.md) | Signless transaction management and session lifecycle |
+| [Shade Agent](./architecture/shade-agent.md) | TEE key management (Phala Network) |
+| [Session Keys](./architecture/session-keys.md) | Signless UX implementation |
 | [Chain Signatures](./architecture/chain-signatures.md) | NEAR MPC for cross-chain operations |
-| [Storage](./architecture/storage.md) | IPFS and Crust Network storage architecture |
+| [Storage](./architecture/storage.md) | IPFS + Crust Network storage architecture |
 
 ### Guides
 
 | Document | Description |
 |----------|-------------|
-| [User Flows](./guides/user-flows.md) | Upload, watch, purchase, and gift flows |
-| [Nova SDK](./guides/nova-sdk.md) | Nova SDK integration guide with code examples |
-| [Environment](./guides/environment.md) | Environment variables and configuration reference |
+| [User Flows](./guides/user-flows.md) | Upload, watch, purchase, gift, and trial flows with diagrams |
+| [Developer Guide](./guides/developer-guide.md) | Development workflow, patterns, and common tasks |
+| [Nova SDK Guide](./guides/nova-sdk.md) | Nova SDK integration with code examples |
+| [Environment](./guides/environment.md) | Environment variables reference |
 
 ### API Reference
 
 | Document | Description |
 |----------|-------------|
-| [Contract Methods](./api/contract-methods.md) | Smart contract function reference (events, tickets, prepaid, gifts, trials) |
+| [Contract Methods](./api/contract-methods.md) | Smart contract API reference (80+ methods) |
 
-### Platform Documentation
+### Platform
 
 | Document | Description |
 |----------|-------------|
+| [Overview](./overview.md) | Platform introduction and value propositions |
+| [Frontend](./frontend.md) | Next.js 16 architecture, components, and hooks |
 | [Security](./security.md) | Security model, threat analysis, and audit checklist |
-| [Frontend](./frontend.md) | Next.js 16 implementation, components, and hooks |
-| [Contributing](./contributing.md) | Contribution guidelines, branch strategy, and code standards |
-
-### Expert Analysis Reports
-
-| Document | Expert | Focus |
-|----------|--------|-------|
-| [Architecture Analysis](./analysis/01-architecture-analysis.md) | Senior Web3 Project Architect | Protocol architecture, decentralization, security |
-| [Software Review](./analysis/02-software-architecture-review.md) | Senior Software Architect | Code quality, modularity, performance |
-| [Marketing Strategy](./analysis/03-marketing-strategy.md) | Senior Marketing Expert | Market analysis, GTM, growth plan |
-| [Analysis Overview](./analysis/README.md) | Cross-Expert Synthesis | Priority action items, combined findings |
-
----
-
-## Key Features
-
-| Feature | Description | Decentralized |
-|---------|-------------|:-------------:|
-| Token-Gated Content | Videos encrypted with Nova TEE, access controlled by NFT ownership | Yes |
-| Signless UX | Session Keys eliminate wallet pop-ups after initial setup | Yes |
-| Gift Links | Share access via Access Key drops, no recipient wallet needed | Yes |
-| Trial Accounts | Sponsored onboarding for new users (no crypto required) | Yes |
-| 98/2 Revenue Split | Creators receive 98% of revenue, 2% platform fee | Yes |
-
----
-
-## Technology Stack
-
-| Layer | Technology | Version | Purpose |
-|-------|------------|---------|---------|
-| Frontend | Next.js | 16.0.10 | App Router, React Server Components |
-| Frontend | React | 19.2.3 | UI components, hooks |
-| Frontend | Tailwind CSS | 4.x | Utility-first styling |
-| Frontend | TypeScript | 5.x | Type-safe development |
-| Blockchain | NEAR Protocol | Mainnet | Smart contract, payments, session keys |
-| Blockchain | NEAR SDK (Rust) | 5.1.0 | Contract development framework |
-| Encryption | Nova Protocol | TEE | AES-256-GCM encryption, group-based access |
-| Storage | IPFS | Crust Network | Decentralized encrypted video storage |
-
----
-
-## Directory Map
-
-```
-youtick-demo/
-├── apps/
-│   └── web/                      # Frontend application (Next.js 16)
-│       ├── app/                   # App Router pages and API routes
-│       │   ├── api/               # API routes (nova-proxy, trial)
-│       │   ├── claim/             # Gift claim page
-│       │   ├── ticket/            # Ticket view pages
-│       │   └── trial/             # Trial onboarding page
-│       ├── components/            # React components
-│       │   ├── UploadForm.tsx     # Video upload with encryption
-│       │   ├── IpfsPlayer.tsx     # Decrypted video playback
-│       │   ├── MintButton.tsx     # NFT minting interface
-│       │   └── GiftLinkGenerator.tsx  # Gift link creation
-│       ├── hooks/                 # Custom React hooks
-│       │   ├── useAllVideos.ts    # Video listing
-│       │   ├── useOwnedTokens.ts  # NFT ownership queries
-│       │   └── useEventDescription.ts  # Event metadata
-│       └── lib/                   # Core business logic
-│           ├── nova/              # Nova Protocol integration
-│           │   ├── index.ts       # SDK singleton and exports
-│           │   ├── client.ts      # Nova API client
-│           │   ├── auth.ts        # Authentication helpers
-│           │   ├── groups.ts      # Group management
-│           │   ├── types.ts       # Type definitions
-│           │   └── config.ts      # Configuration
-│           ├── crust/             # Crust Network storage
-│           ├── crypto/            # Cryptographic utilities
-│           ├── session-manager.ts # NEAR session key management
-│           ├── gift-service.ts    # Gift link generation
-│           ├── batch-transactions.ts  # Transaction batching
-│           └── constants.ts       # App-wide constants
-├── contracts/                     # Smart contracts
-│   └── nft-ticket/                # NFT ticket contract
-│       └── src/lib.rs             # Main contract (Rust)
-├── docs/                          # Documentation (you are here)
-│   ├── architecture/              # System design documentation
-│   ├── guides/                    # How-to guides
-│   ├── api/                       # API reference
-│   └── analysis/                  # Expert analysis reports
-└── scripts/                       # Utility and setup scripts
-```
+| [Testing](./testing.md) | Test infrastructure, patterns, and commands |
+| [Contributing](./contributing.md) | Contribution guidelines and code standards |
+| [Roadmap](./roadmap.md) | Development milestones and future plans |
 
 ---
 
 ## Reading Order
 
-Different audiences should read the documentation in different orders depending on their goals.
+### New Contributors
 
-### Newcomers
-
-Start here to understand what YouTick is and how it works.
-
-1. [Overview](./overview.md) -- Platform introduction and value propositions
-2. [Architecture](./architecture/README.md) -- System design and component relationships
-3. [User Flows](./guides/user-flows.md) -- End-to-end upload, watch, purchase, and gift flows
+1. [Overview](./overview.md) — What YouTick is and why it exists
+2. [Installation](./getting-started/installation.md) — Get the project running locally
+3. [Developer Guide](./guides/developer-guide.md) — Code patterns and workflow
+4. [Contributing](./contributing.md) — Contribution guidelines
 
 ### Frontend Developers
 
-Focus on the Next.js application, components, and client-side integrations.
-
-1. [Frontend](./frontend.md) -- Next.js 16 application structure and patterns
-2. [Session Keys](./architecture/session-keys.md) -- Signless UX implementation
-3. [Nova Protocol](./architecture/nova-protocol.md) -- Client-side encryption integration
-4. [Nova SDK Guide](./guides/nova-sdk.md) -- Practical SDK usage with code examples
+1. [Frontend Architecture](./frontend.md) — Next.js 16 structure and patterns
+2. [Session Keys](./architecture/session-keys.md) — Signless UX implementation
+3. [Nova Protocol](./architecture/nova-protocol.md) — Client-side encryption
+4. [Nova SDK Guide](./guides/nova-sdk.md) — Practical SDK usage
+5. [User Flows](./guides/user-flows.md) — End-to-end flow diagrams
 
 ### Contract Developers
 
-Focus on the Rust smart contract and NEAR Protocol integration.
-
-1. [Smart Contract](./architecture/smart-contract.md) -- Contract architecture and storage design
-2. [Contract Methods](./api/contract-methods.md) -- Complete function reference with CLI examples
-3. [Security](./security.md) -- Security model and audit checklist
+1. [Smart Contract](./architecture/smart-contract.md) — V8 specification
+2. [Contract Methods](./api/contract-methods.md) — Method reference with CLI examples
+3. [Security](./security.md) — Security model and audit checklist
+4. [Testing](./testing.md) — Contract testing patterns
 
 ### Integrators
 
-Third-party developers building on top of YouTick or integrating with its services.
-
-1. [Nova SDK Guide](./guides/nova-sdk.md) -- SDK setup, authentication, and group management
-2. [Shade Agent](./architecture/shade-agent.md) -- TEE key management internals
-3. [Contract Methods](./api/contract-methods.md) -- API surface for on-chain interactions
-4. [Chain Signatures](./architecture/chain-signatures.md) -- Cross-chain operation patterns
-
-### Stakeholders
-
-Non-technical overview of the platform, market position, and strategic analysis.
-
-1. [Overview](./overview.md) -- Platform vision and value propositions
-2. [Analysis Overview](./analysis/README.md) -- Cross-expert synthesis and priority actions
-3. [Architecture Analysis](./analysis/01-architecture-analysis.md) -- Web3 architecture assessment
-4. [Marketing Strategy](./analysis/03-marketing-strategy.md) -- Market analysis and growth plan
+1. [System Overview](./architecture/README.md) — Architecture and data flows
+2. [Nova SDK Guide](./guides/nova-sdk.md) — SDK setup and authentication
+3. [Contract Methods](./api/contract-methods.md) — On-chain API surface
+4. [Configuration](./getting-started/configuration.md) — Environment setup
 
 ---
 
-## Decentralization Summary
+## Key Features
 
-YouTick achieves decentralization with no server-side dependencies. Every operation runs client-side.
+| Feature | Description | Status |
+|---------|-------------|:------:|
+| NFT-Gated Content | AES-256-GCM encryption via Nova TEE, access by NFT ownership | Active |
+| Signless UX | Session Keys eliminate wallet pop-ups (24h expiry) | Active |
+| Revenue Split | 98% creator, 1% trial pool, 1% commission — on-chain enforced | Active |
+| Gift Links | Access-key-based drops, no recipient wallet needed | Active |
+| Trial Accounts | Sponsored onboarding via Onboarding Keys (no relayer) | Active |
+| wNEAR Payments | Purchase with wrapped NEAR via NEP-141 | Active |
+| Content Moderation | On-chain ban system with typed reasons | Active |
+| Purchase Audit | Full on-chain purchase logs with PurchaseType enum | Active |
+| Multi-Gateway IPFS | 7+ IPFS gateways with automatic failover | Active |
 
-| Component | Technology | Method | Status |
-|-----------|------------|--------|:------:|
-| NFT Ownership | NEAR Protocol | On-chain smart contract | Active |
-| Payments | NEAR Protocol | 98/2 split via contract logic | Active |
-| Video Encryption | Nova Protocol | TEE Shade Agent (AES-256-GCM) | Active |
-| Video Storage | IPFS | Crust Network with multi-gateway failover | Active |
-| Session Management | NEAR Protocol | Function-call access keys (signless UX) | Active |
-| Gift Distribution | NEAR Protocol | Access Key based drops (client-side) | Active |
-| Trial Onboarding | NEAR Protocol | Onboarding Key based (no relayer) | Active |
-| Group Access Control | Nova SDK | Client-side membership verification | Active |
-| RPC Communication | NEAR RPC | Multi-endpoint failover (fastnear, near.org, lava.build) | Active |
+---
+
+## Technology Stack
+
+| Layer | Technology | Version |
+|-------|------------|---------|
+| Frontend | Next.js (App Router) | 16.0.10 |
+| UI | React | 19.2.3 |
+| Styling | Tailwind CSS | 4.x |
+| Language | TypeScript | 5.x |
+| Blockchain | NEAR Protocol | Mainnet |
+| Smart Contract | Rust (NEAR SDK) | 5.5.0 |
+| NFT Standards | NEP-171/177/178 | — |
+| Encryption | Nova Protocol (TEE) | AES-256-GCM |
+| Storage | IPFS (Crust Network) | Multi-gateway |
+| Wallet | NEAR Wallet Selector | 10.1.4 |
+| Data Fetching | TanStack React Query | 5.x |
+
+---
+
+## Decentralization
+
+All operations run client-side with zero server dependencies:
+
+| Component | Technology | Server Required |
+|-----------|------------|:---------------:|
+| NFT Ownership | NEAR smart contract | No |
+| Payments | On-chain 98/2 split | No |
+| Video Encryption | Nova Protocol TEE | No |
+| Video Storage | IPFS via Crust Network | No |
+| Session Management | NEAR Function-Call Keys | No |
+| Gift Claims | Access-Key drops | No |
+| Trial Onboarding | Onboarding Key pattern | No |
+| Group Access | Nova SDK (client-side) | No |
+| RPC | Multi-endpoint failover | No |
 
 ---
 
@@ -215,13 +161,12 @@ YouTick achieves decentralization with no server-side dependencies. Every operat
 
 | Resource | Value |
 |----------|-------|
-| Production Contract | `youtick-prod-v1.near` |
-| Network | NEAR Mainnet |
+| Contract (Mainnet) | `youtick-prod-v1.near` |
+| Contract (Testnet) | `v1.utick.testnet` |
 | Nova Contract | `nova-sdk.near` |
-| Nova Encryption | AES-256-GCM via TEE |
-| IPFS Storage | Crust Network |
 | Frontend Framework | Next.js 16.0.10 |
-| Contract Language | Rust (NEAR SDK 5.1.0) |
+| Contract Language | Rust (NEAR SDK 5.5.0) |
+| Storage Version | V8 (collision-safe) |
 
 ---
 

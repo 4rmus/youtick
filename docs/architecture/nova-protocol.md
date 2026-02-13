@@ -51,12 +51,18 @@ The Nova SDK is YouTick's primary interface for encryption operations.
 **Module Structure (`/apps/web/lib/nova/`):**
 ```
 lib/nova/
-├── index.ts      # Module exports
-├── types.ts      # TypeScript definitions
-├── auth.ts       # Session Key → Nova token
-├── client.ts     # Upload/download operations
-├── groups.ts     # Access group management
-└── config.ts     # Environment configuration
+├── index.ts              # Module entry point, NovaSDK singleton
+├── client.ts             # Upload/download with TEE encryption
+├── auth.ts               # Session Key → Nova token
+├── config.ts             # Environment configuration
+├── groups.ts             # Group management utilities
+├── types.ts              # TypeScript type definitions
+├── costs.ts              # Group registration cost checks
+├── attestation.ts        # TEE attestation verification
+├── key-storage.ts        # AES key storage in Nova TEE
+├── post-purchase.ts      # Post-purchase Nova group membership
+├── pending-access-queue.ts # Retry failed group additions
+└── public-groups.ts      # Public group management (thumbnails)
 ```
 
 **Key Responsibilities:**
@@ -256,7 +262,7 @@ Distributed storage for encrypted video content.
    │             │              │               │
    │             │ 2. Transfer  │               │
    │             │    payment   │               │
-   │             │    (98%→Creator, 2%→Platform)│
+   │             │    (98% Creator, 1% Trial, 1% Commission)│
    │             │              │               │
    │             │ 3. Add to    │               │
    │             │    group     │               │

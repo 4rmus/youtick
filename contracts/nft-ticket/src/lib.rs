@@ -36,6 +36,7 @@ impl StorageKey {
     pub const PURCHASE_LOGS: Self = Self(b"p8");
     pub const EVENT_NOVA_GROUPS: Self = Self(b"ng8");
     pub const EVENT_PRICE_USD: Self = Self(b"pu8");
+    pub const BANNED_EVENTS: Self = Self(b"be8");
 }
 
 #[near(serializers = [borsh, json])]
@@ -59,6 +60,17 @@ pub struct EventResponse {
     pub creator_id: AccountId,
     pub created_at: u64,
     pub price_usd: Option<u128>,
+    pub banned: Option<bool>,
+    pub ban_reason: Option<String>,
+}
+
+/// Paginated response for get_events_paginated view method.
+#[near(serializers = [json])]
+#[derive(Clone)]
+pub struct PaginatedEventsResponse {
+    pub events: Vec<(String, EventResponse)>,
+    pub next_cursor: Option<String>,
+    pub total_count: u64,
 }
 
 // Custom video metadata for token-gated content
@@ -99,6 +111,22 @@ pub struct GiftDrop {
     pub remaining_claims: u32,
     pub deposit_per_claim: U128,  // Amount reserved for each claim
     pub created_at: u64,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub enum BanReason {
+    SexualContent,
+    CopyrightViolation,
+    Other,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
+pub struct BanInfo {
+    pub reason: BanReason,
+    pub banned_at: u64,
+    pub banned_by: AccountId,
 }
 
 // Onboarding configuration
@@ -340,6 +368,35 @@ impl Contract {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // LAZY STORAGE HELPER (banned_events stored outside Contract borsh)
+    // ═══════════════════════════════════════════════════════════════
+
+    fn lazy_banned_events(&self) -> LookupMap<String, BanInfo> {
+        LookupMap::new(StorageKey::BANNED_EVENTS)
+    }
+
+    /// DRY helper: build EventResponse with ban status and price_usd
+    fn build_event_response(&self, cid: &str, event: &Event) -> EventResponse {
+        let cid_string = cid.to_string();
+        let price_usd = self.lazy_event_price_usd().get(&cid_string);
+        let ban_info = self.lazy_banned_events().get(&cid_string);
+        EventResponse {
+            title: event.title.clone(),
+            description: event.description.clone(),
+            price: event.price,
+            creator_id: event.creator_id.clone(),
+            created_at: event.created_at,
+            price_usd,
+            banned: if ban_info.is_some() { Some(true) } else { None },
+            ban_reason: ban_info.map(|i| match i.reason {
+                BanReason::SexualContent => "sexual_content".to_string(),
+                BanReason::CopyrightViolation => "copyright_violation".to_string(),
+                BanReason::Other => "other".to_string(),
+            }),
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // OWNER ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════
 
@@ -391,6 +448,64 @@ impl Contract {
     /// View: Get Nova service fee per ticket
     pub fn get_nova_service_fee(&self) -> U128 {
         U128(self.nova_service_fee.as_yoctonear())
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CONTENT MODERATION (BAN/UNBAN) ADMIN FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Ban an event (owner only). Banned events are hidden from listings
+    /// and blocked from purchases, but remain in storage for audit trails.
+    pub fn ban_event(&mut self, encrypted_cid: String, reason: BanReason) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can ban events"
+        );
+        require!(
+            self.events.get(&encrypted_cid).is_some(),
+            "Event not found"
+        );
+
+        let ban_info = BanInfo {
+            reason: reason.clone(),
+            banned_at: env::block_timestamp(),
+            banned_by: env::predecessor_account_id(),
+        };
+
+        self.lazy_banned_events().insert(&encrypted_cid, &ban_info);
+        env::log_str(&format!("Event banned: {} (reason: {:?})", encrypted_cid, reason));
+    }
+
+    /// Unban an event (owner only). Restores event to normal listings.
+    pub fn unban_event(&mut self, encrypted_cid: String) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can unban events"
+        );
+
+        let removed = self.lazy_banned_events().remove(&encrypted_cid);
+        require!(removed.is_some(), "Event is not banned");
+
+        env::log_str(&format!("Event unbanned: {}", encrypted_cid));
+    }
+
+    /// View: Check if an event is banned (public)
+    pub fn is_event_banned(&self, encrypted_cid: String) -> bool {
+        self.lazy_banned_events().get(&encrypted_cid).is_some()
+    }
+
+    /// View: Get all banned events (owner only, iterates events checking ban map)
+    pub fn get_banned_events(&self) -> Vec<(String, BanInfo)> {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can list banned events"
+        );
+
+        self.events.iter()
+            .filter_map(|(cid, _)| {
+                self.lazy_banned_events().get(&cid).map(|info| (cid, info))
+            })
+            .collect()
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -567,34 +682,88 @@ impl Contract {
     }
 
     pub fn get_events(&self, from_index: Option<U128>, limit: Option<u64>) -> Vec<(String, EventResponse)> {
+        let banned = self.lazy_banned_events();
         self.events.iter()
             .skip(from_index.map(|v| v.0 as usize).unwrap_or(0))
+            .filter(|(cid, _)| banned.get(cid).is_none())
             .take(limit.unwrap_or(50) as usize)
             .map(|(cid, event)| {
-                let price_usd = self.lazy_event_price_usd().get(&cid);
-                (cid, EventResponse {
-                    title: event.title,
-                    description: event.description,
-                    price: event.price,
-                    creator_id: event.creator_id,
-                    created_at: event.created_at,
-                    price_usd,
-                })
+                let resp = self.build_event_response(&cid, &event);
+                (cid, resp)
             })
             .collect()
     }
 
+    /// Cursor-based paginated event listing.
+    /// - `cursor`: CID to start after (None = start from beginning)
+    /// - `limit`: max items to return (default 50, capped at 100)
+    pub fn get_events_paginated(&self, cursor: Option<String>, limit: Option<u64>) -> PaginatedEventsResponse {
+        let limit = limit.unwrap_or(50).min(100) as usize;
+        let banned = self.lazy_banned_events();
+
+        // Count non-banned events for total_count
+        let total_count = self.events.iter()
+            .filter(|(cid, _)| banned.get(cid).is_none())
+            .count() as u64;
+
+        // Build an iterator that skips past the cursor if provided
+        let mut iter = self.events.iter();
+        if let Some(ref cursor_cid) = cursor {
+            // Advance iterator until we find the cursor CID, then skip it
+            let mut found = false;
+            for (cid, _) in iter.by_ref() {
+                if cid == *cursor_cid {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                // Cursor not found — return empty result
+                return PaginatedEventsResponse {
+                    events: Vec::new(),
+                    next_cursor: None,
+                    total_count,
+                };
+            }
+        }
+
+        // Collect limit + 1 non-banned items so we can determine if there's a next page
+        let items: Vec<(String, Event)> = iter
+            .filter(|(cid, _)| banned.get(cid).is_none())
+            .take(limit + 1)
+            .collect();
+        let has_more = items.len() > limit;
+        let page_items = if has_more { &items[..limit] } else { &items[..] };
+
+        let events: Vec<(String, EventResponse)> = page_items.iter().map(|(cid, event)| {
+            let resp = self.build_event_response(cid, event);
+            (cid.clone(), resp)
+        }).collect();
+
+        let next_cursor = if has_more {
+            events.last().map(|(cid, _)| cid.clone())
+        } else {
+            None
+        };
+
+        PaginatedEventsResponse {
+            events,
+            next_cursor,
+            total_count,
+        }
+    }
+
+    /// Returns the total number of non-banned events.
+    pub fn get_events_count(&self) -> u64 {
+        let banned = self.lazy_banned_events();
+        self.events.iter()
+            .filter(|(cid, _)| banned.get(cid).is_none())
+            .count() as u64
+    }
+
     pub fn get_event(&self, encrypted_cid: String) -> Option<EventResponse> {
         self.events.get(&encrypted_cid).map(|event| {
-            let price_usd = self.lazy_event_price_usd().get(&encrypted_cid);
-            EventResponse {
-                title: event.title,
-                description: event.description,
-                price: event.price,
-                creator_id: event.creator_id,
-                created_at: event.created_at,
-                price_usd,
-            }
+            self.build_event_response(&encrypted_cid, &event)
         })
     }
 
@@ -644,6 +813,10 @@ impl Contract {
     pub fn buy_ticket(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Token {
         let event = self.events.get(&encrypted_cid)
             .expect("Event not found");
+        require!(
+            self.lazy_banned_events().get(&encrypted_cid).is_none(),
+            "This event has been banned and tickets cannot be purchased"
+        );
 
         let deposit = env::attached_deposit();
         let required_price = NearToken::from_yoctonear(event.price.0);
@@ -667,17 +840,10 @@ impl Contract {
                     event.price.0, storage_cost.as_yoctonear(), self.nova_service_fee.as_yoctonear())
             );
 
-            // Calculate commission (2% to contract, 98% to creator)
-            let commission_rate: u128 = 2;
-            let price_yocto = required_price.as_yoctonear();
-            commission = price_yocto * commission_rate / 100;
-            creator_amount = price_yocto - commission;
-
-            // Split commission: 50% to trial pool, 50% to commission pool
-            let trial_share = commission / 2;
-            let commission_share = commission - trial_share;
-            self.trial_pool = self.trial_pool.saturating_add(NearToken::from_yoctonear(trial_share));
-            self.commission_pool = self.commission_pool.saturating_add(NearToken::from_yoctonear(commission_share));
+            // Calculate and apply commission (2% platform, 98% creator)
+            let (ca, cm) = self.apply_commission(required_price);
+            creator_amount = ca;
+            commission = cm;
 
             // Transfer 98% to creator
             // Note: The rest (storage + any excess) stays in contract
@@ -696,8 +862,8 @@ impl Contract {
                 }
             }
 
-            env::log_str(&format!("Ticket sold: {} to creator, {} trial_pool, {} commission_pool, {} storage, {} nova_fee",
-                creator_amount, trial_share, commission_share, storage_cost.as_yoctonear(), self.nova_service_fee.as_yoctonear()));
+            env::log_str(&format!("Ticket sold: {} to creator, {} commission, {} storage, {} nova_fee",
+                creator_amount, commission, storage_cost.as_yoctonear(), self.nova_service_fee.as_yoctonear()));
 
             // Refund excess deposit to buyer
             let total_used = required_price
@@ -746,6 +912,10 @@ impl Contract {
         let account_id = env::predecessor_account_id();
         let event = self.events.get(&encrypted_cid)
             .expect("Event not found");
+        require!(
+            self.lazy_banned_events().get(&encrypted_cid).is_none(),
+            "This event has been banned and tickets cannot be purchased"
+        );
 
         let required_price = NearToken::from_yoctonear(event.price.0);
         let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
@@ -776,17 +946,10 @@ impl Contract {
             let new_bal = current_bal.saturating_sub(total_cost);
             self.user_deposits.insert(&account_id, &new_bal);
 
-            // Calculate commission (2% to contract, 98% to creator)
-            let commission_rate: u128 = 2;
-            let price_yocto = required_price.as_yoctonear();
-            commission = price_yocto * commission_rate / 100;
-            creator_amount = price_yocto - commission;
-
-            // Split commission: 50% to trial pool, 50% to commission pool
-            let trial_share = commission / 2;
-            let commission_share = commission - trial_share;
-            self.trial_pool = self.trial_pool.saturating_add(NearToken::from_yoctonear(trial_share));
-            self.commission_pool = self.commission_pool.saturating_add(NearToken::from_yoctonear(commission_share));
+            // Calculate and apply commission (2% platform, 98% creator)
+            let (ca, cm) = self.apply_commission(required_price);
+            creator_amount = ca;
+            commission = cm;
 
             // Transfer 98% to creator
             if creator_amount > 0 {
@@ -804,8 +967,8 @@ impl Contract {
                 }
             }
 
-            env::log_str(&format!("Prepaid ticket: {} to creator, {} trial_pool, {} commission_pool, {} nova_fee",
-                creator_amount, trial_share, commission_share, self.nova_service_fee.as_yoctonear()));
+            env::log_str(&format!("Prepaid ticket: {} to creator, {} commission, {} nova_fee",
+                creator_amount, commission, self.nova_service_fee.as_yoctonear()));
         }
 
         // Log purchase for audit trail (use next_token_id as expected token_id)
@@ -834,11 +997,36 @@ impl Contract {
     pub fn buy_ticket_internal(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Token {
         let event = self.events.get(&encrypted_cid)
             .expect("Event not found");
+        require!(
+            self.lazy_banned_events().get(&encrypted_cid).is_none(),
+            "This event has been banned and tickets cannot be purchased"
+        );
 
         // Mint the NFT using helper (storage paid by attached deposit from contract)
         self.internal_mint_ticket(receiver_id, &event, encrypted_cid, false)
     }
 
+
+    // ═══════════════════════════════════════════════════════════════
+    // COMMISSION HELPER
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Calculate commission split: 2% total (50% trial pool, 50% commission pool)
+    /// Returns (creator_amount, commission_total)
+    fn apply_commission(&mut self, price: NearToken) -> (u128, u128) {
+        let commission_rate: u128 = 2;
+        let price_yocto = price.as_yoctonear();
+        let commission = price_yocto * commission_rate / 100;
+        let creator_amount = price_yocto - commission;
+
+        // Split commission: 50% to trial pool, 50% to commission pool
+        let trial_share = commission / 2;
+        let commission_share = commission - trial_share;
+        self.trial_pool = self.trial_pool.saturating_add(NearToken::from_yoctonear(trial_share));
+        self.commission_pool = self.commission_pool.saturating_add(NearToken::from_yoctonear(commission_share));
+
+        (creator_amount, commission)
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // MINTING FUNCTIONS
@@ -1169,17 +1357,8 @@ impl Contract {
         let required_price = NearToken::from_yoctonear(event.price.0);
         let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
 
-        // Calculate commission (2% to contract, 98% to creator)
-        let commission_rate: u128 = 2;
-        let price_yocto = required_price.as_yoctonear();
-        let commission = price_yocto * commission_rate / 100;
-        let creator_amount = price_yocto - commission;
-
-        // Split commission: 50% trial pool, 50% commission pool
-        let trial_share = commission / 2;
-        let commission_share = commission - trial_share;
-        self.trial_pool = self.trial_pool.saturating_add(NearToken::from_yoctonear(trial_share));
-        self.commission_pool = self.commission_pool.saturating_add(NearToken::from_yoctonear(commission_share));
+        // Calculate and apply commission (2% platform, 98% creator)
+        let (creator_amount, commission) = self.apply_commission(required_price);
 
         // Transfer 98% to creator
         if creator_amount > 0 {
@@ -1216,6 +1395,7 @@ impl Contract {
         ));
 
         // Log purchase for audit trail
+        let price_yocto = required_price.as_yoctonear();
         self.log_purchase(
             buyer_id.clone(),
             event.creator_id.clone(),
@@ -1596,8 +1776,12 @@ impl Contract {
             "Daily limit reached. Please try again tomorrow."
         );
 
-        // Verify event exists and is free
+        // Verify event exists, is not banned, and is free
         let event = self.events.get(&encrypted_cid).expect("Event not found");
+        require!(
+            self.lazy_banned_events().get(&encrypted_cid).is_none(),
+            "This event has been banned and tickets cannot be claimed"
+        );
         require!(event.price.0 == 0, "This ticket is not free. Use buy_ticket instead.");
 
         // Storage cost
@@ -1726,6 +1910,10 @@ impl Contract {
 
         let event = self.events.get(&encrypted_cid)
             .expect("Event not found");
+        require!(
+            self.lazy_banned_events().get(&encrypted_cid).is_none(),
+            "This event has been banned and tickets cannot be claimed"
+        );
 
         // Verify this is actually a free ticket
         require!(
@@ -1919,6 +2107,10 @@ impl Contract {
         // Verify event exists
         let event = self.events.get(&event_cid)
             .expect("Event not found");
+        require!(
+            self.lazy_banned_events().get(&event_cid).is_none(),
+            "This event has been banned and gift drops cannot be created"
+        );
 
         // Creator must own the event
         require!(
@@ -1995,6 +2187,10 @@ impl Contract {
         // Get event details for NFT metadata
         let event = self.events.get(&gift_drop.event_cid)
             .expect("Event not found");
+        require!(
+            self.lazy_banned_events().get(&gift_drop.event_cid).is_none(),
+            "This event has been banned and gift tickets cannot be claimed"
+        );
 
         env::log_str(&format!(
             "Gift claimed: -> {} (event: {})",
@@ -2053,6 +2249,12 @@ impl Contract {
         Promise::new(env::current_account_id())
             .delete_key(env::signer_account_pk())
             .detach();
+
+        // Check event is not banned
+        require!(
+            self.lazy_banned_events().get(&gift_drop.event_cid).is_none(),
+            "This event has been banned and gift tickets cannot be claimed"
+        );
 
         // Account creation costs ~0.1 NEAR + access key storage ~0.0075 NEAR
         let account_creation_cost = NearToken::from_millinear(110); // 0.11 NEAR

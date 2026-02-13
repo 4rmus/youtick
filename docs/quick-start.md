@@ -21,8 +21,8 @@
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/4rmus/youtick-mvp.git
-cd youtick-mvp
+git clone https://github.com/4rmus/youtick.git
+cd youtick
 ```
 
 ### 2. Install Dependencies

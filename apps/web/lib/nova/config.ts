@@ -291,14 +291,14 @@ export const NOVA_CONSTANTS = {
   /** Auth token cache duration (30 minutes) */
   AUTH_TOKEN_CACHE_DURATION: 30 * 60 * 1000,
 
-  /** Default upload timeout (5 minutes) */
-  UPLOAD_TIMEOUT: 5 * 60 * 1000,
+  /** Default upload timeout (15 minutes — increased for 500 MB uploads) */
+  UPLOAD_TIMEOUT: 15 * 60 * 1000,
 
   /** Default fetch timeout (30 seconds) */
   FETCH_TIMEOUT: 30 * 1000,
 
-  /** Max file size for upload (100 MB) */
-  MAX_FILE_SIZE: 100 * 1024 * 1024,
+  /** Max file size for upload (500 MB) */
+  MAX_FILE_SIZE: 500 * 1024 * 1024,
 
   /** TEE health check timeout (10 seconds) */
   TEE_HEALTH_TIMEOUT: 10 * 1000,

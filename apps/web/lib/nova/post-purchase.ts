@@ -10,6 +10,7 @@
 import { addGroupMember } from './groups';
 import { getProvider, viewContract } from '@/lib/near';
 import { NEAR_CONFIG } from '@/lib/constants';
+import { pendingAccessQueue } from './pending-access-queue';
 
 /**
  * Add buyer to the Nova group for a video after purchase/claim.
@@ -84,9 +85,14 @@ export async function addBuyerToNovaGroup(
 
     console.log(`[DECENTRALIZATION_METRIC] {"operation":"post_purchase_nova","buyer":"${buyerAccountId}","groupId":"${novaGroupId}","timestamp":${Date.now()}}`);
 
+    // Success: remove from queue if was pending
+    pendingAccessQueue.remove(eventCid, buyerAccountId);
+
   } catch (error) {
     // Non-blocking: log but don't throw
     console.error('[Nova Post-Purchase] Failed to add buyer to Nova group:', error);
     console.error('[Nova Post-Purchase] Ticket purchase was still successful. Video access may require manual grant.');
+    // Queue for background retry
+    pendingAccessQueue.add(eventCid, buyerAccountId);
   }
 }

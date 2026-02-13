@@ -25,13 +25,9 @@ const CONTRACT_ID = NEAR_CONFIG.contractId;
 
 // ── Upload state reducer ──
 
-type StepStatus = 'pending' | 'loading' | 'complete' | 'error';
+import type { UploadStep } from '@/lib/types';
 
-interface UploadStep {
-    id: string;
-    label: string;
-    status: StepStatus;
-}
+type StepStatus = UploadStep['status'];
 
 const INITIAL_STEPS: UploadStep[] = [
     { id: 'session', label: 'Preparing Identity', status: 'pending' },
@@ -332,13 +328,17 @@ export function UploadForm() {
                 // Schema (paid):  "CID:::ThumbnailURL:::KeyCID:::Title" (4 segments)
                 // Schema (free):  "CID:::ThumbnailURL:::Title"          (3 segments)
                 // Schema (legacy): "NovaCID:::Title"                    (2 segments)
+                // Title encoding:
+                //   Paid:  "CID:::Thumbnail:::KeyCID:::Title"  (always 4 segments)
+                //   Free:  "CID:::Thumbnail:::Title"           (3 segments)
+                //   Legacy:"CID:::Title"                       (2 segments)
+                // Paid videos MUST always use 4 segments so IpfsPlayer can
+                // distinguish keyCid from thumbnailCid (empty string = no thumbnail).
                 let eventTitle: string;
-                if (keyCid && thumbnailUrl) {
-                    eventTitle = `${novaCid}:::${thumbnailUrl}:::${keyCid}:::${title || file.name}`;
+                if (keyCid) {
+                    eventTitle = `${novaCid}:::${thumbnailUrl || ''}:::${keyCid}:::${title || file.name}`;
                 } else if (thumbnailUrl) {
                     eventTitle = `${novaCid}:::${thumbnailUrl}:::${title || file.name}`;
-                } else if (keyCid) {
-                    eventTitle = `${novaCid}:::${keyCid}:::${title || file.name}`;
                 } else {
                     eventTitle = `${novaCid}:::${title || file.name}`;
                 }

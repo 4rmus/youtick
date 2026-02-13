@@ -5,12 +5,14 @@ import { fetchFile } from '@/lib/nova';
 import { hasApiKey } from '@/lib/nova/config';
 import { NovaError } from '@/lib/nova/types';
 import { addBuyerToNovaGroup } from '@/lib/nova/post-purchase';
+import { pendingAccessQueue } from '@/lib/nova/pending-access-queue';
 import { fetchFromGateways } from '@/lib/crust';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { Loader2, Play, Lock, Ticket, KeyRound } from 'lucide-react';
+import { Loader2, Play, Lock, KeyRound, ShieldOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useNFTOwnership } from '@/lib/hooks/useSessionState';
 import { NovaThumbnail } from './NovaThumbnail';
+import { TicketPurchaseCard } from './TicketPurchaseCard';
 import { SessionManager } from '@/lib/session-manager';
 import { NEAR_CONFIG } from '@/lib/constants';
 import { getProvider, viewContract } from '@/lib/near';
@@ -27,6 +29,7 @@ type PlayerState =
     | { type: 'decrypting'; message: string }
     | { type: 'playing'; videoUrl: string }
     | { type: 'needs-session-key' }
+    | { type: 'banned' }
     | { type: 'error'; message: string };
 
 const initialState: PlayerState = { type: 'idle' };
@@ -35,7 +38,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
     const { accountId, getWallet } = useWallet();
 
     // React Query hooks for cached state
-    const { data: hasOwnership, isLoading: checkingAccess } = useNFTOwnership(accountId, cid);
+    const { data: hasOwnership, isLoading: checkingAccess, refetch: refetchOwnership } = useNFTOwnership(accountId, cid);
 
     // Consolidated state machine
     const [playerState, setPlayerState] = useState<PlayerState>(initialState);
@@ -62,6 +65,16 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
 
     // Derived access state from React Query
     const hasAccess = hasOwnership === true;
+
+    // Show inline purchase card when no access, no error, not loading, and not in special states
+    const showPurchaseCard = !videoUrl
+        && playerState.type !== 'banned'
+        && !checkingAccess
+        && !loading
+        && error !== 'SIMULATION_MODE'
+        && playerState.type !== 'needs-session-key'
+        && hasAccess === false
+        && !error;
 
     const playVideo = useCallback(async (isRetry: boolean = false) => {
         if (!accountId) {
@@ -93,17 +106,29 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                         title: string;
                         price: string;
                         creator_id: string;
+                        banned?: boolean;
                     }>(provider, contractId, 'get_event', { encrypted_cid: cid });
+
+                    if (event?.banned) {
+                        setPlayerState({ type: 'banned' });
+                        return;
+                    }
 
                     if (event && event.title && event.title.includes(':::')) {
                         const parts = event.title.split(':::');
-                        if (parts.length === 4) {
-                            // New paid: "CID:::Thumbnail:::KeyCID:::Title"
+                        if (parts.length >= 4) {
+                            // Paid: "CID:::Thumbnail:::KeyCID:::Title" (4+ segments)
                             novaCid = parts[0];
                             keyCid = parts[2];
                         } else if (parts.length === 3) {
-                            // Free or legacy: "CID:::Thumbnail:::Title"
+                            // Could be free ("CID:::Thumbnail:::Title") or
+                            // legacy paid without thumbnail ("CID:::KeyCID:::Title").
+                            // Disambiguate using event price: paid videos always have keyCid.
                             novaCid = parts[0];
+                            const isPaid = event.price && event.price !== '0';
+                            if (isPaid) {
+                                keyCid = parts[1];
+                            }
                         } else {
                             // Legacy 2-segment: "CID:::Title"
                             novaCid = parts[0];
@@ -136,7 +161,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             // 2. Fetch video based on keyCid presence
             //    keyCid present  → paid video (encrypted, needs Nova decrypt)
             //    keyCid absent   → free video (unencrypted, raw fetch from Crust)
-            let videoData: Uint8Array = undefined!;
+            let videoData: Uint8Array | undefined;
 
             if (keyCid) {
                 // Paid video: decrypt via Crust data + Nova key
@@ -159,6 +184,8 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
 
                     console.log('[IpfsPlayer] Access denied — self-healing group add for:', accountId);
                     setPlayerState({ type: 'decrypting', message: 'Syncing access rights...' });
+                    // First: try processing any pending queue entries for this video
+                    await pendingAccessQueue.processQueue();
                     await addBuyerToNovaGroup(cid, accountId);
 
                     // Retry with escalating delays for TEE propagation
@@ -178,7 +205,10 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                             console.warn(`[IpfsPlayer] Retry after ${delay}ms failed, will try again...`);
                         }
                     }
-                    if (lastErr) throw lastErr;
+                    if (lastErr) {
+                        pendingAccessQueue.add(cid, accountId);
+                        throw lastErr;
+                    }
                 }
             } else {
                 // Free video: fetch raw (unencrypted) from Crust gateways
@@ -192,6 +222,9 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
             // Revoke previous blob URL if any
             if (blobUrlRef.current) {
                 URL.revokeObjectURL(blobUrlRef.current);
+            }
+            if (!videoData) {
+                throw new Error('Failed to load video data');
             }
             const arrayBuffer = new Uint8Array(videoData).buffer;
             const videoBlob = new Blob([arrayBuffer], { type: 'video/mp4' });
@@ -227,10 +260,24 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
     const handlePlay = () => playVideo(false);
 
     return (
-        <div className="w-full aspect-video bg-slate-900 rounded-lg overflow-hidden relative group">
+        <div className={`w-full bg-slate-900 rounded-lg relative group ${showPurchaseCard ? 'min-h-[56.25%] overflow-visible' : 'aspect-video overflow-hidden'}`}>
             {!videoUrl ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-4">
-                    {checkingAccess ? (
+                <div className={`flex flex-col items-center text-white ${showPurchaseCard ? 'w-full' : 'absolute inset-0 justify-center p-4'}`}>
+                    {playerState.type === 'banned' ? (
+                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md w-full h-full p-6 text-center">
+                            <ShieldOff className="w-16 h-16 text-red-500 mb-4" />
+                            <h3 className="text-2xl font-bold text-white mb-2">Content Removed</h3>
+                            <p className="text-zinc-400 max-w-sm mb-6">
+                                This content has been removed for violating platform guidelines.
+                            </p>
+                            <Button
+                                variant="outline"
+                                onClick={() => window.location.href = '/discover'}
+                            >
+                                Back to Discover
+                            </Button>
+                        </div>
+                    ) : checkingAccess ? (
                         <div className="text-center">
                             <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-zinc-500" />
                             <p className="text-xs text-zinc-500">Verifying access...</p>
@@ -275,37 +322,35 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                                 Setup Session Key
                             </Button>
                         </div>
-                    ) : (hasAccess === false || error) ? (
-                        // SHOW LOCKED SCREEN IF NO ACCESS OR ERROR
+                    ) : hasAccess === false && !error ? (
+                        // SHOW INLINE PURCHASE CARD
+                        <div className="z-10 flex flex-col items-center bg-black/95 backdrop-blur-md w-full p-4">
+                            <TicketPurchaseCard
+                                cid={cid}
+                                onPurchaseSuccess={() => {
+                                    refetchOwnership();
+                                }}
+                                className="w-full max-w-sm"
+                            />
+                        </div>
+                    ) : error ? (
+                        // SHOW ERROR / RETRY
                         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md w-full h-full p-6 text-center">
                             <Lock className="w-16 h-16 text-zinc-600 mb-4" />
-                            <h3 className="text-2xl font-bold text-white mb-2">Content Locked</h3>
+                            <h3 className="text-2xl font-bold text-white mb-2">Playback Error</h3>
                             <p className="text-zinc-400 max-w-sm mb-8">
-                                {hasAccess && error
+                                {hasAccess
                                     ? 'Access sync in progress. Try again in a moment.'
-                                    : 'You need a ticket to watch this video. Purchase one to unlock permanent access.'}
+                                    : error}
                             </p>
-
                             <div className="flex flex-col gap-4 w-full max-w-xs">
-                                {hasAccess && error ? (
-                                    <Button
-                                        className="w-full h-12 text-lg font-bold gap-2"
-                                        onClick={handlePlay}
-                                    >
-                                        <Play className="w-5 h-5" />
-                                        Retry Playback
-                                    </Button>
-                                ) : (
-                                    <Button
-                                        className="w-full h-12 text-lg font-bold gap-2"
-                                        onClick={() => window.location.href = `/ticket/${cid}`}
-                                    >
-                                        <Ticket className="w-5 h-5" />
-                                        Get Ticket
-                                    </Button>
-                                )}
-
-                                {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
+                                <Button
+                                    className="w-full h-12 text-lg font-bold gap-2"
+                                    onClick={handlePlay}
+                                >
+                                    <Play className="w-5 h-5" />
+                                    Retry Playback
+                                </Button>
                             </div>
                         </div>
                     ) : (

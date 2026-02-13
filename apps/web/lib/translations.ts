@@ -155,7 +155,20 @@ export const translations = {
             connect_prompt: "Please connect your NEAR wallet to view your profile.",
             go_home: "Go to Home",
             upgrade_trial_title: "Upgrade Your Trial Account",
-            upgrade_trial_desc: "Create a permanent NEAR account and unlock all features."
+            upgrade_trial_desc: "Create a permanent NEAR account and unlock all features.",
+            gift_button: "Gift",
+            gift_select_desc: "Select the video you want to gift",
+            gift_create_link: "Create Gift Link",
+            gift_share_desc: "Create shareable gift links for",
+            my_events: "Events",
+            no_events: "No Events Created",
+            no_events_desc: "Upload your first video to get started",
+            upload_video: "Upload Video",
+            access_pass: "Access Pass",
+            nft_ticket: "NFT Ticket",
+            free: "Free",
+            creator: "Creator",
+            free_event: "Free Event"
         },
         roadmap: {
             title: "Roadmap",
@@ -426,6 +439,16 @@ export const translations = {
             no_gift_link: "No gift link found. Please use a valid gift link or connect your wallet.",
             gift_for: "Gift ticket for:"
         },
+        moderation: {
+            content_removed: "Content Removed",
+            content_removed_desc: "This content has been removed for violating platform guidelines.",
+            reason_sexual_content: "Sexual Content",
+            reason_copyright_violation: "Copyright Violation",
+            reason_other: "Policy Violation",
+            banned_badge: "Banned",
+            cannot_purchase: "This event has been banned and tickets cannot be purchased.",
+            back_to_discover: "Back to Discover",
+        },
         claim_page: {
             loading_gift: "Loading gift info...",
             invalid_link: "Invalid link. Claim key not found.",
@@ -623,7 +646,20 @@ export const translations = {
             connect_prompt: "Profilinizi görüntülemek için lütfen NEAR cüzdanınızı bağlayın.",
             go_home: "Ana Sayfaya Dön",
             upgrade_trial_title: "Trial Hesabınızı Yükseltin",
-            upgrade_trial_desc: "Kalıcı bir NEAR hesabı oluşturun ve tüm özelliklere erişin."
+            upgrade_trial_desc: "Kalıcı bir NEAR hesabı oluşturun ve tüm özelliklere erişin.",
+            gift_button: "Hediye Et",
+            gift_select_desc: "Hediye etmek istediğiniz videoyu seçin",
+            gift_create_link: "Hediye Linki Oluştur",
+            gift_share_desc: "için paylaşılabilir hediye linkleri oluşturun",
+            my_events: "Etkinlikler",
+            no_events: "Henüz Etkinlik Yok",
+            no_events_desc: "Başlamak için ilk videonuzu yükleyin",
+            upload_video: "Video Yükle",
+            access_pass: "Erişim Bileti",
+            nft_ticket: "NFT Bilet",
+            free: "Ücretsiz",
+            creator: "İçerik Sahibi",
+            free_event: "Ücretsiz Etkinlik"
         },
         roadmap: {
             title: "Yol Haritası",
@@ -893,6 +929,16 @@ export const translations = {
             generating_trial: "Deneme hesabı oluşturuluyor...",
             no_gift_link: "Hediye linki bulunamadı. Lütfen geçerli bir hediye linki kullanın veya cüzdanınızı bağlayın.",
             gift_for: "Hediye bilet:"
+        },
+        moderation: {
+            content_removed: "İçerik Kaldırıldı",
+            content_removed_desc: "Bu içerik platform kurallarını ihlal ettiği için kaldırılmıştır.",
+            reason_sexual_content: "Cinsel İçerik",
+            reason_copyright_violation: "Telif Hakkı İhlali",
+            reason_other: "Politika İhlali",
+            banned_badge: "Yasaklandı",
+            cannot_purchase: "Bu etkinlik yasaklanmıştır ve bilet satın alınamaz.",
+            back_to_discover: "Keşfete Dön",
         },
         claim_page: {
             loading_gift: "Hediye bilgisi yükleniyor...",

@@ -1,12 +1,12 @@
 # Security Model
 
-> **Multi-Layer Security Architecture** -- Transport, Storage, Access Control, Key Management, and Session Isolation
+> **Multi-Layer Security Architecture** -- Transport, Storage, Access Control, Key Management, and Content Moderation
 
 ---
 
 ## Security Overview
 
-YouTick implements defense-in-depth across five layers. No single layer's failure compromises the entire system.
+YouTick implements defense-in-depth across six layers. No single layer's failure compromises the entire system.
 
 | Layer | Protection | Implementation |
 |-------|------------|----------------|
@@ -14,7 +14,8 @@ YouTick implements defense-in-depth across five layers. No single layer's failur
 | **Storage** | AES-256-GCM | TEE-based encryption via Nova Protocol |
 | **Access** | NFT Ownership | On-chain verification on NEAR Protocol |
 | **Keys** | TEE Isolation | Shade Agent manages keys inside secure enclave |
-| **Sessions** | 7-day max | Scoped permissions, limited allowance, automatic cleanup |
+| **Sessions** | 24h max | Scoped permissions, limited allowance, automatic cleanup |
+| **Moderation** | On-chain bans | Content moderation with typed reasons (V8) |
 
 ---
 
@@ -28,13 +29,13 @@ User Browser                              IPFS (Crust Network)
     |  1. Select video file                    |
     |  2. Generate AES-256-GCM key             |
     |  3. Encrypt file client-side             |
-    |  4. Upload encrypted blob ──────────────>|
+    |  4. Upload encrypted blob -------------->|
     |  5. Store AES key in Nova TEE            |
     |                                          |
     |  [Only encrypted data leaves browser]    |
 ```
 
-### Encryption Flow (TypeScript)
+### Encryption Flow
 
 The hybrid upload encrypts client-side, stores the binary on Crust, and keeps only the tiny AES key (~44 bytes) in Nova's TEE for access control.
 
@@ -94,10 +95,8 @@ const decrypted = await decryptFile(encrypted, aesKey);
 The smart contract provides a view method to verify whether an account owns a ticket for a given video.
 
 ```rust
-// Smart contract method (Rust)
 pub fn verify_ownership(&self, account_id: AccountId, cid: String) -> bool {
     let tokens = self.nft_tokens_for_owner(account_id.clone(), None, None);
-
     tokens.iter().any(|token| {
         if let Some(video_meta) = &token.video_metadata {
             video_meta.encrypted_cid == cid
@@ -113,7 +112,6 @@ pub fn verify_ownership(&self, account_id: AccountId, cid: String) -> bool {
 After ownership is confirmed on-chain, the frontend verifies Nova group membership before requesting decryption.
 
 ```typescript
-// Verify membership before decryption
 const hasAccess = await nova.verifyMembership({
   groupId: videoGroupId,
   accountId: viewerAccountId
@@ -135,7 +133,6 @@ Session Keys provide signless UX by creating a restricted access key on the user
 ### Permission Scoping
 
 ```typescript
-// Session keys are limited to specific contract methods
 const sessionKeyPermissions = {
   receiverId: CONTRACT_ID,       // Only this contract
   methodNames: [                 // Only these methods
@@ -192,6 +189,7 @@ async function hasSessionKey(): Promise<boolean> {
 | Scoped methods | `buy_ticket_prepaid`, `nft_mint`, `create_event`, `deposit_funds` | Prevents unauthorized operations |
 | Storage | Browser `localStorage` | Keys never leave the user's device |
 | On-chain validation | Every use | Prevents use of revoked keys |
+| Max expiry | 24 hours | Limits window of exposure |
 | Key type | ed25519 `FunctionCall` access key | Cannot transfer NEAR or call other contracts |
 
 ---
@@ -240,53 +238,136 @@ await nova.removeMember({
 
 ---
 
+## Content Moderation (V8)
+
+### On-Chain Ban System
+
+YouTick implements an on-chain content moderation system with typed ban reasons:
+
+```rust
+pub enum BanReason {
+    SexualContent,
+    CopyrightViolation,
+    Other,
+}
+
+pub struct BanInfo {
+    pub reason: BanReason,
+    pub banned_at: u64,
+    pub banned_by: AccountId,
+}
+```
+
+### Ban Enforcement
+
+Banned events are blocked across all contract operations:
+
+| Operation | Ban Check | Effect |
+|-----------|-----------|--------|
+| `get_events` | Excluded | Banned events not returned |
+| `get_events_paginated` | Excluded | Banned events not returned |
+| `buy_ticket` | Blocked | "Event has been banned" error |
+| `buy_ticket_prepaid` | Blocked | "Event has been banned" error |
+| `create_gift_drop` | Blocked | Cannot create gifts for banned events |
+| `claim_gift` | Blocked | Cannot claim gifts for banned events |
+| `claim_free_ticket_sponsored` | Blocked | Cannot claim free tickets for banned events |
+
+### Ban Management (Owner Only)
+
+```bash
+# Ban an event
+near call youtick-prod-v1.near ban_event \
+  '{"encrypted_cid":"Qm...","reason":"CopyrightViolation"}' \
+  --accountId youtick-prod-v1.near
+
+# Unban an event
+near call youtick-prod-v1.near unban_event \
+  '{"encrypted_cid":"Qm..."}' \
+  --accountId youtick-prod-v1.near
+
+# List all banned events
+near view youtick-prod-v1.near get_banned_events '{}' \
+  --accountId youtick-prod-v1.near
+```
+
+### Ban Security Properties
+
+- Ban data stored in lazy `LookupMap` (no migration required to add)
+- Only contract owner can ban/unban events
+- Ban checks use `require!()` assertions -- cannot be bypassed
+- `get_event` view includes ban status transparently in response
+- Existing NFT holders retain their tokens but new purchases are blocked
+
+---
+
+## Purchase Audit Trail (V6+)
+
+Every ticket purchase is logged on-chain with full traceability:
+
+```rust
+pub struct PurchaseLog {
+    pub buyer_id: AccountId,
+    pub creator_id: AccountId,
+    pub event_cid: String,
+    pub token_id: String,
+    pub price: U128,
+    pub creator_amount: U128,      // 98% of price
+    pub commission_amount: U128,   // 2% of price
+    pub purchase_type: PurchaseType,
+    pub timestamp_ns: u64,
+}
+
+pub enum PurchaseType {
+    Direct,   // buy_ticket (wallet signature)
+    Prepaid,  // buy_ticket_prepaid (session key)
+    Free,     // price == 0
+}
+```
+
+### Audit Capabilities
+
+- Query individual purchase records by ID
+- Paginated listing of all purchase history
+- Total purchase count for analytics
+- Purchase type tracking for behavioral analysis
+- Timestamp precision to nanoseconds for ordering guarantees
+
+---
+
 ## Rate Limiting
 
 YouTick implements rate limiting at multiple levels to prevent abuse.
 
 ### Client-Side Rate Limiter
 
-A sliding window rate limiter with file-based persistence protects trial account creation and other sensitive endpoints.
+A sliding window rate limiter protects trial account creation and other sensitive endpoints.
 
-```typescript
-class RateLimiter {
-  private cache: Map<string, RateLimitEntry> = new Map();
-  private config: RateLimiterConfig;
+### On-Chain Rate Limiting
 
-  checkLimit(identifier: string): boolean {
-    const now = Date.now();
-    const windowStart = now - this.config.windowMs;
+The smart contract enforces daily trial limits:
 
-    let entry = this.cache.get(identifier);
-    if (!entry) {
-      entry = { timestamps: [] };
-      this.cache.set(identifier, entry);
+```rust
+fn check_and_increment_daily_limit(&mut self) -> bool {
+    let today = Self::get_day_timestamp();
+    let current = self.daily_trial_counts.get(&today).unwrap_or(0);
+
+    if self.onboarding_config.daily_limit > 0
+        && current >= self.onboarding_config.daily_limit {
+        return false;
     }
 
-    // Remove timestamps outside the window
-    entry.timestamps = entry.timestamps.filter(ts => ts > windowStart);
-
-    if (entry.timestamps.length >= this.config.maxRequests) {
-      return false; // Rate limited
-    }
-
-    entry.timestamps.push(now);
-    return true;
-  }
+    self.daily_trial_counts.insert(&today, &(current + 1));
+    true
 }
 ```
 
 ### Configured Rate Limits
 
-| Endpoint | Window | Limit | Persistence |
+| Endpoint | Window | Limit | Enforcement |
 |----------|--------|-------|-------------|
-| Trial account creation (per IP) | 24 hours | 3 requests | File-based + contract sync |
-| Trial accounts (global daily) | 24 hours | 100 total | File-based + NEAR contract sync |
-| Uploads (per account) | 1 hour | 10 requests | In-memory |
-
-### Daily Global Limiter
-
-The `DailyGlobalLimiter` syncs its count from the NEAR contract's `get_daily_trial_count()` view method on cold start, preventing bypass through server restarts.
+| Trial account creation (per IP) | 24 hours | 3 requests | Client-side |
+| Trial accounts (global daily) | 24 hours | 100 total | On-chain contract |
+| Uploads (per account) | 1 hour | 10 requests | Client-side |
 
 ---
 
@@ -296,16 +377,18 @@ The `DailyGlobalLimiter` syncs its count from the NEAR contract's `get_daily_tri
 
 - [ ] No hardcoded private keys in source code
 - [ ] Environment variables properly set in `.env.local`
-- [ ] Contract storage keys are V7 (collision-safe)
+- [ ] Contract storage keys are V8 (collision-safe)
 - [ ] Prepaid withdrawal limit is 0.1 NEAR max
 - [ ] Session key allowance is 0.25 NEAR max
-- [ ] Session cache expiry is 7 days max
-- [ ] Gift drop access keys are properly scoped (`create_sponsored_trial_direct`, `claim_free_ticket_direct`)
+- [ ] Session cache expiry is 24 hours max
+- [ ] Gift drop access keys are properly scoped
 - [ ] CORS configured correctly for API routes
 - [ ] Rate limiting enabled on trial account endpoints
-- [ ] Nova API key is set and not exposed in client bundles (use `NEXT_PUBLIC_` prefix only for public values)
-- [ ] Onboarding key is a Function Call access key with restricted method scope
+- [ ] Nova API key is set and not exposed in client bundles
+- [ ] Onboarding key is a Function Call access key with restricted scope
 - [ ] RPC failover endpoints are configured (fastnear, near.org, lava.build)
+- [ ] Content moderation ban system operational
+- [ ] Nova auto-funding caps verified
 
 ### Ongoing Monitoring
 
@@ -314,8 +397,10 @@ The `DailyGlobalLimiter` syncs its count from the NEAR contract's `get_daily_tri
 - [ ] Verify Nova group integrity (member counts match ticket sales)
 - [ ] Audit session key creations (watch for mass key generation)
 - [ ] Monitor trial pool balance via `get_trial_pool_balance`
-- [ ] Review rate limiter logs for abuse patterns
+- [ ] Monitor commission pool balance via `get_commission_pool`
+- [ ] Review purchase logs for anomalous patterns
 - [ ] Verify Crust storage replicas for uploaded content
+- [ ] Review banned events list periodically
 
 ---
 
@@ -325,20 +410,20 @@ The `DailyGlobalLimiter` syncs its count from the NEAR contract's `get_daily_tri
 |--------|------------|--------|------------|
 | **Key extraction from TEE** | Low | Critical | Hardware-level TEE isolation (Shade Agent). No single point of key exposure. Attestation verification. |
 | **Content theft (encrypted data)** | Low | High | Client-side AES-256-GCM encryption. IPFS stores only encrypted blobs. Key retrieval requires group membership. |
-| **Session key hijacking** | Medium | Medium | 7-day max expiry, scoped permissions (specific methods only), 0.25 NEAR max allowance, on-chain validation per use. |
-| **Smart contract exploit** | Low | Critical | NEP-171 standard compliance, storage key V7 collision safety, upgrade mechanism for patches. |
+| **Session key hijacking** | Medium | Medium | 24h max expiry, scoped permissions (specific methods only), 0.25 NEAR max allowance, on-chain validation per use. |
+| **Smart contract exploit** | Low | Critical | NEP-171 standard compliance, V8 collision-safe storage keys, state migration audit trail, owner-only admin methods. |
 | **IPFS content deanonymization** | Medium | Low | Content is always encrypted before upload. CIDs alone reveal nothing about content. |
 | **Front-running attacks** | Low | Medium | Commit-reveal pattern available if needed. Prepaid balance model reduces on-chain bid visibility. |
-| **Trial account spam** | Medium | Medium | Per-IP rate limiting (3/day), global daily cap (100/day), contract-synced counters, trial pool balance check. |
+| **Trial account spam** | Medium | Medium | Per-IP rate limiting (3/day), global daily cap (100/day), contract-enforced counters, trial pool balance check. |
 | **Nova group manipulation** | Low | High | Group creation restricted to platform account. Member additions require on-chain ticket ownership proof. |
+| **Banned content re-upload** | Medium | Medium | CID-based banning. Re-upload produces different CID requiring new ban. Content hash tracking can be added. |
+| **Commission pool theft** | Low | Critical | Owner-only withdrawal. Separate pool from trial pool. On-chain audit trail. |
 
 ---
 
 ## Incident Response
 
 ### Private Key Compromised
-
-If a NEAR account private key or session key is compromised:
 
 1. **Immediately revoke all session keys** via `deleteKey` on the affected NEAR account
 2. **Pause contract** if the compromised key has owner-level access
@@ -349,8 +434,6 @@ If a NEAR account private key or session key is compromised:
 
 ### Nova Group Compromised
 
-If unauthorized access to a Nova group is detected:
-
 1. **Rotate group key immediately** -- Nova handles this when members are removed
 2. **Remove all unauthorized members** from the group
 3. **Verify all current member access** against on-chain ticket ownership
@@ -359,13 +442,19 @@ If unauthorized access to a Nova group is detected:
 
 ### Trial Pool Drained
 
-If the trial pool balance reaches zero unexpectedly:
-
 1. **Check `get_trial_pool_balance`** to confirm depletion
 2. **Review trial creation logs** for spam patterns
-3. **Verify rate limiter state** (check `/tmp/youtick-rate-limits/`)
+3. **Verify rate limiter state** on-chain via `get_daily_trial_count`
 4. **Fund trial pool** with additional NEAR once abuse is mitigated
-5. **Adjust rate limits** if the current configuration was insufficient
+5. **Adjust rate limits** via `set_onboarding_config` if needed
+
+### Content Moderation Incident
+
+1. **Ban the event** immediately via `ban_event` with appropriate `BanReason`
+2. **Verify ban enforcement** by checking `is_event_banned` and confirming exclusion from listings
+3. **Review related events** from the same creator
+4. **Audit purchase logs** for the banned event to assess impact
+5. **Consider creator account restrictions** if pattern of violations
 
 ---
 

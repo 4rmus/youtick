@@ -149,6 +149,8 @@ export interface NFTEvent {
     price: string;
     price_usd?: number | null;
     created_at?: number;
+    banned?: boolean;
+    ban_reason?: string;
 }
 
 // ============================================================================

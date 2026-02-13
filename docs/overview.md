@@ -29,7 +29,8 @@ Viewer purchases NFT ticket
     ▼
 ┌──────────────────────────────────┐
 │  1. buy_ticket() on NEAR         │  Smart contract handles payment
-│  2. 98% to creator, 2% platform  │  and mints the NFT ticket
+│  2. 98% creator, 1% trial,      │  and mints the NFT ticket
+│     1% commission (on-chain)     │  with purchase audit trail
 │  3. Add viewer to Nova Group     │  Nova grants decryption access
 │  4. Decrypt and play video       │  All client-side, no servers
 └──────────────────────────────────┘
@@ -121,9 +122,9 @@ Even if the YouTick frontend goes offline, your content and access rights persis
 ├─────────────────────────────────────────────────────────────────┤
 │                        SMART CONTRACT LAYER                       │
 │                                                                   │
-│  Language: Rust          | NEAR SDK: 5.1.0                        │
-│  Standard: NEP-171 NFT   | Contract: youtick-prod-v1.near         │
-│  Features: Events, Tickets, Prepaid Balance, Gift Drops, Trials   │
+│  Language: Rust          | NEAR SDK: 5.5.0                        │
+│  Standards: NEP-171 NFT, NEP-141 FT | Contract: youtick-prod-v1  │
+│  Features: Events, Tickets, Prepaid, Gifts, Trials, Moderation   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -136,7 +137,7 @@ Even if the YouTick frontend goes offline, your content and access rights persis
 | Frontend | Tailwind CSS | 4.x | Utility-first CSS framework for responsive design |
 | Frontend | TypeScript | 5.x | Type-safe development across the entire frontend |
 | Blockchain | NEAR Protocol | Mainnet | NFT minting, payment processing, session key management |
-| Blockchain | NEAR SDK (Rust) | 5.1.0 | Smart contract development framework |
+| Blockchain | NEAR SDK (Rust) | 5.5.0 | Smart contract development framework |
 | Encryption | Nova Protocol | TEE | AES-256-GCM encryption with Shade Agent key management |
 | Storage | IPFS | Crust Network | Permanent decentralized storage for encrypted video blobs |
 
@@ -152,6 +153,10 @@ Even if the YouTick frontend goes offline, your content and access rights persis
 | IPFS Storage | Permanent, censorship-resistant video storage | Encrypted blobs uploaded to Crust Network with multi-gateway failover | Live |
 | Gift Links | Share video access via shareable URLs | `create_gift_drop()` creates access-key-based claim links | Live |
 | Trial Accounts | New users get sponsored NEAR accounts | Onboarding Key creates subaccounts, no relayer dependency | Live |
+| wNEAR Payments | Accept wrapped NEAR for ticket purchases | `ft_on_transfer` (NEP-141) processes wNEAR with same revenue split | Live |
+| Content Moderation | On-chain ban/unban with typed reasons | `ban_event()` blocks purchases and hides from listings | Live |
+| Purchase Audit | Full on-chain purchase history | `PurchaseLog` records buyer, price, type, and timestamp | Live |
+| Commission Pool | Platform revenue management | 1% commission collected per sale, owner-withdrawable | Live |
 
 ---
 
@@ -166,7 +171,7 @@ Decentralization:  ████████████████████ 
 | Component | Decentralized Via | Server Required |
 |-----------|------------------|:---------------:|
 | NFT Ownership | NEAR smart contract | No |
-| Payment Processing | On-chain 98/2 split | No |
+| Payment Processing | On-chain 98/1/1 split (creator/trial/commission) | No |
 | Video Encryption | Nova Protocol TEE (client-side) | No |
 | Video Storage | IPFS via Crust Network | No |
 | Session Management | NEAR function-call access keys | No |

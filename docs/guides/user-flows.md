@@ -202,19 +202,29 @@ async function watchVideo(cid: string, groupId: string) {
 │          └────────┬───────┘                                      │
 │                   │                                              │
 │                   ▼                                              │
-│  3. Contract processes payment                                  │
+│  3. Contract checks ban status                                  │
+│     └── Blocked if event is banned (BanReason)                  │
+│                   │                                              │
+│                   ▼                                              │
+│  4. Contract processes payment                                  │
 │     ├── 98% → Creator                                           │
-│     └── 2%  → Platform                                          │
+│     ├── 1%  → Trial Pool                                        │
+│     └── 1%  → Commission Pool                                   │
 │                   │                                              │
 │                   ▼                                              │
-│  4. Add buyer to Nova group                                     │
+│  5. Purchase recorded on-chain (PurchaseLog)                    │
+│     └── buyer, creator, price, type, timestamp                  │
+│                   │                                              │
+│                   ▼                                              │
+│  6. Add buyer to Nova group                                     │
 │     └── nova.addMember({ groupId, memberId: buyer })            │
+│     └── Queued for retry on failure (pending-access-queue)      │
 │                   │                                              │
 │                   ▼                                              │
-│  5. NFT minted to buyer                                         │
+│  7. NFT minted to buyer                                         │
 │                   │                                              │
 │                   ▼                                              │
-│  6. Immediate access to content                                 │
+│  8. Immediate access to content                                 │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```

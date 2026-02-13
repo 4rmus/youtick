@@ -24,7 +24,12 @@ async function fetchAllEvents(): Promise<TokenWithVideo[]> {
         return [];
     }
 
-    const eventTokens: TokenWithVideo[] = events.map((item, index) => {
+    const eventTokens: TokenWithVideo[] = events
+    .filter((item) => {
+        const [, event] = item as [string, { banned?: boolean }];
+        return !event.banned;
+    })
+    .map((item, index) => {
         const [cid, event] = item as [string, { title: string; description: string; creator_id: string; price: string; price_usd?: number | null }];
 
         const parsed = parseTitleMetadata(event.title);

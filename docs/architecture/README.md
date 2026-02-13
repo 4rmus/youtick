@@ -7,61 +7,60 @@
 ## System Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           YouTick Platform                               │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐               │
-│  │   Creator    │    │    Viewer    │    │  Gift Link   │               │
-│  │   Upload     │    │    Watch     │    │   Claimer    │               │
-│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘               │
-│         │                   │                   │                        │
-│         ▼                   ▼                   ▼                        │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │                    Frontend (Next.js 16)                      │       │
-│  │  ┌────────────┐  ┌────────────┐  ┌────────────┐              │       │
-│  │  │ UploadForm │  │ IpfsPlayer │  │  ClaimPage │              │       │
-│  │  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘              │       │
-│  └────────┼───────────────┼───────────────┼─────────────────────┘       │
-│           │               │               │                              │
-│           ▼               ▼               ▼                              │
-│  ┌────────────────────────────────────────────────────────────────┐     │
-│  │                      Core Libraries                             │     │
-│  │                                                                 │     │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐     │     │
-│  │  │  Nova SDK   │  │   IPFS      │  │  Session Manager    │     │     │
-│  │  │ (Encrypt)   │  │  (Storage)  │  │  (NEAR Session Key) │     │     │
-│  │  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘     │     │
-│  │         │                │                    │                 │     │
-│  │  ┌──────┴──────┐  ┌──────┴──────┐  ┌─────────┴─────────┐       │     │
-│  │  │ Shade Agent │  │ Multi-GW    │  │ Signless Txns     │       │     │
-│  │  │ (TEE Keys)  │  │ (Failover)  │  │ (Function Keys)   │       │     │
-│  │  └─────────────┘  └─────────────┘  └───────────────────┘       │     │
-│  └─────────────────────────────────────────────────────────────────┘     │
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                        Decentralized Services                             │
-├───────────────────┬───────────────────┬──────────────────────────────────┤
-│   NEAR Protocol   │       IPFS        │      Nova Protocol               │
-│                   │                   │                                   │
-│ ┌───────────────┐ │ ┌───────────────┐ │ ┌─────────────────────────────┐  │
-│ │ NFT Contract  │ │ │ IPFS Gateways │ │ │ Shade Agent (Phala TEE)     │  │
-│ │ (youtick-     │ │ │               │ │ │ - AES-256-GCM Encryption    │  │
-│ │  prod-v1.near)│ │ │ Upload:       │ │ │ - Group-based Access        │  │
-│ │               │ │ │ Crust Network │ │ │ - Automatic Key Rotation    │  │
-│ │ - Events      │ │ │               │ │ │ - NEAR Auth Verification    │  │
-│ │ - Tickets     │ │ │ Retrieval:    │ │ └─────────────────────────────┘  │
-│ │ - Prepaid     │ │ │ pinata.cloud  │ │                                   │
-│ │ - Gifts       │ │ │ ipfs.io       │ │ ┌─────────────────────────────┐  │
-│ │ - Trials      │ │ │ dweb.link     │ │ │ Nova Contract               │  │
-│ └───────────────┘ │ └───────────────┘ │ │ (nova-sdk.near)             │  │
-│                   │                   │ │ - Group Management          │  │
-│                   │                   │ │ - Member Access Control     │  │
-│                   │                   │ └─────────────────────────────┘  │
-└───────────────────┴───────────────────┴──────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                            YouTick Platform                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌────────────┐  │
+│  │   Creator    │    │    Viewer    │    │  Gift Link   │    │   Trial    │  │
+│  │   Upload     │    │    Watch     │    │   Claimer    │    │   User     │  │
+│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘    └─────┬──────┘  │
+│         │                   │                   │                  │          │
+│         ▼                   ▼                   ▼                  ▼          │
+│  ┌───────────────────────────────────────────────────────────────────────┐   │
+│  │                     Frontend (Next.js 16 + React 19)                   │   │
+│  │                                                                        │   │
+│  │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────────┐   │   │
+│  │  │ UploadForm │  │ IpfsPlayer │  │  ClaimPage │  │ TrialOnboard  │   │   │
+│  │  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └──────┬────────┘   │   │
+│  │        │               │               │                │             │   │
+│  │  ┌─────┴───────────────┴───────────────┴────────────────┴──────┐      │   │
+│  │  │                   Core Libraries (lib/)                      │      │   │
+│  │  │                                                              │      │   │
+│  │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │      │   │
+│  │  │  │ Nova SDK │  │  Crust   │  │ Session  │  │  Gift    │    │      │   │
+│  │  │  │ (TEE)    │  │ (IPFS)   │  │ Manager  │  │ Service  │    │      │   │
+│  │  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘    │      │   │
+│  │  └─────────────────────────────────────────────────────────────┘      │   │
+│  └───────────────────────────────────────────────────────────────────────┘   │
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                       │
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         Decentralized Services                                │
+├───────────────────────┬──────────────────────┬───────────────────────────────┤
+│    NEAR Protocol      │        IPFS          │      Nova Protocol            │
+│                       │                      │                               │
+│ ┌───────────────────┐ │ ┌──────────────────┐ │ ┌───────────────────────────┐ │
+│ │ NFT Contract (V8) │ │ │ Upload:          │ │ │ Shade Agent (Phala TEE)   │ │
+│ │ youtick-prod-v1   │ │ │ Crust Network    │ │ │ - AES-256-GCM encryption │ │
+│ │                   │ │ │                  │ │ │ - Group-based access      │ │
+│ │ - Events          │ │ │ Retrieval:       │ │ │ - Auto key rotation      │ │
+│ │ - Tickets (NFT)   │ │ │ 7+ gateways     │ │ │ - NEAR auth verification │ │
+│ │ - Prepaid Balance │ │ │ (auto-failover)  │ │ └───────────────────────────┘ │
+│ │ - Gift Drops      │ │ │                  │ │                               │
+│ │ - Trial Accounts  │ │ │ crustipfs.xyz    │ │ ┌───────────────────────────┐ │
+│ │ - Commission Pool │ │ │ ipfs.io          │ │ │ Nova Contract             │ │
+│ │ - Purchase Audit  │ │ │ dweb.link        │ │ │ (nova-sdk.near)           │ │
+│ │ - Content Mod     │ │ │ 4everland.io     │ │ │ - Group Management        │ │
+│ │ - wNEAR Receiver  │ │ │ + 3 more         │ │ │ - Member Access Control   │ │
+│ └───────────────────┘ │ └──────────────────┘ │ └───────────────────────────┘ │
+│                       │                      │                               │
+│ RPC Failover:         │                      │                               │
+│ fastnear -> near.org  │                      │                               │
+│ -> lava.build         │                      │                               │
+└───────────────────────┴──────────────────────┴───────────────────────────────┘
 ```
 
 ---
@@ -70,15 +69,19 @@
 
 | Layer | Technology | Version | Purpose |
 |-------|------------|---------|---------|
-| Frontend | Next.js | 16.0.10 | App Router, React Server Components |
-| Frontend | React | 19.2.3 | UI Components |
-| Frontend | TypeScript | 5.x | Type Safety |
-| Frontend | Tailwind CSS | 4.x | Utility-first styling |
-| Blockchain | NEAR Protocol | Mainnet | Smart Contract, Payments, Session Keys |
-| Blockchain | near-api-js | 7.x | NEAR JavaScript SDK |
-| Contract | Rust + NEAR SDK | 5.1.0 | Smart Contract development |
-| Storage | IPFS | Crust Network | Decentralized encrypted video storage |
-| Encryption | Nova Protocol | TEE | AES-256-GCM via Shade Agent |
+| Frontend | Next.js (App Router) | 16.0.10 | Pages, routing, SSR |
+| UI | React | 19.2.3 | Component rendering |
+| Language | TypeScript | 5.x | Type safety |
+| Styling | Tailwind CSS | 4.x | Utility-first CSS |
+| Blockchain | NEAR Protocol | Mainnet | Smart contract, payments, session keys |
+| NEAR SDK (JS) | near-api-js | 7.x | Frontend blockchain interaction |
+| Smart Contract | Rust + NEAR SDK | 5.5.0 | NFT ticket contract (V8) |
+| NFT Standards | NEP-171/177/178 | -- | Core, metadata, approval |
+| FT Standard | NEP-141 | -- | wNEAR payment receiver |
+| Encryption | Nova Protocol (TEE) | AES-256-GCM | Client-side via Shade Agent |
+| Storage | IPFS + Crust Network | Multi-gateway | Encrypted video storage |
+| Wallet | NEAR Wallet Selector | 10.1.4 | Multi-wallet support |
+| Data Fetching | TanStack React Query | 5.x | Caching and state |
 
 ---
 
@@ -91,14 +94,16 @@ All operations run in the user's browser with no server-side dependencies:
 | Operation | Method | Server Required |
 |-----------|--------|:---------------:|
 | Video Upload | Nova encrypt + IPFS (Crust) | No |
-| Video Retrieval | Multi-gateway failover | No |
+| Video Retrieval | Multi-gateway failover (7+ gateways) | No |
 | Encryption/Decryption | Nova SDK (TEE Shade Agent) | No |
-| NFT Minting | Session Key → NEAR contract | No |
+| NFT Minting | Session Key -> NEAR contract | No |
 | Payments | NEAR smart contract (98/2 split) | No |
+| wNEAR Payments | ft_on_transfer (NEP-141) | No |
 | Gift Claims | Access Key drops (client-side) | No |
 | Trial Creation | Onboarding Key (on-chain) | No |
 | Group Access | Nova SDK (client-side) | No |
 | RPC Communication | Multi-endpoint failover | No |
+| Content Moderation | On-chain ban/unban | No |
 
 ### Signless UX via Session Keys
 
@@ -119,8 +124,8 @@ See [Session Keys](./session-keys.md) for full implementation details.
 NFT ownership controls content access through Nova encryption groups:
 
 ```
-1. Creator uploads → Nova creates encryption group
-2. Creator encrypts video → uploads encrypted blob to IPFS
+1. Creator uploads -> Nova creates encryption group
+2. Creator encrypts video -> uploads encrypted blob to IPFS
 3. Buyer purchases NFT ticket on NEAR
 4. Smart contract + Nova SDK add buyer to encryption group
 5. Nova TEE decrypts content for verified group members
@@ -136,39 +141,66 @@ See [Nova Protocol](./nova-protocol.md) for the encryption architecture.
 
 ```
 apps/web/
-├── app/                    # Next.js App Router
-│   ├── api/                # API routes
-│   │   ├── nova-proxy/     # Nova SDK proxy
-│   │   └── trial/          # Trial account endpoints
-│   ├── claim/              # Gift claim page
-│   ├── ticket/             # Ticket view pages
-│   └── trial/              # Trial onboarding page
-├── components/
-│   ├── UploadForm.tsx      # Video upload with Nova encryption
-│   ├── IpfsPlayer.tsx      # Decrypted video playback
-│   ├── MintButton.tsx      # NFT minting interface
-│   ├── GiftLinkGenerator.tsx  # Gift link creation
-│   ├── TicketPurchaseCard.tsx # Purchase flow
-│   ├── TrialOnboarding.tsx    # Trial account setup
-│   └── OnboardingKeyInit.tsx  # Onboarding key initialization
+├── app/                      # Next.js App Router
+│   ├── api/                  # API routes
+│   │   ├── nova-proxy/       # Nova SDK proxy
+│   │   └── trial/            # Trial account endpoints
+│   ├── claim/                # Gift claim page
+│   ├── discover/             # Video discovery page
+│   ├── profile/              # User profile page
+│   ├── ticket/               # Ticket view pages
+│   │   └── [cid]/            # Dynamic ticket detail
+│   └── trial/                # Trial onboarding page
+├── components/               # 54+ React components
+│   ├── providers/            # Context providers
+│   │   ├── WalletProvider    # NEAR wallet state
+│   │   ├── LanguageContext   # i18n (en/tr)
+│   │   └── ThemeProvider     # Dark/light theme
+│   ├── UploadForm.tsx        # Video upload with Nova encryption
+│   ├── IpfsPlayer.tsx        # Decrypted video playback
+│   ├── MintButton.tsx        # NFT minting interface
+│   ├── TicketPurchaseCard.tsx # Purchase flow with cost breakdown
+│   ├── NovaAccessSync.tsx    # Auto-sync Nova memberships
+│   ├── NovaThumbnail.tsx     # Nova-encrypted thumbnails
+│   ├── VideoCard.tsx         # Video card component
+│   ├── AccountSetupDialog.tsx # Account setup wizard
+│   └── OnboardingKeyInit.tsx # Onboarding key initialization
 ├── hooks/
-│   ├── useAllVideos.ts     # Video listing
-│   ├── useOwnedTokens.ts   # NFT ownership queries
-│   └── useEventDescription.ts # Event metadata
+│   ├── useAllVideos.ts       # Video listing with pagination
+│   ├── useOwnedTokens.ts    # NFT ownership queries
+│   ├── useNovaAccessSync.ts  # Nova access synchronization
+│   └── useNearPrice.ts      # NEAR price feed
 └── lib/
-    ├── nova/               # Nova Protocol integration
-    │   ├── index.ts        # SDK singleton and exports
-    │   ├── client.ts       # Nova API client
-    │   ├── auth.ts         # Authentication helpers
-    │   ├── groups.ts       # Group management
-    │   ├── types.ts        # Type definitions
-    │   └── config.ts       # Configuration
-    ├── crust/              # Crust Network storage
-    ├── crypto/             # Cryptographic utilities
-    ├── session-manager.ts  # NEAR session key management
-    ├── gift-service.ts     # Gift link generation
+    ├── nova/                 # Nova Protocol integration (12 modules)
+    │   ├── index.ts          # SDK singleton and exports
+    │   ├── client.ts         # Nova API client
+    │   ├── auth.ts           # Authentication helpers
+    │   ├── groups.ts         # Group management
+    │   ├── key-storage.ts    # Encryption key storage
+    │   ├── attestation.ts    # TEE attestation verification
+    │   ├── costs.ts          # Nova cost calculations
+    │   ├── post-purchase.ts  # Post-purchase group membership
+    │   ├── pending-access-queue.ts # Retry failed group additions
+    │   ├── public-groups.ts  # Public group utilities
+    │   ├── types.ts          # Type definitions
+    │   └── config.ts         # Configuration
+    ├── crust/                # Crust Network storage (7 modules)
+    │   ├── index.ts          # Module entry
+    │   ├── client.ts         # Upload client
+    │   ├── gateway.ts        # Multi-gateway retrieval
+    │   ├── storage-order.ts  # Crust storage orders
+    │   ├── w3auth.ts         # W3Auth authentication
+    │   ├── types.ts          # Type definitions
+    │   └── config.ts         # Configuration
+    ├── crypto/               # Cryptographic utilities
+    │   ├── aes-gcm.ts        # AES-256-GCM encryption
+    │   └── aes-ctr-chunked.ts # AES-CTR for large files
+    ├── session-manager.ts    # NEAR session key management
+    ├── gift-service.ts       # Gift link generation
     ├── batch-transactions.ts # Transaction batching
-    └── constants.ts        # Application constants
+    ├── near.ts               # NEAR utilities
+    ├── types.ts              # Shared type definitions
+    └── translations.ts       # i18n strings (en/tr)
 ```
 
 ### Contract Layer
@@ -176,9 +208,9 @@ apps/web/
 ```
 contracts/nft-ticket/
 ├── src/
-│   └── lib.rs              # Main contract (Rust)
-├── Cargo.toml              # Dependencies
-└── build.sh                # Build script
+│   └── lib.rs                # V8 contract (2400+ lines, 80+ methods)
+├── Cargo.toml                # Dependencies (NEAR SDK 5.5.0)
+└── build.sh                  # Build script
 ```
 
 ---
@@ -188,77 +220,102 @@ contracts/nft-ticket/
 ### Upload Flow
 
 ```
-Creator → UploadForm
-    │
-    ├─[1]─ Session Key check (cached or generate new)
-    │
-    ├─[2]─ Nova SDK → Create encryption group for video
-    │
-    ├─[3]─ Nova SDK → Encrypt video (AES-256-GCM in TEE)
-    │
-    ├─[4]─ IPFS → Upload encrypted blob via Crust Network
-    │
-    ├─[5]─ NEAR Contract → create_event_prepaid(cid, groupId, price)
-    │
-    └─[6]─ Event listed on platform
+Creator -> UploadForm
+    |
+    |-[1]- Session Key check (cached or generate new)
+    |
+    |-[2]- Nova SDK -> Create encryption group for video
+    |
+    |-[3]- AES-256-GCM encrypt video client-side
+    |
+    |-[4]- Store AES key in Nova TEE (group-controlled access)
+    |
+    |-[5]- Upload encrypted blob to IPFS via Crust Network
+    |
+    |-[6]- NEAR Contract -> create_event_prepaid(cid, groupId, price)
+    |       Nova group ID indexed in event_nova_groups mapping
+    |
+    '-[7]- Event listed on platform
 ```
 
 ### Watch Flow
 
 ```
-Viewer → IpfsPlayer
-    │
-    ├─[1]─ NEAR Contract → verify_ownership(account_id, token_id)
-    │
-    ├─[2]─ Nova SDK → Verify group membership
-    │
-    ├─[3]─ IPFS → Fetch encrypted video (multi-gateway failover)
-    │
-    ├─[4]─ Nova SDK → Decrypt via Shade Agent (TEE)
-    │
-    └─[5]─ Stream decrypted video to player
+Viewer -> IpfsPlayer
+    |
+    |-[1]- NEAR Contract -> verify_ownership(account_id, token_id)
+    |
+    |-[2]- Nova SDK -> Verify group membership
+    |
+    |-[3]- Nova SDK -> Retrieve AES key from TEE (membership required)
+    |
+    |-[4]- IPFS -> Fetch encrypted video (multi-gateway failover)
+    |
+    |-[5]- Decrypt video client-side with AES key
+    |
+    '-[6]- Stream decrypted video to player
 ```
 
 ### Purchase Flow
 
 ```
-Buyer → TicketPurchaseCard
-    │
-    ├─[1]─ Session Manager → Check prepaid balance or wallet funds
-    │
-    ├─[2]─ NEAR Contract → buy_ticket_prepaid(cid) or buy_ticket(cid)
-    │          │
-    │          ├── 98% → Creator account
-    │          └── 2%  → Platform (retained in contract)
-    │
-    ├─[3]─ Nova SDK → Add buyer to video encryption group
-    │
-    └─[4]─ NFT minted to buyer → immediate access granted
+Buyer -> TicketPurchaseCard
+    |
+    |-[1]- Session Manager -> Check prepaid balance or wallet funds
+    |
+    |-[2]- NEAR Contract -> buy_ticket_prepaid(cid) or buy_ticket(cid)
+    |          |
+    |          |- 98% -> Creator account
+    |          |- 1%  -> Trial Pool
+    |          '- 1%  -> Commission Pool
+    |
+    |-[3]- Purchase log recorded on-chain (PurchaseLog)
+    |
+    |-[4]- Nova SDK -> Add buyer to video encryption group
+    |       (queued for retry on failure via pending-access-queue)
+    |
+    '-[5]- NFT minted to buyer -> immediate access granted
 ```
 
 ### Gift Flow
 
 ```
-Creator → GiftLinkGenerator
-    │
-    ├─[1]─ NEAR Contract → create_gift_drop(cid, public_keys)
-    │          Deposit: 0.15 NEAR per link
-    │
-    ├─[2]─ Generate shareable claim URLs with access keys
-    │
-    └─[3]─ Share links to recipients
+Creator -> GiftLinkGenerator
+    |
+    |-[1]- NEAR Contract -> create_gift_drop(cid, public_keys)
+    |          Deposit: 0.15 NEAR per link
+    |
+    |-[2]- Generate shareable claim URLs with access keys
+    |
+    '-[3]- Share links to recipients
 
-Recipient → Claim Page
-    │
-    ├─[1]─ NEAR Contract → claim_gift() or claim_gift_and_create_account()
-    │          If new user: creates trial account (0.10 NEAR)
-    │          NFT storage: 0.01 NEAR
-    │
-    ├─[2]─ Nova SDK → Add recipient to encryption group
-    │
-    ├─[3]─ Access key deleted after claim (single-use)
-    │
-    └─[4]─ Recipient can now watch the video
+Recipient -> Claim Page
+    |
+    |-[1]- NEAR Contract -> claim_gift() or claim_gift_and_create_account()
+    |          If new user: creates trial account (0.10 NEAR from gift deposit)
+    |          NFT storage: 0.01 NEAR
+    |
+    |-[2]- Nova SDK -> Add recipient to encryption group
+    |
+    |-[3]- Access key deleted after claim (single-use)
+    |
+    '-[4]- Recipient can now watch the video
+```
+
+### wNEAR Purchase Flow
+
+```
+Buyer (holding wNEAR) -> ft_transfer_call
+    |
+    |-[1]- Send wNEAR to youtick-prod-v1.near via ft_transfer_call
+    |          msg: JSON with event CID and receiver
+    |
+    |-[2]- Contract ft_on_transfer processes purchase
+    |          Same 98/2 split as direct NEAR
+    |
+    |-[3]- NFT minted, purchase logged
+    |
+    '-[4]- Nova group membership added
 ```
 
 ---
@@ -268,7 +325,9 @@ Recipient → Claim Page
 | Contract | Network | Address |
 |----------|---------|---------|
 | NFT Ticket | Mainnet | `youtick-prod-v1.near` |
+| NFT Ticket | Testnet | `v1.utick.testnet` |
 | Nova SDK | Mainnet | `nova-sdk.near` |
+| Nova SDK | Testnet | `nova-sdk-6.testnet` |
 
 ---
 
@@ -276,8 +335,8 @@ Recipient → Claim Page
 
 | Document | Description |
 |----------|-------------|
-| [Smart Contract](./smart-contract.md) | NFT ticket contract architecture, data structures, and method reference |
-| [Nova Protocol](./nova-protocol.md) | TEE encryption system, group management, and Shade Agent |
+| [Smart Contract](./smart-contract.md) | V8 contract specification, data structures, 80+ methods |
+| [Nova Protocol](./nova-protocol.md) | TEE encryption, group management, Shade Agent |
 | [Shade Agent](./shade-agent.md) | Phala Network TEE key management internals |
 | [Session Keys](./session-keys.md) | Signless UX implementation and session lifecycle |
 | [Chain Signatures](./chain-signatures.md) | NEAR MPC for cross-chain operations |

@@ -26,8 +26,12 @@ apps/web/
 │   ├── page.tsx                # Landing page
 │   ├── claim/
 │   │   └── page.tsx            # Gift ticket claiming
+│   ├── discover/
+│   │   └── page.tsx            # Browse and discover events
+│   ├── profile/
+│   │   └── page.tsx            # User profile and owned tickets
 │   ├── ticket/
-│   │   ├── page.tsx            # Browse events / discover
+│   │   ├── page.tsx            # Ticket listing view
 │   │   └── [cid]/
 │   │       └── page.tsx        # Individual ticket purchase page
 │   ├── trial/
@@ -45,6 +49,9 @@ apps/web/
 │   ├── TicketPurchaseCard.tsx   # Ticket purchase flow
 │   ├── GiftLinkGenerator.tsx    # Gift link creation
 │   ├── NovaThumbnail.tsx       # Nova/IPFS thumbnail component
+│   ├── NovaAccessSync.tsx     # Auto-sync Nova group memberships
+│   ├── VideoCard.tsx          # Video card display component
+│   ├── AccountSetupDialog.tsx # Account setup wizard
 │   ├── DecentralizationBadge.tsx # Live decentralization metrics
 │   ├── MintButton.tsx          # NFT minting trigger
 │   ├── OnboardingKeyInit.tsx   # Trial account key setup
@@ -54,6 +61,7 @@ apps/web/
 ├── hooks/
 │   ├── useAllVideos.ts         # Browse all events from contract
 │   ├── useOwnedTokens.ts      # User's NFT tickets
+│   ├── useNovaAccessSync.ts   # Nova access synchronization
 │   └── useEventDescription.ts # Event metadata + thumbnail
 ├── lib/
 │   ├── constants.ts            # App-wide configuration constants
@@ -66,7 +74,7 @@ apps/web/
 │   ├── metadata-parser.ts      # Title/thumbnail metadata extraction
 │   ├── translations.ts         # i18n translation strings
 │   ├── decentralization-metrics.ts # Live decentralization scoring
-│   ├── nova/                   # Nova Protocol integration
+│   ├── nova/                   # Nova Protocol integration (12 modules)
 │   │   ├── index.ts            # Module entry point, singleton
 │   │   ├── client.ts           # Upload/download with TEE encryption
 │   │   ├── auth.ts             # Authentication token generation
@@ -77,9 +85,12 @@ apps/web/
 │   │   ├── attestation.ts      # TEE attestation verification
 │   │   ├── key-storage.ts      # AES key storage in Nova TEE
 │   │   ├── post-purchase.ts    # Post-purchase Nova group membership
+│   │   ├── pending-access-queue.ts # Retry failed group additions
 │   │   └── public-groups.ts    # Public group management (thumbnails)
-│   ├── crust/                  # Crust Network IPFS integration
-│   └── crypto/                 # Client-side AES-256-GCM encryption
+│   ├── crust/                  # Crust Network IPFS integration (7 modules)
+│   └── crypto/                 # Cryptographic utilities
+│       ├── aes-gcm.ts          # AES-256-GCM encryption
+│       └── aes-ctr-chunked.ts  # AES-CTR for large file streaming
 └── public/
     └── locales/                # i18n translation files
 ```
