@@ -96,14 +96,15 @@ export const translations = {
                 additional_payment: "Additional Payment"
             },
             progress_title: "Upload Progress",
+            file_too_large_free: "File exceeds the 20 MB limit for free videos. Set a price to upload up to 500 MB.",
+            file_too_large_paid: "File exceeds the 500 MB upload limit.",
             steps: {
-                session: "Preparing Identity",
-                nova: "Setting Up Nova Group",
-                thumbnail: "Uploading Cover",
-                encrypt: "Securing Video",
-                upload: "Finalizing Storage",
-                mint: "Minting Ticket",
-                event: "Event Created"
+                session: "Wallet & Balance",
+                thumbnail: "Cover Image",
+                nova_group: "Creating Nova Group",
+                encrypt: "Encrypting Video",
+                upload: "Uploading to IPFS",
+                mint: "Minting NFT Ticket"
             }
         },
         watch_page: {
@@ -587,14 +588,15 @@ export const translations = {
                 additional_payment: "Ek Ödeme"
             },
             progress_title: "Yükleme Durumu",
+            file_too_large_free: "Dosya ücretsiz videolar için 20 MB sınırını aşıyor. 500 MB'ye kadar yüklemek için bir fiyat belirleyin.",
+            file_too_large_paid: "Dosya 500 MB yükleme sınırını aşıyor.",
             steps: {
-                session: "Kimlik Hazırlanıyor",
-                nova: "Nova Grubu Kuruluyor",
-                thumbnail: "Kapak Fotoğrafı Yükleniyor",
+                session: "Cüzdan & Bakiye",
+                thumbnail: "Kapak Fotoğrafı",
+                nova_group: "Nova Grubu Oluşturuluyor",
                 encrypt: "Video Şifreleniyor",
-                upload: "Depolama Tamamlanıyor",
-                mint: "Bilet Basılıyor",
-                event: "Etkinlik Oluşturuldu"
+                upload: "IPFS'e Yükleniyor",
+                mint: "NFT Bilet Basılıyor"
             }
         },
         watch_page: {

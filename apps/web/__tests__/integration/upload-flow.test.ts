@@ -29,7 +29,7 @@ describe('Upload Flow Integration', () => {
   });
 
   describe('File Preparation', () => {
-    it('should validate file size limits', () => {
+    it('should validate paid video file size limits (500 MB)', () => {
       const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
 
       const smallFile = { size: 10 * 1024 * 1024 }; // 10MB
@@ -37,6 +37,16 @@ describe('Upload Flow Integration', () => {
 
       expect(smallFile.size).toBeLessThan(MAX_FILE_SIZE);
       expect(largeFile.size).toBeGreaterThan(MAX_FILE_SIZE);
+    });
+
+    it('should validate free video file size limits (20 MB)', () => {
+      const MAX_FREE_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+
+      const smallFreeFile = { size: 15 * 1024 * 1024 }; // 15MB — within limit
+      const largeFreeFile = { size: 25 * 1024 * 1024 }; // 25MB — exceeds limit
+
+      expect(smallFreeFile.size).toBeLessThan(MAX_FREE_FILE_SIZE);
+      expect(largeFreeFile.size).toBeGreaterThan(MAX_FREE_FILE_SIZE);
     });
 
     it('should validate supported file types', () => {

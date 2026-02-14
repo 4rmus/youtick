@@ -297,8 +297,11 @@ export const NOVA_CONSTANTS = {
   /** Default fetch timeout (30 seconds) */
   FETCH_TIMEOUT: 30 * 1000,
 
-  /** Max file size for upload (500 MB) */
+  /** Max file size for paid video upload (500 MB) */
   MAX_FILE_SIZE: 500 * 1024 * 1024,
+
+  /** Max file size for free video upload (20 MB) */
+  MAX_FREE_FILE_SIZE: 20 * 1024 * 1024,
 
   /** TEE health check timeout (10 seconds) */
   TEE_HEALTH_TIMEOUT: 10 * 1000,

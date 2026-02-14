@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Progress } from "@/components/ui/progress"
 import { Button } from "@/components/ui/button"
 import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
@@ -20,6 +19,7 @@ import { GiftLinkGenerator } from './GiftLinkGenerator';
 import { useSessionState, useAccountBalance } from '@/lib/hooks/useSessionState';
 import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
 import { getNearPrice, usdToNear, formatUsdCents } from '@/lib/price';
+import { NOVA_CONSTANTS } from '@/lib/nova/config';
 
 const CONTRACT_ID = NEAR_CONFIG.contractId;
 
@@ -30,12 +30,12 @@ import type { UploadStep } from '@/lib/types';
 type StepStatus = UploadStep['status'];
 
 const INITIAL_STEPS: UploadStep[] = [
-    { id: 'session', label: 'Preparing Identity', status: 'pending' },
-    { id: 'thumbnail', label: 'Uploading Cover', status: 'pending' },
-    { id: 'encrypt', label: 'Securing Video', status: 'pending' },
-    { id: 'upload', label: 'Finalizing Storage', status: 'pending' },
-    { id: 'mint', label: 'Minting Ticket', status: 'pending' },
-    { id: 'event', label: 'Event Created', status: 'pending' },
+    { id: 'session', label: 'Wallet & Balance', status: 'pending' },
+    { id: 'thumbnail', label: 'Cover Image', status: 'pending' },
+    { id: 'nova_group', label: 'Creating Nova Group', status: 'pending' },
+    { id: 'encrypt', label: 'Encrypting Video', status: 'pending' },
+    { id: 'upload', label: 'Uploading to IPFS', status: 'pending' },
+    { id: 'mint', label: 'Minting NFT Ticket', status: 'pending' },
 ];
 
 interface UploadState {
@@ -132,6 +132,7 @@ export function UploadForm() {
     const [description, setDescription] = useState('');
     const [priceUsd, setPriceUsd] = useState(''); // USD amount (e.g. "5.00"), empty = free
     const [nearPrice, setNearPrice] = useState<number>(0); // NEAR/USD rate
+    const [fileSizeError, setFileSizeError] = useState<string | null>(null);
 
     // Derived NEAR price from USD input
     const priceUsdNum = parseFloat(priceUsd) || 0;
@@ -144,13 +145,27 @@ export function UploadForm() {
         getNearPrice().then(setNearPrice);
     }, []);
 
+    // Dynamic file size validation — re-checks when file or price changes
+    React.useEffect(() => {
+        if (!file) {
+            setFileSizeError(null);
+            return;
+        }
+        const isFree = priceUsdNum === 0;
+        const limit = isFree ? NOVA_CONSTANTS.MAX_FREE_FILE_SIZE : NOVA_CONSTANTS.MAX_FILE_SIZE;
+        if (file.size > limit) {
+            setFileSizeError(isFree ? t.upload_page.file_too_large_free : t.upload_page.file_too_large_paid);
+        } else {
+            setFileSizeError(null);
+        }
+    }, [file, priceUsdNum, t]);
+
     // Upload state (consolidated)
     const [us, dispatch] = useReducer(uploadReducer, initialUploadState);
 
     // Convenience aliases for template readability
     const uploading = us.uploading;
     const status = us.status;
-    const progress = us.progress;
     const uploadSteps = us.steps;
     const retryStep = us.retryStep;
     const estimatedStorageFee = us.estimatedStorageFee;
@@ -175,7 +190,6 @@ export function UploadForm() {
     };
     const setStatus = (msg: string) => dispatch({ type: 'SET_STATUS', payload: msg });
     const setUploading = (val: boolean) => dispatch({ type: 'SET_UPLOADING', payload: val });
-    const setProgress = (val: number) => dispatch({ type: 'SET_PROGRESS', payload: val });
 
     // Track thumbnail preview for cleanup
     const thumbnailPreviewRef = React.useRef<string | null>(null);
@@ -261,7 +275,7 @@ export function UploadForm() {
             let thumbnailUrl: string | null = null;
             if (thumbnail) {
                 updateStep('thumbnail', 'loading');
-                setStatus('Uploading thumbnail to Nova...');
+                setStatus('Uploading cover image...');
 
                 try {
                     const thumbResult = await uploadPublicThumbnail(
@@ -271,10 +285,8 @@ export function UploadForm() {
 
                     if (thumbResult.novaUrl) {
                         thumbnailUrl = thumbResult.novaUrl;
-                        updateStep('thumbnail', 'complete');
-                    } else {
-                        updateStep('thumbnail', 'complete');
                     }
+                    updateStep('thumbnail', 'complete');
                 } catch (thumbError) {
                     console.error('[Thumbnail] Upload failed:', thumbError);
                     // Continue without thumbnail
@@ -284,45 +296,70 @@ export function UploadForm() {
                 updateStep('thumbnail', 'complete');
             }
 
-            // 1. Encrypt & Upload with NOVA (TEE-based encryption)
-            updateStep('encrypt', 'loading');
-            setStatus('Encrypting video with NOVA TEE...');
+            // 1. Nova group + Encrypt + Upload (tracked via onStageChange callback)
+            const isFreeVideo = parseFloat(price) === 0 || price === '';
 
             // Generate a UUID to serve as the Access Control identifier
-            // This UUID will be used as the key in the contract
             const videoUuid = crypto.randomUUID();
             dispatch({ type: 'SET_VIDEO_UUID', payload: { uuid: videoUuid, title: title || file.name } });
 
-            // Upload to NOVA (handles encryption via TEE automatically)
-            updateStep('upload', 'loading');
-            setStatus('Uploading to NOVA decentralized storage...');
-
-            const isFreeVideo = parseFloat(price) === 0 || price === '';
             let novaCid: string;
             let novaGroupId: string;
             let keyCid: string | undefined;
 
             if (isFreeVideo) {
-                // Free video: upload directly to Crust (no encryption, no Nova group fee)
+                // Free video: no Nova group needed, no encryption
+                updateStep('nova_group', 'complete');
+                updateStep('encrypt', 'complete');
+                updateStep('upload', 'loading');
+                setStatus('Uploading to IPFS...');
+
                 const result = await uploadFreeVideo(file, accountId, { filename: file.name });
                 novaCid = result.cid;
                 novaGroupId = result.groupId;
+                updateStep('upload', 'complete');
             } else {
-                // Paid video: client-side AES encrypt → Crust storage → Nova key store
-                const result = await novaUploadFile(file, accountId, { filename: file.name });
+                // Paid video: Nova group → AES encrypt → Crust upload → key storage
+                // onStageChange fires at each real internal step
+                updateStep('nova_group', 'loading');
+                setStatus('Creating Nova access group...');
+
+                const result = await novaUploadFile(file, accountId, {
+                    filename: file.name,
+                    onStageChange: (stage) => {
+                        switch (stage) {
+                            case 'group':
+                                // Already showing nova_group loading
+                                break;
+                            case 'encrypt':
+                                updateStep('nova_group', 'complete');
+                                updateStep('encrypt', 'loading');
+                                setStatus('Encrypting video (AES-256)...');
+                                break;
+                            case 'upload':
+                                updateStep('encrypt', 'complete');
+                                updateStep('upload', 'loading');
+                                setStatus('Uploading to IPFS...');
+                                break;
+                            case 'key':
+                                setStatus('Storing encryption key...');
+                                break;
+                        }
+                    },
+                });
                 novaCid = result.cid;
                 novaGroupId = result.groupId;
                 keyCid = result.keyCid;
+
+                // Ensure all steps are marked complete after novaUploadFile returns
+                updateStep('nova_group', 'complete');
+                updateStep('encrypt', 'complete');
+                updateStep('upload', 'complete');
             }
 
-            updateStep('encrypt', 'complete');
-            updateStep('upload', 'complete');
-            setStatus('NOVA Upload Complete! CID: ' + novaCid);
-
-
-            // 6. Mint Ticket + Create Event (BATCH - Signless!)
+            // 2. Mint Ticket + Create Event (BATCH - Signless!)
             updateStep('mint', 'loading');
-            setStatus(`Paying Fee (${storageFee} NEAR) & Minting Ticket...`);
+            setStatus('Minting NFT ticket on NEAR...');
             try {
                 // Construct Title with CID for Player to parse
                 // Schema (paid):  "CID:::ThumbnailURL:::KeyCID:::Title" (4 segments)
@@ -378,9 +415,10 @@ export function UploadForm() {
                     price_usd: priceUsdCents,
                 };
 
-                setStatus('Minting Ticket...');
+                setStatus('Minting NFT ticket & publishing event...');
 
                 // Signless batch transaction (session key)
+                // This single batch does: nft_mint_prepaid + create_event_prepaid
                 await batchUploadActionsSignless(
                     sessionManager,
                     videoMetadata,
@@ -388,23 +426,17 @@ export function UploadForm() {
                 );
 
                 updateStep('mint', 'complete');
-
-                // Event complete
-                await new Promise(resolve => setTimeout(resolve, 500));
-                updateStep('event', 'loading');
-                await new Promise(resolve => setTimeout(resolve, 500));
-                updateStep('event', 'complete');
-                setStatus('Success! Video Uploaded & Ticket Sales Started!');
+                setStatus('Success! Video uploaded & ticket sales started!');
 
             } catch (mintError: unknown) {
                 console.error('Minting/Event failed:', mintError);
                 updateStep('mint', 'error');
-                setStatus(`Upload success, but Blockchain actions failed: ${mintError instanceof Error ? mintError.message : String(mintError)}`);
+                setStatus(`Video uploaded but blockchain actions failed: ${mintError instanceof Error ? mintError.message : String(mintError)}`);
                 refetchBalance();
             }
 
             // Final success message
-            setStatus('Success! Video Uploaded & Ticket Sales Started!');
+            setStatus('Success! Video uploaded & ticket sales started!');
 
             setUploading(false);
 
@@ -447,6 +479,7 @@ export function UploadForm() {
 
     const handleUpload = async () => {
         if (!file || !accountId) return;
+        if (fileSizeError) return;
         if (!title || !description) {
             setStatus('Please enter a title and description');
             return;
@@ -471,9 +504,7 @@ export function UploadForm() {
         }
 
         setUploading(true);
-        setStatus('Initializing Upload...');
-        setProgress(0);
-
+        setStatus('Checking wallet & balance...');
         // Reset all steps to pending
         dispatch({ type: 'RESET_STEPS' });
 
@@ -558,7 +589,7 @@ export function UploadForm() {
                 }, GAS_CONSTANTS.mediumGas.toString());
             }
 
-            setStatus('Session ready for NOVA upload...');
+            setStatus('Wallet ready');
             updateStep('session', 'complete');
 
             // --- NOVA Upload (TEE-based encryption) ---
@@ -713,15 +744,14 @@ export function UploadForm() {
                             </p>
                         )}
 
-                        {uploading && progress > 0 && (
-                            <div className="space-y-2">
-                                <div className="flex justify-between text-sm text-muted-foreground">
-                                    <span>Uploading...</span>
-                                    <span>{progress}%</span>
-                                </div>
-                                <Progress value={progress} className="w-full" />
-                            </div>
+                        {fileSizeError && (
+                            <Alert variant="destructive">
+                                <AlertCircle className="h-4 w-4" />
+                                <AlertDescription>{fileSizeError}</AlertDescription>
+                            </Alert>
                         )}
+
+{/* Progress bar removed - step indicators provide upload feedback */}
 
                         {status && (
                             <Alert variant={status.includes('failed') ? "destructive" : "default"}>
@@ -771,7 +801,7 @@ export function UploadForm() {
                     <CardFooter>
                         <Button
                             onClick={handleUpload}
-                            disabled={uploading || !file || !title || !description || !accountId}
+                            disabled={uploading || !file || !title || !description || !accountId || !!fileSizeError}
                             className="w-full"
                         >
                             {uploading ? (
@@ -900,56 +930,128 @@ export function UploadForm() {
                         </div>
 
                         {/* Upload Progress Steps - Vertical Layout Below Preview */}
-                        <div className="mt-4 p-4 bg-gradient-to-br from-zinc-900/80 to-zinc-950/80 rounded-xl border border-white/10 backdrop-blur-sm shadow-lg">
-                            <h3 className="text-xs font-bold mb-4 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
-                                {t.upload_page.progress_title}
-                            </h3>
+                        <div className="mt-4 p-5 bg-gradient-to-br from-zinc-900/90 to-zinc-950/90 rounded-2xl border border-white/[0.08] backdrop-blur-sm shadow-xl">
+                            {/* Header with step counter */}
+                            <div className="flex items-center justify-between mb-5">
+                                <h3 className="text-xs font-bold tracking-wide uppercase text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
+                                    {t.upload_page.progress_title}
+                                </h3>
+                                {uploading && (
+                                    <span className="text-[10px] font-mono text-zinc-500 tabular-nums">
+                                        {uploadSteps.filter(s => s.status === 'complete').length}/{uploadSteps.length}
+                                    </span>
+                                )}
+                            </div>
+
+                            {/* Overall progress bar */}
+                            {uploading && (() => {
+                                const completed = uploadSteps.filter(s => s.status === 'complete').length;
+                                const loading = uploadSteps.filter(s => s.status === 'loading').length;
+                                const pct = Math.round(((completed + loading * 0.5) / uploadSteps.length) * 100);
+                                return (
+                                    <div className="mb-5">
+                                        <div className="h-1 w-full rounded-full bg-zinc-800 overflow-hidden">
+                                            <div
+                                                className="h-full rounded-full bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-500 transition-all duration-700 ease-out"
+                                                style={{ width: `${pct}%` }}
+                                            />
+                                        </div>
+                                    </div>
+                                );
+                            })()}
 
                             {/* Vertical Progress Steps */}
-                            <div className="relative space-y-3">
-                                {uploadSteps.map((step, index) => (
-                                    <div key={step.id} className="flex items-center gap-3 relative">
-                                        {/* Vertical Line */}
-                                        {index < uploadSteps.length - 1 && (
-                                            <div className={`absolute left-3 top-6 w-0.5 h-6 transition-all duration-300 ${step.status === 'complete' ? 'bg-emerald-500' : 'bg-zinc-700'
-                                                }`} />
-                                        )}
+                            <div className="relative">
+                                {/* Continuous vertical track */}
+                                <div className="absolute left-[13px] top-3 bottom-3 w-[2px] bg-zinc-800 rounded-full" />
 
-                                        {/* Step Circle */}
-                                        <div className="relative z-10 flex-shrink-0">
-                                            {step.status === 'pending' && (
-                                                <div className="w-6 h-6 rounded-full bg-zinc-800 border-2 border-zinc-700 flex items-center justify-center">
-                                                    <span className="text-[8px] font-bold text-zinc-500">{index + 1}</span>
-                                                </div>
-                                            )}
-                                            {step.status === 'loading' && (
-                                                <div className="w-6 h-6 rounded-full bg-blue-500/20 border-2 border-blue-500 flex items-center justify-center animate-pulse shadow-md shadow-blue-500/30">
-                                                    <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
-                                                </div>
-                                            )}
-                                            {step.status === 'complete' && (
-                                                <div className="w-6 h-6 rounded-full bg-emerald-500 border-2 border-emerald-400 flex items-center justify-center shadow-md shadow-emerald-500/30">
-                                                    <CheckCircle2 className="w-3 h-3 text-white" />
-                                                </div>
-                                            )}
-                                            {step.status === 'error' && (
-                                                <div className="w-6 h-6 rounded-full bg-red-500/20 border-2 border-red-500 flex items-center justify-center shadow-md shadow-red-500/30">
-                                                    <AlertCircle className="w-3 h-3 text-red-400" />
-                                                </div>
-                                            )}
-                                        </div>
+                                <div className="space-y-1">
+                                    {uploadSteps.map((step, index) => {
+                                        const isActive = step.status === 'loading';
+                                        const isDone = step.status === 'complete';
+                                        const isError = step.status === 'error';
 
-                                        {/* Step Label */}
-                                        <span className={`text-xs font-medium transition-all duration-300 ${step.status === 'complete' ? 'text-emerald-400' :
-                                            step.status === 'loading' ? 'text-blue-400' :
-                                                step.status === 'error' ? 'text-red-400' :
-                                                    'text-zinc-500'
-                                            }`}>
-                                            {(t.upload_page.steps as Record<string, string>)[step.id] || step.label}
+                                        return (
+                                            <div key={step.id} className="relative">
+                                                {/* Filled track segment */}
+                                                {index > 0 && (
+                                                    <div
+                                                        className={`absolute left-[13px] -top-1 w-[2px] h-[calc(50%+4px)] rounded-full transition-all duration-500 ${
+                                                            isDone || isActive || isError ? 'bg-gradient-to-b from-emerald-500 to-emerald-500/80' : 'bg-transparent'
+                                                        }`}
+                                                    />
+                                                )}
+
+                                                <div className={`flex items-center gap-3 px-2 py-2.5 rounded-xl transition-all duration-300 ${
+                                                    isActive ? 'bg-blue-500/[0.08] border border-blue-500/20' :
+                                                    isError ? 'bg-red-500/[0.06] border border-red-500/15' :
+                                                    'border border-transparent'
+                                                }`}>
+                                                    {/* Step indicator */}
+                                                    <div className="relative z-10 flex-shrink-0">
+                                                        {step.status === 'pending' && (
+                                                            <div className="w-7 h-7 rounded-full bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center">
+                                                                <span className="text-[9px] font-bold text-zinc-600">{index + 1}</span>
+                                                            </div>
+                                                        )}
+                                                        {step.status === 'loading' && (
+                                                            <div className="w-7 h-7 rounded-full bg-blue-500/20 border-2 border-blue-400 flex items-center justify-center shadow-lg shadow-blue-500/25">
+                                                                <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+                                                            </div>
+                                                        )}
+                                                        {step.status === 'complete' && (
+                                                            <div className="w-7 h-7 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/25">
+                                                                <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                                                            </div>
+                                                        )}
+                                                        {step.status === 'error' && (
+                                                            <div className="w-7 h-7 rounded-full bg-red-500/20 border-2 border-red-400 flex items-center justify-center shadow-lg shadow-red-500/25">
+                                                                <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Step content */}
+                                                    <div className="flex-1 min-w-0">
+                                                        <span className={`text-xs font-medium block transition-colors duration-300 ${
+                                                            isDone ? 'text-emerald-400' :
+                                                            isActive ? 'text-blue-300' :
+                                                            isError ? 'text-red-400' :
+                                                            'text-zinc-500'
+                                                        }`}>
+                                                            {(t.upload_page.steps as Record<string, string>)[step.id] || step.label}
+                                                        </span>
+                                                        {isActive && (
+                                                            <span className="text-[10px] text-blue-400/60 mt-0.5 block animate-pulse">
+                                                                {t.upload_page.processing}...
+                                                            </span>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Status indicator */}
+                                                    {isDone && (
+                                                        <span className="text-[9px] font-medium text-emerald-500/60 uppercase tracking-wider flex-shrink-0">
+                                                            OK
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* All done message */}
+                            {uploadSteps.every(s => s.status === 'complete') && (
+                                <div className="mt-4 pt-4 border-t border-emerald-500/10">
+                                    <div className="flex items-center gap-2 text-emerald-400">
+                                        <CheckCircle2 className="w-4 h-4" />
+                                        <span className="text-xs font-semibold">
+                                            {status.includes('Success') ? status : 'Upload Complete!'}
                                         </span>
                                     </div>
-                                ))}
-                            </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

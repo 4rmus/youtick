@@ -149,10 +149,12 @@ async function uploadToNOVA(
   }
 
   try {
+    const onStage = options?.onStageChange;
     const tempGroupId = `video_${Date.now()}`;
 
     // 1. Create Nova group (for access control)
     // Fee is already transferred to Nova sub-account via fund_nova_platform() before this call
+    onStage?.('group');
     const groupId = await createNovaGroup(tempGroupId);
 
     // 1b. Add uploader as group member (group is owned by the Nova platform account,
@@ -161,16 +163,19 @@ async function uploadToNOVA(
     await sdk.addGroupMember(groupId, accountId);
 
     // 2. Client-side AES-256-CTR chunked encryption (memory-efficient via file.slice())
+    onStage?.('encrypt');
     const aesKey = await generateEncryptionKey();
     const encrypted = await encryptFileFromBlob(file, aesKey);
 
     // 3. Upload encrypted binary to Crust (no base64 inflation!)
+    onStage?.('upload');
     const encryptedBlob = new Blob([encrypted.buffer as ArrayBuffer], { type: 'application/octet-stream' });
     const crustResult = await uploadToCrust(encryptedBlob, accountId, {
       onProgress: options?.onProgress,
     });
 
     // 4. Store tiny AES key in Nova (TEE-protected, ~44 bytes)
+    onStage?.('key');
     const keyCid = await storeEncryptionKey(groupId, aesKey, accountId);
 
     return {

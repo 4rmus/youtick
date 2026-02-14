@@ -66,6 +66,13 @@ export interface NovaGroup {
 }
 
 /**
+ * Upload stage identifiers for progress tracking.
+ * These map to the internal steps of the hybrid upload pipeline:
+ *   Nova group creation → AES encryption → Crust upload → Key storage
+ */
+export type UploadStage = 'group' | 'encrypt' | 'upload' | 'key';
+
+/**
  * NOVA upload options
  */
 export interface NovaUploadOptions {
@@ -73,6 +80,8 @@ export interface NovaUploadOptions {
   filename?: string;
   /** Progress callback */
   onProgress?: (progress: UploadProgress) => void;
+  /** Stage change callback - called when the upload pipeline moves to a new internal step */
+  onStageChange?: (stage: UploadStage) => void;
   /** Request timeout (milliseconds) */
   timeout?: number;
   /** Whether to verify TEE attestation before upload */
