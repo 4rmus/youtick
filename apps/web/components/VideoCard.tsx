@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import Link from '@/components/Web4Link';
 import { Play, Ticket } from 'lucide-react';
 import { NovaThumbnail } from '@/components/NovaThumbnail';
 

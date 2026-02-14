@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { TrialOnboarding } from "@/components/TrialOnboarding";
 import { useWallet } from "@/components/providers/WalletProvider";
+import { Loader2 } from "lucide-react";
 
-export default function TrialPage() {
+function TrialContent() {
     const searchParams = useSearchParams();
     const redirect = searchParams.get("redirect");
     const { accountId, connect } = useWallet();
@@ -40,5 +41,17 @@ export default function TrialPage() {
                 onConnectWallet={handleConnectWallet}
             />
         </main>
+    );
+}
+
+export default function TrialPage() {
+    return (
+        <Suspense fallback={
+            <main className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-black flex items-center justify-center p-4">
+                <Loader2 className="h-8 w-8 animate-spin text-white" />
+            </main>
+        }>
+            <TrialContent />
+        </Suspense>
     );
 }

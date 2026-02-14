@@ -1,25 +1,25 @@
 'use client';
 
 import { useEffect, Suspense } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 
 /**
  * /ticket?cid=... — Legacy query-string route.
  * Redirects to /watch?cid=... or /discover if no cid.
+ * Uses window.location for Web4 compatibility (avoids RSC data fetching).
  */
 function TicketRedirect() {
     const searchParams = useSearchParams();
-    const router = useRouter();
     const cid = searchParams.get('cid');
 
     useEffect(() => {
         if (cid) {
-            router.replace(`/watch?cid=${cid}`);
+            window.location.replace(`/watch?cid=${cid}`);
         } else {
-            router.replace('/discover');
+            window.location.replace('/discover');
         }
-    }, [cid, router]);
+    }, [cid]);
 
     return (
         <div className="flex h-screen items-center justify-center bg-black text-white">

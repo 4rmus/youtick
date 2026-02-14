@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import Link from '@/components/Web4Link';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/components/providers/LanguageContext';
@@ -122,6 +122,11 @@ export function Navbar() {
                             {link.label}
                         </Link>
                     ))}
+                    <div className="h-px bg-white/10 my-2" />
+                    <div className="flex items-center gap-4 text-sm">
+                        <Link href="/terms" onClick={() => setIsMenuOpen(false)} className="text-zinc-500 hover:text-zinc-300 transition-colors">Terms</Link>
+                        <Link href="/privacy" onClick={() => setIsMenuOpen(false)} className="text-zinc-500 hover:text-zinc-300 transition-colors">Privacy</Link>
+                    </div>
                     <div className="h-px bg-white/10 my-2" />
                     {!accountId && (
                         <Link href="/trial" onClick={() => setIsMenuOpen(false)} className="text-near-green font-semibold flex items-center gap-2">

@@ -17,6 +17,7 @@ import {
   NOVA_CONSTANTS,
   hasApiKey,
   getExpectedEnclaveHash,
+  getProxyBaseUrl,
 } from './config';
 
 // ============================================================================
@@ -61,7 +62,7 @@ export async function fetchAttestation(): Promise<TEEAttestation> {
   );
 
   try {
-    const response = await fetch('/api/nova-proxy/attestation', {
+    const response = await fetch(`${getProxyBaseUrl()}/attestation`, {
       method: 'GET',
       signal: controller.signal,
     });

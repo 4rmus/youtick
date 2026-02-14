@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 interface ErrorProps {
   error: Error & { digest?: string };
@@ -8,52 +8,71 @@ interface ErrorProps {
 }
 
 export default function Error({ error, reset }: ErrorProps) {
+  const [retrying, setRetrying] = useState(false);
+  const isChunkError = error.name === 'ChunkLoadError' || error.message?.includes('ChunkLoadError');
+
   useEffect(() => {
-    // Log to error reporting service in production
     console.error('Page error:', error);
-  }, [error]);
+
+    // Auto-reload for ChunkLoadError (IPFS gateway blip)
+    if (isChunkError) {
+      const retryKey = '__ytk_chunk_retry';
+      let retries = 0;
+      try { retries = parseInt(sessionStorage.getItem(retryKey) || '0', 10); } catch {}
+
+      if (retries < 3) {
+        setRetrying(true);
+        try { sessionStorage.setItem(retryKey, String(retries + 1)); } catch {}
+        const delay = Math.min(1000 * Math.pow(2, retries), 8000);
+        const timer = setTimeout(() => window.location.reload(), delay);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [error, isChunkError]);
+
+  if (retrying) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-900 px-4">
+        <div className="max-w-md w-full text-center">
+          <div className="w-12 h-12 mx-auto border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-6" />
+          <p className="text-gray-400">Loading resources, retrying...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-900 px-4">
       <div className="max-w-md w-full text-center">
         <div className="mb-8">
           <div className="w-16 h-16 mx-auto bg-red-500/10 rounded-full flex items-center justify-center">
-            <svg
-              className="w-8 h-8 text-red-500"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
+            <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
         </div>
 
         <h1 className="text-2xl font-bold text-white mb-4">
-          Something went wrong
+          {isChunkError ? 'Loading failed' : 'Something went wrong'}
         </h1>
 
         <p className="text-gray-400 mb-6">
-          We encountered an unexpected error. Please try again or contact support if the problem persists.
+          {isChunkError
+            ? 'A required resource could not be loaded from the decentralized network. This is usually temporary.'
+            : 'We encountered an unexpected error. Please try again or contact support if the problem persists.'}
         </p>
 
         {error.digest && (
-          <p className="text-xs text-gray-500 mb-6">
-            Error ID: {error.digest}
-          </p>
+          <p className="text-xs text-gray-500 mb-6">Error ID: {error.digest}</p>
         )}
 
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
           <button
-            onClick={reset}
+            onClick={() => window.location.reload()}
             className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
           >
-            Try again
+            {isChunkError ? 'Reload page' : 'Try again'}
           </button>
           <button
             onClick={() => window.location.href = '/'}

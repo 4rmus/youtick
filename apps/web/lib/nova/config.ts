@@ -139,16 +139,27 @@ export function getExpectedEnclaveHash(): string | undefined {
 }
 
 /**
- * Get Nova SDK constructor options with CORS proxy URLs.
+ * Get the Nova CORS proxy base URL.
  *
  * Nova SDK's authUrl (nova-sdk.com) and mcpUrl (nova-mcp.fastmcp.app)
- * don't support CORS from browser origins. We route them through
- * our Next.js API route at /api/nova-proxy/[...path].
+ * don't support CORS from browser origins. We route them through a
+ * Cloudflare Worker proxy (or the Next.js API route in dev).
+ *
+ * Set NEXT_PUBLIC_NOVA_PROXY_URL to the Worker URL in production
+ * (e.g. "https://nova-proxy.<account>.workers.dev").
+ * Falls back to "/api/nova-proxy" for local development.
+ */
+export function getProxyBaseUrl(): string {
+  return process.env.NEXT_PUBLIC_NOVA_PROXY_URL || '/api/nova-proxy';
+}
+
+/**
+ * Get Nova SDK constructor options with CORS proxy URLs.
  */
 export function getSdkOptions() {
-  const proxyBase = '/api/nova-proxy';
+  const proxyBase = getProxyBaseUrl();
   return {
-    // Real API key is injected server-side by the proxy route.
+    // Real API key is injected server-side by the proxy route / Worker.
     // Pass a placeholder so the SDK's internal auth checks don't skip.
     apiKey: hasApiKey() ? 'proxy-injected' : undefined,
     authUrl: proxyBase,
