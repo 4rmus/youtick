@@ -1,5 +1,5 @@
 import { memo, useCallback, useState } from 'react';
-import Link from 'next/link';
+import Link from '@/components/Web4Link';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Branding } from './Branding';
@@ -20,11 +20,11 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
 
   const handleGetStarted = useCallback(() => {
     if (accountId) {
-      router.push('/upload');
+      window.location.href = '/upload';
     } else {
       connect();
     }
-  }, [accountId, connect, router]);
+  }, [accountId, connect]);
 
   const handleSignOut = useCallback(async () => {
     await signOut();

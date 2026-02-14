@@ -31,7 +31,7 @@ export const metadata: Metadata = {
         'video on demand',
         'dApp',
         'blockchain streaming',
-        'Nova Protocol',
+        'Nova SDK',
         'TEE encryption',
         'IPFS video',
         'encrypted video',
@@ -91,6 +91,31 @@ export default function RootLayout({
 }>) {
     return (
         <html lang="en" suppressHydrationWarning>
+            <head>
+                {/* ChunkLoadError recovery: reload page on failed dynamic imports (IPFS gateway blips) */}
+                <script dangerouslySetInnerHTML={{ __html: `
+                    (function(){
+                        var retries = 0;
+                        var MAX_RETRIES = 3;
+                        var KEY = '__ytk_chunk_retry';
+                        try { retries = parseInt(sessionStorage.getItem(KEY) || '0', 10); } catch(e) {}
+                        window.addEventListener('error', function(e) {
+                            if (e.message && e.message.indexOf('ChunkLoadError') !== -1 && retries < MAX_RETRIES) {
+                                try { sessionStorage.setItem(KEY, String(retries + 1)); } catch(e) {}
+                                window.location.reload();
+                            }
+                        });
+                        window.addEventListener('unhandledrejection', function(e) {
+                            var msg = e.reason && (e.reason.message || String(e.reason));
+                            if (msg && msg.indexOf('ChunkLoadError') !== -1 && retries < MAX_RETRIES) {
+                                try { sessionStorage.setItem(KEY, String(retries + 1)); } catch(e) {}
+                                window.location.reload();
+                            }
+                        });
+                        if (retries > 0) { setTimeout(function(){ try { sessionStorage.removeItem(KEY); } catch(e) {} }, 30000); }
+                    })();
+                `}} />
+            </head>
             <body className={inter.className}>
                 <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
                     <QueryProvider>

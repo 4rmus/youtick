@@ -7,9 +7,11 @@ use near_contract_standards::non_fungible_token::{
 use near_sdk::{
     collections::{LazyOption, UnorderedMap, LookupMap, LookupSet},
     env, near, require,
-    json_types::U128,
+    json_types::{U128, Base64VecU8},
     AccountId, NearToken, PanicOnDefault, Promise, PromiseOrValue, PublicKey,
 };
+use near_sdk::serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::num::NonZeroU128;
 
 
@@ -170,6 +172,35 @@ pub struct PurchaseLog {
     pub timestamp_ns: u64,
 }
 
+// ═══════════════════════════════════════════════════════════════
+// WEB4 TYPES
+// ═══════════════════════════════════════════════════════════════
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct Web4Request {
+    pub path: String,
+    #[serde(default)]
+    pub query: HashMap<String, Vec<String>>,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+#[serde(untagged)]
+pub enum Web4Response {
+    Body {
+        #[serde(rename = "contentType")]
+        content_type: String,
+        body: Base64VecU8,
+    },
+    BodyUrl {
+        #[serde(rename = "contentType")]
+        content_type: String,
+        #[serde(rename = "bodyUrl")]
+        body_url: String,
+    },
+}
+
 /// Old contract state V4 (before commission_pool was added)
 /// Used for state migration from V4 → V5
 #[near(serializers=[borsh])]
@@ -250,6 +281,30 @@ pub struct OldContractV7 {
     event_nova_groups: LookupMap<String, String>,
 }
 
+/// Old contract state V8 (before web4_static_url was added)
+/// Used for state migration from V8 → V9
+#[near(serializers=[borsh])]
+#[derive(PanicOnDefault)]
+pub struct OldContractV8 {
+    tokens: NonFungibleToken,
+    metadata: LazyOption<NFTContractMetadata>,
+    video_metadata: UnorderedMap<TokenId, VideoMetadata>,
+    user_deposits: LookupMap<AccountId, NearToken>,
+    events: UnorderedMap<String, Event>,
+    next_token_id: u64,
+    gift_drops: LookupMap<String, GiftDrop>,
+    trial_pool: NearToken,
+    onboarding_keys: LookupSet<PublicKey>,
+    daily_trial_counts: LookupMap<u64, u32>,
+    onboarding_config: OnboardingConfig,
+    commission_pool: NearToken,
+    purchase_logs: UnorderedMap<u64, PurchaseLog>,
+    next_purchase_id: u64,
+    event_nova_groups: LookupMap<String, String>,
+    nova_platform_account: Option<AccountId>,
+    nova_service_fee: NearToken,
+}
+
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
@@ -280,6 +335,8 @@ pub struct Contract {
     // V8: Nova platform auto-funding (already in on-chain state)
     nova_platform_account: Option<AccountId>,
     nova_service_fee: NearToken,
+    // V9: Web4 static URL for NEARFS gateway (e.g., "/ipfs/CID")
+    pub web4_static_url: Option<String>,
     // NOTE: event_price_usd uses lazy LookupMap (separate storage) to avoid migration.
 }
 
@@ -327,16 +384,17 @@ impl Contract {
             event_nova_groups: LookupMap::new(StorageKey::EVENT_NOVA_GROUPS),
             nova_platform_account: None,
             nova_service_fee: NearToken::from_yoctonear(0),
+            web4_static_url: None,
         }
     }
 
-    /// Migrate state V6 → V7: Add event_nova_groups LookupMap
-    /// Preserves all existing data and adds the new mapping
+    /// Migrate state V8 → V9: Add web4_static_url field
+    /// Preserves all existing data and adds Web4 gateway support
     #[private]
     #[init(ignore_state)]
     pub fn migrate_state() -> Self {
-        let old_state: OldContractV6 = env::state_read().expect("Failed to read old state");
-        env::log_str("State migration V6 -> V7: Adding event_nova_groups");
+        let old_state: OldContractV8 = env::state_read().expect("Failed to read old state");
+        env::log_str("State migration V8 -> V9: Adding web4_static_url");
 
         Self {
             tokens: old_state.tokens,
@@ -353,9 +411,10 @@ impl Contract {
             commission_pool: old_state.commission_pool,
             purchase_logs: old_state.purchase_logs,
             next_purchase_id: old_state.next_purchase_id,
-            event_nova_groups: LookupMap::new(StorageKey::EVENT_NOVA_GROUPS),
-            nova_platform_account: None,
-            nova_service_fee: NearToken::from_yoctonear(0),
+            event_nova_groups: old_state.event_nova_groups,
+            nova_platform_account: old_state.nova_platform_account,
+            nova_service_fee: old_state.nova_service_fee,
+            web4_static_url: None,
         }
     }
 
@@ -394,6 +453,126 @@ impl Contract {
                 BanReason::Other => "other".to_string(),
             }),
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // WEB4 GATEWAY FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Web4 gateway entry point — serves static content from IPFS.
+    ///
+    /// Path resolution rules (Next.js static export with trailingSlash):
+    ///   "/"            → "/index.html"
+    ///   "/discover/"   → "/discover/index.html"
+    ///   "/discover"    → "/discover/index.html"  (no extension = route)
+    ///   "/file.js"     → "/file.js"              (has extension = static file)
+    pub fn web4_get(&self, request: Web4Request) -> Web4Response {
+        match &self.web4_static_url {
+            Some(base_url) => {
+                // Strip query string from path — near.page gateway may include it
+                // (e.g. MetaMask requests "/favicon.ico?favicon.0b3bf435.ico")
+                let clean_path = match request.path.find('?') {
+                    Some(idx) => &request.path[..idx],
+                    None => &request.path,
+                };
+
+                let path = if clean_path == "/" {
+                    "/index.html".to_string()
+                } else if clean_path.ends_with('/') {
+                    // Trailing slash → directory → serve index.html
+                    format!("{}index.html", clean_path)
+                } else if !Self::path_has_extension(clean_path) {
+                    // No file extension → route path → serve index.html
+                    format!("{}/index.html", clean_path)
+                } else {
+                    clean_path.to_string()
+                };
+                let content_type = Self::detect_content_type(&path);
+                let body_url = format!("{}{}", base_url, path);
+                Web4Response::BodyUrl {
+                    content_type,
+                    body_url,
+                }
+            }
+            None => {
+                let html = b"<!DOCTYPE html><html><head><title>YouTick</title></head><body><h1>YouTick</h1><p>Web4 static URL not configured. Owner must call web4_set_static_url.</p></body></html>";
+                Web4Response::Body {
+                    content_type: "text/html; charset=utf-8".to_string(),
+                    body: Base64VecU8::from(html.to_vec()),
+                }
+            }
+        }
+    }
+
+    /// Check if the last segment of a path contains a file extension (has a dot).
+    fn path_has_extension(path: &str) -> bool {
+        match path.rsplit('/').next() {
+            Some(segment) => segment.contains('.'),
+            None => false,
+        }
+    }
+
+    /// Owner-only: Set the NEARFS static URL (e.g., "/ipfs/CID")
+    pub fn web4_set_static_url(&mut self, url: String) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            self.tokens.owner_id,
+            "Only owner can set static URL"
+        );
+        self.web4_static_url = Some(url);
+    }
+
+    /// View: Get the current web4 static URL
+    pub fn web4_get_static_url(&self) -> Option<String> {
+        self.web4_static_url.clone()
+    }
+
+    /// Internal helper: detect content type from file extension
+    fn detect_content_type(path: &str) -> String {
+        let path_lower = path.to_lowercase();
+        if path_lower.ends_with(".html") || path_lower.ends_with(".htm") {
+            "text/html; charset=utf-8"
+        } else if path_lower.ends_with(".js") || path_lower.ends_with(".mjs") {
+            "application/javascript"
+        } else if path_lower.ends_with(".css") {
+            "text/css"
+        } else if path_lower.ends_with(".json") {
+            "application/json"
+        } else if path_lower.ends_with(".png") {
+            "image/png"
+        } else if path_lower.ends_with(".jpg") || path_lower.ends_with(".jpeg") {
+            "image/jpeg"
+        } else if path_lower.ends_with(".gif") {
+            "image/gif"
+        } else if path_lower.ends_with(".svg") {
+            "image/svg+xml"
+        } else if path_lower.ends_with(".ico") {
+            "image/x-icon"
+        } else if path_lower.ends_with(".woff") {
+            "font/woff"
+        } else if path_lower.ends_with(".woff2") {
+            "font/woff2"
+        } else if path_lower.ends_with(".ttf") {
+            "font/ttf"
+        } else if path_lower.ends_with(".xml") {
+            "application/xml"
+        } else if path_lower.ends_with(".txt") {
+            // Next.js RSC data files use .txt extension but need text/x-component
+            if path_lower.contains("__next.") || path_lower.contains("index.txt") {
+                "text/x-component"
+            } else {
+                "text/plain"
+            }
+        } else if path_lower.ends_with(".wasm") {
+            "application/wasm"
+        } else if path_lower.ends_with(".webp") {
+            "image/webp"
+        } else if path_lower.ends_with(".map") {
+            "application/json"
+        } else {
+            "application/octet-stream"
+        }
+        .to_string()
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import Link from 'next/link';
+import Link from '@/components/Web4Link';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import { useAllVideos } from '@/hooks/useAllVideos';

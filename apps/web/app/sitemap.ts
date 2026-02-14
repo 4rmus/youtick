@@ -1,8 +1,6 @@
 import { MetadataRoute } from 'next';
-import { NEAR_CONFIG } from '@/lib/constants';
 
-// Contract configuration
-const CONTRACT_ID = NEAR_CONFIG.contractId;
+export const dynamic = 'force-static';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     const baseUrl = 'https://youtick.net';

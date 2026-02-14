@@ -1,0 +1,18 @@
+name = "nova-proxy"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# NOVA_API_KEY must be set as a secret:
+#   wrangler secret put NOVA_API_KEY
+
+[vars]
+ALLOWED_ORIGINS = "https://youtick-prod-v1.near.page,https://youtick.near.page,http://localhost:3000"
+
+# KV namespace for rate limiting
+# Create with: wrangler kv:namespace create RATE_LIMIT
+# Then replace the IDs below
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "2f96f521801a4879bb6ed797a7b8c0a1"
+preview_id = "bece71da3a954513a39be3a9f76c9e6d"

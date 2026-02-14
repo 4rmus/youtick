@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useState, useMemo } from 'react';
-import { Calculator, TrendingUp } from 'lucide-react';
+import { Calculator, TrendingDown } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
 /**
@@ -165,8 +165,9 @@ export const ROICalculator = memo(() => {
                                 <span className="text-sm text-zinc-400">Vimeo OTT</span>
                                 <div className="text-right">
                                     <span className="text-lg font-bold text-zinc-300">{formatUsd(calculations.vimeoRevenue)}</span>
-                                    <div className="text-xs text-near-green">
-                                        +{formatUsd(calculations.youtickRevenue - calculations.vimeoRevenue)} {t.landing.roi_calculator?.more || 'more'}
+                                    <div className="text-xs text-red-400 flex items-center gap-1 justify-end">
+                                        <TrendingDown className="w-3 h-3" />
+                                        -{formatUsd(calculations.youtickRevenue - calculations.vimeoRevenue)} {t.landing.roi_calculator?.less || 'less'}
                                     </div>
                                 </div>
                             </div>
@@ -175,9 +176,9 @@ export const ROICalculator = memo(() => {
                                 <span className="text-sm text-zinc-400">YouTube</span>
                                 <div className="text-right">
                                     <span className="text-lg font-bold text-zinc-300">{formatUsd(calculations.youtubeRevenue)}</span>
-                                    <div className="text-xs text-near-green flex items-center gap-1">
-                                        <TrendingUp className="w-3 h-3" />
-                                        {Math.round(calculations.youtickRevenue / Math.max(calculations.youtubeRevenue, 1))}x {t.landing.roi_calculator?.more || 'more'}
+                                    <div className="text-xs text-red-400 flex items-center gap-1 justify-end">
+                                        <TrendingDown className="w-3 h-3" />
+                                        -{formatUsd(calculations.youtickRevenue - calculations.youtubeRevenue)} {t.landing.roi_calculator?.less || 'less'}
                                     </div>
                                 </div>
                             </div>
@@ -186,9 +187,9 @@ export const ROICalculator = memo(() => {
                                 <span className="text-sm text-zinc-400">Spotify</span>
                                 <div className="text-right">
                                     <span className="text-lg font-bold text-zinc-300">{formatUsd(calculations.spotifyRevenue)}</span>
-                                    <div className="text-xs text-near-green flex items-center gap-1">
-                                        <TrendingUp className="w-3 h-3" />
-                                        {Math.round(calculations.youtickRevenue / Math.max(calculations.spotifyRevenue, 1))}x {t.landing.roi_calculator?.more || 'more'}
+                                    <div className="text-xs text-red-400 flex items-center gap-1 justify-end">
+                                        <TrendingDown className="w-3 h-3" />
+                                        -{formatUsd(calculations.youtickRevenue - calculations.spotifyRevenue)} {t.landing.roi_calculator?.less || 'less'}
                                     </div>
                                 </div>
                             </div>
