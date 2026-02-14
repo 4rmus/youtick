@@ -39,7 +39,7 @@ type PaymentSelection = {
 };
 
 export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: TicketPurchaseCardProps) {
-    const { accountId, getWallet, connect } = useWallet();
+    const { accountId, getWallet, connect, setEvmLinkedAccount } = useWallet();
 
     // React Query hooks for cached state
     const { hasSessionKey, refetchSessionKey } = useSessionState(accountId);
@@ -145,6 +145,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 pendingAccessQueue.add(cid, implicitId);
             }
 
+            // Batch all state updates after async work completes (single render)
+            setEvmLinkedAccount(implicitId);
             setActionLoading(false);
             if (onPurchaseSuccess) onPurchaseSuccess();
         } catch (e) {
@@ -257,7 +259,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     const handleFreeTicketClaim = async () => {
         if (!eventDetails) return;
         if (!accountId) {
-            connect();
+            // Redirect to trial page where user can connect wallet or create trial account
+            const redirectUrl = encodeURIComponent(`/watch?cid=${cid}`);
+            window.location.href = `/trial?redirect=${redirectUrl}`;
             return;
         }
         setActionLoading(true);

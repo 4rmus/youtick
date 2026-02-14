@@ -14,6 +14,8 @@ interface WalletContextValue {
     getWallet: () => Promise<WalletInstance>;
     signOut: () => Promise<void>;
     connect: () => Promise<void>;
+    /** Activate an EVM-linked implicit NEAR account without page refresh */
+    setEvmLinkedAccount: (accountId: string) => void;
     isReady: boolean;
 }
 
@@ -174,6 +176,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
     }, []);
 
+    const setEvmLinkedAccount = useCallback((id: string) => {
+        setEvmLinkedAccountId(id);
+    }, []);
+
     return (
         <WalletContext.Provider value={{
             accountId: activeAccountId,
@@ -182,6 +188,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             getWallet,
             signOut,
             connect,
+            setEvmLinkedAccount,
             isReady,
         }}>
             {children}

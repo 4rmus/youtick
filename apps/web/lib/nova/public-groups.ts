@@ -492,11 +492,11 @@ export async function uploadFreeVideo(
   creatorAccountId: string,
   options?: { filename?: string; onProgress?: (progress: UploadProgress) => void }
 ): Promise<NovaUploadResult> {
-  // Validate file size
-  if (file.size > NOVA_CONSTANTS.MAX_FILE_SIZE) {
+  // Validate file size (free videos have a lower limit)
+  if (file.size > NOVA_CONSTANTS.MAX_FREE_FILE_SIZE) {
     throw new NovaError(
       'UPLOAD_FAILED',
-      `File size ${file.size} bytes exceeds maximum ${NOVA_CONSTANTS.MAX_FILE_SIZE} bytes`
+      `File size ${(file.size / 1024 / 1024).toFixed(1)} MB exceeds the ${NOVA_CONSTANTS.MAX_FREE_FILE_SIZE / 1024 / 1024} MB limit for free videos. Set a price to upload up to ${NOVA_CONSTANTS.MAX_FILE_SIZE / 1024 / 1024} MB.`
     );
   }
 

@@ -149,5 +149,13 @@ describe('NOVA Configuration', () => {
     it('should have positive fetch timeout', () => {
       expect(NOVA_CONSTANTS.FETCH_TIMEOUT).toBeGreaterThan(0);
     });
+
+    it('should have MAX_FREE_FILE_SIZE defined as 20 MB', () => {
+      expect(NOVA_CONSTANTS.MAX_FREE_FILE_SIZE).toBe(20 * 1024 * 1024);
+    });
+
+    it('should have MAX_FREE_FILE_SIZE smaller than MAX_FILE_SIZE', () => {
+      expect(NOVA_CONSTANTS.MAX_FREE_FILE_SIZE).toBeLessThan(NOVA_CONSTANTS.MAX_FILE_SIZE);
+    });
   });
 });

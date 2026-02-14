@@ -42,6 +42,8 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
 
     // Consolidated state machine
     const [playerState, setPlayerState] = useState<PlayerState>(initialState);
+    // Tracks successful purchase — forces transition from purchase card to player
+    const [purchased, setPurchased] = useState(false);
     const videoRef = useRef<HTMLVideoElement>(null);
 
     // Track blob URL for cleanup
@@ -74,6 +76,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
         && error !== 'SIMULATION_MODE'
         && playerState.type !== 'needs-session-key'
         && hasAccess === false
+        && !purchased
         && !error;
 
     const playVideo = useCallback(async (isRetry: boolean = false) => {
@@ -277,7 +280,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                                 Back to Discover
                             </Button>
                         </div>
-                    ) : checkingAccess ? (
+                    ) : checkingAccess && !purchased ? (
                         <div className="text-center">
                             <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-zinc-500" />
                             <p className="text-xs text-zinc-500">Verifying access...</p>
@@ -322,12 +325,13 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                                 Setup Session Key
                             </Button>
                         </div>
-                    ) : hasAccess === false && !error ? (
+                    ) : hasAccess === false && !purchased && !error ? (
                         // SHOW INLINE PURCHASE CARD
                         <div className="z-10 flex flex-col items-center bg-black/95 backdrop-blur-md w-full p-4">
                             <TicketPurchaseCard
                                 cid={cid}
                                 onPurchaseSuccess={() => {
+                                    setPurchased(true);
                                     refetchOwnership();
                                 }}
                                 className="w-full max-w-sm"

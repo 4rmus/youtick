@@ -1,8 +1,22 @@
 "use client";
 
+import { useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { TrialOnboarding } from "@/components/TrialOnboarding";
+import { useWallet } from "@/components/providers/WalletProvider";
 
 export default function TrialPage() {
+    const searchParams = useSearchParams();
+    const redirect = searchParams.get("redirect");
+    const { accountId, connect } = useWallet();
+
+    // When wallet gets connected, redirect back to the original page
+    useEffect(() => {
+        if (accountId && redirect) {
+            window.location.href = redirect;
+        }
+    }, [accountId, redirect]);
+
     const handleTrialCreated = (accountId: string) => {
         // Store in localStorage for session persistence
         if (typeof window !== "undefined") {
@@ -11,8 +25,12 @@ export default function TrialPage() {
     };
 
     const handleConnectWallet = () => {
-        // Redirect to main page with wallet connection
-        window.location.href = "/?connect=true";
+        if (redirect) {
+            // Open wallet modal; useEffect above handles redirect after connection
+            connect();
+        } else {
+            window.location.href = "/?connect=true";
+        }
     };
 
     return (
