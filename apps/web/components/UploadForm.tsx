@@ -1,94 +1,195 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useReducer } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { uploadFile } from '@/lib/crust';
-import { lit, LIT_ACTION_CID } from '@/lib/lit';
+import { uploadFile as novaUploadFile, uploadPublicThumbnail, uploadFreeVideo } from '@/lib/nova';
 import { SessionManager } from '@/lib/session-manager';
 import { batchUploadActionsSignless } from '@/lib/batch-transactions';
 import { generateVideoThumbnail } from '@/lib/video-utils';
-import { ethers } from 'ethers';
-import { nearToYocto } from 'near-api-js';
+import { actions, nearToYocto } from 'near-api-js';
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Progress } from "@/components/ui/progress"
 import { Button } from "@/components/ui/button"
 import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { GiftLinkGenerator } from './GiftLinkGenerator';
 import { useSessionState, useAccountBalance } from '@/lib/hooks/useSessionState';
-import { IPFS_CONFIG } from '@/lib/constants';
+import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
+import { getNearPrice, usdToNear, formatUsdCents } from '@/lib/price';
+import { NOVA_CONSTANTS } from '@/lib/nova/config';
 
+const CONTRACT_ID = NEAR_CONFIG.contractId;
 
-const CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+// ── Upload state reducer ──
 
-// Crust upload result interface
-interface CrustUploadResult {
-    cid: string;
-    size: number;
-    name?: string;
+import type { UploadStep } from '@/lib/types';
+
+type StepStatus = UploadStep['status'];
+
+const INITIAL_STEPS: UploadStep[] = [
+    { id: 'session', label: 'Wallet & Balance', status: 'pending' },
+    { id: 'thumbnail', label: 'Cover Image', status: 'pending' },
+    { id: 'nova_group', label: 'Creating Nova Group', status: 'pending' },
+    { id: 'encrypt', label: 'Encrypting Video', status: 'pending' },
+    { id: 'upload', label: 'Uploading to IPFS', status: 'pending' },
+    { id: 'mint', label: 'Minting NFT Ticket', status: 'pending' },
+];
+
+interface UploadState {
+    uploading: boolean;
+    status: string;
+    progress: number;
+    steps: UploadStep[];
+    retryStep: 'none' | 'sign_auth';
+    verifiedStorageFee: string;
+    estimatedStorageFee: string;
+    payAmount: string;
+    novaGroupFee: number;
+    generatedVideoUuid: string | null;
+    lastUploadedTitle: string;
+}
+
+const initialUploadState: UploadState = {
+    uploading: false,
+    status: '',
+    progress: 0,
+    steps: INITIAL_STEPS,
+    retryStep: 'none',
+    verifiedStorageFee: '0',
+    estimatedStorageFee: '0',
+    payAmount: '0',
+    novaGroupFee: 0,
+    generatedVideoUuid: null,
+    lastUploadedTitle: '',
+};
+
+type UploadAction =
+    | { type: 'SET_UPLOADING'; payload: boolean }
+    | { type: 'SET_STATUS'; payload: string }
+    | { type: 'SET_PROGRESS'; payload: number }
+    | { type: 'UPDATE_STEP'; payload: { id: string; status: StepStatus } }
+    | { type: 'RESET_STEPS' }
+    | { type: 'SET_RETRY_STEP'; payload: 'none' | 'sign_auth' }
+    | { type: 'SET_VERIFIED_STORAGE_FEE'; payload: string }
+    | { type: 'SET_ESTIMATED_STORAGE_FEE'; payload: string }
+    | { type: 'SET_PAY_AMOUNT'; payload: string }
+    | { type: 'SET_NOVA_GROUP_FEE'; payload: number }
+    | { type: 'SET_VIDEO_UUID'; payload: { uuid: string; title: string } }
+    | { type: 'RESET' };
+
+function uploadReducer(state: UploadState, action: UploadAction): UploadState {
+    switch (action.type) {
+        case 'SET_UPLOADING':
+            return { ...state, uploading: action.payload };
+        case 'SET_STATUS':
+            return { ...state, status: action.payload };
+        case 'SET_PROGRESS':
+            return { ...state, progress: action.payload };
+        case 'UPDATE_STEP':
+            return {
+                ...state,
+                steps: state.steps.map(step =>
+                    step.id === action.payload.id ? { ...step, status: action.payload.status } : step
+                ),
+            };
+        case 'RESET_STEPS':
+            return { ...state, steps: INITIAL_STEPS.map(s => ({ ...s })) };
+        case 'SET_RETRY_STEP':
+            return { ...state, retryStep: action.payload };
+        case 'SET_VERIFIED_STORAGE_FEE':
+            return { ...state, verifiedStorageFee: action.payload };
+        case 'SET_ESTIMATED_STORAGE_FEE':
+            return { ...state, estimatedStorageFee: action.payload };
+        case 'SET_PAY_AMOUNT':
+            return { ...state, payAmount: action.payload };
+        case 'SET_NOVA_GROUP_FEE':
+            return { ...state, novaGroupFee: action.payload };
+        case 'SET_VIDEO_UUID':
+            return { ...state, generatedVideoUuid: action.payload.uuid, lastUploadedTitle: action.payload.title };
+        case 'RESET':
+            return initialUploadState;
+        default:
+            return state;
+    }
 }
 
 export function UploadForm() {
     const { t } = useLanguage();
-    const { selector, accountId, getWallet, pkpData, isPKPMinting } = useWallet();
+    const { accountId, getWallet } = useWallet();
 
     // React Query hooks for session state (cached, deduplicated)
     const { hasSessionKey, isSessionKeyLoading, refetchSessionKey } = useSessionState(accountId);
     const { data: balanceData, isLoading: isBalanceLoading, refetch: refetchBalance } = useAccountBalance(accountId);
 
+    // Form fields
     const [file, setFile] = useState<File | null>(null);
     const [thumbnail, setThumbnail] = useState<Blob | null>(null);
     const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
-    const [uploading, setUploading] = useState(false);
-    const [status, setStatus] = useState('');
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
-    const [price, setPrice] = useState('0'); // Default 0 NEAR
-    const [progress, setProgress] = useState(0);
+    const [priceUsd, setPriceUsd] = useState(''); // USD amount (e.g. "5.00"), empty = free
+    const [nearPrice, setNearPrice] = useState<number>(0); // NEAR/USD rate
+    const [fileSizeError, setFileSizeError] = useState<string | null>(null);
 
-    // Upload steps tracking
-    const [uploadSteps, setUploadSteps] = useState([
-        { id: 'session', label: 'Preparing Identity', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'thumbnail', label: 'Uploading Cover', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'encrypt', label: 'Securing Video', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'upload', label: 'Finalizing Storage', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'mint', label: 'Minting Ticket', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' },
-        { id: 'event', label: 'Event Created', status: 'pending' as 'pending' | 'loading' | 'complete' | 'error' }
-    ]);
+    // Derived NEAR price from USD input
+    const priceUsdNum = parseFloat(priceUsd) || 0;
+    const priceNearDerived = nearPrice > 0 ? usdToNear(priceUsdNum, nearPrice) : 0;
+    // Keep 'price' as NEAR string for backward compat with CostReceipt etc.
+    const price = priceUsdNum > 0 ? priceNearDerived.toFixed(6) : '0';
 
-    // Retry state for popup blocked scenarios
-    const [retryStep, setRetryStep] = useState<'none' | 'sign_auth' | 'pkp_link'>('none');
-    const [pendingMessage, setPendingMessage] = useState<string | null>(null);
-    const [recoveredAddr, setRecoveredAddr] = useState<string | null>(null);
-    const [verifiedStorageFee, setVerifiedStorageFee] = useState<string>('0');
+    // Fetch NEAR/USD price on mount
+    React.useEffect(() => {
+        getNearPrice().then(setNearPrice);
+    }, []);
 
-    // Cost Receipt State
-    const [estimatedStorageFee, setEstimatedStorageFee] = useState('0');
-    const [payAmount, setPayAmount] = useState('0');
+    // Dynamic file size validation — re-checks when file or price changes
+    React.useEffect(() => {
+        if (!file) {
+            setFileSizeError(null);
+            return;
+        }
+        const isFree = priceUsdNum === 0;
+        const limit = isFree ? NOVA_CONSTANTS.MAX_FREE_FILE_SIZE : NOVA_CONSTANTS.MAX_FILE_SIZE;
+        if (file.size > limit) {
+            setFileSizeError(isFree ? t.upload_page.file_too_large_free : t.upload_page.file_too_large_paid);
+        } else {
+            setFileSizeError(null);
+        }
+    }, [file, priceUsdNum, t]);
+
+    // Upload state (consolidated)
+    const [us, dispatch] = useReducer(uploadReducer, initialUploadState);
+
+    // Convenience aliases for template readability
+    const uploading = us.uploading;
+    const status = us.status;
+    const uploadSteps = us.steps;
+    const retryStep = us.retryStep;
+    const estimatedStorageFee = us.estimatedStorageFee;
+    const payAmount = us.payAmount;
+    const novaGroupFee = us.novaGroupFee;
+    const generatedVideoUuid = us.generatedVideoUuid;
+    const lastUploadedTitle = us.lastUploadedTitle;
+    const verifiedStorageFee = us.verifiedStorageFee;
 
     // Gas Top-Up State (derived from React Query)
     const gasBalance = parseFloat(balanceData || '0');
-    const REQUIRED_GAS = 0.5; // MPC (0.25) + NFT (0.1) + Event (0.1)
+    const REQUIRED_GAS = 0.20; // NFT (0.1) + Event (0.1) — exact cost, no buffer
 
     // Calculate if top-up is needed based on cached data
-    const hasPkp = !!pkpData;
-    const minRequired = hasPkp ? 0.2 : REQUIRED_GAS;
+    const isFreeForTopUp = parseFloat(price) === 0 || price === '';
+    const minRequired = REQUIRED_GAS + (isFreeForTopUp ? 0 : novaGroupFee);
     const needsTopUp = hasSessionKey === true && gasBalance < minRequired;
 
-    // Track the generated UUID for gifting
-    const [generatedVideoUuid, setGeneratedVideoUuid] = useState<string | null>(null);
-    const [lastUploadedTitle, setLastUploadedTitle] = useState<string>('');
-
-    // Helper function to update step status
-    const updateStep = (stepId: string, status: 'pending' | 'loading' | 'complete' | 'error') => {
-        setUploadSteps(prev => prev.map(step =>
-            step.id === stepId ? { ...step, status } : step
-        ));
+    // Helper functions that dispatch to reducer
+    const updateStep = (stepId: string, stepStatus: StepStatus) => {
+        dispatch({ type: 'UPDATE_STEP', payload: { id: stepId, status: stepStatus } });
     };
+    const setStatus = (msg: string) => dispatch({ type: 'SET_STATUS', payload: msg });
+    const setUploading = (val: boolean) => dispatch({ type: 'SET_UPLOADING', payload: val });
 
     // Track thumbnail preview for cleanup
     const thumbnailPreviewRef = React.useRef<string | null>(null);
@@ -102,14 +203,15 @@ export function UploadForm() {
         };
     }, []);
 
-    // Recalculate pay amount when storage fee or balance changes
+    // Recalculate pay amount when storage fee or nova fee changes
     React.useEffect(() => {
         const fee = parseFloat(estimatedStorageFee) || 0;
-        // Session key costs: MPC (0.25) + NFT mint (0.1) + Event (0.1) = 0.45 NEAR
-        // Using 0.5 NEAR for safety margin
-        const totalNeeded = fee + 0.5;
-        setPayAmount(totalNeeded > 0 ? totalNeeded.toFixed(4) : '0');
-    }, [estimatedStorageFee, gasBalance]);
+        const isFree = parseFloat(price) === 0 || price === '';
+        // Exact prepaid costs: NFT mint (0.1) + Event (0.1) + Nova group fee (paid only)
+        const novaFee = isFree ? 0 : novaGroupFee;
+        const totalNeeded = fee + 0.20 + novaFee;
+        dispatch({ type: 'SET_PAY_AMOUNT', payload: totalNeeded > 0 ? totalNeeded.toFixed(4) : '0' });
+    }, [estimatedStorageFee, price, novaGroupFee]);
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -117,15 +219,23 @@ export function UploadForm() {
 
             setFile(selectedFile);
 
-            // Calculate estimated storage fee immediately
+            // Calculate storage fee
             try {
                 const { getNearPrice, calculateStorageFee } = await import('@/lib/price');
                 const nearPrice = await getNearPrice();
                 const fee = calculateStorageFee(selectedFile.size, nearPrice);
-                setEstimatedStorageFee(fee);
-                // PKP minting now happens automatically in WalletProvider on connect
+                dispatch({ type: 'SET_ESTIMATED_STORAGE_FEE', payload: fee });
             } catch (err) {
-                console.error("Error calculating fee:", err);
+                console.error('[UploadForm] Error calculating storage fee:', err);
+            }
+
+            // Fetch Nova group registration fee (independent of storage fee)
+            try {
+                const { getRegisterGroupFee } = await import('@/lib/nova/costs');
+                const novaFee = await getRegisterGroupFee();
+                dispatch({ type: 'SET_NOVA_GROUP_FEE', payload: novaFee });
+            } catch (err) {
+                console.error('[UploadForm] Error fetching Nova group fee:', err);
             }
 
             // Generate thumbnail
@@ -147,9 +257,9 @@ export function UploadForm() {
         }
     };
 
-    // Helper function to process the upload with Crust W3Auth
-    // Crust handles auth via Session Key automatically (signless)
-    const processSignatureAndUpload = async (storageFee: string, sessionManager: SessionManager, mpcAddress: string) => {
+    // Helper function to process the upload with NOVA
+    // NOVA handles TEE-based encryption automatically
+    const processSignatureAndUpload = async (storageFee: string, sessionManager: SessionManager) => {
         if (!file || !accountId) {
             throw new Error("Missing file, accountId, or selector for upload process.");
         }
@@ -158,188 +268,122 @@ export function UploadForm() {
             const wallet = await getWallet();
             console.log('[DECENTRALIZATION_METRIC] upload_process_start', {
                 accountId,
-                storage: 'crust_w3auth',
-                mpcAddress
+                storage: 'nova_tee_encryption'
             });
 
-            // 0. Upload Thumbnail first (Public) via Crust W3Auth
-            let thumbnailCid: string | null = null; // No default placeholder - will use v1 format if no thumbnail
+            // 0. Upload Thumbnail (Public) via Nova Public Groups
+            let thumbnailUrl: string | null = null;
             if (thumbnail) {
                 updateStep('thumbnail', 'loading');
-                setStatus('Uploading thumbnail to Crust IPFS...');
+                setStatus('Uploading cover image...');
 
-                // Upload via Crust W3Auth (signless, client-side)
-                const thumbResult = await uploadFile(thumbnail, accountId, {
-                    filename: 'thumbnail.jpg'
-                }) as CrustUploadResult;
+                try {
+                    const thumbResult = await uploadPublicThumbnail(
+                        thumbnail,
+                        accountId
+                    );
 
-                if (thumbResult.cid) {
-                    thumbnailCid = thumbResult.cid;
-                    console.log('[Crust] Thumbnail uploaded CID:', thumbnailCid);
+                    if (thumbResult.novaUrl) {
+                        thumbnailUrl = thumbResult.novaUrl;
+                    }
                     updateStep('thumbnail', 'complete');
-                } else {
+                } catch (thumbError) {
+                    console.error('[Thumbnail] Upload failed:', thumbError);
+                    // Continue without thumbnail
                     updateStep('thumbnail', 'complete');
                 }
             } else {
                 updateStep('thumbnail', 'complete');
             }
 
-            // 1. Get Session Signatures
-            // Try PKP first (signless), fallback to MPC if unavailable
-            setStatus('Getting Session Signatures...');
+            // 1. Nova group + Encrypt + Upload (tracked via onStageChange callback)
+            const isFreeVideo = parseFloat(price) === 0 || price === '';
 
-            let sessionSignatures: any;
-
-            // Check if we have PKP for signless experience
-            const cachedPkp = localStorage.getItem(`lit_pkp_${accountId}`);
-            let pkp: { publicKey: string; ethAddress: string } | null = null;
-
-            if (cachedPkp) {
-                try {
-                    pkp = JSON.parse(cachedPkp);
-                    console.log("Found PKP for signless upload:", pkp?.ethAddress);
-                } catch (e) {
-                    console.warn("Error parsing cached PKP:", e);
-                }
-            }
-
-            if (pkp) {
-                // ⚡ PKP-based signless session sigs (no MPC cost!)
-                try {
-                    console.log("🔐 Using PKP for signless upload session...");
-                    setStatus('Using PKP for signless authentication...');
-
-                    sessionSignatures = await lit.getSessionSigsWithPKP(
-                        pkp.publicKey,
-                        pkp.ethAddress,
-                        accountId,
-                        undefined // capacityDelegationAuthSig (optional, will be fetched)
-                    );
-
-                    console.log("✅ PKP session sigs obtained for upload!");
-                } catch (pkpError: any) {
-                    console.warn("PKP session failed, falling back to MPC:", pkpError.message);
-                    pkp = null; // Force MPC fallback
-                }
-            }
-
-            if (!pkp || !sessionSignatures) {
-                // MPC FALLBACK (uses Session Key) - requires gas for MPC signature
-                console.log("Using Session Key + MPC for upload (fallback)...");
-                setStatus('Signing with Session Key (MPC)...');
-
-                const signWithSessionKey = async (w: any, accId: string, path: string, msg: string) => {
-                    console.log("Using Session Key for MPC signature...");
-                    const messageHash = ethers.hashMessage(msg);
-                    const payload = Array.from(ethers.getBytes(messageHash));
-
-                    return await sessionManager.callMethod('sign_with_mpc', {
-                        payload,
-                        path,
-                        key_version: 0
-                    });
-                };
-
-                sessionSignatures = await lit.getSessionSigs(
-                    wallet,
-                    accountId,
-                    mpcAddress, // MPC-derived ETH address for Lit Protocol
-                    signWithSessionKey,
-                    undefined, // ACC (optional)
-                    undefined, // hash (optional)
-                    'lit/pkp-minting' // derivationPath
-                );
-            }
-
-            // 2. Encrypt with Lit Protocol using Session Keys
-            updateStep('encrypt', 'loading');
-            setStatus('Encrypting file with Lit Protocol...');
-
-            // 4. Encrypt file with Lit Protocol
-            // Generate a UUID to serve as the Content Identifier for Access Control
-            // This UUID will be stored in the contract's video_metadata.encrypted_cid field (repurposing it as an ID key)
-            // The Real IPFS CID will be stored in the Title for now.
+            // Generate a UUID to serve as the Access Control identifier
             const videoUuid = crypto.randomUUID();
-            console.log("Generated Video UUID for Access Control:", videoUuid);
-            setGeneratedVideoUuid(videoUuid);
-            setLastUploadedTitle(title || file.name);
+            dispatch({ type: 'SET_VIDEO_UUID', payload: { uuid: videoUuid, title: title || file.name } });
 
-            // Use Lit Action to check NEAR NFT ownership on-chain
-            // Import the secure ACC helper
-            const { createAccessControlConditions } = await import('@/lib/access-conditions');
+            let novaCid: string;
+            let novaGroupId: string;
+            let keyCid: string | undefined;
 
-            const accessControlConditions = createAccessControlConditions({
-                videoUuid,
-                uploaderAccountId: accountId,
-                useSecureNearCheck: true // Enable NEAR NFT verification
-            });
+            if (isFreeVideo) {
+                // Free video: no Nova group needed, no encryption
+                updateStep('nova_group', 'complete');
+                updateStep('encrypt', 'complete');
+                updateStep('upload', 'loading');
+                setStatus('Uploading to IPFS...');
 
-            // Store nearAccountId and targetCid for later use in decryption
-            // These will be passed as jsParams to the Lit Action
-            const litActionParams = {
-                targetCid: videoUuid,
-                nearAccountId: accountId
-            };
-            console.log("Lit Action params for decryption:", litActionParams);
+                const result = await uploadFreeVideo(file, accountId, { filename: file.name });
+                novaCid = result.cid;
+                novaGroupId = result.groupId;
+                updateStep('upload', 'complete');
+            } else {
+                // Paid video: Nova group → AES encrypt → Crust upload → key storage
+                // onStageChange fires at each real internal step
+                updateStep('nova_group', 'loading');
+                setStatus('Creating Nova access group...');
 
-            const { ciphertext, dataToEncryptHash } = await lit.encryptFile(
-                file,
-                accessControlConditions,
-                undefined, // No authSig needed if using sessionSigs
-                'ethereum', // Chain for encryption (Lit uses ETH signatures usually)
-                sessionSignatures
-            );
+                const result = await novaUploadFile(file, accountId, {
+                    filename: file.name,
+                    onStageChange: (stage) => {
+                        switch (stage) {
+                            case 'group':
+                                // Already showing nova_group loading
+                                break;
+                            case 'encrypt':
+                                updateStep('nova_group', 'complete');
+                                updateStep('encrypt', 'loading');
+                                setStatus('Encrypting video (AES-256)...');
+                                break;
+                            case 'upload':
+                                updateStep('encrypt', 'complete');
+                                updateStep('upload', 'loading');
+                                setStatus('Uploading to IPFS...');
+                                break;
+                            case 'key':
+                                setStatus('Storing encryption key...');
+                                break;
+                        }
+                    },
+                });
+                novaCid = result.cid;
+                novaGroupId = result.groupId;
+                keyCid = result.keyCid;
 
-            updateStep('encrypt', 'complete');
-            updateStep('upload', 'loading');
-            setStatus('Uploading encrypted content to Crust IPFS...');
-
-            // 5. Upload to Crust IPFS via W3Auth (signless, client-side)
-            // We need to upload a JSON containing ciphertext + metadata to allow decryption later.
-            const encryptedContent = {
-                ciphertext,
-                dataToEncryptHash,
-                accessControlConditions
-            };
-
-            const metadataBlob = new Blob([JSON.stringify(encryptedContent)], { type: 'application/json' });
-
-            // Upload via Crust W3Auth (signless, client-side)
-            console.log('[Crust] Uploading encrypted content...');
-            const uploadResult = await uploadFile(metadataBlob, accountId, {
-                filename: `${file.name}.encrypted.json`
-            }) as CrustUploadResult;
-
-            if (!uploadResult.cid) {
-                throw new Error('Upload succeeded but no CID returned');
+                // Ensure all steps are marked complete after novaUploadFile returns
+                updateStep('nova_group', 'complete');
+                updateStep('encrypt', 'complete');
+                updateStep('upload', 'complete');
             }
 
-            const fileHash = uploadResult.cid;
-            console.log('[Crust] Encrypted File CID:', fileHash);
-
-            updateStep('upload', 'complete');
-            setStatus('Upload Complete! CID: ' + fileHash);
-
-
-            // 6. Mint Ticket + Refund + Create Event (BATCH - Signless!)
+            // 2. Mint Ticket + Create Event (BATCH - Signless!)
             updateStep('mint', 'loading');
-            setStatus(`Paying Fee (${storageFee} NEAR) & Minting Ticket...`);
+            setStatus('Minting NFT ticket on NEAR...');
             try {
-                // Construct Title with RealCID for Player to parse
-                // Schema v2: "RealCID:::ThumbnailCID:::Title" (with thumbnail)
-                // Schema v1: "RealCID:::Title" (without thumbnail)
-                const eventTitle = thumbnailCid
-                    ? `${fileHash}:::${thumbnailCid}:::${title || file.name}`
-                    : `${fileHash}:::${title || file.name}`;
+                // Construct Title with CID for Player to parse
+                // Schema (paid):  "CID:::ThumbnailURL:::KeyCID:::Title" (4 segments)
+                // Schema (free):  "CID:::ThumbnailURL:::Title"          (3 segments)
+                // Schema (legacy): "NovaCID:::Title"                    (2 segments)
+                // Title encoding:
+                //   Paid:  "CID:::Thumbnail:::KeyCID:::Title"  (always 4 segments)
+                //   Free:  "CID:::Thumbnail:::Title"           (3 segments)
+                //   Legacy:"CID:::Title"                       (2 segments)
+                // Paid videos MUST always use 4 segments so IpfsPlayer can
+                // distinguish keyCid from thumbnailCid (empty string = no thumbnail).
+                let eventTitle: string;
+                if (keyCid) {
+                    eventTitle = `${novaCid}:::${thumbnailUrl || ''}:::${keyCid}:::${title || file.name}`;
+                } else if (thumbnailUrl) {
+                    eventTitle = `${novaCid}:::${thumbnailUrl}:::${title || file.name}`;
+                } else {
+                    eventTitle = `${novaCid}:::${title || file.name}`;
+                }
 
-                // Construct full IPFS Gateway URL for media (empty string if no thumbnail)
-                // Uses Crust gateway from IPFS_CONFIG
-                const mediaUrl = thumbnailCid
-                    ? `${IPFS_CONFIG.gatewayUrl}/${thumbnailCid}`
-                    : '';
+                // Use nova:// URL for media (empty string if no thumbnail)
+                const mediaUrl = thumbnailUrl || '';
 
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-                // v7: Use nearToYocto
+                const contractId = NEAR_CONFIG.contractId;
                 const priceYocto = nearToYocto(parseFloat(price) || 0);
 
                 // Prepare metadata for batch transaction
@@ -352,51 +396,47 @@ export function UploadForm() {
                         copies: 1
                     },
                     video_metadata: {
-                        encrypted_cid: videoUuid, // The UUID
+                        encrypted_cid: videoUuid, // UUID (access control key)
                         duration_seconds: 0,
-                        content_type: 'Exclusive'
+                        content_type: 'Exclusive',
+                        nova_group_id: novaGroupId, // NOVA group for access control
+                        storage_type: 'Nova' as const // Contract enum only accepts 'Nova'; actual storage detection via title segment count
                     }
                 };
 
-                // Debug: Log what we're sending to contract
-                console.log('📝 Video metadata being sent to contract:', videoMetadata);
+                // price_usd in cents (e.g. $5.00 → 500), null if free
+                const priceUsdCents = priceUsdNum > 0 ? Math.round(priceUsdNum * 100) : null;
 
                 const eventMetadata = {
-                    encrypted_cid: videoUuid, // Key is UUID
+                    encrypted_cid: videoUuid, // UUID key
                     title: eventTitle,
                     description: description || 'No description provided',
-                    // v7: nearToYocto returns bigint, contract expects string
-                    price: priceYocto.toString()
+                    price: priceYocto.toString(),
+                    price_usd: priceUsdCents,
                 };
 
-                // Use signless batch transaction
-                setStatus('Minting Ticket...');
-                console.log("Using Session Key for signless final publication...");
+                setStatus('Minting NFT ticket & publishing event...');
 
+                // Signless batch transaction (session key)
+                // This single batch does: nft_mint_prepaid + create_event_prepaid
                 await batchUploadActionsSignless(
                     sessionManager,
                     videoMetadata,
                     eventMetadata
                 );
 
-                // Step 1: Mint complete
                 updateStep('mint', 'complete');
+                setStatus('Success! Video uploaded & ticket sales started!');
 
-                // Step 2: Event complete (with small delay for visual feedback)
-                await new Promise(resolve => setTimeout(resolve, 500));
-                updateStep('event', 'loading');
-                await new Promise(resolve => setTimeout(resolve, 500));
-                updateStep('event', 'complete');
-                setStatus('Success! Video Uploaded & Ticket Sales Started!');
-
-            } catch (mintError: any) {
+            } catch (mintError: unknown) {
                 console.error('Minting/Event failed:', mintError);
                 updateStep('mint', 'error');
-                setStatus(`Upload success, but Blockchain actions failed: ${mintError.message}`);
+                setStatus(`Video uploaded but blockchain actions failed: ${mintError instanceof Error ? mintError.message : String(mintError)}`);
+                refetchBalance();
             }
 
             // Final success message
-            setStatus('Success! Video Uploaded & Ticket Sales Started!');
+            setStatus('Success! Video uploaded & ticket sales started!');
 
             setUploading(false);
 
@@ -404,36 +444,34 @@ export function UploadForm() {
             setFile(null);
             setTitle('');
             setDescription('');
+            setPriceUsd('');
             setThumbnail(null);
             setThumbnailPreview(null);
 
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('Upload failed:', error);
             // Mark current loading step as error
-            const currentStep = uploadSteps.find(s => s.status === 'loading');
+            const currentStep = us.steps.find(s => s.status === 'loading');
             if (currentStep) {
                 updateStep(currentStep.id, 'error');
             }
-            setStatus(`Upload failed: ${error.message}`);
+            setStatus(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
             setUploading(false);
         }
     };
 
-    // Retry handler - simplified for Crust W3Auth
-    // With Crust W3Auth, auth is signless via Session Key, so retry is simpler
+    // Retry handler - simplified for NOVA
+    // NOVA handles auth and encryption automatically
     const handleRetrySign = async () => {
-        if (!recoveredAddr) return;
-
         try {
-            setRetryStep('none');
-            setStatus('Retrying upload with Crust W3Auth...');
+            dispatch({ type: 'SET_RETRY_STEP', payload: 'none' });
+            setStatus('Retrying NOVA upload...');
 
             const sessionManager = new SessionManager(accountId!);
-            // Crust W3Auth handles auth automatically via Session Key
-            await processSignatureAndUpload(verifiedStorageFee, sessionManager, recoveredAddr);
-        } catch (error: any) {
+            await processSignatureAndUpload(verifiedStorageFee, sessionManager);
+        } catch (error: unknown) {
             console.error('Retry failed:', error);
-            setStatus(`Retry failed: ${error.message}`);
+            setStatus(`Retry failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
 
@@ -441,108 +479,131 @@ export function UploadForm() {
 
     const handleUpload = async () => {
         if (!file || !accountId) return;
+        if (fileSizeError) return;
         if (!title || !description) {
             setStatus('Please enter a title and description');
             return;
         }
 
-        setUploading(true);
-        setStatus('Initializing Upload...');
-        setProgress(0);
+        // Input validation
+        if (title.length > 200) {
+            setStatus('Title must be 200 characters or less');
+            return;
+        }
+        if (description.length > 2000) {
+            setStatus('Description must be 2000 characters or less');
+            return;
+        }
+        if (priceUsdNum < 0) {
+            setStatus('Price cannot be negative');
+            return;
+        }
+        if (priceUsdNum > 50000) {
+            setStatus('Price cannot exceed $50,000');
+            return;
+        }
 
+        setUploading(true);
+        setStatus('Checking wallet & balance...');
         // Reset all steps to pending
-        setUploadSteps(prev => prev.map(step => ({ ...step, status: 'pending' as const })));
+        dispatch({ type: 'RESET_STEPS' });
 
         try {
             const wallet = await getWallet();
             const sessionManager = new SessionManager(accountId);
 
-            // --- PRE-CHECK: Session Key Status (from React Query cache) ---
             const sessionKeyExists = hasSessionKey === true;
-            console.log("Session key status:", sessionKeyExists ? "EXISTS" : "NEEDS CREATION");
-
-            // --- STEP 1: CALCULATE STORAGE FEE (Use pre-calculated state) ---
             const storageFee = estimatedStorageFee;
-            setVerifiedStorageFee(storageFee);
-
-            console.log(`Video Size: ${file.size} bytes. Fee: ${storageFee} NEAR`);
-
-            // --- STEP 2: DYNAMIC GAS CHECK (Every upload) ---
-            const { deriveEthAddress } = await import('@/lib/chain-signatures');
-            const derivationPath = 'lit/pkp-minting';
+            dispatch({ type: 'SET_VERIFIED_STORAGE_FEE', payload: storageFee });
 
             updateStep('session', 'loading');
-            setStatus('Checking gas balance...');
 
-            // PKP is now minted automatically on wallet connect (WalletProvider)
-            // We just use the cached pkpData from context
-            const hasPkpNow = !!pkpData;
-            console.log(`📊 PKP Status: ${hasPkpNow ? 'Available' : 'Pending/None'} (minting: ${isPKPMinting})`);
+            // --- Fetch fresh on-chain balance (React Query cache may be stale) ---
+            const freshBalanceResult = await refetchBalance();
+            let freshBalance = parseFloat(freshBalanceResult.data || '0');
 
-            // Calculate minimum required:
-            // With PKP: NFT (0.1) + Event (0.1) = 0.2 NEAR
-            // Without PKP (MPC fallback): MPC (0.25) + NFT (0.1) + Event (0.1) = 0.45 NEAR
-            const currentMinRequired = hasPkpNow ? 0.2 : 0.5;
+            // --- Calculate exact required deposit ---
+            const isFreeVideo = parseFloat(price) === 0 || price === '';
+            const mintCost = 0.10;   // nft_mint_prepaid charge
+            const eventCost = 0.10;  // create_event_prepaid charge
 
-            console.log(`📊 Gas Check: Balance=${gasBalance}, Required=${currentMinRequired}, HasPKP=${hasPkpNow}`);
-
-            if (!sessionKeyExists) {
-                // First time user - create session key with appropriate deposit
-                setStatus('Setting up Session Key...');
-
-                // Deposit amount based on PKP status:
-                // - PKP available: 0.3 NEAR (NFT + Event + buffer)
-                // - PKP unavailable: 1.0 NEAR (MPC + NFT + Event + safety margin)
-                const depositAmount = hasPkpNow ? '0.3' : '1.0';
-
-                if (!hasPkpNow) {
-                    console.log(`⚠️ PKP unavailable - using silent MPC fallback with ${depositAmount} NEAR deposit`);
-                } else {
-                    console.log(`Creating session key (PKP available - depositing ${depositAmount} NEAR)...`);
-                }
-
-                await sessionManager.createSessionKey(wallet, depositAmount);
-                // Refetch session key status in React Query cache
-                refetchSessionKey();
-                console.log("Session key created!");
-            } else if (gasBalance < currentMinRequired) {
-                // Returning user with insufficient balance - top up
-                const topUpAmount = hasPkpNow
-                    ? Math.ceil((currentMinRequired - gasBalance + 0.1) * 10) / 10
-                    : 1.0; // 1 NEAR for MPC fallback
-
-                setStatus(`Gas balance low (${gasBalance.toFixed(2)} NEAR). Topping up ${topUpAmount} NEAR...`);
-                console.log(`⛽ Topping up gas: Current=${gasBalance}, Required=${currentMinRequired}, TopUp=${topUpAmount}`);
-
-                await sessionManager.topUpGas(wallet, topUpAmount.toString());
-                // Refetch balance in React Query cache
-                refetchBalance();
-                console.log(`✅ Gas topped up by ${topUpAmount} NEAR`);
-            } else {
-                console.log(`✅ Gas balance sufficient: ${gasBalance} >= ${currentMinRequired}`);
+            let novaFee = 0;
+            if (!isFreeVideo) {
+                const { getRegisterGroupFee } = await import('@/lib/nova/costs');
+                novaFee = await getRegisterGroupFee();
             }
 
-            setStatus('Verifying Identity & Preparing Session...');
+            // Exact deposit: only what the contract methods will deduct
+            const exactPrepaidNeeded = novaFee + mintCost + eventCost;
 
-            // Derive MPC address (mathematical derivation - no gas cost)
-            // Still needed for Lit Protocol session signatures
-            const recoveredAddress = await deriveEthAddress(CONTRACT_ID, derivationPath);
-            console.log('Identity Verified. MPC Address:', recoveredAddress);
+            // --- Ensure a valid session key exists (local + on-chain) ---
+            // 1. Try importing MyNearWallet's function call key (no-op if key already in keystore)
+            await sessionManager.importWalletFunctionCallKey();
+            // 2. Verify the local key is also registered on-chain.
+            //    hasSessionKey() removes stale local keys that no longer exist on-chain,
+            //    preventing AccessKeyDoesNotExistError at callMethod time.
+            const hasValidKey = await sessionManager.hasSessionKey();
+
+            if (!hasValidKey) {
+                // No valid session key (Meteor wallet, stale/removed key, first use, etc.)
+                // Create a fresh key pair + deposit in one wallet popup.
+                setStatus('Creating session key...');
+                const depositAmount = Math.max(exactPrepaidNeeded, 0.5);
+                await sessionManager.createSessionKey(wallet, depositAmount.toFixed(2));
+                refetchSessionKey();
+
+                // Re-fetch balance since createSessionKey deposited funds
+                const updatedResult = await refetchBalance();
+                freshBalance = parseFloat(updatedResult.data || '0');
+            }
+
+            if (freshBalance < exactPrepaidNeeded) {
+                // Returning user: prepaid balance insufficient → top-up (1 wallet popup)
+                const topUpAmount = Math.ceil((exactPrepaidNeeded - freshBalance) * 100) / 100;
+                setStatus(`Topping up prepaid balance (${topUpAmount.toFixed(2)} NEAR)...`);
+
+                const txResult = await wallet.signAndSendTransactions({
+                    transactions: [{
+                        receiverId: CONTRACT_ID,
+                        actions: [
+                            actions.functionCall(
+                                'deposit_funds', {},
+                                GAS_CONSTANTS.smallGas,
+                                nearToYocto(topUpAmount)
+                            )
+                        ]
+                    }]
+                });
+                if (!txResult) {
+                    throw new Error('Transaction cancelled or wallet returned no result.');
+                }
+                refetchBalance();
+            }
+
+            // --- Fund Nova platform (signless, from prepaid balance) ---
+            if (novaFee > 0) {
+                setStatus('Funding Nova group registration...');
+                const amountYocto = nearToYocto(novaFee);
+                await sessionManager.callMethod('fund_nova_platform', {
+                    amount: amountYocto.toString()
+                }, GAS_CONSTANTS.mediumGas.toString());
+            }
+
+            setStatus('Wallet ready');
             updateStep('session', 'complete');
 
-            // --- STEP 3: Crust W3Auth (Signless) ---
-            // With Crust W3Auth, authentication happens automatically during upload
-            // using the Session Key stored in localStorage. No separate auth step needed!
-            setStatus('Ready for decentralized upload via Crust W3Auth...');
-            console.log('[Crust] W3Auth will use Session Key for signless authentication');
+            // --- NOVA Upload (TEE-based encryption) ---
+            await processSignatureAndUpload(storageFee, sessionManager);
 
-            // Continue with upload - Crust W3Auth handles auth automatically
-            await processSignatureAndUpload(storageFee, sessionManager, recoveredAddress);
-
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('Upload failed:', error);
-            setStatus(`Upload failed: ${error.message} `);
+            const msg = error instanceof Error
+                ? error.message
+                : error ? String(error) : 'Transaction cancelled or wallet returned no result.';
+            setStatus(`Upload failed: ${msg}`);
             setUploading(false);
+            // Refresh balance so next upload attempt uses fresh on-chain data
+            refetchBalance();
         }
     };
 
@@ -556,32 +617,24 @@ export function UploadForm() {
                     <p className="text-muted-foreground text-sm">{t.upload_page.description}</p>
                 </div>
                 {/* Verified Badge - Same width as preview (2/5) */}
-                <div className={`lg:col-span-2 px-4 py-2 rounded-xl border flex items-center gap-3 ${pkpData
-                    ? 'bg-amber-500/10 border-amber-500/30'
-                    : hasSessionKey
+                <div className={`lg:col-span-2 px-4 py-2 rounded-xl border flex items-center gap-3 ${hasSessionKey
                         ? 'bg-blue-500/10 border-blue-500/30'
                         : 'bg-zinc-900/50 border-white/5'}`}>
-                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${pkpData
-                        ? 'bg-amber-500/20 border border-amber-500/50'
-                        : hasSessionKey
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${hasSessionKey
                             ? 'bg-blue-500/20 border border-blue-500/50'
                             : 'bg-zinc-800 border border-zinc-700'}`}>
-                        {pkpData ? (
-                            <CheckCircle2 className="w-4 h-4 text-amber-400" />
-                        ) : hasSessionKey ? (
+                        {hasSessionKey ? (
                             <CheckCircle2 className="w-4 h-4 text-blue-400" />
-                        ) : isPKPMinting ? (
-                            <Loader2 className="w-4 h-4 text-zinc-400 animate-spin" />
                         ) : (
                             <div className="w-3 h-3 rounded-full border-2 border-zinc-500 border-dashed animate-pulse" />
                         )}
                     </div>
                     <div className="flex-1 min-w-0">
-                        <p className={`text-xs font-bold ${pkpData ? 'text-amber-300' : hasSessionKey ? 'text-blue-300' : 'text-zinc-300'}`}>
-                            {pkpData ? '⚡ PKP Verified' : hasSessionKey ? '✓ Session Key Active' : isPKPMinting ? 'Setting up PKP...' : 'Pending Verification'}
+                        <p className={`text-xs font-bold ${hasSessionKey ? 'text-blue-300' : 'text-zinc-300'}`}>
+                            {hasSessionKey ? '✓ Session Key Active' : 'Pending Verification'}
                         </p>
                         <p className="text-[10px] text-zinc-500 truncate">
-                            {pkpData ? 'Signless uploads & playback' : hasSessionKey ? 'Session key enabled' : isPKPMinting ? 'Background setup in progress' : 'Complete first upload'}
+                            {hasSessionKey ? 'Session key enabled' : 'Complete first upload'}
                         </p>
                     </div>
                 </div>
@@ -620,6 +673,8 @@ export function UploadForm() {
                                 value={title}
                                 onChange={(e) => setTitle(e.target.value)}
                                 disabled={uploading || !accountId}
+                                maxLength={200}
+                                aria-required="true"
                             />
                         </div>
 
@@ -634,6 +689,8 @@ export function UploadForm() {
                                 onChange={(e) => setDescription(e.target.value)}
                                 disabled={uploading || !accountId}
                                 className="min-h-[60px] resize-none"
+                                maxLength={2000}
+                                aria-required="true"
                             />
                         </div>
 
@@ -641,17 +698,29 @@ export function UploadForm() {
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <label htmlFor="ticket-price" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                    {t.upload_page.price}
+                                    Price (USD)
                                 </label>
-                                <Input
-                                    id="ticket-price"
-                                    type="number"
-                                    step="0.1"
-                                    placeholder="0"
-                                    value={price}
-                                    onChange={(e) => setPrice(e.target.value)}
-                                    disabled={uploading || !accountId}
-                                />
+                                <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
+                                    <Input
+                                        id="ticket-price"
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        max="50000"
+                                        placeholder="0.00"
+                                        value={priceUsd}
+                                        onChange={(e) => setPriceUsd(e.target.value)}
+                                        disabled={uploading || !accountId}
+                                        aria-label="Ticket price in USD"
+                                        className="pl-7"
+                                    />
+                                </div>
+                                {priceUsdNum > 0 && nearPrice > 0 && (
+                                    <p className="text-[11px] text-zinc-500">
+                                        ≈ {priceNearDerived.toFixed(2)} NEAR
+                                    </p>
+                                )}
                             </div>
 
                             <div className="space-y-2">
@@ -675,15 +744,14 @@ export function UploadForm() {
                             </p>
                         )}
 
-                        {uploading && progress > 0 && (
-                            <div className="space-y-2">
-                                <div className="flex justify-between text-sm text-muted-foreground">
-                                    <span>Uploading...</span>
-                                    <span>{progress}%</span>
-                                </div>
-                                <Progress value={progress} className="w-full" />
-                            </div>
+                        {fileSizeError && (
+                            <Alert variant="destructive">
+                                <AlertCircle className="h-4 w-4" />
+                                <AlertDescription>{fileSizeError}</AlertDescription>
+                            </Alert>
                         )}
+
+{/* Progress bar removed - step indicators provide upload feedback */}
 
                         {status && (
                             <Alert variant={status.includes('failed') ? "destructive" : "default"}>
@@ -712,22 +780,6 @@ export function UploadForm() {
                             </Alert>
                         )}
 
-                        {retryStep === 'pkp_link' && (
-                            <Alert className="border-blue-500/50 bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                                <AlertCircle className="h-4 w-4" />
-                                <AlertTitle>One-Click Setup Blocked</AlertTitle>
-                                <AlertDescription className="flex flex-col gap-2">
-                                    <p>Your browser blocked the setup popup. Click below to enable faster future uploads.</p>
-                                    <Button
-                                        onClick={handleUpload}
-                                        variant="outline"
-                                        className="w-full border-blue-500/50 hover:bg-blue-500/20"
-                                    >
-                                        Try Setup Again
-                                    </Button>
-                                </AlertDescription>
-                            </Alert>
-                        )}
                     </CardContent>
 
                     {/* Cost Receipt Section - shown when file is selected */}
@@ -738,29 +790,18 @@ export function UploadForm() {
                                 currentBalance={balanceData || '0'}
                                 payAmount={payAmount}
                                 loading={isBalanceLoading}
-                                hasPKP={!!pkpData}
                                 gasBalance={gasBalance}
-                                requiredGas={REQUIRED_GAS}
-                                needsTopUp={needsTopUp}
-                                isFirstUpload={!hasSessionKey}
+                                isFreeVideo={parseFloat(price) === 0 || price === ''}
+                                novaGroupFee={novaGroupFee}
                             />
                         </div>
                     )}
 
-                    {/* Loading indicator while PKP is being minted in background */}
-                    {file && isPKPMinting && !pkpData && (
-                        <div className="px-6 pb-2">
-                            <div className="rounded-lg border border-white/10 bg-black/20 p-4 flex items-center justify-center gap-2">
-                                <Loader2 className="h-4 w-4 animate-spin text-green-400" />
-                                <span className="text-sm text-zinc-400">Setting up PKP for signless upload...</span>
-                            </div>
-                        </div>
-                    )}
 
                     <CardFooter>
                         <Button
                             onClick={handleUpload}
-                            disabled={uploading || !file || !title || !description || !accountId}
+                            disabled={uploading || !file || !title || !description || !accountId || !!fileSizeError}
                             className="w-full"
                         >
                             {uploading ? (
@@ -824,14 +865,14 @@ export function UploadForm() {
                                 {/* Top Badges Row */}
                                 <div className="absolute top-3 left-3 right-3 flex items-center justify-end">
                                     {/* Price Badge */}
-                                    <div className={`px-3 py-1.5 rounded-lg backdrop-blur-sm border shadow-lg ${parseFloat(price) === 0 || price === ''
+                                    <div className={`px-3 py-1.5 rounded-lg backdrop-blur-sm border shadow-lg ${priceUsdNum === 0
                                         ? 'bg-emerald-500/90 border-emerald-400/30'
                                         : 'bg-black/60 border-white/10'
                                         }`}>
-                                        {parseFloat(price) === 0 || price === '' ? (
+                                        {priceUsdNum === 0 ? (
                                             <span className="text-[10px] font-bold text-white tracking-wider uppercase">✨ Free Ticket</span>
                                         ) : (
-                                            <span className="text-[10px] font-bold text-white tracking-wider">{price} NEAR</span>
+                                            <span className="text-[10px] font-bold text-white tracking-wider">${parseFloat(priceUsd).toFixed(2)}</span>
                                         )}
                                     </div>
                                 </div>
@@ -889,56 +930,128 @@ export function UploadForm() {
                         </div>
 
                         {/* Upload Progress Steps - Vertical Layout Below Preview */}
-                        <div className="mt-4 p-4 bg-gradient-to-br from-zinc-900/80 to-zinc-950/80 rounded-xl border border-white/10 backdrop-blur-sm shadow-lg">
-                            <h3 className="text-xs font-bold mb-4 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
-                                {t.upload_page.progress_title}
-                            </h3>
+                        <div className="mt-4 p-5 bg-gradient-to-br from-zinc-900/90 to-zinc-950/90 rounded-2xl border border-white/[0.08] backdrop-blur-sm shadow-xl">
+                            {/* Header with step counter */}
+                            <div className="flex items-center justify-between mb-5">
+                                <h3 className="text-xs font-bold tracking-wide uppercase text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
+                                    {t.upload_page.progress_title}
+                                </h3>
+                                {uploading && (
+                                    <span className="text-[10px] font-mono text-zinc-500 tabular-nums">
+                                        {uploadSteps.filter(s => s.status === 'complete').length}/{uploadSteps.length}
+                                    </span>
+                                )}
+                            </div>
+
+                            {/* Overall progress bar */}
+                            {uploading && (() => {
+                                const completed = uploadSteps.filter(s => s.status === 'complete').length;
+                                const loading = uploadSteps.filter(s => s.status === 'loading').length;
+                                const pct = Math.round(((completed + loading * 0.5) / uploadSteps.length) * 100);
+                                return (
+                                    <div className="mb-5">
+                                        <div className="h-1 w-full rounded-full bg-zinc-800 overflow-hidden">
+                                            <div
+                                                className="h-full rounded-full bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-500 transition-all duration-700 ease-out"
+                                                style={{ width: `${pct}%` }}
+                                            />
+                                        </div>
+                                    </div>
+                                );
+                            })()}
 
                             {/* Vertical Progress Steps */}
-                            <div className="relative space-y-3">
-                                {uploadSteps.map((step, index) => (
-                                    <div key={step.id} className="flex items-center gap-3 relative">
-                                        {/* Vertical Line */}
-                                        {index < uploadSteps.length - 1 && (
-                                            <div className={`absolute left-3 top-6 w-0.5 h-6 transition-all duration-300 ${step.status === 'complete' ? 'bg-emerald-500' : 'bg-zinc-700'
-                                                }`} />
-                                        )}
+                            <div className="relative">
+                                {/* Continuous vertical track */}
+                                <div className="absolute left-[13px] top-3 bottom-3 w-[2px] bg-zinc-800 rounded-full" />
 
-                                        {/* Step Circle */}
-                                        <div className="relative z-10 flex-shrink-0">
-                                            {step.status === 'pending' && (
-                                                <div className="w-6 h-6 rounded-full bg-zinc-800 border-2 border-zinc-700 flex items-center justify-center">
-                                                    <span className="text-[8px] font-bold text-zinc-500">{index + 1}</span>
-                                                </div>
-                                            )}
-                                            {step.status === 'loading' && (
-                                                <div className="w-6 h-6 rounded-full bg-blue-500/20 border-2 border-blue-500 flex items-center justify-center animate-pulse shadow-md shadow-blue-500/30">
-                                                    <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
-                                                </div>
-                                            )}
-                                            {step.status === 'complete' && (
-                                                <div className="w-6 h-6 rounded-full bg-emerald-500 border-2 border-emerald-400 flex items-center justify-center shadow-md shadow-emerald-500/30">
-                                                    <CheckCircle2 className="w-3 h-3 text-white" />
-                                                </div>
-                                            )}
-                                            {step.status === 'error' && (
-                                                <div className="w-6 h-6 rounded-full bg-red-500/20 border-2 border-red-500 flex items-center justify-center shadow-md shadow-red-500/30">
-                                                    <AlertCircle className="w-3 h-3 text-red-400" />
-                                                </div>
-                                            )}
-                                        </div>
+                                <div className="space-y-1">
+                                    {uploadSteps.map((step, index) => {
+                                        const isActive = step.status === 'loading';
+                                        const isDone = step.status === 'complete';
+                                        const isError = step.status === 'error';
 
-                                        {/* Step Label */}
-                                        <span className={`text-xs font-medium transition-all duration-300 ${step.status === 'complete' ? 'text-emerald-400' :
-                                            step.status === 'loading' ? 'text-blue-400' :
-                                                step.status === 'error' ? 'text-red-400' :
-                                                    'text-zinc-500'
-                                            }`}>
-                                            {(t.upload_page.steps as any)[step.id] || step.label}
+                                        return (
+                                            <div key={step.id} className="relative">
+                                                {/* Filled track segment */}
+                                                {index > 0 && (
+                                                    <div
+                                                        className={`absolute left-[13px] -top-1 w-[2px] h-[calc(50%+4px)] rounded-full transition-all duration-500 ${
+                                                            isDone || isActive || isError ? 'bg-gradient-to-b from-emerald-500 to-emerald-500/80' : 'bg-transparent'
+                                                        }`}
+                                                    />
+                                                )}
+
+                                                <div className={`flex items-center gap-3 px-2 py-2.5 rounded-xl transition-all duration-300 ${
+                                                    isActive ? 'bg-blue-500/[0.08] border border-blue-500/20' :
+                                                    isError ? 'bg-red-500/[0.06] border border-red-500/15' :
+                                                    'border border-transparent'
+                                                }`}>
+                                                    {/* Step indicator */}
+                                                    <div className="relative z-10 flex-shrink-0">
+                                                        {step.status === 'pending' && (
+                                                            <div className="w-7 h-7 rounded-full bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center">
+                                                                <span className="text-[9px] font-bold text-zinc-600">{index + 1}</span>
+                                                            </div>
+                                                        )}
+                                                        {step.status === 'loading' && (
+                                                            <div className="w-7 h-7 rounded-full bg-blue-500/20 border-2 border-blue-400 flex items-center justify-center shadow-lg shadow-blue-500/25">
+                                                                <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+                                                            </div>
+                                                        )}
+                                                        {step.status === 'complete' && (
+                                                            <div className="w-7 h-7 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/25">
+                                                                <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                                                            </div>
+                                                        )}
+                                                        {step.status === 'error' && (
+                                                            <div className="w-7 h-7 rounded-full bg-red-500/20 border-2 border-red-400 flex items-center justify-center shadow-lg shadow-red-500/25">
+                                                                <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Step content */}
+                                                    <div className="flex-1 min-w-0">
+                                                        <span className={`text-xs font-medium block transition-colors duration-300 ${
+                                                            isDone ? 'text-emerald-400' :
+                                                            isActive ? 'text-blue-300' :
+                                                            isError ? 'text-red-400' :
+                                                            'text-zinc-500'
+                                                        }`}>
+                                                            {(t.upload_page.steps as Record<string, string>)[step.id] || step.label}
+                                                        </span>
+                                                        {isActive && (
+                                                            <span className="text-[10px] text-blue-400/60 mt-0.5 block animate-pulse">
+                                                                {t.upload_page.processing}...
+                                                            </span>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Status indicator */}
+                                                    {isDone && (
+                                                        <span className="text-[9px] font-medium text-emerald-500/60 uppercase tracking-wider flex-shrink-0">
+                                                            OK
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* All done message */}
+                            {uploadSteps.every(s => s.status === 'complete') && (
+                                <div className="mt-4 pt-4 border-t border-emerald-500/10">
+                                    <div className="flex items-center gap-2 text-emerald-400">
+                                        <CheckCircle2 className="w-4 h-4" />
+                                        <span className="text-xs font-semibold">
+                                            {status.includes('Success') ? status : 'Upload Complete!'}
                                         </span>
                                     </div>
-                                ))}
-                            </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

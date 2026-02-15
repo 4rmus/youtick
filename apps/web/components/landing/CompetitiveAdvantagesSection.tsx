@@ -1,17 +1,18 @@
 import { memo } from 'react';
-import { Check, Package, Palette, Zap, Coins, Globe, Server, Gift, UserPlus } from 'lucide-react';
+import { Package, Shield, HardDrive, Coins, Globe, Server, Gift, UserPlus, Fingerprint } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { COLORS, ANIMATION } from '@/lib/constants';
 
 const advantages = [
     { icon: Package, titleKey: 'end_to_end', descKey: 'end_to_end_desc', color: 'text-purple-400' },
-    { icon: Globe, titleKey: 'global_access', descKey: 'global_access_desc', color: 'text-pink-400' },
-    { icon: Zap, titleKey: 'hybrid', descKey: 'hybrid_desc', color: 'text-blue-400' },
+    { icon: Shield, titleKey: 'global_access', descKey: 'global_access_desc', color: 'text-pink-400' },
+    { icon: HardDrive, titleKey: 'hybrid', descKey: 'hybrid_desc', color: 'text-blue-400' },
     { icon: Coins, titleKey: 'creator_first', descKey: 'creator_first_desc', color: 'text-emerald-400' },
     { icon: Globe, titleKey: 'near_ecosystem', descKey: 'near_ecosystem_desc', color: 'text-orange-400' },
     { icon: Server, titleKey: 'decentralization', descKey: 'decentralization_desc', color: 'text-red-400' },
     { icon: Gift, titleKey: 'gift_tickets', descKey: 'gift_tickets_desc', color: 'text-cyan-400' },
     { icon: UserPlus, titleKey: 'trial_accounts', descKey: 'trial_accounts_desc', color: 'text-violet-400' },
+    { icon: Fingerprint, titleKey: 'session_keys', descKey: 'session_keys_desc', color: 'text-yellow-400' },
 ] as const;
 
 export const CompetitiveAdvantagesSection = memo(() => {

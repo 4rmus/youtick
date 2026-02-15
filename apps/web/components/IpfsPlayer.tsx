@@ -1,15 +1,21 @@
 'use client';
 
-import React, { useState, useRef, useCallback } from 'react';
-import { lit } from '@/lib/lit';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { fetchFile } from '@/lib/nova';
+import { hasApiKey } from '@/lib/nova/config';
+import { NovaError } from '@/lib/nova/types';
+import { addBuyerToNovaGroup } from '@/lib/nova/post-purchase';
+import { pendingAccessQueue } from '@/lib/nova/pending-access-queue';
+import { fetchFromGateways } from '@/lib/crust';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { ethers } from 'ethers';
-import { Loader2, Play, Lock, Ticket } from 'lucide-react';
+import { Loader2, Play, Lock, KeyRound, ShieldOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useNFTOwnership } from '@/lib/hooks/useSessionState';
+import { NovaThumbnail } from './NovaThumbnail';
+import { TicketPurchaseCard } from './TicketPurchaseCard';
 import { SessionManager } from '@/lib/session-manager';
-import { useNFTOwnership, useSessionState } from '@/lib/hooks/useSessionState';
-import { GAS_CONSTANTS, IPFS_CONFIG } from '@/lib/constants';
-import { fetchWithRace } from '@/lib/crust';
+import { NEAR_CONFIG } from '@/lib/constants';
+import { getProvider, viewContract } from '@/lib/near';
 
 interface IpfsPlayerProps {
     cid: string;
@@ -20,85 +26,58 @@ interface IpfsPlayerProps {
 // State machine for player states
 type PlayerState =
     | { type: 'idle' }
-    | { type: 'checking' }
-    | { type: 'waitingPKP'; message: string }
     | { type: 'decrypting'; message: string }
-    | { type: 'needsTopUp' }
     | { type: 'playing'; videoUrl: string }
-    | { type: 'error'; message: string }
-    | { type: 'noAccess' };
+    | { type: 'needs-session-key' }
+    | { type: 'banned' }
+    | { type: 'error'; message: string };
 
 const initialState: PlayerState = { type: 'idle' };
 
 export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
-    const { selector, accountId, getWallet, isTrial, pkpData, isPKPMinting } = useWallet();
+    const { accountId, getWallet } = useWallet();
 
     // React Query hooks for cached state
-    const { hasSessionKey, balance, refetchPKP } = useSessionState(accountId);
-    const { data: hasOwnership, isLoading: checkingAccess } = useNFTOwnership(accountId, cid);
+    const { data: hasOwnership, isLoading: checkingAccess, refetch: refetchOwnership } = useNFTOwnership(accountId, cid);
 
     // Consolidated state machine
     const [playerState, setPlayerState] = useState<PlayerState>(initialState);
+    // Tracks successful purchase — forces transition from purchase card to player
+    const [purchased, setPurchased] = useState(false);
     const videoRef = useRef<HTMLVideoElement>(null);
+
+    // Track blob URL for cleanup
+    const blobUrlRef = useRef<string | null>(null);
+
+    // Revoke blob URL on unmount or when player state changes away from playing
+    useEffect(() => {
+        return () => {
+            if (blobUrlRef.current) {
+                URL.revokeObjectURL(blobUrlRef.current);
+                blobUrlRef.current = null;
+            }
+        };
+    }, []);
 
     // Derived states from state machine
     const videoUrl = playerState.type === 'playing' ? playerState.videoUrl : null;
-    const loading = playerState.type === 'decrypting' || playerState.type === 'waitingPKP';
+    const loading = playerState.type === 'decrypting';
     const error = playerState.type === 'error' ? playerState.message : null;
-    const status = (playerState.type === 'decrypting' || playerState.type === 'waitingPKP')
-        ? playerState.message
-        : '';
-    const needsTopUp = playerState.type === 'needsTopUp';
-    const waitingForPKP = playerState.type === 'waitingPKP';
+    const status = playerState.type === 'decrypting' ? playerState.message : '';
 
     // Derived access state from React Query
     const hasAccess = hasOwnership === true;
 
-    const handleTopUp = async () => {
-        if (!accountId) {
-            setPlayerState({ type: 'error', message: "Wallet not connected" });
-            return;
-        }
-        try {
-            setPlayerState({ type: 'decrypting', message: 'Processing Top Up...' });
-            const wallet = await getWallet();
-            const sessionManager = new SessionManager(accountId);
-            // Deposit 1 NEAR
-            await sessionManager.topUpGas(wallet, '1');
-            // Resume play after topup
-            await playVideo(true);
-        } catch (e) {
-            console.error("Top Up Failed:", e);
-            setPlayerState({ type: 'error', message: "Top Up Failed. Please try again." });
-        }
-    };
-
-
-    // Helper: Wait for PKP to be ready (with timeout)
-    const waitForPKP = async (maxWaitMs: number = 30000): Promise<typeof pkpData> => {
-        const startTime = Date.now();
-        const pollInterval = 500; // Check every 500ms
-
-        while (Date.now() - startTime < maxWaitMs) {
-            // Refetch PKP data from cache/storage
-            const result = await refetchPKP();
-            if (result.data) {
-                console.log('[IpfsPlayer] PKP ready after', Date.now() - startTime, 'ms');
-                return result.data;
-            }
-
-            // If not minting anymore and still no PKP, it failed
-            if (!isPKPMinting) {
-                console.log('[IpfsPlayer] PKP minting finished but no PKP data');
-                return null;
-            }
-
-            await new Promise(resolve => setTimeout(resolve, pollInterval));
-        }
-
-        console.warn('[IpfsPlayer] PKP wait timeout after', maxWaitMs, 'ms');
-        return null;
-    };
+    // Show inline purchase card when no access, no error, not loading, and not in special states
+    const showPurchaseCard = !videoUrl
+        && playerState.type !== 'banned'
+        && !checkingAccess
+        && !loading
+        && error !== 'SIMULATION_MODE'
+        && playerState.type !== 'needs-session-key'
+        && hasAccess === false
+        && !purchased
+        && !error;
 
     const playVideo = useCallback(async (isRetry: boolean = false) => {
         if (!accountId) {
@@ -108,313 +87,274 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
 
         setPlayerState({
             type: 'decrypting',
-            message: isRetry ? 'Refreshing Session...' : 'Initializing...'
+            message: isRetry ? 'Retrying...' : 'Initializing...'
         });
 
         try {
-            const wallet = await getWallet();
-            const { deriveEthAddress } = await import('@/lib/chain-signatures');
-
-            // Custom signWithMPC using Session Keys
-            const signWithSessionKey = async (wallet: any, accountId: string, path: string, message: string) => {
-                const sessionManager = new SessionManager(accountId);
-                if (await sessionManager.hasSessionKey()) {
-                    console.log("Signing with Session Key via Proxy...");
-                    const messageHash = ethers.hashMessage(message);
-                    const payload = Array.from(ethers.getBytes(messageHash));
-
-                    const signature = await sessionManager.callMethod('sign_with_mpc', {
-                        payload,
-                        path,
-                        key_version: 0
-                    });
-                    return signature;
-                } else {
-                    console.warn("No Session Key found, falling back to wallet prompt (not ideal for playback).");
-                    // Fallback to standard wallet signing (will prompt)
-                    const { signWithMPC } = await import('@/lib/chain-signatures');
-                    return signWithMPC(wallet, accountId, path, message);
-                }
-            };
-
-            // 0. Client-Side Access Control Check
-            if (!isRetry) setPlayerState({ type: 'decrypting', message: 'Checking permissions...' });
-            // Note: We skip client-side check if it's a UUID because we trust Lit Action will handle it 
-            // and we might not have the RealCID yet.
-
-            // 1. Resolve CID if UUID
-            let targetCid = cid;
+            // 1. Resolve UUID to NOVA CID and groupId
             const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid);
+            let novaCid = cid;
+            let novaGroupId: string | null = null;
+
+            let keyCid: string | undefined;
 
             if (isUuid) {
-                if (!isRetry) setPlayerState({ type: 'decrypting', message: 'Resolving Video Metadata...' });
+                setPlayerState({ type: 'decrypting', message: 'Resolving Video Metadata...' });
                 try {
-                    const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
-                    const rpcUrl = "/api/near-rpc";
-                    const body = JSON.stringify({
-                        jsonrpc: "2.0",
-                        id: "dontcare",
-                        method: "query",
-                        params: {
-                            request_type: "call_function",
-                            finality: "final",
-                            account_id: contractId,
-                            method_name: "get_event",
-                            args_base64: btoa(JSON.stringify({ encrypted_cid: cid }))
-                        }
-                    });
+                    const contractId = NEAR_CONFIG.contractId;
+                    const provider = getProvider();
 
-                    const response = await fetch(rpcUrl, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body
-                    });
-                    const data = await response.json();
+                    // Get event to extract CID from title (direct RPC, no server proxy)
+                    const event = await viewContract<{
+                        title: string;
+                        price: string;
+                        creator_id: string;
+                        banned?: boolean;
+                    }>(provider, contractId, 'get_event', { encrypted_cid: cid });
 
-                    if (data.result && data.result.result) {
-                        const resultBytes = data.result.result;
-                        const resultStr = String.fromCharCode(...resultBytes);
-                        const event = JSON.parse(resultStr);
+                    if (event?.banned) {
+                        setPlayerState({ type: 'banned' });
+                        return;
+                    }
 
-                        if (event && event.title && event.title.includes(':::')) {
-                            // Extract RealCID from "RealCID:::Title"
-                            const parts = event.title.split(':::');
-                            targetCid = parts[0];
-                            console.log("Resolved UUID", cid, "to RealCID", targetCid);
+                    if (event && event.title && event.title.includes(':::')) {
+                        const parts = event.title.split(':::');
+                        if (parts.length >= 4) {
+                            // Paid: "CID:::Thumbnail:::KeyCID:::Title" (4+ segments)
+                            novaCid = parts[0];
+                            keyCid = parts[2];
+                        } else if (parts.length === 3) {
+                            // Could be free ("CID:::Thumbnail:::Title") or
+                            // legacy paid without thumbnail ("CID:::KeyCID:::Title").
+                            // Disambiguate using event price: paid videos always have keyCid.
+                            novaCid = parts[0];
+                            const isPaid = event.price && event.price !== '0';
+                            if (isPaid) {
+                                keyCid = parts[1];
+                            }
                         } else {
-                            console.warn("Event found but title format unknown:", event?.title);
+                            // Legacy 2-segment: "CID:::Title"
+                            novaCid = parts[0];
                         }
+                    }
+
+                    // Get NOVA group ID and storage type
+                    if (event?.creator_id) {
+                        const novaVideos = await viewContract<[string, { encrypted_cid: string; nova_group_id: string | null }][]>(
+                            provider, contractId, 'get_nova_videos', { account_id: event.creator_id }
+                        );
+                        const match = novaVideos?.find(([, meta]) => meta.encrypted_cid === cid);
+                        novaGroupId = match ? match[1].nova_group_id : null;
                     }
                 } catch (e) {
-                    console.error("Error resolving/fetching event:", e);
-                    // Fallback: try to use cid as is
+                    console.error("Error resolving metadata:", e);
+                    throw new Error("Failed to resolve video metadata");
                 }
             }
 
-            // 1. Fetch Encrypted File from IPFS (with multi-gateway race)
-            if (!isRetry) setPlayerState({ type: 'decrypting', message: 'Fetching video from IPFS...' });
-            // Use multi-gateway race for fastest retrieval
-            const metadataResponse = await fetchWithRace(targetCid);
-            if (!metadataResponse.ok) {
-                throw new Error(`Failed to fetch from IPFS: ${metadataResponse.statusText}`);
-            }
-            const metadata = await metadataResponse.json();
-            const { ciphertext, dataToEncryptHash, accessControlConditions: storedConditions } = metadata;
-
-            // 2. Recover Ethereum Address (needed for MPC fallback)
-            if (!isRetry) setPlayerState({ type: 'decrypting', message: 'Recovering Ethereum address...' });
-            const derivationPath = "lit/pkp-minting"; // Standardized path
-            const recoveredAddress = await deriveEthAddress(accountId, derivationPath, wallet);
-            console.log('Recovered MPC Address:', recoveredAddress);
-
-            // 3. Get Session Signatures
-            // PRIORITY: Use PKP if available (signless experience - NO GAS NEEDED!)
-            // FALLBACK: Use MPC with Session Keys (requires gas)
-            // Note: PKP is now minted automatically on wallet connect (WalletProvider)
-            if (!isRetry) setPlayerState({ type: 'decrypting', message: 'Checking authentication method...' });
-
-            let sessionSigs;
-            let currentPkpData = pkpData;
-
-            // WAIT FOR PKP if it's still minting
-            // Trial users MUST wait for PKP (they don't have gas for MPC fallback)
-            if (!currentPkpData && isPKPMinting) {
-                const waitTimeout = isTrial ? 45000 : 30000; // Trial users wait longer
-                console.log(`[IpfsPlayer] PKP minting in progress, waiting up to ${waitTimeout}ms...`);
+            // Check for simulation mode (no Nova API key)
+            if (!hasApiKey()) {
                 setPlayerState({
-                    type: 'waitingPKP',
-                    message: isTrial ? 'Setting up secure playback (first time only)...' : 'Initializing secure player...'
+                    type: 'error',
+                    message: 'SIMULATION_MODE'
                 });
-
-                currentPkpData = await waitForPKP(waitTimeout);
+                return;
             }
 
-            // PKP PATH - Use pkpData (now possibly waited for)
-            if (currentPkpData) {
-                console.log("Found PKP for decryption (signless):", currentPkpData.ethAddress);
+            // 2. Fetch video based on keyCid presence
+            //    keyCid present  → paid video (encrypted, needs Nova decrypt)
+            //    keyCid absent   → free video (unencrypted, raw fetch from Crust)
+            let videoData: Uint8Array | undefined;
 
-                setPlayerState({ type: 'decrypting', message: 'Using PKP for signless decryption...' });
+            if (keyCid) {
+                // Paid video: decrypt via Crust data + Nova key
+                if (!novaGroupId) {
+                    throw new Error("No NOVA group ID found - video may not be uploaded correctly");
+                }
+
+                setPlayerState({ type: 'decrypting', message: 'Decrypting video...' });
+
                 try {
-                    // Use inline Lit Action - no pre-signed NEAR data needed
-                    sessionSigs = await lit.getSessionSigsWithPKP(
-                        currentPkpData.publicKey,
-                        currentPkpData.ethAddress,
-                        accountId
-                    );
-                    console.log("✅ PKP session sigs obtained successfully!");
-                } catch (pkpError: any) {
-                    console.warn("PKP session failed, will try MPC fallback silently:", pkpError.message);
-                    sessionSigs = null;
+                    videoData = await fetchFile(novaCid, accountId, {
+                        groupId: novaGroupId,
+                        keyCid,
+                    });
+                } catch (fetchErr) {
+                    // Self-healing: if not authorized, add user to group and retry with escalating delays
+                    const isAccessDenied = fetchErr instanceof NovaError &&
+                        (fetchErr.code === 'ACCESS_DENIED' || fetchErr.message.includes('not authorized'));
+                    if (!isAccessDenied) throw fetchErr;
+
+                    console.log('[IpfsPlayer] Access denied — self-healing group add for:', accountId);
+                    setPlayerState({ type: 'decrypting', message: 'Syncing access rights...' });
+                    // First: try processing any pending queue entries for this video
+                    await pendingAccessQueue.processQueue();
+                    await addBuyerToNovaGroup(cid, accountId);
+
+                    // Retry with escalating delays for TEE propagation
+                    const delays = [5000, 8000, 12000];
+                    let lastErr: unknown = fetchErr;
+                    for (const delay of delays) {
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        try {
+                            videoData = await fetchFile(novaCid, accountId, {
+                                groupId: novaGroupId,
+                                keyCid,
+                            });
+                            lastErr = null;
+                            break;
+                        } catch (retryErr) {
+                            lastErr = retryErr;
+                            console.warn(`[IpfsPlayer] Retry after ${delay}ms failed, will try again...`);
+                        }
+                    }
+                    if (lastErr) {
+                        pendingAccessQueue.add(cid, accountId);
+                        throw lastErr;
+                    }
                 }
+            } else {
+                // Free video: fetch raw (unencrypted) from Crust gateways
+                setPlayerState({ type: 'decrypting', message: 'Fetching video from IPFS...' });
+                const response = await fetchFromGateways(novaCid);
+                const buffer = await response.arrayBuffer();
+                videoData = new Uint8Array(buffer);
             }
 
-
-            // MPC FALLBACK PATH - Only if PKP failed or unavailable (silent fallback)
-            // For trial users without PKP: show friendly error instead of gas prompt
-            if (!sessionSigs) {
-                // Trial users should NOT see MPC fallback - they need PKP
-                if (isTrial) {
-                    console.warn("[IpfsPlayer] Trial user without PKP - cannot use MPC fallback");
-                    setPlayerState({ type: 'error', message: "Your trial account is still being set up. Please wait a moment and try again." });
-                    return;
-                }
-
-                console.log("PKP unavailable, using MPC fallback silently");
-
-                // 2.5 Ensure Gas for MPC (Session Key Mode)
-                // Use hasSessionKey from React Query hook
-                if (hasSessionKey) {
-                    const sessionManager = new SessionManager(accountId);
-
-                    // Check balance from React Query cache (balance is string in NEAR)
-                    const currentBalance = parseFloat(balance || '0');
-
-                    // CHECK GAS - NON BLOCKING
-                    // We use 0.25 NEAR threshold for MPC
-                    if (currentBalance < GAS_CONSTANTS.minMpcBalance) {
-                        // STOP FLOW HERE
-                        console.warn("Insufficient Gas for MPC. Halting flow to request User TopUp.");
-                        setPlayerState({ type: 'needsTopUp' });
-                        return; // Exit function, wait for user click
-                    }
-                }
-
-                // Get MPC session signatures
-                console.log("Using MPC for session signatures (silent fallback)");
-                setPlayerState({ type: 'decrypting', message: 'Getting Session Signatures...' });
-                sessionSigs = await lit.getSessionSigs(
-                    wallet,
-                    accountId,
-                    recoveredAddress,
-                    signWithSessionKey,
-                    storedConditions,
-                    dataToEncryptHash,
-                    derivationPath
-                );
+            // 3. Create video URL (convert to ArrayBuffer for Blob)
+            // Revoke previous blob URL if any
+            if (blobUrlRef.current) {
+                URL.revokeObjectURL(blobUrlRef.current);
             }
-
-            // 4. Decrypt
-            if (!isRetry) setPlayerState({ type: 'decrypting', message: 'Decrypting video...' });
-
-            // SANITIZATION: Ensure 'chain' exists, remove 'key' (strict schema)
-            const sanitizedConditions = storedConditions.map((cond: any) => {
-                if (cond.conditionType === 'litAction') {
-                    // Create a shallow copy
-                    const newCond = { ...cond };
-
-                    // Ensure chain is present (some nodes require it default to ethereum)
-                    if (!newCond.chain) {
-                        newCond.chain = 'ethereum';
-                    }
-
-                    // Remove key (Node validation might reject 'key' for boolean return type)
-                    if (newCond.returnValueTest && 'key' in newCond.returnValueTest) {
-                        const newTest = { ...newCond.returnValueTest };
-                        delete newTest.key;
-                        newCond.returnValueTest = newTest;
-                    }
-
-                    console.log("Sanitized litAction condition (chain added, key removed)");
-                    return newCond;
-                }
-                return cond;
-            });
-
-            console.log('Decrypting with ACCs:', JSON.stringify(sanitizedConditions, null, 2));
-
-            const decryptedBytes = await lit.decryptFile(
-                ciphertext,
-                dataToEncryptHash,
-                sanitizedConditions, // Use sanitized conditions
-                undefined, // No authSig
-                'ethereum',
-                sessionSigs
-            );
-
-            const decryptedBlob = new Blob([decryptedBytes as any], { type: 'video/mp4' });
-            const url = URL.createObjectURL(decryptedBlob);
+            if (!videoData) {
+                throw new Error('Failed to load video data');
+            }
+            const arrayBuffer = new Uint8Array(videoData).buffer;
+            const videoBlob = new Blob([arrayBuffer], { type: 'video/mp4' });
+            const url = URL.createObjectURL(videoBlob);
+            blobUrlRef.current = url;
             setPlayerState({ type: 'playing', videoUrl: url });
 
-        } catch (err: any) {
-            console.error('Decryption failed:', err);
-
-            // Check for Stale Session / Capability Error
-            if (
-                (err.message && err.message.includes('Could not find valid capability')) ||
-                (err.shortMessage && err.shortMessage.includes('Could not find valid capability')) ||
-                (err.message && err.message.includes('400')) // 400 Bad Request often from Lit Node on invalid sig
-            ) {
-                if (!isRetry) {
-                    console.warn('Caught capability error. Clearing stale session and retrying...');
-                    const { clearSessionCache } = await import('@/lib/lit');
-                    clearSessionCache(accountId);
-                    // Retry ONCE
-                    await playVideo(true);
-                    return;
-                }
+        } catch (err: unknown) {
+            console.error('Playback failed:', err);
+            if (err instanceof NovaError && err.code === 'NO_SESSION_KEY') {
+                setPlayerState({ type: 'needs-session-key' });
+            } else {
+                setPlayerState({ type: 'error', message: err instanceof Error ? err.message : 'Failed to load video' });
             }
-
-            setPlayerState({ type: 'error', message: err.message || 'Failed to decrypt video' });
         }
-    }, [accountId, getWallet, pkpData, isPKPMinting, isTrial, hasSessionKey, balance, refetchPKP, cid]);
+    }, [accountId, cid]);
+
+    const handleSetupSessionKey = useCallback(async () => {
+        if (!accountId) return;
+        setPlayerState({ type: 'decrypting', message: 'Creating Session Key...' });
+        try {
+            const wallet = await getWallet();
+            const sessionManager = new SessionManager(accountId);
+            await sessionManager.createSessionKey(wallet, '0.5');
+            // Session key created, auto-retry playback
+            await playVideo(true);
+        } catch (err: unknown) {
+            console.error('Session key creation failed:', err);
+            setPlayerState({ type: 'error', message: err instanceof Error ? err.message : 'Failed to create session key' });
+        }
+    }, [accountId, getWallet, playVideo]);
 
     const handlePlay = () => playVideo(false);
 
     return (
-        <div className="w-full aspect-video bg-slate-900 rounded-lg overflow-hidden relative group">
+        <div className={`w-full bg-slate-900 rounded-lg relative group ${showPurchaseCard ? 'min-h-[56.25%] overflow-visible' : 'aspect-video overflow-hidden'}`}>
             {!videoUrl ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-4">
-                    {checkingAccess ? (
+                <div className={`flex flex-col items-center text-white ${showPurchaseCard ? 'w-full' : 'absolute inset-0 justify-center p-4'}`}>
+                    {playerState.type === 'banned' ? (
+                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md w-full h-full p-6 text-center">
+                            <ShieldOff className="w-16 h-16 text-red-500 mb-4" />
+                            <h3 className="text-2xl font-bold text-white mb-2">Content Removed</h3>
+                            <p className="text-zinc-400 max-w-sm mb-6">
+                                This content has been removed for violating platform guidelines.
+                            </p>
+                            <Button
+                                variant="outline"
+                                onClick={() => window.location.href = '/discover'}
+                            >
+                                Back to Discover
+                            </Button>
+                        </div>
+                    ) : checkingAccess && !purchased ? (
                         <div className="text-center">
                             <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-zinc-500" />
                             <p className="text-xs text-zinc-500">Verifying access...</p>
-                        </div>
-                    ) : needsTopUp ? (
-                        <div className="relative z-10 p-6 bg-black/80 backdrop-blur-md rounded-xl border border-yellow-500/30 text-center max-w-sm">
-                            <div className="h-12 w-12 bg-yellow-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <span className="text-2xl">⛽</span>
-                            </div>
-                            <h3 className="text-xl font-bold mb-2 text-white">Prepaid Gas Low</h3>
-                            <p className="text-sm text-slate-300 mb-6">
-                                The MPC signer needs a small gas deposit to verify your identity without popups.
-                                Your balance is low.
-                            </p>
-                            <Button onClick={handleTopUp} size="lg" className="w-full gap-2 bg-yellow-500 hover:bg-yellow-600 text-black font-bold">
-                                Top Up Gas (1 NEAR)
-                            </Button>
-                            <p className="text-xs text-zinc-500 mt-3">
-                                This is a one-time deposit. Unused funds remain yours.
-                            </p>
                         </div>
                     ) : loading ? (
                         <div className="text-center">
                             <Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-primary" />
                             <p className="text-sm text-slate-300">{status}</p>
-                            {waitingForPKP && isTrial && (
-                                <p className="text-xs text-zinc-500 mt-2">
-                                    First-time setup for gasless playback...
-                                </p>
-                            )}
                         </div>
-                    ) : (hasAccess === false || error) ? (
-                        // SHOW LOCKED SCREEN IF NO ACCESS OR ERROR
+                    ) : error === 'SIMULATION_MODE' ? (
+                        // SHOW SIMULATION MODE MESSAGE
+                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md w-full h-full p-6 text-center">
+                            <div className="text-yellow-400 text-5xl mb-4">⚠️</div>
+                            <h3 className="text-2xl font-bold text-yellow-400 mb-2">Simulation Mode</h3>
+                            <p className="text-zinc-400 max-w-sm mb-4">
+                                Nova API key is not configured. Video playback requires a real Nova integration.
+                            </p>
+                            <p className="text-zinc-500 text-sm max-w-sm mb-6">
+                                UI flow verified successfully. Set <code className="bg-zinc-800 px-1 rounded">NEXT_PUBLIC_NOVA_API_KEY</code> for real playback.
+                            </p>
+                            <Button
+                                variant="outline"
+                                onClick={() => setPlayerState({ type: 'idle' })}
+                            >
+                                Dismiss
+                            </Button>
+                        </div>
+                    ) : playerState.type === 'needs-session-key' ? (
+                        // SHOW SESSION KEY SETUP
+                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md w-full h-full p-6 text-center">
+                            <KeyRound className="w-16 h-16 text-yellow-400 mb-4" />
+                            <h3 className="text-2xl font-bold text-white mb-2">Session Key Required</h3>
+                            <p className="text-zinc-400 max-w-sm mb-6">
+                                A one-time session key setup is needed to decrypt and play videos. This requires a wallet signature.
+                            </p>
+                            <Button
+                                onClick={handleSetupSessionKey}
+                                size="lg"
+                                className="gap-2 shadow-xl shadow-primary/20"
+                            >
+                                <KeyRound className="h-5 w-5" />
+                                Setup Session Key
+                            </Button>
+                        </div>
+                    ) : hasAccess === false && !purchased && !error ? (
+                        // SHOW INLINE PURCHASE CARD
+                        <div className="z-10 flex flex-col items-center bg-black/95 backdrop-blur-md w-full p-4">
+                            <TicketPurchaseCard
+                                cid={cid}
+                                onPurchaseSuccess={() => {
+                                    setPurchased(true);
+                                    refetchOwnership();
+                                }}
+                                className="w-full max-w-sm"
+                            />
+                        </div>
+                    ) : error ? (
+                        // SHOW ERROR / RETRY
                         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md w-full h-full p-6 text-center">
                             <Lock className="w-16 h-16 text-zinc-600 mb-4" />
-                            <h3 className="text-2xl font-bold text-white mb-2">Content Locked</h3>
+                            <h3 className="text-2xl font-bold text-white mb-2">Playback Error</h3>
                             <p className="text-zinc-400 max-w-sm mb-8">
-                                You need a ticket to watch this video. Purchase one to unlock permanent access.
+                                {hasAccess
+                                    ? 'Access sync in progress. Try again in a moment.'
+                                    : error}
                             </p>
-
                             <div className="flex flex-col gap-4 w-full max-w-xs">
                                 <Button
                                     className="w-full h-12 text-lg font-bold gap-2"
-                                    onClick={() => window.location.href = `/ticket/${cid}`}
+                                    onClick={handlePlay}
                                 >
-                                    <Ticket className="w-5 h-5" />
-                                    Get Ticket
+                                    <Play className="w-5 h-5" />
+                                    Retry Playback
                                 </Button>
-
-                                {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
                             </div>
                         </div>
                     ) : (
@@ -424,8 +364,8 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                             {
                                 thumbnailUrl && (
                                     <div className="absolute inset-0 z-0">
-                                        <img
-                                            src={thumbnailUrl}
+                                        <NovaThumbnail
+                                            url={thumbnailUrl}
                                             alt="Video Thumbnail"
                                             className="w-full h-full object-cover opacity-50 blur-sm"
                                         />
@@ -444,13 +384,6 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                                     <Play className="h-5 w-5" />
                                     Decrypt & Play
                                 </Button>
-                                {/* Trial user PKP status hint */}
-                                {isTrial && isPKPMinting && (
-                                    <p className="text-xs text-zinc-400 mt-3 flex items-center justify-center gap-1">
-                                        <Loader2 className="h-3 w-3 animate-spin" />
-                                        Setting up gasless playback...
-                                    </p>
-                                )}
                             </div>
                         </div>
                     )}

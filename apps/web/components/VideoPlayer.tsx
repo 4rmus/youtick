@@ -31,7 +31,7 @@ export function VideoPlayer({
                     thumbnailUrl={thumbnailUrl}
                 />
                 <p className="text-xs text-zinc-500 mt-2 text-center">
-                    🌐 Decentralized playback via IPFS (Crust Network)
+                    🌐 Decentralized playback via IPFS
                 </p>
             </div>
         );

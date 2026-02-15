@@ -10,16 +10,16 @@ import { NEAR_CONFIG } from './constants';
 
 // RPC Endpoints - ordered by priority
 export const MAINNET_RPC_ENDPOINTS = [
-    'https://rpc.mainnet.near.org',
     'https://free.rpc.fastnear.com',
-    'https://near-mainnet.lava.build',
+    'https://rpc.mainnet.near.org',
     'https://rpc.mainnet.pagoda.co',
+    // 'https://near-mainnet.lava.build' — excluded: no CORS support for browser requests
 ];
 
 export const TESTNET_RPC_ENDPOINTS = [
     'https://test.rpc.fastnear.com',
     'https://rpc.testnet.near.org',
-    'https://near-testnet.lava.build',
+    // 'https://near-testnet.lava.build' — excluded: no CORS support for browser requests
 ];
 
 // Select endpoints based on network
@@ -71,6 +71,7 @@ function isRpcError(error: Error): boolean {
         message.includes('fetch') ||
         message.includes('network') ||
         message.includes('timeout') ||
+        message.includes('429') ||
         message.includes('502') ||
         message.includes('503') ||
         message.includes('504') ||

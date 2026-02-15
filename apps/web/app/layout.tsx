@@ -1,13 +1,17 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import "@near-wallet-selector/modal-ui/styles.css";
 import { WalletProvider } from "@/components/providers/WalletProvider";
 import { QueryProvider } from "@/components/providers/QueryProvider";
+import { EvmProvider } from "@/components/providers/EvmProvider";
 import { Navbar } from "@/components/Navbar";
 import { LanguageProvider } from "@/components/providers/LanguageContext";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { GoogleAnalytics } from "@next/third-parties/google";
+import { OnboardingKeyInit } from "@/components/OnboardingKeyInit";
+import { NovaAccessSync } from "@/components/NovaAccessSync";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -27,7 +31,8 @@ export const metadata: Metadata = {
         'video on demand',
         'dApp',
         'blockchain streaming',
-        'Lit Protocol',
+        'Nova SDK',
+        'TEE encryption',
         'IPFS video',
         'encrypted video',
     ],
@@ -86,11 +91,39 @@ export default function RootLayout({
 }>) {
     return (
         <html lang="en" suppressHydrationWarning>
+            <head>
+                {/* ChunkLoadError recovery: reload page on failed dynamic imports (IPFS gateway blips) */}
+                <script dangerouslySetInnerHTML={{ __html: `
+                    (function(){
+                        var retries = 0;
+                        var MAX_RETRIES = 3;
+                        var KEY = '__ytk_chunk_retry';
+                        try { retries = parseInt(sessionStorage.getItem(KEY) || '0', 10); } catch(e) {}
+                        window.addEventListener('error', function(e) {
+                            if (e.message && e.message.indexOf('ChunkLoadError') !== -1 && retries < MAX_RETRIES) {
+                                try { sessionStorage.setItem(KEY, String(retries + 1)); } catch(e) {}
+                                window.location.reload();
+                            }
+                        });
+                        window.addEventListener('unhandledrejection', function(e) {
+                            var msg = e.reason && (e.reason.message || String(e.reason));
+                            if (msg && msg.indexOf('ChunkLoadError') !== -1 && retries < MAX_RETRIES) {
+                                try { sessionStorage.setItem(KEY, String(retries + 1)); } catch(e) {}
+                                window.location.reload();
+                            }
+                        });
+                        if (retries > 0) { setTimeout(function(){ try { sessionStorage.removeItem(KEY); } catch(e) {} }, 30000); }
+                    })();
+                `}} />
+            </head>
             <body className={inter.className}>
                 <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
                     <QueryProvider>
+                        <EvmProvider>
                         <LanguageProvider>
                             <WalletProvider>
+                            <NovaAccessSync />
+                            <OnboardingKeyInit />
                             <div className="min-h-screen bg-background text-foreground">
                                 <Navbar />
                                 <main className="flex-grow">
@@ -98,9 +131,9 @@ export default function RootLayout({
                                 </main>
                             </div>
                             <LanguageSwitcher />
-                            <div id="wallet-modal-container" />
                         </WalletProvider>
                         </LanguageProvider>
+                        </EvmProvider>
                     </QueryProvider>
                 </ThemeProvider>
             </body>

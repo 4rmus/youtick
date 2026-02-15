@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import Image from 'next/image';
-import Link from 'next/link';
+import Link from '@/components/Web4Link';
 import { Button } from '@/components/ui/button';
 import { ArrowRight, Shield, Zap, Lock, Sparkles, DollarSign } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';

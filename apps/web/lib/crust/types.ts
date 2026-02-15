@@ -1,104 +1,123 @@
 /**
  * Crust Network Type Definitions
  *
- * Type definitions for Crust W3Auth integration with NEAR Protocol
+ * Types for Crust IPFS integration with YouTick.
+ * Crust provides decentralized IPFS pinning with NEAR-based W3Auth.
  */
 
 /**
- * W3Auth token structure for Crust IPFS authentication
+ * Crust W3Auth token (generated from NEAR Session Key)
  */
-export interface W3AuthToken {
-    /** Authorization header value (Basic base64(...)) */
-    authHeader: string;
-    /** NEAR public key used for authentication */
-    publicKey: string;
-    /** Account ID that generated the token */
-    accountId: string;
-    /** Timestamp when token was generated */
-    generatedAt: number;
+export interface CrustAuthToken {
+  /** Authorization header value (Basic base64) */
+  header: string;
+  /** NEAR account ID */
+  accountId: string;
+  /** Token creation timestamp (milliseconds) */
+  createdAt: number;
+  /** Token expiration timestamp (milliseconds) */
+  expiresAt: number;
 }
 
 /**
- * Result of a successful Crust upload
+ * Result of Crust IPFS upload
  */
 export interface CrustUploadResult {
-    /** IPFS CID (Content Identifier) */
-    cid: string;
-    /** File size in bytes */
-    size: number;
-    /** Original filename */
-    name?: string;
+  /** IPFS CID of uploaded file */
+  cid: string;
+  /** File size in bytes */
+  size: number;
 }
 
 /**
- * Upload options for Crust client
+ * Result of Crust pin operation
  */
-export interface CrustUploadOptions {
-    /** Custom filename for the upload */
-    filename?: string;
-    /** Callback for upload progress */
-    onProgress?: (progress: UploadProgress) => void;
-    /** Request timeout in milliseconds */
-    timeout?: number;
+export interface CrustPinResult {
+  /** IPFS CID */
+  cid: string;
+  /** Pin status */
+  status: 'pinned' | 'queued' | 'failed';
+  /** Gateway URL used */
+  gateway: string;
 }
 
 /**
- * Upload progress information
- */
-export interface UploadProgress {
-    /** Bytes uploaded so far */
-    loaded: number;
-    /** Total bytes to upload */
-    total: number;
-    /** Progress percentage (0-100) */
-    percentage: number;
-}
-
-/**
- * Gateway configuration
+ * Gateway configuration for multi-gateway failover
  */
 export interface GatewayConfig {
-    /** Gateway URL (without /ipfs suffix) */
-    url: string;
-    /** Gateway priority (lower = higher priority) */
-    priority: number;
-    /** Whether this gateway supports uploads */
-    supportsUpload: boolean;
+  /** Gateway name */
+  name: string;
+  /** Gateway base URL (e.g. https://crustipfs.xyz/ipfs) */
+  url: string;
+  /** Priority (lower = higher priority) */
+  priority: number;
+  /** Whether gateway is currently healthy */
+  healthy: boolean;
+  /** Last health check timestamp */
+  lastCheck: number;
 }
 
 /**
- * Crust IPFS API response for add operation
+ * Result of Crust PSA (Pinning Service API) pin request
  */
-export interface IpfsAddResponse {
-    /** File name */
-    Name: string;
-    /** IPFS CID */
-    Hash: string;
-    /** File size as string */
-    Size: string;
+export interface CrustPsaPinResult {
+  /** Pin request ID from Crust PSA */
+  requestId: string;
+  /** Pin status */
+  status: 'queued' | 'pinning' | 'pinned' | 'failed';
+  /** IPFS CID */
+  cid: string;
+  /** Timestamp of pin request */
+  createdAt: number;
 }
 
 /**
- * Error types specific to Crust operations
+ * Storage order tracking entry
+ */
+export interface StorageOrderTrack {
+  /** IPFS CID */
+  cid: string;
+  /** PSA request ID */
+  requestId: string;
+  /** Current pin status */
+  status: CrustPsaPinResult['status'];
+  /** File size in bytes */
+  fileSize: number;
+  /** NEAR account that placed the order */
+  accountId: string;
+  /** Timestamp when order was placed */
+  placedAt: number;
+  /** Timestamp of last status check */
+  lastChecked: number;
+}
+
+/**
+ * Crust error codes
  */
 export type CrustErrorCode =
-    | 'NO_SESSION_KEY'
-    | 'AUTH_FAILED'
-    | 'UPLOAD_FAILED'
-    | 'GATEWAY_UNAVAILABLE'
-    | 'INVALID_RESPONSE'
-    | 'NETWORK_ERROR';
+  | 'AUTH_FAILED'            // W3Auth token generation failed
+  | 'UPLOAD_FAILED'          // File upload to Crust failed
+  | 'PIN_FAILED'             // CID pinning failed
+  | 'STORAGE_ORDER_FAILED'   // On-chain storage order failed
+  | 'GATEWAY_UNAVAILABLE'    // All gateways unavailable
+  | 'NO_SESSION_KEY'         // Session Key not found
+  | 'TIMEOUT';               // Operation timed out
 
 /**
- * Crust operation error
+ * Crust error class (follows NovaError pattern)
  */
 export class CrustError extends Error {
-    constructor(
-        public code: CrustErrorCode,
-        message: string,
-        public cause?: Error
-    ) {
-        super(message);
-        this.name = 'CrustError';
+  code: CrustErrorCode;
+  cause?: Error;
+
+  constructor(code: CrustErrorCode, message: string, cause?: Error) {
+    super(message);
+    this.code = code;
+    this.cause = cause;
+    this.name = 'CrustError';
+
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, CrustError);
     }
+  }
 }

@@ -20,6 +20,7 @@ dist
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.log
 
 # Local env files
 .env
@@ -38,15 +39,30 @@ next-env.d.ts
 # Rust
 target/
 
-# Internal Documentation (not for public repo)
-# Removed non-existent files
-
 # NEAR Credentials (sensitive keys)
 .near-credentials/
 
 # Project Specific
 CLAUDE.md
 PRD.md
-.claude/
 claudedocs/
 .skills/
+
+# AI Assistants
+.claude/
+.agent/
+.agents/
+
+# Cloudflare Wrangler
+workers/**/.wrangler/
+
+# Test artifacts
+.vitest/
+
+# Cursor
+.cursor/
+
+# VitePress
+docs/.vitepress/dist
+docs/.vitepress/cache
+docs/node_modules

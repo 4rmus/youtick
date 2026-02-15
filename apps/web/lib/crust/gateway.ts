@@ -1,317 +1,193 @@
 /**
- * Crust Gateway Management
+ * Crust Gateway Module
  *
- * Provides multi-gateway failover for IPFS content retrieval.
- * Follows the same pattern as rpc-failover.ts for consistency.
+ * Multi-gateway failover for IPFS content retrieval.
  *
- * Upload Gateway: crustipfs.xyz (only one supporting W3Auth)
- *
- * Retrieval Priority (optimized for speed):
- * 1. ipfs.io (IPFS Foundation - fast, reliable)
- * 2. dweb.link (Web3.Storage - good availability)
- * 3. crustipfs.xyz (Crust primary)
- * 4. gw.crustfiles.app (Crust secondary)
- *
- * Note: Crust gateways need pinning propagation time,
- * so we prioritize global IPFS gateways for retrieval.
+ * Priority order:
+ * 1. Crust API (/api/v0/cat) — fastest for Crust-pinned content, CORS ✓, POST only
+ * 2. Public IPFS gateways — CORS ✓, may have propagation delay
  */
 
-import type { GatewayConfig } from './types';
+import { GatewayConfig, CrustError } from './types';
+import { CRUST_GATEWAYS, CRUST_CONSTANTS } from './config';
 
 /**
- * Upload gateway - only crustipfs.xyz supports W3Auth
+ * Runtime gateway state (cloned from config to allow mutation)
  */
-export const UPLOAD_GATEWAY = 'https://crustipfs.xyz';
+const gateways: GatewayConfig[] = CRUST_GATEWAYS.map(g => ({ ...g }));
 
 /**
- * Retrieval gateways in priority order
- * Prioritized by reliability and speed, not by storage provider
- */
-export const RETRIEVAL_GATEWAYS: GatewayConfig[] = [
-    {
-        url: 'https://ipfs.io',
-        priority: 1,
-        supportsUpload: false
-    },
-    {
-        url: 'https://dweb.link',
-        priority: 2,
-        supportsUpload: false
-    },
-    {
-        url: 'https://w3s.link',
-        priority: 3,
-        supportsUpload: false
-    },
-    {
-        url: 'https://crustipfs.xyz',
-        priority: 4,
-        supportsUpload: true
-    },
-    {
-        url: 'https://gw.crustfiles.app',
-        priority: 5,
-        supportsUpload: false
-    }
-];
-
-/**
- * @deprecated Use RETRIEVAL_GATEWAYS instead
- */
-export const CRUST_GATEWAYS = RETRIEVAL_GATEWAYS;
-
-// Module-level state for current gateway
-let currentGatewayIndex = 0;
-let consecutiveFailures = 0;
-const MAX_CONSECUTIVE_FAILURES = 3;
-
-/**
- * Get the current active retrieval gateway URL
- */
-export function getCurrentGateway(): string {
-    return RETRIEVAL_GATEWAYS[currentGatewayIndex].url;
-}
-
-/**
- * Get the upload gateway (always crustipfs.xyz for W3Auth)
- */
-export function getUploadGateway(): string {
-    return UPLOAD_GATEWAY;
-}
-
-/**
- * Switch to the next available gateway
- *
- * @returns true if switched to a new gateway, false if wrapped around
- */
-export function switchToNextGateway(): boolean {
-    const previousIndex = currentGatewayIndex;
-    currentGatewayIndex = (currentGatewayIndex + 1) % RETRIEVAL_GATEWAYS.length;
-
-    const wrapped = currentGatewayIndex === 0;
-    const previousGateway = RETRIEVAL_GATEWAYS[previousIndex].url;
-    const newGateway = RETRIEVAL_GATEWAYS[currentGatewayIndex].url;
-
-    console.warn(`[Gateway Failover] ${previousGateway} -> ${newGateway}`);
-
-    if (wrapped) {
-        consecutiveFailures++;
-        console.warn(`[Gateway Failover] All gateways tried. Cycle ${consecutiveFailures}`);
-    }
-
-    return !wrapped;
-}
-
-/**
- * Reset gateway to primary
- */
-export function resetGateway(): void {
-    currentGatewayIndex = 0;
-    consecutiveFailures = 0;
-    console.log('[Gateway] Reset to primary:', RETRIEVAL_GATEWAYS[0].url);
-}
-
-/**
- * Mark current gateway as successful (reset failure count)
- */
-export function markGatewaySuccess(): void {
-    consecutiveFailures = 0;
-}
-
-/**
- * Check if error is a gateway-related error
- */
-function isGatewayError(error: Error): boolean {
-    const message = error.message?.toLowerCase() || '';
-    return (
-        message.includes('fetch') ||
-        message.includes('network') ||
-        message.includes('timeout') ||
-        message.includes('econnrefused') ||
-        message.includes('enotfound') ||
-        message.includes('502') ||
-        message.includes('503') ||
-        message.includes('504') ||
-        message.includes('failed to fetch')
-    );
-}
-
-/**
- * Build full URL for a CID
+ * Get full URL for a CID from the best available gateway
  *
  * @param cid - IPFS CID
- * @param gateway - Optional specific gateway URL
+ * @returns Full gateway URL
  */
-export function getGatewayUrl(cid: string, gateway?: string): string {
-    const baseUrl = gateway || getCurrentGateway();
-    return `${baseUrl}/ipfs/${cid}`;
+export function getGatewayUrl(cid: string): string {
+  const gateway = getBestGateway();
+  return `${gateway.url}/${cid}`;
 }
 
 /**
- * Fetch content from IPFS with automatic gateway failover
+ * Get URLs for a CID from all gateways, ordered by priority (healthy first)
  *
- * @param cid - IPFS CID to fetch
- * @param maxRetries - Maximum retry attempts (default: 3)
- * @returns Response from successful gateway
- * @throws Error if all gateways fail
+ * Used for <img> tag fallback chains where each URL is tried sequentially
+ * on load error without CORS restrictions.
+ *
+ * @param cid - IPFS CID
+ * @returns Array of gateway URLs sorted by priority
  */
-export async function fetchWithFailover(
-    cid: string,
-    maxRetries: number = 3
+export function getGatewayUrls(cid: string): string[] {
+  refreshGatewayHealth();
+  const sorted = [...gateways].sort((a, b) => {
+    // Healthy gateways first, then by priority
+    if (a.healthy !== b.healthy) return a.healthy ? -1 : 1;
+    return a.priority - b.priority;
+  });
+  return sorted.map(g => `${g.url}/${cid}`);
+}
+
+/**
+ * Fetch content from Crust API first, then public IPFS gateways as fallback.
+ *
+ * Crust API (POST /api/v0/cat?arg={CID}) is tried first because:
+ * - Content is guaranteed to be available (no propagation delay)
+ * - Supports CORS from browsers
+ * - Fastest for Crust-pinned content
+ *
+ * @param cid - IPFS CID
+ * @param options - Optional fetch options (timeout)
+ * @returns Fetch Response
+ * @throws CrustError if all sources fail
+ */
+export async function fetchFromGateways(
+  cid: string,
+  options?: { timeout?: number }
 ): Promise<Response> {
-    let lastError: Error | null = null;
-    const totalAttempts = maxRetries * CRUST_GATEWAYS.length;
+  const timeout = options?.timeout || CRUST_CONSTANTS.FETCH_TIMEOUT;
+  const errors: string[] = [];
 
-    for (let attempt = 0; attempt < totalAttempts; attempt++) {
-        const url = getGatewayUrl(cid);
-
-        try {
-            console.log(`[Gateway] Fetching ${cid} from ${getCurrentGateway()} (attempt ${attempt + 1})`);
-
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-
-            const response = await fetch(url, {
-                signal: controller.signal
-            });
-
-            clearTimeout(timeoutId);
-
-            if (response.ok) {
-                markGatewaySuccess();
-                return response;
-            }
-
-            // Non-OK response - treat as gateway error
-            throw new Error(`Gateway returned ${response.status}: ${response.statusText}`);
-
-        } catch (e: unknown) {
-            const error = e instanceof Error ? e : new Error(String(e));
-            lastError = error;
-
-            console.warn(`[Gateway Failover] Attempt ${attempt + 1} failed:`, error.message);
-
-            if (isGatewayError(error) || error.name === 'AbortError') {
-                switchToNextGateway();
-                // Exponential backoff
-                const delay = Math.min(500 * Math.pow(2, attempt % CRUST_GATEWAYS.length), 5000);
-                await new Promise(r => setTimeout(r, delay));
-            } else {
-                // Non-gateway error, throw immediately
-                throw error;
-            }
-        }
-    }
-
-    // All attempts exhausted
-    throw lastError || new Error(`Failed to fetch ${cid} from all gateways`);
-}
-
-/**
- * Prefetch content to check availability without downloading
- *
- * @param cid - IPFS CID to check
- * @returns true if content is available
- */
-export async function checkAvailability(cid: string): Promise<boolean> {
-    try {
-        const url = getGatewayUrl(cid);
-        const response = await fetch(url, {
-            method: 'HEAD',
-            signal: AbortSignal.timeout(10000)
-        });
-        return response.ok;
-    } catch {
-        return false;
-    }
-}
-
-/**
- * Get gateway health status
- */
-export function getGatewayStatus(): {
-    current: string;
-    index: number;
-    consecutiveFailures: number;
-    healthy: boolean;
-} {
-    return {
-        current: getCurrentGateway(),
-        index: currentGatewayIndex,
-        consecutiveFailures,
-        healthy: consecutiveFailures < MAX_CONSECUTIVE_FAILURES
-    };
-}
-
-/**
- * Race multiple gateways and return fastest response
- *
- * Fires parallel requests to top N gateways, first successful response wins.
- * Other pending requests are automatically cancelled after the winner's body is consumed.
- * Falls back to sequential fetchWithFailover if all race attempts fail.
- *
- * @param cid - IPFS CID to fetch
- * @param options - Race options (timeout per gateway, max gateways to race)
- * @returns Response from fastest successful gateway
- */
-export async function fetchWithRace(
-    cid: string,
-    options: { timeout?: number; maxGateways?: number } = {}
-): Promise<Response> {
-    const { timeout = 10000, maxGateways = 3 } = options;
-
-    // Use top N fastest gateways based on priority
-    const gateways = RETRIEVAL_GATEWAYS.slice(0, maxGateways);
-    const controllers: AbortController[] = [];
-    const startTime = Date.now();
-
-    console.log(`[Gateway Race] Racing ${gateways.length} gateways for ${cid.slice(0, 12)}...`);
-
-    const racePromises = gateways.map((gw, index) => {
-        const controller = new AbortController();
-        controllers.push(controller);
-
-        return new Promise<{ response: Response; gateway: string; winnerIndex: number }>((resolve, reject) => {
-            const timeoutId = setTimeout(() => {
-                controller.abort();
-                reject(new Error(`Timeout: ${gw.url}`));
-            }, timeout);
-
-            fetch(`${gw.url}/ipfs/${cid}`, { signal: controller.signal })
-                .then(response => {
-                    clearTimeout(timeoutId);
-                    if (response.ok) {
-                        resolve({ response, gateway: gw.url, winnerIndex: index });
-                    } else {
-                        reject(new Error(`HTTP ${response.status}: ${gw.url}`));
-                    }
-                })
-                .catch(err => {
-                    clearTimeout(timeoutId);
-                    reject(err);
-                });
-        });
-    });
+  // 1. Try Crust API endpoints first (POST /api/v0/cat — fastest for Crust content)
+  const crustEndpoints = [CRUST_CONSTANTS.READ_ENDPOINT, CRUST_CONSTANTS.READ_ENDPOINT_FALLBACK];
+  for (const endpoint of crustEndpoints) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
 
     try {
-        // Race all promises - first success wins
-        const { response, gateway, winnerIndex } = await Promise.race(racePromises);
+      const response = await fetch(`${endpoint}?arg=${cid}`, {
+        method: 'POST',
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
 
-        // Cancel OTHER pending requests (not the winner!)
-        controllers.forEach((c, i) => {
-            if (i !== winnerIndex) {
-                try { c.abort(); } catch { /* ignore */ }
-            }
-        });
-
-        const elapsed = Date.now() - startTime;
-        console.log(`[Gateway Race] Winner: ${gateway} (${elapsed}ms)`);
-        markGatewaySuccess();
-
+      if (response.ok) {
         return response;
-    } catch {
-        // All raced gateways failed - fallback to sequential with full retry logic
-        console.warn('[Gateway Race] All gateways failed, falling back to sequential');
-        return fetchWithFailover(cid);
+      }
+
+      errors.push(`crust-api(${endpoint.includes('crustfiles') ? 'fallback' : 'primary'}): HTTP ${response.status}`);
+    } catch (err: unknown) {
+      clearTimeout(timer);
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`crust-api: ${msg}`);
     }
+  }
+
+  // 2. Fall back to public IPFS gateways (CORS-friendly)
+  const sortedGateways = getHealthyGateways();
+
+  if (sortedGateways.length === 0) {
+    // Reset all gateways and try again
+    resetGatewayHealth();
+    sortedGateways.push(...getHealthyGateways());
+  }
+
+  for (const gateway of sortedGateways) {
+    const url = `${gateway.url}/${cid}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+
+      if (response.ok) {
+        return response;
+      }
+
+      // Non-OK response, try next gateway
+      errors.push(`${gateway.name}: HTTP ${response.status}`);
+      markGatewayUnhealthy(gateway.name);
+    } catch (err: unknown) {
+      clearTimeout(timer);
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`${gateway.name}: ${msg}`);
+      markGatewayUnhealthy(gateway.name);
+    }
+  }
+
+  throw new CrustError(
+    'GATEWAY_UNAVAILABLE',
+    `All gateways failed for CID ${cid}: ${errors.join(', ')}`
+  );
+}
+
+/**
+ * Mark a gateway as unhealthy (temporarily disabled)
+ *
+ * @param name - Gateway name
+ */
+export function markGatewayUnhealthy(name: string): void {
+  const gateway = gateways.find(g => g.name === name);
+  if (gateway) {
+    gateway.healthy = false;
+    gateway.lastCheck = Date.now();
+    console.warn(`[CRUST Gateway] Marked ${name} as unhealthy`);
+  }
+}
+
+/**
+ * Get the best (highest priority, healthy) gateway
+ *
+ * @returns Best available GatewayConfig
+ */
+export function getBestGateway(): GatewayConfig {
+  refreshGatewayHealth();
+  const healthy = getHealthyGateways();
+  if (healthy.length > 0) {
+    return healthy[0];
+  }
+  // All unhealthy - reset and return first
+  resetGatewayHealth();
+  return gateways[0];
+}
+
+/**
+ * Get healthy gateways sorted by priority
+ */
+function getHealthyGateways(): GatewayConfig[] {
+  refreshGatewayHealth();
+  return gateways
+    .filter(g => g.healthy)
+    .sort((a, b) => a.priority - b.priority);
+}
+
+/**
+ * Refresh gateway health (re-enable gateways past unhealthy duration)
+ */
+function refreshGatewayHealth(): void {
+  const now = Date.now();
+  for (const gateway of gateways) {
+    if (!gateway.healthy && now - gateway.lastCheck > CRUST_CONSTANTS.GATEWAY_UNHEALTHY_DURATION) {
+      gateway.healthy = true;
+    }
+  }
+}
+
+/**
+ * Reset all gateways to healthy
+ */
+function resetGatewayHealth(): void {
+  for (const gateway of gateways) {
+    gateway.healthy = true;
+    gateway.lastCheck = 0;
+  }
 }

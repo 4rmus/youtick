@@ -8,11 +8,14 @@
 
 import { KeyPair, Account, KeyPairSigner, nearToYocto, actions, type KeyPairString } from "near-api-js";
 import { InMemoryKeyStore } from "./keystore-v7";
-import type { WalletSelector } from "@near-wallet-selector/core";
+import type { WalletInstance } from "./types";
 
-// Contract ID from environment
-const NFT_CONTRACT_ID = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "youtick-v4.testnet";
-const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || "testnet";
+import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from './constants';
+import { getCurrentRpcUrl } from './rpc-failover';
+
+// Contract ID from centralized config
+const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
+const NETWORK_ID = NEAR_CONFIG.networkId;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
 // Cost per gift link (account creation + NFT storage + buffer)
@@ -43,7 +46,7 @@ export interface SponsoredTrialResult {
  */
 export async function getTrialPoolBalance(): Promise<string> {
     try {
-        const response = await fetch(`${getRpcUrl()}/`, {
+        const response = await fetch(`${getCurrentRpcUrl()}/`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -82,14 +85,21 @@ export async function createSponsoredTrialDirect(
 ): Promise<SponsoredTrialResult> {
     try {
         // Check if we have an onboarding key
-        const onboardingKeyStr = typeof window !== "undefined"
+        let onboardingKeyStr = typeof window !== "undefined"
             ? localStorage.getItem(`onboarding_key:${NFT_CONTRACT_ID}`)
             : null;
 
         if (!onboardingKeyStr) {
-            // Fall back to relayer-based method
-            console.log("No onboarding key found, falling back to relayer API");
-            return createSponsoredTrialRelayer(username);
+            // Retry: key may still be loading from OnboardingKeyInit
+            await new Promise(r => setTimeout(r, 1500));
+            onboardingKeyStr = typeof window !== "undefined"
+                ? localStorage.getItem(`onboarding_key:${NFT_CONTRACT_ID}`)
+                : null;
+
+            if (!onboardingKeyStr) {
+                console.log('[DECENTRALIZATION_METRIC] trial_fallback_no_onboarding_key');
+                return createSponsoredTrialRelayer(username);
+            }
         }
 
         // Generate keypair for the new account
@@ -102,7 +112,7 @@ export async function createSponsoredTrialDirect(
 
         // v7: Create Account directly with signer
         const signer = new KeyPairSigner(onboardingKeyPair);
-        const account = new Account(NFT_CONTRACT_ID, getRpcUrl(), signer);
+        const account = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), signer);
 
         // Call create_sponsored_trial_direct using v7 actions format
         await account.signAndSendTransaction({
@@ -111,7 +121,7 @@ export async function createSponsoredTrialDirect(
                 actions.functionCall(
                     "create_sponsored_trial_direct",
                     { username, new_public_key: userPublicKey },
-                    BigInt("200000000000000"), // 200 TGas
+                    GAS_CONSTANTS.highGas,
                     BigInt(0) // No deposit
                 )
             ]
@@ -131,18 +141,58 @@ export async function createSponsoredTrialDirect(
             accountId,
             secretKey: userSecretKey,
         };
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Direct sponsored trial error:", error);
+        const errMsg = error instanceof Error ? error.message : '';
 
-        // If the error is about unauthorized key, fall back to relayer
-        if (error.message?.includes("Unauthorized") || error.message?.includes("onboarding key")) {
-            console.log("Onboarding key rejected, falling back to relayer API");
+        // If the error is about unauthorized key, retry once with fresh RPC before relayer fallback
+        if (errMsg.includes("Unauthorized") || errMsg.includes("onboarding key")) {
+            console.log('[DECENTRALIZATION_METRIC] trial_onboarding_key_unauthorized');
+            try {
+                // One retry with fresh RPC endpoint
+                const retryKeyStr = typeof window !== "undefined"
+                    ? localStorage.getItem(`onboarding_key:${NFT_CONTRACT_ID}`)
+                    : null;
+                if (retryKeyStr) {
+                    const retryKeyPair = KeyPair.fromString(retryKeyStr as KeyPairString);
+                    const retrySigner = new KeyPairSigner(retryKeyPair);
+
+                    const userKeyPair = KeyPair.fromRandom("ed25519");
+                    const userPublicKey = userKeyPair.getPublicKey().toString();
+                    const userSecretKey = userKeyPair.toString();
+
+                    const retryAccount = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), retrySigner);
+                    await retryAccount.signAndSendTransaction({
+                        receiverId: NFT_CONTRACT_ID,
+                        actions: [
+                            actions.functionCall(
+                                "create_sponsored_trial_direct",
+                                { username, new_public_key: userPublicKey },
+                                GAS_CONSTANTS.highGas,
+                                BigInt(0)
+                            )
+                        ]
+                    });
+
+                    const accountId = `${username}.${NFT_CONTRACT_ID}`;
+                    if (typeof window !== "undefined") {
+                        localStorage.setItem(`near-api-js:keystore:${accountId}:${NETWORK_ID}`, userSecretKey);
+                        localStorage.setItem("trialAccountId", accountId);
+                    }
+
+                    return { success: true, accountId, secretKey: userSecretKey };
+                }
+            } catch {
+                // Retry failed, fall through to relayer
+            }
+
+            console.log('[DECENTRALIZATION_METRIC] trial_fallback_to_relayer');
             return createSponsoredTrialRelayer(username);
         }
 
         return {
             success: false,
-            error: error.message || "Failed to create trial account",
+            error: errMsg || "Failed to create trial account",
         };
     }
 }
@@ -192,11 +242,11 @@ export async function createSponsoredTrialRelayer(
             accountId,
             secretKey,
         };
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Relayer sponsored trial error:", error);
         return {
             success: false,
-            error: error.message || "Failed to create trial account",
+            error: error instanceof Error ? error.message : "Failed to create trial account",
         };
     }
 }
@@ -215,29 +265,23 @@ export async function createSponsoredTrialRelayer(
 export async function createSponsoredTrial(
     username: string
 ): Promise<SponsoredTrialResult & { method?: 'direct' | 'relayer' }> {
-    console.log(`[DECENTRALIZATION] Creating sponsored trial for: ${username}`);
-
     // Try direct method first (relayer-less, decentralized)
     const directResult = await createSponsoredTrialDirect(username);
 
     if (directResult.success) {
-        console.log('[DECENTRALIZATION] ✅ Trial created via onboarding key (decentralized)');
         console.log(`[DECENTRALIZATION_METRIC] {"operation":"trial_create","method":"direct","username":"${username}","timestamp":${Date.now()}}`);
         return { ...directResult, method: 'direct' };
     }
 
     // If direct failed with a non-fallback error, return it
     if (directResult.error && !directResult.error.includes('falling back')) {
-        console.log('[DECENTRALIZATION] ⚠️ Trial creation failed (no fallback):', directResult.error);
         return { ...directResult, method: 'direct' };
     }
 
     // Fallback: relayer-based trial creation
-    console.log('[DECENTRALIZATION] Using relayer for trial creation (fallback)');
     const relayerResult = await createSponsoredTrialRelayer(username);
 
     if (relayerResult.success) {
-        console.log('[DECENTRALIZATION] ✅ Trial created via relayer (centralized fallback)');
         console.log(`[DECENTRALIZATION_METRIC] {"operation":"trial_create","method":"relayer","username":"${username}","timestamp":${Date.now()}}`);
     }
 
@@ -251,7 +295,6 @@ export async function createSponsoredTrial(
 export function setOnboardingKey(secretKey: string): void {
     if (typeof window !== "undefined") {
         localStorage.setItem(`onboarding_key:${NFT_CONTRACT_ID}`, secretKey);
-        console.log("Onboarding key stored for", NFT_CONTRACT_ID);
     }
 }
 
@@ -282,7 +325,7 @@ export async function getOnboardingConfig(): Promise<{
     try {
         // Fetch config and daily count in parallel
         const [configResponse, countResponse] = await Promise.all([
-            fetch(`${getRpcUrl()}/`, {
+            fetch(`${getCurrentRpcUrl()}/`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -298,7 +341,7 @@ export async function getOnboardingConfig(): Promise<{
                     },
                 }),
             }),
-            fetch(`${getRpcUrl()}/`, {
+            fetch(`${getCurrentRpcUrl()}/`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -337,14 +380,6 @@ export async function getOnboardingConfig(): Promise<{
     }
 }
 
-/**
- * Get RPC URL based on network
- */
-function getRpcUrl(): string {
-    return NETWORK_ID === "mainnet"
-        ? "https://rpc.mainnet.near.org"
-        : "https://test.rpc.fastnear.com";
-}
 
 /**
  * Generate key pairs for gift links
@@ -370,7 +405,7 @@ export function generateKeyPairs(count: number): { publicKey: string; secretKey:
 export async function createGiftLinks(
     eventCid: string,
     numLinks: number,
-    wallet: any  // Wallet from wallet selector
+    wallet: WalletInstance
 ): Promise<GiftLinkResult[]> {
     if (numLinks < 1 || numLinks > 50) {
         throw new Error("Must create 1-50 links");
@@ -396,7 +431,7 @@ export async function createGiftLinks(
                         event_cid: eventCid,
                         public_keys: publicKeys,
                     },
-                    gas: "100000000000000", // 100 TGas
+                    gas: GAS_CONSTANTS.mediumGas.toString(),
                     deposit: totalDeposit,
                 },
             },
@@ -407,7 +442,7 @@ export async function createGiftLinks(
     const links: GiftLinkResult[] = keyPairs.map(kp => ({
         publicKey: kp.publicKey,
         secretKey: kp.secretKey,
-        link: `${APP_URL}/claim?key=${encodeURIComponent(kp.secretKey)}&pk=${encodeURIComponent(kp.publicKey)}`,
+        link: `${APP_URL}/claim#key=${encodeURIComponent(kp.secretKey)}`,
     }));
 
     return links;
@@ -418,7 +453,7 @@ export async function createGiftLinks(
  */
 export async function validateGiftLink(publicKey: string): Promise<GiftInfo | null> {
     try {
-        const response = await fetch(`${getRpcUrl()}/`, {
+        const response = await fetch(`${getCurrentRpcUrl()}/`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -472,7 +507,7 @@ export async function claimGiftAndCreateAccount(
 
         // v7: Create Account with signer
         const signer = new KeyPairSigner(keyPair);
-        const account = new Account(NFT_CONTRACT_ID, getRpcUrl(), signer);
+        const account = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), signer);
 
         // Call claim_gift_and_create_account using v7 actions format
         await account.signAndSendTransaction({
@@ -481,7 +516,7 @@ export async function claimGiftAndCreateAccount(
                 actions.functionCall(
                     "claim_gift_and_create_account",
                     { new_account_id: newAccountId, new_public_key: newPublicKey },
-                    BigInt("200000000000000"), // 200 TGas
+                    GAS_CONSTANTS.highGas,
                     BigInt(0) // No deposit
                 )
             ]
@@ -491,11 +526,11 @@ export async function claimGiftAndCreateAccount(
             success: true,
             accountId: newAccountId,
         };
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Error claiming gift:", error);
         return {
             success: false,
-            error: error.message || "Failed to claim gift",
+            error: error instanceof Error ? error.message : "Failed to claim gift",
         };
     }
 }
@@ -512,7 +547,7 @@ export async function claimGiftToExisting(
 
         // v7: Create Account with signer
         const signer = new KeyPairSigner(keyPair);
-        const account = new Account(NFT_CONTRACT_ID, getRpcUrl(), signer);
+        const account = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), signer);
 
         // v7 actions format for Account.signAndSendTransaction
         await account.signAndSendTransaction({
@@ -521,7 +556,7 @@ export async function claimGiftToExisting(
                 actions.functionCall(
                     "claim_gift",
                     { receiver_id: receiverId },
-                    BigInt("100000000000000"), // 100 TGas
+                    GAS_CONSTANTS.mediumGas,
                     BigInt(0) // No deposit
                 )
             ]
@@ -530,11 +565,11 @@ export async function claimGiftToExisting(
         return {
             success: true,
         };
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("Error claiming gift:", error);
         return {
             success: false,
-            error: error.message || "Failed to claim gift",
+            error: error instanceof Error ? error.message : "Failed to claim gift",
         };
     }
 }
@@ -577,7 +612,7 @@ export async function getGiftEventInfo(publicKey: string): Promise<{
     if (!giftInfo) return null;
 
     try {
-        const response = await fetch(`${getRpcUrl()}/`, {
+        const response = await fetch(`${getCurrentRpcUrl()}/`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

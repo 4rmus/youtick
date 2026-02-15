@@ -7,9 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Loader2, CheckCircle2, AlertCircle, Ticket, ExternalLink, Wallet, User, Play, Sparkles } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageContext";
 import { parseTitleMetadata } from "@/lib/metadata-parser";
+import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from "@/lib/constants";
+import { getCurrentRpcUrl } from "@/lib/rpc-failover";
+import { addBuyerToNovaGroup } from "@/lib/nova/post-purchase";
+import { pendingAccessQueue } from "@/lib/nova/pending-access-queue";
+import { NovaThumbnail } from "@/components/NovaThumbnail";
 
-const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || "testnet";
-const NFT_CONTRACT = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || "v1.utick.testnet";
+const NETWORK_ID = NEAR_CONFIG.networkId;
+const NFT_CONTRACT = NEAR_CONFIG.contractId;
 
 interface GiftInfo {
     eventTitle?: string;
@@ -22,8 +27,26 @@ interface GiftInfo {
 function ClaimContent() {
     const { t } = useLanguage();
     const searchParams = useSearchParams();
-    const secretKey = searchParams.get("secret") || searchParams.get("key");
-    const eventCidParam = searchParams.get("eventCid");
+    // Read key from hash fragment (secure) or query params (backward compat)
+    const [secretKey, setSecretKey] = useState<string | null>(null);
+
+    useEffect(() => {
+        // Priority 1: Hash fragment (new secure format)
+        const hash = window.location.hash.substring(1); // remove #
+        const hashParams = new URLSearchParams(hash);
+        const hashKey = hashParams.get("key");
+
+        // Priority 2: Query params (legacy links)
+        const queryKey = searchParams.get("secret") || searchParams.get("key");
+
+        const key = hashKey || queryKey;
+        setSecretKey(key);
+
+        // Clear sensitive data from URL
+        if (key) {
+            window.history.replaceState(null, "", window.location.pathname);
+        }
+    }, [searchParams]);
 
     const [step, setStep] = useState<"loading" | "preview" | "claim-options" | "creating-account" | "claiming" | "success" | "error">("loading");
     const [giftInfo, setGiftInfo] = useState<GiftInfo | null>(null);
@@ -51,9 +74,7 @@ function ClaimContent() {
             try {
                 // v7: Use Account directly to check existence
                 const { Account } = await import("near-api-js");
-                const rpcUrl = NETWORK_ID === "mainnet"
-                    ? "https://rpc.mainnet.near.org"
-                    : "https://test.rpc.fastnear.com";
+                const rpcUrl = getCurrentRpcUrl();
 
                 try {
                     // v7: Use JsonRpcProvider to check account existence
@@ -65,7 +86,7 @@ function ClaimContent() {
                         finality: 'final'
                     });
                     setAccountCheckStatus("taken");
-                } catch (err: any) {
+                } catch {
                     // Account doesn't exist = available
                     setAccountCheckStatus("available");
                 }
@@ -126,13 +147,6 @@ function ClaimContent() {
                     t.claim_page?.exclusive_content || "YouTick Exclusive Content"
                 );
 
-                console.log('[ClaimPage] Parsed metadata:', {
-                    rawTitle: eventData?.title,
-                    thumbnailCid: parsed.thumbnailCid,
-                    thumbnailUrl: parsed.thumbnailUrl,
-                    schemaVersion: parsed.schemaVersion
-                });
-
                 setGiftInfo({
                     eventTitle: parsed.title,
                     creator: giftData.creator_id,
@@ -141,25 +155,15 @@ function ClaimContent() {
                     description: t.claim_page?.ticket_for_content || "Özel içeriğe erişim bileti"
                 });
                 setStep("preview");
-            } catch (err: any) {
+            } catch (err: unknown) {
                 console.error("Gift validation error:", err);
-                if (eventCidParam) {
-                    setGiftInfo({
-                        eventTitle: t.claim_page?.exclusive_content || "YouTick Exclusive Content",
-                        creator: "Creator",
-                        eventCid: decodeURIComponent(eventCidParam),
-                        media: "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png"
-                    });
-                    setStep("preview");
-                } else {
-                    setError(t.claim_page?.gift_info_failed || "Hediye bilgisi alınamadı. Link geçersiz olabilir.");
-                    setStep("error");
-                }
+                setError(t.claim_page?.gift_info_failed || "Hediye bilgisi alınamadı. Link geçersiz olabilir.");
+                setStep("error");
             }
         };
 
         validateGift();
-    }, [secretKey, eventCidParam]);
+    }, [secretKey]);
 
     const handleClaimWithNewAccount = async () => {
         if (!isValidUsername(newUsername)) return;
@@ -195,7 +199,7 @@ function ClaimContent() {
                             new_account_id: fullAccountId,
                             new_public_key: newAccountPublicKey,
                         },
-                        BigInt("200000000000000"),
+                        GAS_CONSTANTS.highGas,
                         BigInt(0)
                     )
                 ]
@@ -208,15 +212,25 @@ function ClaimContent() {
             localStorage.setItem("trialAccountId", fullAccountId);
             localStorage.setItem("trialAccountNetwork", NETWORK_ID);
 
+            // Non-blocking: Add new account to Nova group for video access
+            if (giftInfo?.eventCid) {
+                const eventCid = giftInfo.eventCid;
+                addBuyerToNovaGroup(eventCid, fullAccountId).catch(err => {
+                    console.error('[Nova Post-Purchase] Group add failed:', err);
+                    pendingAccessQueue.add(eventCid, fullAccountId);
+                });
+            }
+
             setClaimedAccountId(fullAccountId);
             setTxHash(result.transaction.hash);
             setStep("success");
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("Create account error:", err);
+            const errMsg = err instanceof Error ? err.message : '';
             let errorMsg = t.claim_page?.account_create_failed || "Hesap oluşturulamadı.";
-            if (err.message?.includes("already claimed")) {
+            if (errMsg.includes("already claimed")) {
                 errorMsg = t.claim_page?.invalid_or_used || "Bu hediye linki daha önce kullanılmış.";
-            } else if (err.message?.includes("account already exists")) {
+            } else if (errMsg.includes("account already exists")) {
                 errorMsg = t.claim_page?.username_taken || "Bu hesap adı zaten kullanılıyor.";
             }
             setError(errorMsg);
@@ -249,21 +263,31 @@ function ClaimContent() {
                     actions.functionCall(
                         "claim_gift",
                         { receiver_id: existingAccountId.trim() },
-                        BigInt("100000000000000"),
-                        BigInt("10000000000000000000000")
+                        GAS_CONSTANTS.mediumGas,
+                        DEPOSIT_CONSTANTS.smallStorageDeposit
                     )
                 ]
             });
 
+            // Non-blocking: Add existing account to Nova group for video access
+            if (giftInfo?.eventCid) {
+                const eventCid = giftInfo.eventCid;
+                addBuyerToNovaGroup(eventCid, existingAccountId.trim()).catch(err => {
+                    console.error('[Nova Post-Purchase] Group add failed:', err);
+                    pendingAccessQueue.add(eventCid, existingAccountId.trim());
+                });
+            }
+
             setClaimedAccountId(existingAccountId.trim());
             setTxHash(result.transaction.hash);
             setStep("success");
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("Claim to existing error:", err);
+            const errMsg = err instanceof Error ? err.message : '';
             let errorMsg = t.claim_page?.transfer_failed || "Bilet aktarılamadı.";
-            if (err.message?.includes("already claimed")) {
+            if (errMsg.includes("already claimed")) {
                 errorMsg = t.claim_page?.invalid_or_used || "Bu hediye linki daha önce kullanılmış.";
-            } else if (err.message?.includes("Invalid")) {
+            } else if (errMsg.includes("Invalid")) {
                 errorMsg = t.claim_page?.invalid_link || "Geçersiz hediye linki.";
             }
             setError(errorMsg);
@@ -295,8 +319,8 @@ function ClaimContent() {
                 <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl overflow-hidden">
                     {/* Ticket Image/Thumbnail */}
                     <div className="relative aspect-video w-full overflow-hidden">
-                        <img
-                            src={giftInfo?.media}
+                        <NovaThumbnail
+                            url={giftInfo?.media}
                             alt={giftInfo?.eventTitle}
                             className="w-full h-full object-cover"
                         />
@@ -373,7 +397,7 @@ function ClaimContent() {
                     {/* Mini Preview Header */}
                     <div className="flex gap-3 p-4 bg-zinc-800/50 border-b border-zinc-700/50">
                         <div className="w-16 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-700">
-                            <img src={giftInfo?.media} alt="" className="w-full h-full object-cover" />
+                            <NovaThumbnail url={giftInfo?.media} alt="" className="w-full h-full object-cover" />
                         </div>
                         <div className="flex-1 min-w-0">
                             <h3 className="text-sm font-medium text-white truncate">{giftInfo?.eventTitle}</h3>
@@ -425,7 +449,7 @@ function ClaimContent() {
                                         maxLength={32}
                                     />
                                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 text-sm">
-                                        .testnet
+                                        .{NFT_CONTRACT.split('.').slice(1).join('.') || NFT_CONTRACT}
                                     </span>
                                 </div>
                                 {newUsername && !isValidUsername(newUsername) && (
@@ -524,8 +548,8 @@ function ClaimContent() {
                 <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl overflow-hidden">
                     {/* Success Header */}
                     <div className="relative aspect-video w-full overflow-hidden">
-                        <img
-                            src={giftInfo?.media}
+                        <NovaThumbnail
+                            url={giftInfo?.media}
                             alt={giftInfo?.eventTitle}
                             className="w-full h-full object-cover opacity-50"
                         />

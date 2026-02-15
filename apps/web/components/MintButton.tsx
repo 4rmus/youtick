@@ -4,16 +4,21 @@ import { Button } from "@/components/ui/button";
 import { Loader2, Coins, Ticket } from "lucide-react";
 import { actions, yoctoToNear, nearToYocto } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
+import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from '@/lib/constants';
+import { useNearPrice } from '@/hooks/useNearPrice';
 
 interface MintButtonProps {
     cid?: string;
 }
 
 export function MintButton({ cid }: MintButtonProps) {
-    const { selector, accountId, getWallet } = useWallet();
+    const { accountId, getWallet } = useWallet();
+    const { nearToUsdStr } = useNearPrice();
     const [minting, setMinting] = useState(false);
     const [price, setPrice] = useState<string | null>(null);
+    const [priceUsdCents, setPriceUsdCents] = useState<number | null>(null);
     const [loadingPrice, setLoadingPrice] = useState(false);
+    const [isBanned, setIsBanned] = useState(false);
 
     useEffect(() => {
         if (!cid) return;
@@ -21,20 +26,26 @@ export function MintButton({ cid }: MintButtonProps) {
         const fetchPrice = async () => {
             setLoadingPrice(true);
             try {
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+                const contractId = NEAR_CONFIG.contractId;
                 // v7: Use JsonRpcProvider directly for view calls
                 const provider = getProvider();
 
-                const event = await viewContract<{ price: string }>(
+                const event = await viewContract<{ price: string; price_usd?: number | null; banned?: boolean }>(
                     provider,
                     contractId,
                     'get_event',
                     { encrypted_cid: cid }
                 );
 
+                if (event?.banned) {
+                    setIsBanned(true);
+                    return;
+                }
+
                 if (event && event.price) {
                     // v7: yoctoToNear expects bigint, convert string from contract
                     setPrice(yoctoToNear(BigInt(event.price)));
+                    setPriceUsdCents(event.price_usd ?? null);
                 }
             } catch (e) {
                 console.error("Error fetching ticket price:", e);
@@ -51,7 +62,7 @@ export function MintButton({ cid }: MintButtonProps) {
         setMinting(true);
         try {
             const wallet = await getWallet();
-            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'v1.utick.testnet';
+            const contractId = NEAR_CONFIG.contractId;
 
             // SALES FLOW: Buy Ticket
             if (cid && price) {
@@ -64,7 +75,7 @@ export function MintButton({ cid }: MintButtonProps) {
                         receiver_id: accountId,
                         encrypted_cid: cid
                     },
-                    BigInt('30000000000000'), // 30 Tgas
+                    GAS_CONSTANTS.smallGas, // 30 Tgas
                     BigInt(depositYocto) + BigInt('12000000000000000000000') // Price + 0.012 NEAR (Storage + commission buffer)
                 );
 
@@ -94,8 +105,8 @@ export function MintButton({ cid }: MintButtonProps) {
                 const action = actions.functionCall(
                     'nft_mint',
                     args,
-                    BigInt('300000000000000'), // 300 Tgas
-                    BigInt('100000000000000000000000') // 0.1 NEAR
+                    GAS_CONSTANTS.standardGas, // 300 Tgas
+                    DEPOSIT_CONSTANTS.storageDeposit // 0.1 NEAR
                 );
 
                 await wallet.signAndSendTransaction({
@@ -111,7 +122,7 @@ export function MintButton({ cid }: MintButtonProps) {
         }
     };
 
-    if (!accountId) return null;
+    if (!accountId || isBanned) return null;
 
     if (loadingPrice) {
         return <Button disabled variant="outline" size="sm"><Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading price...</Button>;
@@ -131,7 +142,7 @@ export function MintButton({ cid }: MintButtonProps) {
             ) : (
                 <Coins className="h-4 w-4" />
             )}
-            {minting ? "Processing..." : price ? `Buy Ticket (${price} NEAR)` : "Mint Global Access Pass"}
+            {minting ? "Processing..." : price ? (priceUsdCents ? `Buy Ticket ($${(priceUsdCents / 100).toFixed(2)})` : `Buy Ticket (${nearToUsdStr(parseFloat(price))})`) : "Mint Global Access Pass"}
         </Button>
     );
 }
