@@ -19,7 +19,7 @@ import { createPrivateKey, createPublicKey, sign as cryptoSign } from 'crypto';
 import { execSync } from 'child_process';
 
 // ─── Config ──────────────────────────────────────────────────
-const CONTRACT_ID = 'youtick-prod-v1.near';
+const CONTRACT_ID = 'youtick.near';
 const CRUST_UPLOAD_URL = 'https://crustipfs.xyz/api/v0/add';
 const CREDS_PATH = join(process.env.HOME, '.near-credentials/mainnet', `${CONTRACT_ID}.json`);
 const WEB_DIR = new URL('../apps/web', import.meta.url).pathname;

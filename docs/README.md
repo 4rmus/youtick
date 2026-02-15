@@ -4,7 +4,7 @@
 
 YouTick is an open-source decentralized platform for token-gated video content. Creators upload encrypted videos to IPFS and monetize through NFT-gated access. Viewers purchase NFT tickets that grant permanent, transferable access to encrypted content.
 
-**Contract:** `youtick-prod-v1.near` · **Network:** NEAR Mainnet · **SDK:** NEAR SDK 5.5.0
+**Contract:** `youtick.near` · **Network:** NEAR Mainnet · **SDK:** NEAR SDK 5.5.0
 
 ---
 
@@ -161,7 +161,7 @@ All operations run client-side with zero server dependencies:
 
 | Resource | Value |
 |----------|-------|
-| Contract (Mainnet) | `youtick-prod-v1.near` |
+| Contract (Mainnet) | `youtick.near` |
 | Contract (Testnet) | `v1.utick.testnet` |
 | Nova Contract | `nova-sdk.near` |
 | Frontend Framework | Next.js 16.0.10 |

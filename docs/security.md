@@ -276,18 +276,18 @@ Banned events are blocked across all contract operations:
 
 ```bash
 # Ban an event
-near call youtick-prod-v1.near ban_event \
+near call youtick.near ban_event \
   '{"encrypted_cid":"Qm...","reason":"CopyrightViolation"}' \
-  --accountId youtick-prod-v1.near
+  --accountId youtick.near
 
 # Unban an event
-near call youtick-prod-v1.near unban_event \
+near call youtick.near unban_event \
   '{"encrypted_cid":"Qm..."}' \
-  --accountId youtick-prod-v1.near
+  --accountId youtick.near
 
 # List all banned events
-near view youtick-prod-v1.near get_banned_events '{}' \
-  --accountId youtick-prod-v1.near
+near view youtick.near get_banned_events '{}' \
+  --accountId youtick.near
 ```
 
 ### Ban Security Properties
@@ -392,7 +392,7 @@ fn check_and_increment_daily_limit(&mut self) -> bool {
 
 ### Ongoing Monitoring
 
-- [ ] Monitor contract storage growth via `near state youtick-prod-v1.near`
+- [ ] Monitor contract storage growth via `near state youtick.near`
 - [ ] Check for unusual transaction patterns on NearBlocks
 - [ ] Verify Nova group integrity (member counts match ticket sales)
 - [ ] Audit session key creations (watch for mass key generation)

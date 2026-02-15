@@ -45,7 +45,7 @@ Users only sign once during setup, then enjoy popup-free interactions.
 │           │    │  ┌────────────────────────────┐  │       │     │
 │           │    │  │ ed25519:ABC... (FullAccess)│  │       │     │
 │           │    │  │ ed25519:XYZ... (FunctionCall)│◄───────┘     │
-│           │    │  │   receiver: youtick-prod-v1.near │              │
+│           │    │  │   receiver: youtick.near │              │
 │           │    │  │   methods: *                  │              │
 │           │    │  └────────────────────────────┘  │              │
 │           │    └──────────────────────────────────┘              │

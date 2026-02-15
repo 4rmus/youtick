@@ -21,7 +21,7 @@
 
 set -euo pipefail
 
-CONTRACT_ID="youtick-prod-v1.near"
+CONTRACT_ID="youtick.near"
 WEB_DIR="$(cd "$(dirname "$0")/../apps/web" && pwd)"
 OUT_DIR="$WEB_DIR/out"
 SET_URL=false

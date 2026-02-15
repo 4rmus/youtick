@@ -307,7 +307,7 @@ Recipient -> Claim Page
 ```
 Buyer (holding wNEAR) -> ft_transfer_call
     |
-    |-[1]- Send wNEAR to youtick-prod-v1.near via ft_transfer_call
+    |-[1]- Send wNEAR to youtick.near via ft_transfer_call
     |          msg: JSON with event CID and receiver
     |
     |-[2]- Contract ft_on_transfer processes purchase
@@ -324,7 +324,7 @@ Buyer (holding wNEAR) -> ft_transfer_call
 
 | Contract | Network | Address |
 |----------|---------|---------|
-| NFT Ticket | Mainnet | `youtick-prod-v1.near` |
+| NFT Ticket | Mainnet | `youtick.near` |
 | NFT Ticket | Testnet | `v1.utick.testnet` |
 | Nova SDK | Mainnet | `nova-sdk.near` |
 | Nova SDK | Testnet | `nova-sdk-6.testnet` |

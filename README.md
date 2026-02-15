@@ -186,7 +186,7 @@ youtick/
 
 ## Smart Contract
 
-**Contract ID:** `youtick-prod-v1.near` (Mainnet)
+**Contract ID:** `youtick.near` (Mainnet)
 **Language:** Rust · **NEAR SDK:** 5.5.0 · **Storage Version:** V8
 
 ### Key Methods
@@ -324,6 +324,6 @@ git push origin feature/your-feature
 
 ---
 
-**Contract:** `youtick-prod-v1.near` · **Network:** NEAR Mainnet · **Encryption:** Nova TEE (AES-256-GCM)
+**Contract:** `youtick.near` · **Network:** NEAR Mainnet · **Encryption:** Nova TEE (AES-256-GCM)
 
 *Own Your Content. Own Your Audience. Own Your Revenue.*

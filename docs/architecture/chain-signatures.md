@@ -147,7 +147,7 @@ When using the proxy contract pattern (e.g., calling MPC via nft-ticket contract
 // - accountId: CONTRACT_ID (not user's account)
 // - path: "{userAccount}/{derivationPath}"
 
-const CONTRACT_ID = 'youtick-prod-v1.near';
+const CONTRACT_ID = 'youtick.near';
 const compositePath = `${accountId}/${path}`; // "user.near/nova/signing"
 const derivedKey = deriveChildKey(masterKey, CONTRACT_ID, compositePath);
 ```
@@ -383,7 +383,7 @@ localStorage.setItem(cacheKey, address);
 NEXT_PUBLIC_MPC_CONTRACT=v1.signer-prod.near
 
 # Contract ID (required for derivation path)
-NEXT_PUBLIC_NFT_CONTRACT_ID=youtick-prod-v1.near
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 ```
 
 ---

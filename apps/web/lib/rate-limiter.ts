@@ -295,7 +295,7 @@ class DailyGlobalLimiter {
         if (!isServer) return;
         try {
             this.lastSync = Date.now();
-            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'youtick-prod-v1.near';
+            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'youtick.near';
             const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
 
             const rpcUrl = networkId === 'mainnet'

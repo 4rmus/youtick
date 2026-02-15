@@ -124,7 +124,7 @@ Trusted Execution Environment for secure key management.
 │          └── keys: HashMap<Version, AES256Key>              │
 │                                                              │
 │  contract_verifier: NearContractVerifier                    │
-│    └── contract_id: "youtick-prod-v1.near"                      │
+│    └── contract_id: "youtick.near"                      │
 │    └── rpc_url: "https://rpc.mainnet.near.org"              │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘

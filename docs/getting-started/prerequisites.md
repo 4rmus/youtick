@@ -67,7 +67,7 @@ rustup target add wasm32-unknown-unknown
 npm install -g near-cli
 
 # Or use npx without installing
-npx near-cli view youtick-prod-v1.near nft_metadata '{}'
+npx near-cli view youtick.near nft_metadata '{}'
 ```
 
 ---
@@ -88,7 +88,7 @@ npx near-cli view youtick-prod-v1.near nft_metadata '{}'
 
 | Network | Contract ID | RPC Endpoint |
 |---------|-------------|-------------|
-| **Mainnet** | `youtick-prod-v1.near` | `https://free.rpc.fastnear.com` |
+| **Mainnet** | `youtick.near` | `https://free.rpc.fastnear.com` |
 | **Testnet** | `v1.utick.testnet` | `https://rpc.testnet.near.org` |
 
 ---

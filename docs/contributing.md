@@ -207,7 +207,7 @@ Before requesting review, confirm the following:
 
 Smart contract modifications require extra care due to their on-chain and financial nature:
 
-1. **Always test on dev accounts** -- never on `youtick-prod-v1.near`
+1. **Always test on dev accounts** -- never on `youtick.near`
 2. **Consider state migration implications** -- storage layout changes can break existing data
 3. **Document any storage key changes** -- V8 collision-safe prefixes must be maintained
 4. **Use the lazy storage pattern** for new collections to avoid migrations

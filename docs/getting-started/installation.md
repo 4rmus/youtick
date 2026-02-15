@@ -44,7 +44,7 @@ Edit `.env.local` with your configuration. See [configuration.md](./configuratio
 
 ```env
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=youtick-prod-v1.near
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 NEXT_PUBLIC_NOVA_NETWORK=mainnet
 NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk.near
 ```
@@ -111,7 +111,7 @@ near deploy dev-xxx.testnet \
 near view dev-xxx.testnet nft_metadata '{}'
 ```
 
-> Never deploy directly to `youtick-prod-v1.near` (production). Always use testnet dev accounts.
+> Never deploy directly to `youtick.near` (production). Always use testnet dev accounts.
 
 ---
 
