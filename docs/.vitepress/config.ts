@@ -75,7 +75,7 @@ export default withMermaid(
       ],
 
       socialLinks: [
-        { icon: 'github', link: 'https://github.com/4rmus/youtick-mvp' },
+        { icon: 'github', link: 'https://github.com/4rmus/youtick' },
       ],
 
       search: {
