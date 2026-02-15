@@ -307,7 +307,7 @@ export function TrialOnboarding({ onTrialCreated, onConnectWallet }: TrialOnboar
                             maxLength={32}
                         />
                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">
-                            {giftInfo ? ".testnet" : ".utick.testnet"}
+                            {giftInfo ? ".near" : ".youtick.near"}
                         </span>
                     </div>
 
