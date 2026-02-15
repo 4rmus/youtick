@@ -8,8 +8,8 @@ on:
 
 env:
   # Public vars (Updated for current config)
-  NEXT_PUBLIC_NEAR_NETWORK: testnet
-  NEXT_PUBLIC_NFT_CONTRACT_ID: v3.utick.testnet
+  NEXT_PUBLIC_NEAR_NETWORK: mainnet
+  NEXT_PUBLIC_NFT_CONTRACT_ID: youtick.near
 
 jobs:
   build-and-deploy:
@@ -64,8 +64,8 @@ jobs:
             # .env.local dosyasını oluştur (Secrets kullanarak)
             echo "Creating .env.local..."
             cat <<EOF > .env.local
-            NEXT_PUBLIC_NEAR_NETWORK=testnet
-            NEXT_PUBLIC_NFT_CONTRACT_ID=v3.utick.testnet
+            NEXT_PUBLIC_NEAR_NETWORK=mainnet
+            NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
             RELAYER_ACCOUNT_ID=${{ secrets.RELAYER_ACCOUNT_ID }}
             RELAYER_PRIVATE_KEY=${{ secrets.RELAYER_PRIVATE_KEY }}
             EOF
