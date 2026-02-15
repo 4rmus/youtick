@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 #   wrangler secret put NOVA_API_KEY
 
 [vars]
-ALLOWED_ORIGINS = "https://youtick.near.page,http://localhost:3000"
+ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,http://localhost:3000"
 
 # KV namespace for rate limiting
 # Create with: wrangler kv:namespace create RATE_LIMIT

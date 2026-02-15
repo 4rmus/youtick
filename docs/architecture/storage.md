@@ -370,7 +370,7 @@ The decentralized model eliminates ongoing storage fees and egress charges, maki
 
 ## Related Documentation
 
-- [Architecture Overview](./overview.md) - System architecture and technology stack
+- [Architecture Overview](../overview.md) - System architecture and technology stack
 - [Nova Protocol](./nova-protocol.md) - Encryption system and TEE integration
 - [Shade Agent](./shade-agent.md) - TEE key management details
 - [Smart Contract](./smart-contract.md) - Contract architecture and NFT metadata
