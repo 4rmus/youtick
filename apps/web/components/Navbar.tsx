@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import Link from '@/components/Web4Link';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/components/providers/LanguageContext';
@@ -11,8 +11,8 @@ import { Menu, X, User, LogOut, Sparkles } from 'lucide-react';
 import { Branding } from '@/components/landing/Branding';
 
 export function Navbar() {
-    const { modal, accountId, selector, getWallet } = useWallet();
-    const { language, setLanguage, t } = useLanguage();
+    const { connect, accountId, signOut } = useWallet();
+    const { language, t } = useLanguage();
     const [mounted, setMounted] = useState(false);
     const pathname = usePathname();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -23,13 +23,12 @@ export function Navbar() {
     }, []);
 
     const handleSignIn = () => {
-        modal?.show();
+        connect();
     };
 
     const handleSignOut = async () => {
         try {
-            const wallet = await getWallet();
-            await wallet.signOut();
+            await signOut();
             window.location.reload();
         } catch (e) {
             console.error("Failed to sign out:", e);
@@ -123,6 +122,11 @@ export function Navbar() {
                             {link.label}
                         </Link>
                     ))}
+                    <div className="h-px bg-white/10 my-2" />
+                    <div className="flex items-center gap-4 text-sm">
+                        <Link href="/terms" onClick={() => setIsMenuOpen(false)} className="text-zinc-500 hover:text-zinc-300 transition-colors">Terms</Link>
+                        <Link href="/privacy" onClick={() => setIsMenuOpen(false)} className="text-zinc-500 hover:text-zinc-300 transition-colors">Privacy</Link>
+                    </div>
                     <div className="h-px bg-white/10 my-2" />
                     {!accountId && (
                         <Link href="/trial" onClick={() => setIsMenuOpen(false)} className="text-near-green font-semibold flex items-center gap-2">

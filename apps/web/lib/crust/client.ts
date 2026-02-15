@@ -1,335 +1,174 @@
 /**
- * Crust IPFS Upload Client
+ * Crust Client Module
  *
- * Provides client-side file uploads to Crust IPFS network using W3Auth.
- * This provides a fully decentralized approach to IPFS storage.
- *
- * Features:
- * - 100% client-side uploads (no server proxy needed)
- * - Session Key authentication (signless UX)
- * - Automatic retry on failure
- * - Upload progress tracking
- *
- * @see https://wiki.crust.network/docs/en/buildIPFSWeb3AuthGW
+ * Handles file uploads to Crust IPFS and pin operations.
+ * Uses W3Auth (NEAR Session Key) for authentication.
  */
 
+import { CrustUploadResult, CrustPinResult, CrustError } from './types';
+import { CRUST_CONSTANTS } from './config';
 import { generateW3AuthToken } from './w3auth';
-import { getUploadGateway, getGatewayUrl } from './gateway';
-import type {
-    CrustUploadResult,
-    CrustUploadOptions,
-    IpfsAddResponse
-} from './types';
-import { CrustError } from './types';
-
-// Default upload timeout (5 minutes for large files)
-const DEFAULT_TIMEOUT = 5 * 60 * 1000;
-
-// Maximum file size for single upload (100MB)
-// Larger files should use chunked upload
-const MAX_SINGLE_UPLOAD_SIZE = 100 * 1024 * 1024;
-
+import { getGatewayUrl } from './gateway';
 
 /**
- * Upload a file to Crust IPFS using Session Key authentication
- *
- * This is the primary upload function that provides signless UX.
- * The Session Key stored in localStorage is used to generate W3Auth tokens
- * without any user interaction or gas costs.
+ * Upload a file to Crust IPFS
  *
  * @param file - File or Blob to upload
- * @param accountId - NEAR account ID for authentication
- * @param options - Upload options (filename, progress callback, timeout)
- * @returns Upload result with CID
- * @throws CrustError on upload failure
+ * @param accountId - NEAR account ID (for W3Auth)
+ * @param options - Optional upload options
+ * @returns CrustUploadResult with CID and size
+ * @throws CrustError if upload fails
  */
-export async function uploadFile(
-    file: File | Blob,
-    accountId: string,
-    options: CrustUploadOptions = {}
+export async function uploadToCrust(
+  file: Blob,
+  accountId: string,
+  options?: {
+    onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void;
+    timeout?: number;
+  }
 ): Promise<CrustUploadResult> {
-    const { filename, onProgress, timeout = DEFAULT_TIMEOUT } = options;
+  try {
+    // Generate W3Auth token
+    const authToken = await generateW3AuthToken(accountId);
 
-    // Log decentralization metric
-    console.log('[DECENTRALIZATION_METRIC] crust_upload_start', {
-        accountId,
-        fileSize: file.size,
-        method: 'session_key'
-    });
-
-    // Warn for large files
-    if (file.size > MAX_SINGLE_UPLOAD_SIZE) {
-        console.warn(
-            `[Crust] File size (${Math.round(file.size / 1024 / 1024)}MB) exceeds recommended limit. ` +
-            `Consider chunked upload for better reliability.`
-        );
-    }
-
-    // Generate W3Auth token using Session Key
-    const { authHeader } = await generateW3AuthToken(accountId);
-
-    // Prepare upload file
-    const uploadFile = file instanceof File
-        ? file
-        : new File([file], filename || 'upload', { type: file.type });
-
-    // Create FormData
+    // Build FormData
     const formData = new FormData();
-    formData.append('file', uploadFile);
+    formData.append('file', file);
 
-    // Get upload endpoint
-    const uploadEndpoint = `${getUploadGateway()}/api/v0/add`;
-
-    console.log('[Crust] Uploading to:', uploadEndpoint);
-    console.log('[Crust] File:', uploadFile.name, `(${Math.round(uploadFile.size / 1024)}KB)`);
-
-    // Create abort controller for timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-    try {
-        // Perform upload with XMLHttpRequest for progress tracking
-        const result = await uploadWithProgress(
-            uploadEndpoint,
-            formData,
-            authHeader,
-            controller.signal,
-            onProgress
-        );
-
-        clearTimeout(timeoutId);
-
-        // Parse response
-        const response = result as IpfsAddResponse;
-
-        if (!response.Hash) {
-            throw new CrustError(
-                'INVALID_RESPONSE',
-                'Upload succeeded but no CID returned'
-            );
-        }
-
-        const uploadResult: CrustUploadResult = {
-            cid: response.Hash,
-            size: parseInt(response.Size, 10),
-            name: response.Name
-        };
-
-        console.log('[Crust] Upload successful!');
-        console.log('[Crust] CID:', uploadResult.cid);
-        console.log('[Crust] Size:', uploadResult.size, 'bytes');
-        console.log('[Crust] Gateway URL:', `https://ipfs.io/ipfs/${uploadResult.cid}`);
-
-        // Note: Pinning removed for 100% decentralization
-        // The file is already on IPFS network via crustipfs.xyz upload
-        // and accessible via any IPFS gateway (ipfs.io, dweb.link, etc.)
-
-        console.log('[DECENTRALIZATION_METRIC] crust_upload_success', {
-            accountId,
-            cid: uploadResult.cid,
-            size: uploadResult.size,
-            method: 'client_side_w3auth'
-        });
-
-        return uploadResult;
-
-    } catch (error: unknown) {
-        clearTimeout(timeoutId);
-
-        if (error instanceof CrustError) {
-            throw error;
-        }
-
-        const err = error instanceof Error ? error : new Error(String(error));
-
-        // Handle abort (timeout)
-        if (err.name === 'AbortError') {
-            throw new CrustError(
-                'NETWORK_ERROR',
-                `Upload timed out after ${timeout / 1000}s`,
-                err
-            );
-        }
-
-        // Handle network errors
-        if (err.message.includes('fetch') || err.message.includes('network')) {
-            throw new CrustError(
-                'NETWORK_ERROR',
-                'Network error during upload. Please check your connection.',
-                err
-            );
-        }
-
-        // Handle auth errors
-        if (err.message.includes('401') || err.message.includes('403')) {
-            throw new CrustError(
-                'AUTH_FAILED',
-                'W3Auth authentication failed. Please reconnect your wallet.',
-                err
-            );
-        }
-
-        throw new CrustError(
-            'UPLOAD_FAILED',
-            `Upload failed: ${err.message}`,
-            err
-        );
-    }
-}
-
-/**
- * Upload file with progress tracking using fetch
- * Falls back to XHR if progress tracking is needed
- */
-async function uploadWithProgress(
-    url: string,
-    formData: FormData,
-    authHeader: string,
-    signal: AbortSignal,
-    onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
-): Promise<IpfsAddResponse> {
-    // If no progress callback, use simple fetch
-    if (!onProgress) {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Authorization': authHeader
-            },
-            body: formData,
-            signal
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`HTTP ${response.status}: ${errorText}`);
-        }
-
-        return response.json();
-    }
+    const timeout = options?.timeout || CRUST_CONSTANTS.UPLOAD_TIMEOUT;
 
     // Use XMLHttpRequest for progress tracking
-    return new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
+    const result = await new Promise<CrustUploadResult>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const timer = setTimeout(() => {
+        xhr.abort();
+        reject(new CrustError('TIMEOUT', `Upload timed out after ${timeout}ms`));
+      }, timeout);
 
-        // Track upload progress
-        xhr.upload.onprogress = (event) => {
-            if (event.lengthComputable) {
-                onProgress({
-                    loaded: event.loaded,
-                    total: event.total,
-                    percentage: Math.round((event.loaded / event.total) * 100)
-                });
-            }
-        };
-
-        xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-                try {
-                    const response = JSON.parse(xhr.responseText);
-                    resolve(response);
-                } catch {
-                    reject(new Error('Invalid JSON response'));
-                }
-            } else {
-                reject(new Error(`HTTP ${xhr.status}: ${xhr.responseText}`));
-            }
-        };
-
-        xhr.onerror = () => {
-            reject(new Error('Network error during upload'));
-        };
-
-        xhr.ontimeout = () => {
-            reject(new Error('Upload timed out'));
-        };
-
-        // Handle abort signal
-        signal.addEventListener('abort', () => {
-            xhr.abort();
-            reject(new Error('Upload aborted'));
-        });
-
-        xhr.open('POST', url);
-        xhr.setRequestHeader('Authorization', authHeader);
-        xhr.send(formData);
-    });
-}
-
-/**
- * Upload multiple files in parallel
- *
- * @param files - Array of files to upload
- * @param accountId - NEAR account ID
- * @param options - Upload options
- * @returns Array of upload results
- */
-export async function uploadFiles(
-    files: Array<File | Blob>,
-    accountId: string,
-    options: CrustUploadOptions = {}
-): Promise<CrustUploadResult[]> {
-    const results: CrustUploadResult[] = [];
-    const errors: Error[] = [];
-
-    // Upload in parallel (max 3 concurrent)
-    const CONCURRENCY = 3;
-
-    for (let i = 0; i < files.length; i += CONCURRENCY) {
-        const batch = files.slice(i, i + CONCURRENCY);
-        const batchResults = await Promise.allSettled(
-            batch.map((file, index) =>
-                uploadFile(file, accountId, {
-                    ...options,
-                    filename: options.filename ? `${options.filename}_${i + index}` : undefined
-                })
-            )
-        );
-
-        for (const result of batchResults) {
-            if (result.status === 'fulfilled') {
-                results.push(result.value);
-            } else {
-                errors.push(result.reason);
-            }
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable && options?.onProgress) {
+          options.onProgress({
+            loaded: event.loaded,
+            total: event.total,
+            percentage: Math.round((event.loaded / event.total) * 100),
+          });
         }
+      });
+
+      xhr.addEventListener('load', () => {
+        clearTimeout(timer);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const response = JSON.parse(xhr.responseText);
+            resolve({
+              cid: response.Hash,
+              size: Number(response.Size) || file.size,
+            });
+          } catch (err) {
+            reject(new CrustError('UPLOAD_FAILED', `Invalid response from Crust: ${xhr.responseText}`));
+          }
+        } else {
+          reject(new CrustError('UPLOAD_FAILED', `Crust upload returned HTTP ${xhr.status}: ${xhr.responseText}`));
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        clearTimeout(timer);
+        reject(new CrustError('UPLOAD_FAILED', 'Network error during Crust upload'));
+      });
+
+      xhr.addEventListener('abort', () => {
+        clearTimeout(timer);
+        reject(new CrustError('TIMEOUT', 'Crust upload aborted'));
+      });
+
+      xhr.open('POST', CRUST_CONSTANTS.UPLOAD_ENDPOINT);
+      xhr.setRequestHeader('Authorization', authToken.header);
+      xhr.send(formData);
+    });
+
+    console.log('[DECENTRALIZATION_METRIC] crust_upload_success', {
+      accountId,
+      cid: result.cid,
+      size: result.size,
+    });
+
+    return result;
+  } catch (error: unknown) {
+    if (error instanceof CrustError) {
+      throw error;
     }
 
-    if (errors.length > 0 && results.length === 0) {
-        throw new CrustError(
-            'UPLOAD_FAILED',
-            `All uploads failed. First error: ${errors[0].message}`,
-            errors[0]
-        );
-    }
-
-    return results;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new CrustError(
+      'UPLOAD_FAILED',
+      `Crust upload failed: ${errorMessage}`,
+      error instanceof Error ? error : undefined
+    );
+  }
 }
 
 /**
- * Get the URL for accessing uploaded content
+ * Verify a CID is pinned on Crust by checking the Crust API
  *
- * @param cid - IPFS CID
- * @returns Full gateway URL for the content
+ * Since we upload directly to Crust (crustipfs.xyz/api/v0/add),
+ * the file is already pinned. This just confirms availability
+ * via the Crust read endpoint (POST /api/v0/cat).
+ *
+ * @param cid - IPFS CID to verify
+ * @param _accountId - NEAR account ID (unused, kept for API compat)
+ * @returns CrustPinResult with status
  */
-export function getContentUrl(cid: string): string {
-    return getGatewayUrl(cid);
+export async function pinOnCrust(
+  cid: string,
+  _accountId: string
+): Promise<CrustPinResult> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CRUST_CONSTANTS.FETCH_TIMEOUT);
+
+    // HEAD-like check via Crust API — file was already uploaded, just verify it's available
+    const response = await fetch(`${CRUST_CONSTANTS.READ_ENDPOINT}?arg=${cid}`, {
+      method: 'POST',
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (response.ok) {
+      // Consume and discard the body to release the connection
+      await response.blob();
+      return { cid, status: 'pinned', gateway: 'crustipfs.xyz' };
+    }
+
+    console.warn('[CRUST Pin] CID not yet available on Crust:', cid, response.status);
+    return { cid, status: 'failed', gateway: 'crustipfs.xyz' };
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.warn('[CRUST Pin] Verification skipped (non-blocking):', errorMessage);
+    return { cid, status: 'failed', gateway: 'crustipfs.xyz' };
+  }
 }
 
 /**
- * Upload JSON data directly
+ * Verify that a CID is available on Crust gateways
  *
- * @param data - JSON-serializable data
- * @param accountId - NEAR account ID
- * @param filename - Optional filename
- * @returns Upload result with CID
+ * @param cid - IPFS CID to verify
+ * @returns true if accessible
  */
-export async function uploadJson(
-    data: unknown,
-    accountId: string,
-    filename: string = 'data.json'
-): Promise<CrustUploadResult> {
-    const jsonString = JSON.stringify(data);
-    const blob = new Blob([jsonString], { type: 'application/json' });
+export async function verifyCrustAvailability(cid: string): Promise<boolean> {
+  try {
+    const url = getGatewayUrl(cid);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CRUST_CONSTANTS.FETCH_TIMEOUT);
 
-    return uploadFile(blob, accountId, { filename });
+    const response = await fetch(url, {
+      method: 'HEAD',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timer);
+    return response.ok;
+  } catch {
+    return false;
+  }
 }

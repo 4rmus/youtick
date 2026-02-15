@@ -1,10 +1,10 @@
 // lib/trial-wallet.ts - near-api-js v7 compatible
-import { Account, KeyPair, KeyPairSigner, type KeyPairString } from "near-api-js";
+import { Account, KeyPair, KeyPairSigner, type KeyPairString, type Action } from "near-api-js";
 import { BrowserKeyStore } from "./keystore-v7";
 
-const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet';
+const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
 const RPC_URL = NETWORK_ID === 'mainnet'
-    ? 'https://rpc.mainnet.near.org'
+    ? 'https://free.rpc.fastnear.com'
     : 'https://test.rpc.fastnear.com';
 
 /**
@@ -34,7 +34,7 @@ export class TrialWallet {
         return this.account;
     }
 
-    async signAndSendTransaction(params: { receiverId: string; actions: any[] }) {
+    async signAndSendTransaction(params: { receiverId: string; actions: Action[] }) {
         const account = await this.getAccount();
         return await account.signAndSendTransaction({
             receiverId: params.receiverId,
@@ -42,7 +42,7 @@ export class TrialWallet {
         });
     }
 
-    async signAndSendTransactions(params: { transactions: { receiverId: string; actions: any[] }[] }) {
+    async signAndSendTransactions(params: { transactions: { receiverId: string; actions: Action[] }[] }) {
         const account = await this.getAccount();
         const results = [];
 

@@ -1,142 +1,195 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
-import { setupWalletSelector } from '@near-wallet-selector/core';
-import { setupMyNearWallet } from '@near-wallet-selector/my-near-wallet';
-import { setupModal } from '@near-wallet-selector/modal-ui-js';
-import type { WalletSelector, AccountState } from '@near-wallet-selector/core';
-import type { WalletSelectorModal } from '@near-wallet-selector/modal-ui-js';
-import { usePKPMint, usePKPData } from '@/lib/hooks/useSessionState';
-import '@near-wallet-selector/modal-ui-js/styles.css';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import type { WalletSelector, Wallet } from '@near-wallet-selector/core';
+import type { WalletSelectorModal } from '@near-wallet-selector/modal-ui';
+import type { WalletInstance } from '@/lib/types';
+import { NEAR_CONFIG } from '@/lib/constants';
 
 interface WalletContextValue {
-    selector: WalletSelector | null;
-    modal: WalletSelectorModal | null;
-    accounts: Array<AccountState>;
     accountId: string | null;
     isTrial: boolean;
-    getWallet: () => Promise<any>;
-    // PKP state
-    pkpData: { publicKey: string; ethAddress: string; tokenId: string } | null;
-    isPKPMinting: boolean;
+    /** Active wallet ID: 'my-near-wallet' | 'meteor-wallet' | null */
+    walletType: string | null;
+    getWallet: () => Promise<WalletInstance>;
+    signOut: () => Promise<void>;
+    connect: () => Promise<void>;
+    /** Activate an EVM-linked implicit NEAR account without page refresh */
+    setEvmLinkedAccount: (accountId: string) => void;
+    isReady: boolean;
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
 
+/**
+ * Adapt wallet-selector's Wallet to our WalletInstance interface.
+ * near-api-js v7 Action objects are passed through directly since
+ * wallet-selector v10 uses `Action = NAJAction` from @near-js/transactions.
+ */
+function createWalletAdapter(wallet: Wallet): WalletInstance {
+    return {
+        async signAndSendTransaction(params) {
+            const result = await wallet.signAndSendTransaction({
+                receiverId: params.receiverId,
+                actions: params.actions as Parameters<typeof wallet.signAndSendTransaction>[0]['actions'],
+            });
+            return (result || {}) as object;
+        },
+        async signAndSendTransactions(params) {
+            const result = await wallet.signAndSendTransactions({
+                transactions: params.transactions as Parameters<typeof wallet.signAndSendTransactions>[0]['transactions'],
+            });
+            return (result || []) as object[];
+        },
+        async getAccounts() {
+            return wallet.getAccounts();
+        },
+    };
+}
+
 export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [selector, setSelector] = useState<WalletSelector | null>(null);
-    const [modal, setModal] = useState<WalletSelectorModal | null>(null);
-    const [accounts, setAccounts] = useState<Array<AccountState>>([]);
+    const selectorRef = useRef<WalletSelector | null>(null);
+    const modalRef = useRef<WalletSelectorModal | null>(null);
+    const subscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
+    const [accountId, setAccountId] = useState<string | null>(null);
+    const [walletType, setWalletType] = useState<string | null>(null);
     const [trialAccountId, setTrialAccountId] = useState<string | null>(null);
+    const [evmLinkedAccountId, setEvmLinkedAccountId] = useState<string | null>(null);
+    const [isReady, setIsReady] = useState(false);
 
-    // PKP minting state
-    const pkpMintMutation = usePKPMint();
-    const pkpMintAttempted = useRef<Set<string>>(new Set());
-
-    // Initial setup
     useEffect(() => {
+        let mounted = true;
+
         // Check for trial account
-        if (typeof window !== "undefined") {
-            const storedTrial = localStorage.getItem("trialAccountId");
+        if (typeof window !== 'undefined') {
+            const storedTrial = localStorage.getItem('trialAccountId');
             if (storedTrial) {
                 setTrialAccountId(storedTrial);
             }
+            // Check for EVM-linked implicit NEAR account (MetaMask-only users)
+            const storedEvmAccount = localStorage.getItem('evmLinkedNearAccount');
+            if (storedEvmAccount) {
+                setEvmLinkedAccountId(storedEvmAccount);
+            }
         }
 
-        setupWalletSelector({
-            network: (process.env.NEXT_PUBLIC_NEAR_NETWORK as 'testnet' | 'mainnet') || 'testnet',
-            modules: [setupMyNearWallet()],
-        })
-            .then((selector) => {
-                setSelector(selector);
-                setAccounts(selector.store.getState().accounts);
+        const network = (process.env.NEXT_PUBLIC_NEAR_NETWORK as 'testnet' | 'mainnet') || 'mainnet';
+        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || NEAR_CONFIG.contractId;
 
-                // P1 LCP Optimization: Remove arbitrary delay, setup modal immediately
-                // The selector is already ready at this point
-                const modal = setupModal(selector, {
-                    contractId: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || '',
-                });
-                setModal(modal);
-            })
-            .catch((err) => {
-                console.error('Failed to setup wallet selector', err);
+        // Dynamic imports to avoid SSR issues with wallet-selector modules
+        Promise.all([
+            import('@near-wallet-selector/core'),
+            import('@near-wallet-selector/modal-ui'),
+            import('@near-wallet-selector/my-near-wallet'),
+            import('@near-wallet-selector/meteor-wallet'),
+        ]).then(async ([
+            { setupWalletSelector },
+            { setupModal },
+            { setupMyNearWallet },
+            { setupMeteorWallet },
+        ]) => {
+            if (!mounted) return;
+
+            const selector = await setupWalletSelector({
+                network,
+                modules: [
+                    setupMyNearWallet(),
+                    setupMeteorWallet(),
+                ],
             });
+
+            if (!mounted) return;
+
+            selectorRef.current = selector;
+            modalRef.current = setupModal(selector, { contractId });
+
+            // Subscribe to account and wallet changes
+            const subscription = selector.store.observable.subscribe((state) => {
+                if (!mounted) return;
+                const accounts = state.accounts;
+                setAccountId(accounts.length > 0 ? accounts[0].accountId : null);
+                setWalletType(state.selectedWalletId ?? null);
+            });
+            subscriptionRef.current = subscription;
+
+            // Check existing session
+            const state = selector.store.getState();
+            if (state.accounts.length > 0) {
+                setAccountId(state.accounts[0].accountId);
+            }
+            setWalletType(state.selectedWalletId ?? null);
+
+            setIsReady(true);
+        }).catch((err) => {
+            if (!mounted) return;
+            console.error('Failed to setup wallet selector:', err);
+            setIsReady(true);
+        });
+
+        return () => {
+            mounted = false;
+            subscriptionRef.current?.unsubscribe();
+        };
     }, []);
 
-    // Subscribe to wallet selector changes
-    useEffect(() => {
-        if (!selector) {
-            return;
-        }
+    // Determine active account (Wallet > Trial > EVM-linked implicit)
+    const activeAccountId = accountId || trialAccountId || evmLinkedAccountId;
+    const isTrial = !accountId && !!trialAccountId;
+    const isEvmLinked = !accountId && !trialAccountId && !!evmLinkedAccountId;
 
-        const subscription = selector.store.observable.subscribe((state) => {
-            setAccounts(state.accounts);
-        });
-
-        return () => subscription.unsubscribe();
-    }, [selector]);
-
-    // Determine active account (Wallet Selector > Trial Account)
-    const walletAccountId = accounts.find((account) => account.active)?.accountId || null;
-    const activeAccountId = walletAccountId || trialAccountId;
-    const isTrial = !walletAccountId && !!trialAccountId;
-
-    // Get PKP data from React Query cache
-    const { data: pkpData } = usePKPData(activeAccountId);
-
-    // PKP Onboarding: Mint PKP on wallet connect (background, non-blocking)
-    useEffect(() => {
-        if (!activeAccountId) return;
-
-        // Skip if already attempted for this account
-        if (pkpMintAttempted.current.has(activeAccountId)) return;
-
-        // Skip if PKP already exists
-        const existingPkp = localStorage.getItem(`lit_pkp_${activeAccountId}`);
-        if (existingPkp) return;
-
-        // Skip if mutation is already pending
-        if (pkpMintMutation.isPending) return;
-
-        // Mark as attempted to prevent double-minting (React StrictMode safety)
-        pkpMintAttempted.current.add(activeAccountId);
-
-        // Mint PKP in background (non-blocking)
-        console.log('[WalletProvider] Starting background PKP mint for:', activeAccountId);
-        pkpMintMutation.mutate(activeAccountId, {
-            onSuccess: (data) => {
-                console.log('[WalletProvider] PKP minted successfully:', data.ethAddress);
-            },
-            onError: (error) => {
-                console.warn('[WalletProvider] Background PKP mint failed (non-blocking):', error);
-                // Remove from attempted set so it can be retried later
-                pkpMintAttempted.current.delete(activeAccountId);
-            },
-        });
-    }, [activeAccountId, pkpMintMutation]);
-
-    const getWallet = async () => {
+    const getWallet = useCallback(async (): Promise<WalletInstance> => {
         if (isTrial && trialAccountId) {
             const { TrialWallet } = await import('@/lib/trial-wallet');
             return new TrialWallet(trialAccountId);
         }
-        if (selector) {
-            return selector.wallet();
+        // EVM-linked implicit account uses same BrowserKeyStore format
+        if (isEvmLinked && evmLinkedAccountId) {
+            const { TrialWallet } = await import('@/lib/trial-wallet');
+            return new TrialWallet(evmLinkedAccountId);
         }
-        throw new Error("No wallet connected");
-    };
+        if (selectorRef.current) {
+            const wallet = await selectorRef.current.wallet();
+            return createWalletAdapter(wallet);
+        }
+        throw new Error('No wallet connected');
+    }, [isTrial, trialAccountId, isEvmLinked, evmLinkedAccountId]);
+
+    const signOut = useCallback(async (): Promise<void> => {
+        if (isTrial && trialAccountId) {
+            const { TrialWallet } = await import('@/lib/trial-wallet');
+            const trialWallet = new TrialWallet(trialAccountId);
+            await trialWallet.signOut();
+            setTrialAccountId(null);
+        } else if (isEvmLinked && evmLinkedAccountId) {
+            localStorage.removeItem('evmLinkedNearAccount');
+            setEvmLinkedAccountId(null);
+        } else if (selectorRef.current) {
+            const wallet = await selectorRef.current.wallet();
+            await wallet.signOut();
+        }
+        setWalletType(null);
+    }, [isTrial, trialAccountId, isEvmLinked, evmLinkedAccountId]);
+
+    const connect = useCallback(async (): Promise<void> => {
+        if (modalRef.current) {
+            modalRef.current.show();
+        }
+    }, []);
+
+    const setEvmLinkedAccount = useCallback((id: string) => {
+        setEvmLinkedAccountId(id);
+    }, []);
 
     return (
         <WalletContext.Provider value={{
-            selector,
-            modal,
-            accounts,
             accountId: activeAccountId,
             isTrial,
+            walletType,
             getWallet,
-            // PKP state exposed to consumers
-            pkpData: pkpData ?? null,
-            isPKPMinting: pkpMintMutation.isPending,
+            signOut,
+            connect,
+            setEvmLinkedAccount,
+            isReady,
         }}>
             {children}
         </WalletContext.Provider>

@@ -20,7 +20,6 @@ export function validateEnv() {
     );
   }
 
-  // console.log('✅ Environment variables validated successfully');
 }
 
 /**
@@ -29,13 +28,13 @@ export function validateEnv() {
 export const env = {
   // App
   baseUrl: process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000',
-  nearNetwork: (process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet') as 'testnet' | 'mainnet',
+  nearNetwork: (process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet') as 'testnet' | 'mainnet',
   nftContractId: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID!,
 
-  // Crust Network (no API key needed - uses W3Auth with Session Keys)
-  useCrust: process.env.NEXT_PUBLIC_USE_CRUST !== 'false',
+  // IPFS Storage (no API key needed - uses W3Auth with Session Keys)
+  useIpfs: process.env.NEXT_PUBLIC_USE_IPFS !== 'false',
 
-  // MPC
-  mpcContractId: process.env.MPC_CONTRACT_ID || 'v1.signer-prod.testnet',
-  mpcPath: process.env.NEXT_PUBLIC_MPC_PATH || 'test', // Fixed derivation path for demo
+  // Nova Protocol
+  novaNetwork: process.env.NEXT_PUBLIC_NOVA_NETWORK || 'mainnet',
+  novaContractId: process.env.NEXT_PUBLIC_NOVA_CONTRACT_ID || 'nova-sdk.near',
 } as const;

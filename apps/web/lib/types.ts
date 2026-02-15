@@ -7,6 +7,7 @@
  * - Provide single source of truth for shared types
  */
 
+
 // ============================================================================
 // NEAR Protocol Types
 // ============================================================================
@@ -117,6 +118,7 @@ export interface VideoMetadata {
     event_date?: number;
     content_type: string;
     price?: string;
+    price_usd?: number | null;
 }
 
 /**
@@ -145,85 +147,26 @@ export interface NFTEvent {
     description: string;
     creator_id: string;
     price: string;
+    price_usd?: number | null;
     created_at?: number;
+    banned?: boolean;
+    ban_reason?: string;
 }
 
 // ============================================================================
-// Lit Protocol Types
+// Nova Protocol Types (TEE-based encryption)
+// ============================================================================
+
+// Nova types are defined in lib/nova/types.ts
+
+// ============================================================================
+// Storage Types
 // ============================================================================
 
 /**
- * PKP (Programmable Key Pair) data
- * Used for signless transactions with Lit Protocol
+ * Video storage provider type
  */
-export interface PKPData {
-    /** PKP public key */
-    publicKey: string;
-    /** Derived Ethereum address */
-    ethAddress: string;
-    /** PKP Token ID (on Chronicle) */
-    tokenId?: string;
-}
-
-/**
- * Lit Protocol session signatures
- */
-export interface LitSessionSigs {
-    [nodeAddress: string]: {
-        sig: string;
-        derivedVia: string;
-        signedMessage: string;
-        address: string;
-        algo: string;
-    };
-}
-
-/**
- * Lit Protocol access control condition
- */
-export interface LitAccessControlCondition {
-    conditionType: 'evmBasic' | 'evmContract' | 'solRpc' | 'cosmos' | 'litAction';
-    contractAddress?: string;
-    functionName?: string;
-    functionParams?: string[];
-    functionAbi?: Record<string, unknown>;
-    chain?: string;
-    returnValueTest: {
-        key?: string;
-        comparator: string;
-        value: string;
-    };
-    // Lit Action specific
-    code?: string;
-    ipfsId?: string;
-    jsParams?: Record<string, unknown>;
-}
-
-/**
- * Encryption result from Lit Protocol
- */
-export interface EncryptionResult {
-    ciphertext: string;
-    dataToEncryptHash: string;
-    accessControlConditions: LitAccessControlCondition[];
-}
-
-// ============================================================================
-// Chain Signatures (MPC) Types
-// ============================================================================
-
-/**
- * MPC signature result
- */
-export interface MPCSignature {
-    big_r: {
-        affine_point: string;
-    };
-    s: {
-        scalar: string;
-    };
-    recovery_id: number;
-}
+export type StorageType = 'Nova';
 
 // ============================================================================
 // Wallet Types
@@ -231,43 +174,39 @@ export interface MPCSignature {
 
 /**
  * Wallet selector instance type
+ *
+ * Uses method syntax (not property syntax) so TypeScript applies bivariant
+ * parameter checking — required because NearWalletBase and TrialWallet use
+ * narrower Action types from different packages.
+ * Return type is `object` to stay compatible with both FinalExecutionOutcome
+ * (NearWalletBase) and RpcTransactionResponse (near-api-js Account).
  */
 export interface WalletInstance {
-    signAndSendTransaction: (params: {
+    signAndSendTransaction(params: {
         receiverId: string;
         actions: unknown[];
-    }) => Promise<TransactionOutcome>;
-    signAndSendTransactions: (params: {
+    }): Promise<object>;
+    signAndSendTransactions(params: {
         transactions: Array<{
             receiverId: string;
             actions: unknown[];
         }>;
-    }) => Promise<TransactionOutcome[]>;
-    getAccounts: () => Promise<Array<{ accountId: string }>>;
+    }): Promise<object[]>;
+    getAccounts(): Promise<Array<{ accountId: string }>>;
 }
 
 /**
  * Wallet context type for useWallet hook
  */
-/**
- * Wallet selector type (opaque - from @near-wallet-selector/core)
- */
-export type WalletSelector = unknown;
-
-/**
- * Modal type (opaque - from @near-wallet-selector/modal-ui)
- */
-export type WalletModal = unknown;
-
 export interface WalletContextType {
-    selector: WalletSelector;
-    modal: WalletModal;
     accountId: string | null;
+    isTrial: boolean;
+    /** Active wallet ID: 'my-near-wallet' | 'meteor-wallet' | null */
+    walletType: string | null;
     getWallet: () => Promise<WalletInstance>;
     signOut: () => Promise<void>;
-    isTrial: boolean;
-    pkpData: PKPData | null;
-    isPKPMinting: boolean;
+    connect: () => Promise<void>;
+    isReady: boolean;
 }
 
 // ============================================================================
@@ -309,15 +248,6 @@ export interface CachedSession {
     accountId: string;
     createdAt: number;
     expiresAt: number;
-    sessionSigs?: LitSessionSigs;
-}
-
-/**
- * Cached PKP data in localStorage
- */
-export interface CachedPKP extends PKPData {
-    createdAt: number;
-    accountId: string;
 }
 
 // ============================================================================
@@ -384,16 +314,3 @@ export function isFunctionCallPermission(
     return typeof permission === 'object' && 'FunctionCall' in permission;
 }
 
-/**
- * Check if PKP data is valid
- */
-export function isValidPKPData(data: unknown): data is PKPData {
-    if (!data || typeof data !== 'object') return false;
-    const pkp = data as PKPData;
-    return (
-        typeof pkp.publicKey === 'string' &&
-        typeof pkp.ethAddress === 'string' &&
-        pkp.publicKey.length > 0 &&
-        pkp.ethAddress.length > 0
-    );
-}

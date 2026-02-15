@@ -1,65 +1,46 @@
 /**
- * Crust Network Integration Module
+ * Crust Network Module
  *
- * Provides decentralized IPFS storage for YouTick using Crust Network.
- * Uses W3Auth with NEAR Session Keys for 100% client-side, signless uploads.
- *
- * This module provides 100% decentralized IPFS storage.
- *
- * @example
- * ```typescript
- * import { uploadFile, getContentUrl } from '@/lib/crust';
- *
- * // Upload a file (signless, no gas cost)
- * const result = await uploadFile(file, accountId);
- * console.log('CID:', result.cid);
- *
- * // Get URL for the content
- * const url = getContentUrl(result.cid);
- * ```
- *
- * @module crust
+ * Decentralized IPFS pinning and retrieval via Crust Network.
+ * Uses W3Auth (NEAR Session Key) authentication for decentralized storage.
  */
 
 // Types
 export type {
-    W3AuthToken,
-    CrustUploadResult,
-    CrustUploadOptions,
-    UploadProgress,
-    GatewayConfig,
-    IpfsAddResponse,
-    CrustErrorCode
+  CrustAuthToken,
+  CrustUploadResult,
+  CrustPinResult,
+  GatewayConfig,
+  CrustErrorCode,
+  StorageOrderTrack,
 } from './types';
-
 export { CrustError } from './types';
+
+// Config
+export { CRUST_CONSTANTS, CRUST_GATEWAYS } from './config';
 
 // W3Auth
 export {
-    generateW3AuthToken,
-    clearW3AuthCache,
-    hasValidW3AuthToken
+  generateW3AuthToken,
+  getCachedW3AuthToken,
+  clearW3AuthCache,
 } from './w3auth';
 
-// Upload Client
+// Gateway
 export {
-    uploadFile,
-    uploadFiles,
-    uploadJson,
-    getContentUrl
+  getGatewayUrl,
+  getGatewayUrls,
+  fetchFromGateways,
+  markGatewayUnhealthy,
+  getBestGateway,
+} from './gateway';
+
+// Client
+export {
+  uploadToCrust,
+  pinOnCrust,
+  verifyCrustAvailability,
 } from './client';
 
-// Gateway Management
-export {
-    CRUST_GATEWAYS,
-    getCurrentGateway,
-    getUploadGateway,
-    switchToNextGateway,
-    resetGateway,
-    markGatewaySuccess,
-    fetchWithFailover,
-    fetchWithRace,
-    checkAvailability,
-    getGatewayUrl,
-    getGatewayStatus
-} from './gateway';
+// Storage Orders
+export { placeStorageOrder, checkStorageOrderStatus } from './storage-order';

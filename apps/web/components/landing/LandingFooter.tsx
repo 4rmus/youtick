@@ -3,6 +3,7 @@ import { Github } from 'lucide-react';
 import { Branding } from './Branding';
 import { BuiltOnNEARBadge } from './BuiltOnNEARBadge';
 import { useLanguage } from '@/components/providers/LanguageContext';
+import { NEAR_CONFIG } from '@/lib/constants';
 
 export const LandingFooter = memo(() => {
   const { t } = useLanguage();
@@ -26,9 +27,9 @@ export const LandingFooter = memo(() => {
             <BuiltOnNEARBadge variant="dark" size="lg" />
             <div className="flex items-center gap-2 text-xs text-zinc-600">
               <span>+</span>
-              <span className="text-zinc-500">Lit Protocol</span>
+              <a href="https://nova-sdk.com/" target="_blank" rel="noopener noreferrer" className="text-zinc-500 hover:text-near-green transition-colors">Nova</a>
               <span>•</span>
-              <span className="text-zinc-500">Crust Network</span>
+              <a href="https://crust.network" target="_blank" rel="noopener noreferrer" className="text-zinc-500 hover:text-near-green transition-colors">Crust Network</a>
             </div>
           </div>
 
@@ -45,7 +46,7 @@ export const LandingFooter = memo(() => {
                 <Github className="w-5 h-5 text-zinc-400 group-hover:text-near-green transition-colors" />
               </a>
               <a
-                href="https://explorer.testnet.near.org"
+                href={NEAR_CONFIG.networkId === 'mainnet' ? 'https://nearblocks.io' : 'https://testnet.nearblocks.io'}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-xs text-zinc-500 hover:text-near-green transition-colors"
@@ -63,11 +64,16 @@ export const LandingFooter = memo(() => {
         {/* Bottom Bar */}
         <div className="mt-12 pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-xs text-zinc-600 text-left">
-            {t.landing.footer.built_on_prefix} NEAR Protocol, Crust Network & Lit Protocol.
+            {t.landing.footer.built_on_prefix}{' '}
+            <a href="https://near.org" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-400 transition-colors">NEAR Protocol</a>
+            {' • '}
+            <a href="https://nova-sdk.com/" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-400 transition-colors">Nova</a>
+            {' • '}
+            <a href="https://crust.network" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-400 transition-colors">Crust Network</a>
           </p>
           <div className="flex items-center gap-6 text-xs text-zinc-600">
-            <a href="#" className="hover:text-zinc-400 transition-colors">Privacy</a>
-            <a href="#" className="hover:text-zinc-400 transition-colors">Terms</a>
+            <a href="/privacy" className="hover:text-zinc-400 transition-colors">Privacy</a>
+            <a href="/terms" className="hover:text-zinc-400 transition-colors">Terms</a>
             <a href="mailto:contact@youtick.net" className="hover:text-zinc-400 transition-colors">Contact</a>
           </div>
         </div>

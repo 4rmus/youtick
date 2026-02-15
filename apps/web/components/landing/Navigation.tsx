@@ -1,5 +1,5 @@
 import { memo, useCallback, useState } from 'react';
-import Link from 'next/link';
+import Link from '@/components/Web4Link';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Branding } from './Branding';
@@ -14,23 +14,22 @@ interface NavigationProps {
 
 export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: NavigationProps) => {
   const { language, setLanguage, t } = useLanguage();
-  const { modal, accountId, selector } = useWallet();
+  const { connect, accountId, signOut } = useWallet();
   const router = useRouter();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const handleGetStarted = useCallback(() => {
     if (accountId) {
-      router.push('/upload');
+      window.location.href = '/upload';
     } else {
-      modal?.show();
+      connect();
     }
-  }, [accountId, modal, router]);
+  }, [accountId, connect]);
 
   const handleSignOut = useCallback(async () => {
-    const wallet = await selector?.wallet();
-    await wallet?.signOut();
+    await signOut();
     window.location.reload();
-  }, [selector]);
+  }, [signOut]);
 
   const closeMenu = () => setIsMenuOpen(false);
 
@@ -74,7 +73,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
                 </Button>
               </Link>
               <Button
-                variant="ghost" onClick={() => modal?.show()}
+                variant="ghost" onClick={() => connect()}
                 className="text-zinc-400 hover:text-white"
               >
                 {t.landing.nav_extra?.login || 'Login'}

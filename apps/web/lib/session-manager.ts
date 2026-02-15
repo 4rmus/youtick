@@ -7,11 +7,15 @@ import {
     actions,
     nearToYocto,
     yoctoToNear,
-    type KeyPairString
+    TypedError,
+    getTransactionLastResult,
+    type KeyPairString,
+    type Action
 } from 'near-api-js';
 import { BrowserKeyStore } from './keystore-v7';
-import { NEAR_CONFIG } from './constants';
+import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from './constants';
 import { getCurrentRpcUrl, withRpcFailover } from './rpc-failover';
+import type { WalletInstance } from './types';
 
 // Re-export from constants for backwards compatibility
 const NETWORK_ID = NEAR_CONFIG.networkId;
@@ -24,6 +28,45 @@ export class SessionManager {
     constructor(accountId: string) {
         this.accountId = accountId;
         this.keyStore = new BrowserKeyStore();
+    }
+
+    /**
+     * Import existing function call key from wallet-selector's localStorage.
+     *
+     * Wallet-specific behavior:
+     * - MyNearWallet (redirect-based): wallet-selector stores the private key in
+     *   localStorage with the standard 'near-api-js:keystore:' prefix (same as our
+     *   BrowserKeyStore). This means getKey() above usually finds it directly.
+     *   The 'mynearwallet:functionCallKey' check is a legacy fallback.
+     * - MeteorWallet (injected): Keys are managed by the browser extension and
+     *   NOT accessible in page localStorage. This method returns false, so
+     *   createSessionKey() is called to generate a dApp-managed key (one popup).
+     */
+    async importWalletFunctionCallKey(): Promise<boolean> {
+        // Skip if we already have a local key (covers wallet-selector's standard keystore)
+        const existing = await this.keyStore.getKey(NETWORK_ID, this.accountId);
+        if (existing) return true;
+
+        if (typeof window === 'undefined') return false;
+
+        // Legacy MyNearWallet format (pre wallet-selector v10 integration)
+        const raw = localStorage.getItem('mynearwallet:functionCallKey');
+        if (!raw) return false;
+
+        try {
+            const data = JSON.parse(raw) as {
+                privateKey?: string;
+                contractId?: string;
+                methods?: string[];
+            };
+            if (!data.privateKey || data.contractId !== CONTRACT_ID) return false;
+
+            const keyPair = KeyPair.fromString(data.privateKey as KeyPairString);
+            await this.keyStore.setKey(NETWORK_ID, this.accountId, keyPair);
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     async hasSessionKey(): Promise<boolean> {
@@ -42,7 +85,7 @@ export class SessionManager {
                 );
 
                 if (!accessKeyInfo) {
-                    console.warn("Session key found locally but not on-chain. Removing.");
+                    console.warn("[SessionManager] Key found locally but not on-chain. Removing.");
                     await this.keyStore.removeKey(NETWORK_ID, this.accountId);
                     return false;
                 }
@@ -52,22 +95,39 @@ export class SessionManager {
                 // Permission can be 'FullAccess' (string) or object with FunctionCall
                 if (typeof permission === 'object' && 'FunctionCall' in permission) {
                     if (permission.FunctionCall.receiver_id !== CONTRACT_ID) {
-                        console.warn(`Session key found but for wrong contract (${permission.FunctionCall.receiver_id} vs ${CONTRACT_ID}). Removing.`);
+                        console.warn(`[SessionManager] Key for wrong contract (${permission.FunctionCall.receiver_id} vs ${CONTRACT_ID}). Removing.`);
                         await this.keyStore.removeKey(NETWORK_ID, this.accountId);
                         return false;
+                    }
+
+                    // Check remaining allowance — exhausted keys fail silently at callMethod time
+                    const allowance = permission.FunctionCall.allowance;
+                    if (allowance !== null && allowance !== undefined) {
+                        const remaining = BigInt(allowance);
+                        // 0.005 NEAR minimum: enough for ~1-2 function calls (gas cost per 30TGas ≈ 0.003 NEAR)
+                        const MIN_ALLOWANCE = BigInt('5000000000000000000000');
+                        if (remaining < MIN_ALLOWANCE) {
+                            console.warn(`[SessionManager] Key allowance exhausted (${allowance} yocto remaining). Removing for renewal.`);
+                            await this.keyStore.removeKey(NETWORK_ID, this.accountId);
+                            return false;
+                        }
                     }
                 }
                 return true;
             });
         } catch (e) {
-            console.warn("Error checking session key on-chain (network issue?). Assuming local key is valid.", e);
+            if (e instanceof TypedError) {
+                console.warn(`[SessionManager] TypedError checking session key (${e.type}):`, e.message);
+            } else {
+                console.warn("[SessionManager] Error checking key on-chain (network issue?). Assuming local key is valid.", e);
+            }
             // Fallback: if we have a local key but can't check chain, assume it's valid to allow progress.
             // If it's actually invalid, the subsequent transaction will fail, which is handled.
             return true;
         }
     }
 
-    async createSessionKey(wallet: any, gasAmount: string = '1'): Promise<void> {
+    async createSessionKey(wallet: WalletInstance, gasAmount: string = '1'): Promise<void> {
         // Generate new key pair
         const keyPair = KeyPair.fromRandom('ed25519');
         const publicKey = keyPair.getPublicKey().toString();
@@ -88,10 +148,10 @@ export class SessionManager {
     }
 
     /**
-     * Create session key with minimal deposit (for PKP users)
-     * PKP users need less gas but still need prepaid for MPC + NFT minting
+     * Create session key with minimal deposit
+     * For users who already have sufficient balance for operations
      */
-    async createSessionKeyMinimal(wallet: any): Promise<void> {
+    async createSessionKeyMinimal(wallet: WalletInstance): Promise<void> {
         // Generate new key pair
         const keyPair = KeyPair.fromRandom('ed25519');
         const publicKey = keyPair.getPublicKey().toString();
@@ -99,7 +159,7 @@ export class SessionManager {
         // Store in local storage
         await this.keyStore.setKey(NETWORK_ID, this.accountId, keyPair);
 
-        // Use batch transaction with minimal deposit (0.1 NEAR for minting)
+        // Use batch transaction with minimal deposit
         const { batchInitialSetup } = await import('./batch-transactions');
 
         await batchInitialSetup(
@@ -107,15 +167,26 @@ export class SessionManager {
             this.accountId,
             CONTRACT_ID,
             publicKey,
-            '0.5' // Covers: MPC signature (0.25) + NFT mint (0.1) + Event (0.1) = 0.45 NEAR + margin
+            '0.5' // Covers: NFT mint (0.1) + Event (0.1) + buffer = 0.25 NEAR + margin. Nova group reg is funded separately for paid videos.
         );
+    }
+
+    /**
+     * Generate a new session key pair, store it locally, and return the public key string.
+     * Used when the caller handles the wallet batch transaction externally.
+     */
+    async generateSessionKeyPair(): Promise<string> {
+        const keyPair = KeyPair.fromRandom('ed25519');
+        const publicKey = keyPair.getPublicKey().toString();
+        await this.keyStore.setKey(NETWORK_ID, this.accountId, keyPair);
+        return publicKey;
     }
 
     async saveSessionKey(keyPair: KeyPair): Promise<void> {
         await this.keyStore.setKey(NETWORK_ID, this.accountId, keyPair);
     }
 
-    async callMethod(method: string, args: any, gas: string = '300000000000000'): Promise<any> {
+    async callMethod(method: string, args: Record<string, unknown>, gas: string = GAS_CONSTANTS.standardGas.toString()): Promise<unknown> {
         const keyPair = await this.keyStore.getKey(NETWORK_ID, this.accountId);
         if (!keyPair) {
             throw new Error("No session key found. Please setup account first.");
@@ -125,21 +196,34 @@ export class SessionManager {
         const signer = new KeyPairSigner(keyPair);
         const account = new Account(this.accountId, getCurrentRpcUrl(), signer);
 
-        // Call contract method using the session key
-        // Note: We cannot attach deposit with a FunctionCallKey!
-        // This is why we use the Prepaid Proxy pattern.
-        const outcome = await account.signAndSendTransaction({
-            receiverId: CONTRACT_ID,
-            actions: [
-                actions.functionCall(method, args, BigInt(gas), BigInt(0))
-            ]
-        });
+        // Retry on nonce errors (TypedError from near-api-js v7)
+        const MAX_NONCE_RETRIES = 2;
+        for (let attempt = 0; attempt <= MAX_NONCE_RETRIES; attempt++) {
+            try {
+                const outcome = await account.signAndSendTransaction({
+                    receiverId: CONTRACT_ID,
+                    actions: [
+                        actions.functionCall(method, args, BigInt(gas), BigInt(0))
+                    ]
+                });
+                return getTransactionLastResult(outcome);
+            } catch (error) {
+                const isNonceError = error instanceof TypedError &&
+                    (error.type === 'InvalidNonce' || error.message.includes('nonce'));
 
-        // v7: Parse result from transaction
-        return this.getTransactionResult(outcome);
+                if (isNonceError && attempt < MAX_NONCE_RETRIES) {
+                    console.warn(`[SessionManager] Nonce error on attempt ${attempt + 1}, retrying...`);
+                    await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+                    continue;
+                }
+                throw error;
+            }
+        }
+
+        throw new Error("Exhausted nonce retries");
     }
 
-    async sendBatchTransaction(txActions: any[], gas: string = '300000000000000'): Promise<any> {
+    async sendBatchTransaction(txActions: Action[], gas: string = GAS_CONSTANTS.standardGas.toString()): Promise<unknown> {
         const keyPair = await this.keyStore.getKey(NETWORK_ID, this.accountId);
         if (!keyPair) {
             throw new Error("No session key found. Please setup account first.");
@@ -154,40 +238,7 @@ export class SessionManager {
             actions: txActions
         });
 
-        return this.getTransactionResult(outcome);
-    }
-
-    /**
-     * Extract result from transaction outcome (v7 pattern)
-     */
-    private getTransactionResult(outcome: any): any {
-        // v7: Transaction result is in outcome.transaction_outcome or final_execution_outcome
-        if (outcome?.status?.SuccessValue) {
-            const value = outcome.status.SuccessValue;
-            if (value === '') return null;
-            try {
-                return JSON.parse(Buffer.from(value, 'base64').toString());
-            } catch {
-                return value;
-            }
-        }
-
-        // Try to get from receipts
-        if (outcome?.receipts_outcome) {
-            for (const receipt of outcome.receipts_outcome) {
-                if (receipt?.outcome?.status?.SuccessValue) {
-                    const value = receipt.outcome.status.SuccessValue;
-                    if (value === '') continue;
-                    try {
-                        return JSON.parse(Buffer.from(value, 'base64').toString());
-                    } catch {
-                        return value;
-                    }
-                }
-            }
-        }
-
-        return null;
+        return getTransactionLastResult(outcome);
     }
 
     async getAccountBalance(nodeUrl: string): Promise<number> {
@@ -199,38 +250,39 @@ export class SessionManager {
                 method_name: 'get_user_balance',
                 args_base64: Buffer.from(JSON.stringify({ account_id: this.accountId })).toString('base64'),
                 finality: 'final',
-            }) as any;
+            }) as { result: number[] };
             const balString = JSON.parse(Buffer.from(res.result).toString());
             // v7: Use yoctoToNear instead of utils.format.formatNearAmount
             return parseFloat(yoctoToNear(balString));
         } catch (e) {
-            console.warn("Error getting gas balance (maybe not registered?):", e);
+            if (e instanceof TypedError) {
+                console.warn(`[SessionManager] TypedError getting balance (${e.type}):`, e.message);
+            } else {
+                console.warn("Error getting gas balance (maybe not registered?):", e);
+            }
             return 0;
         }
     }
 
     async hasSufficientGas(nodeUrl: string, minAmount: number = 1.0): Promise<boolean> {
         const currentBalance = await this.getAccountBalance(nodeUrl);
-        console.log(`Current Prepaid Gas Balance: ${currentBalance} NEAR, Required: ${minAmount}`);
         return currentBalance >= minAmount;
     }
 
-    async ensureGas(wallet: any, nodeUrl: string, minAmount: number = 1.0): Promise<void> {
+    async ensureGas(wallet: WalletInstance, nodeUrl: string, minAmount: number = 1.0): Promise<void> {
         const sufficient = await this.hasSufficientGas(nodeUrl, minAmount);
         if (!sufficient) {
-            console.log(`Low gas, triggering Top Up...`);
             // Deposit 1 NEAR if low
             await this.topUpGas(wallet, '1');
         }
     }
 
-    async topUpGas(wallet: any, amount: string) {
-        console.log(`Topping up gas: ${amount} NEAR`);
+    async topUpGas(wallet: WalletInstance, amount: string) {
         // v7: Use actions.functionCall instead of transactions.functionCall
         const action = actions.functionCall(
             'deposit_funds',
             {},
-            BigInt('30000000000000'), // 30 TGas
+            GAS_CONSTANTS.smallGas,
             BigInt(nearToYocto(parseFloat(amount))) // v7: Use nearToYocto with number
         );
 
@@ -240,14 +292,13 @@ export class SessionManager {
         });
     }
 
-    async withdrawFunds(wallet: any, amount: string) {
-        console.log(`Withdrawing funds: ${amount} NEAR`);
+    async withdrawFunds(wallet: WalletInstance, amount: string) {
         // v7: Use actions.functionCall
         const action = actions.functionCall(
             'withdraw_funds',
             { amount: nearToYocto(parseFloat(amount)) },
-            BigInt('30000000000000'), // 30 TGas
-            BigInt('1') // Attach 1 yocto for security
+            GAS_CONSTANTS.smallGas,
+            DEPOSIT_CONSTANTS.oneYocto
         );
 
         await wallet.signAndSendTransaction({
@@ -257,13 +308,12 @@ export class SessionManager {
     }
 
     async withdrawFundsSilent(amount: string) {
-        console.log(`Withdrawing funds silently (Session Key): ${amount} NEAR`);
         // Uses Session Key -> No User Signature required!
         // Uses withdraw_funds_prepaid which doesn't require 1 yocto deposit
         return await this.callMethod(
             'withdraw_funds_prepaid',
             {},
-            '30000000000000'
+            GAS_CONSTANTS.smallGas.toString()
         );
     }
 }

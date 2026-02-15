@@ -12,7 +12,7 @@ import {
     DialogTrigger,
 } from '@/components/ui/dialog';
 import { Copy, Check, AlertTriangle, Wallet, ArrowRight, ExternalLink } from 'lucide-react';
-import { KeyPair } from 'near-api-js';
+import { KeyPair, type KeyPairString } from 'near-api-js';
 import { generateSeedPhrase } from 'near-seed-phrase';
 
 interface TrialUpgradeDialogProps {
@@ -38,7 +38,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
             const { seedPhrase: phrase, publicKey: pk, secretKey } = generateSeedPhrase();
 
             // Get stored trial key from localStorage
-            const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'testnet';
+            const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
             const storedKey = localStorage.getItem(`near-api-js:keystore:${accountId}:${networkId}`);
 
             if (!storedKey) {
@@ -46,7 +46,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
             }
 
             // Use current trial key to add new Full Access Key
-            const trialKeyPair = KeyPair.fromString(storedKey as any);
+            const trialKeyPair = KeyPair.fromString(storedKey as KeyPairString);
 
             // v7: Import Account, KeyPairSigner, PublicKey, and actions
             const { Account, KeyPairSigner, PublicKey, actions } = await import('near-api-js');
@@ -60,8 +60,6 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
             const account = new Account(accountId, rpcUrl, signer);
 
             // Add the new Full Access Key derived from seed phrase
-            console.log('Adding Full Access Key:', pk);
-
             // v7: Use actions.addFullAccessKey with signAndSendTransaction
             await account.signAndSendTransaction({
                 receiverId: accountId,
@@ -69,16 +67,14 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                     actions.addFullAccessKey(PublicKey.fromString(pk))
                 ]
             });
-            console.log('✅ Full Access Key added successfully!');
-
             // Now the seed phrase can be used to recover this account
             setSeedPhrase(phrase);
             setPublicKey(pk);
             setStep('seedPhrase');
 
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error('Upgrade error:', err);
-            setError(err.message || 'Beklenmeyen bir hata oluştu');
+            setError(err instanceof Error ? err.message : 'Beklenmeyen bir hata oluştu');
             setStep('error');
         }
     };
@@ -290,7 +286,12 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
 
                             <Button
                                 className="w-full bg-purple-600 hover:bg-purple-700"
-                                onClick={() => window.open('https://wallet.testnet.near.org/create', '_blank')}
+                                onClick={() => {
+                                    const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
+                                    window.open(networkId === 'mainnet'
+                                        ? 'https://app.mynearwallet.com/create'
+                                        : 'https://testnet.mynearwallet.com/create', '_blank');
+                                }}
                             >
                                 MyNearWallet'ta Hesap Oluştur
                                 <ExternalLink className="w-4 h-4 ml-2" />

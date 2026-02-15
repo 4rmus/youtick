@@ -2,103 +2,88 @@
 
 import { useWallet } from '@/components/providers/WalletProvider';
 import { useOwnedTokens, TokenWithVideo } from '@/hooks/useOwnedTokens';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { getProvider, viewContract } from '@/lib/near';
+import { NEAR_CONFIG } from '@/lib/constants';
 import { User, Wallet, Ticket, Loader2, ArrowLeft, Gift, Video, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import Link from 'next/link';
+import Link from '@/components/Web4Link';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { GiftLinkGenerator } from "@/components/GiftLinkGenerator";
 import { TrialUpgradeDialog } from "@/components/TrialUpgradeDialog";
+import { NovaThumbnail } from "@/components/NovaThumbnail";
+import { useNearPrice } from '@/hooks/useNearPrice';
+import { parseTitleMetadata } from '@/lib/metadata-parser';
+import type { NFTEvent } from '@/lib/types';
+
+interface CreatedEvent extends NFTEvent {
+    cid: string;
+    media: string;
+    price_usd?: number | null;
+}
 
 export default function ProfilePage() {
     const { t } = useLanguage();
     const { accountId, isTrial } = useWallet();
+    const { yoctoToUsd } = useNearPrice();
     const { tokens, loading: tokensLoading } = useOwnedTokens();
-    const [walletBalance, setWalletBalance] = useState<string | null>(null);
-    const [loadingBalances, setLoadingBalances] = useState(false);
-
-    // Created Events State
-    const [createdEvents, setCreatedEvents] = useState<any[]>([]);
-    const [loadingCreated, setLoadingCreated] = useState(false);
 
     // Gift Modal State
     const [showGiftModal, setShowGiftModal] = useState(false);
-    const [selectedEventForGift, setSelectedEventForGift] = useState<any | null>(null);
+    const [selectedEventForGift, setSelectedEventForGift] = useState<CreatedEvent | null>(null);
 
-    // Fetch wallet balance
-    useEffect(() => {
-        if (!accountId) return;
+    // Wallet balance via React Query + FailoverRpcProvider
+    const { data: walletBalance, isLoading: loadingBalances } = useQuery({
+        queryKey: ['walletBalance', accountId],
+        queryFn: async () => {
+            const provider = getProvider();
+            const state = await provider.query({
+                request_type: 'view_account',
+                account_id: accountId!,
+                finality: 'final'
+            }) as { amount: string };
 
-        const fetchBalances = async () => {
-            setLoadingBalances(true);
-            try {
-                // v7: Use JsonRpcProvider to get account balance
-                const { JsonRpcProvider } = await import('near-api-js');
-                const rpcUrl = process.env.NEXT_PUBLIC_NEAR_NETWORK === 'mainnet'
-                    ? 'https://rpc.mainnet.near.org'
-                    : 'https://test.rpc.fastnear.com';
+            const balanceInNear = (BigInt(state.amount) / BigInt(10 ** 24)).toString();
+            const decimals = (Number(BigInt(state.amount) % BigInt(10 ** 24)) / 10 ** 24).toFixed(2).substring(2);
+            return `${balanceInNear}.${decimals}`;
+        },
+        enabled: !!accountId,
+        staleTime: 30 * 1000,
+        gcTime: 2 * 60 * 1000,
+    });
 
-                const provider = new JsonRpcProvider({ url: rpcUrl });
-                const state = await provider.query({
-                    request_type: 'view_account',
-                    account_id: accountId,
-                    finality: 'final'
-                }) as any;
+    // Created events via React Query + FailoverRpcProvider
+    const { data: createdEvents = [], isLoading: loadingCreated } = useQuery({
+        queryKey: ['createdEvents', accountId],
+        queryFn: async () => {
+            const provider = getProvider();
 
-                const balanceInNear = (BigInt(state.amount) / BigInt(10 ** 24)).toString();
-                const decimals = (Number(BigInt(state.amount) % BigInt(10 ** 24)) / 10 ** 24).toFixed(2).substring(2);
-                setWalletBalance(`${balanceInNear}.${decimals}`);
-            } catch (error) {
-                console.error('Error fetching balances:', error);
-            } finally {
-                setLoadingBalances(false);
-            }
-        };
+            const events = await viewContract<[string, NFTEvent][]>(
+                provider,
+                NEAR_CONFIG.contractId,
+                'get_events',
+                { limit: 100 }
+            );
 
-        fetchBalances();
-    }, [accountId]);
-
-    // Fetch created events
-    useEffect(() => {
-        if (!accountId) return;
-
-        const fetchCreatedEvents = async () => {
-            setLoadingCreated(true);
-            try {
-                // v7: Use JsonRpcProvider directly for view calls
-                const provider = getProvider();
-                const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || '';
-
-                const events = await viewContract<[string, any][]>(
-                    provider,
-                    contractId,
-                    'get_events',
-                    { limit: 100 }
-                );
-
-                const myEvents = events
-                    .filter(([_, event]) => event.creator_id === accountId)
-                    .map(([cid, event]) => ({
+            return events
+                .filter(([, event]) => event.creator_id === accountId)
+                .map(([cid, event]) => {
+                    const parsed = parseTitleMetadata(event.title);
+                    return {
                         cid,
                         ...event,
-                        media: event.title.includes(':::') && event.title.split(':::').length >= 2
-                            ? `https://ipfs.io/ipfs/${event.title.split(':::')[1]}`
-                            : "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png",
-                        title: event.title.includes(':::') ? event.title.split(':::').pop() : event.title
-                    }));
-
-                setCreatedEvents(myEvents);
-            } catch (error) {
-                console.error('Error fetching created events:', error);
-            } finally {
-                setLoadingCreated(false);
-            }
-        };
-
-        fetchCreatedEvents();
-    }, [accountId]);
+                        price_usd: event.price_usd ?? null,
+                        media: parsed.thumbnailUrl,
+                        title: parsed.title,
+                    };
+                });
+        },
+        enabled: !!accountId,
+        staleTime: 60 * 1000,
+        gcTime: 5 * 60 * 1000,
+    });
 
     if (!accountId) {
         return (
@@ -141,7 +126,7 @@ export default function ProfilePage() {
                             className="bg-near-green text-near-black hover:bg-near-green/80 font-semibold gap-2"
                         >
                             <Gift className="w-4 h-4" />
-                            Hediye Et
+                            {t.profile_page.gift_button}
                         </Button>
                     )}
                 </div>
@@ -263,14 +248,10 @@ export default function ProfilePage() {
                                                 <div className="flex gap-3 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900 transition-all">
                                                     <div className="w-20 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-800">
                                                         {media && !media.includes('token.png') ? (
-                                                            <img
-                                                                src={media}
+                                                            <NovaThumbnail
+                                                                url={media}
                                                                 alt={title}
                                                                 className="w-full h-full object-cover"
-                                                                onError={(e) => {
-                                                                    const target = e.target as HTMLImageElement;
-                                                                    target.style.display = 'none';
-                                                                }}
                                                             />
                                                         ) : (
                                                             <div className="w-full h-full flex items-center justify-center">
@@ -281,7 +262,7 @@ export default function ProfilePage() {
                                                     <div className="flex-1 min-w-0">
                                                         <h4 className="text-sm font-medium text-white truncate">{title}</h4>
                                                         <p className="text-xs text-zinc-500 mt-0.5">
-                                                            {isAccessPass ? 'Access Pass' : 'NFT Ticket'}
+                                                            {isAccessPass ? t.profile_page.access_pass : t.profile_page.nft_ticket}
                                                         </p>
                                                     </div>
                                                     <div className="opacity-0 group-hover:opacity-100 transition-opacity self-center">
@@ -304,7 +285,7 @@ export default function ProfilePage() {
                                 <div className="p-2 bg-zinc-800 rounded-lg">
                                     <Video className="w-5 h-5 text-zinc-400" />
                                 </div>
-                                <h2 className="font-bold text-xl text-white">Events</h2>
+                                <h2 className="font-bold text-xl text-white">{t.profile_page.my_events}</h2>
                             </div>
                             <span className="text-xs text-zinc-500 bg-zinc-800/50 px-2 py-1 rounded">
                                 {createdEvents.length}
@@ -318,10 +299,10 @@ export default function ProfilePage() {
                         ) : createdEvents.length === 0 ? (
                             <div className="text-center py-12 border border-dashed border-zinc-800 rounded-xl bg-zinc-950/50">
                                 <Video className="w-10 h-10 mx-auto text-zinc-700 mb-3" />
-                                <h3 className="text-sm font-medium text-white mb-1">No Events Created</h3>
-                                <p className="text-xs text-zinc-500 mb-4">Upload your first video to get started</p>
+                                <h3 className="text-sm font-medium text-white mb-1">{t.profile_page.no_events}</h3>
+                                <p className="text-xs text-zinc-500 mb-4">{t.profile_page.no_events_desc}</p>
                                 <Link href="/upload">
-                                    <Button variant="outline" size="sm">Upload Video</Button>
+                                    <Button variant="outline" size="sm">{t.profile_page.upload_video}</Button>
                                 </Link>
                             </div>
                         ) : (
@@ -331,25 +312,31 @@ export default function ProfilePage() {
                                         <Link href={`/watch?cid=${event.cid}`} className="block">
                                             <div className="flex gap-3 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900 transition-all">
                                                 <div className="w-20 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-800">
-                                                    <img
-                                                        src={event.media || '/placeholder-video.svg'}
-                                                        alt={event.title}
-                                                        className="w-full h-full object-cover"
-                                                        onError={(e) => {
-                                                            const target = e.target as HTMLImageElement;
-                                                            target.src = '/placeholder-video.svg';
-                                                        }}
-                                                    />
+                                                    {event.media && !event.media.includes('token.png') ? (
+                                                        <NovaThumbnail
+                                                            url={event.media}
+                                                            alt={event.title}
+                                                            className="w-full h-full object-cover"
+                                                        />
+                                                    ) : (
+                                                        <div className="w-full h-full flex items-center justify-center">
+                                                            <Video className="w-5 h-5 text-zinc-600" />
+                                                        </div>
+                                                    )}
                                                 </div>
                                                 <div className="flex-1 min-w-0">
                                                     <h4 className="text-sm font-medium text-white truncate">{event.title}</h4>
                                                     <p className="text-xs text-zinc-500 mt-0.5">
-                                                        {event.price === "0" ? "Free" : `${Number(BigInt(event.price) / BigInt(10 ** 24)).toFixed(2)} NEAR`}
+                                                        {event.price === "0"
+                                                            ? t.profile_page.free
+                                                            : event.price_usd
+                                                                ? `$${(event.price_usd / 100).toFixed(2)}`
+                                                                : yoctoToUsd(event.price)}
                                                     </p>
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-[9px] font-bold text-black bg-white px-1.5 py-0.5 rounded uppercase">
-                                                        Creator
+                                                        {t.profile_page.creator}
                                                     </span>
                                                 </div>
                                             </div>
@@ -378,10 +365,10 @@ export default function ProfilePage() {
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Gift className="w-5 h-5 text-zinc-400" />
-                            Hediye Et
+                            {t.profile_page.gift_button}
                         </DialogTitle>
                         <DialogDescription>
-                            Hediye etmek istediğiniz videoyu seçin
+                            {t.profile_page.gift_select_desc}
                         </DialogDescription>
                     </DialogHeader>
                     <div className="mt-4 space-y-2 max-h-[400px] overflow-y-auto">
@@ -395,20 +382,26 @@ export default function ProfilePage() {
                                 className="w-full flex gap-3 p-3 rounded-xl bg-zinc-800/50 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800 transition-all text-left"
                             >
                                 <div className="w-16 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-700">
-                                    <img
-                                        src={event.media || '/placeholder-video.svg'}
-                                        alt={event.title}
-                                        className="w-full h-full object-cover"
-                                        onError={(e) => {
-                                            const target = e.target as HTMLImageElement;
-                                            target.src = '/placeholder-video.svg';
-                                        }}
-                                    />
+                                    {event.media && !event.media.includes('token.png') ? (
+                                        <NovaThumbnail
+                                            url={event.media}
+                                            alt={event.title}
+                                            className="w-full h-full object-cover"
+                                        />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center">
+                                            <Video className="w-4 h-4 text-zinc-600" />
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <h4 className="text-sm font-medium text-white truncate">{event.title}</h4>
                                     <p className="text-xs text-zinc-500 mt-0.5">
-                                        {event.price === "0" ? "Free" : `${Number(BigInt(event.price) / BigInt(10 ** 24)).toFixed(2)} NEAR`}
+                                        {event.price === "0"
+                                            ? t.profile_page.free
+                                            : event.price_usd
+                                                ? `$${(event.price_usd / 100).toFixed(2)}`
+                                                : yoctoToUsd(event.price)}
                                     </p>
                                 </div>
                             </button>
@@ -423,10 +416,10 @@ export default function ProfilePage() {
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Gift className="w-5 h-5 text-zinc-400" />
-                            Hediye Linki Oluştur
+                            {t.profile_page.gift_create_link}
                         </DialogTitle>
                         <DialogDescription>
-                            "{selectedEventForGift?.title}" için paylaşılabilir hediye linkleri oluşturun
+                            &ldquo;{selectedEventForGift?.title}&rdquo; {t.profile_page.gift_share_desc}
                         </DialogDescription>
                     </DialogHeader>
 
@@ -434,23 +427,29 @@ export default function ProfilePage() {
                     {selectedEventForGift && (
                         <div className="mt-4 w-full flex gap-4 p-4 rounded-xl bg-zinc-800/50 border border-zinc-700">
                             <div className="w-24 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-700">
-                                <img
-                                    src={selectedEventForGift.media || '/placeholder-video.svg'}
-                                    alt={selectedEventForGift.title}
-                                    className="w-full h-full object-cover"
-                                    onError={(e) => {
-                                        const target = e.target as HTMLImageElement;
-                                        target.src = '/placeholder-video.svg';
-                                    }}
-                                />
+                                {selectedEventForGift.media && !selectedEventForGift.media.includes('token.png') ? (
+                                    <NovaThumbnail
+                                        url={selectedEventForGift.media}
+                                        alt={selectedEventForGift.title}
+                                        className="w-full h-full object-cover"
+                                    />
+                                ) : (
+                                    <div className="w-full h-full flex items-center justify-center">
+                                        <Video className="w-5 h-5 text-zinc-600" />
+                                    </div>
+                                )}
                             </div>
                             <div className="flex-1 min-w-0">
                                 <h4 className="text-sm font-semibold text-white truncate">{selectedEventForGift.title}</h4>
                                 <p className="text-xs text-zinc-400 mt-1">
-                                    Creator: <span className="text-zinc-300">{accountId}</span>
+                                    {t.profile_page.creator}: <span className="text-zinc-300">{accountId}</span>
                                 </p>
                                 <p className="text-xs text-zinc-500 mt-0.5">
-                                    {selectedEventForGift.price === "0" ? "Free Event" : `${Number(BigInt(selectedEventForGift.price) / BigInt(10 ** 24)).toFixed(2)} NEAR`}
+                                    {selectedEventForGift.price === "0"
+                                        ? t.profile_page.free_event
+                                        : selectedEventForGift.price_usd
+                                            ? `$${(selectedEventForGift.price_usd / 100).toFixed(2)}`
+                                            : yoctoToUsd(selectedEventForGift.price)}
                                 </p>
                             </div>
                         </div>
