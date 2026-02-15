@@ -8,6 +8,7 @@ import { Loader2, Sparkles, Wallet, ArrowRight, CheckCircle2, AlertCircle, Gift 
 import { useLanguage } from "@/components/providers/LanguageContext";
 import { KeyPair, type KeyPairString } from "near-api-js";
 import { claimGiftAndCreateAccount, validateGiftLink, getGiftEventInfo, createSponsoredTrial } from "@/lib/gift-service";
+import { NEAR_CONFIG } from "@/lib/constants";
 
 interface TrialOnboardingProps {
     onTrialCreated?: (accountId: string) => void;
@@ -307,7 +308,7 @@ export function TrialOnboarding({ onTrialCreated, onConnectWallet }: TrialOnboar
                             maxLength={32}
                         />
                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">
-                            {giftInfo ? ".near" : ".youtick.near"}
+                            .{NEAR_CONFIG.contractId}
                         </span>
                     </div>
 
