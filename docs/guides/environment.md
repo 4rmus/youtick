@@ -19,7 +19,7 @@ All `NEXT_PUBLIC_` prefixed variables are exposed to the browser. Variables with
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `NEXT_PUBLIC_NEAR_NETWORK` | Yes | `mainnet` | NEAR network to connect to. Accepted values: `mainnet`, `testnet`. |
-| `NEXT_PUBLIC_NFT_CONTRACT_ID` | Yes | `youtick-prod-v1.near` | Account ID of the YouTick NFT ticket smart contract. |
+| `NEXT_PUBLIC_NFT_CONTRACT_ID` | Yes | `youtick.near` | Account ID of the YouTick NFT ticket smart contract. |
 
 ### Nova Protocol (TEE Encryption)
 
@@ -46,7 +46,7 @@ All `NEXT_PUBLIC_` prefixed variables are exposed to the browser. Variables with
 
 ```
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=youtick-prod-v1.near
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 NEXT_PUBLIC_NOVA_NETWORK=mainnet
 NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk.near
 ```
@@ -150,7 +150,7 @@ Trial accounts allow new users to experience YouTick without owning a NEAR walle
 |----------|-------|
 | Key type | Function Call Access Key (ed25519) |
 | Allowed methods | `create_sponsored_trial_direct`, `claim_free_ticket_direct` |
-| Receiver | NFT contract (`youtick-prod-v1.near`) |
+| Receiver | NFT contract (`youtick.near`) |
 | Visibility | Public (embedded in client-side code) |
 | Security model | Restricted scope prevents misuse |
 
@@ -163,7 +163,7 @@ The key is intentionally public. Its limited scope means it can only create tria
 | Aspect | Development | Production |
 |--------|-------------|------------|
 | NEAR network | `testnet` | `mainnet` |
-| NFT contract | `v3.utick.testnet` | `youtick-prod-v1.near` |
+| NFT contract | `v3.utick.testnet` | `youtick.near` |
 | Nova network | `testnet` | `mainnet` |
 | Nova contract | `nova-sdk.testnet` | `nova-sdk.near` |
 | Nova API key | Test key (or empty) | Production key (required) |
@@ -217,7 +217,7 @@ All `NEXT_PUBLIC_` variables must be set at build time (they are inlined during 
 # NEAR Configuration (Required)
 # ==============================================================================
 NEXT_PUBLIC_NEAR_NETWORK=mainnet                            # testnet or mainnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=youtick-prod-v1.near            # NFT contract account ID
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near            # NFT contract account ID
 
 # ==============================================================================
 # Nova Protocol Configuration (TEE Encryption)

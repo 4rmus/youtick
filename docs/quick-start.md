@@ -43,7 +43,7 @@ Edit `.env.local` with your credentials:
 ```env
 # Network Configuration
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=youtick-prod-v1.near
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 
 # Nova Protocol
 NEXT_PUBLIC_NOVA_NETWORK=mainnet
@@ -52,7 +52,7 @@ NEXT_PUBLIC_NOVA_API_KEY=
 NEXT_PUBLIC_NOVA_ACCOUNT_ID=
 
 # Relayer (Optional - for sponsored transactions)
-RELAYER_ACCOUNT_ID=relayer.youtick-prod-v1.near
+RELAYER_ACCOUNT_ID=relayer.youtick.near
 RELAYER_PRIVATE_KEY=ed25519:...
 ```
 
@@ -134,8 +134,8 @@ cargo near build     # Build contract WASM
 cargo test           # Run contract tests
 
 # View Contract State
-near view youtick-prod-v1.near nft_metadata '{}'
-near view youtick-prod-v1.near get_event '{"encrypted_cid":"YOUR_CID"}'
+near view youtick.near nft_metadata '{}'
+near view youtick.near get_event '{"encrypted_cid":"YOUR_CID"}'
 ```
 
 ---

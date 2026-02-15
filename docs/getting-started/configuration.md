@@ -22,7 +22,7 @@ cp apps/web/.env.example apps/web/.env.local
 ```env
 # Mainnet
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=youtick-prod-v1.near
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 
 # Testnet
 NEXT_PUBLIC_NEAR_NETWORK=testnet
@@ -56,7 +56,7 @@ NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk-6.testnet
 | `RELAYER_PRIVATE_KEY` | No | — | Relayer private key (`ed25519:...`) |
 
 ```env
-RELAYER_ACCOUNT_ID=relayer.youtick-prod-v1.near
+RELAYER_ACCOUNT_ID=relayer.youtick.near
 RELAYER_PRIVATE_KEY=ed25519:...
 ```
 
@@ -102,7 +102,7 @@ Gateway failover is automatic — no configuration needed.
 | Setting | Development (Testnet) | Production (Mainnet) |
 |---------|----------------------|---------------------|
 | Network | `testnet` | `mainnet` |
-| Contract | `v1.utick.testnet` | `youtick-prod-v1.near` |
+| Contract | `v1.utick.testnet` | `youtick.near` |
 | Nova Contract | `nova-sdk-6.testnet` | `nova-sdk.near` |
 | Wallet | Testnet wallets | Mainnet wallets |
 | NEAR Faucet | Available | N/A |
@@ -122,7 +122,7 @@ NEXT_PUBLIC_NOVA_ACCOUNT_ID=your-testnet-account
 
 ```env
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=youtick-prod-v1.near
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 NEXT_PUBLIC_NOVA_NETWORK=mainnet
 NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk.near
 NEXT_PUBLIC_NOVA_API_KEY=your-mainnet-api-key

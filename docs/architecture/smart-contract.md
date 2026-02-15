@@ -3,7 +3,7 @@
 > NFT Ticket Contract V8 on NEAR Protocol
 
 **Location**: `contracts/nft-ticket/src/lib.rs` (2400+ lines)
-**Contract ID**: `youtick-prod-v1.near`
+**Contract ID**: `youtick.near`
 **SDK**: NEAR SDK 5.5.0
 **Standards**: NEP-171 (Core), NEP-177 (Metadata), NEP-178 (Approval), NEP-141 (FT Receiver)
 
@@ -507,7 +507,7 @@ The current migration function reads V7 state (`OldContractV7`) and constructs V
 ### Create Event
 
 ```bash
-near call youtick-prod-v1.near create_event \
+near call youtick.near create_event \
   '{"encrypted_cid":"Qm...","title":"Concert","description":"Live show","price":"1000000000000000000000000"}' \
   --accountId creator.near --deposit 0.1
 ```
@@ -515,7 +515,7 @@ near call youtick-prod-v1.near create_event \
 ### Buy Ticket
 
 ```bash
-near call youtick-prod-v1.near buy_ticket \
+near call youtick.near buy_ticket \
   '{"receiver_id":"buyer.near","encrypted_cid":"Qm..."}' \
   --accountId buyer.near --deposit 1.01
 ```
@@ -523,29 +523,29 @@ near call youtick-prod-v1.near buy_ticket \
 ### Check Ownership
 
 ```bash
-near view youtick-prod-v1.near verify_ownership \
+near view youtick.near verify_ownership \
   '{"account_id":"buyer.near","token_id":"42"}'
 ```
 
 ### Ban Event (Owner)
 
 ```bash
-near call youtick-prod-v1.near ban_event \
+near call youtick.near ban_event \
   '{"encrypted_cid":"Qm...","reason":"CopyrightViolation"}' \
-  --accountId youtick-prod-v1.near
+  --accountId youtick.near
 ```
 
 ### Get Purchase Logs
 
 ```bash
-near view youtick-prod-v1.near get_purchase_logs \
+near view youtick.near get_purchase_logs \
   '{"from_index":0,"limit":10}'
 ```
 
 ### Fund Trial Pool
 
 ```bash
-near call youtick-prod-v1.near fund_trial_pool '{}' \
+near call youtick.near fund_trial_pool '{}' \
   --accountId owner.near --deposit 10
 ```
 

@@ -15,7 +15,7 @@
  */
 export const NEAR_CONFIG = {
     /** NFT Contract ID (e.g., youtick-prod-v1.near) */
-    contractId: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'youtick-prod-v1.near',
+    contractId: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'youtick.near',
 
     /** Network ID (testnet or mainnet) */
     networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet',

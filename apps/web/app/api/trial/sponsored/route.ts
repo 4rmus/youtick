@@ -10,7 +10,7 @@ import { NEAR_CONFIG, GAS_CONSTANTS } from "@/lib/constants";
  * POST /api/trial/sponsored
  * Body: { username: string, new_public_key: string }
  *
- * Creates: {username}.{contract_id} (e.g. "alice.youtick-prod-v1.near")
+ * Creates: {username}.{contract_id} (e.g. "alice.youtick.near")
  *
  * SECURITY: Rate limited to prevent spam account creation
  * - Per IP: 3 accounts per day

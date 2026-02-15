@@ -41,6 +41,10 @@ impl StorageKey {
     pub const BANNED_EVENTS: Self = Self(b"be8");
 }
 
+/// Storage cost constants to avoid repeated allocations
+const STORAGE_COST_NFT: NearToken = NearToken::from_millinear(10);       // 0.01 NEAR
+const STORAGE_COST_ACCOUNT: NearToken = NearToken::from_millinear(100);  // 0.1 NEAR
+
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
 pub struct Event {
@@ -116,7 +120,7 @@ pub struct GiftDrop {
 }
 
 #[near(serializers = [borsh, json])]
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum BanReason {
     SexualContent,
     CopyrightViolation,
@@ -199,110 +203,6 @@ pub enum Web4Response {
         #[serde(rename = "bodyUrl")]
         body_url: String,
     },
-}
-
-/// Old contract state V4 (before commission_pool was added)
-/// Used for state migration from V4 → V5
-#[near(serializers=[borsh])]
-#[derive(PanicOnDefault)]
-pub struct OldContractV4 {
-    tokens: NonFungibleToken,
-    metadata: LazyOption<NFTContractMetadata>,
-    video_metadata: UnorderedMap<TokenId, VideoMetadata>,
-    user_deposits: LookupMap<AccountId, NearToken>,
-    events: UnorderedMap<String, Event>,
-    next_token_id: u64,
-    gift_drops: LookupMap<String, GiftDrop>,
-    trial_pool: NearToken,
-    onboarding_keys: LookupSet<PublicKey>,
-    daily_trial_counts: LookupMap<u64, u32>,
-    onboarding_config: OnboardingConfig,
-}
-
-/// Old contract state V5 (before purchase_logs was added)
-/// Used for state migration from V5 → V6
-#[near(serializers=[borsh])]
-#[derive(PanicOnDefault)]
-pub struct OldContractV5 {
-    tokens: NonFungibleToken,
-    metadata: LazyOption<NFTContractMetadata>,
-    video_metadata: UnorderedMap<TokenId, VideoMetadata>,
-    user_deposits: LookupMap<AccountId, NearToken>,
-    events: UnorderedMap<String, Event>,
-    next_token_id: u64,
-    gift_drops: LookupMap<String, GiftDrop>,
-    trial_pool: NearToken,
-    onboarding_keys: LookupSet<PublicKey>,
-    daily_trial_counts: LookupMap<u64, u32>,
-    onboarding_config: OnboardingConfig,
-    commission_pool: NearToken,
-}
-
-/// Old contract state V6 (before event_nova_groups was added)
-/// Used for state migration from V6 → V7
-#[near(serializers=[borsh])]
-#[derive(PanicOnDefault)]
-pub struct OldContractV6 {
-    tokens: NonFungibleToken,
-    metadata: LazyOption<NFTContractMetadata>,
-    video_metadata: UnorderedMap<TokenId, VideoMetadata>,
-    user_deposits: LookupMap<AccountId, NearToken>,
-    events: UnorderedMap<String, Event>,
-    next_token_id: u64,
-    gift_drops: LookupMap<String, GiftDrop>,
-    trial_pool: NearToken,
-    onboarding_keys: LookupSet<PublicKey>,
-    daily_trial_counts: LookupMap<u64, u32>,
-    onboarding_config: OnboardingConfig,
-    commission_pool: NearToken,
-    purchase_logs: UnorderedMap<u64, PurchaseLog>,
-    next_purchase_id: u64,
-}
-
-/// Old contract state V7 (before nova_platform_account was added)
-/// Used for state migration from V7 → V8
-#[near(serializers=[borsh])]
-#[derive(PanicOnDefault)]
-pub struct OldContractV7 {
-    tokens: NonFungibleToken,
-    metadata: LazyOption<NFTContractMetadata>,
-    video_metadata: UnorderedMap<TokenId, VideoMetadata>,
-    user_deposits: LookupMap<AccountId, NearToken>,
-    events: UnorderedMap<String, Event>,
-    next_token_id: u64,
-    gift_drops: LookupMap<String, GiftDrop>,
-    trial_pool: NearToken,
-    onboarding_keys: LookupSet<PublicKey>,
-    daily_trial_counts: LookupMap<u64, u32>,
-    onboarding_config: OnboardingConfig,
-    commission_pool: NearToken,
-    purchase_logs: UnorderedMap<u64, PurchaseLog>,
-    next_purchase_id: u64,
-    event_nova_groups: LookupMap<String, String>,
-}
-
-/// Old contract state V8 (before web4_static_url was added)
-/// Used for state migration from V8 → V9
-#[near(serializers=[borsh])]
-#[derive(PanicOnDefault)]
-pub struct OldContractV8 {
-    tokens: NonFungibleToken,
-    metadata: LazyOption<NFTContractMetadata>,
-    video_metadata: UnorderedMap<TokenId, VideoMetadata>,
-    user_deposits: LookupMap<AccountId, NearToken>,
-    events: UnorderedMap<String, Event>,
-    next_token_id: u64,
-    gift_drops: LookupMap<String, GiftDrop>,
-    trial_pool: NearToken,
-    onboarding_keys: LookupSet<PublicKey>,
-    daily_trial_counts: LookupMap<u64, u32>,
-    onboarding_config: OnboardingConfig,
-    commission_pool: NearToken,
-    purchase_logs: UnorderedMap<u64, PurchaseLog>,
-    next_purchase_id: u64,
-    event_nova_groups: LookupMap<String, String>,
-    nova_platform_account: Option<AccountId>,
-    nova_service_fee: NearToken,
 }
 
 #[near(contract_state)]
@@ -388,36 +288,6 @@ impl Contract {
         }
     }
 
-    /// Migrate state V8 → V9: Add web4_static_url field
-    /// Preserves all existing data and adds Web4 gateway support
-    #[private]
-    #[init(ignore_state)]
-    pub fn migrate_state() -> Self {
-        let old_state: OldContractV8 = env::state_read().expect("Failed to read old state");
-        env::log_str("State migration V8 -> V9: Adding web4_static_url");
-
-        Self {
-            tokens: old_state.tokens,
-            metadata: old_state.metadata,
-            video_metadata: old_state.video_metadata,
-            user_deposits: old_state.user_deposits,
-            events: old_state.events,
-            next_token_id: old_state.next_token_id,
-            gift_drops: old_state.gift_drops,
-            trial_pool: old_state.trial_pool,
-            onboarding_keys: old_state.onboarding_keys,
-            daily_trial_counts: old_state.daily_trial_counts,
-            onboarding_config: old_state.onboarding_config,
-            commission_pool: old_state.commission_pool,
-            purchase_logs: old_state.purchase_logs,
-            next_purchase_id: old_state.next_purchase_id,
-            event_nova_groups: old_state.event_nova_groups,
-            nova_platform_account: old_state.nova_platform_account,
-            nova_service_fee: old_state.nova_service_fee,
-            web4_static_url: None,
-        }
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // LAZY STORAGE HELPER (event_price_usd stored outside Contract borsh)
     // ═══════════════════════════════════════════════════════════════
@@ -487,7 +357,7 @@ impl Contract {
                 } else {
                     clean_path.to_string()
                 };
-                let content_type = Self::detect_content_type(&path);
+                let content_type = Self::detect_content_type(&path).to_string();
                 let body_url = format!("{}{}", base_url, path);
                 Web4Response::BodyUrl {
                     content_type,
@@ -528,7 +398,7 @@ impl Contract {
     }
 
     /// Internal helper: detect content type from file extension
-    fn detect_content_type(path: &str) -> String {
+    fn detect_content_type(path: &str) -> &'static str {
         let path_lower = path.to_lowercase();
         if path_lower.ends_with(".html") || path_lower.ends_with(".htm") {
             "text/html; charset=utf-8"
@@ -572,7 +442,6 @@ impl Contract {
         } else {
             "application/octet-stream"
         }
-        .to_string()
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -585,9 +454,7 @@ impl Contract {
             env::predecessor_account_id() == self.tokens.owner_id,
             "Only owner can set next token ID"
         );
-        let old_id = self.next_token_id;
         self.next_token_id = new_id;
-        env::log_str(&format!("next_token_id updated: {} -> {}", old_id, new_id));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -600,8 +467,7 @@ impl Contract {
             env::predecessor_account_id() == self.tokens.owner_id,
             "Only owner can set Nova platform account"
         );
-        self.nova_platform_account = Some(account_id.clone());
-        env::log_str(&format!("Nova platform account set to: {}", account_id));
+        self.nova_platform_account = Some(account_id);
     }
 
     /// Set Nova service fee per ticket (owner only, max 0.1 NEAR)
@@ -612,11 +478,10 @@ impl Contract {
         );
         let fee_token = NearToken::from_yoctonear(fee.0);
         require!(
-            fee_token <= NearToken::from_millinear(100),
+            fee_token <= STORAGE_COST_ACCOUNT,
             "Nova service fee cannot exceed 0.1 NEAR"
         );
         self.nova_service_fee = fee_token;
-        env::log_str(&format!("Nova service fee set to: {} yoctoNEAR", fee.0));
     }
 
     /// View: Get Nova platform account
@@ -652,7 +517,6 @@ impl Contract {
         };
 
         self.lazy_banned_events().insert(&encrypted_cid, &ban_info);
-        env::log_str(&format!("Event banned: {} (reason: {:?})", encrypted_cid, reason));
     }
 
     /// Unban an event (owner only). Restores event to normal listings.
@@ -664,8 +528,6 @@ impl Contract {
 
         let removed = self.lazy_banned_events().remove(&encrypted_cid);
         require!(removed.is_some(), "Event is not banned");
-
-        env::log_str(&format!("Event unbanned: {}", encrypted_cid));
     }
 
     /// View: Check if an event is banned (public)
@@ -703,8 +565,6 @@ impl Contract {
         // Store in set
         self.onboarding_keys.insert(&public_key);
 
-        env::log_str(&format!("Onboarding key added: {:?}", public_key));
-
         // Add Function Call Access Key to contract
         // Allowance: 1 NEAR for gas (enough for many trial creations)
         // Restricted to: create_sponsored_trial_direct only
@@ -725,8 +585,6 @@ impl Contract {
 
         self.onboarding_keys.remove(&public_key);
 
-        env::log_str(&format!("Onboarding key removed: {:?}", public_key));
-
         // Delete the access key
         Promise::new(env::current_account_id()).delete_key(public_key)
     }
@@ -742,11 +600,6 @@ impl Contract {
             daily_limit,
             enabled,
         };
-
-        env::log_str(&format!(
-            "Onboarding config updated: daily_limit={}, enabled={}",
-            daily_limit, enabled
-        ));
     }
 
     /// View: Check if a key is authorized for onboarding
@@ -834,7 +687,7 @@ impl Contract {
     pub fn create_event(&mut self, encrypted_cid: String, title: String, description: String, price: U128, price_usd: Option<u128>) {
         let deposit = env::attached_deposit();
         require!(
-            deposit >= NearToken::from_millinear(100), // 0.1 NEAR
+            deposit >= STORAGE_COST_ACCOUNT,
             "Requires at least 0.1 NEAR deposit to create an event"
         );
 
@@ -956,7 +809,7 @@ impl Contract {
             "Event with this CID already exists"
         );
 
-        let charge_amount = NearToken::from_millinear(100); // 0.1 NEAR for storage
+        let charge_amount = STORAGE_COST_ACCOUNT;
 
         let current_bal = self.user_deposits.get(&account_id).expect("Insufficient prepaid balance for event creation");
         require!(current_bal.as_yoctonear() >= charge_amount.as_yoctonear(), "Insufficient prepaid balance for event creation");
@@ -1002,7 +855,7 @@ impl Contract {
         let is_free = required_price.as_yoctonear() == 0;
 
         // Storage cost for NFT (safe upper bound)
-        let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        let storage_cost = STORAGE_COST_NFT;
 
         // Track amounts for purchase log
         let mut creator_amount: u128 = 0;
@@ -1041,9 +894,6 @@ impl Contract {
                 }
             }
 
-            env::log_str(&format!("Ticket sold: {} to creator, {} commission, {} storage, {} nova_fee",
-                creator_amount, commission, storage_cost.as_yoctonear(), self.nova_service_fee.as_yoctonear()));
-
             // Refund excess deposit to buyer
             let total_used = required_price
                 .saturating_add(storage_cost)
@@ -1053,7 +903,6 @@ impl Contract {
                 Promise::new(env::predecessor_account_id())
                     .transfer(refund)
                     .detach();
-                env::log_str(&format!("Refunded {} excess to buyer", refund.as_yoctonear()));
             }
         } else {
             // Free ticket - just require minimal storage (or contract pays)
@@ -1061,7 +910,6 @@ impl Contract {
                 deposit >= storage_cost || env::account_balance() > storage_cost,
                 "Insufficient deposit for storage"
             );
-            env::log_str("Free ticket minted");
         }
 
         // Mint the NFT using helper
@@ -1097,7 +945,7 @@ impl Contract {
         );
 
         let required_price = NearToken::from_yoctonear(event.price.0);
-        let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        let storage_cost = STORAGE_COST_NFT;
         let is_free = required_price.as_yoctonear() == 0;
 
         // Track amounts for purchase log
@@ -1106,7 +954,6 @@ impl Contract {
 
         if is_free {
             // FREE TICKET: Contract pays storage, user pays nothing
-            env::log_str("Free ticket - contract sponsors storage");
         } else {
             // PAID TICKET: Deduct from user's prepaid balance (including Nova service fee)
             let total_cost = required_price
@@ -1146,8 +993,6 @@ impl Contract {
                 }
             }
 
-            env::log_str(&format!("Prepaid ticket: {} to creator, {} commission, {} nova_fee",
-                creator_amount, commission, self.nova_service_fee.as_yoctonear()));
         }
 
         // Log purchase for audit trail (use next_token_id as expected token_id)
@@ -1281,10 +1126,6 @@ impl Contract {
                     // Store in event-level mapping if not already present
                     if self.event_nova_groups.get(&metadata.encrypted_cid).is_none() {
                         self.event_nova_groups.insert(&metadata.encrypted_cid, group_id);
-                        env::log_str(&format!(
-                            "Indexed: event {} -> group {} (from token {})",
-                            metadata.encrypted_cid, group_id, token_id
-                        ));
                     }
                 }
             }
@@ -1298,16 +1139,11 @@ impl Contract {
                         metadata.nova_group_id = Some(group_id.clone());
                         self.video_metadata.insert(token_id, &metadata);
                         backfilled += 1;
-                        env::log_str(&format!(
-                            "Backfilled token {} with group {} (event {})",
-                            token_id, group_id, metadata.encrypted_cid
-                        ));
                     }
                 }
             }
         }
 
-        env::log_str(&format!("Backfill complete: {} tokens updated", backfilled));
         backfilled
     }
 
@@ -1339,10 +1175,6 @@ impl Contract {
         if let Some(ref group_id) = video_metadata.nova_group_id {
             if self.event_nova_groups.get(&video_metadata.encrypted_cid).is_none() {
                 self.event_nova_groups.insert(&video_metadata.encrypted_cid, group_id);
-                env::log_str(&format!(
-                    "Nova group {} indexed for event {}",
-                    group_id, video_metadata.encrypted_cid
-                ));
             }
         }
 
@@ -1372,8 +1204,6 @@ impl Contract {
         let new_bal = current_bal.saturating_add(amount);
 
         self.user_deposits.insert(&account_id, &new_bal);
-
-        env::log_str(&format!("Deposited {} for {}", amount, account_id));
     }
 
     /// Deposit funds for a SPECIFIC account (used by Keypom for trial accounts)
@@ -1386,8 +1216,6 @@ impl Contract {
         let new_bal = current_bal.saturating_add(amount);
 
         self.user_deposits.insert(&account_id, &new_bal);
-
-        env::log_str(&format!("Deposited {} for {} (by {})", amount, account_id, env::predecessor_account_id()));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1418,7 +1246,7 @@ impl Contract {
         );
 
         // Parse the message
-        let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap_or_else(|_| {
+        let parsed: near_sdk::serde_json::Value = near_sdk::serde_json::from_str(&msg).unwrap_or_else(|_| {
             env::panic_str("Invalid JSON message. Expected: {\"action\":\"buy_ticket\",\"buyer_id\":\"...\",\"encrypted_cid\":\"...\"}");
         });
 
@@ -1447,12 +1275,11 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("Event not found"));
 
         let required_price = NearToken::from_yoctonear(event.price.0);
-        let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        let storage_cost = STORAGE_COST_NFT;
         let is_free = required_price.as_yoctonear() == 0;
 
         if is_free {
             // Free tickets don't need wNEAR — refund everything
-            env::log_str("Free ticket — use claim_free_ticket instead. Refunding wNEAR.");
             return PromiseOrValue::Value(amount); // Refund all
         }
 
@@ -1478,10 +1305,6 @@ impl Contract {
         // near_withdraw on wrap.near burns the wNEAR and sends native NEAR back to this
         // contract via a Promise::Transfer receipt (processed in the next block).
         // The callback then handles payment splitting and NFT minting.
-        env::log_str(&format!(
-            "ft_on_transfer: {} wNEAR from {} for event {} (buyer: {})",
-            amount.0, sender_id, encrypted_cid, buyer_id
-        ));
 
         // Step 1: Call near_withdraw on wrap.near to unwrap wNEAR → native NEAR
         // Step 2: Callback processes the ticket purchase using the unwrapped NEAR
@@ -1489,7 +1312,7 @@ impl Contract {
             Promise::new("wrap.near".parse::<AccountId>().unwrap())
                 .function_call(
                     "near_withdraw".to_string(),
-                    serde_json::json!({ "amount": amount.0.to_string() }).to_string().into_bytes(),
+                    near_sdk::serde_json::json!({ "amount": amount.0.to_string() }).to_string().into_bytes(),
                     NearToken::from_yoctonear(1), // 1 yoctoNEAR required by wrap.near
                     near_sdk::Gas::from_tgas(10),
                 )
@@ -1534,7 +1357,7 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("Event not found"));
 
         let required_price = NearToken::from_yoctonear(event.price.0);
-        let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        let storage_cost = STORAGE_COST_NFT;
 
         // Calculate and apply commission (2% platform, 98% creator)
         let (creator_amount, commission) = self.apply_commission(required_price);
@@ -1565,13 +1388,7 @@ impl Contract {
             Promise::new(buyer_id.clone())
                 .transfer(refund)
                 .detach();
-            env::log_str(&format!("Refunded {} excess NEAR to {}", refund.as_yoctonear(), buyer_id));
         }
-
-        env::log_str(&format!(
-            "wNEAR ticket purchase: {} to creator, {} commission, {} nova_fee (buyer: {})",
-            creator_amount, commission, self.nova_service_fee.as_yoctonear(), buyer_id
-        ));
 
         // Log purchase for audit trail
         let price_yocto = required_price.as_yoctonear();
@@ -1611,8 +1428,6 @@ impl Contract {
         // Remove balance (Effects first)
         self.user_deposits.remove(&account_id);
 
-        env::log_str(&format!("Withdrawing {} for {}", current_bal, account_id));
-
         // Transfer funds (Interactions last)
         Promise::new(account_id).transfer(current_bal)
     }
@@ -1627,7 +1442,7 @@ impl Contract {
         require!(current_bal.as_yoctonear() > 0, "No funds to withdraw");
 
         // P0 Security: Limit signless withdrawals to prevent session key abuse
-        let max_signless_withdraw = NearToken::from_millinear(100); // 0.1 NEAR
+        let max_signless_withdraw = STORAGE_COST_ACCOUNT;
         require!(
             current_bal <= max_signless_withdraw,
             "Amount exceeds signless limit (0.1 NEAR). Use withdraw_funds with wallet signature for larger amounts."
@@ -1635,8 +1450,6 @@ impl Contract {
 
         // Remove balance (Effects first)
         self.user_deposits.remove(&account_id);
-
-        env::log_str(&format!("Signless withdraw: {} for {}", current_bal, account_id));
 
         // Transfer funds (Interactions last)
         Promise::new(account_id).transfer(current_bal)
@@ -1668,11 +1481,6 @@ impl Contract {
         let new_bal = current_bal.saturating_sub(transfer_amount);
         self.user_deposits.insert(&account_id, &new_bal);
 
-        env::log_str(&format!(
-            "Nova funding initiated: {} from {} (remaining: {})",
-            transfer_amount, account_id, new_bal
-        ));
-
         // Transfer with callback verification for automatic refund on failure
         Promise::new(nova_account).transfer(transfer_amount)
             .then(
@@ -1692,12 +1500,7 @@ impl Contract {
             near_sdk::PromiseResult::Successful(_)
         );
 
-        if succeeded {
-            env::log_str(&format!(
-                "Nova funding confirmed: {} yoctoNEAR for {}",
-                amount.0, account_id
-            ));
-        } else {
+        if !succeeded {
             // Refund: restore user's prepaid balance
             let current = self.user_deposits.get(&account_id)
                 .unwrap_or(NearToken::from_yoctonear(0));
@@ -1726,7 +1529,7 @@ impl Contract {
     ) -> Promise {
         let account_id = env::predecessor_account_id();
 
-        let charge_amount = NearToken::from_millinear(100); // 0.1 NEAR
+        let charge_amount = STORAGE_COST_ACCOUNT;
 
         let current_bal = self.user_deposits.get(&account_id).expect("Insufficient prepaid balance");
         require!(current_bal.as_yoctonear() >= charge_amount.as_yoctonear(), "Insufficient prepaid balance");
@@ -1789,12 +1592,7 @@ impl Contract {
             near_sdk::PromiseResult::Successful(_)
         );
 
-        if succeeded {
-            env::log_str(&format!(
-                "Prepaid mint confirmed for {}",
-                account_id
-            ));
-        } else {
+        if !succeeded {
             // Refund: restore user's prepaid balance
             let current = self.user_deposits.get(&account_id)
                 .unwrap_or(NearToken::from_yoctonear(0));
@@ -1822,11 +1620,6 @@ impl Contract {
         require!(deposit.as_yoctonear() > 0, "Must attach some NEAR");
 
         self.trial_pool = self.trial_pool.saturating_add(deposit);
-
-        env::log_str(&format!(
-            "Trial pool funded: {} added, total: {}",
-            deposit, self.trial_pool
-        ));
     }
 
     /// Withdraw funds from trial pool (owner only)
@@ -1844,11 +1637,6 @@ impl Contract {
 
         self.trial_pool = self.trial_pool.saturating_sub(withdraw_amount);
 
-        env::log_str(&format!(
-            "Trial pool withdraw: {} removed, remaining: {}",
-            withdraw_amount, self.trial_pool
-        ));
-
         Promise::new(env::predecessor_account_id()).transfer(withdraw_amount)
     }
 
@@ -1860,7 +1648,7 @@ impl Contract {
     /// 2. Daily rate limit enforced
     /// 3. Onboarding must be enabled
     ///
-    /// Creates: {username}.{contract_id} (e.g. "alice.youtick-prod-v1.near")
+    /// Creates: {username}.{contract_id} (e.g. "alice.youtick.near")
     /// Cost: ~0.1 NEAR per account from trial pool
     pub fn create_sponsored_trial_direct(
         &mut self,
@@ -1897,7 +1685,7 @@ impl Contract {
         );
 
         // Cost for account creation + initial balance
-        let account_cost = NearToken::from_millinear(100); // 0.1 NEAR
+        let account_cost = STORAGE_COST_ACCOUNT;
 
         require!(
             self.trial_pool >= account_cost,
@@ -1912,13 +1700,6 @@ impl Contract {
         let new_account_id: AccountId = format!("{}.{}", username, contract_id)
             .parse()
             .expect("Invalid account ID format");
-
-        env::log_str(&format!(
-            "Relayer-less trial created: {} (pool remaining: {}, daily count: {})",
-            new_account_id,
-            self.trial_pool,
-            self.daily_trial_counts.get(&Self::get_day_timestamp()).unwrap_or(0)
-        ));
 
         // Create the subaccount with Full Access Key
         Promise::new(new_account_id)
@@ -1964,16 +1745,11 @@ impl Contract {
         require!(event.price.0 == 0, "This ticket is not free. Use buy_ticket instead.");
 
         // Storage cost
-        let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        let storage_cost = STORAGE_COST_NFT;
         require!(self.trial_pool >= storage_cost, "Trial pool empty.");
 
         // Deduct from trial pool
         self.trial_pool = self.trial_pool.saturating_sub(storage_cost);
-
-        env::log_str(&format!(
-            "Direct free ticket: {} for {} (pool: {})",
-            receiver_id, encrypted_cid, self.trial_pool
-        ));
 
         // Mint via internal call with storage deposit
         Self::ext(env::current_account_id())
@@ -1983,7 +1759,7 @@ impl Contract {
 
     /// Create a sponsored trial account as a subaccount of this contract
     /// Contract pays the cost from trial pool!
-    /// Creates: {username}.{contract_id} (e.g. "alice.youtick-prod-v1.near")
+    /// Creates: {username}.{contract_id} (e.g. "alice.youtick.near")
     /// Cost: ~0.1 NEAR per account from trial pool
     ///
     /// NOTE: This is the original relayer-based method. For relayer-less onboarding,
@@ -2010,7 +1786,7 @@ impl Contract {
         );
 
         // Cost for account creation + initial balance
-        let account_cost = NearToken::from_millinear(100); // 0.1 NEAR
+        let account_cost = STORAGE_COST_ACCOUNT;
 
         require!(
             self.trial_pool >= account_cost,
@@ -2025,11 +1801,6 @@ impl Contract {
         let new_account_id: AccountId = format!("{}.{}", username, contract_id)
             .parse()
             .expect("Invalid account ID format");
-
-        env::log_str(&format!(
-            "Sponsored trial: {} (pool remaining: {})",
-            new_account_id, self.trial_pool
-        ));
 
         // Create the subaccount with Full Access Key
         Promise::new(new_account_id)
@@ -2062,11 +1833,6 @@ impl Contract {
         );
 
         self.commission_pool = self.commission_pool.saturating_sub(withdraw_amount);
-
-        env::log_str(&format!(
-            "Commission withdrawn: {} removed, remaining: {}",
-            withdraw_amount, self.commission_pool
-        ));
 
         Promise::new(env::predecessor_account_id()).transfer(withdraw_amount)
     }
@@ -2101,7 +1867,7 @@ impl Contract {
         );
 
         // Storage cost for minting
-        let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        let storage_cost = STORAGE_COST_NFT;
 
         require!(
             self.trial_pool >= storage_cost,
@@ -2110,11 +1876,6 @@ impl Contract {
 
         // Deduct from trial pool
         self.trial_pool = self.trial_pool.saturating_sub(storage_cost);
-
-        env::log_str(&format!(
-            "Sponsored free ticket claim for {} (pool remaining: {})",
-            receiver_id, self.trial_pool
-        ));
 
         // Call internal minting with storage from contract
         Self::ext(env::current_account_id())
@@ -2215,7 +1976,7 @@ impl Contract {
         );
 
         // Require storage deposit
-        let storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        let storage_cost = STORAGE_COST_NFT;
         require!(
             env::attached_deposit() >= storage_cost,
             "Requires at least 0.01 NEAR for storage"
@@ -2253,8 +2014,6 @@ impl Contract {
             reference: None,
             reference_hash: None,
         };
-
-        env::log_str(&format!("Gift ticket minted: {} -> {}", token_id, receiver_id));
 
         self.tokens.internal_mint(
             token_id.clone(),
@@ -2333,10 +2092,6 @@ impl Contract {
                 .detach();
         }
 
-        env::log_str(&format!(
-            "Gift drop created: {} keys for event {} by {}",
-            num_keys, event_cid, event.creator_id
-        ));
     }
 
     /// Claim a gift - creates trial account and mints NFT
@@ -2370,11 +2125,6 @@ impl Contract {
             self.lazy_banned_events().get(&gift_drop.event_cid).is_none(),
             "This event has been banned and gift tickets cannot be claimed"
         );
-
-        env::log_str(&format!(
-            "Gift claimed: -> {} (event: {})",
-            receiver_id, gift_drop.event_cid
-        ));
 
         // Mint NFT using helper (is_gift = true for "Gift ticket:" prefix)
         self.internal_mint_ticket(receiver_id, &event, gift_drop.event_cid, true)
@@ -2438,15 +2188,10 @@ impl Contract {
         // Account creation costs ~0.1 NEAR + access key storage ~0.0075 NEAR
         let account_creation_cost = NearToken::from_millinear(110); // 0.11 NEAR
 
-        env::log_str(&format!(
-            "Creating account {} for gift claim (event: {})",
-            new_account_id, gift_drop.event_cid
-        ));
-
         // Create new account and add full access key
         // Then callback to mint the NFT
         // Leave 0.01 NEAR for NFT storage in callback
-        let nft_storage_cost = NearToken::from_millinear(10); // 0.01 NEAR for NFT storage
+        let nft_storage_cost = STORAGE_COST_NFT;
 
         Promise::new(new_account_id.clone())
             .create_account()
@@ -2479,11 +2224,6 @@ impl Contract {
                 let event = self.events.get(&event_cid)
                     .expect("Event not found");
 
-                env::log_str(&format!(
-                    "Gift NFT minted: -> {} (event: {})",
-                    receiver_id, event_cid
-                ));
-
                 // Mint NFT using helper (is_gift = true for "Gift ticket:" prefix)
                 self.internal_mint_ticket(receiver_id, &event, event_cid, true)
             }
@@ -2512,11 +2252,6 @@ impl Contract {
             caller.to_string().ends_with(&format!(".{}", contract_id)),
             "Only trial sub-accounts can upgrade via this method"
         );
-
-        env::log_str(&format!(
-            "Upgrading trial account {} with new FAK",
-            caller
-        ));
 
         // Add Full Access Key to the caller's account
         // This is a cross-contract call where the contract sponsors the gas
@@ -2556,14 +2291,9 @@ impl Contract {
         // Store in event-level mapping for ticket copies
         self.event_nova_groups.insert(&metadata.encrypted_cid, &nova_group_id);
 
-        metadata.nova_group_id = Some(nova_group_id.clone());
+        metadata.nova_group_id = Some(nova_group_id);
         metadata.storage_type = StorageType::Nova;
         self.video_metadata.insert(&token_id, &metadata);
-
-        env::log_str(&format!(
-            "NOVA group {} set for token {} (event {})",
-            nova_group_id, token_id, metadata.encrypted_cid
-        ));
     }
 
     /// Get NOVA group ID for a video

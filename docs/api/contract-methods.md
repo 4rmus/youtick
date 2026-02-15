@@ -2,7 +2,7 @@
 
 > Complete reference for YouTick NFT contract methods (V8)
 
-**Contract**: `youtick-prod-v1.near`
+**Contract**: `youtick.near`
 **Standards**: NEP-171 (Core), NEP-177 (Metadata), NEP-178 (Approval), NEP-141 (FT Receiver)
 **SDK**: NEAR SDK 5.5.0
 
@@ -56,7 +56,7 @@ pub fn create_event(
 **Gas**: 30 TGas
 
 ```bash
-near call youtick-prod-v1.near create_event \
+near call youtick.near create_event \
   '{"encrypted_cid":"Qm...","title":"Concert","description":"Live show","price":"1000000000000000000000000"}' \
   --accountId creator.near --deposit 0.1
 ```
@@ -105,7 +105,7 @@ pub fn get_event(&self, encrypted_cid: String) -> Option<EventResponse>
 ```
 
 ```bash
-near view youtick-prod-v1.near get_event '{"encrypted_cid":"Qm..."}'
+near view youtick.near get_event '{"encrypted_cid":"Qm..."}'
 ```
 
 ---
@@ -179,7 +179,7 @@ pub fn buy_ticket(
 **Blocked**: If event is banned
 
 ```bash
-near call youtick-prod-v1.near buy_ticket \
+near call youtick.near buy_ticket \
   '{"receiver_id":"buyer.near","encrypted_cid":"Qm..."}' \
   --accountId buyer.near --deposit 1.01
 ```
@@ -285,7 +285,7 @@ pub fn deposit_funds(&mut self)
 ```
 
 ```bash
-near call youtick-prod-v1.near deposit_funds '{}' \
+near call youtick.near deposit_funds '{}' \
   --accountId user.near --deposit 1
 ```
 
@@ -336,7 +336,7 @@ pub fn get_user_balance(&self, account_id: AccountId) -> U128
 ```
 
 ```bash
-near view youtick-prod-v1.near get_user_balance '{"account_id":"user.near"}'
+near view youtick.near get_user_balance '{"account_id":"user.near"}'
 ```
 
 ---
@@ -448,7 +448,7 @@ pub fn fund_trial_pool(&mut self)
 ```
 
 ```bash
-near call youtick-prod-v1.near fund_trial_pool '{}' \
+near call youtick.near fund_trial_pool '{}' \
   --accountId owner.near --deposit 10
 ```
 
@@ -540,9 +540,9 @@ pub fn ban_event(&mut self, encrypted_cid: String, reason: BanReason)
 **BanReason values**: `SexualContent`, `CopyrightViolation`, `Other`
 
 ```bash
-near call youtick-prod-v1.near ban_event \
+near call youtick.near ban_event \
   '{"encrypted_cid":"Qm...","reason":"CopyrightViolation"}' \
-  --accountId youtick-prod-v1.near
+  --accountId youtick.near
 ```
 
 ---
@@ -685,7 +685,7 @@ pub fn get_purchase_logs(
 **Default limit**: 50, **Max limit**: 100
 
 ```bash
-near view youtick-prod-v1.near get_purchase_logs '{"from_index":0,"limit":10}'
+near view youtick.near get_purchase_logs '{"from_index":0,"limit":10}'
 ```
 
 ---
@@ -812,7 +812,7 @@ pub fn verify_ownership(&self, account_id: AccountId, token_id: TokenId) -> bool
 ```
 
 ```bash
-near view youtick-prod-v1.near verify_ownership \
+near view youtick.near verify_ownership \
   '{"account_id":"buyer.near","token_id":"42"}'
 ```
 
