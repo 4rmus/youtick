@@ -37,7 +37,7 @@ export const LandingFooter = memo(() => {
           <div className="flex flex-col items-start md:items-end gap-4">
             <div className="flex items-center gap-4">
               <a
-                href="https://github.com/4rmus/youtick-mvp"
+                href="https://github.com/4rmus/youtick"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="group p-2 rounded-lg bg-zinc-900/50 hover:bg-near-green/10 border border-white/5 hover:border-near-green/30 transition-all"
