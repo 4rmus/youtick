@@ -1,7 +1,6 @@
 import { memo } from 'react';
 import { TrendingUp, Zap, Shield } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { COLORS, ANIMATION } from '@/lib/constants';
 
 export const ValuePropositionSection = memo(() => {
     const { t } = useLanguage();

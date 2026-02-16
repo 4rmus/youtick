@@ -18,6 +18,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { getCurrentRpcUrl } from './rpc-failover';
 
 const isServer = typeof window === 'undefined';
 
@@ -296,11 +297,8 @@ class DailyGlobalLimiter {
         try {
             this.lastSync = Date.now();
             const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'youtick.near';
-            const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
 
-            const rpcUrl = networkId === 'mainnet'
-                ? 'https://rpc.mainnet.near.org'
-                : 'https://rpc.testnet.near.org';
+            const rpcUrl = getCurrentRpcUrl();
 
             const response = await fetch(rpcUrl, {
                 method: 'POST',

@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button"
 import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { GiftLinkGenerator } from './GiftLinkGenerator';
 import { useSessionState, useAccountBalance } from '@/lib/hooks/useSessionState';
 import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
 import { getNearPrice, usdToNear, formatUsdCents } from '@/lib/price';

@@ -1,7 +1,7 @@
 import { memo } from 'react';
-import { Music, Film, BookOpen, ArrowRight } from 'lucide-react';
+import { Music, Film, BookOpen } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { COLORS, ANIMATION } from '@/lib/constants';
+import { ANIMATION } from '@/lib/constants';
 
 const useCases = [
   { icon: Music, titleKey: 'concerts_title', physicalKey: 'concerts_physical', digitalKey: 'concerts_digital', gradient: 'from-purple-500/10 to-pink-500/10', border: 'border-purple-500/20' },

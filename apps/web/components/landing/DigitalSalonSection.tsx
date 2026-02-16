@@ -1,7 +1,6 @@
 import { memo } from 'react';
-import { Ticket, Video, MessageCircle, Star, ArrowRight, Sparkles } from 'lucide-react';
+import { Ticket, Video, MessageCircle, Star, Sparkles } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { COLORS, ANIMATION } from '@/lib/constants';
 
 export const DigitalSalonSection = memo(() => {
     const { t } = useLanguage();

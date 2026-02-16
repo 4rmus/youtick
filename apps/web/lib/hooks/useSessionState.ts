@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { SessionManager, getCurrentRpcUrl } from '../session-manager';
+import { SessionManager } from '../session-manager';
 import { getProvider, viewContract } from '../near';
 import { NEAR_CONFIG } from '../constants';
 

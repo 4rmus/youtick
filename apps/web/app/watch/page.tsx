@@ -2,7 +2,6 @@
 
 import { useSearchParams } from 'next/navigation';
 import { VideoPlayer } from '@/components/VideoPlayer';
-import { MintButton } from '@/components/MintButton';
 import { useState, useEffect, Suspense } from 'react';
 import { useOwnedTokens, TokenWithVideo } from '@/hooks/useOwnedTokens';
 import { useEventDescription } from '@/hooks/useEventDescription';
