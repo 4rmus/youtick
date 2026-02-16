@@ -15,7 +15,7 @@
 import { generateNovaAuthToken } from './auth';
 import { NovaError, NovaUploadResult, UploadProgress } from './types';
 import { hasApiKey, getNovaSdk, getNovaAccountId, NOVA_CONSTANTS, createNovaGroup } from './config';
-import { uploadToCrust, getGatewayUrl as getCrustGatewayUrl, fetchFromGateways, pinOnCrust } from '../crust';
+import { uploadToCrust, getGatewayUrl as getCrustGatewayUrl, fetchFromGateways } from '../crust';
 
 // Local storage key for caching public group IDs
 const PUBLIC_GROUP_CACHE_KEY = 'nova_public_groups';

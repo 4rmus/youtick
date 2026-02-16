@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import { Lock, DollarSign, Zap, Shield, Clock, Palette, Gift, UserPlus } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { COLORS, ANIMATION } from '@/lib/constants';
+import { ANIMATION } from '@/lib/constants';
 
 const features = [
   { icon: Lock, key: 'nft_gated' },

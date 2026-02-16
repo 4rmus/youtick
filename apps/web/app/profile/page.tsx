@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getProvider, viewContract } from '@/lib/near';
 import { NEAR_CONFIG } from '@/lib/constants';
-import { User, Wallet, Ticket, Loader2, ArrowLeft, Gift, Video, X } from 'lucide-react';
+import { User, Wallet, Ticket, Loader2, ArrowLeft, Gift, Video } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from '@/components/Web4Link';
 import { useLanguage } from '@/components/providers/LanguageContext';

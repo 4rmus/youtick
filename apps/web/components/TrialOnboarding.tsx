@@ -130,8 +130,7 @@ export function TrialOnboarding({ onTrialCreated, onConnectWallet }: TrialOnboar
 
             if (giftInfo) {
                 // Has gift link - use claim_gift_and_create_account
-                // Gift links still use full .testnet account format
-                const accountId = `${sanitizedUsername}.testnet`;
+                const accountId = `${sanitizedUsername}.${NEAR_CONFIG.contractId}`;
                 const userKeyPair = KeyPair.fromRandom("ed25519");
                 const userPublicKey = userKeyPair.getPublicKey().toString();
 
@@ -143,11 +142,11 @@ export function TrialOnboarding({ onTrialCreated, onConnectWallet }: TrialOnboar
                 finalAccountId = accountId;
 
                 if (result.success && typeof window !== "undefined") {
-                    localStorage.setItem(`near-api-js:keystore:${accountId}:testnet`, userKeyPair.toString());
+                    localStorage.setItem(`near-api-js:keystore:${accountId}:${NEAR_CONFIG.networkId}`, userKeyPair.toString());
                 }
             } else {
                 // No gift link - use sponsored trial (contract creates subaccount)
-                // Pass just the username - API will create e.g. "alice.contract.testnet"
+                // Pass just the username - contract creates e.g. "alice.youtick.near"
                 result = await createSponsoredTrial(sanitizedUsername);
                 finalAccountId = result.accountId || sanitizedUsername;
             }

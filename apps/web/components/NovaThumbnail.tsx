@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { parseNovaUrl, isPublicGroup } from '@/lib/nova';
+import { parseNovaUrl } from '@/lib/nova';
 import { isNovaUrl, isIpfsUrl } from '@/lib/nova/types';
 import { getGatewayUrl, getGatewayUrls, fetchFromGateways } from '@/lib/crust';
 
