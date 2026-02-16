@@ -53,10 +53,8 @@ export function TrialOnboarding({ onTrialCreated, onConnectWallet }: TrialOnboar
         start_exploring: t.trial_page?.start_exploring || "Start Exploring",
         error_title: t.trial_page?.error_title || "Something went wrong",
         try_again: t.trial_page?.try_again || "Try Again",
-        no_gift_link: "No gift link found. Please use a valid gift link or connect your wallet.",
-        no_gift_link_tr: "Hediye linki bulunamadı. Lütfen geçerli bir hediye linki kullanın veya cüzdanınızı bağlayın.",
-        gift_for: "Gift ticket for:",
-        gift_for_tr: "Hediye bilet:",
+        no_gift_link: t.trial_page?.no_gift_link || "No gift link found. Please use a valid gift link or connect your wallet.",
+        gift_for: t.trial_page?.gift_for || "Gift ticket for:",
     };
 
     // Parse URL params on mount
