@@ -8,7 +8,7 @@ import { useLanguage } from '@/components/providers/LanguageContext';
  * Based on VISUAL_ASSETS_MASTER_PROMPT.md specifications.
  */
 export const FinancialComparisonChart = memo(() => {
-    const { t, language } = useLanguage();
+    const { language } = useLanguage();
 
     const platforms = [
         {

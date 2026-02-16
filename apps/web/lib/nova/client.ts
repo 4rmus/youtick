@@ -5,13 +5,11 @@
  */
 
 import { generateNovaAuthToken } from './auth';
-import { createGroup } from './groups';
 import {
   NovaUploadResult,
   NovaUploadOptions,
   NovaFetchOptions,
   NovaError,
-  UploadProgress
 } from './types';
 import { NOVA_CONSTANTS, getGatewayUrl, hasApiKey, getNovaSdk, createNovaGroup } from './config';
 import { getRegisterGroupFee } from './costs';

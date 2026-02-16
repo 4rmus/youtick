@@ -101,7 +101,7 @@ describe('SessionManager Logic', () => {
     it('should use testnet configuration', () => {
       const config = {
         networkId: 'testnet',
-        contractId: 'v1.utick.testnet'
+        contractId: 'test-contract.testnet'
       };
 
       expect(config.networkId).toBe('testnet');
@@ -111,7 +111,7 @@ describe('SessionManager Logic', () => {
     it('should validate mainnet configuration', () => {
       const config = {
         networkId: 'mainnet',
-        contractId: 'v1.utick.near'
+        contractId: 'youtick.near'
       };
 
       expect(config.networkId).toBe('mainnet');

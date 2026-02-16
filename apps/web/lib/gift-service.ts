@@ -7,7 +7,6 @@
  */
 
 import { KeyPair, Account, KeyPairSigner, nearToYocto, actions, type KeyPairString } from "near-api-js";
-import { InMemoryKeyStore } from "./keystore-v7";
 import type { WalletInstance } from "./types";
 
 import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from './constants';
@@ -78,7 +77,7 @@ export async function getTrialPoolBalance(): Promise<string> {
  * Uses the onboarding Function Call Access Key stored in localStorage
  *
  * @param username - Just the username prefix (e.g. "alice")
- * @returns The full account ID will be returned in the result (e.g. "alice.contract.testnet")
+ * @returns The full account ID will be returned in the result (e.g. "alice.youtick.near")
  */
 export async function createSponsoredTrialDirect(
     username: string

@@ -1,6 +1,5 @@
 import { memo, useCallback, useState } from 'react';
 import Link from '@/components/Web4Link';
-import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Branding } from './Branding';
 import { useLanguage } from '@/components/providers/LanguageContext';
@@ -15,7 +14,6 @@ interface NavigationProps {
 export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: NavigationProps) => {
   const { language, setLanguage, t } = useLanguage();
   const { connect, accountId, signOut } = useWallet();
-  const router = useRouter();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const handleGetStarted = useCallback(() => {

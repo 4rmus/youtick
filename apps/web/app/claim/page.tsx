@@ -178,9 +178,7 @@ function ClaimContent() {
             const giftKeyPair = KeyPair.fromString(formattedKey as `ed25519:${string}`);
 
             // v7: Create Account with signer directly
-            const rpcUrl = NETWORK_ID === "mainnet"
-                ? "https://rpc.mainnet.near.org"
-                : "https://test.rpc.fastnear.com";
+            const rpcUrl = getCurrentRpcUrl();
             const signer = new KeyPairSigner(giftKeyPair);
             const contractAccount = new Account(NFT_CONTRACT, rpcUrl, signer);
 
@@ -250,9 +248,7 @@ function ClaimContent() {
             const giftKeyPair = KeyPair.fromString(formattedKey as `ed25519:${string}`);
 
             // v7: Create Account with signer directly
-            const rpcUrl = NETWORK_ID === "mainnet"
-                ? "https://rpc.mainnet.near.org"
-                : "https://test.rpc.fastnear.com";
+            const rpcUrl = getCurrentRpcUrl();
             const signer = new KeyPairSigner(giftKeyPair);
             const contractAccount = new Account(NFT_CONTRACT, rpcUrl, signer);
 
@@ -492,7 +488,7 @@ function ClaimContent() {
                                 <Input
                                     value={existingAccountId}
                                     onChange={(e) => setExistingAccountId(e.target.value)}
-                                    placeholder={t.claim_page?.existing_placeholder || "hesap.testnet veya hesap.near"}
+                                    placeholder={t.claim_page?.existing_placeholder || "hesap.near"}
                                     className="bg-zinc-800/50 border-zinc-700 text-white rounded-xl h-12"
                                 />
                                 <Button

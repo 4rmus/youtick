@@ -37,17 +37,12 @@ Create `.env.local` (see [.env.example](.env.example) for template):
 
 ```env
 # Required - NEAR Network
-NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
+NEXT_PUBLIC_NEAR_NETWORK=mainnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 
 # Required - Nova Protocol (TEE Encryption)
-NEXT_PUBLIC_NOVA_NETWORK=testnet
-NEXT_PUBLIC_NOVA_CONTRACT_ID=nova.testnet
-NEXT_PUBLIC_NOVA_SHADE_AGENT_URL=https://shade-testnet.phala.network
-
-# Optional - Trial Accounts
-RELAYER_ACCOUNT_ID=your-relayer.testnet
-RELAYER_PRIVATE_KEY=ed25519:...
+NEXT_PUBLIC_NOVA_NETWORK=mainnet
+NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk.near
 ```
 
 ## Project Structure
