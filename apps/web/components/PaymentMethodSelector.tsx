@@ -8,7 +8,7 @@ import {
     getSupportedChains,
     getDryQuote,
 } from '@/lib/intents';
-import { getNearPrice, nearToUsd, formatUsdCents } from '@/lib/price';
+import { getNearPrice, formatUsdCents } from '@/lib/price';
 
 interface PaymentMethodSelectorProps {
     /** Ticket price in NEAR (as a number) */
