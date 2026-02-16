@@ -8,43 +8,46 @@ import { useLanguage } from '@/components/providers/LanguageContext';
  * Based on VISUAL_ASSETS_MASTER_PROMPT.md specifications.
  */
 export const FinancialComparisonChart = memo(() => {
-    const { language } = useLanguage();
+    const { t } = useLanguage();
+    const fc = t.financial_chart;
 
     const platforms = [
         {
             name: 'YouTick',
             commission: 2,
             color: 'bg-near-green',
-            description: language === 'tr' ? 'Sanatçıya %98' : '98% to artist',
+            description: `${fc?.to_artist || '98% to artist'}`,
+            descriptionFormatted: true,
             highlight: true,
         },
         {
             name: 'YouTube',
             commission: 55,
             color: 'bg-near-red',
-            description: language === 'tr' ? 'Platform kesintisi' : 'Platform cut',
+            description: fc?.platform_cut || 'Platform cut',
         },
         {
             name: 'Spotify',
             commission: 70,
             color: 'bg-orange-500',
-            description: language === 'tr' ? 'Platform + Label' : 'Platform + Label',
+            description: fc?.platform_label || 'Platform + Label',
         },
         {
             name: 'Ticketmaster',
             commission: 28,
             color: 'bg-yellow-500',
-            description: language === 'tr' ? 'Bilet komisyonu' : 'Ticket commission',
+            description: fc?.ticket_commission || 'Ticket commission',
         },
         {
             name: 'Netflix',
             commission: 77,
             color: 'bg-red-600',
-            description: language === 'tr' ? 'Lisans modeli' : 'License model',
+            description: fc?.license_model || 'License model',
         },
     ];
 
     const maxCommission = 100;
+    const artistLabel = fc?.artist_label || 'Artist';
 
     return (
         <section id="commission-comparison" className="py-24 bg-black relative">
@@ -52,12 +55,10 @@ export const FinancialComparisonChart = memo(() => {
                 {/* Header - Left aligned per NEAR guidelines */}
                 <div className="max-w-3xl mb-16">
                     <h2 className="text-3xl md:text-4xl font-black text-white mb-4 text-left">
-                        {language === 'tr' ? 'Komisyon Karşılaştırması' : 'Commission Comparison'}
+                        {fc?.title || 'Commission Comparison'}
                     </h2>
                     <p className="text-lg text-zinc-400 text-left">
-                        {language === 'tr'
-                            ? 'Geleneksel platformlar sanatçı gelirinin çoğunu alır. Biz farklıyız.'
-                            : 'Traditional platforms take most of artist revenue. We\'re different.'}
+                        {fc?.subtitle || "Traditional platforms take most of artist revenue. We're different."}
                     </p>
                 </div>
 
@@ -82,7 +83,7 @@ export const FinancialComparisonChart = memo(() => {
                                         {platform.commission}%
                                     </span>
                                     <span className="text-xs text-zinc-500 ml-2">
-                                        {language === 'tr' ? 'komisyon' : 'commission'}
+                                        {fc?.commission || 'commission'}
                                     </span>
                                 </div>
                             </div>
@@ -98,8 +99,8 @@ export const FinancialComparisonChart = memo(() => {
                                     className="absolute right-2 top-1/2 -translate-y-1/2 text-sm font-bold text-zinc-300"
                                 >
                                     {platform.highlight
-                                        ? (language === 'tr' ? 'Sanatçı: %98 ✓' : 'Artist: 98% ✓')
-                                        : (language === 'tr' ? `Sanatçı: %${100 - platform.commission}` : `Artist: ${100 - platform.commission}%`)
+                                        ? `${artistLabel}: 98% ✓`
+                                        : `${artistLabel}: ${100 - platform.commission}%`
                                     }
                                 </div>
                             </div>
@@ -119,14 +120,10 @@ export const FinancialComparisonChart = memo(() => {
                             50x
                         </div>
                         <p className="text-lg text-zinc-300 mb-2">
-                            {language === 'tr'
-                                ? 'YouTick komisyonu diğer platformlara göre ~50 kat daha düşük'
-                                : 'YouTick commission is ~50x lower than other platforms'}
+                            {fc?.summary_title || 'YouTick commission is ~50x lower than other platforms'}
                         </p>
                         <p className="text-sm text-zinc-500">
-                            {language === 'tr'
-                                ? '2% vs 55-70% platform kesintisi'
-                                : '2% vs 55-70% platform cut'}
+                            {fc?.summary_subtitle || '2% vs 55-70% platform cut'}
                         </p>
                     </div>
                 </div>

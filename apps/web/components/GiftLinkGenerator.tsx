@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Copy, Check, Download, Link2 } from "lucide-react";
 import { useWallet } from "@/components/providers/WalletProvider";
+import { useLanguage } from "@/components/providers/LanguageContext";
 import { actions as nearActions } from "near-api-js";
 import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from "@/lib/constants";
 
@@ -21,6 +22,8 @@ export function GiftLinkGenerator({
     creatorAccountId,
     onLinksGenerated,
 }: GiftLinkGeneratorProps) {
+    const { t } = useLanguage();
+    const g = t.gift_generator;
     const [ticketCount, setTicketCount] = useState(5);
     const [generating, setGenerating] = useState(false);
     const [links, setLinks] = useState<string[]>([]);
@@ -101,7 +104,7 @@ export function GiftLinkGenerator({
             onLinksGenerated?.(claimLinks);
         } catch (err: unknown) {
             console.error("Failed to generate gift links:", err);
-            setError(err instanceof Error ? err.message : "Link oluşturulamadı");
+            setError(err instanceof Error ? err.message : (g?.create_failed || "Failed to create link"));
         } finally {
             setGenerating(false);
         }
@@ -136,7 +139,7 @@ export function GiftLinkGenerator({
                 <>
                     {/* Ticket Count */}
                     <div className="space-y-2">
-                        <label className="text-sm text-zinc-400">Kaç adet bilet?</label>
+                        <label className="text-sm text-zinc-400">{g?.how_many || "How many tickets?"}</label>
                         <Input
                             type="number"
                             min={1}
@@ -150,10 +153,10 @@ export function GiftLinkGenerator({
                     {/* Cost Estimate */}
                     <div className="p-3 bg-zinc-900/50 border border-zinc-600/50 rounded-lg">
                         <p className="text-sm text-zinc-300">
-                            💰 Tahmini Maliyet: <span className="font-bold text-white">{estimatedCost} NEAR</span>
+                            💰 {g?.estimated_cost || "Estimated Cost"}: <span className="font-bold text-white">{estimatedCost} NEAR</span>
                         </p>
                         <p className="text-xs text-zinc-500 mt-1">
-                            {ticketCount} bilet × 0.12 NEAR depolama
+                            {ticketCount} {g?.tickets_storage || "tickets × 0.12 NEAR storage"}
                         </p>
                     </div>
 
@@ -170,12 +173,12 @@ export function GiftLinkGenerator({
                         {generating ? (
                             <>
                                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Oluşturuluyor...
+                                {g?.generating || "Generating..."}
                             </>
                         ) : (
                             <>
                                 <Link2 className="w-4 h-4 mr-2" />
-                                {ticketCount} Link Oluştur
+                                {ticketCount} {g?.generate_links || "Generate Links"}
                             </>
                         )}
                     </Button>
@@ -185,7 +188,7 @@ export function GiftLinkGenerator({
                     {/* Success Header */}
                     <div className="flex items-center gap-2 text-near-green text-sm">
                         <Check className="w-4 h-4" />
-                        <span>{links.length} hediye linki oluşturuldu!</span>
+                        <span>{links.length} {g?.links_created || "gift links created!"}</span>
                     </div>
 
                     {/* Generated Links */}
@@ -225,7 +228,7 @@ export function GiftLinkGenerator({
                             ) : (
                                 <Copy className="w-4 h-4 mr-2" />
                             )}
-                            Tümünü Kopyala
+                            {g?.copy_all || "Copy All"}
                         </Button>
                         <Button
                             onClick={handleDownloadCSV}
@@ -233,7 +236,7 @@ export function GiftLinkGenerator({
                             className="flex-1 border-zinc-600 text-zinc-300 hover:bg-zinc-700 rounded-xl"
                         >
                             <Download className="w-4 h-4 mr-2" />
-                            CSV İndir
+                            {g?.download_csv || "Download CSV"}
                         </Button>
                     </div>
 
@@ -243,7 +246,7 @@ export function GiftLinkGenerator({
                         variant="ghost"
                         className="w-full text-zinc-400 hover:text-white"
                     >
-                        Daha Fazla Oluştur
+                        {g?.create_more || "Create More"}
                     </Button>
                 </>
             )}

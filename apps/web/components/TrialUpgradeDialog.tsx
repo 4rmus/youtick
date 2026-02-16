@@ -14,6 +14,7 @@ import {
 import { Copy, Check, AlertTriangle, Wallet, ArrowRight, ExternalLink } from 'lucide-react';
 import { KeyPair, type KeyPairString } from 'near-api-js';
 import { generateSeedPhrase } from 'near-seed-phrase';
+import { useLanguage } from '@/components/providers/LanguageContext';
 
 interface TrialUpgradeDialogProps {
     accountId: string;
@@ -21,6 +22,9 @@ interface TrialUpgradeDialogProps {
 }
 
 export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgradeDialogProps) {
+    const { t } = useLanguage();
+    const u = t.upgrade_dialog;
+
     const [isOpen, setIsOpen] = useState(false);
     const [step, setStep] = useState<'intro' | 'processing' | 'seedPhrase' | 'complete' | 'error'>('intro');
     const [seedPhrase, setSeedPhrase] = useState<string>('');
@@ -42,7 +46,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
             const storedKey = localStorage.getItem(`near-api-js:keystore:${accountId}:${networkId}`);
 
             if (!storedKey) {
-                throw new Error('Trial hesap anahtarı bulunamadı. Lütfen tekrar giriş yapın.');
+                throw new Error(u?.key_not_found || 'Trial account key not found. Please sign in again.');
             }
 
             // Use current trial key to add new Full Access Key
@@ -74,7 +78,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
 
         } catch (err: unknown) {
             console.error('Upgrade error:', err);
-            setError(err instanceof Error ? err.message : 'Beklenmeyen bir hata oluştu');
+            setError(err instanceof Error ? err.message : (u?.unexpected_error || 'An unexpected error occurred'));
             setStep('error');
         }
     };
@@ -122,7 +126,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                     className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
                 >
                     <Wallet className="w-4 h-4 mr-2" />
-                    Hesabı Yükselt
+                    {u?.upgrade_button || "Upgrade Account"}
                 </Button>
             </DialogTrigger>
 
@@ -134,22 +138,22 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                         <DialogHeader>
                             <DialogTitle className="flex items-center gap-2">
                                 <Wallet className="w-5 h-5 text-purple-500" />
-                                Tam Cüzdana Geç
+                                {u?.title || "Upgrade to Full Wallet"}
                             </DialogTitle>
                             <DialogDescription>
-                                Trial hesabınızı kalıcı bir NEAR cüzdanına dönüştürün
+                                {u?.description || "Convert your trial account to a permanent NEAR wallet"}
                             </DialogDescription>
                         </DialogHeader>
 
                         <div className="space-y-4 py-4">
                             <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
                                 <h4 className="font-medium text-blue-800 dark:text-blue-200 mb-2">
-                                    Nasıl çalışır?
+                                    {u?.how_it_works || "How does it work?"}
                                 </h4>
                                 <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
-                                    <li>• 12 kelimelik güvenli seed phrase oluşturulur</li>
-                                    <li>• MyNearWallet'a bu seed ile hesap oluşturabilirsiniz</li>
-                                    <li>• NFT'lerinizi yeni hesaba transfer edebilirsiniz</li>
+                                    <li>• {u?.step1 || "A secure 12-word seed phrase is generated"}</li>
+                                    <li>• {u?.step2 || "You can create an account on MyNearWallet with this seed"}</li>
+                                    <li>• {u?.step3 || "You can transfer your NFTs to your new account"}</li>
                                 </ul>
                             </div>
 
@@ -158,11 +162,10 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                                     <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
                                     <div>
                                         <h4 className="font-medium text-amber-800 dark:text-amber-200">
-                                            Önemli
+                                            {u?.important || "Important"}
                                         </h4>
                                         <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
-                                            Seed phrase'inizi güvenli bir yerde saklayın.
-                                            Kaybolursa hesabınıza erişemezsiniz!
+                                            {u?.important_desc || "Store your seed phrase in a safe place. If you lose it, you won't be able to access your account!"}
                                         </p>
                                     </div>
                                 </div>
@@ -171,10 +174,10 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
 
                         <DialogFooter>
                             <Button variant="outline" onClick={handleClose}>
-                                İptal
+                                {u?.cancel || "Cancel"}
                             </Button>
                             <Button onClick={handleUpgrade} className="bg-purple-600 hover:bg-purple-700">
-                                Seed Phrase Oluştur
+                                {u?.generate_seed || "Generate Seed Phrase"}
                                 <ArrowRight className="w-4 h-4 ml-2" />
                             </Button>
                         </DialogFooter>
@@ -184,12 +187,12 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                 {step === 'processing' && (
                     <>
                         <DialogHeader>
-                            <DialogTitle>İşleniyor...</DialogTitle>
+                            <DialogTitle>{u?.processing || "Processing..."}</DialogTitle>
                         </DialogHeader>
                         <div className="flex flex-col items-center justify-center py-8">
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mb-4" />
                             <p className="text-muted-foreground">
-                                Seed phrase oluşturuluyor...
+                                {u?.generating_seed || "Generating seed phrase..."}
                             </p>
                         </div>
                     </>
@@ -199,10 +202,10 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                     <>
                         <DialogHeader>
                             <DialogTitle className="text-green-600">
-                                ✓ Seed Phrase Hazır!
+                                {u?.seed_ready || "✓ Seed Phrase Ready!"}
                             </DialogTitle>
                             <DialogDescription>
-                                Bu kelimeleri güvenli bir yere kaydedin
+                                {u?.save_words || "Save these words in a safe place"}
                             </DialogDescription>
                         </DialogHeader>
 
@@ -229,12 +232,12 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                                 {copied ? (
                                     <>
                                         <Check className="w-4 h-4 mr-2 text-green-500" />
-                                        Kopyalandı!
+                                        {u?.copied || "Copied!"}
                                     </>
                                 ) : (
                                     <>
                                         <Copy className="w-4 h-4 mr-2" />
-                                        Seed Phrase'i Kopyala
+                                        {u?.copy_seed || "Copy Seed Phrase"}
                                     </>
                                 )}
                             </Button>
@@ -247,8 +250,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                                     className="mt-1"
                                 />
                                 <span className="text-sm text-muted-foreground">
-                                    Seed phrase'imi güvenli bir yere kaydettim.
-                                    Kaybolursa hesabıma erişemeyeceğimi anlıyorum.
+                                    {u?.confirm_saved || "I have saved my seed phrase in a safe place. I understand I cannot access my account if I lose it."}
                                 </span>
                             </label>
                         </div>
@@ -259,7 +261,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                                 disabled={!confirmed}
                                 className="w-full bg-green-600 hover:bg-green-700"
                             >
-                                Devam Et
+                                {u?.continue || "Continue"}
                             </Button>
                         </DialogFooter>
                     </>
@@ -269,18 +271,17 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                     <>
                         <DialogHeader>
                             <DialogTitle className="text-green-600">
-                                🎉 Sonraki Adım
+                                {u?.next_step || "🎉 Next Step"}
                             </DialogTitle>
                         </DialogHeader>
 
                         <div className="space-y-4 py-4 text-center">
                             <p className="text-muted-foreground">
-                                Seed phrase'inizi kullanarak MyNearWallet'ta hesap oluşturun.
-                                Sonra NFT'lerinizi yeni hesabınıza transfer edebilirsiniz.
+                                {u?.next_step_desc || "Create an account on MyNearWallet using your seed phrase. Then you can transfer your NFTs to your new account."}
                             </p>
 
                             <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-3">
-                                <p className="text-xs text-muted-foreground mb-1">Mevcut Hesap</p>
+                                <p className="text-xs text-muted-foreground mb-1">{u?.current_account || "Current Account"}</p>
                                 <p className="font-mono text-sm">{accountId}</p>
                             </div>
 
@@ -293,14 +294,14 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                                         : 'https://testnet.mynearwallet.com/create', '_blank');
                                 }}
                             >
-                                MyNearWallet'ta Hesap Oluştur
+                                {u?.create_on_mynear || "Create Account on MyNearWallet"}
                                 <ExternalLink className="w-4 h-4 ml-2" />
                             </Button>
                         </div>
 
                         <DialogFooter>
                             <Button variant="outline" onClick={handleClose} className="w-full">
-                                Kapat
+                                {u?.close || "Close"}
                             </Button>
                         </DialogFooter>
                     </>
@@ -310,7 +311,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                     <>
                         <DialogHeader>
                             <DialogTitle className="text-red-600">
-                                Hata Oluştu
+                                {u?.error_title || "Error Occurred"}
                             </DialogTitle>
                         </DialogHeader>
 
@@ -324,10 +325,10 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
 
                         <DialogFooter>
                             <Button variant="outline" onClick={handleClose}>
-                                Kapat
+                                {u?.close || "Close"}
                             </Button>
                             <Button onClick={() => setStep('intro')}>
-                                Tekrar Dene
+                                {u?.try_again || "Try Again"}
                             </Button>
                         </DialogFooter>
                     </>
