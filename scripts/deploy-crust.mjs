@@ -243,21 +243,23 @@ async function main() {
   console.log(`  Contract: ${CONTRACT_ID}`);
   console.log(`  New URL:  ipfs://${cid}\n`);
 
+  const setUrlCommand =
+    `near contract call-function as-transaction ${CONTRACT_ID} web4_set_static_url json-args '{"url":"ipfs://${cid}"}' ` +
+    `prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as ${CONTRACT_ID} network-config mainnet ` +
+    `sign-with-access-key-file ${CREDS_PATH} send`;
+
   if (SET_URL) {
     console.log('  Updating contract...');
     try {
-      execSync(
-        `near contract call-function as-transaction ${CONTRACT_ID} web4_set_static_url json-args '{"url":"ipfs://${cid}"}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as ${CONTRACT_ID} network-config mainnet sign-with-keychain send`,
-        { stdio: 'inherit' }
-      );
+      execSync(setUrlCommand, { stdio: 'inherit' });
       console.log('\n  ✓ Contract updated!');
     } catch (err) {
       console.error('  ERROR: Contract update failed. Run manually:');
-      console.log(`  near contract call-function as-transaction ${CONTRACT_ID} web4_set_static_url json-args '{"url":"ipfs://${cid}"}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as ${CONTRACT_ID} network-config mainnet sign-with-keychain send`);
+      console.log(`  ${setUrlCommand}`);
     }
   } else {
     console.log('  To update the contract URL, run:');
-    console.log(`  near contract call-function as-transaction ${CONTRACT_ID} web4_set_static_url json-args '{"url":"ipfs://${cid}"}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as ${CONTRACT_ID} network-config mainnet sign-with-keychain send`);
+    console.log(`  ${setUrlCommand}`);
     console.log('\n  Or re-run with --set-url flag');
   }
 
