@@ -2,7 +2,7 @@
  * Decentralization Metrics Collection
  *
  * Structured metrics collection for YouTick's decentralization score.
- * Captures events from NEAR, Nova, and Crust layers to compute
+ * Captures events from NEAR, KMS, and Crust layers to compute
  * a real-time decentralization health score.
  */
 
@@ -19,7 +19,7 @@ export interface LayerScore {
 
 export interface DecentralizationMetrics {
   near: LayerScore;
-  nova: LayerScore;
+  kms: LayerScore;
   storage: LayerScore;
   /** Weighted composite score (0-100) */
   composite: number;
@@ -28,8 +28,8 @@ export interface DecentralizationMetrics {
 type MetricEvent =
   | 'trial_direct_success'
   | 'trial_relayer_fallback'
-  | 'nova_direct_success'
-  | 'nova_proxy_used'
+  | 'kms_direct_success'
+  | 'kms_proxy_used'
   | 'crust_upload_success'
   | 'crust_storage_order_placed'
   | 'crust_storage_order_failed'
@@ -41,9 +41,9 @@ type MetricListener = (metrics: DecentralizationMetrics) => void;
 /** In-memory metrics store */
 const state = {
   near: { decentralized: 0, centralized: 0 },
-  nova: { decentralized: 0, centralized: 0 },
+  kms: { decentralized: 0, centralized: 0 },
   storage: { decentralized: 0, centralized: 0 },
-  lastUpdated: { near: 0, nova: 0, storage: 0 },
+  lastUpdated: { near: 0, kms: 0, storage: 0 },
 };
 
 const listeners = new Set<MetricListener>();
@@ -63,13 +63,13 @@ export function recordMetric(event: MetricEvent): void {
       state.near.centralized++;
       state.lastUpdated.near = now;
       break;
-    case 'nova_direct_success':
-      state.nova.decentralized++;
-      state.lastUpdated.nova = now;
+    case 'kms_direct_success':
+      state.kms.decentralized++;
+      state.lastUpdated.kms = now;
       break;
-    case 'nova_proxy_used':
-      state.nova.centralized++;
-      state.lastUpdated.nova = now;
+    case 'kms_proxy_used':
+      state.kms.centralized++;
+      state.lastUpdated.kms = now;
       break;
     case 'crust_upload_success':
     case 'crust_storage_order_placed':
@@ -92,13 +92,13 @@ export function recordMetric(event: MetricEvent): void {
  */
 export function getMetrics(): DecentralizationMetrics {
   const near = computeLayerScore(state.near, state.lastUpdated.near, 95);
-  const nova = computeLayerScore(state.nova, state.lastUpdated.nova, 92);
+  const kms = computeLayerScore(state.kms, state.lastUpdated.kms, 92);
   const storage = computeLayerScore(state.storage, state.lastUpdated.storage, 95);
 
-  // Weighted composite: NEAR 35%, Nova 35%, Storage 30%
-  const composite = Math.round(near.score * 0.35 + nova.score * 0.35 + storage.score * 0.30);
+  // Weighted composite: NEAR 35%, KMS 35%, Storage 30%
+  const composite = Math.round(near.score * 0.35 + kms.score * 0.35 + storage.score * 0.30);
 
-  return { near, nova, storage, composite };
+  return { near, kms, storage, composite };
 }
 
 /**

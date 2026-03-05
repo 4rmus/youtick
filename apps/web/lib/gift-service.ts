@@ -9,7 +9,7 @@
 import { KeyPair, Account, KeyPairSigner, nearToYocto, actions, type KeyPairString } from "near-api-js";
 import type { WalletInstance } from "./types";
 
-import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from './constants';
+import { NEAR_CONFIG, GAS_CONSTANTS } from './constants';
 import { getCurrentRpcUrl } from './rpc-failover';
 
 // Contract ID from centralized config
@@ -38,6 +38,75 @@ export interface SponsoredTrialResult {
     accountId?: string;
     secretKey?: string;
     error?: string;
+}
+
+function onboardingStorageKey(): string {
+    return `onboarding_key:${NFT_CONTRACT_ID}`;
+}
+
+function readOnboardingKey(): string | null {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem(onboardingStorageKey());
+}
+
+async function isOnboardingKeyAuthorized(publicKey: string): Promise<boolean> {
+    try {
+        const response = await fetch(`${getCurrentRpcUrl()}/`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: "onboarding-auth-check",
+                method: "query",
+                params: {
+                    request_type: "call_function",
+                    finality: "final",
+                    account_id: NFT_CONTRACT_ID,
+                    method_name: "is_onboarding_key",
+                    args_base64: Buffer.from(JSON.stringify({ public_key: publicKey })).toString("base64"),
+                },
+            }),
+        });
+
+        const data = await response.json();
+        if (data.error || !data.result?.result) return false;
+
+        const result = JSON.parse(Buffer.from(data.result.result).toString());
+        return Boolean(result);
+    } catch {
+        return false;
+    }
+}
+
+async function getValidatedOnboardingKeyPair(retryDelayMs: number = 1500): Promise<KeyPair | null> {
+    let onboardingKeyStr = readOnboardingKey();
+
+    if (!onboardingKeyStr && retryDelayMs > 0) {
+        // Key may still be loading from OnboardingKeyInit on first app load
+        await new Promise(r => setTimeout(r, retryDelayMs));
+        onboardingKeyStr = readOnboardingKey();
+    }
+
+    if (!onboardingKeyStr) return null;
+
+    try {
+        const keyPair = KeyPair.fromString(onboardingKeyStr as KeyPairString);
+        const isAuthorized = await isOnboardingKeyAuthorized(keyPair.getPublicKey().toString());
+
+        if (!isAuthorized) {
+            if (typeof window !== "undefined") {
+                localStorage.removeItem(onboardingStorageKey());
+            }
+            return null;
+        }
+
+        return keyPair;
+    } catch {
+        if (typeof window !== "undefined") {
+            localStorage.removeItem(onboardingStorageKey());
+        }
+        return null;
+    }
 }
 
 /**
@@ -83,31 +152,19 @@ export async function createSponsoredTrialDirect(
     username: string
 ): Promise<SponsoredTrialResult> {
     try {
-        // Check if we have an onboarding key
-        let onboardingKeyStr = typeof window !== "undefined"
-            ? localStorage.getItem(`onboarding_key:${NFT_CONTRACT_ID}`)
-            : null;
-
-        if (!onboardingKeyStr) {
-            // Retry: key may still be loading from OnboardingKeyInit
-            await new Promise(r => setTimeout(r, 1500));
-            onboardingKeyStr = typeof window !== "undefined"
-                ? localStorage.getItem(`onboarding_key:${NFT_CONTRACT_ID}`)
-                : null;
-
-            if (!onboardingKeyStr) {
-                console.log('[DECENTRALIZATION_METRIC] trial_fallback_no_onboarding_key');
-                return createSponsoredTrialRelayer(username);
-            }
+        // Onboarding key is required for anti-abuse controls (authorized key + on-chain daily limit)
+        const onboardingKeyPair = await getValidatedOnboardingKeyPair();
+        if (!onboardingKeyPair) {
+            return {
+                success: false,
+                error: "Onboarding key unavailable or unauthorized. Trial account creation is temporarily disabled.",
+            };
         }
 
         // Generate keypair for the new account
         const userKeyPair = KeyPair.fromRandom("ed25519");
         const userPublicKey = userKeyPair.getPublicKey().toString();
         const userSecretKey = userKeyPair.toString();
-
-        // Parse onboarding key
-        const onboardingKeyPair = KeyPair.fromString(onboardingKeyStr as KeyPairString);
 
         // v7: Create Account directly with signer
         const signer = new KeyPairSigner(onboardingKeyPair);
@@ -144,49 +201,15 @@ export async function createSponsoredTrialDirect(
         console.error("Direct sponsored trial error:", error);
         const errMsg = error instanceof Error ? error.message : '';
 
-        // If the error is about unauthorized key, retry once with fresh RPC before relayer fallback
+        // Remove invalid key from cache so next flow can load a fresh one
         if (errMsg.includes("Unauthorized") || errMsg.includes("onboarding key")) {
-            console.log('[DECENTRALIZATION_METRIC] trial_onboarding_key_unauthorized');
-            try {
-                // One retry with fresh RPC endpoint
-                const retryKeyStr = typeof window !== "undefined"
-                    ? localStorage.getItem(`onboarding_key:${NFT_CONTRACT_ID}`)
-                    : null;
-                if (retryKeyStr) {
-                    const retryKeyPair = KeyPair.fromString(retryKeyStr as KeyPairString);
-                    const retrySigner = new KeyPairSigner(retryKeyPair);
-
-                    const userKeyPair = KeyPair.fromRandom("ed25519");
-                    const userPublicKey = userKeyPair.getPublicKey().toString();
-                    const userSecretKey = userKeyPair.toString();
-
-                    const retryAccount = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), retrySigner);
-                    await retryAccount.signAndSendTransaction({
-                        receiverId: NFT_CONTRACT_ID,
-                        actions: [
-                            actions.functionCall(
-                                "create_sponsored_trial_direct",
-                                { username, new_public_key: userPublicKey },
-                                GAS_CONSTANTS.highGas,
-                                BigInt(0)
-                            )
-                        ]
-                    });
-
-                    const accountId = `${username}.${NFT_CONTRACT_ID}`;
-                    if (typeof window !== "undefined") {
-                        localStorage.setItem(`near-api-js:keystore:${accountId}:${NETWORK_ID}`, userSecretKey);
-                        localStorage.setItem("trialAccountId", accountId);
-                    }
-
-                    return { success: true, accountId, secretKey: userSecretKey };
-                }
-            } catch {
-                // Retry failed, fall through to relayer
+            if (typeof window !== "undefined") {
+                localStorage.removeItem(onboardingStorageKey());
             }
-
-            console.log('[DECENTRALIZATION_METRIC] trial_fallback_to_relayer');
-            return createSponsoredTrialRelayer(username);
+            return {
+                success: false,
+                error: "Unauthorized onboarding key. Please rotate onboarding key and try again.",
+            };
         }
 
         return {
@@ -251,12 +274,8 @@ export async function createSponsoredTrialRelayer(
 }
 
 /**
- * Create a sponsored trial account - Direct-first with relayer fallback
- * Prioritizes decentralization (onboarding key) while maintaining UX (relayer fallback)
- *
- * Strategy:
- * 1. If onboarding key exists in localStorage → Direct (decentralized)
- * 2. If direct fails or no key → Relayer API (UX fallback)
+ * Create a sponsored trial account using the onboarding key.
+ * This preserves on-chain anti-abuse controls (authorized key + daily limit).
  *
  * @param username - Just the username prefix (e.g. "alice")
  * @returns The full account ID and method used
@@ -264,27 +283,63 @@ export async function createSponsoredTrialRelayer(
 export async function createSponsoredTrial(
     username: string
 ): Promise<SponsoredTrialResult & { method?: 'direct' | 'relayer' }> {
-    // Try direct method first (relayer-less, decentralized)
     const directResult = await createSponsoredTrialDirect(username);
 
     if (directResult.success) {
         console.log(`[DECENTRALIZATION_METRIC] {"operation":"trial_create","method":"direct","username":"${username}","timestamp":${Date.now()}}`);
-        return { ...directResult, method: 'direct' };
     }
 
-    // If direct failed with a non-fallback error, return it
-    if (directResult.error && !directResult.error.includes('falling back')) {
-        return { ...directResult, method: 'direct' };
+    return { ...directResult, method: 'direct' };
+}
+
+/**
+ * Claim a free ticket via onboarding key (sponsored storage + on-chain daily limit).
+ */
+export async function claimFreeTicketDirect(
+    receiverId: string,
+    encryptedCid: string
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        const onboardingKeyPair = await getValidatedOnboardingKeyPair(0);
+        if (!onboardingKeyPair) {
+            return {
+                success: false,
+                error: "Onboarding key unavailable or unauthorized. Free ticket claim is temporarily disabled.",
+            };
+        }
+
+        const signer = new KeyPairSigner(onboardingKeyPair);
+        const account = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), signer);
+
+        await account.signAndSendTransaction({
+            receiverId: NFT_CONTRACT_ID,
+            actions: [
+                actions.functionCall(
+                    "claim_free_ticket_direct",
+                    { receiver_id: receiverId, encrypted_cid: encryptedCid },
+                    GAS_CONSTANTS.mediumGas,
+                    BigInt(0)
+                )
+            ]
+        });
+
+        return { success: true };
+    } catch (error: unknown) {
+        console.error("Direct free ticket claim error:", error);
+        const errMsg = error instanceof Error ? error.message : "Failed to claim free ticket";
+
+        if (errMsg.includes("Unauthorized") || errMsg.includes("onboarding key")) {
+            if (typeof window !== "undefined") {
+                localStorage.removeItem(onboardingStorageKey());
+            }
+            return {
+                success: false,
+                error: "Unauthorized onboarding key. Please rotate onboarding key and try again.",
+            };
+        }
+
+        return { success: false, error: errMsg };
     }
-
-    // Fallback: relayer-based trial creation
-    const relayerResult = await createSponsoredTrialRelayer(username);
-
-    if (relayerResult.success) {
-        console.log(`[DECENTRALIZATION_METRIC] {"operation":"trial_create","method":"relayer","username":"${username}","timestamp":${Date.now()}}`);
-    }
-
-    return { ...relayerResult, method: 'relayer' };
 }
 
 /**
@@ -293,7 +348,7 @@ export async function createSponsoredTrial(
  */
 export function setOnboardingKey(secretKey: string): void {
     if (typeof window !== "undefined") {
-        localStorage.setItem(`onboarding_key:${NFT_CONTRACT_ID}`, secretKey);
+        localStorage.setItem(onboardingStorageKey(), secretKey);
     }
 }
 
@@ -302,7 +357,7 @@ export function setOnboardingKey(secretKey: string): void {
  */
 export function hasOnboardingKey(): boolean {
     if (typeof window === "undefined") return false;
-    return !!localStorage.getItem(`onboarding_key:${NFT_CONTRACT_ID}`);
+    return !!localStorage.getItem(onboardingStorageKey());
 }
 
 /**
@@ -310,7 +365,7 @@ export function hasOnboardingKey(): boolean {
  */
 export function getOnboardingKey(): string | null {
     if (typeof window === "undefined") return null;
-    return localStorage.getItem(`onboarding_key:${NFT_CONTRACT_ID}`);
+    return localStorage.getItem(onboardingStorageKey());
 }
 
 /**

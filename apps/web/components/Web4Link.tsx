@@ -26,7 +26,7 @@ export default function Link({ href, children, prefetch, replace, scroll, ...res
   }
 
   return (
-    <NextLink href={href} prefetch={false} replace={replace} scroll={scroll} {...rest}>
+    <NextLink href={href} prefetch={prefetch ?? false} replace={replace} scroll={scroll} {...rest}>
       {children}
     </NextLink>
   );

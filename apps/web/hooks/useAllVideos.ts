@@ -8,35 +8,57 @@ import { NEAR_CONFIG } from '@/lib/constants';
 
 const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
 const PAGE_SIZE = 24;
-const FETCH_LIMIT = 10000;
+const EVENTS_PAGE_LIMIT = 100;
+const MAX_EVENT_PAGES = 300;
+
+type EventRow = [string, {
+    title: string;
+    description: string;
+    creator_id: string;
+    price: string;
+    price_usd?: number | null;
+    banned?: boolean;
+}];
+
+type PaginatedEventsResponse = {
+    events: EventRow[];
+    next_cursor: string | null;
+    total_count: number;
+};
 
 async function fetchAllEvents(): Promise<TokenWithVideo[]> {
     const provider = getProvider();
 
-    const events = await viewContract<unknown[]>(
-        provider,
-        NFT_CONTRACT_ID,
-        'get_events',
-        { from_index: "0", limit: FETCH_LIMIT }
-    );
+    const events: EventRow[] = [];
+    let cursor: string | null = null;
+
+    for (let i = 0; i < MAX_EVENT_PAGES; i++) {
+        const page: PaginatedEventsResponse = await viewContract<PaginatedEventsResponse>(
+            provider,
+            NFT_CONTRACT_ID,
+            'get_events_paginated',
+            { cursor, limit: EVENTS_PAGE_LIMIT }
+        );
+
+        if (!page?.events?.length) break;
+        events.push(...page.events);
+
+        if (!page.next_cursor) break;
+        cursor = page.next_cursor;
+    }
 
     if (!events || events.length === 0) {
         return [];
     }
 
     const eventTokens: TokenWithVideo[] = events
-    .filter((item) => {
-        const [, event] = item as [string, { banned?: boolean }];
-        return !event.banned;
-    })
-    .map((item, index) => {
-        const [cid, event] = item as [string, { title: string; description: string; creator_id: string; price: string; price_usd?: number | null }];
-
+    .filter(([, event]) => !event.banned)
+    .map(([cid, event]) => {
         const parsed = parseTitleMetadata(event.title);
         const displayDescription = event.description || `NFT ticket - ${yoctoToNear(BigInt(event.price))} NEAR`;
 
         return {
-            token_id: `event-${index}`,
+            token_id: `event-${cid}`,
             owner_id: event.creator_id,
             metadata: {
                 title: parsed.title,
@@ -68,7 +90,7 @@ export function useAllVideos() {
         gcTime: 5 * 60 * 1000,
     });
 
-    const allTokens = query.data ?? [];
+    const allTokens = useMemo(() => query.data ?? [], [query.data]);
     const tokens = useMemo(() => allTokens.slice(0, visibleCount), [allTokens, visibleCount]);
     const hasNextPage = visibleCount < allTokens.length;
 

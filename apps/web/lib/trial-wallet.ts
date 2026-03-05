@@ -1,5 +1,5 @@
 // lib/trial-wallet.ts - near-api-js v7 compatible
-import { Account, KeyPair, KeyPairSigner, type KeyPairString, type Action } from "near-api-js";
+import { Account, type Action } from "near-api-js";
 import { BrowserKeyStore } from "./keystore-v7";
 
 const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';

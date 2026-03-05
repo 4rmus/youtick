@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { clearMockLocalStorage, setMockLocalStorage, setupMockSessionKey, MockKeyPair } from '../setup';
+import { clearMockLocalStorage, setupMockSessionKey, MockKeyPair } from '../setup';
 
 // Mock modules
 vi.mock('@/lib/constants', () => ({
@@ -219,7 +219,7 @@ describe('Upload Flow Integration', () => {
     });
   });
 
-  describe('Nova Group Creation', () => {
+  describe('Access Metadata Preparation', () => {
     it('should prepare group creation parameters', () => {
       const createGroupParams = (videoId: string, creatorId: string) => ({
         name: `video-${videoId}`,
@@ -240,9 +240,9 @@ describe('Upload Flow Integration', () => {
     it('should handle group creation failure gracefully', async () => {
       const createGroup = async (): Promise<{ success: boolean; error?: string }> => {
         try {
-          throw new Error('Nova rate limit exceeded');
-        } catch (error: any) {
-          return { success: false, error: error.message };
+          throw new Error('Service rate limit exceeded');
+        } catch (error: unknown) {
+          return { success: false, error: error instanceof Error ? error.message : 'unknown error' };
         }
       };
 
@@ -255,7 +255,7 @@ describe('Upload Flow Integration', () => {
   describe('IPFS Upload Integration', () => {
     it('should prepare multipart form data for upload', () => {
       const prepareFormData = (file: { name: string; content: string }) => {
-        const formData = new Map<string, any>();
+        const formData = new Map<string, { name: string; content: string }>();
         formData.set('file', file);
         return formData;
       };
@@ -284,7 +284,7 @@ describe('Upload Flow Integration', () => {
       const prepareMintTx = (params: {
         creatorId: string;
         encryptedCid: string;
-        novaGroupId: string;
+        accessGroupId: string;
         title: string;
         price: string;
       }) => ({
@@ -292,7 +292,6 @@ describe('Upload Flow Integration', () => {
         methodName: 'create_event',
         args: {
           encrypted_cid: params.encryptedCid,
-          nova_group_id: params.novaGroupId,
           title: `${params.encryptedCid}:::${params.title}`,
           description: '',
           price: params.price
@@ -304,14 +303,14 @@ describe('Upload Flow Integration', () => {
       const tx = prepareMintTx({
         creatorId: 'creator.testnet',
         encryptedCid: 'QmEncrypted',
-        novaGroupId: 'group-123',
+        accessGroupId: 'group-123',
         title: 'My Video',
         price: '1000000000000000000000000'
       });
 
       expect(tx.methodName).toBe('create_event');
       expect(tx.args.encrypted_cid).toBe('QmEncrypted');
-      expect(tx.args.nova_group_id).toBe('group-123');
+      expect(tx.args.title).toContain('My Video');
     });
 
     it('should handle storage deposit requirements', () => {

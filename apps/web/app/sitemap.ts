@@ -34,7 +34,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ];
 
     // Dynamic event pages - fetch from contract if in production
-    let eventPages: MetadataRoute.Sitemap = [];
+    const eventPages: MetadataRoute.Sitemap = [];
 
     try {
         // In production, you would fetch events from the NEAR contract

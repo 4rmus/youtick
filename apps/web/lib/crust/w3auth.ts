@@ -2,7 +2,7 @@
  * Crust W3Auth Module
  *
  * Generates W3Auth tokens from NEAR Session Keys for Crust IPFS uploads.
- * Uses the same BrowserKeyStore as Nova auth for signless UX.
+ * Uses the same BrowserKeyStore flow as session-key auth for signless UX.
  *
  * W3Auth format: Basic base64("near-{pubkey}:{signature_hex}")
  * where pubkey = ed25519 public key (no prefix)
@@ -15,7 +15,7 @@ import { CrustAuthToken, CrustError } from './types';
 import { CRUST_CONSTANTS } from './config';
 
 /**
- * Token cache (in-memory, follows nova/auth.ts pattern)
+ * Token cache (in-memory)
  * Key: accountId
  * Value: CrustAuthToken
  */

@@ -105,7 +105,8 @@ pub enum ContentType {
 #[near(serializers = [borsh, json])]
 #[derive(Clone, PartialEq)]
 pub enum StorageType {
-    Nova,         // NOVA Secure File-Sharing (encrypted_cid is CID, nova_group_id present)
+    Nova,  // Legacy: NOVA TEE (deprecated, kept for backward compat)
+    Kms,   // Cloudflare Edge KMS + AES-CTR chunked encryption
 }
 
 // NEW: Gift drop for trial account creation
@@ -180,7 +181,7 @@ pub struct PurchaseLog {
 // WEB4 TYPES
 // ═══════════════════════════════════════════════════════════════
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(crate = "near_sdk::serde")]
 pub struct Web4Request {
     pub path: String,
@@ -188,13 +189,14 @@ pub struct Web4Request {
     pub query: HashMap<String, Vec<String>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 #[serde(crate = "near_sdk::serde")]
 #[serde(untagged)]
 pub enum Web4Response {
     Body {
         #[serde(rename = "contentType")]
         content_type: String,
+        #[schemars(with = "String")]
         body: Base64VecU8,
     },
     BodyUrl {
@@ -547,6 +549,42 @@ impl Contract {
                 self.lazy_banned_events().get(&cid).map(|info| (cid, info))
             })
             .collect()
+    }
+
+    /// Admin: Remove events and all associated data by encrypted_cid list.
+    /// Cleans up: events, video_metadata, event_nova_groups, price_usd, ban_info.
+    pub fn admin_remove_events(&mut self, encrypted_cids: Vec<String>) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can remove events"
+        );
+
+        for cid in &encrypted_cids {
+            // Remove event
+            self.events.remove(cid);
+
+            // Remove nova group mapping
+            self.event_nova_groups.remove(cid);
+
+            // Remove ban info if any
+            self.lazy_banned_events().remove(cid);
+
+            // Remove price_usd if any
+            self.lazy_event_price_usd().remove(cid);
+
+            // Find and remove associated video_metadata entries
+            // video_metadata is keyed by token_id, so we need to scan
+            let token_ids_to_remove: Vec<TokenId> = self.video_metadata.iter()
+                .filter(|(_, meta)| meta.encrypted_cid == *cid)
+                .map(|(id, _)| id)
+                .collect();
+
+            for token_id in &token_ids_to_remove {
+                self.video_metadata.remove(token_id);
+            }
+
+            env::log_str(&format!("Removed event {} and {} video entries", cid, token_ids_to_remove.len()));
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -932,11 +970,11 @@ impl Contract {
     }
 
     /// Purchase a ticket using prepaid balance (Callable via Session Key)
-    /// For paid tickets: deducts price + storage from user's prepaid balance
+    /// For paid tickets: deducts price + storage + nova fee from user's prepaid balance
     /// For free tickets (price=0): contract pays storage, user pays nothing
-    /// Returns a Promise that resolves to the minted Token
+    /// Includes callback handling so prepaid balance is refunded if mint fails.
     pub fn buy_ticket_prepaid(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Promise {
-        let account_id = env::predecessor_account_id();
+        let buyer_id = env::predecessor_account_id();
         let event = self.events.get(&encrypted_cid)
             .expect("Event not found");
         require!(
@@ -946,21 +984,20 @@ impl Contract {
 
         let required_price = NearToken::from_yoctonear(event.price.0);
         let storage_cost = STORAGE_COST_NFT;
+        let nova_fee = self.nova_service_fee;
         let is_free = required_price.as_yoctonear() == 0;
-
-        // Track amounts for purchase log
-        let mut creator_amount: u128 = 0;
-        let mut commission: u128 = 0;
+        let mut total_cost = NearToken::from_yoctonear(0);
 
         if is_free {
             // FREE TICKET: Contract pays storage, user pays nothing
         } else {
-            // PAID TICKET: Deduct from user's prepaid balance (including Nova service fee)
-            let total_cost = required_price
+            // PAID TICKET: Deduct from user's prepaid balance.
+            // Transfers and commission are applied in callback only after mint success.
+            total_cost = required_price
                 .saturating_add(storage_cost)
-                .saturating_add(self.nova_service_fee);
+                .saturating_add(nova_fee);
 
-            let current_bal = self.user_deposits.get(&account_id)
+            let current_bal = self.user_deposits.get(&buyer_id)
                 .expect("No prepaid balance. Call deposit_funds first.");
             require!(
                 current_bal >= total_cost,
@@ -970,49 +1007,30 @@ impl Contract {
 
             // Deduct total cost from user's balance
             let new_bal = current_bal.saturating_sub(total_cost);
-            self.user_deposits.insert(&account_id, &new_bal);
-
-            // Calculate and apply commission (2% platform, 98% creator)
-            let (ca, cm) = self.apply_commission(required_price);
-            creator_amount = ca;
-            commission = cm;
-
-            // Transfer 98% to creator
-            if creator_amount > 0 {
-                Promise::new(event.creator_id.clone())
-                    .transfer(NearToken::from_yoctonear(creator_amount))
-                    .detach();
-            }
-
-            // Auto-fund Nova platform account
-            if self.nova_service_fee.as_yoctonear() > 0 {
-                if let Some(ref nova_account) = self.nova_platform_account {
-                    Promise::new(nova_account.clone())
-                        .transfer(self.nova_service_fee)
-                        .detach();
-                }
-            }
-
+            self.user_deposits.insert(&buyer_id, &new_bal);
         }
 
-        // Log purchase for audit trail (use next_token_id as expected token_id)
-        let purchase_type = if is_free { PurchaseType::Free } else { PurchaseType::Prepaid };
-        self.log_purchase(
-            account_id,
-            event.creator_id.clone(),
-            encrypted_cid.clone(),
-            self.next_token_id.to_string(),
-            required_price.as_yoctonear(),
-            creator_amount,
-            commission,
-            purchase_type,
-        );
+        let expected_token_id = self.next_token_id.to_string();
 
-        // Call buy_ticket internally with storage deposit from contract balance
-        // This ensures the NFT minting has proper storage deposit attached
+        // Call buy_ticket internally with storage deposit from contract balance,
+        // then settle payment/logging in callback only if mint succeeded.
         Self::ext(env::current_account_id())
             .with_attached_deposit(storage_cost)
-            .buy_ticket_internal(receiver_id, encrypted_cid)
+            .buy_ticket_internal(receiver_id, encrypted_cid.clone())
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(25))
+                    .on_buy_ticket_prepaid_callback(
+                        buyer_id,
+                        event.creator_id,
+                        encrypted_cid,
+                        expected_token_id,
+                        U128(required_price.as_yoctonear()),
+                        U128(total_cost.as_yoctonear()),
+                        U128(nova_fee.as_yoctonear()),
+                        is_free,
+                    )
+            )
     }
 
     /// Internal buy ticket function - called via cross-contract call with deposit
@@ -1028,6 +1046,82 @@ impl Contract {
 
         // Mint the NFT using helper (storage paid by attached deposit from contract)
         self.internal_mint_ticket(receiver_id, &event, encrypted_cid, false)
+    }
+
+    /// Callback for buy_ticket_prepaid.
+    /// - On failure: refunds deducted prepaid balance.
+    /// - On success: applies commission, transfers creator/nova funds, then logs purchase.
+    #[private]
+    pub fn on_buy_ticket_prepaid_callback(
+        &mut self,
+        buyer_id: AccountId,
+        creator_id: AccountId,
+        encrypted_cid: String,
+        expected_token_id: String,
+        price: U128,
+        total_cost: U128,
+        nova_fee: U128,
+        is_free: bool,
+    ) {
+        #[allow(deprecated)]
+        match env::promise_result(0) {
+            near_sdk::PromiseResult::Successful(data) => {
+                // Try to log the exact minted token_id from callback result.
+                let token_id = near_sdk::serde_json::from_slice::<Token>(&data)
+                    .map(|token| token.token_id)
+                    .unwrap_or(expected_token_id);
+
+                let mut creator_amount: u128 = 0;
+                let mut commission: u128 = 0;
+
+                if !is_free {
+                    let required_price = NearToken::from_yoctonear(price.0);
+                    let (ca, cm) = self.apply_commission(required_price);
+                    creator_amount = ca;
+                    commission = cm;
+
+                    if creator_amount > 0 {
+                        Promise::new(creator_id.clone())
+                            .transfer(NearToken::from_yoctonear(creator_amount))
+                            .detach();
+                    }
+
+                    if nova_fee.0 > 0 {
+                        if let Some(ref nova_account) = self.nova_platform_account {
+                            Promise::new(nova_account.clone())
+                                .transfer(NearToken::from_yoctonear(nova_fee.0))
+                                .detach();
+                        }
+                    }
+                }
+
+                let purchase_type = if is_free { PurchaseType::Free } else { PurchaseType::Prepaid };
+                self.log_purchase(
+                    buyer_id,
+                    creator_id,
+                    encrypted_cid,
+                    token_id,
+                    price.0,
+                    creator_amount,
+                    commission,
+                    purchase_type,
+                );
+            }
+            _ => {
+                if !is_free && total_cost.0 > 0 {
+                    let current = self.user_deposits.get(&buyer_id)
+                        .unwrap_or(NearToken::from_yoctonear(0));
+                    self.user_deposits.insert(
+                        &buyer_id,
+                        &current.saturating_add(NearToken::from_yoctonear(total_cost.0))
+                    );
+                    env::log_str(&format!(
+                        "Prepaid buy FAILED - refunded {} to {}",
+                        total_cost.0, buyer_id
+                    ));
+                }
+            }
+        }
     }
 
 
@@ -1078,7 +1172,7 @@ impl Contract {
             event_date: Some(event.created_at),
             content_type: ContentType::Exclusive,
             nova_group_id,
-            storage_type: StorageType::Nova,
+            storage_type: StorageType::Kms,
         };
         self.video_metadata.insert(&token_id, &video_metadata);
 
@@ -1995,7 +2089,7 @@ impl Contract {
             event_date: Some(event.created_at),
             content_type: ContentType::Exclusive,
             nova_group_id,
-            storage_type: StorageType::Nova,
+            storage_type: StorageType::Kms,
         };
 
         self.video_metadata.insert(&token_id, &video_metadata);
@@ -2308,27 +2402,48 @@ impl Contract {
             .map(|metadata| metadata.storage_type.clone())
     }
 
-    /// Get all NOVA videos for an account
+    /// Get all videos for an account (any storage type)
     /// Returns vector of (token_id, video_metadata) pairs
-    pub fn get_nova_videos(&self, account_id: AccountId) -> Vec<(TokenId, VideoMetadata)> {
-        // Get tokens_per_owner if it exists
+    pub fn get_videos(&self, account_id: AccountId) -> Vec<(TokenId, VideoMetadata)> {
         let tokens_map = match &self.tokens.tokens_per_owner {
             Some(map) => map,
-            None => return vec![], // No tokens at all
+            None => return vec![],
         };
 
         let tokens = match tokens_map.get(&account_id) {
             Some(set) => set,
-            None => return vec![], // Account has no tokens
+            None => return vec![],
         };
 
         tokens.iter()
             .filter_map(|token_id| {
                 self.video_metadata.get(&token_id)
-                    .filter(|metadata| metadata.storage_type == StorageType::Nova)
                     .map(|metadata| (token_id.clone(), metadata))
             })
             .collect()
+    }
+
+    /// Check if an account has a ticket for a specific video (identified by encrypted_cid)
+    /// Used by KMS Worker for access authorization
+    pub fn has_ticket(&self, account_id: AccountId, encrypted_cid: String) -> bool {
+        let tokens_map = match &self.tokens.tokens_per_owner {
+            Some(map) => map,
+            None => return false,
+        };
+
+        let tokens = match tokens_map.get(&account_id) {
+            Some(set) => set,
+            None => return false,
+        };
+
+        let result = tokens.iter().any(|token_id| {
+            self.video_metadata.get(&token_id)
+                .map_or(false, |metadata| {
+                    metadata.encrypted_cid == encrypted_cid
+                        || metadata.encrypted_cid == "ACCESS_PASS"
+                })
+        });
+        result
     }
 
 }

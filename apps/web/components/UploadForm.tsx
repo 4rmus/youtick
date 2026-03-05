@@ -1,8 +1,11 @@
 'use client';
 
 import React, { useState, useReducer } from 'react';
+import Image from 'next/image';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { uploadFile as novaUploadFile, uploadPublicThumbnail, uploadFreeVideo } from '@/lib/nova';
+import { uploadToCrust } from '@/lib/crust';
+import { generateAESKey, encryptFileChunked, type VideoManifest } from '@/lib/kms/encryption';
+import { storeEncryptionKey } from '@/lib/kms/client';
 import { SessionManager } from '@/lib/session-manager';
 import { batchUploadActionsSignless } from '@/lib/batch-transactions';
 import { generateVideoThumbnail } from '@/lib/video-utils';
@@ -17,8 +20,7 @@ import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { useSessionState, useAccountBalance } from '@/lib/hooks/useSessionState';
 import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
-import { getNearPrice, usdToNear, formatUsdCents } from '@/lib/price';
-import { NOVA_CONSTANTS } from '@/lib/nova/config';
+import { getNearPrice, usdToNear } from '@/lib/price';
 
 const CONTRACT_ID = NEAR_CONFIG.contractId;
 
@@ -31,11 +33,15 @@ type StepStatus = UploadStep['status'];
 const INITIAL_STEPS: UploadStep[] = [
     { id: 'session', label: 'Wallet & Balance', status: 'pending' },
     { id: 'thumbnail', label: 'Cover Image', status: 'pending' },
-    { id: 'nova_group', label: 'Creating Nova Group', status: 'pending' },
     { id: 'encrypt', label: 'Encrypting Video', status: 'pending' },
     { id: 'upload', label: 'Uploading to IPFS', status: 'pending' },
+    { id: 'kms', label: 'Storing Encryption Key', status: 'pending' },
     { id: 'mint', label: 'Minting NFT Ticket', status: 'pending' },
 ];
+
+// File size limits (KMS-based flow)
+const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB for paid
+const MAX_FREE_FILE_SIZE = 100 * 1024 * 1024; // 100MB for free
 
 interface UploadState {
     uploading: boolean;
@@ -46,9 +52,6 @@ interface UploadState {
     verifiedStorageFee: string;
     estimatedStorageFee: string;
     payAmount: string;
-    novaGroupFee: number;
-    generatedVideoUuid: string | null;
-    lastUploadedTitle: string;
 }
 
 const initialUploadState: UploadState = {
@@ -60,9 +63,6 @@ const initialUploadState: UploadState = {
     verifiedStorageFee: '0',
     estimatedStorageFee: '0',
     payAmount: '0',
-    novaGroupFee: 0,
-    generatedVideoUuid: null,
-    lastUploadedTitle: '',
 };
 
 type UploadAction =
@@ -75,8 +75,6 @@ type UploadAction =
     | { type: 'SET_VERIFIED_STORAGE_FEE'; payload: string }
     | { type: 'SET_ESTIMATED_STORAGE_FEE'; payload: string }
     | { type: 'SET_PAY_AMOUNT'; payload: string }
-    | { type: 'SET_NOVA_GROUP_FEE'; payload: number }
-    | { type: 'SET_VIDEO_UUID'; payload: { uuid: string; title: string } }
     | { type: 'RESET' };
 
 function uploadReducer(state: UploadState, action: UploadAction): UploadState {
@@ -104,10 +102,6 @@ function uploadReducer(state: UploadState, action: UploadAction): UploadState {
             return { ...state, estimatedStorageFee: action.payload };
         case 'SET_PAY_AMOUNT':
             return { ...state, payAmount: action.payload };
-        case 'SET_NOVA_GROUP_FEE':
-            return { ...state, novaGroupFee: action.payload };
-        case 'SET_VIDEO_UUID':
-            return { ...state, generatedVideoUuid: action.payload.uuid, lastUploadedTitle: action.payload.title };
         case 'RESET':
             return initialUploadState;
         default:
@@ -120,7 +114,7 @@ export function UploadForm() {
     const { accountId, getWallet } = useWallet();
 
     // React Query hooks for session state (cached, deduplicated)
-    const { hasSessionKey, isSessionKeyLoading, refetchSessionKey } = useSessionState(accountId);
+    const { hasSessionKey, refetchSessionKey } = useSessionState(accountId);
     const { data: balanceData, isLoading: isBalanceLoading, refetch: refetchBalance } = useAccountBalance(accountId);
 
     // Form fields
@@ -151,7 +145,7 @@ export function UploadForm() {
             return;
         }
         const isFree = priceUsdNum === 0;
-        const limit = isFree ? NOVA_CONSTANTS.MAX_FREE_FILE_SIZE : NOVA_CONSTANTS.MAX_FILE_SIZE;
+        const limit = isFree ? MAX_FREE_FILE_SIZE : MAX_FILE_SIZE;
         if (file.size > limit) {
             setFileSizeError(isFree ? t.upload_page.file_too_large_free : t.upload_page.file_too_large_paid);
         } else {
@@ -169,19 +163,10 @@ export function UploadForm() {
     const retryStep = us.retryStep;
     const estimatedStorageFee = us.estimatedStorageFee;
     const payAmount = us.payAmount;
-    const novaGroupFee = us.novaGroupFee;
-    const generatedVideoUuid = us.generatedVideoUuid;
-    const lastUploadedTitle = us.lastUploadedTitle;
     const verifiedStorageFee = us.verifiedStorageFee;
 
     // Gas Top-Up State (derived from React Query)
     const gasBalance = parseFloat(balanceData || '0');
-    const REQUIRED_GAS = 0.20; // NFT (0.1) + Event (0.1) — exact cost, no buffer
-
-    // Calculate if top-up is needed based on cached data
-    const isFreeForTopUp = parseFloat(price) === 0 || price === '';
-    const minRequired = REQUIRED_GAS + (isFreeForTopUp ? 0 : novaGroupFee);
-    const needsTopUp = hasSessionKey === true && gasBalance < minRequired;
 
     // Helper functions that dispatch to reducer
     const updateStep = (stepId: string, stepStatus: StepStatus) => {
@@ -202,15 +187,13 @@ export function UploadForm() {
         };
     }, []);
 
-    // Recalculate pay amount when storage fee or nova fee changes
+    // Recalculate pay amount when storage fee changes
     React.useEffect(() => {
         const fee = parseFloat(estimatedStorageFee) || 0;
-        const isFree = parseFloat(price) === 0 || price === '';
-        // Exact prepaid costs: NFT mint (0.1) + Event (0.1) + Nova group fee (paid only)
-        const novaFee = isFree ? 0 : novaGroupFee;
-        const totalNeeded = fee + 0.20 + novaFee;
+        // Exact prepaid costs: NFT mint (0.1) + Event (0.1)
+        const totalNeeded = fee + 0.20;
         dispatch({ type: 'SET_PAY_AMOUNT', payload: totalNeeded > 0 ? totalNeeded.toFixed(4) : '0' });
-    }, [estimatedStorageFee, price, novaGroupFee]);
+    }, [estimatedStorageFee, price]);
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -226,15 +209,6 @@ export function UploadForm() {
                 dispatch({ type: 'SET_ESTIMATED_STORAGE_FEE', payload: fee });
             } catch (err) {
                 console.error('[UploadForm] Error calculating storage fee:', err);
-            }
-
-            // Fetch Nova group registration fee (independent of storage fee)
-            try {
-                const { getRegisterGroupFee } = await import('@/lib/nova/costs');
-                const novaFee = await getRegisterGroupFee();
-                dispatch({ type: 'SET_NOVA_GROUP_FEE', payload: novaFee });
-            } catch (err) {
-                console.error('[UploadForm] Error fetching Nova group fee:', err);
             }
 
             // Generate thumbnail
@@ -256,35 +230,31 @@ export function UploadForm() {
         }
     };
 
-    // Helper function to process the upload with NOVA
-    // NOVA handles TEE-based encryption automatically
+    // Main upload function using KMS + Crust
     const processSignatureAndUpload = async (storageFee: string, sessionManager: SessionManager) => {
         if (!file || !accountId) {
             throw new Error("Missing file, accountId, or selector for upload process.");
         }
 
         try {
-            const wallet = await getWallet();
             console.log('[DECENTRALIZATION_METRIC] upload_process_start', {
                 accountId,
-                storage: 'nova_tee_encryption'
+                storage: 'kms_aes_ctr_encryption'
             });
 
-            // 0. Upload Thumbnail (Public) via Nova Public Groups
+            // 0. Upload Thumbnail (Public) directly to Crust
             let thumbnailUrl: string | null = null;
             if (thumbnail) {
                 updateStep('thumbnail', 'loading');
                 setStatus('Uploading cover image...');
 
                 try {
-                    const thumbResult = await uploadPublicThumbnail(
+                    const thumbResult = await uploadToCrust(
                         thumbnail,
                         accountId
                     );
-
-                    if (thumbResult.novaUrl) {
-                        thumbnailUrl = thumbResult.novaUrl;
-                    }
+                    // Use Crust gateway URL for thumbnail
+                    thumbnailUrl = `https://crustipfs.xyz/ipfs/${thumbResult.cid}`;
                     updateStep('thumbnail', 'complete');
                 } catch (thumbError) {
                     console.error('[Thumbnail] Upload failed:', thumbError);
@@ -295,97 +265,105 @@ export function UploadForm() {
                 updateStep('thumbnail', 'complete');
             }
 
-            // 1. Nova group + Encrypt + Upload (tracked via onStageChange callback)
-            const isFreeVideo = parseFloat(price) === 0 || price === '';
-
             // Generate a UUID to serve as the Access Control identifier
             const videoUuid = crypto.randomUUID();
-            dispatch({ type: 'SET_VIDEO_UUID', payload: { uuid: videoUuid, title: title || file.name } });
 
-            let novaCid: string;
-            let novaGroupId: string;
-            let keyCid: string | undefined;
+            const isFreeVideo = parseFloat(price) === 0 || price === '';
+
+            let videoCid: string;
+            let manifestCid: string | undefined;
 
             if (isFreeVideo) {
-                // Free video: no Nova group needed, no encryption
-                updateStep('nova_group', 'complete');
+                // Free video: no encryption, upload directly to Crust
                 updateStep('encrypt', 'complete');
                 updateStep('upload', 'loading');
+                updateStep('kms', 'complete'); // No key to store for free videos
                 setStatus('Uploading to IPFS...');
 
-                const result = await uploadFreeVideo(file, accountId, { filename: file.name });
-                novaCid = result.cid;
-                novaGroupId = result.groupId;
+                const result = await uploadToCrust(file, accountId);
+                videoCid = result.cid;
                 updateStep('upload', 'complete');
             } else {
-                // Paid video: Nova group → AES encrypt → Crust upload → key storage
-                // onStageChange fires at each real internal step
-                updateStep('nova_group', 'loading');
-                setStatus('Creating Nova access group...');
+                // Paid video: AES-CTR encrypt → Crust upload → KMS key store
+                updateStep('encrypt', 'loading');
+                setStatus('Generating encryption key...');
 
-                const result = await novaUploadFile(file, accountId, {
-                    filename: file.name,
-                    onStageChange: (stage) => {
-                        switch (stage) {
-                            case 'group':
-                                // Already showing nova_group loading
-                                break;
-                            case 'encrypt':
-                                updateStep('nova_group', 'complete');
-                                updateStep('encrypt', 'loading');
-                                setStatus('Encrypting video (AES-256)...');
-                                break;
-                            case 'upload':
-                                updateStep('encrypt', 'complete');
-                                updateStep('upload', 'loading');
-                                setStatus('Uploading to IPFS...');
-                                break;
-                            case 'key':
-                                setStatus('Storing encryption key...');
-                                break;
-                        }
-                    },
-                });
-                novaCid = result.cid;
-                novaGroupId = result.groupId;
-                keyCid = result.keyCid;
+                // 1. Generate AES-256-CTR key
+                const aesKeyB64 = await generateAESKey();
 
-                // Ensure all steps are marked complete after novaUploadFile returns
-                updateStep('nova_group', 'complete');
+                // 2. Encrypt file in chunks and collect results
+                setStatus('Encrypting video (AES-256-CTR)...');
+                const encryptedChunks: Uint8Array[] = [];
+                let manifest: VideoManifest | undefined;
+
+                for await (const { chunk, manifest: m } of encryptFileChunked(file, aesKeyB64)) {
+                    encryptedChunks.push(chunk.data);
+                    if (m) manifest = m;
+                    // Update progress
+                    const progress = Math.round(((chunk.index + 1) / Math.ceil(file.size / (1024 * 1024))) * 100);
+                    dispatch({ type: 'SET_PROGRESS', payload: progress });
+                }
+
+                if (!manifest) throw new Error('Encryption failed: no manifest generated');
                 updateStep('encrypt', 'complete');
+
+                // 3. Upload encrypted data to Crust as single blob
+                updateStep('upload', 'loading');
+                setStatus('Uploading encrypted video to IPFS...');
+
+                // Combine all chunks into a single blob for upload
+                const encryptedBlob = new Blob(encryptedChunks as unknown as BlobPart[], { type: 'application/octet-stream' });
+                const uploadResult = await uploadToCrust(encryptedBlob, accountId, {
+                    onProgress: (p) => dispatch({ type: 'SET_PROGRESS', payload: p.percentage }),
+                });
+                videoCid = uploadResult.cid;
+
+                // 4. Upload manifest JSON to Crust
+                setStatus('Uploading manifest...');
+                const manifestBlob = new Blob(
+                    [JSON.stringify(manifest)],
+                    { type: 'application/json' }
+                );
+                const manifestResult = await uploadToCrust(manifestBlob, accountId);
+                manifestCid = manifestResult.cid;
                 updateStep('upload', 'complete');
+
+                // 5. Store AES key in KMS Worker
+                updateStep('kms', 'loading');
+                setStatus('Storing encryption key on KMS...');
+
+                const { privateKey, publicKeyB58 } = await sessionManager.getKeyForKMS();
+                await storeEncryptionKey(
+                    videoUuid,
+                    aesKeyB64,
+                    accountId,
+                    privateKey,
+                    publicKeyB58
+                );
+                updateStep('kms', 'complete');
             }
 
-            // 2. Mint Ticket + Create Event (BATCH - Signless!)
+            // 6. Mint Ticket + Create Event (BATCH - Signless!)
             updateStep('mint', 'loading');
             setStatus('Minting NFT ticket on NEAR...');
             try {
-                // Construct Title with CID for Player to parse
-                // Schema (paid):  "CID:::ThumbnailURL:::KeyCID:::Title" (4 segments)
-                // Schema (free):  "CID:::ThumbnailURL:::Title"          (3 segments)
-                // Schema (legacy): "NovaCID:::Title"                    (2 segments)
                 // Title encoding:
-                //   Paid:  "CID:::Thumbnail:::KeyCID:::Title"  (always 4 segments)
-                //   Free:  "CID:::Thumbnail:::Title"           (3 segments)
-                //   Legacy:"CID:::Title"                       (2 segments)
-                // Paid videos MUST always use 4 segments so IpfsPlayer can
-                // distinguish keyCid from thumbnailCid (empty string = no thumbnail).
+                //   Paid:  "CID:::Thumbnail:::ManifestCID:::Title"  (4 segments)
+                //   Free:  "CID:::Thumbnail:::Title"                (3 segments)
+                //   Legacy:"CID:::Title"                            (2 segments)
                 let eventTitle: string;
-                if (keyCid) {
-                    eventTitle = `${novaCid}:::${thumbnailUrl || ''}:::${keyCid}:::${title || file.name}`;
+                if (manifestCid) {
+                    eventTitle = `${videoCid}:::${thumbnailUrl || ''}:::${manifestCid}:::${title || file.name}`;
                 } else if (thumbnailUrl) {
-                    eventTitle = `${novaCid}:::${thumbnailUrl}:::${title || file.name}`;
+                    eventTitle = `${videoCid}:::${thumbnailUrl}:::${title || file.name}`;
                 } else {
-                    eventTitle = `${novaCid}:::${title || file.name}`;
+                    eventTitle = `${videoCid}:::${title || file.name}`;
                 }
 
-                // Use nova:// URL for media (empty string if no thumbnail)
                 const mediaUrl = thumbnailUrl || '';
 
-                const contractId = NEAR_CONFIG.contractId;
                 const priceYocto = nearToYocto(parseFloat(price) || 0);
 
-                // Prepare metadata for batch transaction
                 const videoMetadata = {
                     receiver_id: accountId,
                     token_metadata: {
@@ -395,19 +373,17 @@ export function UploadForm() {
                         copies: 1
                     },
                     video_metadata: {
-                        encrypted_cid: videoUuid, // UUID (access control key)
+                        encrypted_cid: videoUuid,
                         duration_seconds: 0,
                         content_type: 'Exclusive',
-                        nova_group_id: novaGroupId, // NOVA group for access control
-                        storage_type: 'Nova' as const // Contract enum only accepts 'Nova'; actual storage detection via title segment count
+                        storage_type: 'Kms' as const
                     }
                 };
 
-                // price_usd in cents (e.g. $5.00 → 500), null if free
                 const priceUsdCents = priceUsdNum > 0 ? Math.round(priceUsdNum * 100) : null;
 
                 const eventMetadata = {
-                    encrypted_cid: videoUuid, // UUID key
+                    encrypted_cid: videoUuid,
                     title: eventTitle,
                     description: description || 'No description provided',
                     price: priceYocto.toString(),
@@ -416,8 +392,6 @@ export function UploadForm() {
 
                 setStatus('Minting NFT ticket & publishing event...');
 
-                // Signless batch transaction (session key)
-                // This single batch does: nft_mint_prepaid + create_event_prepaid
                 await batchUploadActionsSignless(
                     sessionManager,
                     videoMetadata,
@@ -449,7 +423,6 @@ export function UploadForm() {
 
         } catch (error: unknown) {
             console.error('Upload failed:', error);
-            // Mark current loading step as error
             const currentStep = us.steps.find(s => s.status === 'loading');
             if (currentStep) {
                 updateStep(currentStep.id, 'error');
@@ -459,12 +432,11 @@ export function UploadForm() {
         }
     };
 
-    // Retry handler - simplified for NOVA
-    // NOVA handles auth and encryption automatically
+    // Retry handler
     const handleRetrySign = async () => {
         try {
             dispatch({ type: 'SET_RETRY_STEP', payload: 'none' });
-            setStatus('Retrying NOVA upload...');
+            setStatus('Retrying upload...');
 
             const sessionManager = new SessionManager(accountId!);
             await processSignatureAndUpload(verifiedStorageFee, sessionManager);
@@ -511,7 +483,6 @@ export function UploadForm() {
             const wallet = await getWallet();
             const sessionManager = new SessionManager(accountId);
 
-            const sessionKeyExists = hasSessionKey === true;
             const storageFee = estimatedStorageFee;
             dispatch({ type: 'SET_VERIFIED_STORAGE_FEE', payload: storageFee });
 
@@ -522,18 +493,11 @@ export function UploadForm() {
             let freshBalance = parseFloat(freshBalanceResult.data || '0');
 
             // --- Calculate exact required deposit ---
-            const isFreeVideo = parseFloat(price) === 0 || price === '';
             const mintCost = 0.10;   // nft_mint_prepaid charge
             const eventCost = 0.10;  // create_event_prepaid charge
 
-            let novaFee = 0;
-            if (!isFreeVideo) {
-                const { getRegisterGroupFee } = await import('@/lib/nova/costs');
-                novaFee = await getRegisterGroupFee();
-            }
-
             // Exact deposit: only what the contract methods will deduct
-            const exactPrepaidNeeded = novaFee + mintCost + eventCost;
+            const exactPrepaidNeeded = mintCost + eventCost;
 
             // --- Ensure a valid session key exists (local + on-chain) ---
             // 1. Try importing MyNearWallet's function call key (no-op if key already in keystore)
@@ -579,19 +543,10 @@ export function UploadForm() {
                 refetchBalance();
             }
 
-            // --- Fund Nova platform (signless, from prepaid balance) ---
-            if (novaFee > 0) {
-                setStatus('Funding Nova group registration...');
-                const amountYocto = nearToYocto(novaFee);
-                await sessionManager.callMethod('fund_nova_platform', {
-                    amount: amountYocto.toString()
-                }, GAS_CONSTANTS.mediumGas.toString());
-            }
-
             setStatus('Wallet ready');
             updateStep('session', 'complete');
 
-            // --- NOVA Upload (TEE-based encryption) ---
+            // --- KMS Upload (AES-CTR encryption) ---
             await processSignatureAndUpload(storageFee, sessionManager);
 
         } catch (error: unknown) {
@@ -617,11 +572,11 @@ export function UploadForm() {
                 </div>
                 {/* Verified Badge - Same width as preview (2/5) */}
                 <div className={`lg:col-span-2 px-4 py-2 rounded-xl border flex items-center gap-3 ${hasSessionKey
-                        ? 'bg-blue-500/10 border-blue-500/30'
-                        : 'bg-zinc-900/50 border-white/5'}`}>
+                    ? 'bg-blue-500/10 border-blue-500/30'
+                    : 'bg-zinc-900/50 border-white/5'}`}>
                     <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${hasSessionKey
-                            ? 'bg-blue-500/20 border border-blue-500/50'
-                            : 'bg-zinc-800 border border-zinc-700'}`}>
+                        ? 'bg-blue-500/20 border border-blue-500/50'
+                        : 'bg-zinc-800 border border-zinc-700'}`}>
                         {hasSessionKey ? (
                             <CheckCircle2 className="w-4 h-4 text-blue-400" />
                         ) : (
@@ -750,7 +705,7 @@ export function UploadForm() {
                             </Alert>
                         )}
 
-{/* Progress bar removed - step indicators provide upload feedback */}
+                        {/* Progress bar removed - step indicators provide upload feedback */}
 
                         {status && (
                             <Alert variant={status.includes('failed') ? "destructive" : "default"}>
@@ -790,8 +745,6 @@ export function UploadForm() {
                                 payAmount={payAmount}
                                 loading={isBalanceLoading}
                                 gasBalance={gasBalance}
-                                isFreeVideo={parseFloat(price) === 0 || price === ''}
-                                novaGroupFee={novaGroupFee}
                             />
                         </div>
                     )}
@@ -833,9 +786,12 @@ export function UploadForm() {
                             {/* Image Container */}
                             <div className="aspect-video relative overflow-hidden">
                                 {thumbnailPreview ? (
-                                    <img
+                                    <Image
                                         src={thumbnailPreview}
                                         alt="Ticket Preview"
+                                        fill
+                                        sizes="(max-width: 1024px) 100vw, 66vw"
+                                        unoptimized
                                         className="w-full h-full object-cover scale-105 group-hover:scale-110 transition-transform duration-700 ease-out"
                                     />
                                 ) : (
@@ -975,17 +931,15 @@ export function UploadForm() {
                                                 {/* Filled track segment */}
                                                 {index > 0 && (
                                                     <div
-                                                        className={`absolute left-[13px] -top-1 w-[2px] h-[calc(50%+4px)] rounded-full transition-all duration-500 ${
-                                                            isDone || isActive || isError ? 'bg-gradient-to-b from-emerald-500 to-emerald-500/80' : 'bg-transparent'
-                                                        }`}
+                                                        className={`absolute left-[13px] -top-1 w-[2px] h-[calc(50%+4px)] rounded-full transition-all duration-500 ${isDone || isActive || isError ? 'bg-gradient-to-b from-emerald-500 to-emerald-500/80' : 'bg-transparent'
+                                                            }`}
                                                     />
                                                 )}
 
-                                                <div className={`flex items-center gap-3 px-2 py-2.5 rounded-xl transition-all duration-300 ${
-                                                    isActive ? 'bg-blue-500/[0.08] border border-blue-500/20' :
+                                                <div className={`flex items-center gap-3 px-2 py-2.5 rounded-xl transition-all duration-300 ${isActive ? 'bg-blue-500/[0.08] border border-blue-500/20' :
                                                     isError ? 'bg-red-500/[0.06] border border-red-500/15' :
-                                                    'border border-transparent'
-                                                }`}>
+                                                        'border border-transparent'
+                                                    }`}>
                                                     {/* Step indicator */}
                                                     <div className="relative z-10 flex-shrink-0">
                                                         {step.status === 'pending' && (
@@ -1012,12 +966,11 @@ export function UploadForm() {
 
                                                     {/* Step content */}
                                                     <div className="flex-1 min-w-0">
-                                                        <span className={`text-xs font-medium block transition-colors duration-300 ${
-                                                            isDone ? 'text-emerald-400' :
+                                                        <span className={`text-xs font-medium block transition-colors duration-300 ${isDone ? 'text-emerald-400' :
                                                             isActive ? 'text-blue-300' :
-                                                            isError ? 'text-red-400' :
-                                                            'text-zinc-500'
-                                                        }`}>
+                                                                isError ? 'text-red-400' :
+                                                                    'text-zinc-500'
+                                                            }`}>
                                                             {(t.upload_page.steps as Record<string, string>)[step.id] || step.label}
                                                         </span>
                                                         {isActive && (
@@ -1055,17 +1008,6 @@ export function UploadForm() {
                     </div>
                 </div>
 
-                {/* GIFT LINK GENERATOR - DISABLED (moved to separate page)
-                {(generatedVideoUuid || uploading) && (
-                    <div className="lg:col-span-3 space-y-4">
-                        <GiftLinkGenerator
-                            eventCid={generatedVideoUuid || 'pending'}
-                            eventTitle={lastUploadedTitle || title}
-                            creatorAccountId={accountId || ''}
-                        />
-                    </div>
-                )}
-                */}
             </div>
         </div >
     );

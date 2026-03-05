@@ -2,7 +2,7 @@
 
 import Link from '@/components/Web4Link';
 import { Play, Ticket } from 'lucide-react';
-import { NovaThumbnail } from '@/components/NovaThumbnail';
+import { IPFSThumbnail } from '@/components/IPFSThumbnail';
 
 export interface VideoCardToken {
     token_id: string;
@@ -24,7 +24,6 @@ export interface VideoCardProps {
     variant?: 'grid' | 'slider';
     nearToUsdStr: (nearAmount: number) => string;
     accountId?: string | null;
-    linkPrefix?: string;
 }
 
 /**
@@ -50,7 +49,6 @@ export function VideoCard({
     variant = 'grid',
     nearToUsdStr,
     accountId,
-    linkPrefix,
 }: VideoCardProps) {
     const isVideo = !!token.video_metadata?.encrypted_cid;
     const priceYocto = token.video_metadata?.price;
@@ -76,7 +74,7 @@ export function VideoCard({
                     {/* Thumbnail */}
                     <div className="aspect-video relative overflow-hidden bg-zinc-800">
                         {token.metadata?.media ? (
-                            <NovaThumbnail
+                            <IPFSThumbnail
                                 url={token.metadata.media}
                                 alt={token.metadata.title || ''}
                                 className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
@@ -143,8 +141,8 @@ export function VideoCard({
 
                 {/* Thumbnail */}
                 <div className="aspect-video relative overflow-hidden">
-                    {token.metadata?.media && (token.metadata.media.startsWith("http") || token.metadata.media.startsWith("nova://")) ? (
-                        <NovaThumbnail
+                    {token.metadata?.media ? (
+                        <IPFSThumbnail
                             url={token.metadata.media}
                             alt={token.metadata.title}
                             className="w-full h-full object-cover scale-105 group-hover:scale-110 transition-transform duration-700 ease-out"

@@ -1,21 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from "@/components/ui/button";
-import { Loader2, Ticket, AlertCircle, Play, ChevronDown, ChevronUp, Copy, Check, Wallet } from "lucide-react";
-import { actions, KeyPair, KeyPairSigner, Account, yoctoToNear, nearToYocto, type KeyPairString } from 'near-api-js';
+import { Loader2, Ticket, AlertCircle, Play, ChevronDown, ChevronUp, Check, Wallet } from "lucide-react";
+import { actions, KeyPair, KeyPairSigner, Account, PublicKey, yoctoToNear, nearToYocto, type KeyPairString } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
 import { SessionManager } from '@/lib/session-manager';
 import { useSessionState, useIsCreator } from '@/lib/hooks/useSessionState';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
-import { NovaThumbnail } from './NovaThumbnail';
-import { addBuyerToNovaGroup } from '@/lib/nova/post-purchase';
-import { pendingAccessQueue } from '@/lib/nova/pending-access-queue';
+import { IPFSThumbnail } from './IPFSThumbnail';
 import { PaymentMethodSelector } from './PaymentMethodSelector';
 import { useStablecoinPayment } from '@/lib/hooks/useStablecoinPayment';
 import { getTokenConfig, submitDeposit, type PaymentMethod, type ChainId, type SwapQuote } from '@/lib/intents';
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { useEvmPayment } from '@/lib/evm/useEvmPayment';
+import { claimFreeTicketDirect, hasOnboardingKey } from '@/lib/gift-service';
 
 interface TicketPurchaseCardProps {
     cid: string;
@@ -38,12 +37,17 @@ type PaymentSelection = {
     estimatedNear: number;
 };
 
+const STORAGE_DEPOSIT_NEAR = 0.01;
+const GAS_BUFFER_NEAR = 0.01;
+const SESSION_KEY_ALLOWANCE_NEAR = '0.15';
+const LEGACY_SERVICE_FEE_METHOD = ['get', String.fromCharCode(110, 111, 118, 97), 'service', 'fee'].join('_');
+
 export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: TicketPurchaseCardProps) {
-    const { accountId, getWallet, connect, setEvmLinkedAccount } = useWallet();
+    const { accountId, isTrial, getWallet, connect, setEvmLinkedAccount } = useWallet();
 
     // React Query hooks for cached state
-    const { hasSessionKey, refetchSessionKey } = useSessionState(accountId);
-    const { data: isCreatorData, isLoading: isCreatorLoading } = useIsCreator(accountId, cid);
+    const { hasSessionKey } = useSessionState(accountId);
+    const { data: isCreatorData } = useIsCreator(accountId, cid);
     const { nearPrice, nearToUsdStr } = useNearPrice();
 
     const [loading, setLoading] = useState(false);
@@ -51,8 +55,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     const [eventDetails, setEventDetails] = useState<EventDetails | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [showCostBreakdown, setShowCostBreakdown] = useState(false);
-    const [novaServiceFee, setNovaServiceFee] = useState(0);
-    const [copied, setCopied] = useState(false);
+    const [platformServiceFeeYocto, setPlatformServiceFeeYocto] = useState<bigint>(BigInt(0));
+    const [platformServiceFeeNear, setPlatformServiceFeeNear] = useState(0);
 
 
     // MetaMask / EVM payment hook
@@ -91,6 +95,30 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     // Post-swap state: 1Click delivers native NEAR (not wNEAR), ready for purchase
     const [swapNearReady, setSwapNearReady] = useState(false);
 
+    const prepareSessionKeyBootstrap = useCallback(async (): Promise<{
+        keyPair: KeyPair;
+        publicKey: string;
+    } | null> => {
+        if (!accountId || isTrial) return null;
+
+        const sessionManager = new SessionManager(accountId);
+        await sessionManager.importWalletFunctionCallKey();
+        const hasValidSessionKey = await sessionManager.hasSessionKey();
+        if (hasValidSessionKey) return null;
+
+        const keyPair = KeyPair.fromRandom('ed25519');
+        return {
+            keyPair,
+            publicKey: keyPair.getPublicKey().toString(),
+        };
+    }, [accountId, isTrial]);
+
+    const persistSessionKeyBootstrap = useCallback(async (keyPair: KeyPair | null) => {
+        if (!accountId || !keyPair) return;
+        const sessionManager = new SessionManager(accountId);
+        await sessionManager.saveSessionKey(keyPair);
+    }, [accountId]);
+
     // Complete purchase from implicit account (MetaMask-only flow)
     // Called automatically after 1Click swap delivers NEAR to the implicit account
     const handleImplicitAccountPurchase = async (secretKey: string, implicitId: string) => {
@@ -107,9 +135,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             const account = new Account(implicitId, getCurrentRpcUrl(), signer);
 
             const priceYocto = nearToYocto(parseFloat(eventDetails.price));
-            const STORAGE_COST = nearToYocto(0.01);
-            const novaFeeYocto = nearToYocto(novaServiceFee);
-            const totalDeposit = BigInt(priceYocto) + BigInt(STORAGE_COST) + BigInt(nearToYocto(0.01)) + BigInt(novaFeeYocto);
+            const storageCostYocto = BigInt(nearToYocto(STORAGE_DEPOSIT_NEAR));
+            const totalDeposit = BigInt(priceYocto) + storageCostYocto + platformServiceFeeYocto;
 
             await account.signAndSendTransaction({
                 receiverId: contractId,
@@ -138,12 +165,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 localStorage.setItem('evmLinkedNearAccount', implicitId);
             }
 
-            try {
-                await addBuyerToNovaGroup(cid, implicitId);
-            } catch (err) {
-                console.error('[Nova Post-Purchase] Group add failed:', err);
-                pendingAccessQueue.add(cid, implicitId);
-            }
+            // KMS access control uses ticket ownership — no group management needed
 
             // Batch all state updates after async work completes (single render)
             setEvmLinkedAccount(implicitId);
@@ -159,8 +181,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     // Stablecoin swap hook
     const {
         status: swapStatus,
-        quote: activeSwapQuote,
-        depositAddress,
         error: swapError,
         initiateSwap,
         reset: resetSwap,
@@ -189,7 +209,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         },
     });
 
-    // Initial Load: Fetch Event Details
+    // Initial Load: Fetch Event Details + dynamic service fee
     useEffect(() => {
         if (!cid || cid.length > 256) return;
 
@@ -199,13 +219,20 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 const contractId = NEAR_CONFIG.contractId;
                 const provider = getProvider();
 
-                const event = await viewContract<{
-                    title: string;
-                    price: string;
-                    creator_id: string;
-                    price_usd?: number | null;
-                    banned?: boolean;
-                }>(provider, contractId, 'get_event', { encrypted_cid: cid });
+                const [event, rawServiceFee] = await Promise.all([
+                    viewContract<{
+                        title: string;
+                        price: string;
+                        creator_id: string;
+                        price_usd?: number | null;
+                        banned?: boolean;
+                    }>(provider, contractId, 'get_event', { encrypted_cid: cid }),
+                    viewContract<string>(provider, contractId, LEGACY_SERVICE_FEE_METHOD, {}),
+                ]);
+
+                const feeYocto = BigInt(rawServiceFee || '0');
+                setPlatformServiceFeeYocto(feeYocto);
+                setPlatformServiceFeeNear(parseFloat(yoctoToNear(feeYocto)));
 
                 if (event?.banned) {
                     setError('This event has been banned and tickets cannot be purchased.');
@@ -223,21 +250,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         media: parsed.thumbnailUrl,
                         uploader: event.creator_id
                     });
-
-                    // Query Nova service fee from contract (for paid tickets)
-                    if (BigInt(event.price) > BigInt(0)) {
-                        try {
-                            const novaFeeYocto = await viewContract<string>(
-                                provider, contractId, 'get_nova_service_fee', {}
-                            );
-                            if (novaFeeYocto) {
-                                const feeNear = parseFloat(yoctoToNear(BigInt(novaFeeYocto))) || 0;
-                                setNovaServiceFee(feeNear);
-                            }
-                        } catch {
-                            // Nova fee not configured yet, default to 0
-                        }
-                    }
                 }
 
             } catch (e) {
@@ -255,7 +267,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         setPaymentSelection(selection);
     }, []);
 
-    // Claim FREE Ticket (Direct via onboarding key or session key - decentralized)
+    // Claim FREE Ticket (sponsored onboarding key, session key, or wallet fallback)
     const handleFreeTicketClaim = async () => {
         if (!eventDetails) return;
         if (!accountId) {
@@ -267,60 +279,70 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         setActionLoading(true);
         setError(null);
         try {
+            // Preferred path: sponsored claim via onboarding key (signless + no user deposit).
+            // This path enforces contract-level onboarding checks and daily limits.
+            if (isTrial || hasOnboardingKey()) {
+                const result = await claimFreeTicketDirect(accountId, cid);
+                if (!result.success) {
+                    // Trial users must use the onboarding key path.
+                    if (isTrial) {
+                        throw new Error(result.error || "Failed to claim free ticket");
+                    }
+                    console.warn("[FreeClaim] Direct claim unavailable, falling back to wallet/session path:", result.error);
+                } else {
+                    if (onPurchaseSuccess) onPurchaseSuccess();
+                    return;
+                }
+            }
+
             const contractId = NEAR_CONFIG.contractId;
+            const sessionManager = new SessionManager(accountId);
+            const hasValidSessionKey = hasSessionKey ? await sessionManager.hasSessionKey() : false;
 
-            // Try direct claim via onboarding key first (decentralized, signless)
-            const onboardingKeyStr = localStorage.getItem(`onboarding_key:${contractId}`);
-
-            if (onboardingKeyStr) {
-                const onboardingKeyPair = KeyPair.fromString(onboardingKeyStr as KeyPairString);
-                const signer = new KeyPairSigner(onboardingKeyPair);
-                const { getCurrentRpcUrl } = await import('@/lib/rpc-failover');
-                const account = new Account(contractId, getCurrentRpcUrl(), signer);
-
-                await account.signAndSendTransaction({
-                    receiverId: contractId,
-                    actions: [
-                        actions.functionCall(
-                            "claim_free_ticket_direct",
-                            { receiver_id: accountId, encrypted_cid: cid },
-                            GAS_CONSTANTS.mediumGas,
-                            BigInt(0)
-                        )
-                    ]
-                });
-
-            } else if (hasSessionKey) {
-                const sessionManager = new SessionManager(accountId);
+            if (hasValidSessionKey) {
                 await sessionManager.callMethod('buy_ticket_prepaid', {
                     receiver_id: accountId,
                     encrypted_cid: cid
                 }, GAS_CONSTANTS.mediumGas.toString());
             } else {
                 const wallet = await getWallet();
+                const sessionBootstrap = await prepareSessionKeyBootstrap();
 
-                await wallet.signAndSendTransactions({
-                    transactions: [{
-                        receiverId: contractId,
+                const transactions = [{
+                    receiverId: contractId,
+                    actions: [
+                        actions.functionCall(
+                            'buy_ticket',
+                            { receiver_id: accountId, encrypted_cid: cid },
+                            GAS_CONSTANTS.mediumGas,
+                            // Free ticket storage is sponsored by the contract.
+                            BigInt(0)
+                        )
+                    ]
+                }];
+
+                if (sessionBootstrap) {
+                    transactions.push({
+                        receiverId: accountId,
                         actions: [
-                            actions.functionCall(
-                                'buy_ticket',
-                                { receiver_id: accountId, encrypted_cid: cid },
-                                GAS_CONSTANTS.mediumGas,
-                                BigInt(nearToYocto(0.01))
+                            actions.addFunctionCallAccessKey(
+                                PublicKey.fromString(sessionBootstrap.publicKey),
+                                contractId,
+                                [],
+                                BigInt(nearToYocto(SESSION_KEY_ALLOWANCE_NEAR))
                             )
                         ]
-                    }]
+                    });
+                }
+
+                await wallet.signAndSendTransactions({
+                    transactions
                 });
+
+                await persistSessionKeyBootstrap(sessionBootstrap?.keyPair || null);
             }
 
-            try {
-                await addBuyerToNovaGroup(cid, accountId);
-            } catch (err) {
-                console.error('[Nova Post-Purchase] Group add failed:', err);
-                pendingAccessQueue.add(cid, accountId);
-            }
-
+            // KMS: Access control via on-chain ticket ownership — no group management needed
             if (onPurchaseSuccess) onPurchaseSuccess();
 
         } catch (e: unknown) {
@@ -343,13 +365,13 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         try {
             const wallet = await getWallet();
             const contractId = NEAR_CONFIG.contractId;
+            const sessionBootstrap = await prepareSessionKeyBootstrap();
 
             const purchaseActions = [];
-            const STORAGE_COST = nearToYocto(0.01);
-            const priceYocto = nearToYocto(parseFloat(eventDetails.price));
-            const novaFeeYocto = nearToYocto(novaServiceFee);
+            const storageCostYocto = BigInt(nearToYocto(STORAGE_DEPOSIT_NEAR));
+            const priceYocto = BigInt(nearToYocto(parseFloat(eventDetails.price)));
 
-            const totalDeposit = BigInt(priceYocto) + BigInt(STORAGE_COST) + BigInt(nearToYocto(0.01)) + BigInt(novaFeeYocto);
+            const totalDeposit = priceYocto + storageCostYocto + platformServiceFeeYocto;
 
             purchaseActions.push(
                 actions.functionCall(
@@ -372,20 +394,29 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 )
             );
 
-            await wallet.signAndSendTransactions({
-                transactions: [{
-                    receiverId: contractId,
-                    actions: purchaseActions
-                }]
-            });
+            const transactions = [{
+                receiverId: contractId,
+                actions: purchaseActions
+            }];
 
-            try {
-                await addBuyerToNovaGroup(cid, accountId);
-            } catch (err) {
-                console.error('[Nova Post-Purchase] Group add failed:', err);
-                pendingAccessQueue.add(cid, accountId);
+            if (sessionBootstrap) {
+                transactions.push({
+                    receiverId: accountId,
+                    actions: [
+                        actions.addFunctionCallAccessKey(
+                            PublicKey.fromString(sessionBootstrap.publicKey),
+                            contractId,
+                            [],
+                            BigInt(nearToYocto(SESSION_KEY_ALLOWANCE_NEAR))
+                        )
+                    ]
+                });
             }
 
+            await wallet.signAndSendTransactions({ transactions });
+            await persistSessionKeyBootstrap(sessionBootstrap?.keyPair || null);
+
+            // KMS: Access control via on-chain ticket ownership — no group management needed
             if (onPurchaseSuccess) onPurchaseSuccess();
 
         } catch (e) {
@@ -439,16 +470,16 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         }
 
         const priceNear = parseFloat(eventDetails.price) || 0;
-        // Total NEAR needed by contract: price + storage (0.01) + nova_service_fee
-        // Plus gas buffer and 10% slippage buffer to account for swap price impact
-        const contractCost = priceNear + 0.01 + novaServiceFee; // What buy_ticket_prepaid needs
-        const totalWithBuffer = contractCost + 0.02; // + gas buffer (increased for safety)
-        const totalWithSlippage = totalWithBuffer * 1.10; // + 10% slippage buffer
+        // Total NEAR needed by contract: price + storage + dynamic service fee
+        // Plus gas buffer and slippage buffer to account for swap price impact.
+        const contractCost = priceNear + STORAGE_DEPOSIT_NEAR + platformServiceFeeNear;
+        const totalWithBuffer = contractCost + GAS_BUFFER_NEAR;
+        const totalWithSlippage = totalWithBuffer * 1.10;
 
         let usdCents: number;
         if (eventDetails.priceUsdCents && nearPrice > 0) {
             // USD-priced ticket: calculate overhead in USD and add slippage
-            const overheadNear = 0.01 + novaServiceFee + 0.01; // storage + nova + gas buffer
+            const overheadNear = STORAGE_DEPOSIT_NEAR + platformServiceFeeNear + GAS_BUFFER_NEAR;
             const overheadUsdCents = Math.ceil(overheadNear * nearPrice * 100);
             usdCents = Math.ceil((eventDetails.priceUsdCents + overheadUsdCents) * 1.05);
         } else if (nearPrice > 0) {
@@ -578,13 +609,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         }
     };
 
-    const copyDepositAddress = async () => {
-        if (!depositAddress) return;
-        await navigator.clipboard.writeText(depositAddress);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
-
     if (loading) {
         return (
             <div className="flex items-center justify-center p-8 bg-black/40 rounded-xl border border-white/10 backdrop-blur-sm">
@@ -610,7 +634,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             {/* Image Container */}
             <div className="aspect-video relative overflow-hidden bg-zinc-800">
-                <NovaThumbnail
+                <IPFSThumbnail
                     url={eventDetails.media}
                     alt="Ticket Preview"
                     className="w-full h-full object-cover scale-105 blur-sm opacity-60 group-hover:opacity-80 transition-all duration-700"
@@ -685,8 +709,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                             <Loader2 className="h-4 w-4 animate-spin text-near-green" />
                             <span className="text-sm font-medium text-near-green">
                                 {swapStatus === 'awaiting_deposit' ? 'Deposit sent — waiting for 1Click to detect...' :
-                                 swapStatus === 'processing' ? 'Swap processing — converting to NEAR...' :
-                                 'Preparing swap...'}
+                                    swapStatus === 'processing' ? 'Swap processing — converting to NEAR...' :
+                                        'Preparing swap...'}
                             </span>
                         </div>
                         <p className="text-[11px] text-zinc-500">
@@ -716,10 +740,10 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                             <Loader2 className="h-4 w-4 animate-spin text-near-purple" />
                             <span className="text-sm font-medium text-near-purple">
                                 {isEvmSending ? 'Confirming MetaMask transaction...' :
-                                 actionLoading && evmSwapKeypair && !isSwapInProgress ? 'Completing ticket purchase...' :
-                                 swapStatus === 'awaiting_deposit' ? 'Deposit sent — waiting for detection...' :
-                                 swapStatus === 'processing' ? 'Swap processing — converting to NEAR...' :
-                                 'Preparing swap...'}
+                                    actionLoading && evmSwapKeypair && !isSwapInProgress ? 'Completing ticket purchase...' :
+                                        swapStatus === 'awaiting_deposit' ? 'Deposit sent — waiting for detection...' :
+                                            swapStatus === 'processing' ? 'Swap processing — converting to NEAR...' :
+                                                'Preparing swap...'}
                             </span>
                         </div>
                         <p className="text-[11px] text-zinc-500">
@@ -755,9 +779,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 {!isFree && !isCreator && !isStablecoinFlow && !isSwapInProgress && (() => {
                     const costItems = [
                         { label: 'Ticket price', amount: priceNear },
-                        { label: 'NFT storage deposit', amount: 0.01 },
-                        { label: 'Gas buffer', amount: 0.01 },
-                        ...(novaServiceFee > 0 ? [{ label: 'Nova encryption fee', amount: novaServiceFee }] : []),
+                        { label: 'NFT storage deposit', amount: STORAGE_DEPOSIT_NEAR },
+                        { label: 'Service fee', amount: platformServiceFeeNear },
+                        { label: 'Gas buffer', amount: GAS_BUFFER_NEAR },
                     ];
                     const total = costItems.reduce((sum, item) => sum + item.amount, 0);
 

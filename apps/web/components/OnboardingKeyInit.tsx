@@ -1,30 +1,27 @@
 'use client';
 
 import { useEffect } from 'react';
-import { NEAR_CONFIG, ONBOARDING_CONFIG } from '@/lib/constants';
+import { NEAR_CONFIG } from '@/lib/constants';
 import { getCurrentRpcUrl } from '@/lib/rpc-failover';
 
 /**
- * Injects the onboarding key into localStorage on app load.
- * This enables decentralized (relayer-less) trial account creation
- * and free ticket claims directly from the client.
- *
- * Also monitors trial pool health via read-only RPC calls.
+ * Bootstraps onboarding key from env (if configured), validates cached key,
+ * and monitors trial pool health.
  */
 export function OnboardingKeyInit() {
     useEffect(() => {
-        const key = ONBOARDING_CONFIG.secretKey;
-        if (!key) return;
-
         const storageKey = `onboarding_key:${NEAR_CONFIG.contractId}`;
-        const existing = localStorage.getItem(storageKey);
+        const envKey = process.env.NEXT_PUBLIC_ONBOARDING_KEY;
+        const existingKey = localStorage.getItem(storageKey);
 
-        if (existing !== key) {
-            localStorage.setItem(storageKey, key);
+        // Keep local cache in sync with configured onboarding key.
+        if (envKey && envKey !== existingKey) {
+            localStorage.setItem(storageKey, envKey);
+            validateOnboardingKey(envKey).catch(() => {});
+        } else if (existingKey) {
+            // Validate key is still usable (non-blocking)
+            validateOnboardingKey(existingKey).catch(() => {});
         }
-
-        // Validate key is still usable (non-blocking)
-        validateOnboardingKey(key).catch(() => {});
 
         // Non-blocking: monitor trial pool health
         monitorTrialPool().catch(() => {});

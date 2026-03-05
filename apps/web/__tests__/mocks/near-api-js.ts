@@ -14,7 +14,7 @@ export class MockKeyPair {
     this.keypair = keypair || nacl.sign.keyPair();
   }
 
-  static fromRandom(curve: string = 'ed25519'): MockKeyPair {
+  static fromRandom(): MockKeyPair {
     return new MockKeyPair();
   }
 
@@ -58,15 +58,15 @@ export class MockKeyPair {
 export class MockAccount {
   accountId: string;
   rpcUrl: string;
-  signer: any;
+  signer: unknown;
 
-  constructor(accountId: string, rpcUrl?: string, signer?: any) {
+  constructor(accountId: string, rpcUrl?: string, signer?: unknown) {
     this.accountId = accountId;
     this.rpcUrl = rpcUrl || 'https://rpc.testnet.near.org';
     this.signer = signer;
   }
 
-  async getAccessKeyList(): Promise<{ keys: Array<{ public_key: string; access_key: any }> }> {
+  async getAccessKeyList(): Promise<{ keys: Array<{ public_key: string; access_key: unknown }> }> {
     return {
       keys: [{
         public_key: 'ed25519:mock_public_key',
@@ -77,7 +77,7 @@ export class MockAccount {
     };
   }
 
-  async signAndSendTransaction(params: any): Promise<any> {
+  async signAndSendTransaction(): Promise<unknown> {
     return {
       status: { SuccessValue: '' },
       receipts_outcome: []
@@ -110,7 +110,7 @@ export class MockJsonRpcProvider {
     this.url = options.url;
   }
 
-  async query(params: any): Promise<any> {
+  async query(params: { method_name?: string }): Promise<{ result: number[] } | { result: unknown[] }> {
     if (params.method_name === 'get_user_balance') {
       // Return 1 NEAR in yoctoNEAR
       return {
@@ -123,14 +123,14 @@ export class MockJsonRpcProvider {
 
 // Mock actions
 export const mockActions = {
-  functionCall: vi.fn((methodName: string, args: any, gas: bigint, deposit: bigint) => ({
+  functionCall: vi.fn((methodName: string, args: unknown, gas: bigint, deposit: bigint) => ({
     type: 'FunctionCall',
     methodName,
     args,
     gas,
     deposit
   })),
-  addKey: vi.fn((publicKey: string, accessKey: any) => ({
+  addKey: vi.fn((publicKey: string, accessKey: unknown) => ({
     type: 'AddKey',
     publicKey,
     accessKey
