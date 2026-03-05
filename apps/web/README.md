@@ -2,7 +2,7 @@
 
 Next.js frontend for the YouTick decentralized video platform.
 
-> **Client-Side Decentralization** - No server dependencies for core operations.
+> **Client-First Architecture** - Core media/ticket flows run in-browser, with minimal backend services for KMS and sponsored onboarding.
 
 > For comprehensive documentation, see the [docs/](../../docs/) folder.
 
@@ -10,9 +10,8 @@ Next.js frontend for the YouTick decentralized video platform.
 
 | Topic | Document |
 |-------|----------|
-| Architecture Overview | [docs/architecture/overview.md](../../docs/architecture/overview.md) |
 | Smart Contract | [docs/architecture/smart-contract.md](../../docs/architecture/smart-contract.md) |
-| Nova Protocol | [docs/architecture/nova-protocol.md](../../docs/architecture/nova-protocol.md) |
+| Encryption & KMS | [docs/architecture/storage.md](../../docs/architecture/storage.md) |
 | Session Keys | [docs/architecture/session-keys.md](../../docs/architecture/session-keys.md) |
 | Chain Signatures | [docs/architecture/chain-signatures.md](../../docs/architecture/chain-signatures.md) |
 | User Flows | [docs/guides/user-flows.md](../../docs/guides/user-flows.md) |
@@ -40,9 +39,8 @@ Create `.env.local` (see [.env.example](.env.example) for template):
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 
-# Required - Nova Protocol (TEE Encryption)
-NEXT_PUBLIC_NOVA_NETWORK=mainnet
-NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk.near
+# Optional - KMS worker URL override
+NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
 ```
 
 ## Project Structure
@@ -66,12 +64,10 @@ hooks/            # Custom React hooks
   └── useNearWallet.ts
 
 lib/              # Utilities & services
-  ├── nova/       # Nova Protocol TEE encryption
-  │   ├── index.ts        # Module entry point
-  │   ├── types.ts        # Type definitions
-  │   ├── auth.ts         # Session Key authentication
-  │   ├── client.ts       # Upload/download client
-  │   └── groups.ts       # Group-based access control
+  ├── kms/        # Cloudflare Edge KMS integration
+  │   ├── client.ts       # Store/retrieve encryption keys
+  │   ├── crypto.ts       # AES encryption helpers
+  │   └── signatures.ts   # Request signing helpers
   ├── session-manager.ts  # NEAR Session Keys (signless)
   ├── chain-signatures.ts # NEAR MPC (ETH address derivation)
   ├── gift-service.ts     # Gift link system
@@ -82,8 +78,8 @@ lib/              # Utilities & services
 
 | Component | Description |
 |-----------|-------------|
-| `UploadForm` | Video upload with Nova TEE encryption |
-| `IpfsPlayer` | Decrypted video playback with Nova |
+| `UploadForm` | Video upload with client-side encryption + KMS key storage |
+| `IpfsPlayer` | Decrypted video playback via KMS authorized key retrieval |
 | `TicketPurchaseCard` | Event ticket purchasing |
 | `WalletSelector` | NEAR wallet connection |
 
@@ -94,7 +90,7 @@ lib/              # Utilities & services
 - **Tailwind CSS 4** for styling
 - **near-api-js v7** for NEAR blockchain
 - **@near-wallet-selector** for wallet integration
-- **Nova Protocol** for TEE-based encryption
+- **Cloudflare Worker + KV** for key custody and access checks
 - **IPFS** for decentralized video storage
 
 ## Decentralization
@@ -103,9 +99,10 @@ All core operations run client-side:
 
 | Operation | Method |
 |-----------|--------|
-| Video Encryption | Nova Protocol TEE (client-side) |
-| IPFS Upload | Nova SDK (encrypted storage) |
+| Video Encryption | Browser AES (client-side) |
+| Key Custody | KMS Worker (signed requests + on-chain access checks) |
+| IPFS Upload | Crust gateway (encrypted blobs) |
 | IPFS Retrieval | Multi-gateway failover |
 | NFT Minting | NEAR contract (prepaid balance) |
 | Payments | On-chain (98% creator, 2% platform) |
-| Access Control | Nova Group-based (instant revocation) |
+| Access Control | NFT ownership + contract `has_ticket` checks |

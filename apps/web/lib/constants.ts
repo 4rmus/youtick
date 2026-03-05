@@ -2,7 +2,7 @@
  * YouTick Constants
  *
  * This file contains:
- * 1. Application Configuration (NEAR, Nova, IPFS)
+ * 1. Application Configuration (NEAR, KMS, IPFS)
  * 2. Design System Constants (colors, layout, animation)
  */
 
@@ -19,17 +19,6 @@ export const NEAR_CONFIG = {
 
     /** Network ID (testnet or mainnet) */
     networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet',
-} as const;
-
-/**
- * Onboarding Key Configuration (Decentralized Trial Creation)
- * This is a Function Call Access Key restricted to:
- * - create_sponsored_trial_direct
- * - claim_free_ticket_direct
- */
-export const ONBOARDING_CONFIG = {
-    /** Onboarding key (ed25519 private key, restricted scope) */
-    secretKey: process.env.NEXT_PUBLIC_ONBOARDING_KEY || '',
 } as const;
 
 /**
@@ -64,8 +53,8 @@ export const GAS_CONSTANTS = {
     storageCost: '10000000000000000000000',
 
     /** Minimum prepaid balance for session key operations (NFT mint + Event creation + buffer) */
-    /** Nova group registration (~0.67 NEAR) is a separate platform cost, charged for paid videos */
-    minNovaBalance: 0.25,
+    /** Key-management overhead is a separate platform cost, charged for paid videos */
+    minPlatformBalance: 0.25,
 
     /** Default session key allowance */
     sessionKeyAllowance: 0.25,

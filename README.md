@@ -2,13 +2,13 @@
 
 > **Decentralized Video-on-Demand Platform on NEAR Protocol**
 
-YouTick is an open-source, client-side decentralized VOD platform where creators upload encrypted videos to IPFS and monetize through NFT-gated access. Built on NEAR Protocol with Nova Protocol TEE encryption, it delivers 98% revenue to creators with zero server dependencies.
+YouTick is an open-source decentralized VOD platform where creators upload encrypted videos to IPFS and monetize through NFT-gated access. Built on NEAR Protocol with client-side encryption, Cloudflare Edge KMS key custody, and Crust-backed IPFS storage, it delivers 98% revenue to creators.
 
 ![NEAR Protocol](https://img.shields.io/badge/Blockchain-NEAR%20Protocol-00C1DE?style=flat&logo=near&logoColor=white)
 ![Rust](https://img.shields.io/badge/Contract-Rust-DEA584?style=flat&logo=rust&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Frontend-Next.js%2016-000000?style=flat&logo=next.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/Language-TypeScript%205-3178C6?style=flat&logo=typescript&logoColor=white)
-![Nova Protocol](https://img.shields.io/badge/Encryption-Nova%20TEE-7B2FF7?style=flat)
+![KMS](https://img.shields.io/badge/Encryption-Edge%20KMS-0EA5E9?style=flat)
 ![IPFS](https://img.shields.io/badge/Storage-IPFS%20%2B%20Crust-65C2CB?style=flat&logo=ipfs&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat)
 
@@ -21,7 +21,7 @@ YouTick is an open-source, client-side decentralized VOD platform where creators
 | **NFT-Gated Video** | NEP-171 compliant NFT tickets grant permanent, transferable video access |
 | **Revenue Split** | 98% to creator, 1% trial pool, 1% commission — enforced on-chain, instant settlement |
 | **Signless UX** | NEAR Session Keys eliminate wallet pop-ups after one-time setup |
-| **TEE Encryption** | Client-side AES-256-GCM via Nova Protocol Shade Agent — keys never leave hardware enclave |
+| **Encryption + KMS** | Client-side AES encryption with Cloudflare Edge KMS-backed key custody |
 | **Gift Drops** | Access-key-based shareable gift links — no recipient wallet required |
 | **Trial Accounts** | Sponsored onboarding for new users — zero crypto knowledge needed |
 | **Prepaid Balance** | Gas tank for session key operations — deposit once, transact signlessly |
@@ -47,16 +47,16 @@ YouTick is an open-source, client-side decentralized VOD platform where creators
 │        └──────────────┴─────────────┴─────────────┘          │
 │                           │                                   │
 │  ┌────────────────────────┴────────────────────────────────┐ │
-│  │  Nova SDK · Session Manager · Gift Service · Crust SDK  │ │
+│  │  KMS Client · Session Manager · Gift Service · Crust SDK │ │
 │  └────────────────────────┬────────────────────────────────┘ │
 └───────────────────────────┼──────────────────────────────────┘
                             │
             ┌───────────────┼───────────────┐
             │               │               │
      ┌──────┴──────┐ ┌─────┴─────┐ ┌──────┴──────┐
-     │    NEAR     │ │   Nova    │ │    IPFS     │
-     │  Protocol   │ │ Protocol  │ │   (Crust)   │
-     │             │ │   (TEE)   │ │             │
+     │    NEAR     │ │    KMS    │ │    IPFS     │
+     │  Protocol   │ │  Worker   │ │   (Crust)   │
+     │             │ │ + KV/Auth │ │             │
      │ NFT Tickets │ │ AES-256   │ │ Encrypted   │
      │ Payments    │ │ Group     │ │ Video Blobs │
      │ Sessions    │ │ Access    │ │ Multi-GW    │
@@ -65,8 +65,8 @@ YouTick is an open-source, client-side decentralized VOD platform where creators
 ```
 
 **Core Principles:**
-- **Client-Side First** — Every operation runs in the browser, zero server dependencies
-- **TEE-Based Security** — Encryption keys never leave the hardware enclave
+- **Client-First UX** — Core media and ticket flows run in-browser, with minimal backend services for KMS and sponsored onboarding
+- **Key Custody Security** — Encryption keys are stored and served via authenticated KMS access checks
 - **On-Chain Access Control** — NFT ownership = decryption permission
 - **Multi-Layer Failover** — RPC endpoints and IPFS gateways with automatic retry
 
@@ -83,7 +83,7 @@ YouTick is an open-source, client-side decentralized VOD platform where creators
 | Blockchain | NEAR Protocol | Mainnet |
 | Smart Contract | Rust (NEAR SDK) | 5.5.0 |
 | NFT Standard | NEP-171 / 177 / 178 | — |
-| Encryption | Nova Protocol (TEE) | AES-256-GCM |
+| Encryption | Browser AES + KMS | AES-CTR chunked |
 | Storage | IPFS (Crust Network) | Multi-gateway |
 | Wallet | NEAR Wallet Selector | 10.1.4 |
 | Data Fetching | TanStack React Query | 5.x |
@@ -150,7 +150,7 @@ youtick/
 │   │   ├── upload/              # Video upload
 │   │   ├── watch/               # Video playback
 │   │   ├── trial/               # Trial onboarding
-│   │   └── api/                 # API routes (nova-proxy, rpc, trial)
+│   │   └── api/                 # API routes (trial, sponsored)
 │   ├── components/              # 54+ React components
 │   │   ├── UploadForm.tsx       # Multi-step upload with encryption
 │   │   ├── IpfsPlayer.tsx       # Decrypted video playback
@@ -161,9 +161,9 @@ youtick/
 │   │   ├── useAllVideos.ts      # Paginated video listing
 │   │   ├── useOwnedTokens.ts   # NFT ownership queries
 │   │   ├── useNearPrice.ts     # NEAR/USD conversion
-│   │   └── useNovaAccessSync.ts # Nova group membership sync
+│   │   └── useSessionState.ts   # Session/access state sync
 │   └── lib/                     # Business logic
-│       ├── nova/                # Nova SDK integration (12 modules)
+│       ├── kms/                 # Cloudflare Edge KMS integration
 │       ├── crust/               # Crust Network storage (7 modules)
 │       ├── crypto/              # AES-GCM + AES-CTR chunked encryption
 │       ├── session-manager.ts   # Session key lifecycle
@@ -198,9 +198,8 @@ youtick/
 | **Prepaid** | `deposit_funds`, `withdraw_funds`, `get_user_balance` |
 | **Gift Drops** | `create_gift_drop`, `claim_gift`, `claim_gift_and_create_account` |
 | **Trial** | `create_sponsored_trial_direct`, `claim_free_ticket_direct`, `upgrade_trial_account` |
-| **Nova** | `set_nova_group`, `get_nova_group`, `get_nova_videos` |
 | **wNEAR** | `ft_on_transfer` (NEP-141 receiver) |
-| **Admin** | `ban_event`, `set_nova_platform_account`, `set_nova_service_fee` |
+| **Admin** | `ban_event` |
 | **NEP-171** | Full NFT standard (core, enumeration, approval) |
 
 ### Commission Structure
@@ -213,7 +212,7 @@ Ticket Price
 
 Additional costs per ticket:
 ├── 0.01 NEAR  → NFT storage deposit
-└── 0-0.1 NEAR → Nova service fee (configurable)
+└── 0-0.1 NEAR → Platform service fee (configurable)
 ```
 
 > See [docs/architecture/smart-contract.md](docs/architecture/smart-contract.md) for the complete V8 specification.
@@ -224,29 +223,29 @@ Additional costs per ticket:
 
 ### Upload
 1. Connect wallet → Create Session Key (one signature)
-2. Create Nova encryption group
-3. Encrypt video client-side (AES-256-GCM via TEE)
+2. Generate AES key in browser
+3. Encrypt video client-side (AES-CTR chunked)
 4. Upload encrypted blob to IPFS (Crust Network)
-5. Mint NFT + create event on NEAR (signless via session key)
+5. Store key in KMS + mint NFT/create event on NEAR (signless via session key)
 
 ### Purchase
 1. Browse `/discover` → Select video
 2. Buy ticket (direct NEAR, prepaid balance, or wNEAR)
 3. Smart contract splits payment: 98% creator / 1% trial pool / 1% commission
-4. Buyer added to Nova encryption group
-5. NFT ticket minted to buyer's wallet
+4. NFT ticket minted to buyer's wallet
+5. Access unlocked via on-chain ownership checks
 
 ### Watch
 1. Open video → Verify NFT ownership on-chain
-2. Verify Nova group membership
+2. Request decryption key from KMS with signed session key
 3. Fetch encrypted blob from IPFS (multi-gateway failover)
-4. Decrypt via Nova TEE → Stream to player
+4. Decrypt in browser and stream progressively
 
 ### Gift
 1. Creator generates gift links (`create_gift_drop`)
 2. Share link → Recipient opens `/claim#key=...`
 3. Claim with new account (sponsored) or existing wallet
-4. NFT minted + Nova group access granted
+4. NFT minted and watch access granted
 
 > See [docs/guides/user-flows.md](docs/guides/user-flows.md) for detailed sequence diagrams.
 
@@ -255,7 +254,7 @@ Additional costs per ticket:
 ## Security
 
 - **Client-Side Encryption** — Videos encrypted in browser before upload; raw content never transmitted
-- **TEE Key Management** — Nova Shade Agent runs in Phala Network hardware enclave
+- **KMS Key Management** — Decryption keys served by authenticated Edge KMS checks
 - **NFT Ownership Verification** — On-chain proof required before decryption
 - **Session Key Scoping** — Function-call access keys limited to contract methods + 1 NEAR allowance
 - **Signless Withdrawal Cap** — Maximum 0.1 NEAR per session key withdrawal
@@ -274,7 +273,7 @@ Additional costs per ticket:
 | CDN / Bandwidth | $2,000/mo | IPFS (included) |
 | Storage | $1,000/mo | ~$4/GB one-time |
 | Payment Processing | 2.9% + $0.30/tx | ~$0.01/tx (gas) |
-| DRM / Encryption | $500/mo | Nova TEE (included) |
+| DRM / Encryption | $500/mo | Edge KMS (included) |
 | **Total (10K users)** | **~$8,500/mo** | **~$200 one-time** |
 
 ---
@@ -318,12 +317,10 @@ git push origin feature/your-feature
 ## Links
 
 - [NEAR Protocol](https://near.org) — Layer 1 blockchain
-- [Nova Protocol](https://nova-sdk.near.page) — TEE encryption SDK
 - [Crust Network](https://crust.network) — Decentralized IPFS storage
-- [Phala Network](https://phala.network) — TEE infrastructure
 
 ---
 
-**Contract:** `youtick.near` · **Network:** NEAR Mainnet · **Encryption:** Nova TEE (AES-256-GCM)
+**Contract:** `youtick.near` · **Network:** NEAR Mainnet · **Encryption:** Browser AES + Edge KMS
 
 *Own Your Content. Own Your Audience. Own Your Revenue.*

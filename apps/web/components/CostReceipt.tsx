@@ -11,8 +11,6 @@ interface CostReceiptProps {
     requiredGas?: number;
     needsTopUp?: boolean;
     isFirstUpload?: boolean;
-    isFreeVideo?: boolean;
-    novaGroupFee?: number;
 }
 
 interface CostItem {
@@ -25,8 +23,6 @@ export function CostReceipt({
     storageFee,
     loading,
     gasBalance = 0,
-    isFreeVideo = true,
-    novaGroupFee = 0
 }: CostReceiptProps) {
     const { t } = useLanguage();
 
@@ -39,13 +35,6 @@ export function CostReceipt({
         { label: t.upload_page.cost_receipt.event_creation, amount: 0.10 },
     ];
 
-    if (!isFreeVideo) {
-        costItems.push({
-            label: 'Nova Group Setup',
-            amount: novaGroupFee || 0.70,
-        });
-    }
-
     const totalCost = costItems.reduce((sum, item) => sum + item.amount, 0);
 
     // Existing prepaid balance is used as credit — upload flow auto-handles top-up
@@ -54,7 +43,7 @@ export function CostReceipt({
 
     return (
         <div className="rounded-lg border border-white/10 bg-black/20 p-4 space-y-3 mb-4">
-            {/* Header with NOVA status */}
+            {/* Header */}
             <div className="flex items-center justify-between">
                 <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
                     {t.upload_page.cost_receipt.title}

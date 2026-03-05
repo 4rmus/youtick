@@ -1,0 +1,39 @@
+/**
+ * Youtick KMS Module
+ *
+ * Key management and video encryption module.
+ * Uses Cloudflare Edge KMS + AES-256-CTR for zero-latency video streaming.
+ */
+
+// KMS Client (key storage/retrieval via Cloudflare Worker)
+export {
+    storeEncryptionKey,
+    retrieveEncryptionKey,
+    generateSessionKeyPair,
+    exportPublicKeyBase58,
+    signPayload,
+    KMSError,
+    type KMSStoreResult,
+    type KMSRetrieveResult,
+} from './client';
+
+// AES-CTR Encryption/Decryption
+export {
+    generateAESKey,
+    importAESKey,
+    generateCounter,
+    encryptFileChunked,
+    decryptChunk,
+    decryptFull,
+    CHUNK_SIZE,
+    type EncryptedChunk,
+    type VideoManifest,
+} from './encryption';
+
+// Streaming Video Player
+export {
+    createDecryptedBlobUrl,
+    streamKmsVideo,
+    revokeVideoUrl,
+    type StreamingPlayerOptions,
+} from './streaming';

@@ -64,7 +64,7 @@ export async function uploadToCrust(
               cid: response.Hash,
               size: Number(response.Size) || file.size,
             });
-          } catch (err) {
+          } catch {
             reject(new CrustError('UPLOAD_FAILED', `Invalid response from Crust: ${xhr.responseText}`));
           }
         } else {
@@ -116,12 +116,10 @@ export async function uploadToCrust(
  * via the Crust read endpoint (POST /api/v0/cat).
  *
  * @param cid - IPFS CID to verify
- * @param _accountId - NEAR account ID (unused, kept for API compat)
  * @returns CrustPinResult with status
  */
 export async function pinOnCrust(
-  cid: string,
-  _accountId: string
+  cid: string
 ): Promise<CrustPinResult> {
   try {
     const controller = new AbortController();

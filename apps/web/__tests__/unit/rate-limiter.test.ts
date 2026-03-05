@@ -19,7 +19,7 @@ vi.mock('path', () => ({
 }));
 
 // Import after mocks
-import { RateLimiter, trialAccountLimiter } from '../../lib/rate-limiter';
+import { RateLimiter } from '../../lib/rate-limiter';
 
 describe('RateLimiter', () => {
     let limiter: InstanceType<typeof RateLimiter>;

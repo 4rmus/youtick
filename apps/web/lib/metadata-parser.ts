@@ -3,12 +3,12 @@
  * Centralized parsing of YouTick's title metadata encoding
  *
  * Schema v4: RealCID:::ThumbnailURL:::KeyCID:::Title (Paid videos with encryption key)
- * Schema v3: RealCID:::ThumbnailURL:::Title (Nova URLs)
+ * Schema v3: RealCID:::ThumbnailURL:::Title (Legacy/External URLs)
  * Schema v2: RealCID:::ThumbnailCID:::Title (Legacy IPFS)
  * Schema v1: RealCID:::Title (Legacy)
  *
  * ThumbnailURL can be:
- * - nova://{groupId}/{cid} - Nova Protocol URL
+ * - ipfs://{cid} - Protocol URLs
  * - https://... - Direct gateway URL
  * - Qm... or ba... - Legacy IPFS CID (converted to gateway URL)
  *
@@ -22,10 +22,10 @@
 import { IPFS_CONFIG, METADATA_SCHEMA } from './constants';
 
 /**
- * Check if a string is a Nova URL
+ * Check if a string is an ipfs:// protocol URL
  */
-function isNovaUrl(str: string | null | undefined): boolean {
-    return typeof str === 'string' && str.startsWith('nova://');
+function isIpfsUrl(str: string | null | undefined): boolean {
+    return typeof str === 'string' && str.startsWith('ipfs://');
 }
 
 /**
@@ -55,21 +55,21 @@ function isValidThumbnailCid(cid: string | null | undefined): boolean {
 }
 
 /**
- * Check if a thumbnail reference is valid (Nova URL, direct URL, or valid CID)
+ * Check if a thumbnail reference is valid (ipfs:// URL, direct URL, or valid CID)
  */
 function isValidThumbnailRef(ref: string | null | undefined): boolean {
     if (!ref || ref.trim() === '') return false;
-    return isNovaUrl(ref) || isDirectUrl(ref) || isValidThumbnailCid(ref);
+    return isIpfsUrl(ref) || isDirectUrl(ref) || isValidThumbnailCid(ref);
 }
 
 /**
- * Build thumbnail URL from reference (Nova URL, direct URL, or CID)
+ * Build thumbnail URL from reference (ipfs:// URL, direct URL, or CID)
  */
 function resolveThumbnailUrl(ref: string | null | undefined, gatewayUrl: string, placeholderImage: string): string {
     if (!ref || ref.trim() === '') return placeholderImage;
 
-    // Nova URL - use as-is (NovaThumbnail component will handle resolution)
-    if (isNovaUrl(ref)) {
+    // Special Protocol URL - use as-is (IPFSThumbnail component will handle resolution)
+    if (isIpfsUrl(ref)) {
         return ref;
     }
 
@@ -92,15 +92,15 @@ function resolveThumbnailUrl(ref: string | null | undefined, gatewayUrl: string,
 export interface ParsedMetadata {
     /** Display title for UI */
     title: string;
-    /** Thumbnail reference (CID or nova:// URL) */
+    /** Thumbnail reference (CID or ipfs:// URL) */
     thumbnailCid: string | null;
-    /** Full thumbnail URL (nova:// or gateway URL) */
+    /** Full thumbnail URL (ipfs:// or gateway URL) */
     thumbnailUrl: string;
     /** Real encrypted CID (first part) */
     realCid: string | null;
     /** Original raw title (for debugging) */
     rawTitle: string;
-    /** Schema version detected (1=legacy, 2=IPFS CID, 3=Nova URL) */
+    /** Schema version detected (1=legacy, 2=IPFS CID, 3=External URL) */
     schemaVersion: 1 | 2 | 3;
 }
 
@@ -169,7 +169,7 @@ export function parseTitleMetadata(
 
         const hasValidThumbnail = isValidThumbnailRef(thumbnailRef);
         const thumbnailUrl = resolveThumbnailUrl(thumbnailRef, gatewayUrl, placeholderImage);
-        const schemaVersion = isNovaUrl(thumbnailRef) ? 3 : 2;
+        const schemaVersion = isIpfsUrl(thumbnailRef) ? 3 : 2;
 
         return {
             title: title || fallbackTitle,
@@ -182,7 +182,7 @@ export function parseTitleMetadata(
     } else if (parts.length >= 3) {
         // v2/v3 Format: RealCID:::ThumbnailRef:::Title
         // ThumbnailRef can be:
-        // - nova://{groupId}/{cid} (v3 Nova URL)
+        // - ipfs://... (v3 protocol URL)
         // - Qm.../ba... (v2 legacy IPFS CID)
         // - https://... (direct URL)
         const realCid = parts[0];
@@ -194,7 +194,7 @@ export function parseTitleMetadata(
         const thumbnailUrl = resolveThumbnailUrl(thumbnailRef, gatewayUrl, placeholderImage);
 
         // Determine schema version based on thumbnail type
-        const schemaVersion = isNovaUrl(thumbnailRef) ? 3 : 2;
+        const schemaVersion = isIpfsUrl(thumbnailRef) ? 3 : 2;
 
         return {
             title: title || fallbackTitle,
@@ -283,7 +283,7 @@ export function isValidCid(str: string): boolean {
 }
 
 /**
- * Build thumbnail URL from reference (CID, nova:// URL, or direct URL)
+ * Build thumbnail URL from reference (CID, ipfs:// URL, or direct URL)
  */
 export function buildThumbnailUrl(thumbnailRef: string | null): string {
     return resolveThumbnailUrl(thumbnailRef, IPFS_CONFIG.gatewayUrl, IPFS_CONFIG.placeholderImage);

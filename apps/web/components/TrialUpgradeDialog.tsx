@@ -28,7 +28,6 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
     const [isOpen, setIsOpen] = useState(false);
     const [step, setStep] = useState<'intro' | 'processing' | 'seedPhrase' | 'complete' | 'error'>('intro');
     const [seedPhrase, setSeedPhrase] = useState<string>('');
-    const [publicKey, setPublicKey] = useState<string>('');
     const [error, setError] = useState<string>('');
     const [copied, setCopied] = useState(false);
     const [confirmed, setConfirmed] = useState(false);
@@ -39,7 +38,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
 
         try {
             // Generate a new seed phrase and derive keypair
-            const { seedPhrase: phrase, publicKey: pk, secretKey } = generateSeedPhrase();
+            const { seedPhrase: phrase, publicKey: pk } = generateSeedPhrase();
 
             // Get stored trial key from localStorage
             const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
@@ -73,7 +72,6 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
             });
             // Now the seed phrase can be used to recover this account
             setSeedPhrase(phrase);
-            setPublicKey(pk);
             setStep('seedPhrase');
 
         } catch (err: unknown) {
@@ -106,7 +104,6 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
         setTimeout(() => {
             setStep('intro');
             setSeedPhrase('');
-            setPublicKey('');
             setError('');
             setCopied(false);
             setConfirmed(false);

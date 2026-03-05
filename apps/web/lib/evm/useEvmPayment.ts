@@ -55,8 +55,11 @@ export function useEvmPayment({ onSuccess, onError }: UseEvmPaymentOptions = {})
 
     useEffect(() => {
         if (isTxConfirmed && txHash) {
-            setIsSending(false);
-            onSuccess?.(txHash);
+            const timer = setTimeout(() => {
+                setIsSending(false);
+                onSuccess?.(txHash);
+            }, 0);
+            return () => clearTimeout(timer);
         }
     }, [isTxConfirmed, txHash, onSuccess]);
 

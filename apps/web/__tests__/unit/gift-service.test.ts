@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { setMockLocalStorage, clearMockLocalStorage, MockKeyPair } from '../setup';
+import { setMockLocalStorage, clearMockLocalStorage } from '../setup';
 
 // Import the functions to test
 import {
@@ -18,6 +18,7 @@ import {
   getTrialPoolBalance,
   validateGiftLink,
   createSponsoredTrialDirect,
+  claimFreeTicketDirect,
   createSponsoredTrialRelayer,
   createSponsoredTrial
 } from '@/lib/gift-service';
@@ -229,49 +230,62 @@ describe('Gift Service', () => {
   });
 
   describe('createSponsoredTrialDirect', () => {
-    it('should return a result object with expected structure', async () => {
+    it('should fail when onboarding key is missing', async () => {
       clearMockLocalStorage();
-
-      // Mock the relayer endpoint for fallback case
-      const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          account_id: 'testuser.test-contract.testnet'
-        })
-      });
 
       const result = await createSponsoredTrialDirect('testuser');
 
-      // Result should have expected structure
-      expect(result).toBeDefined();
-      expect(typeof result.success).toBe('boolean');
-
-      // If successful, should have accountId
-      if (result.success) {
-        expect(result.accountId).toBeDefined();
-      } else {
-        // If failed, should have error
-        expect(result.error).toBeDefined();
-      }
-
-      global.fetch = originalFetch;
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Onboarding key unavailable');
     });
 
-    it('should handle username parameter correctly', async () => {
-      // Mock successful relayer response
+    it('should create trial account when onboarding key is valid', async () => {
+      const onboardingKey = generateKeyPairs(1)[0].secretKey;
+      setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
+
       const originalFetch = global.fetch;
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({
-          account_id: 'newuser.test-contract.testnet'
+          result: {
+            result: Array.from(Buffer.from('true'))
+          }
         })
       });
 
       const result = await createSponsoredTrialDirect('newuser');
 
-      // Function should complete without throwing
-      expect(result).toBeDefined();
+      expect(result.success).toBe(true);
+      expect(result.accountId).toBe('newuser.test-contract.testnet');
+
+      global.fetch = originalFetch;
+    });
+  });
+
+  describe('claimFreeTicketDirect', () => {
+    it('should fail when onboarding key is missing', async () => {
+      clearMockLocalStorage();
+      const result = await claimFreeTicketDirect('alice.testnet', 'cid-123');
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Onboarding key unavailable');
+    });
+
+    it('should claim free ticket when onboarding key is valid', async () => {
+      const onboardingKey = generateKeyPairs(1)[0].secretKey;
+      setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
+
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          result: {
+            result: Array.from(Buffer.from('true'))
+          }
+        })
+      });
+
+      const result = await claimFreeTicketDirect('alice.testnet', 'cid-123');
+      expect(result.success).toBe(true);
 
       global.fetch = originalFetch;
     });
@@ -327,36 +341,28 @@ describe('Gift Service', () => {
   });
 
   describe('createSponsoredTrial', () => {
-    it('should try direct method and use it when onboarding key exists', async () => {
-      // Note: When no onboarding key, it falls back to relayer internally
+    it('should return direct error when onboarding key is missing', async () => {
       // We just verify the function returns a result
       vi.mocked(localStorage.getItem).mockReturnValue(null);
 
-      const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          account_id: 'user123.test-contract.testnet'
-        })
-      });
-
       const result = await createSponsoredTrial('user123');
 
-      expect(result.success).toBe(true);
-      // Method could be 'direct' or 'relayer' depending on internal logic
-      expect(['direct', 'relayer']).toContain(result.method);
-
-      global.fetch = originalFetch;
+      expect(result.success).toBe(false);
+      expect(result.method).toBe('direct');
+      expect(result.error).toContain('Onboarding key unavailable');
     });
 
-    it('should return secretKey on success', async () => {
-      vi.mocked(localStorage.getItem).mockReturnValue(null);
+    it('should return secretKey on direct success', async () => {
+      const onboardingKey = generateKeyPairs(1)[0].secretKey;
+      setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
 
       const originalFetch = global.fetch;
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({
-          account_id: 'newaccount.test-contract.testnet'
+          result: {
+            result: Array.from(Buffer.from('true'))
+          }
         })
       });
 
@@ -365,26 +371,30 @@ describe('Gift Service', () => {
       expect(result.success).toBe(true);
       expect(result.secretKey).toBeDefined();
       expect(result.accountId).toBe('newaccount.test-contract.testnet');
+      expect(result.method).toBe('direct');
 
       global.fetch = originalFetch;
     });
 
-    it('should return error when both methods fail', async () => {
-      vi.mocked(localStorage.getItem).mockReturnValue(null);
+    it('should return error when onboarding key is unauthorized', async () => {
+      const onboardingKey = generateKeyPairs(1)[0].secretKey;
+      setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
 
-      // Mock failed relayer response
       const originalFetch = global.fetch;
       global.fetch = vi.fn().mockResolvedValue({
-        ok: false,
+        ok: true,
         json: async () => ({
-          error: 'Trial pool empty'
+          result: {
+            result: Array.from(Buffer.from('false'))
+          }
         })
       });
 
       const result = await createSponsoredTrial('failuser');
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Trial pool empty');
+      expect(result.error).toContain('Onboarding key unavailable');
+      expect(result.method).toBe('direct');
 
       global.fetch = originalFetch;
     });

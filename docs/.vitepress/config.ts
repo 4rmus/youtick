@@ -38,12 +38,9 @@ export default withMermaid(
           items: [
             { text: 'System Architecture', link: '/architecture/' },
             { text: 'Smart Contract', link: '/architecture/smart-contract' },
-            { text: 'Nova Protocol', link: '/architecture/nova-protocol' },
             { text: 'Session Keys', link: '/architecture/session-keys' },
             { text: 'Storage', link: '/architecture/storage' },
             { text: 'Innovations', link: '/architecture/innovations' },
-            { text: 'Chain Signatures', link: '/architecture/chain-signatures' },
-            { text: 'Shade Agent', link: '/architecture/shade-agent' },
           ],
         },
         {
@@ -57,7 +54,6 @@ export default withMermaid(
           items: [
             { text: 'User Flows', link: '/guides/user-flows' },
             { text: 'Developer Guide', link: '/guides/developer-guide' },
-            { text: 'Nova SDK', link: '/guides/nova-sdk' },
             { text: 'Environment', link: '/guides/environment' },
           ],
         },
@@ -83,7 +79,7 @@ export default withMermaid(
       },
 
       footer: {
-        message: 'Built on NEAR Protocol with Nova Protocol encryption.',
+        message: 'Built on NEAR Protocol with KMS-backed client-side encryption.',
         copyright: 'YouTick - Decentralized Video-on-Demand',
       },
     },

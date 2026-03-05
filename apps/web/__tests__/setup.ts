@@ -1,10 +1,11 @@
 /**
  * Vitest Global Setup File
- * Provides comprehensive mocks for browser-only modules and NEAR/Nova APIs
+ * Provides comprehensive mocks for browser-only modules and NEAR APIs
  */
 
 import { vi, beforeEach, afterEach } from 'vitest';
 import * as nacl from 'tweetnacl';
+import nodeCrypto from 'node:crypto';
 
 // ============================================================================
 // Mock KeyPair Implementation (used across modules)
@@ -17,7 +18,7 @@ export class MockKeyPair {
     this.keypair = keypair || nacl.sign.keyPair();
   }
 
-  static fromRandom(curve: string = 'ed25519'): MockKeyPair {
+  static fromRandom(): MockKeyPair {
     return new MockKeyPair();
   }
 
@@ -58,32 +59,58 @@ export class MockKeyPair {
   }
 }
 
+class MockKeyPairSigner {
+  keyPair: MockKeyPair;
+
+  constructor(keyPair: MockKeyPair) {
+    this.keyPair = keyPair;
+  }
+
+  sign(message: Uint8Array) {
+    return this.keyPair.sign(message);
+  }
+
+  getPublicKey() {
+    return this.keyPair.getPublicKey();
+  }
+}
+
+class MockAccount {
+  accountId: string;
+  rpcUrl?: string;
+  signer?: unknown;
+
+  constructor(accountId: string, rpcUrl?: string, signer?: unknown) {
+    this.accountId = accountId;
+    this.rpcUrl = rpcUrl;
+    this.signer = signer;
+  }
+
+  async getAccessKeyList() {
+    return {
+      keys: [{
+        public_key: 'ed25519:mock_public_key',
+        access_key: { permission: 'FullAccess' }
+      }]
+    };
+  }
+
+  async signAndSendTransaction() {
+    return {
+      status: { SuccessValue: '' },
+      receipts_outcome: []
+    };
+  }
+}
+
 // ============================================================================
 // Mock near-api-js
 // ============================================================================
 
 vi.mock('near-api-js', () => ({
   KeyPair: MockKeyPair,
-  Account: vi.fn().mockImplementation((accountId: string, rpcUrl?: string, signer?: any) => ({
-    accountId,
-    rpcUrl,
-    signer,
-    getAccessKeyList: vi.fn().mockResolvedValue({
-      keys: [{
-        public_key: 'ed25519:mock_public_key',
-        access_key: { permission: 'FullAccess' }
-      }]
-    }),
-    signAndSendTransaction: vi.fn().mockResolvedValue({
-      status: { SuccessValue: '' },
-      receipts_outcome: []
-    })
-  })),
-  KeyPairSigner: vi.fn().mockImplementation((keyPair: MockKeyPair) => ({
-    keyPair,
-    sign: (message: Uint8Array) => keyPair.sign(message),
-    getPublicKey: () => keyPair.getPublicKey()
-  })),
+  Account: MockAccount,
+  KeyPairSigner: MockKeyPairSigner,
   JsonRpcProvider: vi.fn().mockImplementation((options: { url: string }) => ({
     url: options.url,
     query: vi.fn().mockResolvedValue({
@@ -175,36 +202,44 @@ const localStorageMock = {
   })
 };
 
-global.localStorage = localStorageMock as any;
+Object.defineProperty(globalThis, 'localStorage', {
+  value: localStorageMock,
+  writable: true,
+});
 
 // ============================================================================
 // Mock window (for browser-only checks like "typeof window !== 'undefined'")
 // ============================================================================
 
-// @ts-ignore - Mocking window for browser APIs
-global.window = {
+Object.defineProperty(globalThis, 'window', {
+  value: {
   localStorage: localStorageMock
-} as any;
+  },
+  writable: true,
+});
 
 // ============================================================================
 // Mock crypto
 // ============================================================================
 
-if (typeof global.crypto === 'undefined') {
-  const crypto = require('crypto');
-  global.crypto = {
-    randomUUID: () => crypto.randomUUID(),
-    getRandomValues: (arr: any) => crypto.randomFillSync(arr),
-    subtle: {} as any
-  } as any;
+if (typeof globalThis.crypto === 'undefined') {
+  Object.defineProperty(globalThis, 'crypto', {
+    value: {
+      randomUUID: () => nodeCrypto.randomUUID(),
+      getRandomValues: <T extends ArrayBufferView | null>(arr: T): T =>
+        nodeCrypto.getRandomValues(arr),
+      subtle: {} as SubtleCrypto,
+    },
+    writable: true,
+  });
 }
 
 // ============================================================================
 // Mock fetch (for RPC calls)
 // ============================================================================
 
-global.fetch = vi.fn().mockImplementation(async (url: string, options?: any) => {
-  const body = options?.body ? JSON.parse(options.body) : {};
+global.fetch = vi.fn().mockImplementation(async (_url: string, options?: { body?: string }) => {
+  const body = options?.body ? JSON.parse(options.body) as { method?: string; params?: { method_name?: string } } : {};
 
   // Mock RPC responses
   if (body.method === 'query') {
@@ -253,7 +288,7 @@ global.fetch = vi.fn().mockImplementation(async (url: string, options?: any) => 
     ok: true,
     json: async () => ({ result: {} })
   };
-}) as any;
+}) as unknown as typeof fetch;
 
 // ============================================================================
 // Mock environment variables
@@ -261,8 +296,6 @@ global.fetch = vi.fn().mockImplementation(async (url: string, options?: any) => 
 
 process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
 process.env.NEXT_PUBLIC_NFT_CONTRACT_ID = 'test-contract.testnet';
-process.env.NEXT_PUBLIC_NOVA_NETWORK = 'testnet';
-process.env.NEXT_PUBLIC_NOVA_CONTRACT_ID = 'nova.testnet';
 
 // ============================================================================
 // Test utilities
@@ -299,6 +332,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockKeyStore.clear();
   mockLocalStorage.clear();
+
+  // Restore default localStorage mock behavior after tests that override implementations
+  localStorageMock.getItem.mockImplementation((key: string) => mockLocalStorage.get(key) || null);
+  localStorageMock.setItem.mockImplementation((key: string, value: string) => mockLocalStorage.set(key, value));
+  localStorageMock.removeItem.mockImplementation((key: string) => mockLocalStorage.delete(key));
+  localStorageMock.clear.mockImplementation(() => mockLocalStorage.clear());
+  localStorageMock.key.mockImplementation((index: number) => {
+    const keys = Array.from(mockLocalStorage.keys());
+    return keys[index] || null;
+  });
 });
 
 afterEach(() => {

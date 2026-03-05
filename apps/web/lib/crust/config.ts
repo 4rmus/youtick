@@ -35,8 +35,8 @@ export const CRUST_CONSTANTS = {
   /** Duration to mark a gateway as unhealthy (5 minutes) */
   GATEWAY_UNHEALTHY_DURATION: 5 * 60 * 1000,
 
-  /** Crust PSA (IPFS Pinning Service API) endpoint */
-  PSA_ENDPOINT: 'https://pin.crustcode.com/psa/pins',
+  /** Crust PSA (IPFS Pinning Service API) endpoint (Updated to working active node) */
+  PSA_ENDPOINT: 'https://crustipfs.xyz/psa/pins',
 } as const;
 
 /**
@@ -49,14 +49,13 @@ export const CRUST_CONSTANTS = {
  * @see https://ipfs.github.io/public-gateway-checker/ — live status
  */
 export const CRUST_GATEWAYS: GatewayConfig[] = [
-  // IPFS Foundation gateways (reliable, CORS ✓)
-  { name: 'ipfs-io',     url: 'https://ipfs.io/ipfs',                    priority: 1, healthy: true, lastCheck: 0 },
-  { name: 'dweb',        url: 'https://dweb.link/ipfs',                  priority: 2, healthy: true, lastCheck: 0 },
-  { name: 'trustless',   url: 'https://trustless-gateway.link/ipfs',     priority: 3, healthy: true, lastCheck: 0 },
+  // IPFS Foundation gateways (reliable, CORS ✓)  - HIGHEST PRIORITY NOW
+  { name: 'ipfs-io', url: 'https://ipfs.io/ipfs', priority: 1, healthy: true, lastCheck: 0 },
+  { name: 'dweb', url: 'https://dweb.link/ipfs', priority: 2, healthy: true, lastCheck: 0 },
+  { name: 'trustless', url: 'https://trustless-gateway.link/ipfs', priority: 3, healthy: true, lastCheck: 0 },
   // Third-party gateways (CORS ✓)
-  { name: '4everland',   url: 'https://4everland.io/ipfs',               priority: 4, healthy: true, lastCheck: 0 },
-  { name: 'lighthouse',  url: 'https://gateway.lighthouse.storage/ipfs', priority: 5, healthy: true, lastCheck: 0 },
-  { name: 'w3s',         url: 'https://w3s.link/ipfs',                   priority: 6, healthy: true, lastCheck: 0 },
-  // Note: crustipfs.xyz/ipfs and gw.crustfiles.app/ipfs return 403 for GET requests.
-  // Use CRUST_CONSTANTS.READ_ENDPOINT (POST /api/v0/cat) for Crust-pinned content instead.
+  { name: '4everland', url: 'https://4everland.io/ipfs', priority: 4, healthy: true, lastCheck: 0 },
+  { name: 'lighthouse', url: 'https://gateway.lighthouse.storage/ipfs', priority: 5, healthy: true, lastCheck: 0 },
+  { name: 'w3s', url: 'https://w3s.link/ipfs', priority: 6, healthy: true, lastCheck: 0 },
+  // Crust-operated gateways are excluded as they have TLS/CORS issues currently.
 ];
