@@ -6,13 +6,17 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { clearMockLocalStorage, setMockLocalStorage, MockKeyPair } from '../setup';
+import { clearMockLocalStorage } from '../setup';
 import { generateKeyPairs, parseGiftLink } from '@/lib/gift-service';
 
 // Mock modules
 vi.mock('@/lib/constants', () => ({
   NFT_CONTRACT_ID: 'test-contract.testnet',
   NETWORK_ID: 'testnet',
+  NEAR_CONFIG: {
+    contractId: 'test-contract.testnet',
+    networkId: 'testnet',
+  },
   APP_URL: 'https://app.youtick.io',
   GIFT_LINK_CONFIG: {
     maxLinks: 50,
@@ -189,8 +193,8 @@ describe('Gift Claim Flow Integration', () => {
       expect(tx.deposit).toBe(BigInt(0));
     });
 
-    it('should handle claim with new trial account', () => {
-      const claimWithTrialAccount = async (username: string, giftKey: string) => {
+    it('should handle claim with new trial account', async () => {
+      const claimWithTrialAccount = async (username: string) => {
         // Simulate trial account creation result
         const trialResult = {
           success: true,
@@ -208,9 +212,9 @@ describe('Gift Claim Flow Integration', () => {
         };
       };
 
-      const result = claimWithTrialAccount('newuser', 'ed25519:gift_key');
+      const result = claimWithTrialAccount('newuser');
 
-      expect(result).resolves.toEqual({
+      await expect(result).resolves.toEqual({
         accountId: 'newuser.test-contract.testnet',
         readyToClaim: true
       });
@@ -237,9 +241,9 @@ describe('Gift Claim Flow Integration', () => {
       expect(stored[0].tokenId).toBe('token_1');
     });
 
-    it('should add claimer to Nova group for video access', () => {
+    it('should update claimer access state for video access', async () => {
       const addMemberToGroup = async (groupId: string, accountId: string) => {
-        // Simulate Nova group member addition
+        // Simulate access membership update
         return {
           success: true,
           groupId,
@@ -250,7 +254,7 @@ describe('Gift Claim Flow Integration', () => {
 
       const result = addMemberToGroup('group-123', 'claimer.testnet');
 
-      expect(result).resolves.toMatchObject({
+      await expect(result).resolves.toMatchObject({
         success: true,
         newMember: 'claimer.testnet'
       });

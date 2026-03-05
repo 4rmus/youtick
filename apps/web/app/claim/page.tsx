@@ -9,9 +9,7 @@ import { useLanguage } from "@/components/providers/LanguageContext";
 import { parseTitleMetadata } from "@/lib/metadata-parser";
 import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from "@/lib/constants";
 import { getCurrentRpcUrl } from "@/lib/rpc-failover";
-import { addBuyerToNovaGroup } from "@/lib/nova/post-purchase";
-import { pendingAccessQueue } from "@/lib/nova/pending-access-queue";
-import { NovaThumbnail } from "@/components/NovaThumbnail";
+import { IPFSThumbnail } from "@/components/IPFSThumbnail";
 
 const NETWORK_ID = NEAR_CONFIG.networkId;
 const NFT_CONTRACT = NEAR_CONFIG.contractId;
@@ -72,8 +70,6 @@ function ClaimContent() {
             const fullAccountId = `${newUsername}.${NFT_CONTRACT}`;
 
             try {
-                // v7: Use Account directly to check existence
-                const { Account } = await import("near-api-js");
                 const rpcUrl = getCurrentRpcUrl();
 
                 try {
@@ -163,7 +159,7 @@ function ClaimContent() {
         };
 
         validateGift();
-    }, [secretKey]);
+    }, [secretKey, t]);
 
     const handleClaimWithNewAccount = async () => {
         if (!isValidUsername(newUsername)) return;
@@ -209,15 +205,6 @@ function ClaimContent() {
 
             localStorage.setItem("trialAccountId", fullAccountId);
             localStorage.setItem("trialAccountNetwork", NETWORK_ID);
-
-            // Non-blocking: Add new account to Nova group for video access
-            if (giftInfo?.eventCid) {
-                const eventCid = giftInfo.eventCid;
-                addBuyerToNovaGroup(eventCid, fullAccountId).catch(err => {
-                    console.error('[Nova Post-Purchase] Group add failed:', err);
-                    pendingAccessQueue.add(eventCid, fullAccountId);
-                });
-            }
 
             setClaimedAccountId(fullAccountId);
             setTxHash(result.transaction.hash);
@@ -265,15 +252,6 @@ function ClaimContent() {
                 ]
             });
 
-            // Non-blocking: Add existing account to Nova group for video access
-            if (giftInfo?.eventCid) {
-                const eventCid = giftInfo.eventCid;
-                addBuyerToNovaGroup(eventCid, existingAccountId.trim()).catch(err => {
-                    console.error('[Nova Post-Purchase] Group add failed:', err);
-                    pendingAccessQueue.add(eventCid, existingAccountId.trim());
-                });
-            }
-
             setClaimedAccountId(existingAccountId.trim());
             setTxHash(result.transaction.hash);
             setStep("success");
@@ -315,7 +293,7 @@ function ClaimContent() {
                 <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl overflow-hidden">
                     {/* Ticket Image/Thumbnail */}
                     <div className="relative aspect-video w-full overflow-hidden">
-                        <NovaThumbnail
+                        <IPFSThumbnail
                             url={giftInfo?.media}
                             alt={giftInfo?.eventTitle}
                             className="w-full h-full object-cover"
@@ -393,7 +371,7 @@ function ClaimContent() {
                     {/* Mini Preview Header */}
                     <div className="flex gap-3 p-4 bg-zinc-800/50 border-b border-zinc-700/50">
                         <div className="w-16 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-700">
-                            <NovaThumbnail url={giftInfo?.media} alt="" className="w-full h-full object-cover" />
+                            <IPFSThumbnail url={giftInfo?.media} alt="" className="w-full h-full object-cover" />
                         </div>
                         <div className="flex-1 min-w-0">
                             <h3 className="text-sm font-medium text-white truncate">{giftInfo?.eventTitle}</h3>
@@ -544,7 +522,7 @@ function ClaimContent() {
                 <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl overflow-hidden">
                     {/* Success Header */}
                     <div className="relative aspect-video w-full overflow-hidden">
-                        <NovaThumbnail
+                        <IPFSThumbnail
                             url={giftInfo?.media}
                             alt={giftInfo?.eventTitle}
                             className="w-full h-full object-cover opacity-50"

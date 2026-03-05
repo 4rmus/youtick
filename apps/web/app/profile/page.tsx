@@ -13,7 +13,7 @@ import { useLanguage } from '@/components/providers/LanguageContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { GiftLinkGenerator } from "@/components/GiftLinkGenerator";
 import { TrialUpgradeDialog } from "@/components/TrialUpgradeDialog";
-import { NovaThumbnail } from "@/components/NovaThumbnail";
+import { IPFSThumbnail } from "@/components/IPFSThumbnail";
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
 import type { NFTEvent } from '@/lib/types';
@@ -248,7 +248,7 @@ export default function ProfilePage() {
                                                 <div className="flex gap-3 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900 transition-all">
                                                     <div className="w-20 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-800">
                                                         {media && !media.includes('token.png') ? (
-                                                            <NovaThumbnail
+                                                            <IPFSThumbnail
                                                                 url={media}
                                                                 alt={title}
                                                                 className="w-full h-full object-cover"
@@ -313,7 +313,7 @@ export default function ProfilePage() {
                                             <div className="flex gap-3 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900 transition-all">
                                                 <div className="w-20 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-800">
                                                     {event.media && !event.media.includes('token.png') ? (
-                                                        <NovaThumbnail
+                                                        <IPFSThumbnail
                                                             url={event.media}
                                                             alt={event.title}
                                                             className="w-full h-full object-cover"
@@ -383,7 +383,7 @@ export default function ProfilePage() {
                             >
                                 <div className="w-16 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-700">
                                     {event.media && !event.media.includes('token.png') ? (
-                                        <NovaThumbnail
+                                        <IPFSThumbnail
                                             url={event.media}
                                             alt={event.title}
                                             className="w-full h-full object-cover"
@@ -428,7 +428,7 @@ export default function ProfilePage() {
                         <div className="mt-4 w-full flex gap-4 p-4 rounded-xl bg-zinc-800/50 border border-zinc-700">
                             <div className="w-24 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-700">
                                 {selectedEventForGift.media && !selectedEventForGift.media.includes('token.png') ? (
-                                    <NovaThumbnail
+                                    <IPFSThumbnail
                                         url={selectedEventForGift.media}
                                         alt={selectedEventForGift.title}
                                         className="w-full h-full object-cover"
@@ -460,8 +460,6 @@ export default function ProfilePage() {
                         <div className="mt-4 w-full">
                             <GiftLinkGenerator
                                 eventCid={selectedEventForGift.cid}
-                                eventTitle={selectedEventForGift.title}
-                                creatorAccountId={accountId || ''}
                             />
                         </div>
                     )}

@@ -73,7 +73,7 @@ export const translations = {
             how_it_works_title: "How it works:",
             how_it_works_step1: "Your video is encrypted before upload",
             how_it_works_step2: "Only NFT holders can decrypt and watch",
-            how_it_works_step3: "Nova ensures secure encryption",
+            how_it_works_step3: "KMS ensures secure encryption",
             price_label: "Price",
             connect_wallet: "Connect Wallet",
             cost_receipt: {
@@ -88,7 +88,7 @@ export const translations = {
                 from_balance: "Used from Balance",
                 nft_mint: "NFT Mint",
                 event_creation: "Event Creation",
-                nova_group: "Nova Group Setup",
+                key_setup: "Key Setup",
                 security_margin: "Security Margin",
                 signless_upload: "Signless Upload",
                 balance_sufficient: "Balance sufficient - signless upload ready",
@@ -101,7 +101,7 @@ export const translations = {
             steps: {
                 session: "Wallet & Balance",
                 thumbnail: "Cover Image",
-                nova_group: "Creating Nova Group",
+                key_setup: "Preparing Key Storage",
                 encrypt: "Encrypting Video",
                 upload: "Uploading to IPFS",
                 mint: "Minting NFT Ticket"
@@ -287,7 +287,7 @@ export const translations = {
                 copyright: "© 2026 youtick. All rights reserved.",
                 description: "Empowering artists with true ownership and instant payments.",
                 built_on_prefix: "Built on",
-                built_on_tech: "NEAR Protocol • Nova • Crust Network",
+                built_on_tech: "NEAR Protocol • KMS • Crust Network",
                 privacy: "Privacy",
                 terms: "Terms",
                 support: "Support"
@@ -351,8 +351,8 @@ export const translations = {
                 subtitle: "What makes us different from every other platform.",
                 end_to_end: "All-in-One Platform",
                 end_to_end_desc: "Ticketing, video streaming, and NFT ownership in one place. No need for multiple tools or platforms.",
-                global_access: "Nova Encryption",
-                global_access_desc: "Videos are encrypted inside secure hardware (TEE) using Nova. Only ticket holders can decrypt and watch. Not even we can access your content.",
+                global_access: "KMS Encryption",
+                global_access_desc: "Videos are encrypted client-side and keys are protected by Edge KMS. Only ticket holders can decrypt and watch.",
                 hybrid: "Crust Storage",
                 hybrid_desc: "Your content lives on IPFS, pinned permanently by Crust Network. Decentralized storage means no single server can go down and take your videos with it.",
                 creator_first: "Creator First",
@@ -380,7 +380,7 @@ export const translations = {
                 storage: "Distributed Storage",
                 storage_desc: "Content stored on IPFS with Crust Network pinning. Permanent, censorship-resistant, and fully yours.",
                 encryption: "Secure Encryption",
-                encryption_desc: "Only ticket holders can decrypt, secured by Nova.",
+                encryption_desc: "Only ticket holders can decrypt, secured by KMS.",
                 fees: "Minimal Fees",
                 fees_desc: "One-time storage fee. No ongoing server costs. Maximum earnings."
             },
@@ -623,7 +623,7 @@ export const translations = {
             how_it_works_title: "Nasıl Çalışır:",
             how_it_works_step1: "Videonuz yüklenmeden önce şifrelenir",
             how_it_works_step2: "Sadece NFT sahipleri şifreyi çözüp izleyebilir",
-            how_it_works_step3: "Nova ile güvenli şifreleme sağlıyoruz",
+            how_it_works_step3: "KMS ile güvenli şifreleme sağlıyoruz",
             price_label: "Fiyat",
             connect_wallet: "Cüzdan Bağla",
             cost_receipt: {
@@ -638,7 +638,7 @@ export const translations = {
                 from_balance: "Bakiyeden Kullanılacak",
                 nft_mint: "NFT Mint",
                 event_creation: "Event Oluşturma",
-                nova_group: "Nova Grup Kurulumu",
+                key_setup: "Anahtar Kurulumu",
                 security_margin: "Güvenlik Marjı",
                 signless_upload: "İmzasız Yükleme",
                 balance_sufficient: "Bakiye yeterli - imzasız yükleme hazır",
@@ -651,7 +651,7 @@ export const translations = {
             steps: {
                 session: "Cüzdan & Bakiye",
                 thumbnail: "Kapak Fotoğrafı",
-                nova_group: "Nova Grubu Oluşturuluyor",
+                key_setup: "Anahtar Depolama Hazırlanıyor",
                 encrypt: "Video Şifreleniyor",
                 upload: "IPFS'e Yükleniyor",
                 mint: "NFT Bilet Basılıyor"
@@ -837,7 +837,7 @@ export const translations = {
                 copyright: "© 2026 youtick. Tüm hakları saklıdır.",
                 description: "Sanatçılara gerçek sahiplik ve anlık ödemeler sunuyoruz.",
                 built_on_prefix: "Altyapısı:",
-                built_on_tech: "NEAR Protocol • Nova • Crust Network",
+                built_on_tech: "NEAR Protocol • KMS • Crust Network",
                 privacy: "Gizlilik",
                 terms: "Şartlar",
                 support: "Destek"
@@ -901,8 +901,8 @@ export const translations = {
                 subtitle: "Bizi diğer platformlardan ayıran özellikler.",
                 end_to_end: "Hepsi Bir Arada",
                 end_to_end_desc: "Biletleme, video yayını ve NFT sahipliği tek platformda. Birden fazla araca gerek yok.",
-                global_access: "Nova Şifreleme",
-                global_access_desc: "Videolarınız Nova ile güvenli donanım (TEE) içinde şifrelenir. Sadece bilet sahipleri izleyebilir. Biz dahil kimse içeriğinize erişemez.",
+                global_access: "KMS Şifreleme",
+                global_access_desc: "Videolar istemci tarafında şifrelenir, anahtarlar Edge KMS ile korunur. Sadece bilet sahipleri izleyebilir.",
                 hybrid: "Crust Depolama",
                 hybrid_desc: "İçeriğiniz IPFS üzerinde Crust Network ile kalıcı olarak saklanır. Merkeziyetsiz depolama sayesinde tek bir sunucu çöküp videolarınızı götüremez.",
                 creator_first: "Üretici Öncelikli",
@@ -930,7 +930,7 @@ export const translations = {
                 storage: "Dağıtık Depolama",
                 storage_desc: "İçerik IPFS üzerinde Crust Network pinleme ile saklanır. Kalıcı, sansürsüz ve tamamen size ait.",
                 encryption: "Güvenli Şifreleme",
-                encryption_desc: "Nova ile sadece bilet sahipleri şifreyi çözebilir.",
+                encryption_desc: "KMS ile sadece bilet sahipleri şifreyi çözebilir.",
                 fees: "Minimal Ücretler",
                 fees_desc: "Tek seferlik depolama ücreti. Sürekli sunucu maliyeti yok. Maksimum kazanç."
             },

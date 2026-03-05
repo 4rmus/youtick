@@ -29,7 +29,7 @@ export const UseCasesSection = memo(() => {
 
         {/* Use Cases Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-7xl mx-auto">
-          {useCases.map(({ icon: Icon, titleKey, physicalKey, digitalKey, gradient, border }, index) => (
+          {useCases.map(({ icon: Icon, titleKey, physicalKey, digitalKey, gradient, border }) => (
             <div
               key={titleKey}
               className={`relative p-6 rounded-3xl bg-gradient-to-br ${gradient} border ${border} ${ANIMATION.transition.default} hover:scale-[1.02] group flex flex-col h-full`}

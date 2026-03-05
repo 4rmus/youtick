@@ -8,17 +8,12 @@ export default defineConfig({
     setupFiles: ['__tests__/setup.ts'],
     include: [
       '__tests__/unit/**/*.test.ts',
-      '__tests__/integration/**/*.test.ts',
-      '__tests__/nova/config.test.ts'  // Nova config tests migrated to Vitest
+      '__tests__/integration/**/*.test.ts'
     ],
     exclude: [
       'node_modules',
       'dist',
-      '.next',
-      '__tests__/nova/auth.test.ts',     // Legacy format - needs conversion
-      '__tests__/nova/client.test.ts',   // Legacy format - needs conversion
-      '__tests__/nova/groups.test.ts',   // Legacy format - needs conversion
-      '__tests__/nova/integration.test.ts'  // Legacy format - needs conversion
+      '.next'
     ],
     testTimeout: 10000,
     hookTimeout: 10000,

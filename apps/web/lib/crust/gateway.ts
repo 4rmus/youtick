@@ -66,7 +66,56 @@ export async function fetchFromGateways(
   const timeout = options?.timeout || CRUST_CONSTANTS.FETCH_TIMEOUT;
   const errors: string[] = [];
 
-  // 1. Try Crust API endpoints first (POST /api/v0/cat — fastest for Crust content)
+  // 1. Try public IPFS gateways first (Fastest, CDN cached, Range support)
+  const sortedGateways = getHealthyGateways();
+
+  if (sortedGateways.length === 0) {
+    // Reset all gateways and try again if none are marked healthy
+    resetGatewayHealth();
+    sortedGateways.push(...getHealthyGateways());
+  }
+
+  // Pick top 3 gateways for a race to minimize latency
+  const raceGateways = sortedGateways.slice(0, 3);
+
+  if (raceGateways.length > 0) {
+    try {
+      const racePromises = raceGateways.map(async (gateway) => {
+        const url = `${gateway.url}/${cid}`;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeout);
+
+        try {
+          const response = await fetch(url, { signal: controller.signal });
+          clearTimeout(timer);
+
+          if (response.ok) {
+            return response;
+          }
+
+          errors.push(`${gateway.name}: HTTP ${response.status}`);
+          markGatewayUnhealthy(gateway.name);
+          throw new Error(`HTTP ${response.status}`);
+        } catch (err: unknown) {
+          clearTimeout(timer);
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`${gateway.name}: ${msg}`);
+          markGatewayUnhealthy(gateway.name);
+          throw err;
+        }
+      });
+
+      // Return the first successful response
+      const fastestResponse = await Promise.any(racePromises);
+      return fastestResponse;
+    } catch {
+      // All race gateways failed, we will fall back to Crust API below
+      console.warn(`[Gateway Race] All top gateways failed for ${cid}. Falling back to Crust API.`);
+    }
+  }
+
+  // 2. Fall back to Crust API endpoints (POST /api/v0/cat)
+  // Guaranteed availability for Crust-pinned content, but slower and no Range support.
   const crustEndpoints = [CRUST_CONSTANTS.READ_ENDPOINT, CRUST_CONSTANTS.READ_ENDPOINT_FALLBACK];
   for (const endpoint of crustEndpoints) {
     const controller = new AbortController();
@@ -91,42 +140,9 @@ export async function fetchFromGateways(
     }
   }
 
-  // 2. Fall back to public IPFS gateways (CORS-friendly)
-  const sortedGateways = getHealthyGateways();
-
-  if (sortedGateways.length === 0) {
-    // Reset all gateways and try again
-    resetGatewayHealth();
-    sortedGateways.push(...getHealthyGateways());
-  }
-
-  for (const gateway of sortedGateways) {
-    const url = `${gateway.url}/${cid}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
-
-    try {
-      const response = await fetch(url, { signal: controller.signal });
-      clearTimeout(timer);
-
-      if (response.ok) {
-        return response;
-      }
-
-      // Non-OK response, try next gateway
-      errors.push(`${gateway.name}: HTTP ${response.status}`);
-      markGatewayUnhealthy(gateway.name);
-    } catch (err: unknown) {
-      clearTimeout(timer);
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`${gateway.name}: ${msg}`);
-      markGatewayUnhealthy(gateway.name);
-    }
-  }
-
   throw new CrustError(
     'GATEWAY_UNAVAILABLE',
-    `All gateways failed for CID ${cid}: ${errors.join(', ')}`
+    `All gateways and Crust API failed for CID ${cid}: ${errors.join(', ')}`
   );
 }
 

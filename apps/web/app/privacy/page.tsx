@@ -74,7 +74,7 @@ export default function PrivacyPage() {
               <li><strong className="text-white">Wallet Credentials</strong>: Encrypted keypairs managed by your wallet provider</li>
               <li><strong className="text-white">Trial Account Data</strong>: Locally generated account IDs and onboarding keys</li>
               <li><strong className="text-white">User Preferences</strong>: Theme settings, language selection</li>
-              <li><strong className="text-white">Nova Authentication Tokens</strong>: Tokens for TEE encryption/decryption sessions</li>
+              <li><strong className="text-white">KMS Authentication Tokens</strong>: Tokens for TEE encryption/decryption sessions</li>
             </ul>
             <p className="mt-3">
               You can delete all client-side data at any time by clearing your browser&apos;s local
@@ -141,7 +141,7 @@ export default function PrivacyPage() {
                 <ul className="list-disc list-inside space-y-1 ml-2">
                   <li>Facilitating smart contract interactions (ticket purchases, content uploads)</li>
                   <li>Verifying NFT ownership for content access</li>
-                  <li>Managing Nova Protocol group memberships for encryption/decryption</li>
+                  <li>Managing KMS group memberships for encryption/decryption</li>
                   <li>Processing payments and distributing creator revenue (98% / 2% split)</li>
                 </ul>
               </div>
@@ -190,7 +190,7 @@ export default function PrivacyPage() {
                     <td className="py-3 px-4">Account ID, transactions, balances (public ledger)</td>
                   </tr>
                   <tr>
-                    <td className="py-3 px-4 font-medium text-white">Nova Protocol</td>
+                    <td className="py-3 px-4 font-medium text-white">KMS</td>
                     <td className="py-3 px-4">TEE encryption, group access</td>
                     <td className="py-3 px-4">Encrypted content, group membership, attestation data</td>
                   </tr>
@@ -253,7 +253,7 @@ export default function PrivacyPage() {
 
             <h3 className="text-lg font-medium text-white mt-6 mb-3">5.3 Content Privacy</h3>
             <p>
-              Video content uploaded through YouTick is encrypted using Nova Protocol&apos;s Trusted
+              Video content uploaded through YouTick is encrypted using KMS&apos;s Trusted
               Execution Environment before being stored on IPFS. Only authorized group members
               (ticket holders) can decrypt and view the content. The encrypted content itself is
               stored on the public IPFS network, but it is computationally infeasible to decrypt
@@ -267,7 +267,7 @@ export default function PrivacyPage() {
 
             <h3 className="text-lg font-medium text-white mt-6 mb-3">6.1 Encryption</h3>
             <ul className="list-disc list-inside mt-2 space-y-1 ml-4">
-              <li><strong className="text-white">Video Content</strong>: AES-256-GCM encryption via Nova Protocol TEE</li>
+              <li><strong className="text-white">Video Content</strong>: AES-256-GCM encryption via KMS TEE</li>
               <li><strong className="text-white">Transport</strong>: TLS encryption for all API communications</li>
               <li><strong className="text-white">Local Storage</strong>: Wallet keys encrypted by wallet providers</li>
               <li><strong className="text-white">Gift Links</strong>: Secret keys stored in URL fragments (not sent to servers)</li>
@@ -452,11 +452,11 @@ export default function PrivacyPage() {
             </p>
           </section>
 
-          {/* 12. NOVA PROTOCOL */}
+          {/* 12. KMS */}
           <section>
-            <h2 className="text-2xl font-semibold text-white mb-4">12. Nova Protocol and Trusted Execution Environment</h2>
+            <h2 className="text-2xl font-semibold text-white mb-4">12. KMS and Trusted Execution Environment</h2>
             <p>
-              YouTick uses Nova Protocol for video encryption and access control. Nova operates a
+              YouTick uses KMS for video encryption and access control. KMS operates a
               Trusted Execution Environment (TEE) that:
             </p>
             <ul className="list-disc list-inside mt-3 space-y-2 ml-4">
@@ -466,9 +466,9 @@ export default function PrivacyPage() {
               <li>Provides cryptographic attestation of TEE integrity</li>
             </ul>
             <p className="mt-3">
-              YouTick does not have access to Nova&apos;s encryption keys. The TEE ensures that
-              encryption keys cannot be extracted by any party, including Nova Protocol operators
-              or YouTick. Nova Protocol&apos;s own privacy practices govern the data processed
+              YouTick does not have access to KMS&apos;s encryption keys. The TEE ensures that
+              encryption keys cannot be extracted by any party, including KMS operators
+              or YouTick. KMS&apos;s own privacy practices govern the data processed
               within their TEE infrastructure.
             </p>
           </section>

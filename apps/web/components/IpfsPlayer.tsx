@@ -1,17 +1,14 @@
 'use client';
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { fetchFile } from '@/lib/nova';
-import { hasApiKey } from '@/lib/nova/config';
-import { NovaError } from '@/lib/nova/types';
-import { addBuyerToNovaGroup } from '@/lib/nova/post-purchase';
-import { pendingAccessQueue } from '@/lib/nova/pending-access-queue';
+import { streamKmsVideo } from '@/lib/kms/streaming';
+import { retrieveEncryptionKey } from '@/lib/kms/client';
 import { fetchFromGateways } from '@/lib/crust';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Loader2, Play, Lock, KeyRound, ShieldOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useNFTOwnership } from '@/lib/hooks/useSessionState';
-import { NovaThumbnail } from './NovaThumbnail';
+import { IPFSThumbnail } from './IPFSThumbnail';
 import { TicketPurchaseCard } from './TicketPurchaseCard';
 import { SessionManager } from '@/lib/session-manager';
 import { NEAR_CONFIG } from '@/lib/constants';
@@ -19,7 +16,6 @@ import { getProvider, viewContract } from '@/lib/near';
 
 interface IpfsPlayerProps {
     cid: string;
-    filename?: string;
     thumbnailUrl?: string;
 }
 
@@ -34,7 +30,7 @@ type PlayerState =
 
 const initialState: PlayerState = { type: 'idle' };
 
-export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
+export function IpfsPlayer({ cid, thumbnailUrl }: IpfsPlayerProps) {
     const { accountId, getWallet } = useWallet();
 
     // React Query hooks for cached state
@@ -73,7 +69,6 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
         && playerState.type !== 'banned'
         && !checkingAccess
         && !loading
-        && error !== 'SIMULATION_MODE'
         && playerState.type !== 'needs-session-key'
         && hasAccess === false
         && !purchased
@@ -91,10 +86,9 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
         });
 
         try {
-            // 1. Resolve UUID to NOVA CID and groupId
+            // 1. Resolve UUID to KMS CID
             const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid);
-            let novaCid = cid;
-            let novaGroupId: string | null = null;
+            let ipfsCid = cid;
 
             let keyCid: string | undefined;
 
@@ -120,31 +114,22 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                     if (event && event.title && event.title.includes(':::')) {
                         const parts = event.title.split(':::');
                         if (parts.length >= 4) {
-                            // Paid: "CID:::Thumbnail:::KeyCID:::Title" (4+ segments)
-                            novaCid = parts[0];
+                            // Paid: "CID:::Thumbnail:::ManifestCID:::Title" (4+ segments)
+                            ipfsCid = parts[0];
                             keyCid = parts[2];
                         } else if (parts.length === 3) {
                             // Could be free ("CID:::Thumbnail:::Title") or
                             // legacy paid without thumbnail ("CID:::KeyCID:::Title").
                             // Disambiguate using event price: paid videos always have keyCid.
-                            novaCid = parts[0];
+                            ipfsCid = parts[0];
                             const isPaid = event.price && event.price !== '0';
                             if (isPaid) {
                                 keyCid = parts[1];
                             }
                         } else {
                             // Legacy 2-segment: "CID:::Title"
-                            novaCid = parts[0];
+                            ipfsCid = parts[0];
                         }
-                    }
-
-                    // Get NOVA group ID and storage type
-                    if (event?.creator_id) {
-                        const novaVideos = await viewContract<[string, { encrypted_cid: string; nova_group_id: string | null }][]>(
-                            provider, contractId, 'get_nova_videos', { account_id: event.creator_id }
-                        );
-                        const match = novaVideos?.find(([, meta]) => meta.encrypted_cid === cid);
-                        novaGroupId = match ? match[1].nova_group_id : null;
                     }
                 } catch (e) {
                     console.error("Error resolving metadata:", e);
@@ -152,96 +137,88 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                 }
             }
 
-            // Check for simulation mode (no Nova API key)
-            if (!hasApiKey()) {
-                setPlayerState({
-                    type: 'error',
-                    message: 'SIMULATION_MODE'
-                });
-                return;
-            }
+            // Simulation mode check removed as KMS is the primary flow
 
             // 2. Fetch video based on keyCid presence
-            //    keyCid present  → paid video (encrypted, needs Nova decrypt)
+            //    keyCid present  → paid video (encrypted, needs KMS key retrieval)
             //    keyCid absent   → free video (unencrypted, raw fetch from Crust)
-            let videoData: Uint8Array | undefined;
-
             if (keyCid) {
-                // Paid video: decrypt via Crust data + Nova key
-                if (!novaGroupId) {
-                    throw new Error("No NOVA group ID found - video may not be uploaded correctly");
-                }
-
-                setPlayerState({ type: 'decrypting', message: 'Decrypting video...' });
+                setPlayerState({ type: 'decrypting', message: 'Retrieving encryption key...' });
 
                 try {
-                    videoData = await fetchFile(novaCid, accountId, {
-                        groupId: novaGroupId,
-                        keyCid,
-                    });
-                } catch (fetchErr) {
-                    // Self-healing: if not authorized, add user to group and retry with escalating delays
-                    const isAccessDenied = fetchErr instanceof NovaError &&
-                        (fetchErr.code === 'ACCESS_DENIED' || fetchErr.message.includes('not authorized'));
-                    if (!isAccessDenied) throw fetchErr;
+                    const sessionManager = new SessionManager(accountId);
+                    await sessionManager.importWalletFunctionCallKey();
+                    const hasValidSessionKey = await sessionManager.hasSessionKey();
 
-                    console.log('[IpfsPlayer] Access denied — self-healing group add for:', accountId);
-                    setPlayerState({ type: 'decrypting', message: 'Syncing access rights...' });
-                    // First: try processing any pending queue entries for this video
-                    await pendingAccessQueue.processQueue();
-                    await addBuyerToNovaGroup(cid, accountId);
+                    if (!hasValidSessionKey) {
+                        setPlayerState({ type: 'needs-session-key' });
+                        return;
+                    }
 
-                    // Retry with escalating delays for TEE propagation
-                    const delays = [5000, 8000, 12000];
-                    let lastErr: unknown = fetchErr;
-                    for (const delay of delays) {
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                        try {
-                            videoData = await fetchFile(novaCid, accountId, {
-                                groupId: novaGroupId,
-                                keyCid,
-                            });
-                            lastErr = null;
-                            break;
-                        } catch (retryErr) {
-                            lastErr = retryErr;
-                            console.warn(`[IpfsPlayer] Retry after ${delay}ms failed, will try again...`);
+                    // Fetch manifest from IPFS
+                    const manifestResp = await fetchFromGateways(keyCid);
+                    const manifest = await manifestResp.json();
+
+                    // Retrieve AES Key from KMS
+                    const { privateKey, publicKeyB58 } = await sessionManager.getKeyForKMS();
+                    const aesKeyB64 = await retrieveEncryptionKey(cid, accountId, privateKey, publicKeyB58);
+
+                    setPlayerState({ type: 'decrypting', message: 'Starting video stream...' });
+
+                    const streamingOptions = {
+                        onProgress: (loaded: number, total: number) => {
+                            const pct = Math.round((loaded / total) * 100);
+                            setPlayerState({ type: 'decrypting', message: `Loading... ${pct}%` });
+                        },
+                        onSourceUpdate: (url: string) => {
+                            if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+                            blobUrlRef.current = url;
+                            setPlayerState({ type: 'playing', videoUrl: url });
                         }
+                    };
+
+                    await streamKmsVideo(ipfsCid, aesKeyB64, manifest, streamingOptions);
+                    return;
+
+                } catch (fetchErr: unknown) {
+                    const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr || '');
+                    const errCode = typeof fetchErr === 'object' && fetchErr !== null && 'code' in fetchErr
+                        ? String((fetchErr as { code?: unknown }).code || '')
+                        : '';
+                    if (errMsg.includes('No session key found') || errMsg.includes('setup account first')) {
+                        setPlayerState({ type: 'needs-session-key' });
+                    } else if (errCode === 'ACCESS_DENIED') {
+                        setPlayerState({ type: 'error', message: "Access denied. Please ensure you own this ticket." });
+                    } else if (errCode === 'NOT_FOUND') {
+                        setPlayerState({ type: 'error', message: "Encryption key not found." });
+                    } else if (errMsg.includes('No valid ticket')) {
+                        setPlayerState({ type: 'error', message: "Access denied. Please ensure you own this ticket." });
+                    } else {
+                        setPlayerState({ type: 'error', message: errMsg || "Failed to stream video." });
                     }
-                    if (lastErr) {
-                        pendingAccessQueue.add(cid, accountId);
-                        throw lastErr;
-                    }
+                    console.error("KMS Streaming error:", fetchErr);
+                    return;
                 }
             } else {
-                // Free video: fetch raw (unencrypted) from Crust gateways
-                setPlayerState({ type: 'decrypting', message: 'Fetching video from IPFS...' });
-                const response = await fetchFromGateways(novaCid);
-                const buffer = await response.arrayBuffer();
-                videoData = new Uint8Array(buffer);
-            }
+                // Free video: native browser streaming via IPFS gateway
+                // ipfs.io supports Range requests + Cloudflare CDN caching
+                // Browser handles progressive download automatically
+                const targetCid = ipfsCid || cid;
+                const streamUrl = `https://ipfs.io/ipfs/${targetCid}`;
 
-            // 3. Create video URL (convert to ArrayBuffer for Blob)
-            // Revoke previous blob URL if any
-            if (blobUrlRef.current) {
-                URL.revokeObjectURL(blobUrlRef.current);
+                // Revoke previous blob URL if any
+                if (blobUrlRef.current) {
+                    URL.revokeObjectURL(blobUrlRef.current);
+                    blobUrlRef.current = null;
+                }
+
+                setPlayerState({ type: 'playing', videoUrl: streamUrl });
+                return; // Skip blob creation below for free videos
             }
-            if (!videoData) {
-                throw new Error('Failed to load video data');
-            }
-            const arrayBuffer = new Uint8Array(videoData).buffer;
-            const videoBlob = new Blob([arrayBuffer], { type: 'video/mp4' });
-            const url = URL.createObjectURL(videoBlob);
-            blobUrlRef.current = url;
-            setPlayerState({ type: 'playing', videoUrl: url });
 
         } catch (err: unknown) {
             console.error('Playback failed:', err);
-            if (err instanceof NovaError && err.code === 'NO_SESSION_KEY') {
-                setPlayerState({ type: 'needs-session-key' });
-            } else {
-                setPlayerState({ type: 'error', message: err instanceof Error ? err.message : 'Failed to load video' });
-            }
+            setPlayerState({ type: 'error', message: err instanceof Error ? err.message : 'Failed to load video' });
         }
     }, [accountId, cid]);
 
@@ -261,6 +238,32 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
     }, [accountId, getWallet, playVideo]);
 
     const handlePlay = () => playVideo(false);
+
+    const handleVideoError = () => {
+        if (playerState.type !== 'playing' || !playerState.videoUrl) return;
+
+        // If it's a blob component (from our decrypted streams), don't fallback this route
+        if (playerState.videoUrl.startsWith('blob:')) {
+            console.error("Video playback error with blob");
+            return;
+        }
+
+        // Try extracting CID to fallback
+        const cidMatch = playerState.videoUrl.match(/\/ipfs\/([a-zA-Z0-9]+)$/);
+        if (!cidMatch) return;
+        const videoCid = cidMatch[1];
+
+        console.warn(`Video load error from ${playerState.videoUrl}. Attempting fallback...`);
+
+        if (playerState.videoUrl.includes('ipfs.io')) {
+            setPlayerState({ type: 'playing', videoUrl: `https://dweb.link/ipfs/${videoCid}` });
+        } else if (playerState.videoUrl.includes('dweb.link')) {
+            setPlayerState({ type: 'playing', videoUrl: `https://w3s.link/ipfs/${videoCid}` });
+        } else {
+            console.error("All fallback gateways failed for video playback");
+            setPlayerState({ type: 'error', message: 'Failed to load video from IPFS gateways. Please try again later.' });
+        }
+    };
 
     return (
         <div className={`w-full bg-slate-900 rounded-lg relative group ${showPurchaseCard ? 'min-h-[56.25%] overflow-visible' : 'aspect-video overflow-hidden'}`}>
@@ -289,24 +292,6 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                         <div className="text-center">
                             <Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-primary" />
                             <p className="text-sm text-slate-300">{status}</p>
-                        </div>
-                    ) : error === 'SIMULATION_MODE' ? (
-                        // SHOW SIMULATION MODE MESSAGE
-                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md w-full h-full p-6 text-center">
-                            <div className="text-yellow-400 text-5xl mb-4">⚠️</div>
-                            <h3 className="text-2xl font-bold text-yellow-400 mb-2">Simulation Mode</h3>
-                            <p className="text-zinc-400 max-w-sm mb-4">
-                                Nova API key is not configured. Video playback requires a real Nova integration.
-                            </p>
-                            <p className="text-zinc-500 text-sm max-w-sm mb-6">
-                                UI flow verified successfully. Set <code className="bg-zinc-800 px-1 rounded">NEXT_PUBLIC_NOVA_API_KEY</code> for real playback.
-                            </p>
-                            <Button
-                                variant="outline"
-                                onClick={() => setPlayerState({ type: 'idle' })}
-                            >
-                                Dismiss
-                            </Button>
                         </div>
                     ) : playerState.type === 'needs-session-key' ? (
                         // SHOW SESSION KEY SETUP
@@ -364,7 +349,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                             {
                                 thumbnailUrl && (
                                     <div className="absolute inset-0 z-0">
-                                        <NovaThumbnail
+                                        <IPFSThumbnail
                                             url={thumbnailUrl}
                                             alt="Video Thumbnail"
                                             className="w-full h-full object-cover opacity-50 blur-sm"
@@ -395,6 +380,7 @@ export function IpfsPlayer({ cid, filename, thumbnailUrl }: IpfsPlayerProps) {
                     controls
                     controlsList="nodownload"
                     onContextMenu={(e) => e.preventDefault()}
+                    onError={handleVideoError}
                     className="w-full h-full"
                     autoPlay
                 />

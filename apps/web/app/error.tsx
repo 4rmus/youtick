@@ -1,36 +1,41 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 
 interface ErrorProps {
   error: Error & { digest?: string };
   reset: () => void;
 }
 
-export default function Error({ error, reset }: ErrorProps) {
-  const [retrying, setRetrying] = useState(false);
+export default function Error({ error }: ErrorProps) {
   const isChunkError = error.name === 'ChunkLoadError' || error.message?.includes('ChunkLoadError');
+  const retryKey = '__ytk_chunk_retry';
+  const shouldAutoRetry = isChunkError && (() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const retries = parseInt(sessionStorage.getItem(retryKey) || '0', 10);
+      return retries < 3;
+    } catch {
+      return false;
+    }
+  })();
 
   useEffect(() => {
     console.error('Page error:', error);
 
     // Auto-reload for ChunkLoadError (IPFS gateway blip)
-    if (isChunkError) {
-      const retryKey = '__ytk_chunk_retry';
+    if (shouldAutoRetry) {
       let retries = 0;
       try { retries = parseInt(sessionStorage.getItem(retryKey) || '0', 10); } catch {}
 
-      if (retries < 3) {
-        setRetrying(true);
-        try { sessionStorage.setItem(retryKey, String(retries + 1)); } catch {}
-        const delay = Math.min(1000 * Math.pow(2, retries), 8000);
-        const timer = setTimeout(() => window.location.reload(), delay);
-        return () => clearTimeout(timer);
-      }
+      try { sessionStorage.setItem(retryKey, String(retries + 1)); } catch {}
+      const delay = Math.min(1000 * Math.pow(2, retries), 8000);
+      const timer = setTimeout(() => window.location.reload(), delay);
+      return () => clearTimeout(timer);
     }
-  }, [error, isChunkError]);
+  }, [error, shouldAutoRetry]);
 
-  if (retrying) {
+  if (shouldAutoRetry) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-900 px-4">
         <div className="max-w-md w-full text-center">

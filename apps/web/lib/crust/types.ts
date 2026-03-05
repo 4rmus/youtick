@@ -104,7 +104,7 @@ export type CrustErrorCode =
   | 'TIMEOUT';               // Operation timed out
 
 /**
- * Crust error class (follows NovaError pattern)
+ * Crust error class
  */
 export class CrustError extends Error {
   code: CrustErrorCode;

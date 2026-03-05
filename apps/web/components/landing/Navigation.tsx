@@ -12,8 +12,8 @@ interface NavigationProps {
 }
 
 export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: NavigationProps) => {
-  const { language, setLanguage, t } = useLanguage();
-  const { connect, accountId, signOut } = useWallet();
+  const { t } = useLanguage();
+  const { connect, accountId } = useWallet();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const handleGetStarted = useCallback(() => {
@@ -23,11 +23,6 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
       connect();
     }
   }, [accountId, connect]);
-
-  const handleSignOut = useCallback(async () => {
-    await signOut();
-    window.location.reload();
-  }, [signOut]);
 
   const closeMenu = () => setIsMenuOpen(false);
 

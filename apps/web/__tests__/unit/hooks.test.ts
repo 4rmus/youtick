@@ -58,8 +58,6 @@ describe('useAllVideos data logic', () => {
         mockedViewContract.mockResolvedValueOnce(mockEvents);
 
         const { parseTitleMetadata } = await import('@/lib/metadata-parser');
-        const { yoctoToNear } = await import('near-api-js');
-
         // Simulate the transformation logic from useAllVideos
         const events = mockEvents;
         const tokens = events.map((item, index) => {

@@ -671,6 +671,70 @@ async fn test_verify_ownership() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_has_ticket_with_access_pass() -> anyhow::Result<()> {
+    let (contract, owner, buyer) = init().await?;
+
+    // Mint an ACCESS_PASS-style ticket by creating an ACCESS_PASS event
+    owner
+        .call(contract.id(), "create_event")
+        .args_json(json!({
+            "encrypted_cid": "ACCESS_PASS",
+            "title": "Global Access Pass",
+            "description": "Grants global access",
+            "price": "100000000000000000000000" // 0.1 NEAR
+        }))
+        .deposit(NearToken::from_millinear(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    buyer
+        .call(contract.id(), "buy_ticket")
+        .args_json(json!({
+            "receiver_id": buyer.id(),
+            "encrypted_cid": "ACCESS_PASS"
+        }))
+        .deposit(NearToken::from_millinear(110))
+        .gas(near_workspaces::types::Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // ACCESS_PASS should authorize access to any encrypted_cid
+    let has_global_access: bool = contract
+        .view("has_ticket")
+        .args_json(json!({
+            "account_id": buyer.id(),
+            "encrypted_cid": "QmSomeOtherVideo"
+        }))
+        .await?
+        .json()?;
+    let has_access_pass_cid: bool = contract
+        .view("has_ticket")
+        .args_json(json!({
+            "account_id": buyer.id(),
+            "encrypted_cid": "ACCESS_PASS"
+        }))
+        .await?
+        .json()?;
+    assert!(has_global_access);
+    assert!(has_access_pass_cid);
+
+    let owner_has_global_access: bool = contract
+        .view("has_ticket")
+        .args_json(json!({
+            "account_id": owner.id(),
+            "encrypted_cid": "QmSomeOtherVideo"
+        }))
+        .await?
+        .json()?;
+    assert!(!owner_has_global_access);
+
+    println!("✅ ACCESS_PASS has_ticket test passed");
+    Ok(())
+}
+
 // ═══════════════════════════════════════════════════════════════
 // EDGE CASE TESTS
 // ═══════════════════════════════════════════════════════════════
