@@ -51,16 +51,16 @@ export async function batchInitialSetup(
 }
 
 /**
- * Batch initial setup with optional Nova platform funding.
- * Bundles gas deposit + session key + (optional) Nova NEAR transfer into one wallet popup.
+ * Batch initial setup with optional platform funding.
+ * Bundles gas deposit + session key + (optional) platform NEAR transfer into one wallet popup.
  */
-export async function batchInitialSetupWithNovaFunding(
+export async function batchInitialSetupWithPlatformFunding(
     wallet: WalletInstance,
     accountId: string,
     contractId: string,
     sessionKeyPublicKey: string,
     gasAmount: string = '1',
-    novaFunding?: { receiverId: string; amount: number }
+    platformFunding?: { receiverId: string; amount: number }
 ) {
     const pubKey = PublicKey.fromString(sessionKeyPublicKey);
 
@@ -89,11 +89,11 @@ export async function batchInitialSetupWithNovaFunding(
         }
     ];
 
-    // Add Nova funding transaction if needed
-    if (novaFunding && novaFunding.amount > 0) {
+    // Add platform funding transaction if needed
+    if (platformFunding && platformFunding.amount > 0) {
         transactions.push({
-            receiverId: novaFunding.receiverId,
-            actions: [actions.transfer(nearToYocto(novaFunding.amount))]
+            receiverId: platformFunding.receiverId,
+            actions: [actions.transfer(nearToYocto(platformFunding.amount))]
         });
     }
 
@@ -118,8 +118,7 @@ export async function batchUploadActionsSignless(
             encrypted_cid: string;
             duration_seconds: number;
             content_type: string;
-            nova_group_id?: string | null;
-            storage_type: 'Nova';
+            storage_type: 'Kms';
         };
     },
     eventMetadata: {
@@ -143,4 +142,3 @@ export async function batchUploadActionsSignless(
         price_usd: eventMetadata.price_usd ?? null,
     });
 }
-

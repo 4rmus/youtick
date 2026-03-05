@@ -1,0 +1,28 @@
+name = "youtick-kms"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,http://localhost:3000"
+NEAR_CONTRACT_ID = "youtick.near"
+NEAR_NETWORK = "mainnet"
+
+# KV namespace for AES encryption keys
+# Create with: wrangler kv:namespace create VIDEO_KEYS
+# Then replace the IDs below with the actual IDs from Cloudflare dashboard
+[[kv_namespaces]]
+binding = "VIDEO_KEYS"
+id = "7af9ebeeffaa4f4bace8e0347963d165"
+
+# KV namespace for rate limiting
+# Create with: wrangler kv:namespace create RATE_LIMIT
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "d6371b2b2d3d4cf382af02a341f865da"
+
+# KV namespace for access cache (ticket verification cache)
+# Create with: wrangler kv:namespace create ACCESS_CACHE
+[[kv_namespaces]]
+binding = "ACCESS_CACHE"
+id = "aeb0fda6a8c448b88cf04d69a3b9373b"

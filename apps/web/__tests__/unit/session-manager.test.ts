@@ -5,7 +5,7 @@
  * Due to complex near-api-js mocking requirements, we test helper logic.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 describe('SessionManager Logic', () => {
   describe('getTransactionResult helper', () => {

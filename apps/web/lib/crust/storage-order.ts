@@ -7,7 +7,7 @@
  * This ensures files have economic incentive for long-term persistence on Crust chain.
  */
 
-import { CrustPsaPinResult, CrustError } from './types';
+import { CrustPsaPinResult } from './types';
 import { CRUST_CONSTANTS } from './config';
 import { generateW3AuthToken } from './w3auth';
 
@@ -51,7 +51,8 @@ export async function placeStorageOrder(
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.warn('[CRUST Storage Order] PSA request failed:', response.status, errorText);
+      console.error(`[CRUST Storage Order] 🚨 CRITICAL FAILURE: PSA request to ${CRUST_CONSTANTS.PSA_ENDPOINT} returned ${response.status}`, errorText);
+      console.error(`[CRUST Storage Order] This means CID ${cid} may be lost to garbage collection soon!`);
       return {
         requestId: '',
         status: 'failed',
@@ -154,6 +155,7 @@ function mapPsaStatus(status: string | undefined): CrustPsaPinResult['status'] {
     case 'pinned': return 'pinned';
     case 'pinning': return 'pinning';
     case 'queued': return 'queued';
+    case 'failed': return 'failed';
     default: return 'queued';
   }
 }

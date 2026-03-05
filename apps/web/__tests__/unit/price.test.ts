@@ -31,9 +31,8 @@ describe('Price Utils', () => {
       const price = await getNearPrice();
 
       expect(price).toBe(mockPrice);
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('coingecko')
-      );
+      const calledUrls = vi.mocked(global.fetch).mock.calls.map((call) => String(call[0]));
+      expect(calledUrls.some((url) => url.includes('coingecko'))).toBe(true);
     });
 
     it('should return fallback price on API error', async () => {

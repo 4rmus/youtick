@@ -1,11 +1,11 @@
 /**
  * Client-side AES-256-GCM Encryption Module
  *
- * Replicates Nova SDK's encryption format using Web Crypto API.
+ * Client-side AES-GCM format using Web Crypto API.
  * Format: IV (12 bytes) + ciphertext + authTag (16 bytes)
  *
  * Critical: Returns raw Uint8Array (NOT base64) to avoid the 33%
- * inflation that caused 413 errors with Nova's upload endpoint.
+ * inflation that can trigger 413 errors on upload endpoints.
  */
 
 const IV_LENGTH = 12;
@@ -25,7 +25,7 @@ export async function generateEncryptionKey(): Promise<string> {
  * Encrypt data with AES-256-GCM
  *
  * Output format: IV(12) + ciphertext + authTag(16)
- * Same format as Nova SDK for compatibility.
+ * Compact IV + ciphertext + authTag format.
  *
  * @param data - Plaintext data to encrypt
  * @param keyB64 - Base64-encoded 32-byte AES key

@@ -154,19 +154,13 @@ export interface NFTEvent {
 }
 
 // ============================================================================
-// Nova Protocol Types (TEE-based encryption)
-// ============================================================================
-
-// Nova types are defined in lib/nova/types.ts
-
-// ============================================================================
 // Storage Types
 // ============================================================================
 
 /**
  * Video storage provider type
  */
-export type StorageType = 'Nova';
+export type StorageType = 'KMS';
 
 // ============================================================================
 // Wallet Types
@@ -313,4 +307,3 @@ export function isFunctionCallPermission(
 ): permission is FunctionCallPermission {
     return typeof permission === 'object' && 'FunctionCall' in permission;
 }
-

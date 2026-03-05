@@ -104,8 +104,8 @@ export class SessionManager {
                     const allowance = permission.FunctionCall.allowance;
                     if (allowance !== null && allowance !== undefined) {
                         const remaining = BigInt(allowance);
-                        // 0.005 NEAR minimum: enough for ~1-2 function calls (gas cost per 30TGas ≈ 0.003 NEAR)
-                        const MIN_ALLOWANCE = BigInt('5000000000000000000000');
+                        // Conservative minimum (0.015 NEAR) to avoid runtime failures on medium-gas calls.
+                        const MIN_ALLOWANCE = BigInt('15000000000000000000000');
                         if (remaining < MIN_ALLOWANCE) {
                             console.warn(`[SessionManager] Key allowance exhausted (${allowance} yocto remaining). Removing for renewal.`);
                             await this.keyStore.removeKey(NETWORK_ID, this.accountId);
@@ -167,7 +167,7 @@ export class SessionManager {
             this.accountId,
             CONTRACT_ID,
             publicKey,
-            '0.5' // Covers: NFT mint (0.1) + Event (0.1) + buffer = 0.25 NEAR + margin. Nova group reg is funded separately for paid videos.
+            '0.5' // Covers: NFT mint (0.1) + Event (0.1) + buffer = 0.25 NEAR + margin.
         );
     }
 
@@ -223,7 +223,7 @@ export class SessionManager {
         throw new Error("Exhausted nonce retries");
     }
 
-    async sendBatchTransaction(txActions: Action[], gas: string = GAS_CONSTANTS.standardGas.toString()): Promise<unknown> {
+    async sendBatchTransaction(txActions: Action[]): Promise<unknown> {
         const keyPair = await this.keyStore.getKey(NETWORK_ID, this.accountId);
         if (!keyPair) {
             throw new Error("No session key found. Please setup account first.");
@@ -307,7 +307,7 @@ export class SessionManager {
         });
     }
 
-    async withdrawFundsSilent(amount: string) {
+    async withdrawFundsSilent() {
         // Uses Session Key -> No User Signature required!
         // Uses withdraw_funds_prepaid which doesn't require 1 yocto deposit
         return await this.callMethod(
@@ -316,6 +316,80 @@ export class SessionManager {
             GAS_CONSTANTS.smallGas.toString()
         );
     }
+
+    /**
+     * Get the session key pair in a format usable by the KMS client.
+     * Extracts the raw Ed25519 private key from the NEAR key pair,
+     * imports it as a Web Crypto CryptoKey, and returns both parts.
+     *
+     * @returns Object with Web Crypto privateKey and base58 public key string
+     */
+    async getKeyForKMS(): Promise<{ privateKey: CryptoKey; publicKeyB58: string }> {
+        const keyPair = await this.keyStore.getKey(NETWORK_ID, this.accountId);
+        if (!keyPair) {
+            throw new Error('No session key found. Please setup account first.');
+        }
+
+        // NEAR KeyPair stores keys as "ed25519:BASE58_ENCODED_KEY"
+        const publicKeyB58 = keyPair.getPublicKey().toString(); // "ed25519:xxxx"
+
+        // Extract raw private key bytes from the NEAR key pair
+        // near-api-js v7 KeyPair.toString() returns "ed25519:BASE58_PRIVATE_KEY"
+        // The private key in NEAR is stored as 64 bytes (32 bytes secret + 32 bytes public)
+        const keyString = keyPair.toString() as string;
+        const [, b58Key] = keyString.split(':');
+
+        // Decode base58 to get the raw key bytes
+        const rawBytes = base58DecodeLocal(b58Key);
+        // NEAR stores Ed25519 as 64 bytes: first 32 = seed, last 32 = public key
+        const secretKeyBytes = rawBytes.slice(0, 32);
+
+        // Import as Web Crypto Ed25519 private key using PKCS8 format
+        // Ed25519 PKCS8 wrapping: fixed 16-byte prefix + 2-byte key header + 32 raw key bytes
+        const pkcs8Prefix = new Uint8Array([
+            0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
+            0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+        ]);
+        const pkcs8Key = new Uint8Array(pkcs8Prefix.length + secretKeyBytes.length);
+        pkcs8Key.set(pkcs8Prefix);
+        pkcs8Key.set(secretKeyBytes, pkcs8Prefix.length);
+
+        const privateKey = await crypto.subtle.importKey(
+            'pkcs8',
+            pkcs8Key,
+            'Ed25519',
+            false,
+            ['sign']
+        );
+
+        return { privateKey, publicKeyB58 };
+    }
+}
+
+// Base58 decode helper (local, no dependency)
+const BASE58_CHARS = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function base58DecodeLocal(str: string): Uint8Array {
+    const bytes: number[] = [0];
+    for (const char of str) {
+        const idx = BASE58_CHARS.indexOf(char);
+        if (idx < 0) throw new Error(`Invalid base58 character: ${char}`);
+        let carry = idx;
+        for (let j = 0; j < bytes.length; j++) {
+            carry += bytes[j] * 58;
+            bytes[j] = carry & 0xff;
+            carry >>= 8;
+        }
+        while (carry > 0) {
+            bytes.push(carry & 0xff);
+            carry >>= 8;
+        }
+    }
+    // Leading zeros
+    for (const char of str) {
+        if (char !== '1') break;
+        bytes.push(0);
+    }
+    return new Uint8Array(bytes.reverse());
 }
 
 // Export utilities for other modules

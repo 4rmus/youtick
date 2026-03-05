@@ -4,7 +4,7 @@
  * Tests for title metadata encoding/decoding across schema versions.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 // Mock constants before importing
 vi.mock('@/lib/constants', () => ({
@@ -68,22 +68,22 @@ describe('Metadata Parser', () => {
       });
     });
 
-    describe('Schema v3 (Nova URL)', () => {
-      it('should parse Nova URL thumbnail format', () => {
-        const result = parseTitleMetadata('QmRealCid:::nova://group-123/QmThumbnail:::My Nova Video');
+    describe('Schema v3 (ipfs:// URL)', () => {
+      it('should parse ipfs:// thumbnail format', () => {
+        const result = parseTitleMetadata('QmRealCid:::ipfs://QmThumbnailCid1234567890123456789012345678901234:::My Video');
 
-        expect(result.title).toBe('My Nova Video');
+        expect(result.title).toBe('My Video');
         expect(result.realCid).toBe('QmRealCid');
-        expect(result.thumbnailCid).toBe('nova://group-123/QmThumbnail');
-        expect(result.thumbnailUrl).toBe('nova://group-123/QmThumbnail');
+        expect(result.thumbnailCid).toBe('ipfs://QmThumbnailCid1234567890123456789012345678901234');
+        expect(result.thumbnailUrl).toBe('ipfs://QmThumbnailCid1234567890123456789012345678901234');
         expect(result.schemaVersion).toBe(3);
       });
 
-      it('should preserve Nova URL as-is', () => {
-        const novaUrl = 'nova://abc123/QmThumb456';
-        const result = parseTitleMetadata(`QmReal:::${novaUrl}:::Title`);
+      it('should preserve ipfs:// URL as-is', () => {
+        const ipfsUrl = 'ipfs://QmThumbCid123456789012345678901234567890123456';
+        const result = parseTitleMetadata(`QmReal:::${ipfsUrl}:::Title`);
 
-        expect(result.thumbnailUrl).toBe(novaUrl);
+        expect(result.thumbnailUrl).toBe(ipfsUrl);
       });
     });
 
@@ -165,10 +165,10 @@ describe('Metadata Parser', () => {
       expect(result).toBe('QmReal:::My Video');
     });
 
-    it('should encode with Nova URL thumbnail', () => {
-      const result = encodeTitleMetadata('QmReal', 'Title', 'nova://group/cid');
+    it('should encode with ipfs:// URL thumbnail', () => {
+      const result = encodeTitleMetadata('QmReal', 'Title', 'ipfs://QmThumbCid123456789012345678901234567890123456');
 
-      expect(result).toBe('QmReal:::nova://group/cid:::Title');
+      expect(result).toBe('QmReal:::ipfs://QmThumbCid123456789012345678901234567890123456:::Title');
     });
 
     it('should handle empty title', () => {
@@ -231,11 +231,11 @@ describe('Metadata Parser', () => {
       expect(result).toContain('crustipfs.xyz');
     });
 
-    it('should return Nova URL as-is', () => {
-      const novaUrl = 'nova://group/cid';
-      const result = buildThumbnailUrl(novaUrl);
+    it('should return ipfs:// URL as-is', () => {
+      const ipfsUrl = 'ipfs://QmThumbCid123456789012345678901234567890123456';
+      const result = buildThumbnailUrl(ipfsUrl);
 
-      expect(result).toBe(novaUrl);
+      expect(result).toBe(ipfsUrl);
     });
 
     it('should return direct URL as-is', () => {

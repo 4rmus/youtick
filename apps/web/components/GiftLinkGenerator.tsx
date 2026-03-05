@@ -11,15 +11,11 @@ import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from "@/lib/constants";
 
 interface GiftLinkGeneratorProps {
     eventCid: string;
-    eventTitle: string;
-    creatorAccountId: string;
     onLinksGenerated?: (links: string[]) => void;
 }
 
 export function GiftLinkGenerator({
     eventCid,
-    eventTitle,
-    creatorAccountId,
     onLinksGenerated,
 }: GiftLinkGeneratorProps) {
     const { t } = useLanguage();

@@ -6,7 +6,6 @@ import { IpfsPlayer } from './IpfsPlayer';
 interface VideoPlayerProps {
     // IPFS data
     cid?: string;
-    filename?: string;
     thumbnailUrl?: string;
 
     // Player settings
@@ -18,7 +17,6 @@ interface VideoPlayerProps {
  */
 export function VideoPlayer({
     cid,
-    filename,
     thumbnailUrl,
     className = '',
 }: VideoPlayerProps) {
@@ -27,7 +25,6 @@ export function VideoPlayer({
             <div className={`video-player-container ${className}`}>
                 <IpfsPlayer
                     cid={cid}
-                    filename={filename}
                     thumbnailUrl={thumbnailUrl}
                 />
                 <p className="text-xs text-zinc-500 mt-2 text-center">

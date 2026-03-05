@@ -64,6 +64,7 @@ export function useAccountBalance(accountId: string | null) {
 /**
  * Hook: Check NFT ownership for a specific CID
  * - Caches for 5 minutes (repeat plays use cache)
+ * - Also grants access if user is the creator (uploader) of the video
  */
 export function useNFTOwnership(accountId: string | null, cid: string | null) {
     return useQuery({
@@ -72,18 +73,31 @@ export function useNFTOwnership(accountId: string | null, cid: string | null) {
             if (!accountId || !cid) return false;
             const provider = getProvider();
 
-            // Get all tokens for user
-            const tokens = await viewContract<[string, { encrypted_cid: string }][]>(
+            // Check 1: On-chain access check (includes ACCESS_PASS support)
+            const hasTicket = await viewContract<boolean>(
                 provider,
                 CONTRACT_ID,
-                'get_tokens_with_video',
-                { account_id: accountId }
+                'has_ticket',
+                { account_id: accountId, encrypted_cid: cid }
             );
+            if (hasTicket) return true;
 
-            // Check if user owns token for this CID or has ACCESS_PASS
-            return tokens.some(([_, metadata]) =>
-                metadata.encrypted_cid === cid || metadata.encrypted_cid === 'ACCESS_PASS'
-            );
+            // Check 2: Creator bypass — video uploaders can watch their own content
+            try {
+                const event = await viewContract<{ creator_id: string } | null>(
+                    provider,
+                    CONTRACT_ID,
+                    'get_event',
+                    { encrypted_cid: cid }
+                );
+                if (event && event.creator_id === accountId) {
+                    return true;
+                }
+            } catch {
+                // Event not found — not a creator
+            }
+
+            return false;
         },
         enabled: !!accountId && !!cid,
         staleTime: 5 * 60 * 1000, // 5 minutes fresh

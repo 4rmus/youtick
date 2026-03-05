@@ -2,14 +2,14 @@
 
 import { useSearchParams } from 'next/navigation';
 import { VideoPlayer } from '@/components/VideoPlayer';
-import { useState, useEffect, Suspense } from 'react';
+import { useState, Suspense } from 'react';
 import { useOwnedTokens, TokenWithVideo } from '@/hooks/useOwnedTokens';
 import { useEventDescription } from '@/hooks/useEventDescription';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
 import { Button } from "@/components/ui/button";
 import { Search, Ticket, Loader2 } from "lucide-react";
-import { NovaThumbnail } from "@/components/NovaThumbnail";
+import { IPFSThumbnail } from "@/components/IPFSThumbnail";
 
 export default function WatchPage() {
     return (
@@ -25,15 +25,10 @@ function WatchContent() {
     const { t } = useLanguage();
     const searchParams = useSearchParams();
     const initialCid = searchParams.get('cid') || '';
-    const [playCid, setPlayCid] = useState(initialCid);
+    const [selectedCid, setSelectedCid] = useState('');
+    const playCid = selectedCid || initialCid;
     const { tokens, loading, error } = useOwnedTokens();
     const { description: eventDescription, thumbnailUrl: eventThumbnail, creatorId, loading: descLoading } = useEventDescription(playCid);
-
-    useEffect(() => {
-        if (initialCid) {
-            setPlayCid(initialCid);
-        }
-    }, [initialCid]);
 
     // Get thumbnail from tokens first, fallback to event data
     const getActiveThumbnail = () => {
@@ -164,7 +159,7 @@ function WatchContent() {
                                 return (
                                     <div
                                         key={token.token_id}
-                                        onClick={() => !isAccessPass && isVideo && videoCid && setPlayCid(videoCid)}
+                                        onClick={() => !isAccessPass && isVideo && videoCid && setSelectedCid(videoCid)}
                                         className={`
                                             group relative overflow-hidden rounded-xl border transition-all duration-300 flex-shrink-0
                                             ${isActive ? 'ring-2 ring-primary border-transparent' : 'border-zinc-800 hover:border-zinc-600'}
@@ -175,7 +170,7 @@ function WatchContent() {
                                         {/* Thumbnail Area */}
                                         <div className="aspect-video bg-zinc-950 relative overflow-hidden">
                                             {media && !media.includes('token.png') && (
-                                                <NovaThumbnail url={media} alt={title} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
+                                                <IPFSThumbnail url={media} alt={title} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
                                             )}
                                             {isActive && (
                                                 <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">

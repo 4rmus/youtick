@@ -11,7 +11,6 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { GoogleAnalytics } from "@next/third-parties/google";
 import { OnboardingKeyInit } from "@/components/OnboardingKeyInit";
-import { NovaAccessSync } from "@/components/NovaAccessSync";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -31,8 +30,8 @@ export const metadata: Metadata = {
         'video on demand',
         'dApp',
         'blockchain streaming',
-        'Nova SDK',
-        'TEE encryption',
+        'Edge KMS',
+        'client-side encryption',
         'IPFS video',
         'encrypted video',
     ],
@@ -93,7 +92,8 @@ export default function RootLayout({
         <html lang="en" suppressHydrationWarning>
             <head>
                 {/* ChunkLoadError recovery: reload page on failed dynamic imports (IPFS gateway blips) */}
-                <script dangerouslySetInnerHTML={{ __html: `
+                <script dangerouslySetInnerHTML={{
+                    __html: `
                     (function(){
                         var retries = 0;
                         var MAX_RETRIES = 3;
@@ -120,19 +120,18 @@ export default function RootLayout({
                 <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
                     <QueryProvider>
                         <EvmProvider>
-                        <LanguageProvider>
-                            <WalletProvider>
-                            <NovaAccessSync />
-                            <OnboardingKeyInit />
-                            <div className="min-h-screen bg-background text-foreground">
-                                <Navbar />
-                                <main className="flex-grow">
-                                    {children}
-                                </main>
-                            </div>
-                            <LanguageSwitcher />
-                        </WalletProvider>
-                        </LanguageProvider>
+                            <LanguageProvider>
+                                <WalletProvider>
+                                    <OnboardingKeyInit />
+                                    <div className="min-h-screen bg-background text-foreground">
+                                        <Navbar />
+                                        <main className="flex-grow">
+                                            {children}
+                                        </main>
+                                    </div>
+                                    <LanguageSwitcher />
+                                </WalletProvider>
+                            </LanguageProvider>
                         </EvmProvider>
                     </QueryProvider>
                 </ThemeProvider>
