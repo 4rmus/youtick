@@ -310,89 +310,6 @@ jobs:
           seeds: ${{ secrets.CRUST_SEEDS }}
 ```
 
-## Pattern 5: NEAR + Crust + Nova SDK (TEE-Encrypted Persistent Storage)
-
-Combine Nova SDK's zero-knowledge encryption (Shade Agent TEE on Phala Network) with Crust permanent storage. Nova handles group-based access control on NEAR and AES-256-GCM encryption via TEE, while Crust ensures the encrypted files are permanently replicated.
-
-```typescript
-import { NovaSDK } from 'nova-sdk-js';
-import { ApiPromise, WsProvider } from '@polkadot/api';
-import { typesBundleForPolkadot } from '@crustnetwork/type-definitions';
-import { Keyring } from '@polkadot/keyring';
-
-// 1. Initialize Nova SDK (TEE encryption + NEAR access control)
-const nova = new NovaSDK({
-    networkId: 'mainnet',
-    contractId: 'nova.near',
-    shadeAgentUrl: 'https://shade.phala.network'
-});
-
-// 2. Create group - membership managed on NEAR contract
-const { groupId } = await nova.createGroup({
-    name: 'Confidential R&D',
-    members: ['researcher-a.near', 'researcher-b.near'],
-    metadata: { department: 'R&D', classification: 'confidential' }
-});
-
-// 3. Upload file - Nova SDK handles:
-//    a) Request AES-256-GCM key from Shade Agent (TEE verifies NEAR membership)
-//    b) Encrypt file client-side (plaintext never leaves client)
-//    c) Upload encrypted blob to IPFS
-//    d) Register CID on NEAR contract
-const { cid, encryptedSize } = await nova.uploadFile({
-    groupId,
-    file: sensitiveResearchData,
-    metadata: { fileName: 'experiment-results.pdf', mimeType: 'application/pdf' }
-});
-
-// 4. Place Crust storage order for permanent persistence
-const crustApi = new ApiPromise({
-    provider: new WsProvider('wss://rpc.crust.network'),
-    typesBundle: typesBundleForPolkadot,
-});
-await crustApi.isReady;
-
-const kr = new Keyring({ type: 'sr25519' });
-const crustAccount = kr.addFromUri('crust mnemonic seeds');
-
-await crustApi.tx.market.placeStorageOrder(cid, encryptedSize, 0, '')
-    .signAndSend(crustAccount);
-
-// 5. Only group members can decrypt - Shade Agent verifies NEAR membership
-const decrypted = await nova.downloadFile({
-    groupId,
-    cid,
-    accountId: 'researcher-a.near'
-});
-
-// 6. Revoke access → automatic key rotation in TEE
-await nova.removeMember({ groupId, memberId: 'researcher-b.near' });
-// New key generated in Shade Agent, old member cannot decrypt new files
-// Crust continues storing all encrypted versions permanently
-```
-
-### Security Properties
-
-```
-Zero-Knowledge Architecture:
-├─ NEAR Contract: Knows membership + CIDs. Never sees keys or plaintext.
-├─ Shade Agent (TEE): Knows keys. Never sees files or CIDs.
-├─ IPFS/Crust: Knows encrypted blobs. Cannot decrypt (no keys).
-└─ Client: Temporarily holds key during encrypt/decrypt. Keys not persisted.
-
-TEE Guarantees (Phala Network):
-├─ Hardware isolation (Intel SGX / ARM TrustZone)
-├─ Memory encryption (sealed storage)
-├─ Remote attestation (verifiable execution)
-└─ Key derivation: HKDF-SHA256 → AES-256-GCM (12-byte nonce, 16-byte auth tag)
-
-Forward Secrecy:
-├─ Member removal → automatic key rotation
-├─ Old files: accessible with versioned keys
-├─ New files: encrypted with rotated key
-└─ Removed member: cannot obtain new key version
-```
-
 ## Dependencies
 
 ```json
@@ -401,8 +318,7 @@ Forward Secrecy:
     "@polkadot/api": "^10.0.0",
     "@polkadot/util": "^12.0.0",
     "near-api-js": "^2.0.0",
-    "ipfs-http-client": "^60.0.0",
-    "nova-sdk-js": "latest"
+    "ipfs-http-client": "^60.0.0"
 }
 ```
 

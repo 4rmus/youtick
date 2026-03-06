@@ -157,83 +157,6 @@ DAO Governance Documents
       └─ Anyone can verify document integrity via CID
 ```
 
-## Scenario 5: NEAR + Crust + Nova SDK (TEE-Encrypted Persistent Storage)
-
-Nova SDK provides zero-knowledge encrypted file sharing via Shade Agents running in TEE (Phala Network). Combined with Crust, files are encrypted with hardware-secured keys and permanently persisted across the IPFS network.
-
-```
-Encrypted Persistent Data Flow:
-  │
-  ├─ Auth: NEAR wallet authenticates with Nova SDK
-  │   └─ Group membership verified on NEAR smart contract
-  │
-  ├─ Key Management: Shade Agent (Phala TEE)
-  │   ├─ AES-256-GCM keys generated inside TEE enclave
-  │   ├─ Keys NEVER appear on-chain or leave TEE unencrypted
-  │   ├─ Remote attestation proves genuine hardware execution
-  │   └─ Key rotation on member removal (forward secrecy)
-  │
-  ├─ Encrypt: Client-side AES-256-GCM with TEE-provided key
-  │   └─ Plaintext never reaches any server
-  │
-  ├─ Store: Encrypted blob → IPFS (via Nova or W3Auth gateway)
-  │   └─ Even IPFS/Crust node operators cannot read the data
-  │
-  ├─ Persist: Crust storage order guarantees replication
-  │   └─ sWorkers store encrypted blobs with MPoW verification
-  │
-  ├─ Register: CID + metadata → NEAR contract (access control)
-  │
-  └─ Decrypt:
-      ├─ Shade Agent verifies NEAR group membership
-      ├─ TEE delivers encrypted key via ephemeral X25519 key exchange
-      ├─ Client fetches encrypted blob from Crust IPFS gateway
-      └─ Client decrypts locally with AES-256-GCM key
-```
-
-### Nova + Crust Implementation
-
-```typescript
-import { NovaSDK } from 'nova-sdk-js';
-import { ApiPromise, WsProvider } from '@polkadot/api';
-import { typesBundleForPolkadot } from '@crustnetwork/type-definitions';
-import { Keyring } from '@polkadot/keyring';
-
-// Nova handles: NEAR auth → TEE key management → encryption → IPFS upload
-const nova = new NovaSDK({
-    networkId: 'mainnet',
-    contractId: 'nova.near',
-    shadeAgentUrl: 'https://shade.phala.network'
-});
-
-// Create group with NEAR-based membership
-const { groupId } = await nova.createGroup({
-    name: 'Sensitive Data Vault',
-    members: ['alice.near', 'bob.near']
-});
-
-// Upload encrypts via Shade Agent TEE and stores on IPFS
-const { cid, encryptedSize } = await nova.uploadFile({
-    groupId,
-    file: sensitiveData,
-    metadata: { fileName: 'classified.pdf' }
-});
-
-// Crust ensures permanent persistence of encrypted file
-const crustApi = new ApiPromise({
-    provider: new WsProvider('wss://rpc.crust.network'),
-    typesBundle: typesBundleForPolkadot,
-});
-await crustApi.isReady;
-
-const kr = new Keyring({ type: 'sr25519' });
-await crustApi.tx.market.placeStorageOrder(cid, encryptedSize, 0, '')
-    .signAndSend(kr.addFromUri('crust seeds'));
-
-// Only group members can decrypt via Shade Agent verification
-const decrypted = await nova.downloadFile({ groupId, cid });
-```
-
 ## Supported Chain Summary
 
 ### Authentication (W3Auth - Upload)
@@ -274,6 +197,6 @@ const decrypted = await nova.downloadFile({ groupId, cid });
 | NEAR dApp + file storage | Pattern 1 (NEAR auth + Crust upload + NEAR registry) |
 | NFT media storage | Pattern 3 (Crust storage + any chain NFT mint) |
 | Multi-chain user base | Pattern 1 with EVM payment fallback |
-| Encrypted file sharing | Pattern 5 (Nova SDK TEE + Crust + NEAR) |
+| Encrypted file sharing | Pattern 1 + client-side encryption + Crust persistence |
 | Static website hosting | GitHub Actions deployment |
 | DAO documents | Pattern 4 (multi-chain auth + NEAR access control) |

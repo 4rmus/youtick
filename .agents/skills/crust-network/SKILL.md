@@ -4,7 +4,7 @@ description: >
   Building decentralized storage applications with Crust Network, IPFS pinning, W3Auth multi-chain authentication,
   and cross-chain storage orders. Use when implementing IPFS-based storage, placing on-chain storage orders,
   integrating W3Auth gateway authentication, working with W3Bucket NFT storage, building NEAR Protocol + Crust
-  cross-chain storage solutions, or combining Nova SDK TEE-encrypted file sharing with Crust persistent storage.
+  cross-chain storage solutions.
 version: 1.0.0
 license: MIT
 platforms:
@@ -23,9 +23,6 @@ tags:
   - web3
   - substrate
   - pinning
-  - nova-sdk
-  - shade-agent
-  - tee-encryption
 metadata:
   author: crust-network
   version: "1.0.0"
@@ -63,8 +60,6 @@ Use this skill when:
 | **DSM** | Decentralized Storage Market - on-chain file ordering module |
 | **sWorker** | Storage worker running in TEE enclave, proves storage |
 | **CRU** | Native token for storage payments and staking |
-| **Nova SDK** | Privacy-first encrypted file sharing with TEE key management on NEAR |
-| **Shade Agent** | TEE-based key manager on Phala Network for zero-knowledge encryption |
 
 ### Chain Endpoints
 
@@ -86,9 +81,6 @@ yarn add @crustnetwork/crust-pin
 
 # For NEAR integration
 yarn add near-api-js ipfs-http-client
-
-# For Nova SDK encrypted file sharing (TEE + Crust storage)
-npm install nova-sdk-js
 ```
 
 ### Connect to Crust Chain
@@ -236,111 +228,6 @@ await account.functionCall({
 });
 ```
 
-## Nova SDK + Crust: TEE-Encrypted Storage
-
-Nova SDK provides zero-knowledge encrypted file sharing on NEAR via Shade Agents (TEE on Phala Network). Combined with Crust, files are both encrypted and permanently persisted.
-
-### Nova + Crust Encrypted Persistent Storage
-
-```typescript
-import { NovaSDK } from 'nova-sdk-js';
-import { ApiPromise, WsProvider } from '@polkadot/api';
-import { typesBundleForPolkadot } from '@crustnetwork/type-definitions';
-import { Keyring } from '@polkadot/keyring';
-
-// 1. Initialize Nova SDK (handles encryption via Shade Agent TEE)
-const nova = new NovaSDK({
-    networkId: 'mainnet',
-    contractId: 'nova.near',
-    shadeAgentUrl: 'https://shade.phala.network'
-});
-
-// 2. Create a group with NEAR-based access control
-const { groupId } = await nova.createGroup({
-    name: 'Confidential Project',
-    members: ['alice.near', 'bob.near'],
-});
-
-// 3. Upload file - Nova encrypts via TEE (AES-256-GCM), stores on IPFS
-const { cid, encryptedSize } = await nova.uploadFile({
-    groupId,
-    file: sensitiveDocument,
-    metadata: { fileName: 'strategy.pdf', mimeType: 'application/pdf' }
-});
-
-// 4. Place Crust storage order for permanent persistence of encrypted file
-const crustApi = new ApiPromise({
-    provider: new WsProvider('wss://rpc.crust.network'),
-    typesBundle: typesBundleForPolkadot,
-});
-await crustApi.isReady;
-
-const kr = new Keyring({ type: 'sr25519' });
-const crustAccount = kr.addFromUri('crust mnemonic seeds');
-
-await crustApi.tx.market.placeStorageOrder(cid, encryptedSize, 0, '')
-    .signAndSend(crustAccount);
-
-// Result: File is AES-256-GCM encrypted (keys in TEE only),
-// stored on IPFS, and permanently persisted by Crust Network.
-// Only NEAR group members can decrypt via Shade Agent verification.
-```
-
-### How It Works
-
-```
-Nova + Crust Encrypted Persistent Storage Flow:
-
-User (NEAR Wallet)
-  │
-  ├─ Nova SDK: Authenticate with NEAR account
-  │     ├─ Shade Agent (Phala TEE) generates AES-256-GCM key
-  │     ├─ Keys NEVER appear on-chain or leave TEE unencrypted
-  │     └─ TEE attestation proves unmodified execution
-  │
-  ├─ Encrypt: Client-side AES-256-GCM (key from Shade Agent)
-  │     └─ File header: NOVA magic + key version + nonce + encrypted payload
-  │
-  ├─ Store: Encrypted blob → IPFS (via W3Auth or Nova MCP)
-  │
-  ├─ Persist: Crust storage order → sWorkers replicate encrypted file
-  │     └─ Even Crust nodes cannot read the data (encrypted at rest)
-  │
-  ├─ Register: CID + metadata → NEAR contract (access control)
-  │
-  └─ Decrypt: Only group members verified by Shade Agent via NEAR contract
-        ├─ Shade Agent checks NEAR membership → delivers key
-        ├─ Client decrypts locally
-        └─ Removed members → automatic key rotation (forward secrecy)
-```
-
-### Access Revocation with Crust Persistence
-
-```typescript
-// Remove a team member - key automatically rotates in TEE
-await nova.removeMember({
-    groupId: 'group-123',
-    memberId: 'ex-contractor.near'
-});
-// Shade Agent generates new key version
-// ex-contractor.near can never decrypt new files
-// Old encrypted files on Crust remain safe (new key for new files)
-// Crust continues persisting all versions of encrypted files
-
-// Verify: ex-contractor cannot access
-const canAccess = await nova.verifyMembership({
-    groupId: 'group-123',
-    accountId: 'ex-contractor.near'
-}); // false
-
-// Remaining members seamlessly access all files
-const decrypted = await nova.downloadFile({
-    groupId: 'group-123',
-    cid: 'QmEncrypted...',
-    accountId: 'alice.near'
-});
-```
-
 ## EVM Cross-Chain Storage Orders
 
 ```typescript
@@ -476,7 +363,6 @@ This skill includes detailed documentation in `references/`:
 - **chain-types.md** - Crust chain type definitions and on-chain queries
 - **github-actions.md** - CI/CD deployment with Crust IPFS pinning
 - **cross-chain-scenarios.md** - Advanced multi-chain storage architectures
-- **nova-crust-encryption.md** - Nova SDK TEE encryption + Crust persistence patterns
 
 ## Resources
 
@@ -487,7 +373,3 @@ This skill includes detailed documentation in `references/`:
 - NEAR Demo: https://github.com/crustio/crust-demo/tree/main/near
 - Free Storage: https://github.com/crustio/free-storage
 - IPFS Scanner: https://ipfsscan.io
-- Nova SDK: https://nova-sdk.com
-- Nova Docs: https://nova-25.gitbook.io/nova-docs/
-- Nova GitHub: https://github.com/jcarbonnell/nova
-- Nova MCP: https://nova-mcp.fastmcp.app/mcp

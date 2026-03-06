@@ -11,6 +11,7 @@
  *   2. Upgrade to MSE when fMP4 conversion is integrated
  */
 
+import { CRUST_CONSTANTS, CRUST_GATEWAYS } from '@/lib/crust/config';
 import { decryptChunk, decryptFull, type VideoManifest } from './encryption';
 
 // ============================================================================
@@ -29,6 +30,142 @@ export interface StreamingPlayerOptions {
 }
 
 const DEFAULT_GATEWAY = 'https://ipfs.io/ipfs';
+const RANGE_NOT_SUPPORTED = 'RANGE_NOT_SUPPORTED';
+
+interface GatewayFetchResult {
+    gateway: string;
+    response: Response;
+}
+
+function normalizeGatewayBase(url: string): string {
+    return url.replace(/\/+$/, '');
+}
+
+function getGatewayCandidates(preferredGateway?: string): string[] {
+    const candidates: string[] = [];
+
+    if (preferredGateway) {
+        candidates.push(normalizeGatewayBase(preferredGateway));
+    }
+
+    for (const gateway of CRUST_GATEWAYS) {
+        candidates.push(normalizeGatewayBase(gateway.url));
+    }
+
+    if (!candidates.includes(DEFAULT_GATEWAY)) {
+        candidates.push(DEFAULT_GATEWAY);
+    }
+
+    return [...new Set(candidates)];
+}
+
+function prioritizeGateway(gateways: string[], preferredGateway?: string): string[] {
+    if (!preferredGateway) return gateways;
+
+    const normalizedPreferred = normalizeGatewayBase(preferredGateway);
+    const rest = gateways.filter((gateway) => gateway !== normalizedPreferred);
+    return [normalizedPreferred, ...rest];
+}
+
+async function fetchWithTimeout(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number = CRUST_CONSTANTS.FETCH_TIMEOUT,
+): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        return await fetch(url, {
+            ...init,
+            signal: controller.signal,
+        });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function fetchRangeFromGateways(
+    cid: string,
+    start: number,
+    end: number,
+    gateways: string[],
+    preferredGateway?: string,
+): Promise<GatewayFetchResult> {
+    const orderedGateways = prioritizeGateway(gateways, preferredGateway);
+    const errors: string[] = [];
+    const noRangeGateways: string[] = [];
+
+    for (const gateway of orderedGateways) {
+        const url = `${gateway}/${cid}`;
+        try {
+            const response = await fetchWithTimeout(url, {
+                headers: { Range: `bytes=${start}-${end}` },
+            });
+
+            if (response.status === 206) {
+                return { gateway, response };
+            }
+
+            // Range header ignored, continue trying the next gateway.
+            if (response.ok && response.status === 200) {
+                noRangeGateways.push(gateway);
+                continue;
+            }
+
+            errors.push(`${gateway}: HTTP ${response.status}`);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            errors.push(`${gateway}: ${msg}`);
+        }
+    }
+
+    if (noRangeGateways.length > 0) {
+        throw new Error(`${RANGE_NOT_SUPPORTED}: ${noRangeGateways.join(', ')}`);
+    }
+
+    throw new Error(`IPFS range fetch failed: ${errors.join('; ')}`);
+}
+
+async function fetchFullFromGateways(
+    cid: string,
+    gateways: string[],
+    preferredGateway?: string,
+): Promise<GatewayFetchResult> {
+    const orderedGateways = prioritizeGateway(gateways, preferredGateway);
+    const errors: string[] = [];
+
+    for (const gateway of orderedGateways) {
+        const url = `${gateway}/${cid}`;
+        try {
+            const response = await fetchWithTimeout(url, {});
+            if (response.ok) {
+                return { gateway, response };
+            }
+            errors.push(`${gateway}: HTTP ${response.status}`);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            errors.push(`${gateway}: ${msg}`);
+        }
+    }
+
+    for (const endpoint of [CRUST_CONSTANTS.READ_ENDPOINT, CRUST_CONSTANTS.READ_ENDPOINT_FALLBACK]) {
+        try {
+            const response = await fetchWithTimeout(`${endpoint}?arg=${cid}`, {
+                method: 'POST',
+            });
+            if (response.ok) {
+                return { gateway: endpoint, response };
+            }
+            errors.push(`${endpoint}: HTTP ${response.status}`);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            errors.push(`${endpoint}: ${msg}`);
+        }
+    }
+
+    throw new Error(`IPFS fetch failed across all gateways: ${errors.join('; ')}`);
+}
 
 // ============================================================================
 // Helpers
@@ -64,13 +201,13 @@ export async function createDecryptedBlobUrl(
     manifest: VideoManifest,
     options: StreamingPlayerOptions = {},
 ): Promise<string> {
-    const gateway = options.gatewayUrl || DEFAULT_GATEWAY;
-    const url = `${gateway}/${cid}`;
+    const gateways = getGatewayCandidates(options.gatewayUrl);
+    let activeGateway = options.gatewayUrl ? normalizeGatewayBase(options.gatewayUrl) : undefined;
 
     if (manifest.totalChunks === 1) {
         // Single chunk — just download, decrypt, and return
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`IPFS fetch failed: ${response.status}`);
+        const { response, gateway } = await fetchFullFromGateways(cid, gateways, activeGateway);
+        activeGateway = gateway;
         const encrypted = new Uint8Array(await response.arrayBuffer());
         const decrypted = await decryptChunk(encrypted, aesKeyB64, manifest, 0);
         const blob = new Blob([toBlobPart(decrypted)], { type: manifest.contentType });
@@ -85,25 +222,31 @@ export async function createDecryptedBlobUrl(
         const chunkStart = i * manifest.chunkSize;
         const chunkEnd = Math.min(chunkStart + manifest.chunkSize, manifest.originalSize) - 1;
 
-        // Fetch the encrypted chunk via Range Request
-        const response = await fetch(url, {
-            headers: { Range: `bytes=${chunkStart}-${chunkEnd}` },
-        });
+        try {
+            // Fetch the encrypted chunk via Range Request
+            const { response, gateway } = await fetchRangeFromGateways(
+                cid,
+                chunkStart,
+                chunkEnd,
+                gateways,
+                activeGateway,
+            );
+            activeGateway = gateway;
 
-        if (!response.ok && response.status !== 206) {
-            // Fallback: some IPFS gateways don't support Range, fetch all
-            if (i === 0) {
-                return await fallbackFullDownload(url, aesKeyB64, manifest);
+            const encrypted = new Uint8Array(await response.arrayBuffer());
+            const decrypted = await decryptChunk(encrypted, aesKeyB64, manifest, i);
+            decryptedChunks[i] = toBlobPart(decrypted);
+
+            loadedBytes += decrypted.length;
+            options.onProgress?.(loadedBytes, manifest.originalSize);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : '';
+            if (i === 0 || message.startsWith(RANGE_NOT_SUPPORTED)) {
+                // First chunk failed or Range unsupported — degrade to full download.
+                return await fallbackFullDownload(cid, aesKeyB64, manifest, gateways, activeGateway);
             }
-            throw new Error(`Chunk ${i} fetch failed: ${response.status}`);
+            throw err instanceof Error ? err : new Error(String(err));
         }
-
-        const encrypted = new Uint8Array(await response.arrayBuffer());
-        const decrypted = await decryptChunk(encrypted, aesKeyB64, manifest, i);
-        decryptedChunks[i] = toBlobPart(decrypted);
-
-        loadedBytes += decrypted.length;
-        options.onProgress?.(loadedBytes, manifest.originalSize);
     }
 
     const blob = new Blob(decryptedChunks, { type: manifest.contentType });
@@ -116,8 +259,8 @@ export async function streamKmsVideo(
     manifest: VideoManifest,
     options: StreamingPlayerOptions & { onSourceUpdate?: (url: string) => void } = {},
 ): Promise<void> {
-    const gateway = options.gatewayUrl || DEFAULT_GATEWAY;
-    const url = `${gateway}/${cid}`;
+    const gateways = getGatewayCandidates(options.gatewayUrl);
+    let activeGateway = options.gatewayUrl ? normalizeGatewayBase(options.gatewayUrl) : undefined;
 
     try {
         // For single chunk or small files, use direct approach
@@ -133,17 +276,21 @@ export async function streamKmsVideo(
         // 3. Download remaining chunks in background (non-blocking)
 
         const firstChunkEnd = Math.min(manifest.chunkSize, manifest.originalSize) - 1;
-        const firstResponse = await fetch(url, {
-            headers: { Range: `bytes=0-${firstChunkEnd}` },
-        });
-
         let firstChunkDecrypted: Uint8Array;
-        if (firstResponse.ok || firstResponse.status === 206) {
-            const encrypted = new Uint8Array(await firstResponse.arrayBuffer());
+        try {
+            const { response, gateway } = await fetchRangeFromGateways(
+                cid,
+                0,
+                firstChunkEnd,
+                gateways,
+                activeGateway,
+            );
+            activeGateway = gateway;
+            const encrypted = new Uint8Array(await response.arrayBuffer());
             firstChunkDecrypted = await decryptChunk(encrypted, aesKeyB64, manifest, 0);
-        } else {
+        } catch {
             // Fallback to full download if Range not supported
-            const blobUrl = await fallbackFullDownload(url, aesKeyB64, manifest);
+            const blobUrl = await fallbackFullDownload(cid, aesKeyB64, manifest, gateways, activeGateway);
             if (options.onSourceUpdate) options.onSourceUpdate(blobUrl);
             return;
         }
@@ -164,14 +311,14 @@ export async function streamKmsVideo(
                     const chunkStart = i * manifest.chunkSize;
                     const chunkEnd = Math.min(chunkStart + manifest.chunkSize, manifest.originalSize) - 1;
 
-                    const response = await fetch(url, {
-                        headers: { Range: `bytes=${chunkStart}-${chunkEnd}` },
-                    });
-
-                    if (!response.ok && response.status !== 206) {
-                        options.onError?.(new Error(`Chunk ${i} fetch failed: ${response.status}`));
-                        break;
-                    }
+                    const { response, gateway } = await fetchRangeFromGateways(
+                        cid,
+                        chunkStart,
+                        chunkEnd,
+                        gateways,
+                        activeGateway,
+                    );
+                    activeGateway = gateway;
 
                     const encrypted = new Uint8Array(await response.arrayBuffer());
                     const decrypted = await decryptChunk(encrypted, aesKeyB64, manifest, i);
@@ -185,7 +332,13 @@ export async function streamKmsVideo(
                 if (options.onSourceUpdate) options.onSourceUpdate(URL.createObjectURL(completeBlob));
             } catch (err) {
                 console.error('[streamKmsVideo] Background streaming failed:', err);
-                options.onError?.(err instanceof Error ? err : new Error(String(err)));
+                try {
+                    const blobUrl = await fallbackFullDownload(cid, aesKeyB64, manifest, gateways, activeGateway);
+                    if (options.onSourceUpdate) options.onSourceUpdate(blobUrl);
+                    options.onProgress?.(manifest.originalSize, manifest.originalSize);
+                } catch (fallbackErr) {
+                    options.onError?.(fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr)));
+                }
             }
         })();
 
@@ -200,13 +353,13 @@ export async function streamKmsVideo(
 // ============================================================================
 
 async function fallbackFullDownload(
-    url: string,
+    cid: string,
     aesKeyB64: string,
     manifest: VideoManifest,
+    gateways: string[],
+    preferredGateway?: string,
 ): Promise<string> {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`IPFS fetch failed: ${response.status}`);
-
+    const { response } = await fetchFullFromGateways(cid, gateways, preferredGateway);
     const encrypted = new Uint8Array(await response.arrayBuffer());
     const decrypted = await decryptFull(encrypted, aesKeyB64, manifest.counterB64);
     const blob = new Blob([toBlobPart(decrypted)], { type: manifest.contentType });
