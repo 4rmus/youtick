@@ -11,7 +11,6 @@
 | [chain-types.md](chain-types.md) | On-chain type definitions and queries | Querying file info, work reports, staking |
 | [github-actions.md](github-actions.md) | CI/CD IPFS deployment actions | Automating website/dApp deployment |
 | [cross-chain-scenarios.md](cross-chain-scenarios.md) | Multi-chain storage architectures | Advanced NEAR+Crust+EVM workflows |
-| [nova-crust-encryption.md](nova-crust-encryption.md) | Nova SDK TEE encryption + Crust persistence | Encrypted file sharing with permanent storage |
 
 ## Quick Navigation
 
@@ -22,7 +21,6 @@
 - **Query file status** → [chain-types.md](chain-types.md)
 - **Pay from EVM chain** → [storage-orders.md](storage-orders.md) (EVM section)
 - **NFT storage buckets** → [w3bucket.md](w3bucket.md)
-- **Encrypted file sharing (Nova + Crust)** → [nova-crust-encryption.md](nova-crust-encryption.md)
 
 ### By Chain
 - **NEAR Protocol** → [near-integration.md](near-integration.md)
