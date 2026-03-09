@@ -1,10 +1,13 @@
 'use client';
 
+import { Buffer } from 'buffer';
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import type { WalletSelector, Wallet } from '@near-wallet-selector/core';
 import type { WalletSelectorModal } from '@near-wallet-selector/modal-ui';
-import type { WalletInstance } from '@/lib/types';
 import { NEAR_CONFIG } from '@/lib/constants';
+import type { WalletInstance } from '@/lib/types';
+import { clearKmsAuthCache } from '@/lib/kms/client';
+import { clearW3AuthCache } from '@/lib/crust/w3auth';
 
 interface WalletContextValue {
     accountId: string | null;
@@ -44,6 +47,19 @@ function createWalletAdapter(wallet: Wallet): WalletInstance {
         async getAccounts() {
             return wallet.getAccounts();
         },
+        async signMessage(params) {
+            if (!wallet.signMessage) {
+                throw new Error('Connected wallet does not support signMessage');
+            }
+
+            return wallet.signMessage({
+                message: params.message,
+                recipient: params.recipient,
+                nonce: Buffer.from(params.nonce) as Parameters<NonNullable<typeof wallet.signMessage>>[0]['nonce'],
+                callbackUrl: params.callbackUrl,
+                state: params.state,
+            });
+        },
     };
 }
 
@@ -74,7 +90,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
 
         const network = (process.env.NEXT_PUBLIC_NEAR_NETWORK as 'testnet' | 'mainnet') || 'mainnet';
-        const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || NEAR_CONFIG.contractId;
+
+        if (typeof window !== 'undefined') {
+            localStorage.removeItem('DEV__METEOR_WALLET_BASE_URL');
+        }
 
         // Dynamic imports to avoid SSR issues with wallet-selector modules
         Promise.all([
@@ -92,6 +111,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
             const selector = await setupWalletSelector({
                 network,
+                createAccessKeyFor: {
+                    contractId: NEAR_CONFIG.contractId,
+                    methodNames: [],
+                },
                 modules: [
                     setupMyNearWallet(),
                     setupMeteorWallet(),
@@ -101,7 +124,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             if (!mounted) return;
 
             selectorRef.current = selector;
-            modalRef.current = setupModal(selector, { contractId });
+            modalRef.current = setupModal(selector, {
+                contractId: NEAR_CONFIG.contractId,
+                methodNames: [],
+            });
 
             // Subscribe to account and wallet changes
             const subscription = selector.store.observable.subscribe((state) => {
@@ -155,6 +181,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }, [isTrial, trialAccountId, isEvmLinked, evmLinkedAccountId]);
 
     const signOut = useCallback(async (): Promise<void> => {
+        if (activeAccountId) {
+            clearKmsAuthCache(activeAccountId);
+            clearW3AuthCache(activeAccountId);
+        }
         if (isTrial && trialAccountId) {
             const { TrialWallet } = await import('@/lib/trial-wallet');
             const trialWallet = new TrialWallet(trialAccountId);
@@ -168,7 +198,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             await wallet.signOut();
         }
         setWalletType(null);
-    }, [isTrial, trialAccountId, isEvmLinked, evmLinkedAccountId]);
+    }, [activeAccountId, isTrial, trialAccountId, isEvmLinked, evmLinkedAccountId]);
 
     const connect = useCallback(async (): Promise<void> => {
         if (modalRef.current) {

@@ -87,6 +87,19 @@ describe('Metadata Parser', () => {
       });
     });
 
+    describe('Schema v4 (delivery manifest)', () => {
+      it('should parse four-part titles with a manifest CID', () => {
+        const manifestCid = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+        const result = parseTitleMetadata(`QmRealCid:::ipfs://QmThumbCid1234567890123456789012345678901234:::${manifestCid}:::My Video`);
+
+        expect(result.title).toBe('My Video');
+        expect(result.realCid).toBe('QmRealCid');
+        expect(result.manifestCid).toBe(manifestCid);
+        expect(result.thumbnailCid).toBe('ipfs://QmThumbCid1234567890123456789012345678901234');
+        expect(result.schemaVersion).toBe(4);
+      });
+    });
+
     describe('Edge cases', () => {
       it('should handle null input', () => {
         const result = parseTitleMetadata(null);

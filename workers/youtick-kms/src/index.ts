@@ -50,6 +50,38 @@ interface RetrieveRequest {
     publicKey: string;
 }
 
+interface AuthChallengeRequest {
+    accountId: string;
+    action: 'store' | 'retrieve';
+    videoId: string;
+}
+
+interface AuthVerifyRequest {
+    challengeId: string;
+    accountId: string;
+    publicKey: string;
+    signature: string; // base64-encoded Ed25519 signature from wallet signMessage
+}
+
+interface AuthChallengeRecord {
+    challengeId: string;
+    accountId: string;
+    action: 'store' | 'retrieve';
+    videoId: string;
+    message: string;
+    recipient: string;
+    nonce: string; // base64
+    expiresAt: number;
+}
+
+interface AuthTokenClaims {
+    accountId: string;
+    action: 'store' | 'retrieve';
+    videoId: string;
+    publicKey: string;
+    expiresAt: number;
+}
+
 interface KMSResponse {
     ok: boolean;
     error?: string;
@@ -81,6 +113,9 @@ const RATE_LIMIT_MAX_RETRIEVE = 120;
 
 /** Access cache TTL: 1 hour */
 const ACCESS_CACHE_TTL_S = 3600;
+const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const AUTH_TOKEN_TTL_MS = 10 * 60 * 1000;
+const NEP413_TAG = 2147484061;
 
 // ============================================================================
 // CORS
@@ -293,6 +328,40 @@ async function verifyPublicKeyBinding(
     }
 }
 
+async function verifyFullAccessKeyBinding(
+    env: Env,
+    accountId: string,
+    publicKeyBase58: string,
+): Promise<boolean> {
+    const cacheKey = `pkfull:${accountId}:${publicKeyBase58}`;
+    const cached = await env.ACCESS_CACHE.get(cacheKey);
+    if (cached === 'true') {
+        return true;
+    }
+
+    try {
+        const accessKey = await nearRpcQuery<{ nonce: number; permission: unknown }>(env, {
+            request_type: 'view_access_key',
+            finality: 'final',
+            account_id: accountId,
+            public_key: publicKeyBase58,
+        });
+
+        const isFullAccess = accessKey.permission === 'FullAccess';
+        if (isFullAccess) {
+            await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: ACCESS_CACHE_TTL_S });
+        }
+        return isFullAccess;
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : '';
+        if (msg.includes('does not exist') || msg.includes('UnknownAccessKey')) {
+            return false;
+        }
+        console.error('[KMS] verifyFullAccessKeyBinding RPC error:', msg);
+        return false;
+    }
+}
+
 /**
  * Verify that an account has a valid ticket for a video.
  *
@@ -466,6 +535,129 @@ function hexToBytes(hex: string): Uint8Array {
     return bytes;
 }
 
+function base64ToBytes(base64: string): Uint8Array {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+    let binary = '';
+    for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+    }
+    return btoa(binary);
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+    return bytesToBase64(bytes)
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/g, '');
+}
+
+function encodeU32LE(value: number): Uint8Array {
+    const out = new Uint8Array(4);
+    const view = new DataView(out.buffer);
+    view.setUint32(0, value, true);
+    return out;
+}
+
+function encodeStringBorsh(value: string): Uint8Array {
+    const bytes = new TextEncoder().encode(value);
+    const out = new Uint8Array(4 + bytes.length);
+    out.set(encodeU32LE(bytes.length), 0);
+    out.set(bytes, 4);
+    return out;
+}
+
+function encodeOptionStringBorsh(value?: string): Uint8Array {
+    if (!value) {
+        return new Uint8Array([0]);
+    }
+
+    const encoded = encodeStringBorsh(value);
+    const out = new Uint8Array(1 + encoded.length);
+    out[0] = 1;
+    out.set(encoded, 1);
+    return out;
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+    const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+    const out = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const part of parts) {
+        out.set(part, offset);
+        offset += part.length;
+    }
+    return out;
+}
+
+async function hashBytes(bytes: Uint8Array): Promise<Uint8Array> {
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return new Uint8Array(digest);
+}
+
+async function serializeNep413Hash(payload: {
+    message: string;
+    nonce: Uint8Array;
+    recipient: string;
+    callbackUrl?: string;
+}): Promise<Uint8Array> {
+    if (payload.nonce.length !== 32) {
+        throw new Error('Nonce must be exactly 32 bytes long');
+    }
+
+    const serialized = concatBytes(
+        encodeU32LE(NEP413_TAG),
+        encodeStringBorsh(payload.message),
+        payload.nonce,
+        encodeStringBorsh(payload.recipient),
+        encodeOptionStringBorsh(payload.callbackUrl),
+    );
+
+    return hashBytes(serialized);
+}
+
+async function verifyNep413Signature(
+    payload: {
+        message: string;
+        nonce: Uint8Array;
+        recipient: string;
+        callbackUrl?: string;
+    },
+    signatureBase64: string,
+    publicKeyBase58: string,
+): Promise<boolean> {
+    try {
+        const publicKeyBytes = base58Decode(publicKeyBase58);
+        const signatureBytes = base64ToBytes(signatureBase64);
+        const payloadHash = await serializeNep413Hash(payload);
+
+        const cryptoKey = await crypto.subtle.importKey(
+            'raw',
+            publicKeyBytes,
+            { name: 'Ed25519' },
+            false,
+            ['verify'],
+        );
+
+        return await crypto.subtle.verify('Ed25519', cryptoKey, signatureBytes, payloadHash);
+    } catch (error) {
+        console.error('[KMS] NEP-413 verification error:', error);
+        return false;
+    }
+}
+
+function randomToken(byteLength = 32): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(byteLength));
+    return base64UrlEncode(bytes);
+}
+
 // ============================================================================
 // Response Helpers
 // ============================================================================
@@ -485,6 +677,167 @@ function jsonResponse(
     });
 }
 
+async function readBearerTokenClaims(
+    request: Request,
+    env: Env,
+): Promise<{ claims: AuthTokenClaims | null; error?: string; status?: number }> {
+    const authHeader = request.headers.get('Authorization');
+    if (!authHeader) {
+        return { claims: null };
+    }
+
+    const [scheme, token] = authHeader.split(' ');
+    if (scheme !== 'Bearer' || !token) {
+        return { claims: null, error: 'Invalid Authorization header', status: 401 };
+    }
+
+    const rawClaims = await env.ACCESS_CACHE.get(`auth:token:${token}`);
+    if (!rawClaims) {
+        return { claims: null, error: 'Auth token expired or invalid', status: 401 };
+    }
+
+    const claims = JSON.parse(rawClaims) as AuthTokenClaims;
+    if (Date.now() > claims.expiresAt) {
+        await env.ACCESS_CACHE.delete(`auth:token:${token}`);
+        return { claims: null, error: 'Auth token expired or invalid', status: 401 };
+    }
+
+    return { claims };
+}
+
+async function handleAuthChallenge(
+    request: Request,
+    env: Env,
+): Promise<Response> {
+    const body = (await request.json()) as AuthChallengeRequest;
+
+    if (!body.accountId || !body.videoId || !body.action) {
+        return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
+    }
+
+    if (body.action !== 'store' && body.action !== 'retrieve') {
+        return jsonResponse({ ok: false, error: 'Invalid auth action' }, 400, request, env);
+    }
+
+    const challengeId = randomToken(18);
+    const nonceBytes = crypto.getRandomValues(new Uint8Array(32));
+    const expiresAt = Date.now() + AUTH_CHALLENGE_TTL_MS;
+    const recipient = new URL(request.url).origin;
+    const message = `Authorize Youtick KMS ${body.action} access for ${body.videoId} until ${new Date(expiresAt).toISOString()}`;
+
+    const challenge: AuthChallengeRecord = {
+        challengeId,
+        accountId: body.accountId,
+        action: body.action,
+        videoId: body.videoId,
+        message,
+        recipient,
+        nonce: bytesToBase64(nonceBytes),
+        expiresAt,
+    };
+
+    await env.ACCESS_CACHE.put(
+        `auth:challenge:${challengeId}`,
+        JSON.stringify(challenge),
+        { expirationTtl: Math.ceil(AUTH_CHALLENGE_TTL_MS / 1000) },
+    );
+
+    return jsonResponse(
+        {
+            ok: true,
+            data: {
+                challengeId,
+                message,
+                recipient,
+                nonce: challenge.nonce,
+                expiresAt,
+            },
+        },
+        200,
+        request,
+        env,
+    );
+}
+
+async function handleAuthVerify(
+    request: Request,
+    env: Env,
+): Promise<Response> {
+    const body = (await request.json()) as AuthVerifyRequest;
+
+    if (!body.challengeId || !body.accountId || !body.publicKey || !body.signature) {
+        return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
+    }
+
+    const rawChallenge = await env.ACCESS_CACHE.get(`auth:challenge:${body.challengeId}`);
+    if (!rawChallenge) {
+        return jsonResponse({ ok: false, error: 'Challenge expired or invalid' }, 401, request, env);
+    }
+
+    const challenge = JSON.parse(rawChallenge) as AuthChallengeRecord;
+    if (challenge.accountId !== body.accountId) {
+        return jsonResponse({ ok: false, error: 'Challenge/account mismatch' }, 401, request, env);
+    }
+
+    if (Date.now() > challenge.expiresAt) {
+        await env.ACCESS_CACHE.delete(`auth:challenge:${body.challengeId}`);
+        return jsonResponse({ ok: false, error: 'Challenge expired or invalid' }, 401, request, env);
+    }
+
+    const isFullAccess = await verifyFullAccessKeyBinding(env, body.accountId, body.publicKey);
+    if (!isFullAccess) {
+        return jsonResponse({ ok: false, error: 'Public key must be a FullAccess key on this account' }, 401, request, env);
+    }
+
+    const verified = await verifyNep413Signature(
+        {
+            message: challenge.message,
+            nonce: base64ToBytes(challenge.nonce),
+            recipient: challenge.recipient,
+        },
+        body.signature,
+        body.publicKey,
+    );
+
+    if (!verified) {
+        return jsonResponse({ ok: false, error: 'Invalid NEP-413 signature' }, 401, request, env);
+    }
+
+    await env.ACCESS_CACHE.delete(`auth:challenge:${body.challengeId}`);
+
+    const token = randomToken(32);
+    const expiresAt = Date.now() + AUTH_TOKEN_TTL_MS;
+    const claims: AuthTokenClaims = {
+        accountId: challenge.accountId,
+        action: challenge.action,
+        videoId: challenge.videoId,
+        publicKey: body.publicKey,
+        expiresAt,
+    };
+
+    await env.ACCESS_CACHE.put(
+        `auth:token:${token}`,
+        JSON.stringify(claims),
+        { expirationTtl: Math.ceil(AUTH_TOKEN_TTL_MS / 1000) },
+    );
+
+    return jsonResponse(
+        {
+            ok: true,
+            data: {
+                token,
+                accountId: claims.accountId,
+                action: claims.action,
+                videoId: claims.videoId,
+                expiresAt,
+            },
+        },
+        200,
+        request,
+        env,
+    );
+}
+
 // ============================================================================
 // Route Handlers
 // ============================================================================
@@ -493,36 +846,57 @@ async function handleStore(
     request: Request,
     env: Env,
 ): Promise<Response> {
-    const body = (await request.json()) as StoreRequest;
+    const auth = await readBearerTokenClaims(request, env);
+    if (auth.error) {
+        return jsonResponse({ ok: false, error: auth.error }, auth.status || 401, request, env);
+    }
 
-    // Validate required fields
-    if (!body.videoId || !body.aesKeyB64 || !body.accountId || !body.timestamp || !body.signature || !body.publicKey) {
+    const body = (await request.json()) as Partial<StoreRequest> & { videoId?: string; aesKeyB64?: string };
+    if (!body.videoId || !body.aesKeyB64) {
         return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
     }
 
-    // Validate timestamp (replay attack protection)
-    const now = Date.now();
-    if (Math.abs(now - body.timestamp) > TIMESTAMP_WINDOW_MS) {
-        return jsonResponse({ ok: false, error: 'Request timestamp expired' }, 401, request, env);
-    }
+    let accountId: string;
 
-    // Verify Ed25519 signature
-    const payload = JSON.stringify({
-        action: 'store',
-        videoId: body.videoId,
-        accountId: body.accountId,
-        timestamp: body.timestamp,
-    });
+    if (auth.claims) {
+        if (auth.claims.action !== 'store') {
+            return jsonResponse({ ok: false, error: 'Auth token does not allow store access' }, 403, request, env);
+        }
+        if (auth.claims.videoId !== body.videoId) {
+            return jsonResponse({ ok: false, error: 'Auth token video scope mismatch' }, 403, request, env);
+        }
+        accountId = auth.claims.accountId;
+    } else {
+        if (!body.accountId || !body.timestamp || !body.signature || !body.publicKey) {
+            return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
+        }
 
-    const isValidSig = await verifyEd25519Signature(payload, body.signature, body.publicKey);
-    if (!isValidSig) {
-        return jsonResponse({ ok: false, error: 'Invalid signature' }, 401, request, env);
-    }
+        // Validate timestamp (replay attack protection)
+        const now = Date.now();
+        if (Math.abs(now - body.timestamp) > TIMESTAMP_WINDOW_MS) {
+            return jsonResponse({ ok: false, error: 'Request timestamp expired' }, 401, request, env);
+        }
 
-    // SECURITY: Verify the public key is actually registered on this NEAR account
-    const isKeyBound = await verifyPublicKeyBinding(env, body.accountId, body.publicKey);
-    if (!isKeyBound) {
-        return jsonResponse({ ok: false, error: 'Public key not registered on account' }, 401, request, env);
+        // Verify Ed25519 signature
+        const payload = JSON.stringify({
+            action: 'store',
+            videoId: body.videoId,
+            accountId: body.accountId,
+            timestamp: body.timestamp,
+        });
+
+        const isValidSig = await verifyEd25519Signature(payload, body.signature, body.publicKey);
+        if (!isValidSig) {
+            return jsonResponse({ ok: false, error: 'Invalid signature' }, 401, request, env);
+        }
+
+        // Legacy compatibility: body-signed auth still accepts any registered key.
+        const isKeyBound = await verifyPublicKeyBinding(env, body.accountId, body.publicKey);
+        if (!isKeyBound) {
+            return jsonResponse({ ok: false, error: 'Public key not registered on account' }, 401, request, env);
+        }
+
+        accountId = body.accountId;
     }
 
     const keyId = `key:${body.videoId}`;
@@ -532,14 +906,14 @@ async function handleStore(
     const eventCreatorId = await getEventCreatorId(env, body.videoId);
 
     // Event exists: only event creator can store/update key.
-    if (eventCreatorId && eventCreatorId !== body.accountId) {
+    if (eventCreatorId && eventCreatorId !== accountId) {
         return jsonResponse({ ok: false, error: 'Only the content creator can store keys' }, 403, request, env);
     }
 
     // Existing key overwrite protection.
     // If a key already exists and ownership cannot be proven, deny overwrite (fail-closed).
     if (existingKey) {
-        if (recordedOwner && recordedOwner !== body.accountId) {
+        if (recordedOwner && recordedOwner !== accountId) {
             return jsonResponse({ ok: false, error: 'Only the original uploader can overwrite keys' }, 403, request, env);
         }
 
@@ -556,7 +930,7 @@ async function handleStore(
     // Store AES key in KV and persist owner marker for overwrite protection.
     await env.VIDEO_KEYS.put(keyId, body.aesKeyB64);
     if (!recordedOwner) {
-        await env.VIDEO_KEYS.put(ownerIdKey, body.accountId);
+        await env.VIDEO_KEYS.put(ownerIdKey, accountId);
     }
 
     return jsonResponse(
@@ -571,41 +945,61 @@ async function handleRetrieve(
     request: Request,
     env: Env,
 ): Promise<Response> {
-    const body = (await request.json()) as RetrieveRequest;
+    const auth = await readBearerTokenClaims(request, env);
+    if (auth.error) {
+        return jsonResponse({ ok: false, error: auth.error }, auth.status || 401, request, env);
+    }
 
-    // Validate required fields
-    if (!body.videoId || !body.accountId || !body.timestamp || !body.signature || !body.publicKey) {
+    const body = (await request.json()) as Partial<RetrieveRequest> & { videoId?: string };
+    if (!body.videoId) {
         return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
     }
 
-    // Validate timestamp (replay attack protection)
-    const now = Date.now();
-    if (Math.abs(now - body.timestamp) > TIMESTAMP_WINDOW_MS) {
-        return jsonResponse({ ok: false, error: 'Request timestamp expired' }, 401, request, env);
-    }
+    let accountId: string;
 
-    // Verify Ed25519 signature
-    const payload = JSON.stringify({
-        action: 'retrieve',
-        videoId: body.videoId,
-        accountId: body.accountId,
-        timestamp: body.timestamp,
-    });
+    if (auth.claims) {
+        if (auth.claims.action !== 'retrieve') {
+            return jsonResponse({ ok: false, error: 'Auth token does not allow retrieve access' }, 403, request, env);
+        }
+        if (auth.claims.videoId !== body.videoId) {
+            return jsonResponse({ ok: false, error: 'Auth token video scope mismatch' }, 403, request, env);
+        }
+        accountId = auth.claims.accountId;
+    } else {
+        if (!body.accountId || !body.timestamp || !body.signature || !body.publicKey) {
+            return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
+        }
 
-    const isValidSig = await verifyEd25519Signature(payload, body.signature, body.publicKey);
-    if (!isValidSig) {
-        return jsonResponse({ ok: false, error: 'Invalid signature' }, 401, request, env);
-    }
+        // Validate timestamp (replay attack protection)
+        const now = Date.now();
+        if (Math.abs(now - body.timestamp) > TIMESTAMP_WINDOW_MS) {
+            return jsonResponse({ ok: false, error: 'Request timestamp expired' }, 401, request, env);
+        }
 
-    // SECURITY: Verify the public key is actually registered on this NEAR account
-    const isKeyBound = await verifyPublicKeyBinding(env, body.accountId, body.publicKey);
-    if (!isKeyBound) {
-        return jsonResponse({ ok: false, error: 'Public key not registered on account' }, 401, request, env);
+        // Verify Ed25519 signature
+        const payload = JSON.stringify({
+            action: 'retrieve',
+            videoId: body.videoId,
+            accountId: body.accountId,
+            timestamp: body.timestamp,
+        });
+
+        const isValidSig = await verifyEd25519Signature(payload, body.signature, body.publicKey);
+        if (!isValidSig) {
+            return jsonResponse({ ok: false, error: 'Invalid signature' }, 401, request, env);
+        }
+
+        const isKeyBound = await verifyPublicKeyBinding(env, body.accountId, body.publicKey);
+        if (!isKeyBound) {
+            return jsonResponse({ ok: false, error: 'Public key not registered on account' }, 401, request, env);
+        }
+
+        accountId = body.accountId;
     }
 
     // Verify access: Either the user has a ticket, OR they are the original owner (creator)
-    console.log(`[KMS] Verify access for ${body.accountId} on video ${body.videoId}`);
-    let hasAccess = await verifyTicketAccess(env, body.accountId, body.videoId);
+    console.log(`[KMS] Verify access for ${accountId} on video ${body.videoId}`);
+    let hasAccess = await verifyTicketAccess(env, accountId, body.videoId);
     console.log(`[KMS] verifyTicketAccess: ${hasAccess}`);
 
     if (!hasAccess) {
@@ -614,11 +1008,11 @@ async function handleRetrieve(
         console.log(`[KMS] Checking ownership fallback for ${body.videoId}`);
         const eventCreatorId = await getEventCreatorId(env, body.videoId);
         console.log(`[KMS] get_event creator:`, eventCreatorId);
-        if (eventCreatorId && eventCreatorId === body.accountId) {
-            console.log(`[KMS] Ownership verified: ${eventCreatorId} matches ${body.accountId}`);
+        if (eventCreatorId && eventCreatorId === accountId) {
+            console.log(`[KMS] Ownership verified: ${eventCreatorId} matches ${accountId}`);
             hasAccess = true;
         } else {
-            console.log(`[KMS] Ownership check failed. Creator: ${eventCreatorId}, Signer: ${body.accountId}`);
+            console.log(`[KMS] Ownership check failed. Creator: ${eventCreatorId}, Signer: ${accountId}`);
         }
     }
 
@@ -700,14 +1094,18 @@ export default {
             return handleHealth(request, env);
         }
 
-        // Only POST for store/retrieve
+        // Only POST for auth/store/retrieve
         if (request.method !== 'POST') {
             return jsonResponse({ ok: false, error: 'Method not allowed' }, 405, request, env);
         }
 
         // Rate limiting
         const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-        const action = path === '/store' ? 'store' : 'retrieve';
+        const action = path === '/store'
+            ? 'store'
+            : path === '/retrieve'
+                ? 'retrieve'
+                : 'auth';
         const withinLimit = await checkRateLimit(env, ip, action);
         if (!withinLimit) {
             return jsonResponse({ ok: false, error: 'Rate limit exceeded' }, 429, request, env);
@@ -715,6 +1113,10 @@ export default {
 
         // Route
         switch (path) {
+            case '/auth/challenge':
+                return handleAuthChallenge(request, env);
+            case '/auth/verify':
+                return handleAuthVerify(request, env);
             case '/store':
                 return handleStore(request, env);
             case '/retrieve':

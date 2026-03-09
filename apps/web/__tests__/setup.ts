@@ -226,8 +226,12 @@ if (typeof globalThis.crypto === 'undefined') {
   Object.defineProperty(globalThis, 'crypto', {
     value: {
       randomUUID: () => nodeCrypto.randomUUID(),
-      getRandomValues: <T extends ArrayBufferView | null>(arr: T): T =>
-        nodeCrypto.getRandomValues(arr),
+      getRandomValues: <T extends ArrayBufferView | null>(arr: T): T => {
+        if (!arr) {
+          return arr;
+        }
+        return nodeCrypto.getRandomValues(arr as ArrayBufferView) as T;
+      },
       subtle: {} as SubtleCrypto,
     },
     writable: true,

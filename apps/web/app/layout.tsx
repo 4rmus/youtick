@@ -91,6 +91,14 @@ export default function RootLayout({
     return (
         <html lang="en" suppressHydrationWarning>
             <head>
+                <link rel="dns-prefetch" href="https://ipfs.io" />
+                <link rel="dns-prefetch" href="https://dweb.link" />
+                <link rel="dns-prefetch" href="https://4everland.io" />
+                <link rel="dns-prefetch" href="https://gateway.lighthouse.storage" />
+                <link rel="preconnect" href="https://ipfs.io" crossOrigin="" />
+                <link rel="preconnect" href="https://dweb.link" crossOrigin="" />
+                <link rel="preconnect" href="https://4everland.io" crossOrigin="" />
+                <link rel="preconnect" href="https://gateway.lighthouse.storage" crossOrigin="" />
                 {/* ChunkLoadError recovery: reload page on failed dynamic imports (IPFS gateway blips) */}
                 <script dangerouslySetInnerHTML={{
                     __html: `

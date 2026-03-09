@@ -1,5 +1,5 @@
 // lib/trial-wallet.ts - near-api-js v7 compatible
-import { Account, type Action } from "near-api-js";
+import { Account, KeyPairSigner, type Action } from "near-api-js";
 import { BrowserKeyStore } from "./keystore-v7";
 
 const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
@@ -68,7 +68,7 @@ export class TrialWallet {
         }
     }
 
-    async signMessage(params: { message: string, recipient: string, nonce: Buffer, callbackUrl?: string }) {
+    async signMessage(params: { message: string, recipient: string, nonce: Uint8Array, callbackUrl?: string, state?: string }) {
         // Get key from browser keystore
         const keyPair = await this.keyStore.getKey(NETWORK_ID, this.accountId);
 
@@ -76,21 +76,19 @@ export class TrialWallet {
             throw new Error("No key pair found for trial account");
         }
 
-        const msgValues = {
-            accountId: this.accountId,
-            publicKey: keyPair.getPublicKey().toString(),
-            nonce: params.nonce.toString('base64'),
+        const signer = new KeyPairSigner(keyPair);
+        const signedMessage = await signer.signNep413Message(this.accountId, {
+            message: params.message,
             recipient: params.recipient,
-            message: params.message
-        };
-
-        const payload = new TextEncoder().encode(JSON.stringify(msgValues));
-        const { signature } = keyPair.sign(payload);
+            nonce: params.nonce,
+            callbackUrl: params.callbackUrl,
+        });
 
         return {
-            signature: Buffer.from(signature).toString('base64'),
-            publicKey: keyPair.getPublicKey().toString(),
-            accountId: this.accountId
+            signature: Buffer.from(signedMessage.signature).toString('base64'),
+            publicKey: signedMessage.publicKey.toString(),
+            accountId: signedMessage.accountId,
+            state: params.state,
         };
     }
 

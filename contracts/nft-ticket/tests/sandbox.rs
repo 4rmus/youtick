@@ -213,7 +213,9 @@ async fn test_buy_ticket_excess_refund() -> anyhow::Result<()> {
     let final_balance = buyer.view_account().await?.balance;
 
     // Calculate actual cost (should be ~1.01 NEAR + gas, not 3 NEAR)
-    let balance_diff = initial_balance.as_yoctonear() - final_balance.as_yoctonear();
+    let balance_diff = initial_balance
+        .as_yoctonear()
+        .saturating_sub(final_balance.as_yoctonear());
 
     // The cost should be approximately:
     // - 1 NEAR (ticket price)
@@ -327,56 +329,40 @@ async fn test_buy_free_ticket() -> anyhow::Result<()> {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// PREPAID BALANCE TESTS
+// LEGACY API REMOVAL TESTS
 // ═══════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_deposit_and_withdraw_funds() -> anyhow::Result<()> {
+async fn test_legacy_prepaid_balance_methods_removed() -> anyhow::Result<()> {
     let (contract, _, buyer) = init().await?;
 
-    // Deposit funds
-    buyer
+    let deposit_result = buyer
         .call(contract.id(), "deposit_funds")
         .args_json(json!({}))
         .deposit(NearToken::from_near(2))
         .transact()
-        .await?
-        .into_result()?;
+        .await?;
+    assert!(deposit_result.is_failure());
 
-    // Check balance
-    let balance: String = contract
-        .view("get_user_balance")
-        .args_json(json!({"account_id": buyer.id()}))
-        .await?
-        .json()?;
-
-    assert_eq!(balance, "2000000000000000000000000"); // 2 NEAR
-
-    // Withdraw funds (requires 1 yocto deposit)
-    buyer
+    let withdraw_result = buyer
         .call(contract.id(), "withdraw_funds")
         .args_json(json!({}))
         .deposit(NearToken::from_yoctonear(1))
         .gas(near_workspaces::types::Gas::from_tgas(50))
         .transact()
-        .await?
-        .into_result()?;
+        .await?;
+    assert!(withdraw_result.is_failure());
 
-    // Check balance is now 0
-    let balance_after: String = contract
+    let balance_result = contract
         .view("get_user_balance")
         .args_json(json!({"account_id": buyer.id()}))
-        .await?
-        .json()?;
-
-    assert_eq!(balance_after, "0");
-
-    println!("✅ Deposit and withdraw funds test passed");
+        .await;
+    assert!(balance_result.is_err());
     Ok(())
 }
 
 #[tokio::test]
-async fn test_buy_ticket_prepaid() -> anyhow::Result<()> {
+async fn test_buy_ticket_prepaid_removed() -> anyhow::Result<()> {
     let (contract, owner, buyer) = init().await?;
 
     // Create event
@@ -393,17 +379,8 @@ async fn test_buy_ticket_prepaid() -> anyhow::Result<()> {
         .await?
         .into_result()?;
 
-    // Deposit funds first
-    buyer
-        .call(contract.id(), "deposit_funds")
-        .args_json(json!({}))
-        .deposit(NearToken::from_near(1)) // Deposit 1 NEAR
-        .transact()
-        .await?
-        .into_result()?;
-
-    // Buy with prepaid (no deposit needed in the call)
-    buyer
+    // Legacy prepaid path is disabled.
+    let result = buyer
         .call(contract.id(), "buy_ticket_prepaid")
         .args_json(json!({
             "receiver_id": buyer.id(),
@@ -411,30 +388,9 @@ async fn test_buy_ticket_prepaid() -> anyhow::Result<()> {
         }))
         .gas(near_workspaces::types::Gas::from_tgas(300))
         .transact()
-        .await?
-        .into_result()?;
+        .await?;
 
-    // Verify NFT was minted
-    let tokens: Vec<serde_json::Value> = contract
-        .view("nft_tokens_for_owner")
-        .args_json(json!({"account_id": buyer.id()}))
-        .await?
-        .json()?;
-
-    assert_eq!(tokens.len(), 1);
-
-    // Verify prepaid balance was deducted
-    let balance: String = contract
-        .view("get_user_balance")
-        .args_json(json!({"account_id": buyer.id()}))
-        .await?
-        .json()?;
-
-    // Should have ~0.49 NEAR left (1 - 0.5 price - 0.01 storage)
-    let balance_yocto: u128 = balance.parse()?;
-    assert!(balance_yocto < 500_000_000_000_000_000_000_000); // Less than 0.5 NEAR
-
-    println!("✅ Buy ticket prepaid test passed");
+    assert!(result.is_failure());
     Ok(())
 }
 
@@ -594,7 +550,8 @@ async fn test_commission_split() -> anyhow::Result<()> {
 
     // Creator should receive 98% of 10 NEAR = 9.8 NEAR
     // But they also spent gas creating the event, so just check they received > 9 NEAR
-    let creator_gained = creator_final.as_yoctonear() as i128 - creator_initial.as_yoctonear() as i128;
+    let creator_gained =
+        creator_final.as_yoctonear() as i128 - creator_initial.as_yoctonear() as i128;
 
     // Should have gained approximately 9.8 NEAR (minus gas for create_event)
     // Let's check it's at least 9.5 NEAR gained
@@ -764,16 +721,7 @@ async fn test_event_not_found() -> anyhow::Result<()> {
 async fn test_signless_withdraw_limit() -> anyhow::Result<()> {
     let (contract, _, buyer) = init().await?;
 
-    // Deposit more than signless limit (0.1 NEAR)
-    buyer
-        .call(contract.id(), "deposit_funds")
-        .args_json(json!({}))
-        .deposit(NearToken::from_millinear(200)) // 0.2 NEAR
-        .transact()
-        .await?
-        .into_result()?;
-
-    // Try signless withdraw (should fail - over 0.1 NEAR limit)
+    // Legacy signless withdraw path is removed.
     let result = buyer
         .call(contract.id(), "withdraw_funds_prepaid")
         .args_json(json!({}))
@@ -782,7 +730,6 @@ async fn test_signless_withdraw_limit() -> anyhow::Result<()> {
         .await?;
 
     assert!(result.is_failure());
-    println!("✅ Signless withdraw limit test passed (correctly rejected > 0.1 NEAR)");
     Ok(())
 }
 
@@ -863,7 +810,7 @@ async fn test_commission_pool_tracking() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_commission_pool_prepaid() -> anyhow::Result<()> {
+async fn test_commission_pool_prepaid_removed() -> anyhow::Result<()> {
     let (contract, owner, buyer) = init().await?;
 
     // Create event with 10 NEAR price
@@ -880,17 +827,8 @@ async fn test_commission_pool_prepaid() -> anyhow::Result<()> {
         .await?
         .into_result()?;
 
-    // Deposit funds
-    buyer
-        .call(contract.id(), "deposit_funds")
-        .args_json(json!({}))
-        .deposit(NearToken::from_near(15))
-        .transact()
-        .await?
-        .into_result()?;
-
-    // Buy with prepaid
-    buyer
+    // Legacy prepaid path is disabled.
+    let result = buyer
         .call(contract.id(), "buy_ticket_prepaid")
         .args_json(json!({
             "receiver_id": buyer.id(),
@@ -898,19 +836,18 @@ async fn test_commission_pool_prepaid() -> anyhow::Result<()> {
         }))
         .gas(near_workspaces::types::Gas::from_tgas(300))
         .transact()
-        .await?
-        .into_result()?;
+        .await?;
 
-    // Commission pool should have 0.1 NEAR
+    assert!(result.is_failure());
+
+    // Commission pool should remain unchanged.
     let commission_pool: String = contract
         .view("get_commission_pool")
         .args_json(json!({}))
         .await?
         .json()?;
     let commission_val: u128 = commission_pool.parse()?;
-    assert_eq!(commission_val, 100_000_000_000_000_000_000_000); // 0.1 NEAR
-
-    println!("✅ Commission pool prepaid test passed");
+    assert_eq!(commission_val, 0);
     Ok(())
 }
 
@@ -968,7 +905,10 @@ async fn test_withdraw_commission() -> anyhow::Result<()> {
     // Verify owner received the funds (approximately, minus gas)
     let owner_after = owner.view_account().await?.balance;
     let gained = owner_after.as_yoctonear() as i128 - owner_before.as_yoctonear() as i128;
-    assert!(gained > 90_000_000_000_000_000_000_000, "Owner should receive ~0.1 NEAR");
+    assert!(
+        gained > 90_000_000_000_000_000_000_000,
+        "Owner should receive ~0.1 NEAR"
+    );
 
     println!("✅ Withdraw commission test passed");
     Ok(())
@@ -1020,37 +960,18 @@ async fn test_withdraw_commission_not_owner() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_signless_withdraw_within_limit() -> anyhow::Result<()> {
+async fn test_signless_withdraw_removed() -> anyhow::Result<()> {
     let (contract, _, buyer) = init().await?;
 
-    // Deposit exactly at limit (0.1 NEAR)
-    buyer
-        .call(contract.id(), "deposit_funds")
-        .args_json(json!({}))
-        .deposit(NearToken::from_millinear(100)) // 0.1 NEAR
-        .transact()
-        .await?
-        .into_result()?;
-
-    // Signless withdraw should work
-    buyer
+    // Legacy signless withdraw path is disabled.
+    let result = buyer
         .call(contract.id(), "withdraw_funds_prepaid")
         .args_json(json!({}))
         .gas(near_workspaces::types::Gas::from_tgas(50))
         .transact()
-        .await?
-        .into_result()?;
+        .await?;
 
-    // Verify balance is now 0
-    let balance: String = contract
-        .view("get_user_balance")
-        .args_json(json!({"account_id": buyer.id()}))
-        .await?
-        .json()?;
-
-    assert_eq!(balance, "0");
-
-    println!("✅ Signless withdraw within limit test passed");
+    assert!(result.is_failure());
     Ok(())
 }
 
@@ -1109,14 +1030,14 @@ async fn test_purchase_log_on_buy_ticket() -> anyhow::Result<()> {
     let creator_amount: u128 = log["creator_amount"].as_str().unwrap().parse()?;
     let commission: u128 = log["commission_amount"].as_str().unwrap().parse()?;
     assert_eq!(creator_amount, 980_000_000_000_000_000_000_000); // 0.98 NEAR
-    assert_eq!(commission, 20_000_000_000_000_000_000_000);      // 0.02 NEAR
+    assert_eq!(commission, 20_000_000_000_000_000_000_000); // 0.02 NEAR
 
     println!("✅ Purchase log on buy_ticket test passed");
     Ok(())
 }
 
 #[tokio::test]
-async fn test_purchase_log_on_prepaid() -> anyhow::Result<()> {
+async fn test_purchase_log_on_removed_prepaid_path() -> anyhow::Result<()> {
     let (contract, owner, buyer) = init().await?;
 
     // Create event
@@ -1133,17 +1054,8 @@ async fn test_purchase_log_on_prepaid() -> anyhow::Result<()> {
         .await?
         .into_result()?;
 
-    // Deposit funds
-    buyer
-        .call(contract.id(), "deposit_funds")
-        .args_json(json!({}))
-        .deposit(NearToken::from_near(1))
-        .transact()
-        .await?
-        .into_result()?;
-
-    // Buy with prepaid
-    buyer
+    // Legacy prepaid path is disabled.
+    let result = buyer
         .call(contract.id(), "buy_ticket_prepaid")
         .args_json(json!({
             "receiver_id": buyer.id(),
@@ -1151,22 +1063,18 @@ async fn test_purchase_log_on_prepaid() -> anyhow::Result<()> {
         }))
         .gas(near_workspaces::types::Gas::from_tgas(300))
         .transact()
-        .await?
-        .into_result()?;
+        .await?;
 
-    // Verify purchase log
+    assert!(result.is_failure());
+
+    // Rejected deprecated calls should not create a purchase log.
     let log: Option<serde_json::Value> = contract
         .view("get_purchase_log")
         .args_json(json!({"purchase_id": 0}))
         .await?
         .json()?;
 
-    assert!(log.is_some(), "Purchase log should exist");
-    let log = log.unwrap();
-    assert_eq!(log["purchase_type"], "Prepaid");
-    assert_eq!(log["price"], "500000000000000000000000");
-
-    println!("✅ Purchase log on prepaid test passed");
+    assert!(log.is_none());
     Ok(())
 }
 
@@ -1268,7 +1176,11 @@ async fn test_purchase_log_pagination() -> anyhow::Result<()> {
         .await?
         .json()?;
 
-    assert_eq!(limited_logs.len(), 2, "Should return only 2 logs with limit");
+    assert_eq!(
+        limited_logs.len(),
+        2,
+        "Should return only 2 logs with limit"
+    );
 
     // Get with from_index=2
     let offset_logs: Vec<serde_json::Value> = contract
@@ -1335,5 +1247,128 @@ async fn test_purchase_count() -> anyhow::Result<()> {
     assert_eq!(count, 4);
 
     println!("✅ Purchase count test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_fund_nova_platform_disabled() -> anyhow::Result<()> {
+    let (contract, _, buyer) = init().await?;
+
+    let result = buyer
+        .call(contract.id(), "fund_nova_platform")
+        .args_json(json!({ "amount": "100000000000000000000000" }))
+        .transact()
+        .await?;
+
+    assert!(result.is_failure());
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_upload_session_flow() -> anyhow::Result<()> {
+    let (contract, _, creator) = init().await?;
+    let public_key = creator.secret_key().public_key().to_string();
+
+    creator
+        .call(contract.id(), "create_upload_session")
+        .args_json(json!({
+            "public_key": public_key,
+            "budget_yocto": "200000000000000000000000",
+            "ttl_ms": 300000u64
+        }))
+        .deposit(NearToken::from_millinear(200))
+        .gas(near_workspaces::types::Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let session: Option<serde_json::Value> = contract
+        .view("get_upload_session")
+        .args_json(json!({ "public_key": public_key }))
+        .await?
+        .json()?;
+
+    assert!(
+        session.is_some(),
+        "Upload session should exist after creation"
+    );
+    assert_eq!(session.unwrap()["status"], "AwaitingMint");
+
+    creator
+        .call(contract.id(), "nft_mint_prepaid")
+        .args_json(json!({
+            "receiver_id": creator.id(),
+            "token_metadata": {
+                "title": "Upload Session Video",
+                "description": "Scoped upload test",
+                "media": null,
+                "media_hash": null,
+                "copies": 1,
+                "issued_at": null,
+                "expires_at": null,
+                "starts_at": null,
+                "updated_at": null,
+                "extra": null,
+                "reference": null,
+                "reference_hash": null
+            },
+            "video_metadata": {
+                "encrypted_cid": "upload-session-cid",
+                "duration_seconds": 0,
+                "event_date": null,
+                "content_type": "Exclusive",
+                "nova_group_id": null,
+                "storage_type": "Kms"
+            }
+        }))
+        .gas(near_workspaces::types::Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let session_after_mint: Option<serde_json::Value> = contract
+        .view("get_upload_session")
+        .args_json(json!({ "public_key": public_key }))
+        .await?
+        .json()?;
+
+    assert!(
+        session_after_mint.is_some(),
+        "Upload session should survive first upload step"
+    );
+    assert_eq!(session_after_mint.unwrap()["status"], "AwaitingEvent");
+
+    creator
+        .call(contract.id(), "create_event_prepaid")
+        .args_json(json!({
+            "encrypted_cid": "upload-session-cid",
+            "title": "Scoped Upload Event",
+            "description": "Upload session event",
+            "price": "0",
+            "price_usd": null
+        }))
+        .gas(near_workspaces::types::Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let closed_session: Option<serde_json::Value> = contract
+        .view("get_upload_session")
+        .args_json(json!({ "public_key": public_key }))
+        .await?
+        .json()?;
+
+    assert!(
+        closed_session.is_none(),
+        "Upload session should auto-close after event creation"
+    );
+
+    let event: Option<serde_json::Value> = contract
+        .view("get_event")
+        .args_json(json!({ "encrypted_cid": "upload-session-cid" }))
+        .await?
+        .json()?;
+
+    assert!(event.is_some(), "Event should be created by upload session");
     Ok(())
 }

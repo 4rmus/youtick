@@ -1,26 +1,24 @@
-// lib/batch-transactions.ts - near-api-js v7 compatible
-import { actions, nearToYocto, PublicKey, type Action } from 'near-api-js';
+import { actions, nearToYocto, PublicKey } from 'near-api-js';
 import { GAS_CONSTANTS } from './constants';
 import type { WalletInstance } from './types';
-import type { SessionManager } from './session-manager';
 
-/**
- * Batch initial setup: Gas deposit + Session Key
- * This requires TWO transactions because:
- * 1. deposit_funds goes to the CONTRACT
- * 2. addKey goes to the USER's account
- */
+export interface SignlessUploadManager {
+    callMethod(
+        method: string,
+        args: Record<string, unknown>,
+        gas?: string,
+    ): Promise<unknown>;
+}
+
 export async function batchInitialSetup(
     wallet: WalletInstance,
     accountId: string,
     contractId: string,
     sessionKeyPublicKey: string,
-    gasAmount: string = '1' // 1 NEAR default
+    gasAmount: string = '1',
 ) {
-    // v7: Use actions helpers
-    const pubKey = PublicKey.fromString(sessionKeyPublicKey);
+    const publicKey = PublicKey.fromString(sessionKeyPublicKey);
 
-    // Use signAndSendTransactions (plural) to bundle both into one signature approval if supported by the wallet
     return await wallet.signAndSendTransactions({
         transactions: [
             {
@@ -30,82 +28,27 @@ export async function batchInitialSetup(
                         'deposit_funds',
                         {},
                         GAS_CONSTANTS.smallGas,
-                        BigInt(nearToYocto(parseFloat(gasAmount)))
-                    )
-                ]
+                        BigInt(nearToYocto(parseFloat(gasAmount))),
+                    ),
+                ],
             },
             {
                 receiverId: accountId,
                 actions: [
-                    // v7: Use addFunctionCallAccessKey instead of addKey + functionCallAccessKey
                     actions.addFunctionCallAccessKey(
-                        pubKey,
+                        publicKey,
                         contractId,
-                        [], // All methods allowed
-                        BigInt(nearToYocto('0.25')) // 0.25 NEAR allowance
-                    )
-                ]
-            }
-        ]
+                        [],
+                        BigInt(nearToYocto('0.25')),
+                    ),
+                ],
+            },
+        ],
     });
 }
 
-/**
- * Batch initial setup with optional platform funding.
- * Bundles gas deposit + session key + (optional) platform NEAR transfer into one wallet popup.
- */
-export async function batchInitialSetupWithPlatformFunding(
-    wallet: WalletInstance,
-    accountId: string,
-    contractId: string,
-    sessionKeyPublicKey: string,
-    gasAmount: string = '1',
-    platformFunding?: { receiverId: string; amount: number }
-) {
-    const pubKey = PublicKey.fromString(sessionKeyPublicKey);
-
-    const transactions: Array<{ receiverId: string; actions: Action[] }> = [
-        {
-            receiverId: contractId,
-            actions: [
-                actions.functionCall(
-                    'deposit_funds',
-                    {},
-                    GAS_CONSTANTS.smallGas,
-                    BigInt(nearToYocto(parseFloat(gasAmount)))
-                )
-            ]
-        },
-        {
-            receiverId: accountId,
-            actions: [
-                actions.addFunctionCallAccessKey(
-                    pubKey,
-                    contractId,
-                    [],
-                    BigInt(nearToYocto('0.25'))
-                )
-            ]
-        }
-    ];
-
-    // Add platform funding transaction if needed
-    if (platformFunding && platformFunding.amount > 0) {
-        transactions.push({
-            receiverId: platformFunding.receiverId,
-            actions: [actions.transfer(nearToYocto(platformFunding.amount))]
-        });
-    }
-
-    return await wallet.signAndSendTransactions({ transactions });
-}
-
-/**
- * Signless version of batchUploadActions
- * Uses Session Key and internal balance
- */
 export async function batchUploadActionsSignless(
-    sessionManager: SessionManager,
+    sessionManager: SignlessUploadManager,
     videoMetadata: {
         receiver_id: string;
         token_metadata: {
@@ -129,9 +72,6 @@ export async function batchUploadActionsSignless(
         price_usd?: number | null;
     }
 ) {
-    // We must split these into two transactions because Limited Access Keys (Session Keys)
-    // only allow one action per transaction.
-
     await sessionManager.callMethod('nft_mint_prepaid', videoMetadata);
 
     return await sessionManager.callMethod('create_event_prepaid', {

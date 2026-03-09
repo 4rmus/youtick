@@ -103,7 +103,7 @@ describe('useOwnedTokens data logic', () => {
     it('should filter out token.png media URLs', () => {
         const isValidMediaUrl = (mediaUrl: string | undefined): boolean => {
             if (!mediaUrl) return false;
-            return mediaUrl.startsWith('http') || mediaUrl.startsWith('data:');
+            return mediaUrl.startsWith('http') || mediaUrl.startsWith('data:') || mediaUrl.startsWith('ipfs://');
         };
 
         // token.png should be considered invalid for display
@@ -115,6 +115,10 @@ describe('useOwnedTokens data logic', () => {
         const realMedia = 'https://crustipfs.xyz/ipfs/QmTest';
         const isRealValid = isValidMediaUrl(realMedia) && !realMedia.includes('token.png');
         expect(isRealValid).toBe(true);
+
+        const protocolMedia = 'ipfs://QmTestThumbCid123456789012345678901234567890123456';
+        const isProtocolValid = isValidMediaUrl(protocolMedia) && !protocolMedia.includes('token.png');
+        expect(isProtocolValid).toBe(true);
     });
 
     it('should handle null video metadata', () => {
