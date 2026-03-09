@@ -4,12 +4,27 @@ import React, { useState, useReducer } from 'react';
 import Image from 'next/image';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { uploadToCrust } from '@/lib/crust';
-import { generateAESKey, encryptFileChunked, type VideoManifest } from '@/lib/kms/encryption';
+import {
+    encryptBufferWithCounter,
+    encryptFileChunked,
+    generateAESKey,
+    type VideoManifest,
+} from '@/lib/kms/encryption';
 import { storeEncryptionKey } from '@/lib/kms/client';
 import { SessionManager } from '@/lib/session-manager';
-import { batchUploadActionsSignless } from '@/lib/batch-transactions';
-import { generateVideoThumbnail } from '@/lib/video-utils';
-import { actions, nearToYocto } from 'near-api-js';
+import { UploadSessionManager } from '@/lib/upload-session-manager';
+import {
+    batchUploadActionsSignless,
+    type SignlessUploadManager,
+} from '@/lib/batch-transactions';
+import {
+    generateVideoThumbnail,
+    generateVideoThumbnailVariant,
+    POSTER_THUMBNAIL_HEIGHT,
+    POSTER_THUMBNAIL_QUALITY,
+    POSTER_THUMBNAIL_WIDTH,
+} from '@/lib/video-utils';
+import { nearToYocto } from 'near-api-js';
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -18,11 +33,9 @@ import { Button } from "@/components/ui/button"
 import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { useSessionState, useAccountBalance } from '@/lib/hooks/useSessionState';
-import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
 import { getNearPrice, usdToNear } from '@/lib/price';
-
-const CONTRACT_ID = NEAR_CONFIG.contractId;
+import type { DeliverySegmentPayload } from '@/lib/types';
+import type { PackagedDeliveryAsset } from '@/lib/video-delivery';
 
 // ── Upload state reducer ──
 
@@ -42,6 +55,9 @@ const INITIAL_STEPS: UploadStep[] = [
 // File size limits (KMS-based flow)
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB for paid
 const MAX_FREE_FILE_SIZE = 100 * 1024 * 1024; // 100MB for free
+const LEGACY_UPLOAD_PREPAID_NEAR = 0.2;
+const LEGACY_MIN_SESSION_SETUP_NEAR = 0.5;
+const STRICT_SEGMENTED_DELIVERY = true;
 
 interface UploadState {
     uploading: boolean;
@@ -113,13 +129,10 @@ export function UploadForm() {
     const { t } = useLanguage();
     const { accountId, getWallet } = useWallet();
 
-    // React Query hooks for session state (cached, deduplicated)
-    const { hasSessionKey, refetchSessionKey } = useSessionState(accountId);
-    const { data: balanceData, isLoading: isBalanceLoading, refetch: refetchBalance } = useAccountBalance(accountId);
-
     // Form fields
     const [file, setFile] = useState<File | null>(null);
     const [thumbnail, setThumbnail] = useState<Blob | null>(null);
+    const [posterThumbnail, setPosterThumbnail] = useState<Blob | null>(null);
     const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
@@ -165,15 +178,200 @@ export function UploadForm() {
     const payAmount = us.payAmount;
     const verifiedStorageFee = us.verifiedStorageFee;
 
-    // Gas Top-Up State (derived from React Query)
-    const gasBalance = parseFloat(balanceData || '0');
-
     // Helper functions that dispatch to reducer
     const updateStep = (stepId: string, stepStatus: StepStatus) => {
         dispatch({ type: 'UPDATE_STEP', payload: { id: stepId, status: stepStatus } });
     };
     const setStatus = (msg: string) => dispatch({ type: 'SET_STATUS', payload: msg });
     const setUploading = (val: boolean) => dispatch({ type: 'SET_UPLOADING', payload: val });
+
+    const getErrorText = (error: unknown): string => {
+        if (error instanceof Error) {
+            return error.message;
+        }
+
+        if (typeof error === 'string') {
+            return error;
+        }
+
+        try {
+            return JSON.stringify(error);
+        } catch {
+            return String(error);
+        }
+    };
+
+    const isMissingUploadSessionMethod = (error: unknown): boolean => {
+        const message = getErrorText(error).toLowerCase();
+        return (
+            message.includes('contract method is not found') ||
+            message.includes('methodnotfound') ||
+            (message.includes('create_upload_session') && message.includes('method'))
+        );
+    };
+
+    const extractIpfsCid = (ref: string | null | undefined): string | null => {
+        if (!ref) {
+            return null;
+        }
+
+        if (ref.startsWith('ipfs://')) {
+            return ref.slice('ipfs://'.length);
+        }
+
+        const match = ref.match(/\/ipfs\/([^/?#]+)/);
+        return match?.[1] ?? null;
+    };
+
+    const toBlobPart = (bytes: Uint8Array): ArrayBuffer => {
+        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    };
+
+    const runWithConcurrency = async <T, R>(
+        values: T[],
+        limit: number,
+        handler: (value: T, index: number) => Promise<R>,
+    ): Promise<R[]> => {
+        const results: R[] = new Array(values.length);
+        let nextIndex = 0;
+
+        const workers = Array.from({ length: Math.max(1, Math.min(limit, values.length || 1)) }, async () => {
+            while (nextIndex < values.length) {
+                const current = nextIndex;
+                nextIndex += 1;
+                results[current] = await handler(values[current], current);
+            }
+        });
+
+        await Promise.all(workers);
+        return results;
+    };
+
+    const uploadSegmentedDeliveryAsset = async (params: {
+        packagedAsset: PackagedDeliveryAsset;
+        accountId: string;
+        encrypted: boolean;
+        fallbackFlatCid: string;
+        aesKeyB64?: string;
+        thumbnailRef?: string | null;
+        posterBlob?: Blob | null;
+        legacyChunkManifest?: VideoManifest;
+    }): Promise<{ manifestCid: string }> => {
+        const {
+            packagedAsset,
+            accountId: uploaderAccountId,
+            encrypted,
+            fallbackFlatCid,
+            aesKeyB64,
+            thumbnailRef,
+            posterBlob,
+            legacyChunkManifest,
+        } = params;
+        const {
+            createDeliverySegment,
+            toDeliveryManifestV2,
+            warmupGatewayCids,
+            DELIVERY_UPLOAD_CONCURRENCY,
+        } = await import('@/lib/video-delivery');
+
+        if (encrypted && !aesKeyB64) {
+            throw new Error('Segmented encrypted delivery requires an AES key');
+        }
+
+        let posterCid: string | undefined;
+        if (posterBlob) {
+            try {
+                setStatus('Uploading poster image...');
+                const posterResult = await uploadToCrust(posterBlob, uploaderAccountId);
+                posterCid = posterResult.cid;
+            } catch (posterError) {
+                console.warn('[UploadForm] Poster upload failed, continuing without poster:', posterError);
+            }
+        }
+
+        setStatus('Uploading initialization segment...');
+        const initBytes = new Uint8Array(packagedAsset.initSegment);
+        let initCounterB64: string | undefined;
+        let initUploadBlob: Blob;
+
+        if (encrypted) {
+            const encryptedInit = await encryptBufferWithCounter(initBytes, aesKeyB64!);
+            initCounterB64 = encryptedInit.counterB64;
+            initUploadBlob = new Blob([toBlobPart(encryptedInit.ciphertext)], { type: 'application/octet-stream' });
+        } else {
+            initUploadBlob = new Blob([initBytes], { type: 'video/mp4' });
+        }
+
+        const initUpload = await uploadToCrust(initUploadBlob, uploaderAccountId);
+
+        let uploadedSegmentCount = 0;
+        const uploadedSegments = await runWithConcurrency(
+            packagedAsset.segments,
+            DELIVERY_UPLOAD_CONCURRENCY,
+            async (segment) => {
+                const uploadedPayloads = await Promise.all(segment.payloads.map(async (payload): Promise<DeliverySegmentPayload> => {
+                    const payloadBytes = new Uint8Array(payload.buffer);
+                    let payloadCounterB64: string | undefined;
+                    let payloadBlob: Blob;
+
+                    if (encrypted) {
+                        const encryptedPayload = await encryptBufferWithCounter(payloadBytes, aesKeyB64!);
+                        payloadCounterB64 = encryptedPayload.counterB64;
+                        payloadBlob = new Blob([toBlobPart(encryptedPayload.ciphertext)], { type: 'application/octet-stream' });
+                    } else {
+                        payloadBlob = new Blob([payloadBytes], { type: 'video/mp4' });
+                    }
+
+                    const uploadResult = await uploadToCrust(payloadBlob, uploaderAccountId);
+                    return {
+                        cid: uploadResult.cid,
+                        trackId: payload.trackId,
+                        kind: payload.kind,
+                        byteLength: payload.byteLength,
+                        startMs: payload.startMs,
+                        endMs: payload.endMs,
+                        counterB64: payloadCounterB64,
+                    };
+                }));
+
+                uploadedSegmentCount += 1;
+                const progress = Math.round((uploadedSegmentCount / packagedAsset.segments.length) * 100);
+                dispatch({ type: 'SET_PROGRESS', payload: progress });
+                setStatus(`Uploading delivery segments... ${progress}%`);
+
+                return createDeliverySegment(segment.seq, uploadedPayloads);
+            },
+        );
+
+        setStatus('Uploading delivery manifest...');
+        const manifest = toDeliveryManifestV2(
+            packagedAsset,
+            initUpload.cid,
+            packagedAsset.tracks,
+            uploadedSegments,
+            {
+                encrypted,
+                fallbackFlatCid,
+                posterCid,
+                initSegmentCounterB64: initCounterB64,
+                legacyChunkManifest,
+            },
+        );
+
+        const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+        const manifestResult = await uploadToCrust(manifestBlob, uploaderAccountId);
+
+        const warmupItems = [
+            extractIpfsCid(thumbnailRef) ? { cid: extractIpfsCid(thumbnailRef)!, kind: 'image' as const } : null,
+            posterCid ? { cid: posterCid, kind: 'image' as const } : null,
+            { cid: initUpload.cid, kind: 'segment' as const },
+            ...(uploadedSegments[0]?.payloads.map((payload) => ({ cid: payload.cid, kind: 'segment' as const })) ?? []),
+        ].filter(Boolean) as Array<{ cid: string; kind: 'image' | 'segment' }>;
+
+        void warmupGatewayCids(warmupItems);
+
+        return { manifestCid: manifestResult.cid };
+    };
 
     // Track thumbnail preview for cleanup
     const thumbnailPreviewRef = React.useRef<string | null>(null);
@@ -200,6 +398,7 @@ export function UploadForm() {
             const selectedFile = e.target.files[0];
 
             setFile(selectedFile);
+            setPosterThumbnail(null);
 
             // Calculate storage fee
             try {
@@ -215,23 +414,40 @@ export function UploadForm() {
             if (selectedFile.type.startsWith('video/')) {
                 try {
                     setStatus('Generating thumbnail...');
-                    const thumbBlob = await generateVideoThumbnail(selectedFile);
-                    setThumbnail(thumbBlob);
+                    const [cardThumbBlob, posterThumbBlob] = await Promise.all([
+                        generateVideoThumbnail(selectedFile),
+                        generateVideoThumbnailVariant(selectedFile, {
+                            maxWidth: POSTER_THUMBNAIL_WIDTH,
+                            maxHeight: POSTER_THUMBNAIL_HEIGHT,
+                            quality: POSTER_THUMBNAIL_QUALITY,
+                        }),
+                    ]);
+                    setThumbnail(cardThumbBlob);
+                    setPosterThumbnail(posterThumbBlob);
 
-                    const previewUrl = URL.createObjectURL(thumbBlob);
+                    const previewUrl = URL.createObjectURL(cardThumbBlob);
                     thumbnailPreviewRef.current = previewUrl; // Track for cleanup
                     setThumbnailPreview(previewUrl);
                     setStatus('');
                 } catch (error) {
                     console.error('Thumbnail generation failed:', error);
+                    setThumbnail(null);
+                    setPosterThumbnail(null);
                     setStatus('⚠️ Could not generate thumbnail');
                 }
+            } else {
+                setThumbnail(null);
+                setPosterThumbnail(null);
             }
         }
     };
 
     // Main upload function using KMS + Crust
-    const processSignatureAndUpload = async (storageFee: string, sessionManager: SessionManager) => {
+    const processSignatureAndUpload = async (
+        storageFee: string,
+        wallet: Awaited<ReturnType<typeof getWallet>>,
+        sessionManager: SignlessUploadManager,
+    ) => {
         if (!file || !accountId) {
             throw new Error("Missing file, accountId, or selector for upload process.");
         }
@@ -253,8 +469,8 @@ export function UploadForm() {
                         thumbnail,
                         accountId
                     );
-                    // Use Crust gateway URL for thumbnail
-                    thumbnailUrl = `https://crustipfs.xyz/ipfs/${thumbResult.cid}`;
+                    // Store protocol-native reference so reads are not pinned to one gateway.
+                    thumbnailUrl = `ipfs://${thumbResult.cid}`;
                     updateStep('thumbnail', 'complete');
                 } catch (thumbError) {
                     console.error('[Thumbnail] Upload failed:', thumbError);
@@ -265,95 +481,150 @@ export function UploadForm() {
                 updateStep('thumbnail', 'complete');
             }
 
-            // Generate a UUID to serve as the Access Control identifier
-            const videoUuid = crypto.randomUUID();
-
             const isFreeVideo = parseFloat(price) === 0 || price === '';
+            const {
+                buildSegmentedEventTitle,
+                packageVideoForDelivery,
+                shouldUseSegmentedDelivery,
+            } = await import('@/lib/video-delivery');
+            const canUseSegmentedDelivery = shouldUseSegmentedDelivery(file.type);
+            let packagedDeliveryAsset: PackagedDeliveryAsset | null = null;
+
+            if (canUseSegmentedDelivery) {
+                setStatus('Packaging video for segmented playback...');
+                try {
+                    packagedDeliveryAsset = await packageVideoForDelivery(file);
+                } catch (packagingError) {
+                    console.error('[UploadForm] Segmented packaging failed for supported video type:', {
+                        fileName: file.name,
+                        fileType: file.type,
+                        fileSize: file.size,
+                        error: packagingError,
+                    });
+
+                    if (STRICT_SEGMENTED_DELIVERY) {
+                        throw new Error(
+                            `Segmented delivery packaging failed for ${file.type}. Upload was stopped instead of falling back to the legacy player path.`,
+                        );
+                    }
+                }
+
+                if (!packagedDeliveryAsset && STRICT_SEGMENTED_DELIVERY) {
+                    throw new Error(
+                        `Segmented delivery packaging did not produce an asset for ${file.type}. Upload was stopped.`,
+                    );
+                }
+            }
 
             let videoCid: string;
             let manifestCid: string | undefined;
+            const videoUuid = crypto.randomUUID();
+            const detectedDurationSeconds = packagedDeliveryAsset
+                ? Math.max(1, Math.round(packagedDeliveryAsset.durationMs / 1000))
+                : 0;
 
             if (isFreeVideo) {
-                // Free video: no encryption, upload directly to Crust
                 updateStep('encrypt', 'complete');
                 updateStep('upload', 'loading');
-                updateStep('kms', 'complete'); // No key to store for free videos
+                updateStep('kms', 'complete');
                 setStatus('Uploading to IPFS...');
 
                 const result = await uploadToCrust(file, accountId);
                 videoCid = result.cid;
+
+                if (packagedDeliveryAsset) {
+                    const deliveryUpload = await uploadSegmentedDeliveryAsset({
+                        packagedAsset: packagedDeliveryAsset,
+                        accountId,
+                        encrypted: false,
+                        fallbackFlatCid: videoCid,
+                        thumbnailRef: thumbnailUrl,
+                        posterBlob: posterThumbnail,
+                    });
+                    manifestCid = deliveryUpload.manifestCid;
+                }
+
                 updateStep('upload', 'complete');
             } else {
-                // Paid video: AES-CTR encrypt → Crust upload → KMS key store
                 updateStep('encrypt', 'loading');
                 setStatus('Generating encryption key...');
 
-                // 1. Generate AES-256-CTR key
                 const aesKeyB64 = await generateAESKey();
 
-                // 2. Encrypt file in chunks and collect results
                 setStatus('Encrypting video (AES-256-CTR)...');
                 const encryptedChunks: Uint8Array[] = [];
-                let manifest: VideoManifest | undefined;
+                let legacyChunkManifest: VideoManifest | undefined;
 
-                for await (const { chunk, manifest: m } of encryptFileChunked(file, aesKeyB64)) {
+                for await (const { chunk, manifest: currentManifest } of encryptFileChunked(file, aesKeyB64)) {
                     encryptedChunks.push(chunk.data);
-                    if (m) manifest = m;
-                    // Update progress
+                    if (currentManifest) legacyChunkManifest = currentManifest;
                     const progress = Math.round(((chunk.index + 1) / Math.ceil(file.size / (1024 * 1024))) * 100);
                     dispatch({ type: 'SET_PROGRESS', payload: progress });
                 }
 
-                if (!manifest) throw new Error('Encryption failed: no manifest generated');
+                if (!legacyChunkManifest) {
+                    throw new Error('Encryption failed: no manifest generated');
+                }
                 updateStep('encrypt', 'complete');
 
-                // 3. Upload encrypted data to Crust as single blob
                 updateStep('upload', 'loading');
                 setStatus('Uploading encrypted video to IPFS...');
 
-                // Combine all chunks into a single blob for upload
                 const encryptedBlob = new Blob(encryptedChunks as unknown as BlobPart[], { type: 'application/octet-stream' });
                 const uploadResult = await uploadToCrust(encryptedBlob, accountId, {
                     onProgress: (p) => dispatch({ type: 'SET_PROGRESS', payload: p.percentage }),
                 });
                 videoCid = uploadResult.cid;
 
-                // 4. Upload manifest JSON to Crust
-                setStatus('Uploading manifest...');
-                const manifestBlob = new Blob(
-                    [JSON.stringify(manifest)],
-                    { type: 'application/json' }
-                );
-                const manifestResult = await uploadToCrust(manifestBlob, accountId);
-                manifestCid = manifestResult.cid;
+                if (packagedDeliveryAsset) {
+                    const deliveryUpload = await uploadSegmentedDeliveryAsset({
+                        packagedAsset: packagedDeliveryAsset,
+                        accountId,
+                        encrypted: true,
+                        fallbackFlatCid: videoCid,
+                        aesKeyB64,
+                        thumbnailRef: thumbnailUrl,
+                        posterBlob: posterThumbnail,
+                        legacyChunkManifest,
+                    });
+                    manifestCid = deliveryUpload.manifestCid;
+                } else {
+                    setStatus('Uploading manifest...');
+                    const manifestBlob = new Blob(
+                        [JSON.stringify(legacyChunkManifest)],
+                        { type: 'application/json' }
+                    );
+                    const manifestResult = await uploadToCrust(manifestBlob, accountId);
+                    manifestCid = manifestResult.cid;
+                }
+
                 updateStep('upload', 'complete');
 
-                // 5. Store AES key in KMS Worker
                 updateStep('kms', 'loading');
                 setStatus('Storing encryption key on KMS...');
 
-                const { privateKey, publicKeyB58 } = await sessionManager.getKeyForKMS();
                 await storeEncryptionKey(
                     videoUuid,
                     aesKeyB64,
                     accountId,
-                    privateKey,
-                    publicKeyB58
+                    wallet
                 );
                 updateStep('kms', 'complete');
             }
 
             // 6. Mint Ticket + Create Event (BATCH - Signless!)
+            let blockchainPublishSucceeded = false;
             updateStep('mint', 'loading');
             setStatus('Minting NFT ticket on NEAR...');
             try {
-                // Title encoding:
-                //   Paid:  "CID:::Thumbnail:::ManifestCID:::Title"  (4 segments)
-                //   Free:  "CID:::Thumbnail:::Title"                (3 segments)
-                //   Legacy:"CID:::Title"                            (2 segments)
                 let eventTitle: string;
                 if (manifestCid) {
-                    eventTitle = `${videoCid}:::${thumbnailUrl || ''}:::${manifestCid}:::${title || file.name}`;
+                    eventTitle = buildSegmentedEventTitle(
+                        videoCid,
+                        thumbnailUrl || undefined,
+                        manifestCid,
+                        title || file.name,
+                    );
                 } else if (thumbnailUrl) {
                     eventTitle = `${videoCid}:::${thumbnailUrl}:::${title || file.name}`;
                 } else {
@@ -374,7 +645,7 @@ export function UploadForm() {
                     },
                     video_metadata: {
                         encrypted_cid: videoUuid,
-                        duration_seconds: 0,
+                        duration_seconds: detectedDurationSeconds,
                         content_type: 'Exclusive',
                         storage_type: 'Kms' as const
                     }
@@ -398,6 +669,7 @@ export function UploadForm() {
                     eventMetadata
                 );
 
+                blockchainPublishSucceeded = true;
                 updateStep('mint', 'complete');
                 setStatus('Success! Video uploaded & ticket sales started!');
 
@@ -405,13 +677,13 @@ export function UploadForm() {
                 console.error('Minting/Event failed:', mintError);
                 updateStep('mint', 'error');
                 setStatus(`Video uploaded but blockchain actions failed: ${mintError instanceof Error ? mintError.message : String(mintError)}`);
-                refetchBalance();
             }
 
-            // Final success message
-            setStatus('Success! Video uploaded & ticket sales started!');
-
             setUploading(false);
+
+            if (!blockchainPublishSucceeded) {
+                return;
+            }
 
             // Clear form
             setFile(null);
@@ -419,6 +691,7 @@ export function UploadForm() {
             setDescription('');
             setPriceUsd('');
             setThumbnail(null);
+            setPosterThumbnail(null);
             setThumbnailPreview(null);
 
         } catch (error: unknown) {
@@ -432,17 +705,88 @@ export function UploadForm() {
         }
     };
 
+    const prepareLegacyUploadAuthorization = async (
+        wallet: Awaited<ReturnType<typeof getWallet>>,
+    ): Promise<SessionManager> => {
+        const sessionManager = new SessionManager(accountId!);
+
+        await sessionManager.importWalletFunctionCallKey();
+
+        let prepaidBalance = await sessionManager.getAccountBalance();
+        const hasValidKey = await sessionManager.hasSessionKey();
+
+        if (!hasValidKey) {
+            setStatus('Live contract is missing upload sessions. Creating legacy session key...');
+            await sessionManager.createSessionKey(
+                wallet,
+                LEGACY_MIN_SESSION_SETUP_NEAR.toFixed(2),
+            );
+            prepaidBalance = await sessionManager.getAccountBalance();
+        }
+
+        if (prepaidBalance < LEGACY_UPLOAD_PREPAID_NEAR) {
+            const topUpAmount = Math.ceil(
+                (LEGACY_UPLOAD_PREPAID_NEAR - prepaidBalance) * 100,
+            ) / 100;
+            setStatus(`Funding legacy prepaid balance (${topUpAmount.toFixed(2)} NEAR)...`);
+            await sessionManager.topUpGas(wallet, topUpAmount.toFixed(2));
+        }
+
+        return sessionManager;
+    };
+
+    const authorizeUpload = async (
+        wallet: Awaited<ReturnType<typeof getWallet>>,
+    ): Promise<{ sessionManager: SignlessUploadManager; cleanup: () => void }> => {
+        const sessionManager = new UploadSessionManager(accountId!);
+
+        try {
+            setStatus('Authorizing upload session...');
+            await sessionManager.createSession(wallet);
+            return {
+                sessionManager,
+                cleanup: () => sessionManager.clearSession(),
+            };
+        } catch (error) {
+            sessionManager.clearSession();
+
+            if (!isMissingUploadSessionMethod(error)) {
+                throw error;
+            }
+
+            console.warn(
+                '[UploadForm] create_upload_session is unavailable on the live contract; falling back to legacy session keys.',
+            );
+
+            const legacySessionManager = await prepareLegacyUploadAuthorization(wallet);
+            return {
+                sessionManager: legacySessionManager,
+                cleanup: () => undefined,
+            };
+        }
+    };
+
     // Retry handler
     const handleRetrySign = async () => {
+        let cleanup: () => void = () => {};
+
         try {
             dispatch({ type: 'SET_RETRY_STEP', payload: 'none' });
             setStatus('Retrying upload...');
 
-            const sessionManager = new SessionManager(accountId!);
-            await processSignatureAndUpload(verifiedStorageFee, sessionManager);
+            const wallet = await getWallet();
+            const authorization = await authorizeUpload(wallet);
+            cleanup = authorization.cleanup;
+            await processSignatureAndUpload(
+                verifiedStorageFee,
+                wallet,
+                authorization.sessionManager,
+            );
         } catch (error: unknown) {
             console.error('Retry failed:', error);
-            setStatus(`Retry failed: ${error instanceof Error ? error.message : String(error)}`);
+            setStatus(`Retry failed: ${getErrorText(error)}`);
+        } finally {
+            cleanup();
         }
     };
 
@@ -478,86 +822,36 @@ export function UploadForm() {
         setStatus('Checking wallet & balance...');
         // Reset all steps to pending
         dispatch({ type: 'RESET_STEPS' });
+        let cleanup: () => void = () => {};
 
         try {
             const wallet = await getWallet();
-            const sessionManager = new SessionManager(accountId);
-
             const storageFee = estimatedStorageFee;
             dispatch({ type: 'SET_VERIFIED_STORAGE_FEE', payload: storageFee });
 
             updateStep('session', 'loading');
-
-            // --- Fetch fresh on-chain balance (React Query cache may be stale) ---
-            const freshBalanceResult = await refetchBalance();
-            let freshBalance = parseFloat(freshBalanceResult.data || '0');
-
-            // --- Calculate exact required deposit ---
-            const mintCost = 0.10;   // nft_mint_prepaid charge
-            const eventCost = 0.10;  // create_event_prepaid charge
-
-            // Exact deposit: only what the contract methods will deduct
-            const exactPrepaidNeeded = mintCost + eventCost;
-
-            // --- Ensure a valid session key exists (local + on-chain) ---
-            // 1. Try importing MyNearWallet's function call key (no-op if key already in keystore)
-            await sessionManager.importWalletFunctionCallKey();
-            // 2. Verify the local key is also registered on-chain.
-            //    hasSessionKey() removes stale local keys that no longer exist on-chain,
-            //    preventing AccessKeyDoesNotExistError at callMethod time.
-            const hasValidKey = await sessionManager.hasSessionKey();
-
-            if (!hasValidKey) {
-                // No valid session key (Meteor wallet, stale/removed key, first use, etc.)
-                // Create a fresh key pair + deposit in one wallet popup.
-                setStatus('Creating session key...');
-                const depositAmount = Math.max(exactPrepaidNeeded, 0.5);
-                await sessionManager.createSessionKey(wallet, depositAmount.toFixed(2));
-                refetchSessionKey();
-
-                // Re-fetch balance since createSessionKey deposited funds
-                const updatedResult = await refetchBalance();
-                freshBalance = parseFloat(updatedResult.data || '0');
-            }
-
-            if (freshBalance < exactPrepaidNeeded) {
-                // Returning user: prepaid balance insufficient → top-up (1 wallet popup)
-                const topUpAmount = Math.ceil((exactPrepaidNeeded - freshBalance) * 100) / 100;
-                setStatus(`Topping up prepaid balance (${topUpAmount.toFixed(2)} NEAR)...`);
-
-                const txResult = await wallet.signAndSendTransactions({
-                    transactions: [{
-                        receiverId: CONTRACT_ID,
-                        actions: [
-                            actions.functionCall(
-                                'deposit_funds', {},
-                                GAS_CONSTANTS.smallGas,
-                                nearToYocto(topUpAmount)
-                            )
-                        ]
-                    }]
-                });
-                if (!txResult) {
-                    throw new Error('Transaction cancelled or wallet returned no result.');
-                }
-                refetchBalance();
-            }
+            const authorization = await authorizeUpload(wallet);
+            cleanup = authorization.cleanup;
 
             setStatus('Wallet ready');
             updateStep('session', 'complete');
 
             // --- KMS Upload (AES-CTR encryption) ---
-            await processSignatureAndUpload(storageFee, sessionManager);
+            await processSignatureAndUpload(
+                storageFee,
+                wallet,
+                authorization.sessionManager,
+            );
 
         } catch (error: unknown) {
             console.error('Upload failed:', error);
-            const msg = error instanceof Error
-                ? error.message
-                : error ? String(error) : 'Transaction cancelled or wallet returned no result.';
+            const msg = error
+                ? getErrorText(error)
+                : 'Transaction cancelled or wallet returned no result.';
             setStatus(`Upload failed: ${msg}`);
             setUploading(false);
-            // Refresh balance so next upload attempt uses fresh on-chain data
-            refetchBalance();
+        } finally {
+            cleanup();
         }
     };
 
@@ -571,24 +865,14 @@ export function UploadForm() {
                     <p className="text-muted-foreground text-sm">{t.upload_page.description}</p>
                 </div>
                 {/* Verified Badge - Same width as preview (2/5) */}
-                <div className={`lg:col-span-2 px-4 py-2 rounded-xl border flex items-center gap-3 ${hasSessionKey
-                    ? 'bg-blue-500/10 border-blue-500/30'
-                    : 'bg-zinc-900/50 border-white/5'}`}>
-                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${hasSessionKey
-                        ? 'bg-blue-500/20 border border-blue-500/50'
-                        : 'bg-zinc-800 border border-zinc-700'}`}>
-                        {hasSessionKey ? (
-                            <CheckCircle2 className="w-4 h-4 text-blue-400" />
-                        ) : (
-                            <div className="w-3 h-3 rounded-full border-2 border-zinc-500 border-dashed animate-pulse" />
-                        )}
+                <div className="lg:col-span-2 px-4 py-2 rounded-xl border flex items-center gap-3 bg-blue-500/10 border-blue-500/30">
+                    <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 bg-blue-500/20 border border-blue-500/50">
+                        <CheckCircle2 className="w-4 h-4 text-blue-400" />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <p className={`text-xs font-bold ${hasSessionKey ? 'text-blue-300' : 'text-zinc-300'}`}>
-                            {hasSessionKey ? '✓ Session Key Active' : 'Pending Verification'}
-                        </p>
+                        <p className="text-xs font-bold text-blue-300">Ephemeral Upload Session</p>
                         <p className="text-[10px] text-zinc-500 truncate">
-                            {hasSessionKey ? 'Session key enabled' : 'Complete first upload'}
+                            Upload authorization is created per upload and stays only in memory.
                         </p>
                     </div>
                 </div>
@@ -741,10 +1025,7 @@ export function UploadForm() {
                         <div className="px-6 pb-2">
                             <CostReceipt
                                 storageFee={estimatedStorageFee}
-                                currentBalance={balanceData || '0'}
                                 payAmount={payAmount}
-                                loading={isBalanceLoading}
-                                gasBalance={gasBalance}
                             />
                         </div>
                     )}

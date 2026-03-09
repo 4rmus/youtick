@@ -162,6 +162,74 @@ export interface NFTEvent {
  */
 export type StorageType = 'KMS';
 
+/**
+ * Media delivery track type
+ */
+export type DeliveryTrackKind = 'audio' | 'video';
+
+/**
+ * Per-track metadata for segmented delivery
+ */
+export interface DeliveryTrackInfo {
+    id: number;
+    kind: DeliveryTrackKind;
+    codec: string;
+    bitrate: number;
+    timescale: number;
+}
+
+/**
+ * CID-backed payload for one track inside a delivery segment
+ */
+export interface DeliverySegmentPayload {
+    cid: string;
+    trackId: number;
+    kind: DeliveryTrackKind;
+    byteLength: number;
+    startMs: number;
+    endMs: number;
+    counterB64?: string;
+}
+
+/**
+ * Time-bucketed delivery segment
+ */
+export interface DeliverySegment {
+    seq: number;
+    durationMs: number;
+    payloads: DeliverySegmentPayload[];
+}
+
+/**
+ * Segment-based media manifest used by the v2 player
+ */
+export interface DeliveryManifestV2 {
+    version: 2;
+    packaging: 'cmaf';
+    encrypted: boolean;
+    codec: string;
+    contentType: 'video/mp4';
+    durationMs: number;
+    fallbackFlatCid?: string;
+    legacyChunkManifest?: {
+        totalChunks: number;
+        originalSize: number;
+        chunkSize: number;
+        counterB64: string;
+        contentType: string;
+    };
+    thumbnails?: {
+        posterCid?: string;
+    };
+    initSegment: {
+        cid: string;
+        byteLength: number;
+        counterB64?: string;
+    };
+    tracks: DeliveryTrackInfo[];
+    segments: DeliverySegment[];
+}
+
 // ============================================================================
 // Wallet Types
 // ============================================================================
@@ -187,6 +255,18 @@ export interface WalletInstance {
         }>;
     }): Promise<object[]>;
     getAccounts(): Promise<Array<{ accountId: string }>>;
+    signMessage(params: {
+        message: string;
+        recipient: string;
+        nonce: Uint8Array;
+        callbackUrl?: string;
+        state?: string;
+    }): Promise<{
+        accountId: string;
+        publicKey: string;
+        signature: string;
+        state?: string;
+    } | void>;
 }
 
 /**

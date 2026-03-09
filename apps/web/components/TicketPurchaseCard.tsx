@@ -2,10 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from "@/components/ui/button";
 import { Loader2, Ticket, AlertCircle, Play, ChevronDown, ChevronUp, Check, Wallet } from "lucide-react";
-import { actions, KeyPair, KeyPairSigner, Account, PublicKey, yoctoToNear, nearToYocto, type KeyPairString } from 'near-api-js';
+import { actions, KeyPair, KeyPairSigner, Account, yoctoToNear, nearToYocto, type KeyPairString } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
-import { SessionManager } from '@/lib/session-manager';
-import { useSessionState, useIsCreator } from '@/lib/hooks/useSessionState';
+import { useIsCreator } from '@/lib/hooks/useSessionState';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
 import { IPFSThumbnail } from './IPFSThumbnail';
@@ -15,6 +14,7 @@ import { getTokenConfig, submitDeposit, type PaymentMethod, type ChainId, type S
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { useEvmPayment } from '@/lib/evm/useEvmPayment';
 import { claimFreeTicketDirect, hasOnboardingKey } from '@/lib/gift-service';
+import { resolvePreferredMediaUrl } from '@/lib/video-delivery';
 
 interface TicketPurchaseCardProps {
     cid: string;
@@ -39,14 +39,10 @@ type PaymentSelection = {
 
 const STORAGE_DEPOSIT_NEAR = 0.01;
 const GAS_BUFFER_NEAR = 0.01;
-const SESSION_KEY_ALLOWANCE_NEAR = '0.15';
-const LEGACY_SERVICE_FEE_METHOD = ['get', String.fromCharCode(110, 111, 118, 97), 'service', 'fee'].join('_');
 
 export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: TicketPurchaseCardProps) {
     const { accountId, isTrial, getWallet, connect, setEvmLinkedAccount } = useWallet();
 
-    // React Query hooks for cached state
-    const { hasSessionKey } = useSessionState(accountId);
     const { data: isCreatorData } = useIsCreator(accountId, cid);
     const { nearPrice, nearToUsdStr } = useNearPrice();
 
@@ -55,8 +51,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     const [eventDetails, setEventDetails] = useState<EventDetails | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [showCostBreakdown, setShowCostBreakdown] = useState(false);
-    const [platformServiceFeeYocto, setPlatformServiceFeeYocto] = useState<bigint>(BigInt(0));
-    const [platformServiceFeeNear, setPlatformServiceFeeNear] = useState(0);
 
 
     // MetaMask / EVM payment hook
@@ -95,30 +89,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     // Post-swap state: 1Click delivers native NEAR (not wNEAR), ready for purchase
     const [swapNearReady, setSwapNearReady] = useState(false);
 
-    const prepareSessionKeyBootstrap = useCallback(async (): Promise<{
-        keyPair: KeyPair;
-        publicKey: string;
-    } | null> => {
-        if (!accountId || isTrial) return null;
-
-        const sessionManager = new SessionManager(accountId);
-        await sessionManager.importWalletFunctionCallKey();
-        const hasValidSessionKey = await sessionManager.hasSessionKey();
-        if (hasValidSessionKey) return null;
-
-        const keyPair = KeyPair.fromRandom('ed25519');
-        return {
-            keyPair,
-            publicKey: keyPair.getPublicKey().toString(),
-        };
-    }, [accountId, isTrial]);
-
-    const persistSessionKeyBootstrap = useCallback(async (keyPair: KeyPair | null) => {
-        if (!accountId || !keyPair) return;
-        const sessionManager = new SessionManager(accountId);
-        await sessionManager.saveSessionKey(keyPair);
-    }, [accountId]);
-
     // Complete purchase from implicit account (MetaMask-only flow)
     // Called automatically after 1Click swap delivers NEAR to the implicit account
     const handleImplicitAccountPurchase = async (secretKey: string, implicitId: string) => {
@@ -136,22 +106,16 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             const priceYocto = nearToYocto(parseFloat(eventDetails.price));
             const storageCostYocto = BigInt(nearToYocto(STORAGE_DEPOSIT_NEAR));
-            const totalDeposit = BigInt(priceYocto) + storageCostYocto + platformServiceFeeYocto;
+            const totalDeposit = BigInt(priceYocto) + storageCostYocto;
 
             await account.signAndSendTransaction({
                 receiverId: contractId,
                 actions: [
                     actions.functionCall(
-                        'deposit_funds',
-                        {},
-                        GAS_CONSTANTS.smallGas,
-                        totalDeposit
-                    ),
-                    actions.functionCall(
-                        'buy_ticket_prepaid',
+                        'buy_ticket',
                         { receiver_id: implicitId, encrypted_cid: cid },
-                        BigInt('50000000000000'),
-                        BigInt(0)
+                        GAS_CONSTANTS.mediumGas,
+                        totalDeposit
                     ),
                 ],
             });
@@ -209,7 +173,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         },
     });
 
-    // Initial Load: Fetch Event Details + dynamic service fee
+    // Initial Load: Fetch Event Details
     useEffect(() => {
         if (!cid || cid.length > 256) return;
 
@@ -219,20 +183,13 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 const contractId = NEAR_CONFIG.contractId;
                 const provider = getProvider();
 
-                const [event, rawServiceFee] = await Promise.all([
-                    viewContract<{
-                        title: string;
-                        price: string;
-                        creator_id: string;
-                        price_usd?: number | null;
-                        banned?: boolean;
-                    }>(provider, contractId, 'get_event', { encrypted_cid: cid }),
-                    viewContract<string>(provider, contractId, LEGACY_SERVICE_FEE_METHOD, {}),
-                ]);
-
-                const feeYocto = BigInt(rawServiceFee || '0');
-                setPlatformServiceFeeYocto(feeYocto);
-                setPlatformServiceFeeNear(parseFloat(yoctoToNear(feeYocto)));
+                const event = await viewContract<{
+                    title: string;
+                    price: string;
+                    creator_id: string;
+                    price_usd?: number | null;
+                    banned?: boolean;
+                }>(provider, contractId, 'get_event', { encrypted_cid: cid });
 
                 if (event?.banned) {
                     setError('This event has been banned and tickets cannot be purchased.');
@@ -242,12 +199,13 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
                 if (event) {
                     const parsed = parseTitleMetadata(event.title, "Exclusive Content");
+                    const media = await resolvePreferredMediaUrl(parsed.thumbnailUrl, parsed.manifestCid);
 
                     setEventDetails({
                         price: yoctoToNear(BigInt(event.price)),
                         priceUsdCents: event.price_usd ?? null,
                         title: parsed.title,
-                        media: parsed.thumbnailUrl,
+                        media: media ?? parsed.thumbnailUrl,
                         uploader: event.creator_id
                     });
                 }
@@ -267,7 +225,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         setPaymentSelection(selection);
     }, []);
 
-    // Claim FREE Ticket (sponsored onboarding key, session key, or wallet fallback)
+    // Claim FREE Ticket (sponsored onboarding key or wallet fallback)
     const handleFreeTicketClaim = async () => {
         if (!eventDetails) return;
         if (!accountId) {
@@ -296,51 +254,18 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             }
 
             const contractId = NEAR_CONFIG.contractId;
-            const sessionManager = new SessionManager(accountId);
-            const hasValidSessionKey = hasSessionKey ? await sessionManager.hasSessionKey() : false;
-
-            if (hasValidSessionKey) {
-                await sessionManager.callMethod('buy_ticket_prepaid', {
-                    receiver_id: accountId,
-                    encrypted_cid: cid
-                }, GAS_CONSTANTS.mediumGas.toString());
-            } else {
-                const wallet = await getWallet();
-                const sessionBootstrap = await prepareSessionKeyBootstrap();
-
-                const transactions = [{
-                    receiverId: contractId,
-                    actions: [
-                        actions.functionCall(
-                            'buy_ticket',
-                            { receiver_id: accountId, encrypted_cid: cid },
-                            GAS_CONSTANTS.mediumGas,
-                            // Free ticket storage is sponsored by the contract.
-                            BigInt(0)
-                        )
-                    ]
-                }];
-
-                if (sessionBootstrap) {
-                    transactions.push({
-                        receiverId: accountId,
-                        actions: [
-                            actions.addFunctionCallAccessKey(
-                                PublicKey.fromString(sessionBootstrap.publicKey),
-                                contractId,
-                                [],
-                                BigInt(nearToYocto(SESSION_KEY_ALLOWANCE_NEAR))
-                            )
-                        ]
-                    });
-                }
-
-                await wallet.signAndSendTransactions({
-                    transactions
-                });
-
-                await persistSessionKeyBootstrap(sessionBootstrap?.keyPair || null);
-            }
+            const wallet = await getWallet();
+            await wallet.signAndSendTransaction({
+                receiverId: contractId,
+                actions: [
+                    actions.functionCall(
+                        'buy_ticket',
+                        { receiver_id: accountId, encrypted_cid: cid },
+                        GAS_CONSTANTS.mediumGas,
+                        BigInt(0)
+                    ),
+                ],
+            });
 
             // KMS: Access control via on-chain ticket ownership — no group management needed
             if (onPurchaseSuccess) onPurchaseSuccess();
@@ -365,56 +290,24 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         try {
             const wallet = await getWallet();
             const contractId = NEAR_CONFIG.contractId;
-            const sessionBootstrap = await prepareSessionKeyBootstrap();
-
-            const purchaseActions = [];
             const storageCostYocto = BigInt(nearToYocto(STORAGE_DEPOSIT_NEAR));
             const priceYocto = BigInt(nearToYocto(parseFloat(eventDetails.price)));
+            const totalDeposit = priceYocto + storageCostYocto;
 
-            const totalDeposit = priceYocto + storageCostYocto + platformServiceFeeYocto;
-
-            purchaseActions.push(
-                actions.functionCall(
-                    'deposit_funds',
-                    {},
-                    GAS_CONSTANTS.smallGas,
-                    totalDeposit
-                )
-            );
-
-            purchaseActions.push(
-                actions.functionCall(
-                    'buy_ticket_prepaid',
-                    {
-                        receiver_id: accountId,
-                        encrypted_cid: cid
-                    },
-                    BigInt('50000000000000'),
-                    BigInt('0')
-                )
-            );
-
-            const transactions = [{
+            await wallet.signAndSendTransaction({
                 receiverId: contractId,
-                actions: purchaseActions
-            }];
-
-            if (sessionBootstrap) {
-                transactions.push({
-                    receiverId: accountId,
-                    actions: [
-                        actions.addFunctionCallAccessKey(
-                            PublicKey.fromString(sessionBootstrap.publicKey),
-                            contractId,
-                            [],
-                            BigInt(nearToYocto(SESSION_KEY_ALLOWANCE_NEAR))
-                        )
-                    ]
-                });
-            }
-
-            await wallet.signAndSendTransactions({ transactions });
-            await persistSessionKeyBootstrap(sessionBootstrap?.keyPair || null);
+                actions: [
+                    actions.functionCall(
+                        'buy_ticket',
+                        {
+                            receiver_id: accountId,
+                            encrypted_cid: cid
+                        },
+                        GAS_CONSTANTS.mediumGas,
+                        totalDeposit
+                    ),
+                ],
+            });
 
             // KMS: Access control via on-chain ticket ownership — no group management needed
             if (onPurchaseSuccess) onPurchaseSuccess();
@@ -427,7 +320,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         }
     };
 
-    // Buy Ticket with Stablecoin (1Click swap → native NEAR → deposit_funds → buy_ticket_prepaid)
+    // Buy Ticket with Stablecoin (1Click swap → native NEAR → direct buy_ticket)
     const handleStablecoinPurchase = async () => {
         if (!eventDetails) return;
 
@@ -470,16 +363,16 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         }
 
         const priceNear = parseFloat(eventDetails.price) || 0;
-        // Total NEAR needed by contract: price + storage + dynamic service fee
+        // Total NEAR needed by contract: ticket price + NFT storage.
         // Plus gas buffer and slippage buffer to account for swap price impact.
-        const contractCost = priceNear + STORAGE_DEPOSIT_NEAR + platformServiceFeeNear;
+        const contractCost = priceNear + STORAGE_DEPOSIT_NEAR;
         const totalWithBuffer = contractCost + GAS_BUFFER_NEAR;
         const totalWithSlippage = totalWithBuffer * 1.10;
 
         let usdCents: number;
         if (eventDetails.priceUsdCents && nearPrice > 0) {
             // USD-priced ticket: calculate overhead in USD and add slippage
-            const overheadNear = STORAGE_DEPOSIT_NEAR + platformServiceFeeNear + GAS_BUFFER_NEAR;
+            const overheadNear = STORAGE_DEPOSIT_NEAR + GAS_BUFFER_NEAR;
             const overheadUsdCents = Math.ceil(overheadNear * nearPrice * 100);
             usdCents = Math.ceil((eventDetails.priceUsdCents + overheadUsdCents) * 1.05);
         } else if (nearPrice > 0) {
@@ -591,7 +484,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
                 // Deposit sent — 1Click polling will detect the swap.
                 // onSwapComplete sets swapNearReady=true, then user clicks
-                // "Complete Purchase" which calls handleNearPurchase (deposit_funds + buy_ticket_prepaid).
+                // "Complete Purchase" which calls direct buy_ticket.
             }
         } catch (e) {
             console.error("Stablecoin payment failed:", e);
@@ -780,7 +673,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     const costItems = [
                         { label: 'Ticket price', amount: priceNear },
                         { label: 'NFT storage deposit', amount: STORAGE_DEPOSIT_NEAR },
-                        { label: 'Service fee', amount: platformServiceFeeNear },
                         { label: 'Gas buffer', amount: GAS_BUFFER_NEAR },
                     ];
                     const total = costItems.reduce((sum, item) => sum + item.amount, 0);

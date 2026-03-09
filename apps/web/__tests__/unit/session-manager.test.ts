@@ -164,14 +164,18 @@ describe('SessionManager Logic', () => {
     it('should create valid functionCall action', () => {
       const action = {
         type: 'FunctionCall',
-        methodName: 'deposit_funds',
-        args: {},
+        methodName: 'create_upload_session',
+        args: {
+          public_key: 'ed25519:abc123',
+          budget_yocto: '200000000000000000000000',
+          ttl_ms: 900000,
+        },
         gas: BigInt('30000000000000'),
-        deposit: BigInt('1000000000000000000000000')
+        deposit: BigInt('200000000000000000000000')
       };
 
       expect(action.type).toBe('FunctionCall');
-      expect(action.methodName).toBe('deposit_funds');
+      expect(action.methodName).toBe('create_upload_session');
       expect(action.gas).toBe(BigInt('30000000000000'));
     });
 
@@ -183,7 +187,7 @@ describe('SessionManager Logic', () => {
           permission: {
             FunctionCall: {
               receiver_id: 'contract.testnet',
-              method_names: ['buy_ticket_prepaid', 'deposit_funds']
+              method_names: ['nft_mint_prepaid', 'create_event_prepaid']
             }
           }
         }

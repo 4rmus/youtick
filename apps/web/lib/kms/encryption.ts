@@ -88,6 +88,60 @@ export function generateCounter(): Uint8Array {
     return crypto.getRandomValues(new Uint8Array(16));
 }
 
+/**
+ * Encode a counter as base64 for manifest transport.
+ */
+export function encodeCounter(counter: Uint8Array): string {
+    return arrayBufferToBase64(counter.buffer.slice(counter.byteOffset, counter.byteOffset + counter.byteLength) as ArrayBuffer);
+}
+
+/**
+ * Decode a base64 counter value from a manifest.
+ */
+export function decodeCounter(counterB64: string): Uint8Array {
+    return new Uint8Array(base64ToArrayBuffer(counterB64));
+}
+
+/**
+ * Encrypt an arbitrary buffer with AES-CTR using a fresh counter by default.
+ */
+export async function encryptBufferWithCounter(
+    plaintext: Uint8Array,
+    keyB64: string,
+    counter: Uint8Array = generateCounter(),
+): Promise<{ ciphertext: Uint8Array; counterB64: string }> {
+    const key = await importAESKey(keyB64);
+    const ciphertext = await crypto.subtle.encrypt(
+        { name: 'AES-CTR', counter: counter as unknown as BufferSource, length: CTR_LENGTH },
+        key,
+        plaintext as unknown as BufferSource,
+    );
+
+    return {
+        ciphertext: new Uint8Array(ciphertext),
+        counterB64: encodeCounter(counter),
+    };
+}
+
+/**
+ * Decrypt an arbitrary buffer with AES-CTR using an explicit counter value.
+ */
+export async function decryptBufferWithCounter(
+    encryptedData: Uint8Array,
+    keyB64: string,
+    counterB64: string,
+): Promise<Uint8Array> {
+    const key = await importAESKey(keyB64);
+    const counter = decodeCounter(counterB64);
+    const plaintext = await crypto.subtle.decrypt(
+        { name: 'AES-CTR', counter: counter as unknown as BufferSource, length: CTR_LENGTH },
+        key,
+        encryptedData as unknown as BufferSource,
+    );
+
+    return new Uint8Array(plaintext);
+}
+
 // ============================================================================
 // Chunked Encryption (Upload Flow)
 // ============================================================================
@@ -138,7 +192,7 @@ export async function* encryptFileChunked(
                     totalChunks,
                     originalSize: file.size,
                     chunkSize,
-                    counterB64: arrayBufferToBase64(baseCounter.buffer as ArrayBuffer),
+                    counterB64: encodeCounter(baseCounter),
                     contentType: file instanceof File ? file.type : 'video/mp4',
                 }
                 : undefined,
@@ -170,7 +224,7 @@ export async function decryptChunk(
     chunkIndex: number,
 ): Promise<Uint8Array> {
     const key = await importAESKey(keyB64);
-    const baseCounter = new Uint8Array(base64ToArrayBuffer(manifest.counterB64));
+    const baseCounter = decodeCounter(manifest.counterB64);
 
     // Calculate the correct counter for this chunk
     const blocksPerChunk = Math.ceil(manifest.chunkSize / 16);
@@ -199,7 +253,7 @@ export async function decryptFull(
     counterB64: string,
 ): Promise<Uint8Array> {
     const key = await importAESKey(keyB64);
-    const counter = new Uint8Array(base64ToArrayBuffer(counterB64));
+    const counter = decodeCounter(counterB64);
 
     const plaintext = await crypto.subtle.decrypt(
         { name: 'AES-CTR', counter: counter as unknown as BufferSource, length: CTR_LENGTH },

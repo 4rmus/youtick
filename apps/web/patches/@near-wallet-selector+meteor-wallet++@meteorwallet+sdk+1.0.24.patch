@@ -1,0 +1,228 @@
+diff --git a/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/dist/index.cjs b/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/dist/index.cjs
+index bb013b8..8b49c07 100644
+--- a/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/dist/index.cjs
++++ b/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/dist/index.cjs
+@@ -261,7 +261,6 @@ var ComWindow = class {
+ 		this.walletOrigin = url.origin;
+ 		if (window.meteorCom == null) {
+ 			this.comType = EDappActionSource.website_post_message;
+-			console.log("No extension found. Need to connect to web popup for Meteor communication");
+ 			const queryParams = {
+ 				source: EDappActionSource.website_post_message,
+ 				connectionUid: connection.uid,
+@@ -379,14 +378,15 @@ var MeteorPostMessenger = class {
+ 			if (this.comWindow?.hasActiveWindow() && this.connections.length > 0) {
+ 				if (this.comInterval == null) this.comInterval = setInterval(() => this.sendComs(), pingInterval);
+-				if (this.comWindow.isWindowClosed()) if (this.comWindow.wasOpened) {
++				if (this.comWindow.isWindowClosed()) {
++					if (this.comWindow.wasOpened) {
+ 					for (const con of this.connections) con.reject(new MeteorActionError({
+ 						message: "User closed the window before completing the action",
+ 						endTags: [EDappActionErrorTag.INCOMPLETE_ACTION, EDappActionErrorTag.WINDOW_CLOSED]
+ 					}));
+ 					this.connections = [];
+ 					this.comWindow.close();
+-				} else console.log("Window is closed, need to allow popup");
+-				else {
++					}
++				} else {
+ 					this.comWindow.wasOpened = true;
+ 					for (const { network, actionType, endTags, status, inputs, uid } of this.connections) {
+ 						const postMessage = {
+@@ -767,7 +766,6 @@ var MeteorWallet = class MeteorWallet {
+ 	async requestSignIn(options) {
+ 		const { keyPair,...restOptions } = options;
+ 		const accessKey = keyPair ?? __near_js_crypto.KeyPair.fromRandom("ed25519");
+-		console.log(accessKey);
+ 		const usingPublicKey = accessKey.getPublicKey().toString();
+ 		const response = await getMeteorPostMessenger().connectAndWaitForResponse({
+ 			actionType: EExternalActionType.login,
+@@ -887,7 +885,6 @@ var MeteorWallet = class MeteorWallet {
+ 	async requestSignTransactions(inputs) {
+ 		const { transactions } = inputs;
+ 		const transformedTransactions = await this.transformTransactions(transactions);
+-		console.log("Transformed transactions", transformedTransactions);
+ 		const response = await getMeteorPostMessenger().connectAndWaitForResponse({
+ 			actionType: EExternalActionType.sign,
+ 			inputs: { transactions: transformedTransactions.map((transaction) => transaction.encode()).map((serialized) => Buffer.from(serialized).toString("base64")).join(",") },
+@@ -1049,11 +1046,6 @@ var ConnectedMeteorWalletAccount = class extends __near_js_accounts.Account {
+ 	async accessKeyMatchesTransaction(accessKey, receiverId, actions) {
+ 		const { access_key: { permission } } = accessKey;
+ 		if (permission === "FullAccess") return true;
+-		console.log("Comparing access key and actions", {
+-			accessKey,
+-			receiverId,
+-			actions
+-		});
+ 		if (permission.FunctionCall) {
+ 			const { receiver_id: allowedReceiverId, method_names: allowedMethods } = permission.FunctionCall;
+ 			/********************************
+@@ -1067,7 +1059,6 @@ var ConnectedMeteorWalletAccount = class extends __near_js_accounts.Account {
+ 			if (allowedReceiverId === receiverId) {
+ 				if (actions.length !== 1) return false;
+ 				const firstAction = actions[0];
+-				console.log(firstAction);
+ 				if (firstAction.type === "FunctionCall") {
+ 					const functionCallParams = firstAction.params;
+ 					return (!functionCallParams.deposit || functionCallParams.deposit.toString() === "0") && (allowedMethods.length === 0 || allowedMethods.includes(functionCallParams.methodName));
+@@ -1087,7 +1078,6 @@ var ConnectedMeteorWalletAccount = class extends __near_js_accounts.Account {
+ 	*/
+ 	async accessKeyForTransaction(localKey) {
+ 		const accessKeys = (await this.getAccessKeyList()).keys;
+-		console.log("accessKeys", accessKeys);
+ 		if (localKey) {
+ 			const accessKey = accessKeys.find((key) => key.public_key.toString() === localKey.toString());
+ 			if (accessKey) return accessKey;
+diff --git a/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/dist/index.js b/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/dist/index.js
+index c2ddb8b..826d434 100644
+--- a/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/dist/index.js
++++ b/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/dist/index.js
+@@ -238,7 +238,6 @@ var ComWindow = class {
+ 		this.walletOrigin = url.origin;
+ 		if (window.meteorCom == null) {
+ 			this.comType = EDappActionSource.website_post_message;
+-			console.log("No extension found. Need to connect to web popup for Meteor communication");
+ 			const queryParams = {
+ 				source: EDappActionSource.website_post_message,
+ 				connectionUid: connection.uid,
+@@ -356,14 +355,15 @@ var MeteorPostMessenger = class {
+ 			if (this.comWindow?.hasActiveWindow() && this.connections.length > 0) {
+ 				if (this.comInterval == null) this.comInterval = setInterval(() => this.sendComs(), pingInterval);
+-				if (this.comWindow.isWindowClosed()) if (this.comWindow.wasOpened) {
++				if (this.comWindow.isWindowClosed()) {
++					if (this.comWindow.wasOpened) {
+ 					for (const con of this.connections) con.reject(new MeteorActionError({
+ 						message: "User closed the window before completing the action",
+ 						endTags: [EDappActionErrorTag.INCOMPLETE_ACTION, EDappActionErrorTag.WINDOW_CLOSED]
+ 					}));
+ 					this.connections = [];
+ 					this.comWindow.close();
+-				} else console.log("Window is closed, need to allow popup");
+-				else {
++					}
++				} else {
+ 					this.comWindow.wasOpened = true;
+ 					for (const { network, actionType, endTags, status, inputs, uid } of this.connections) {
+ 						const postMessage = {
+@@ -744,7 +743,6 @@ var MeteorWallet = class MeteorWallet {
+ 	async requestSignIn(options) {
+ 		const { keyPair,...restOptions } = options;
+ 		const accessKey = keyPair ?? KeyPair.fromRandom("ed25519");
+-		console.log(accessKey);
+ 		const usingPublicKey = accessKey.getPublicKey().toString();
+ 		const response = await getMeteorPostMessenger().connectAndWaitForResponse({
+ 			actionType: EExternalActionType.login,
+@@ -864,7 +862,6 @@ var MeteorWallet = class MeteorWallet {
+ 	async requestSignTransactions(inputs) {
+ 		const { transactions } = inputs;
+ 		const transformedTransactions = await this.transformTransactions(transactions);
+-		console.log("Transformed transactions", transformedTransactions);
+ 		const response = await getMeteorPostMessenger().connectAndWaitForResponse({
+ 			actionType: EExternalActionType.sign,
+ 			inputs: { transactions: transformedTransactions.map((transaction) => transaction.encode()).map((serialized) => Buffer.from(serialized).toString("base64")).join(",") },
+@@ -1026,11 +1023,6 @@ var ConnectedMeteorWalletAccount = class extends Account {
+ 	async accessKeyMatchesTransaction(accessKey, receiverId, actions) {
+ 		const { access_key: { permission } } = accessKey;
+ 		if (permission === "FullAccess") return true;
+-		console.log("Comparing access key and actions", {
+-			accessKey,
+-			receiverId,
+-			actions
+-		});
+ 		if (permission.FunctionCall) {
+ 			const { receiver_id: allowedReceiverId, method_names: allowedMethods } = permission.FunctionCall;
+ 			/********************************
+@@ -1044,7 +1036,6 @@ var ConnectedMeteorWalletAccount = class extends Account {
+ 			if (allowedReceiverId === receiverId) {
+ 				if (actions.length !== 1) return false;
+ 				const firstAction = actions[0];
+-				console.log(firstAction);
+ 				if (firstAction.type === "FunctionCall") {
+ 					const functionCallParams = firstAction.params;
+ 					return (!functionCallParams.deposit || functionCallParams.deposit.toString() === "0") && (allowedMethods.length === 0 || allowedMethods.includes(functionCallParams.methodName));
+@@ -1064,7 +1055,6 @@ var ConnectedMeteorWalletAccount = class extends Account {
+ 	*/
+ 	async accessKeyForTransaction(localKey) {
+ 		const accessKeys = (await this.getAccessKeyList()).keys;
+-		console.log("accessKeys", accessKeys);
+ 		if (localKey) {
+ 			const accessKey = accessKeys.find((key) => key.public_key.toString() === localKey.toString());
+ 			if (accessKey) return accessKey;
+diff --git a/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/src/MeteorWallet.ts b/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/src/MeteorWallet.ts
+index 049982c..683fee7 100644
+--- a/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/src/MeteorWallet.ts
++++ b/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/src/MeteorWallet.ts
+@@ -260,8 +260,6 @@ export class MeteorWallet {
+ 
+     const accessKey: KeyPair = keyPair ?? KeyPair.fromRandom("ed25519");
+ 
+-    console.log(accessKey);
+-
+     const usingPublicKey = accessKey.getPublicKey().toString();
+ 
+     const response =
+@@ -385,8 +383,6 @@ export class MeteorWallet {
+ 
+     const transformedTransactions = await this.transformTransactions(transactions);
+ 
+-    console.log("Transformed transactions", transformedTransactions);
+-
+     const response =
+       await getMeteorPostMessenger().connectAndWaitForResponse<IODappAction_PostMessage_SignTransactions_Output>(
+         {
+@@ -630,12 +626,6 @@ export class ConnectedMeteorWalletAccount extends Account {
+       return true;
+     }
+ 
+-    console.log("Comparing access key and actions", {
+-      accessKey,
+-      receiverId,
+-      actions,
+-    });
+-
+     if (permission.FunctionCall) {
+       const { receiver_id: allowedReceiverId, method_names: allowedMethods } =
+         permission.FunctionCall;
+@@ -652,8 +642,6 @@ export class ConnectedMeteorWalletAccount extends Account {
+         }
+         const firstAction = actions[0];
+ 
+-        console.log(firstAction);
+-
+         if (firstAction.type === "FunctionCall") {
+           const functionCallParams = firstAction.params;
+           return (
+@@ -684,8 +672,6 @@ export class ConnectedMeteorWalletAccount extends Account {
+    */
+   async accessKeyForTransaction(localKey?: PublicKey): Promise<AccessKeyInfoView | null> {
+     const accessKeys = (await this.getAccessKeyList()).keys;
+-    console.log("accessKeys", accessKeys);
+-
+     if (localKey) {
+       const accessKey = accessKeys.find((key) => key.public_key.toString() === localKey.toString());
+       if (accessKey) {
+diff --git a/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/src/postMessage/MeteorPostMessenger.ts b/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/src/postMessage/MeteorPostMessenger.ts
+index 7af173d..e04da7b 100644
+--- a/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/src/postMessage/MeteorPostMessenger.ts
++++ b/node_modules/@near-wallet-selector/meteor-wallet/node_modules/@meteorwallet/sdk/src/postMessage/MeteorPostMessenger.ts
+@@ -48,8 +48,6 @@ class ComWindow {
+ 
+     if (window.meteorCom == null) {
+       this.comType = EDappActionSource.website_post_message;
+-      console.log("No extension found. Need to connect to web popup for Meteor communication");
+-
+       const queryParams: {
+         source: EDappActionSource.website_post_message;
+         connectionUid: string;
+@@ -267,14 +267,13 @@ class MeteorPostMessenger {
+                 endTags: [EDappActionErrorTag.INCOMPLETE_ACTION, EDappActionErrorTag.WINDOW_CLOSED],
+               }),
+             );
+           }
+ 
+           this.connections = [];
+           this.comWindow.close();
+-        } else {
+         }
+       } else {
+         this.comWindow.wasOpened = true;

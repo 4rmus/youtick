@@ -98,10 +98,12 @@ export interface ParsedMetadata {
     thumbnailUrl: string;
     /** Real encrypted CID (first part) */
     realCid: string | null;
+    /** Optional delivery or legacy manifest CID (four-part titles) */
+    manifestCid: string | null;
     /** Original raw title (for debugging) */
     rawTitle: string;
     /** Schema version detected (1=legacy, 2=IPFS CID, 3=External URL) */
-    schemaVersion: 1 | 2 | 3;
+    schemaVersion: 1 | 2 | 3 | 4;
 }
 
 /**
@@ -140,6 +142,7 @@ export function parseTitleMetadata(
             thumbnailCid: null,
             thumbnailUrl: placeholderImage,
             realCid: null,
+            manifestCid: null,
             rawTitle: rawTitle || '',
             schemaVersion: 1,
         };
@@ -153,6 +156,7 @@ export function parseTitleMetadata(
             thumbnailCid: null,
             thumbnailUrl: placeholderImage,
             realCid: null,
+            manifestCid: null,
             rawTitle,
             schemaVersion: 1,
         };
@@ -161,23 +165,23 @@ export function parseTitleMetadata(
     const parts = rawTitle.split(delimiter);
 
     if (parts.length >= 4 && isValidCidLike(parts[2])) {
-        // v4 Format: RealCID:::ThumbnailRef:::KeyCID:::Title (paid videos with encryption key)
+        // v4 Format: RealCID:::ThumbnailRef:::ManifestCID:::Title
         const realCid = parts[0];
         const thumbnailRef = parts[1];
-        // parts[2] is keyCid (encryption key CID) — not displayed
+        const manifestCid = parts[2];
         const title = parts.slice(3).join(delimiter); // Handle titles with ::: in them
 
         const hasValidThumbnail = isValidThumbnailRef(thumbnailRef);
         const thumbnailUrl = resolveThumbnailUrl(thumbnailRef, gatewayUrl, placeholderImage);
-        const schemaVersion = isIpfsUrl(thumbnailRef) ? 3 : 2;
 
         return {
             title: title || fallbackTitle,
             thumbnailCid: hasValidThumbnail ? thumbnailRef : null,
             thumbnailUrl,
             realCid,
+            manifestCid,
             rawTitle,
-            schemaVersion: schemaVersion as 1 | 2 | 3,
+            schemaVersion: 4,
         };
     } else if (parts.length >= 3) {
         // v2/v3 Format: RealCID:::ThumbnailRef:::Title
@@ -201,6 +205,7 @@ export function parseTitleMetadata(
             thumbnailCid: hasValidThumbnail ? thumbnailRef : null,
             thumbnailUrl,
             realCid,
+            manifestCid: null,
             rawTitle,
             schemaVersion: schemaVersion as 1 | 2 | 3,
         };
@@ -214,6 +219,7 @@ export function parseTitleMetadata(
             thumbnailCid: null,
             thumbnailUrl: placeholderImage,
             realCid,
+            manifestCid: null,
             rawTitle,
             schemaVersion: 1,
         };
@@ -225,6 +231,7 @@ export function parseTitleMetadata(
         thumbnailCid: null,
         thumbnailUrl: placeholderImage,
         realCid: null,
+        manifestCid: null,
         rawTitle,
         schemaVersion: 1,
     };

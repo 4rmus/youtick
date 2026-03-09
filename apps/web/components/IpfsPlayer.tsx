@@ -3,20 +3,29 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { streamKmsVideo } from '@/lib/kms/streaming';
 import { retrieveEncryptionKey } from '@/lib/kms/client';
-import { fetchFromGateways } from '@/lib/crust';
+import { getGatewayUrls, resolveGatewayUrl } from '@/lib/crust';
+import { createDeliveryPlaybackSession, type DeliveryPlaybackSession } from '@/lib/video-delivery-player';
+import {
+    buildManifestPosterUrl,
+    fetchDeliveryManifest,
+    getEffectiveManifestDurationMs,
+    isDeliveryManifestV2,
+    shouldUseSegmentedPlayback,
+} from '@/lib/video-delivery';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { Loader2, Play, Lock, KeyRound, ShieldOff } from 'lucide-react';
+import { Loader2, Lock, Maximize2, Pause, Play, ShieldOff, Volume2, VolumeX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useNFTOwnership } from '@/lib/hooks/useSessionState';
 import { IPFSThumbnail } from './IPFSThumbnail';
 import { TicketPurchaseCard } from './TicketPurchaseCard';
-import { SessionManager } from '@/lib/session-manager';
 import { NEAR_CONFIG } from '@/lib/constants';
 import { getProvider, viewContract } from '@/lib/near';
+import { parseTitleMetadata } from '@/lib/metadata-parser';
 
 interface IpfsPlayerProps {
     cid: string;
     thumbnailUrl?: string;
+    initialDurationSeconds?: number;
 }
 
 // State machine for player states
@@ -24,13 +33,58 @@ type PlayerState =
     | { type: 'idle' }
     | { type: 'decrypting'; message: string }
     | { type: 'playing'; videoUrl: string }
-    | { type: 'needs-session-key' }
     | { type: 'banned' }
     | { type: 'error'; message: string };
 
 const initialState: PlayerState = { type: 'idle' };
 
-export function IpfsPlayer({ cid, thumbnailUrl }: IpfsPlayerProps) {
+function resolvePosterUrl(input?: string): string | undefined {
+    if (!input) {
+        return undefined;
+    }
+
+    if (input.startsWith('http://') || input.startsWith('https://') || input.startsWith('data:') || input.startsWith('/')) {
+        return input;
+    }
+
+    const cid = input.startsWith('ipfs://')
+        ? input.slice('ipfs://'.length)
+        : input;
+
+    return getGatewayUrls(cid)[0];
+}
+
+function formatTime(seconds: number): string {
+    if (!Number.isFinite(seconds) || seconds < 0) {
+        return '0:00';
+    }
+
+    const totalSeconds = Math.floor(seconds);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const remainingSeconds = totalSeconds % 60;
+
+    if (hours > 0) {
+        return `${hours}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+    }
+
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+}
+
+function isTimeBuffered(video: HTMLVideoElement, targetTimeSeconds: number): boolean {
+    for (let i = 0; i < video.buffered.length; i += 1) {
+        if (
+            video.buffered.start(i) <= targetTimeSeconds + 0.05
+            && video.buffered.end(i) >= targetTimeSeconds + 0.25
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPlayerProps) {
     const { accountId, getWallet } = useWallet();
 
     // React Query hooks for cached state
@@ -40,26 +94,186 @@ export function IpfsPlayer({ cid, thumbnailUrl }: IpfsPlayerProps) {
     const [playerState, setPlayerState] = useState<PlayerState>(initialState);
     // Tracks successful purchase — forces transition from purchase card to player
     const [purchased, setPurchased] = useState(false);
+    const [resolvedThumbnailUrl, setResolvedThumbnailUrl] = useState<string | undefined>(thumbnailUrl);
+    const [backgroundStatus, setBackgroundStatus] = useState<string | null>(null);
+    const [knownDurationSeconds, setKnownDurationSeconds] = useState<number | null>(initialDurationSeconds ?? null);
+    const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0);
+    const [bufferedSeconds, setBufferedSeconds] = useState(0);
+    const [isPaused, setIsPaused] = useState(false);
+    const [isMuted, setIsMuted] = useState(false);
+    const [isScrubbing, setIsScrubbing] = useState(false);
+    const [scrubTimeSeconds, setScrubTimeSeconds] = useState(0);
     const videoRef = useRef<HTMLVideoElement>(null);
 
     // Track blob URL for cleanup
     const blobUrlRef = useRef<string | null>(null);
+    const deliverySessionRef = useRef<DeliveryPlaybackSession | null>(null);
+    const pendingDeliverySessionRef = useRef<DeliveryPlaybackSession | null>(null);
+    const playbackStartedRef = useRef(false);
+    const resumeAfterSeekRef = useRef(false);
+    const pendingSeekTimeRef = useRef<number | null>(null);
+    const seekFrameReadyRef = useRef(true);
+    const pendingVideoFrameCallbackRef = useRef<number | null>(null);
+    const pendingSeekFallbackTimerRef = useRef<number | null>(null);
+
+    const clearPendingSeekWaiters = useCallback(() => {
+        const video = videoRef.current;
+        if (
+            video
+            && pendingVideoFrameCallbackRef.current !== null
+            && 'cancelVideoFrameCallback' in video
+            && typeof video.cancelVideoFrameCallback === 'function'
+        ) {
+            video.cancelVideoFrameCallback(pendingVideoFrameCallbackRef.current);
+        }
+
+        pendingVideoFrameCallbackRef.current = null;
+
+        if (pendingSeekFallbackTimerRef.current !== null) {
+            window.clearTimeout(pendingSeekFallbackTimerRef.current);
+            pendingSeekFallbackTimerRef.current = null;
+        }
+    }, []);
+
+    const tryResumeAfterSeek = useCallback(() => {
+        const video = videoRef.current;
+        if (!video || !resumeAfterSeekRef.current) {
+            return;
+        }
+
+        const targetTime = pendingSeekTimeRef.current ?? video.currentTime;
+        const hasBufferedMedia = isTimeBuffered(video, targetTime)
+            || video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
+        const requiresVideoFrame = 'requestVideoFrameCallback' in video
+            && typeof video.requestVideoFrameCallback === 'function';
+
+        if (!hasBufferedMedia || (requiresVideoFrame && !seekFrameReadyRef.current)) {
+            return;
+        }
+
+        resumeAfterSeekRef.current = false;
+        pendingSeekTimeRef.current = null;
+        clearPendingSeekWaiters();
+        setBackgroundStatus(null);
+        void video.play().catch(() => {
+            resumeAfterSeekRef.current = true;
+            pendingSeekTimeRef.current = targetTime;
+        });
+    }, [clearPendingSeekWaiters]);
 
     // Revoke blob URL on unmount or when player state changes away from playing
     useEffect(() => {
         return () => {
+            pendingDeliverySessionRef.current?.destroy();
+            pendingDeliverySessionRef.current = null;
+            deliverySessionRef.current?.destroy();
+            deliverySessionRef.current = null;
+            clearPendingSeekWaiters();
+            resumeAfterSeekRef.current = false;
+            pendingSeekTimeRef.current = null;
+            seekFrameReadyRef.current = true;
             if (blobUrlRef.current) {
                 URL.revokeObjectURL(blobUrlRef.current);
                 blobUrlRef.current = null;
             }
         };
-    }, []);
+    }, [clearPendingSeekWaiters]);
+
+    useEffect(() => {
+        setResolvedThumbnailUrl(thumbnailUrl);
+    }, [thumbnailUrl, cid]);
+
+    useEffect(() => {
+        setPurchased(false);
+    }, [cid]);
+
+    useEffect(() => {
+        setKnownDurationSeconds(initialDurationSeconds ?? null);
+    }, [initialDurationSeconds, cid]);
+
+    useEffect(() => {
+        if (playerState.type !== 'playing' || !videoRef.current || !pendingDeliverySessionRef.current) {
+            return;
+        }
+
+        const session = pendingDeliverySessionRef.current;
+        pendingDeliverySessionRef.current = null;
+        deliverySessionRef.current = session;
+        session.start(videoRef.current);
+    }, [playerState]);
+
+    useEffect(() => {
+        const video = videoRef.current;
+        if (!video) {
+            return;
+        }
+
+        const syncState = () => {
+            setCurrentTimeSeconds(video.currentTime || 0);
+            setIsPaused(video.paused);
+            setIsMuted(video.muted);
+            const bufferedEnd = video.buffered.length > 0
+                ? video.buffered.end(video.buffered.length - 1)
+                : 0;
+            setBufferedSeconds(bufferedEnd);
+
+            const mediaDuration = Number.isFinite(video.duration) ? video.duration : null;
+            if ((knownDurationSeconds === null || knownDurationSeconds <= 0) && mediaDuration && mediaDuration > 0) {
+                setKnownDurationSeconds(mediaDuration);
+            }
+
+            tryResumeAfterSeek();
+        };
+
+        const handleWaiting = () => {
+            if (resumeAfterSeekRef.current) {
+                setBackgroundStatus('Buffering...');
+            }
+        };
+
+        const handlePlaying = () => {
+            setBackgroundStatus(null);
+        };
+
+        video.addEventListener('timeupdate', syncState);
+        video.addEventListener('play', syncState);
+        video.addEventListener('pause', syncState);
+        video.addEventListener('volumechange', syncState);
+        video.addEventListener('loadedmetadata', syncState);
+        video.addEventListener('durationchange', syncState);
+        video.addEventListener('progress', syncState);
+        video.addEventListener('seeked', syncState);
+        video.addEventListener('canplay', syncState);
+        video.addEventListener('loadeddata', syncState);
+        video.addEventListener('waiting', handleWaiting);
+        video.addEventListener('stalled', handleWaiting);
+        video.addEventListener('playing', handlePlaying);
+
+        syncState();
+
+        return () => {
+            video.removeEventListener('timeupdate', syncState);
+            video.removeEventListener('play', syncState);
+            video.removeEventListener('pause', syncState);
+            video.removeEventListener('volumechange', syncState);
+            video.removeEventListener('loadedmetadata', syncState);
+            video.removeEventListener('durationchange', syncState);
+            video.removeEventListener('progress', syncState);
+            video.removeEventListener('seeked', syncState);
+            video.removeEventListener('canplay', syncState);
+            video.removeEventListener('loadeddata', syncState);
+            video.removeEventListener('waiting', handleWaiting);
+            video.removeEventListener('stalled', handleWaiting);
+            video.removeEventListener('playing', handlePlaying);
+        };
+    }, [playerState, knownDurationSeconds, tryResumeAfterSeek]);
 
     // Derived states from state machine
     const videoUrl = playerState.type === 'playing' ? playerState.videoUrl : null;
     const loading = playerState.type === 'decrypting';
     const error = playerState.type === 'error' ? playerState.message : null;
     const status = playerState.type === 'decrypting' ? playerState.message : '';
+    const posterUrl = resolvePosterUrl(resolvedThumbnailUrl);
 
     // Derived access state from React Query
     const hasAccess = hasOwnership === true;
@@ -69,10 +283,140 @@ export function IpfsPlayer({ cid, thumbnailUrl }: IpfsPlayerProps) {
         && playerState.type !== 'banned'
         && !checkingAccess
         && !loading
-        && playerState.type !== 'needs-session-key'
         && hasAccess === false
         && !purchased
         && !error;
+    const effectiveDurationSeconds = knownDurationSeconds && knownDurationSeconds > 0
+        ? knownDurationSeconds
+        : Math.max(currentTimeSeconds, 1);
+    const bufferedPercent = Math.max(
+        0,
+        Math.min(100, (bufferedSeconds / Math.max(effectiveDurationSeconds, 1)) * 100),
+    );
+    const displayedTimeSeconds = isScrubbing ? scrubTimeSeconds : currentTimeSeconds;
+    const playedPercent = Math.max(
+        0,
+        Math.min(100, (displayedTimeSeconds / Math.max(effectiveDurationSeconds, 1)) * 100),
+    );
+
+    const cleanupPlaybackArtifacts = useCallback(() => {
+        playbackStartedRef.current = false;
+        setBackgroundStatus(null);
+        setCurrentTimeSeconds(0);
+        setBufferedSeconds(0);
+        setKnownDurationSeconds(initialDurationSeconds ?? null);
+        setIsPaused(false);
+        setIsScrubbing(false);
+        setScrubTimeSeconds(0);
+        clearPendingSeekWaiters();
+        resumeAfterSeekRef.current = false;
+        pendingSeekTimeRef.current = null;
+        seekFrameReadyRef.current = true;
+        pendingDeliverySessionRef.current?.destroy();
+        pendingDeliverySessionRef.current = null;
+        deliverySessionRef.current?.destroy();
+        deliverySessionRef.current = null;
+
+        if (blobUrlRef.current) {
+            URL.revokeObjectURL(blobUrlRef.current);
+            blobUrlRef.current = null;
+        }
+    }, [clearPendingSeekWaiters, initialDurationSeconds]);
+
+    const handleTogglePlayback = () => {
+        const video = videoRef.current;
+        if (!video) {
+            return;
+        }
+
+        if (video.paused) {
+            void video.play();
+        } else {
+            video.pause();
+        }
+    };
+
+    const commitSeek = (nextValue: number) => {
+        const video = videoRef.current;
+        if (!video) {
+            return;
+        }
+
+        const shouldResume = !video.paused;
+        if (shouldResume) {
+            video.pause();
+        }
+
+        clearPendingSeekWaiters();
+        resumeAfterSeekRef.current = shouldResume;
+        pendingSeekTimeRef.current = nextValue;
+        seekFrameReadyRef.current = !('requestVideoFrameCallback' in video)
+            || typeof video.requestVideoFrameCallback !== 'function';
+        setBackgroundStatus(shouldResume ? 'Buffering...' : null);
+
+        if (!seekFrameReadyRef.current) {
+            const targetTime = nextValue;
+            const handleVideoFrame = (_now: number, metadata: VideoFrameCallbackMetadata) => {
+                if (pendingSeekTimeRef.current === null) {
+                    return;
+                }
+
+                if (Math.abs(metadata.mediaTime - targetTime) <= 0.35 || metadata.presentedFrames > 0) {
+                    seekFrameReadyRef.current = true;
+                    clearPendingSeekWaiters();
+                    tryResumeAfterSeek();
+                    return;
+                }
+
+                pendingVideoFrameCallbackRef.current = video.requestVideoFrameCallback(handleVideoFrame);
+            };
+
+            pendingVideoFrameCallbackRef.current = video.requestVideoFrameCallback(handleVideoFrame);
+            pendingSeekFallbackTimerRef.current = window.setTimeout(() => {
+                seekFrameReadyRef.current = true;
+                pendingVideoFrameCallbackRef.current = null;
+                pendingSeekFallbackTimerRef.current = null;
+                tryResumeAfterSeek();
+            }, 1200);
+        }
+
+        if ('fastSeek' in video && typeof video.fastSeek === 'function') {
+            video.fastSeek(nextValue);
+        } else {
+            video.currentTime = nextValue;
+        }
+        setCurrentTimeSeconds(nextValue);
+        setScrubTimeSeconds(nextValue);
+        setIsScrubbing(false);
+    };
+
+    const handleSeekPreview = (nextValue: number) => {
+        setScrubTimeSeconds(nextValue);
+    };
+
+    const handleToggleMute = () => {
+        const video = videoRef.current;
+        if (!video) {
+            return;
+        }
+
+        video.muted = !video.muted;
+        setIsMuted(video.muted);
+    };
+
+    const handleToggleFullscreen = async () => {
+        const video = videoRef.current;
+        if (!video) {
+            return;
+        }
+
+        if (document.fullscreenElement) {
+            await document.exitFullscreen();
+            return;
+        }
+
+        await video.requestFullscreen();
+    };
 
     const playVideo = useCallback(async (isRetry: boolean = false) => {
         if (!accountId) {
@@ -80,17 +424,19 @@ export function IpfsPlayer({ cid, thumbnailUrl }: IpfsPlayerProps) {
             return;
         }
 
+        cleanupPlaybackArtifacts();
+        setBackgroundStatus(null);
+
         setPlayerState({
             type: 'decrypting',
             message: isRetry ? 'Retrying...' : 'Initializing...'
         });
 
         try {
-            // 1. Resolve UUID to KMS CID
             const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid);
-            let ipfsCid = cid;
-
-            let keyCid: string | undefined;
+            let primaryCid = cid;
+            let manifestCid: string | undefined;
+            let eventPrice = '0';
 
             if (isUuid) {
                 setPlayerState({ type: 'decrypting', message: 'Resolving Video Metadata...' });
@@ -111,25 +457,13 @@ export function IpfsPlayer({ cid, thumbnailUrl }: IpfsPlayerProps) {
                         return;
                     }
 
-                    if (event && event.title && event.title.includes(':::')) {
-                        const parts = event.title.split(':::');
-                        if (parts.length >= 4) {
-                            // Paid: "CID:::Thumbnail:::ManifestCID:::Title" (4+ segments)
-                            ipfsCid = parts[0];
-                            keyCid = parts[2];
-                        } else if (parts.length === 3) {
-                            // Could be free ("CID:::Thumbnail:::Title") or
-                            // legacy paid without thumbnail ("CID:::KeyCID:::Title").
-                            // Disambiguate using event price: paid videos always have keyCid.
-                            ipfsCid = parts[0];
-                            const isPaid = event.price && event.price !== '0';
-                            if (isPaid) {
-                                keyCid = parts[1];
-                            }
-                        } else {
-                            // Legacy 2-segment: "CID:::Title"
-                            ipfsCid = parts[0];
-                        }
+                    eventPrice = event?.price || '0';
+                    const parsed = parseTitleMetadata(event?.title, 'Untitled');
+                    primaryCid = parsed.realCid || cid;
+                    manifestCid = parsed.manifestCid || undefined;
+
+                    if (parsed.thumbnailCid && parsed.thumbnailUrl) {
+                        setResolvedThumbnailUrl(parsed.thumbnailUrl);
                     }
                 } catch (e) {
                     console.error("Error resolving metadata:", e);
@@ -137,105 +471,206 @@ export function IpfsPlayer({ cid, thumbnailUrl }: IpfsPlayerProps) {
                 }
             }
 
-            // Simulation mode check removed as KMS is the primary flow
+            const resolveAesKey = async (): Promise<string> => {
+                setPlayerState({ type: 'decrypting', message: 'Authorizing playback...' });
+                const wallet = await getWallet();
+                return await retrieveEncryptionKey(cid, accountId, wallet);
+            };
 
-            // 2. Fetch video based on keyCid presence
-            //    keyCid present  → paid video (encrypted, needs KMS key retrieval)
-            //    keyCid absent   → free video (unencrypted, raw fetch from Crust)
-            if (keyCid) {
-                setPlayerState({ type: 'decrypting', message: 'Retrieving encryption key...' });
+            const streamLegacyKms = async (
+                targetCid: string,
+                manifest: {
+                    totalChunks: number;
+                    originalSize: number;
+                    chunkSize: number;
+                    counterB64: string;
+                    contentType: string;
+                },
+                aesKeyB64: string,
+            ) => {
+                setPlayerState({ type: 'decrypting', message: 'Starting video stream...' });
 
-                try {
-                    const sessionManager = new SessionManager(accountId);
-                    await sessionManager.importWalletFunctionCallKey();
-                    const hasValidSessionKey = await sessionManager.hasSessionKey();
+                await streamKmsVideo(targetCid, aesKeyB64, manifest, {
+                    onProgress: (loaded: number, total: number) => {
+                        const pct = Math.round((loaded / total) * 100);
+                        if (playbackStartedRef.current) {
+                            setBackgroundStatus(`Loading... ${pct}%`);
+                        } else {
+                            setPlayerState({ type: 'decrypting', message: `Loading... ${pct}%` });
+                        }
+                    },
+                    onSourceUpdate: (url: string) => {
+                        playbackStartedRef.current = true;
+                        setBackgroundStatus(null);
+                        blobUrlRef.current = url;
+                        setPlayerState({ type: 'playing', videoUrl: url });
+                    },
+                });
+            };
 
-                    if (!hasValidSessionKey) {
-                        setPlayerState({ type: 'needs-session-key' });
+            let manifestData: unknown = null;
+            if (manifestCid) {
+                setPlayerState({ type: 'decrypting', message: 'Resolving Video Manifest...' });
+                manifestData = await fetchDeliveryManifest(manifestCid);
+            }
+
+            if (isDeliveryManifestV2(manifestData)) {
+                console.info('[IpfsPlayer] Using segmented delivery manifest', {
+                    manifestCid,
+                    encrypted: manifestData.encrypted,
+                    tracks: manifestData.tracks.length,
+                    segments: manifestData.segments.length,
+                });
+                setKnownDurationSeconds(getEffectiveManifestDurationMs(manifestData) / 1000);
+                const posterUrl = buildManifestPosterUrl(manifestData);
+                if (posterUrl) {
+                    setResolvedThumbnailUrl(posterUrl);
+                }
+
+                const canUseSegmentedPlayback = shouldUseSegmentedPlayback(manifestData);
+                if (!canUseSegmentedPlayback) {
+                    console.warn('[IpfsPlayer] Manifest is not segmented enough for smooth seek, using fallback playback', {
+                        manifestCid,
+                        segments: manifestData.segments.length,
+                    });
+
+                    if (manifestData.encrypted && manifestData.fallbackFlatCid && manifestData.legacyChunkManifest) {
+                        const aesKeyB64 = await resolveAesKey();
+                        await streamLegacyKms(
+                            manifestData.fallbackFlatCid,
+                            manifestData.legacyChunkManifest,
+                            aesKeyB64,
+                        );
                         return;
                     }
 
-                    // Fetch manifest from IPFS
-                    const manifestResp = await fetchFromGateways(keyCid);
-                    const manifest = await manifestResp.json();
-
-                    // Retrieve AES Key from KMS
-                    const { privateKey, publicKeyB58 } = await sessionManager.getKeyForKMS();
-                    const aesKeyB64 = await retrieveEncryptionKey(cid, accountId, privateKey, publicKeyB58);
-
-                    setPlayerState({ type: 'decrypting', message: 'Starting video stream...' });
-
-                    const streamingOptions = {
-                        onProgress: (loaded: number, total: number) => {
-                            const pct = Math.round((loaded / total) * 100);
-                            setPlayerState({ type: 'decrypting', message: `Loading... ${pct}%` });
-                        },
-                        onSourceUpdate: (url: string) => {
-                            if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
-                            blobUrlRef.current = url;
-                            setPlayerState({ type: 'playing', videoUrl: url });
-                        }
-                    };
-
-                    await streamKmsVideo(ipfsCid, aesKeyB64, manifest, streamingOptions);
-                    return;
-
-                } catch (fetchErr: unknown) {
-                    const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr || '');
-                    const errCode = typeof fetchErr === 'object' && fetchErr !== null && 'code' in fetchErr
-                        ? String((fetchErr as { code?: unknown }).code || '')
-                        : '';
-                    if (errMsg.includes('No session key found') || errMsg.includes('setup account first')) {
-                        setPlayerState({ type: 'needs-session-key' });
-                    } else if (errCode === 'ACCESS_DENIED') {
-                        setPlayerState({ type: 'error', message: "Access denied. Please ensure you own this ticket." });
-                    } else if (errCode === 'NOT_FOUND') {
-                        setPlayerState({ type: 'error', message: "Encryption key not found." });
-                    } else if (errMsg.includes('No valid ticket')) {
-                        setPlayerState({ type: 'error', message: "Access denied. Please ensure you own this ticket." });
-                    } else {
-                        setPlayerState({ type: 'error', message: errMsg || "Failed to stream video." });
+                    if (manifestData.fallbackFlatCid) {
+                        setPlayerState({ type: 'decrypting', message: 'Selecting fastest IPFS gateway...' });
+                        const streamUrl = await resolveGatewayUrl(manifestData.fallbackFlatCid, {
+                            purpose: 'video',
+                            range: { start: 0, end: 65_535 },
+                        });
+                        setPlayerState({ type: 'playing', videoUrl: streamUrl });
+                        return;
                     }
-                    console.error("KMS Streaming error:", fetchErr);
+                }
+
+                if (typeof MediaSource !== 'undefined') {
+                    const aesKeyB64 = manifestData.encrypted ? await resolveAesKey() : undefined;
+                    setPlayerState({ type: 'decrypting', message: 'Preparing segmented stream...' });
+
+                    const session = createDeliveryPlaybackSession(manifestData, {
+                        aesKeyB64,
+                        onProgress: (loaded, total) => {
+                            const pct = Math.round((loaded / total) * 100);
+                            if (playbackStartedRef.current) {
+                                setBackgroundStatus(`Loading... ${pct}%`);
+                            } else {
+                                setPlayerState({ type: 'decrypting', message: `Loading... ${pct}%` });
+                            }
+                        },
+                        onBufferedTimeChange: (bufferedTime) => {
+                            setBufferedSeconds(bufferedTime);
+                        },
+                        onError: async (sessionError) => {
+                            console.error('[IpfsPlayer] Segmented playback failed:', sessionError);
+                            cleanupPlaybackArtifacts();
+
+                            if (manifestData.encrypted && manifestData.fallbackFlatCid && manifestData.legacyChunkManifest) {
+                                try {
+                                    const fallbackKey = aesKeyB64 ?? await resolveAesKey();
+                                    await streamLegacyKms(
+                                        manifestData.fallbackFlatCid,
+                                        manifestData.legacyChunkManifest,
+                                        fallbackKey,
+                                    );
+                                    return;
+                                } catch (legacyError) {
+                                    console.error('[IpfsPlayer] Legacy encrypted fallback failed:', legacyError);
+                                }
+                            }
+
+                            if (manifestData.fallbackFlatCid) {
+                                try {
+                                    const streamUrl = await resolveGatewayUrl(manifestData.fallbackFlatCid, {
+                                        purpose: 'video',
+                                        range: { start: 0, end: 65_535 },
+                                    });
+                                    setPlayerState({ type: 'playing', videoUrl: streamUrl });
+                                    return;
+                                } catch (freeFallbackError) {
+                                    console.error('[IpfsPlayer] Flat fallback failed:', freeFallbackError);
+                                }
+                            }
+
+                            setPlayerState({
+                                type: 'error',
+                                message: sessionError.message || 'Failed to start segmented playback.',
+                            });
+                        },
+                    });
+
+                    playbackStartedRef.current = true;
+                    blobUrlRef.current = session.objectUrl;
+                    pendingDeliverySessionRef.current = session;
+                    setPlayerState({ type: 'playing', videoUrl: session.objectUrl });
                     return;
                 }
-            } else {
-                // Free video: native browser streaming via IPFS gateway
-                // ipfs.io supports Range requests + Cloudflare CDN caching
-                // Browser handles progressive download automatically
-                const targetCid = ipfsCid || cid;
-                const streamUrl = `https://ipfs.io/ipfs/${targetCid}`;
 
-                // Revoke previous blob URL if any
-                if (blobUrlRef.current) {
-                    URL.revokeObjectURL(blobUrlRef.current);
-                    blobUrlRef.current = null;
+                if (manifestData.encrypted && manifestData.fallbackFlatCid && manifestData.legacyChunkManifest) {
+                    console.warn('[IpfsPlayer] MediaSource unavailable or segmented path failed, using legacy encrypted fallback');
+                    const aesKeyB64 = await resolveAesKey();
+                    await streamLegacyKms(
+                        manifestData.fallbackFlatCid,
+                        manifestData.legacyChunkManifest,
+                        aesKeyB64,
+                    );
+                    return;
                 }
 
-                setPlayerState({ type: 'playing', videoUrl: streamUrl });
-                return; // Skip blob creation below for free videos
+                if (manifestData.fallbackFlatCid) {
+                    console.warn('[IpfsPlayer] Segmented manifest present but using flat free-video fallback');
+                    setPlayerState({ type: 'decrypting', message: 'Selecting fastest IPFS gateway...' });
+                    const streamUrl = await resolveGatewayUrl(manifestData.fallbackFlatCid, {
+                        purpose: 'video',
+                        range: { start: 0, end: 65_535 },
+                    });
+                    setPlayerState({ type: 'playing', videoUrl: streamUrl });
+                    return;
+                }
             }
 
+            const isPaidLegacy = Boolean(eventPrice && eventPrice !== '0');
+
+            if (manifestData && isPaidLegacy) {
+                console.warn('[IpfsPlayer] Falling back to legacy chunk manifest playback');
+                const aesKeyB64 = await resolveAesKey();
+                await streamLegacyKms(primaryCid, manifestData as {
+                    totalChunks: number;
+                    originalSize: number;
+                    chunkSize: number;
+                    counterB64: string;
+                    contentType: string;
+                }, aesKeyB64);
+                return;
+            }
+
+            console.info('[IpfsPlayer] Using direct gateway playback', {
+                cid: primaryCid || cid,
+                isPaidLegacy,
+                hasManifest: Boolean(manifestData),
+            });
+            setPlayerState({ type: 'decrypting', message: 'Selecting fastest IPFS gateway...' });
+            const streamUrl = await resolveGatewayUrl(primaryCid || cid, {
+                purpose: 'video',
+                range: { start: 0, end: 65_535 },
+            });
+            setPlayerState({ type: 'playing', videoUrl: streamUrl });
         } catch (err: unknown) {
             console.error('Playback failed:', err);
             setPlayerState({ type: 'error', message: err instanceof Error ? err.message : 'Failed to load video' });
         }
-    }, [accountId, cid]);
-
-    const handleSetupSessionKey = useCallback(async () => {
-        if (!accountId) return;
-        setPlayerState({ type: 'decrypting', message: 'Creating Session Key...' });
-        try {
-            const wallet = await getWallet();
-            const sessionManager = new SessionManager(accountId);
-            await sessionManager.createSessionKey(wallet, '0.5');
-            // Session key created, auto-retry playback
-            await playVideo(true);
-        } catch (err: unknown) {
-            console.error('Session key creation failed:', err);
-            setPlayerState({ type: 'error', message: err instanceof Error ? err.message : 'Failed to create session key' });
-        }
-    }, [accountId, getWallet, playVideo]);
+    }, [accountId, cid, cleanupPlaybackArtifacts, getWallet]);
 
     const handlePlay = () => playVideo(false);
 
@@ -245,6 +680,8 @@ export function IpfsPlayer({ cid, thumbnailUrl }: IpfsPlayerProps) {
         // If it's a blob component (from our decrypted streams), don't fallback this route
         if (playerState.videoUrl.startsWith('blob:')) {
             console.error("Video playback error with blob");
+            cleanupPlaybackArtifacts();
+            setPlayerState({ type: 'error', message: 'Segmented playback failed. Please retry.' });
             return;
         }
 
@@ -255,10 +692,12 @@ export function IpfsPlayer({ cid, thumbnailUrl }: IpfsPlayerProps) {
 
         console.warn(`Video load error from ${playerState.videoUrl}. Attempting fallback...`);
 
-        if (playerState.videoUrl.includes('ipfs.io')) {
-            setPlayerState({ type: 'playing', videoUrl: `https://dweb.link/ipfs/${videoCid}` });
-        } else if (playerState.videoUrl.includes('dweb.link')) {
-            setPlayerState({ type: 'playing', videoUrl: `https://w3s.link/ipfs/${videoCid}` });
+        const candidates = getGatewayUrls(videoCid);
+        const currentIndex = candidates.findIndex((candidate) => candidate === playerState.videoUrl);
+        const nextUrl = candidates.slice(currentIndex + 1).find(Boolean);
+
+        if (nextUrl) {
+            setPlayerState({ type: 'playing', videoUrl: nextUrl });
         } else {
             console.error("All fallback gateways failed for video playback");
             setPlayerState({ type: 'error', message: 'Failed to load video from IPFS gateways. Please try again later.' });
@@ -292,23 +731,6 @@ export function IpfsPlayer({ cid, thumbnailUrl }: IpfsPlayerProps) {
                         <div className="text-center">
                             <Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-primary" />
                             <p className="text-sm text-slate-300">{status}</p>
-                        </div>
-                    ) : playerState.type === 'needs-session-key' ? (
-                        // SHOW SESSION KEY SETUP
-                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md w-full h-full p-6 text-center">
-                            <KeyRound className="w-16 h-16 text-yellow-400 mb-4" />
-                            <h3 className="text-2xl font-bold text-white mb-2">Session Key Required</h3>
-                            <p className="text-zinc-400 max-w-sm mb-6">
-                                A one-time session key setup is needed to decrypt and play videos. This requires a wallet signature.
-                            </p>
-                            <Button
-                                onClick={handleSetupSessionKey}
-                                size="lg"
-                                className="gap-2 shadow-xl shadow-primary/20"
-                            >
-                                <KeyRound className="h-5 w-5" />
-                                Setup Session Key
-                            </Button>
                         </div>
                     ) : hasAccess === false && !purchased && !error ? (
                         // SHOW INLINE PURCHASE CARD
@@ -347,12 +769,13 @@ export function IpfsPlayer({ cid, thumbnailUrl }: IpfsPlayerProps) {
                         <div className="relative z-10 text-center w-full h-full flex flex-col items-center justify-center">
                             {/* Background Thumbnail */}
                             {
-                                thumbnailUrl && (
+                                resolvedThumbnailUrl && (
                                     <div className="absolute inset-0 z-0">
                                         <IPFSThumbnail
-                                            url={thumbnailUrl}
+                                            url={resolvedThumbnailUrl}
                                             alt="Video Thumbnail"
                                             className="w-full h-full object-cover opacity-50 blur-sm"
+                                            loading="eager"
                                         />
                                         <div className="absolute inset-0 bg-black/40" />
                                     </div>
@@ -374,16 +797,75 @@ export function IpfsPlayer({ cid, thumbnailUrl }: IpfsPlayerProps) {
                     )}
                 </div>
             ) : (
-                <video
-                    ref={videoRef}
-                    src={videoUrl}
-                    controls
-                    controlsList="nodownload"
-                    onContextMenu={(e) => e.preventDefault()}
-                    onError={handleVideoError}
-                    className="w-full h-full"
-                    autoPlay
-                />
+                <>
+                    <video
+                        ref={videoRef}
+                        src={videoUrl}
+                        poster={posterUrl}
+                        onContextMenu={(e) => e.preventDefault()}
+                        onError={handleVideoError}
+                        onClick={handleTogglePlayback}
+                        className="w-full h-full"
+                        autoPlay
+                        playsInline
+                        preload="auto"
+                    />
+                    <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-3 pb-3 pt-10">
+                        <div className="space-y-2">
+                            <input
+                                type="range"
+                                min={0}
+                                max={Math.max(effectiveDurationSeconds, 1)}
+                                step={0.1}
+                                value={Math.min(displayedTimeSeconds, effectiveDurationSeconds)}
+                                onPointerDown={() => {
+                                    setIsScrubbing(true);
+                                    setScrubTimeSeconds(currentTimeSeconds);
+                                }}
+                                onPointerUp={(event) => commitSeek(Number((event.target as HTMLInputElement).value))}
+                                onPointerCancel={() => setIsScrubbing(false)}
+                                onChange={(event) => handleSeekPreview(Number(event.target.value))}
+                                className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-transparent accent-white"
+                                style={{
+                                    background: `linear-gradient(to right, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.95) ${playedPercent}%, rgba(255,255,255,0.35) ${playedPercent}%, rgba(255,255,255,0.35) ${bufferedPercent}%, rgba(255,255,255,0.16) ${bufferedPercent}%, rgba(255,255,255,0.16) 100%)`,
+                                }}
+                            />
+                            <div className="flex items-center justify-between text-white">
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={handleTogglePlayback}
+                                        className="rounded-full bg-white/10 p-2 backdrop-blur hover:bg-white/20"
+                                    >
+                                        {isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleToggleMute}
+                                        className="rounded-full bg-white/10 p-2 backdrop-blur hover:bg-white/20"
+                                    >
+                                        {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                                    </button>
+                                    <span className="text-xs font-medium tabular-nums">
+                                        {formatTime(displayedTimeSeconds)} / {formatTime(effectiveDurationSeconds)}
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => { void handleToggleFullscreen(); }}
+                                    className="rounded-full bg-white/10 p-2 backdrop-blur hover:bg-white/20"
+                                >
+                                    <Maximize2 className="h-4 w-4" />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </>
+            )}
+            {videoUrl && backgroundStatus && (
+                <div className="absolute right-3 bottom-3 z-20 rounded-full bg-black/70 px-3 py-1 text-xs text-white backdrop-blur">
+                    {backgroundStatus}
+                </div>
             )}
         </div>
     );

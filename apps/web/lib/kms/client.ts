@@ -1,20 +1,9 @@
-/**
- * Youtick KMS Client
- *
- * Frontend module for communicating with the Youtick KMS Cloudflare Worker.
- * Uses a direct, fast Edge API for key storage/retrieval.
- *
- * Features:
- *   - Ed25519 signature generation for authenticated requests
- *   - Store/retrieve AES encryption keys via KMS Worker
- *   - Session key support for signless (popup-free) operations
- */
+import type { KeyPair } from 'near-api-js';
+import { NEAR_CONFIG } from '../constants';
+import { BrowserKeyStore } from '../keystore-v7';
+import { getActiveUploadSessionKey } from '../upload-session-manager';
+import type { WalletInstance } from '../types';
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
-/** KMS Worker URL — configure via environment variable */
 const KMS_BASE_URL =
     process.env.NEXT_PUBLIC_KMS_URL ||
     (typeof window !== 'undefined' &&
@@ -22,9 +11,8 @@ const KMS_BASE_URL =
         ? 'http://localhost:8787'
         : 'https://youtick-kms.araafatsum.workers.dev');
 
-// ============================================================================
-// Types
-// ============================================================================
+const AUTH_CACHE_PREFIX = 'youtick:kms-auth:';
+const AUTH_CACHE_SKEW_MS = 30_000;
 
 export interface KMSStoreResult {
     videoId: string;
@@ -33,6 +21,22 @@ export interface KMSStoreResult {
 
 export interface KMSRetrieveResult {
     aesKeyB64: string;
+}
+
+interface KMSAuthChallenge {
+    challengeId: string;
+    message: string;
+    recipient: string;
+    nonce: string;
+    expiresAt: number;
+}
+
+interface KMSAuthToken {
+    token: string;
+    accountId: string;
+    action: 'store' | 'retrieve';
+    videoId: string;
+    expiresAt: number;
 }
 
 export class KMSError extends Error {
@@ -46,207 +50,354 @@ export class KMSError extends Error {
     }
 }
 
-// ============================================================================
-// Signing Helpers
-// ============================================================================
-
-/**
- * Sign a payload with an Ed25519 key pair.
- * Uses the Web Crypto API (available in modern browsers).
- *
- * @param payload - String payload to sign
- * @param privateKey - CryptoKey (Ed25519 private key)
- * @returns Hex-encoded signature
- */
-export async function signPayload(
-    payload: string,
-    privateKey: CryptoKey,
-): Promise<string> {
-    const payloadBytes = new TextEncoder().encode(payload);
-    const signature = await crypto.subtle.sign('Ed25519', privateKey, payloadBytes);
-    return bytesToHex(new Uint8Array(signature));
+function authCacheKey(accountId: string, action: 'store' | 'retrieve', videoId: string): string {
+    return `${AUTH_CACHE_PREFIX}${accountId}:${action}:${videoId}`;
 }
 
-/**
- * Generate a new Ed25519 key pair for session signing.
- * This key pair is used for signless (popup-free) operations.
- */
-export async function generateSessionKeyPair(): Promise<CryptoKeyPair> {
-    return await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
+function decodeBase64(base64: string): Uint8Array {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
 }
 
-/**
- * Export the public key as base58 string (NEAR-compatible format).
- */
-export async function exportPublicKeyBase58(publicKey: CryptoKey): Promise<string> {
-    const raw = await crypto.subtle.exportKey('raw', publicKey);
-    return 'ed25519:' + base58Encode(new Uint8Array(raw));
+function encodeHex(bytes: Uint8Array): string {
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-// ============================================================================
-// KMS API Client
-// ============================================================================
-
-/**
- * Store an AES encryption key in the KMS.
- * Only the content owner (NFT holder) can store keys.
- *
- * @param videoId - The video/token ID
- * @param aesKeyB64 - Base64-encoded AES-256 key
- * @param accountId - NEAR account ID of the content owner
- * @param privateKey - Ed25519 private key for signing
- * @param publicKeyB58 - Base58-encoded public key
- */
-export async function storeEncryptionKey(
-    videoId: string,
-    aesKeyB64: string,
+function readCachedAuthToken(
     accountId: string,
-    privateKey: CryptoKey,
-    publicKeyB58: string,
-): Promise<KMSStoreResult> {
-    const timestamp = Date.now();
+    action: 'store' | 'retrieve',
+    videoId: string,
+): KMSAuthToken | null {
+    if (typeof window === 'undefined') {
+        return null;
+    }
 
+    const raw = sessionStorage.getItem(authCacheKey(accountId, action, videoId));
+    if (!raw) {
+        return null;
+    }
+
+    try {
+        const token = JSON.parse(raw) as KMSAuthToken;
+        if (Date.now() + AUTH_CACHE_SKEW_MS >= token.expiresAt) {
+            sessionStorage.removeItem(authCacheKey(accountId, action, videoId));
+            return null;
+        }
+        return token;
+    } catch {
+        sessionStorage.removeItem(authCacheKey(accountId, action, videoId));
+        return null;
+    }
+}
+
+function persistAuthToken(token: KMSAuthToken): void {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    sessionStorage.setItem(
+        authCacheKey(token.accountId, token.action, token.videoId),
+        JSON.stringify(token),
+    );
+}
+
+function clearCachedAuthToken(
+    accountId: string,
+    action: 'store' | 'retrieve',
+    videoId: string,
+): void {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    sessionStorage.removeItem(authCacheKey(accountId, action, videoId));
+}
+
+export function clearKmsAuthCache(accountId?: string): void {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    const prefix = accountId ? `${AUTH_CACHE_PREFIX}${accountId}:` : AUTH_CACHE_PREFIX;
+    const keysToRemove: string[] = [];
+
+    for (let i = 0; i < sessionStorage.length; i++) {
+        const key = sessionStorage.key(i);
+        if (key?.startsWith(prefix)) {
+            keysToRemove.push(key);
+        }
+    }
+
+    for (const key of keysToRemove) {
+        sessionStorage.removeItem(key);
+    }
+}
+
+async function getLocalKmsSigningKey(accountId: string): Promise<KeyPair | null> {
+    const activeUploadSessionKey = getActiveUploadSessionKey(accountId);
+    if (activeUploadSessionKey) {
+        return activeUploadSessionKey;
+    }
+
+    const keyStore = new BrowserKeyStore();
+    const defaultKey = await keyStore.getKey(NEAR_CONFIG.networkId, accountId);
+    if (defaultKey) {
+        return defaultKey;
+    }
+
+    // Meteor wallet stores its browser-managed key under a custom prefix.
+    const meteorKeyStore = new BrowserKeyStore('_meteor_wallet');
+    return await meteorKeyStore.getKey(NEAR_CONFIG.networkId, accountId);
+}
+
+async function tryLocalSignedKmsRequest<T>(
+    endpoint: 'store' | 'retrieve',
+    accountId: string,
+    videoId: string,
+    extraBody: Record<string, unknown>,
+): Promise<T | null> {
+    const keyPair = await getLocalKmsSigningKey(accountId);
+    if (!keyPair) {
+        return null;
+    }
+
+    const timestamp = Date.now();
     const payload = JSON.stringify({
-        action: 'store',
+        action: endpoint,
         videoId,
         accountId,
         timestamp,
     });
 
-    const signature = await signPayload(payload, privateKey);
+    const signature = keyPair.sign(new TextEncoder().encode(payload));
+    const response = await fetch(`${KMS_BASE_URL}/${endpoint}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            ...extraBody,
+            accountId,
+            timestamp,
+            signature: encodeHex(signature.signature),
+            publicKey: keyPair.getPublicKey().toString(),
+        }),
+    });
 
-    let response;
+    const result = await response.json() as { ok: boolean; error?: string; data?: T };
+
+    if (result.ok) {
+        return result.data as T;
+    }
+
+    if (response.status === 401) {
+        return null;
+    }
+
+    throw new KMSError(
+        endpoint === 'store' ? 'STORE_FAILED' : 'RETRIEVE_FAILED',
+        result.error || `Failed to ${endpoint} key`,
+    );
+}
+
+async function requestKmsAuthToken(
+    videoId: string,
+    action: 'store' | 'retrieve',
+    accountId: string,
+    wallet: WalletInstance,
+): Promise<KMSAuthToken> {
+    const cached = readCachedAuthToken(accountId, action, videoId);
+    if (cached) {
+        return cached;
+    }
+
+    let challengeResponse: Response;
     try {
-        response = await fetch(`${KMS_BASE_URL}/store`, {
+        challengeResponse = await fetch(`${KMS_BASE_URL}/auth/challenge`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountId, action, videoId }),
+        });
+    } catch (fetchError) {
+        throw new KMSError(
+            'NETWORK_ERROR',
+            `KMS Connection failed (${KMS_BASE_URL}). Ensure worker is running.`,
+            fetchError as Error,
+        );
+    }
+
+    const challengeResult = await challengeResponse.json() as {
+        ok: boolean;
+        error?: string;
+        data?: KMSAuthChallenge;
+    };
+
+    if (!challengeResult.ok || !challengeResult.data) {
+        throw new KMSError(
+            'AUTH_CHALLENGE_FAILED',
+            challengeResult.error || 'Failed to create KMS auth challenge',
+        );
+    }
+
+    const signedMessage = await wallet.signMessage({
+        message: challengeResult.data.message,
+        recipient: challengeResult.data.recipient,
+        nonce: decodeBase64(challengeResult.data.nonce),
+    });
+
+    if (!signedMessage) {
+        throw new KMSError('AUTH_REJECTED', 'Wallet did not return a signed message');
+    }
+
+    let verifyResponse: Response;
+    try {
+        verifyResponse = await fetch(`${KMS_BASE_URL}/auth/verify`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                action: 'store',
-                videoId,
-                aesKeyB64,
-                accountId,
-                timestamp,
-                signature,
-                publicKey: publicKeyB58,
+                challengeId: challengeResult.data.challengeId,
+                accountId: signedMessage.accountId,
+                publicKey: signedMessage.publicKey,
+                signature: signedMessage.signature,
             }),
         });
     } catch (fetchError) {
         throw new KMSError(
             'NETWORK_ERROR',
             `KMS Connection failed (${KMS_BASE_URL}). Ensure worker is running.`,
-            fetchError as Error
+            fetchError as Error,
         );
     }
 
-    const result = await response.json() as { ok: boolean; error?: string; data?: KMSStoreResult };
+    const verifyResult = await verifyResponse.json() as {
+        ok: boolean;
+        error?: string;
+        data?: KMSAuthToken;
+    };
 
-    if (!result.ok) {
+    if (!verifyResult.ok || !verifyResult.data) {
         throw new KMSError(
-            response.status === 403 ? 'ACCESS_DENIED' : 'STORE_FAILED',
-            result.error || 'Failed to store key',
+            verifyResponse.status === 401 ? 'AUTH_REJECTED' : 'AUTH_VERIFY_FAILED',
+            verifyResult.error || 'Failed to verify KMS auth challenge',
         );
     }
 
-    return result.data as KMSStoreResult;
+    persistAuthToken(verifyResult.data);
+    return verifyResult.data;
 }
 
-/**
- * Retrieve an AES encryption key from the KMS.
- * Only users with a valid ticket can retrieve keys.
- *
- * @param videoId - The video/token ID
- * @param accountId - NEAR account ID of the viewer
- * @param privateKey - Ed25519 private key for signing
- * @param publicKeyB58 - Base58-encoded public key
- */
-export async function retrieveEncryptionKey(
-    videoId: string,
-    accountId: string,
-    privateKey: CryptoKey,
-    publicKeyB58: string,
-): Promise<string> {
-    const timestamp = Date.now();
-
-    const payload = JSON.stringify({
-        action: 'retrieve',
-        videoId,
-        accountId,
-        timestamp,
-    });
-
-    const signature = await signPayload(payload, privateKey);
-
-    let response;
+async function fetchKmsWithToken<T>(
+    endpoint: 'store' | 'retrieve',
+    body: Record<string, unknown>,
+    token: KMSAuthToken,
+): Promise<T> {
+    let response: Response;
     try {
-        response = await fetch(`${KMS_BASE_URL}/retrieve`, {
+        response = await fetch(`${KMS_BASE_URL}/${endpoint}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                action: 'retrieve',
-                videoId,
-                accountId,
-                timestamp,
-                signature,
-                publicKey: publicKeyB58,
-            }),
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token.token}`,
+            },
+            body: JSON.stringify(body),
         });
     } catch (fetchError) {
         throw new KMSError(
             'NETWORK_ERROR',
             `KMS Connection failed (${KMS_BASE_URL}). Ensure worker is running.`,
-            fetchError as Error
+            fetchError as Error,
         );
     }
 
-    const result = await response.json() as { ok: boolean; error?: string; data?: KMSRetrieveResult };
+    const result = await response.json() as { ok: boolean; error?: string; data?: T };
 
     if (!result.ok) {
+        if (response.status === 401) {
+            clearCachedAuthToken(token.accountId, token.action, token.videoId);
+            throw new KMSError('AUTH_EXPIRED', result.error || 'KMS authorization expired');
+        }
         if (response.status === 403) {
-            throw new KMSError('ACCESS_DENIED', result.error || 'No valid ticket');
+            throw new KMSError('ACCESS_DENIED', result.error || 'Access denied');
         }
         if (response.status === 404) {
             throw new KMSError('NOT_FOUND', result.error || 'Key not found');
         }
-        throw new KMSError('RETRIEVE_FAILED', result.error || 'Failed to retrieve key');
+        throw new KMSError(
+            endpoint === 'store' ? 'STORE_FAILED' : 'RETRIEVE_FAILED',
+            result.error || `Failed to ${endpoint} key`,
+        );
     }
 
-    return (result.data as KMSRetrieveResult).aesKeyB64;
+    return result.data as T;
 }
 
-// ============================================================================
-// Base58 Encoding (NEAR-compatible)
-// ============================================================================
+export async function storeEncryptionKey(
+    videoId: string,
+    aesKeyB64: string,
+    accountId: string,
+    wallet: WalletInstance,
+): Promise<KMSStoreResult> {
+    const localResult = await tryLocalSignedKmsRequest<KMSStoreResult>(
+        'store',
+        accountId,
+        videoId,
+        { videoId, aesKeyB64 },
+    );
+    if (localResult) {
+        return localResult;
+    }
 
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+    const token = await requestKmsAuthToken(videoId, 'store', accountId, wallet);
 
-function base58Encode(bytes: Uint8Array): string {
-    const digits = [0];
-    for (const byte of bytes) {
-        let carry = byte;
-        for (let j = 0; j < digits.length; j++) {
-            carry += digits[j] << 8;
-            digits[j] = carry % 58;
-            carry = (carry / 58) | 0;
+    try {
+        return await fetchKmsWithToken<KMSStoreResult>(
+            'store',
+            { videoId, aesKeyB64 },
+            token,
+        );
+    } catch (error) {
+        if (error instanceof KMSError && error.code === 'AUTH_EXPIRED') {
+            const refreshed = await requestKmsAuthToken(videoId, 'store', accountId, wallet);
+            return fetchKmsWithToken<KMSStoreResult>('store', { videoId, aesKeyB64 }, refreshed);
         }
-        while (carry > 0) {
-            digits.push(carry % 58);
-            carry = (carry / 58) | 0;
-        }
+        throw error;
     }
-
-    let str = '';
-    for (const byte of bytes) {
-        if (byte !== 0) break;
-        str += '1';
-    }
-    for (let i = digits.length - 1; i >= 0; i--) {
-        str += BASE58_ALPHABET[digits[i]];
-    }
-    return str;
 }
 
-function bytesToHex(bytes: Uint8Array): string {
-    return Array.from(bytes)
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
+export async function retrieveEncryptionKey(
+    videoId: string,
+    accountId: string,
+    wallet: WalletInstance,
+): Promise<string> {
+    const localResult = await tryLocalSignedKmsRequest<KMSRetrieveResult>(
+        'retrieve',
+        accountId,
+        videoId,
+        { videoId },
+    );
+    if (localResult) {
+        return localResult.aesKeyB64;
+    }
+
+    const token = await requestKmsAuthToken(videoId, 'retrieve', accountId, wallet);
+
+    try {
+        const result = await fetchKmsWithToken<KMSRetrieveResult>(
+            'retrieve',
+            { videoId },
+            token,
+        );
+        return result.aesKeyB64;
+    } catch (error) {
+        if (error instanceof KMSError && error.code === 'AUTH_EXPIRED') {
+            const refreshed = await requestKmsAuthToken(videoId, 'retrieve', accountId, wallet);
+            const result = await fetchKmsWithToken<KMSRetrieveResult>('retrieve', { videoId }, refreshed);
+            return result.aesKeyB64;
+        }
+        throw error;
+    }
 }

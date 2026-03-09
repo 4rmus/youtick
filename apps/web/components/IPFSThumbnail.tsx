@@ -1,11 +1,17 @@
 'use client';
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
-import { getGatewayUrls } from '@/lib/crust';
+import { fetchFromGateways, getGatewayUrls } from '@/lib/crust';
 
 // Module-level cache to avoid repeated URL resolution work
 const resolvedUrlCache = new Map<string, string[]>();
+const selectedUrlCache = new Map<string, string>();
+const fetchedBlobUrlCache = new Map<string, string>();
+let lastSuccessfulGatewayOrigin: string | null = null;
+const THUMBNAIL_PROBE_TIMEOUT_MS = 1800;
+const THUMBNAIL_STAGGER_MS = 500;
+const MAX_THUMBNAIL_CANDIDATES = 3;
 
 /**
  * Extract IPFS CID from various URL formats.
@@ -30,6 +36,27 @@ function getThumbnailGatewayUrls(cid: string): string[] {
   const publicGateways = getGatewayUrls(cid);
   const crustDirect = `https://crustipfs.xyz/ipfs/${cid}`;
   return [...publicGateways, crustDirect];
+}
+
+function getUrlOrigin(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+function prioritizeGatewayUrls(urls: string[]): string[] {
+  if (!lastSuccessfulGatewayOrigin) {
+    return urls;
+  }
+
+  return [...urls].sort((a, b) => {
+    const aMatches = getUrlOrigin(a) === lastSuccessfulGatewayOrigin;
+    const bMatches = getUrlOrigin(b) === lastSuccessfulGatewayOrigin;
+    if (aMatches === bMatches) return 0;
+    return aMatches ? -1 : 1;
+  });
 }
 
 function resolveUrlCandidates(inputUrl: string): string[] {
@@ -73,13 +100,14 @@ interface IPFSThumbnailProps {
   onLoad?: () => void;
   /** Called when image fails to load */
   onError?: (error: Error) => void;
+  /** Browser loading hint */
+  loading?: 'lazy' | 'eager';
+  /** Probe timeout before trying the next gateway candidate */
+  timeoutMs?: number;
 }
 
 /**
- * IPFS thumbnail with gateway fallback chain.
- *
- * This component intentionally avoids effect-driven state updates.
- * Fallback attempts are tracked per source URL and updated only in event handlers.
+ * IPFS thumbnail with latency-aware gateway selection.
  */
 export function IPFSThumbnail({
   url,
@@ -88,49 +116,174 @@ export function IPFSThumbnail({
   fallbackUrl = '/placeholder-video.svg',
   onLoad,
   onError,
+  loading = 'lazy',
+  timeoutMs = THUMBNAIL_PROBE_TIMEOUT_MS,
 }: IPFSThumbnailProps) {
   const sourceKey = url || '__fallback__';
   const candidates = useMemo(
-    () => (url ? resolveUrlCandidates(url) : [fallbackUrl]),
+    () => prioritizeGatewayUrls(url ? resolveUrlCandidates(url) : [fallbackUrl]).slice(0, MAX_THUMBNAIL_CANDIDATES),
     [url, fallbackUrl],
   );
+  const cachedUrl = selectedUrlCache.get(sourceKey);
+  const [imageUrl, setImageUrl] = useState<string>(() => {
+    if (cachedUrl && candidates.includes(cachedUrl)) {
+      return cachedUrl;
+    }
+    return candidates[0] ?? fallbackUrl;
+  });
 
-  // Per-source attempt counters so changing `url` naturally resets attempts.
-  const [attemptsBySource, setAttemptsBySource] = useState<Record<string, number>>({});
-  const attempt = attemptsBySource[sourceKey] || 0;
+  useEffect(() => {
+    let cancelled = false;
 
-  const imageUrl = attempt < candidates.length
-    ? candidates[attempt]
-    : fallbackUrl;
+    async function resolveBestCandidate() {
+      const fetchedBlobUrl = fetchedBlobUrlCache.get(sourceKey);
+      if (fetchedBlobUrl) {
+        setImageUrl(fetchedBlobUrl);
+        return;
+      }
 
-  const handleImageError = useCallback(() => {
-    const nextAttempt = attempt + 1;
+        const cid = url ? extractCidFromUrl(url) : null;
+        if (cid) {
+          try {
+            const response = await fetchFromGateways(cid, { timeout: Math.max(timeoutMs, 2500) });
+            const blob = await response.blob();
+            if (cancelled) return;
 
-    if (nextAttempt < candidates.length) {
-      setAttemptsBySource((prev) => ({ ...prev, [sourceKey]: nextAttempt }));
-      return;
+          const normalizedBlob = blob.type.startsWith('image/')
+            ? blob
+            : new Blob([blob], { type: 'image/jpeg' });
+          const objectUrl = URL.createObjectURL(normalizedBlob);
+          fetchedBlobUrlCache.set(sourceKey, objectUrl);
+          setImageUrl(objectUrl);
+          return;
+          } catch {
+            // Fall through to public gateway probing.
+        }
+      }
+
+      const cached = selectedUrlCache.get(sourceKey);
+      if (cached && candidates.includes(cached)) {
+        setImageUrl(cached);
+        return;
+      }
+
+      setImageUrl(candidates[0] ?? fallbackUrl);
+
+      if (candidates.length <= 1 || typeof window === 'undefined' || typeof window.Image === 'undefined') {
+        setImageUrl(candidates[0] ?? fallbackUrl);
+        return;
+      }
+
+      try {
+        const winner = await pickResponsiveImageUrl(candidates, timeoutMs);
+        if (cancelled) return;
+        selectedUrlCache.set(sourceKey, winner);
+        lastSuccessfulGatewayOrigin = getUrlOrigin(winner);
+        setImageUrl(winner);
+      } catch {
+        if (cancelled) return;
+        setImageUrl(fallbackUrl);
+        onError?.(new Error('All gateways failed'));
+      }
     }
 
-    // Exhausted all candidates; move to fallback state and notify caller.
-    setAttemptsBySource((prev) => ({ ...prev, [sourceKey]: candidates.length }));
-    onError?.(new Error('All gateways failed'));
-  }, [attempt, candidates, sourceKey, onError]);
+    void resolveBestCandidate();
 
-  const handleImageLoad = useCallback(() => {
+    return () => {
+      cancelled = true;
+    };
+  }, [candidates, fallbackUrl, onError, sourceKey, timeoutMs, url]);
+
+  const handleImageError = () => {
+    selectedUrlCache.delete(sourceKey);
+    setImageUrl(fallbackUrl);
+    onError?.(new Error('Image load failed'));
+  };
+
+  const handleImageLoad = () => {
+    const origin = getUrlOrigin(imageUrl);
+    if (origin) {
+      lastSuccessfulGatewayOrigin = origin;
+    }
+    if (imageUrl !== fallbackUrl) {
+      selectedUrlCache.set(sourceKey, imageUrl);
+    }
     onLoad?.();
-  }, [onLoad]);
+  };
 
   return (
-    <Image
-      src={imageUrl}
-      alt={alt}
-      className={className}
-      width={1600}
-      height={900}
-      sizes="100vw"
-      unoptimized
-      onError={handleImageError}
-      onLoad={handleImageLoad}
-    />
+    <span className="contents">
+      <Image
+        src={imageUrl}
+        alt={alt}
+        className={className}
+        width={1600}
+        height={900}
+        sizes="100vw"
+        unoptimized
+        loading={loading}
+        onError={handleImageError}
+        onLoad={handleImageLoad}
+      />
+    </span>
   );
+}
+
+async function pickResponsiveImageUrl(candidates: string[], timeoutMs: number): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const timers: number[] = [];
+    const cleanups: Array<() => void> = [];
+    let failures = 0;
+    let settled = false;
+
+    const finish = (resolver: () => void) => {
+      if (settled) return;
+      settled = true;
+      for (const timer of timers) {
+        window.clearTimeout(timer);
+      }
+      for (const cleanup of cleanups) {
+        cleanup();
+      }
+      resolver();
+    };
+
+    candidates.forEach((candidate, index) => {
+      const timer = window.setTimeout(() => {
+        const img = new window.Image();
+        const cleanup = () => {
+          window.clearTimeout(timeout);
+          img.onload = null;
+          img.onerror = null;
+        };
+
+        const timeout = window.setTimeout(() => {
+          cleanup();
+          img.src = '';
+          failures += 1;
+          if (failures === candidates.length) {
+            finish(() => reject(new Error('All candidates timed out')));
+          }
+        }, timeoutMs);
+
+        cleanups.push(cleanup);
+
+        img.onload = () => {
+          finish(() => resolve(candidate));
+        };
+
+        img.onerror = () => {
+          cleanup();
+          failures += 1;
+          if (failures === candidates.length) {
+            finish(() => reject(new Error('All candidates failed')));
+          }
+        };
+
+        img.src = candidate;
+      }, index * THUMBNAIL_STAGGER_MS);
+
+      timers.push(timer);
+    });
+  });
 }

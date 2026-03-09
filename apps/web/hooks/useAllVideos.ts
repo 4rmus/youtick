@@ -5,6 +5,7 @@ import { getProvider, viewContract } from '@/lib/near';
 import { TokenWithVideo } from './useOwnedTokens';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { NEAR_CONFIG } from '@/lib/constants';
+import { resolvePreferredMediaUrl } from '@/lib/video-delivery';
 
 const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
 const PAGE_SIZE = 24;
@@ -51,30 +52,33 @@ async function fetchAllEvents(): Promise<TokenWithVideo[]> {
         return [];
     }
 
-    const eventTokens: TokenWithVideo[] = events
-    .filter(([, event]) => !event.banned)
-    .map(([cid, event]) => {
-        const parsed = parseTitleMetadata(event.title);
-        const displayDescription = event.description || `NFT ticket - ${yoctoToNear(BigInt(event.price))} NEAR`;
+    const eventTokens: TokenWithVideo[] = await Promise.all(
+        events
+            .filter(([, event]) => !event.banned)
+            .map(async ([cid, event]) => {
+                const parsed = parseTitleMetadata(event.title);
+                const displayDescription = event.description || `NFT ticket - ${yoctoToNear(BigInt(event.price))} NEAR`;
+                const media = await resolvePreferredMediaUrl(parsed.thumbnailUrl, parsed.manifestCid);
 
-        return {
-            token_id: `event-${cid}`,
-            owner_id: event.creator_id,
-            metadata: {
-                title: parsed.title,
-                description: displayDescription,
-                media: parsed.thumbnailUrl,
-                copies: 1
-            },
-            video_metadata: {
-                encrypted_cid: cid,
-                duration_seconds: 0,
-                content_type: "Exclusive",
-                price: event.price,
-                price_usd: event.price_usd ?? null,
-            }
-        };
-    });
+                return {
+                    token_id: `event-${cid}`,
+                    owner_id: event.creator_id,
+                    metadata: {
+                        title: parsed.title,
+                        description: displayDescription,
+                        media: media ?? parsed.thumbnailUrl,
+                        copies: 1
+                    },
+                    video_metadata: {
+                        encrypted_cid: cid,
+                        duration_seconds: 0,
+                        content_type: "Exclusive",
+                        price: event.price,
+                        price_usd: event.price_usd ?? null,
+                    }
+                };
+            }),
+    );
 
     // Reverse globally so newest events appear first
     return eventTokens.reverse();

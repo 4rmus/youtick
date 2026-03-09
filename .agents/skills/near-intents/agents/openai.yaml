@@ -1,0 +1,4 @@
+interface:
+  display_name: "NEAR Intents"
+  short_description: "1Click swap flows, quotes, and status handling"
+  default_prompt: "Use $near-intents to implement or review 1Click swap flows, quotes, and status handling."

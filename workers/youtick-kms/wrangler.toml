@@ -26,3 +26,23 @@ id = "d6371b2b2d3d4cf382af02a341f865da"
 [[kv_namespaces]]
 binding = "ACCESS_CACHE"
 id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+
+[env.testnet]
+name = "youtick-kms-testnet"
+
+[env.testnet.vars]
+ALLOWED_ORIGINS = "http://localhost:3000"
+NEAR_CONTRACT_ID = "dev-1772795729514-559838.v2-0.utick.testnet"
+NEAR_NETWORK = "testnet"
+
+[[env.testnet.kv_namespaces]]
+binding = "VIDEO_KEYS"
+id = "7af9ebeeffaa4f4bace8e0347963d165"
+
+[[env.testnet.kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "d6371b2b2d3d4cf382af02a341f865da"
+
+[[env.testnet.kv_namespaces]]
+binding = "ACCESS_CACHE"
+id = "aeb0fda6a8c448b88cf04d69a3b9373b"

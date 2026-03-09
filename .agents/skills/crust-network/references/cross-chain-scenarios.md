@@ -24,7 +24,7 @@ User (NEAR Wallet)
 import { KeyPair } from 'near-api-js';
 import { ethers } from 'ethers';
 import { ApiPromise, WsProvider } from '@polkadot/api';
-import { typesBundleForPolkadot } from '@crustnetwork/type-definitions';
+import { typesBundleForPolkadot } from '@crustio/type-definitions';
 import { create } from 'ipfs-http-client';
 
 class CrossChainStorage {

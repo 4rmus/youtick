@@ -3,13 +3,14 @@ import { useWallet } from '@/components/providers/WalletProvider';
 import { getProvider, viewContract } from '@/lib/near';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { NEAR_CONFIG } from '@/lib/constants';
+import { resolvePreferredMediaUrl } from '@/lib/video-delivery';
 
 /**
  * Check if a media URL looks valid
  */
 function isValidMediaUrl(mediaUrl: string | undefined): boolean {
     if (!mediaUrl) return false;
-    return mediaUrl.startsWith('http') || mediaUrl.startsWith('data:');
+    return mediaUrl.startsWith('http') || mediaUrl.startsWith('data:') || mediaUrl.startsWith('ipfs://');
 }
 
 const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
@@ -61,7 +62,7 @@ async function fetchOwnedTokens(accountId: string): Promise<TokenWithVideo[]> {
         }
     );
 
-    const mappedTokens: TokenWithVideo[] = result.map(([token, videoMeta]) => {
+    const mappedTokens: TokenWithVideo[] = await Promise.all(result.map(async ([token, videoMeta]) => {
         const parsed = parseTitleMetadata(
             token.metadata?.title,
             token.token_id
@@ -71,9 +72,10 @@ async function fetchOwnedTokens(accountId: string): Promise<TokenWithVideo[]> {
             && !token.metadata.media.includes('token.png')
             && isValidMediaUrl(token.metadata.media);
 
+        const fallbackMedia = await resolvePreferredMediaUrl(parsed.thumbnailUrl, parsed.manifestCid);
         const displayMedia = originalMediaValid
             ? token.metadata!.media
-            : parsed.thumbnailUrl;
+            : (fallbackMedia ?? parsed.thumbnailUrl);
 
         return {
             ...token,
@@ -84,7 +86,7 @@ async function fetchOwnedTokens(accountId: string): Promise<TokenWithVideo[]> {
             },
             video_metadata: videoMeta ?? undefined
         };
-    });
+    }));
 
     return mappedTokens.reverse();
 }

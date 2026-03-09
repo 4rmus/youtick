@@ -1,285 +1,56 @@
 ---
 name: near-api-js
 description: >
-  Guide for developing with near-api-js v7 - the JavaScript/TypeScript library for NEAR blockchain interaction.
-  Use when building apps that interact with NEAR blockchain, creating/signing transactions, calling smart
-  contracts, managing accounts and keys, working with NEAR RPC API, handling FT/NFT tokens, using NEAR
-  cryptographic operations, gasless/meta transactions with relayers, wallet integration and session management,
-  NEP-413 message signing, or storage deposit management for FT contracts.
-version: 1.0.0
+  Develop and maintain near-api-js 7.x integrations for NEAR RPC access, accounts, signers,
+  actions, session keys, NEP-413 signing, and transaction construction. Use when touching repo
+  code under apps/web/lib/near.ts, key/session management, backend NEAR services, or wallet
+  interop that passes near-api-js actions.
 license: MIT
-platforms:
-  - claude
-  - gemini
-  - openai
-  - markdown
-tags:
-  - near-protocol
-  - near-api-js
-  - javascript
-  - typescript
-  - blockchain
-  - web3
-  - transactions
-  - smart-contracts
 metadata:
   author: near
-  version: "1.0.0"
 ---
 
-# near-api-js Skill
+# near-api-js
 
-JavaScript/TypeScript library for NEAR blockchain interaction. Works in browser and Node.js.
+Use this skill for low-level NEAR JavaScript and TypeScript work.
 
-## Quick Start
+## 2026 Stable Guidance
 
-```typescript
-import { Account, JsonRpcProvider, KeyPair } from "near-api-js"
-import { NEAR } from "near-api-js/tokens"
+- `near-api-js` is the low-level client for RPC, keys, actions, accounts, and message signing.
+- If you are building browser wallet login, use a wallet connector layer:
+  - current NEAR docs recommend `@hot-labs/near-connect` for new wallet-login flows,
+  - this repo currently uses `@near-wallet-selector/*`, which is still a supported path.
+- Use RPC for live chain reads and transaction submission. Use indexer-style APIs such as FastNEAR or NearBlocks for heavy history, asset inventory, or analytics queries.
+- Keep on-chain values as `bigint` or stringified yocto amounts. Do not use JS number math for balances or gas.
+- Function-call access keys are scoped and cannot replace a full-access signer for arbitrary transfers or payable flows.
 
-// Connect to testnet
-const provider = new JsonRpcProvider({ url: "https://test.rpc.fastnear.com" })
+## Repo Mapping
 
-// Create account with signer
-const account = new Account("my-account.testnet", provider, "ed25519:...")
-```
+- `apps/web/lib/near.ts`: provider and failover query helpers.
+- `apps/web/lib/keystore-v7.ts`: browser and in-memory key-store primitives.
+- `apps/web/lib/session-manager.ts`: session-key lifecycle and transaction retries.
+- `apps/web/lib/batch-transactions.ts`: multi-action helpers.
+- `apps/web/components/providers/WalletProvider.tsx`: wallet-selector interop using `near-api-js` actions.
 
-## Import Cheatsheet
+## Common Decisions
 
-```typescript
-// Core
-import { Account, actions, JsonRpcProvider, FailoverRpcProvider } from "near-api-js"
-import { KeyPair, PublicKey, KeyType } from "near-api-js"
+- Read-only contract or account query: use `JsonRpcProvider` or `FailoverRpcProvider`.
+- User-signed transaction in the browser: let the wallet connector sign, but build actions with `near-api-js`.
+- Trial wallet or managed session key: use `KeyPair`, `Signer`, and `Account`.
+- Off-chain auth or wallet proof: use NEP-413 message signing.
+- Gasless flow: create a signed delegate and submit through a relayer.
 
-// Tokens
-import { NEAR, FungibleToken, NFTContract } from "near-api-js/tokens"
-import { USDC, wNEAR } from "near-api-js/tokens/mainnet"
+## Read Next
 
-// Seed phrases
-import { generateSeedPhrase, parseSeedPhrase } from "near-api-js/seed-phrase"
+- `references/api_patterns.md` for provider, account, action, and transaction shapes.
+- `references/wallet_integration.md` for browser wallet patterns and repo-specific interop.
+- `references/key_management.md` for key storage, session keys, and signer handling.
+- `references/meta_transactions.md` when a relayer or NEP-366 flow is in scope.
+- `references/tokens_guide.md` for FT/NFT token operations and storage-deposit concerns.
 
-// Signers
-import { KeyPairSigner, MultiKeySigner, Signer } from "near-api-js"
+## Guardrails
 
-// Units
-import { nearToYocto, yoctoToNear, teraToGas, gigaToGas } from "near-api-js"
-
-// Transactions
-import { createTransaction, signTransaction } from "near-api-js"
-
-// Error handling
-import { TypedError, parseTransactionExecutionError } from "near-api-js"
-```
-
-## Core Modules
-
-### Account
-
-Main class for account operations.
-
-```typescript
-const account = new Account(accountId, provider, privateKey)
-
-// Get state
-const state = await account.getState()  // { balance: { total, available, locked }, storageUsage }
-
-// Transfer NEAR
-await account.transfer({ receiverId: "bob.testnet", amount: NEAR.toUnits("1"), token: NEAR })
-
-// Call contract
-await account.callFunction({
-  contractId: "contract.testnet",
-  methodName: "set_greeting",
-  args: { message: "Hello" },
-  deposit: 0n,
-  gas: 30_000_000_000_000n
-})
-
-// Sign and send transaction
-await account.signAndSendTransaction({
-  receiverId: "contract.testnet",
-  actions: [
-    actions.functionCall("method", { arg: "value" }, 30_000_000_000_000n, 0n),
-    actions.transfer(1_000_000_000_000_000_000_000_000n)
-  ]
-})
-```
-
-### Provider
-
-RPC client for querying blockchain.
-
-```typescript
-const provider = new JsonRpcProvider({ url: "https://rpc.mainnet.near.org" })
-
-// Failover provider
-const failover = new FailoverRpcProvider([
-  new JsonRpcProvider({ url: "https://rpc.mainnet.near.org" }),
-  new JsonRpcProvider({ url: "https://rpc.mainnet.pagoda.co" })
-])
-
-// Query methods
-await provider.viewAccount({ accountId: "alice.near" })
-await provider.viewAccessKey({ accountId, publicKey })
-await provider.callFunction({ contractId, method: "get_greeting", args: {} })
-await provider.viewBlock({ finality: "final" })
-await provider.sendTransaction(signedTx)
-```
-
-### Crypto
-
-Key management and cryptographic operations.
-
-```typescript
-import { KeyPair, PublicKey } from "near-api-js"
-
-// Generate random keypair
-const keyPair = KeyPair.fromRandom("ed25519")
-
-// From string
-const keyPair = KeyPair.fromString("ed25519:5Fg2...")
-
-// Sign and verify
-const { signature, publicKey } = keyPair.sign(data)
-const verified = keyPair.verify(message, signature)
-```
-
-### Tokens
-
-FT and NFT support.
-
-```typescript
-import { NEAR, FungibleToken } from "near-api-js/tokens"
-import { USDC } from "near-api-js/tokens/mainnet"
-
-// Unit conversion
-NEAR.toUnits("1.5")  // 1500000000000000000000000n
-NEAR.toDecimal(amount)  // "1.5"
-
-// Transfer FT
-await account.transfer({ receiverId: "bob.near", amount: USDC.toUnits("50"), token: USDC })
-
-// Custom FT
-const token = new FungibleToken("usdt.tether-token.near", { decimals: 6, name: "USDT", symbol: "USDT" })
-```
-
-### Actions
-
-All transaction actions.
-
-```typescript
-import { actions } from "near-api-js"
-
-actions.transfer(amount)
-actions.functionCall(methodName, args, gas, deposit)
-actions.createAccount()
-actions.deployContract(wasmBytes)
-actions.addFullAccessKey(publicKey)
-actions.addFunctionAccessKey(publicKey, contractId, methodNames, allowance)
-actions.deleteKey(publicKey)
-actions.deleteAccount(beneficiaryId)
-actions.stake(amount, publicKey)
-actions.signedDelegate(signedDelegateAction)  // Meta transactions
-```
-
-## RPC Endpoints
-
-| Network | URL |
-|---------|-----|
-| Mainnet | `https://rpc.mainnet.near.org` |
-| Mainnet (Pagoda) | `https://rpc.mainnet.pagoda.co` |
-| Mainnet (FastNEAR) | `https://free.rpc.fastnear.com` |
-| Testnet | `https://rpc.testnet.near.org` |
-| Testnet (FastNEAR) | `https://test.rpc.fastnear.com` |
-
-## Common Patterns
-
-### View Contract State
-
-```typescript
-const result = await provider.callFunction({
-  contractId: "contract.near",
-  method: "get_data",
-  args: { key: "value" }
-})
-```
-
-### Change Contract State
-
-```typescript
-await account.callFunction({
-  contractId: "contract.near",
-  methodName: "set_data",
-  args: { key: "new_value" },
-  gas: 30_000_000_000_000n,
-  deposit: 0n
-})
-```
-
-### Batch Transactions
-
-```typescript
-await account.signAndSendTransactions({
-  transactions: [
-    { receiverId: "bob.near", actions: [actions.transfer(NEAR.toUnits("1"))] },
-    { receiverId: "alice.near", actions: [actions.transfer(NEAR.toUnits("2"))] }
-  ]
-})
-```
-
-### Meta Transactions (Gasless)
-
-```typescript
-// Create signed meta tx (user side)
-const signedDelegate = await account.createSignedMetaTransaction({
-  receiverId: "contract.near",
-  actions: [actions.functionCall("method", {}, 30_000_000_000_000n, 0n)]
-})
-
-// Submit via relayer
-await relayerAccount.signAndSendTransaction({
-  receiverId: signedDelegate.delegateAction.senderId,
-  actions: [actions.signedDelegate(signedDelegate)]
-})
-```
-
-### Contract Interface
-
-```typescript
-import { Contract } from "near-api-js"
-
-const contract = new Contract(account, "contract.near", {
-  viewMethods: ["get_status"],
-  changeMethods: ["set_status"]
-})
-
-const status = await contract.get_status()
-await contract.set_status({ message: "Hello" })
-```
-
-## Error Handling
-
-```typescript
-import { parseTransactionExecutionError, TypedError, InvalidNonceError } from "near-api-js"
-
-try {
-  await account.signAndSendTransaction({ ... })
-} catch (error) {
-  if (error instanceof TypedError) {
-    console.log(error.type, error.message)
-  }
-  if (error instanceof InvalidNonceError) {
-    // Retry with fresh nonce
-  }
-}
-```
-
-## Reference Documentation
-
-For detailed patterns and advanced usage, see:
-
-- [API Patterns Reference](references/api_patterns.md) - Complete Account/Provider method reference, type definitions
-- [Tokens Guide](references/tokens_guide.md) - FT/NFT operations, storage deposits, pre-defined tokens
-- [Key Management](references/key_management.md) - KeyPair types, seed phrases, signers, access keys
-- [Meta Transactions](references/meta_transactions.md) - Gasless transactions, relayer integration
-- [Wallet Integration](references/wallet_integration.md) - Browser patterns, NEP-413 signing, sessions
+- Do not bind UI login flow directly to raw `Account` construction if a wallet connector already owns the user session.
+- Standardize local key storage keys; this repo uses `near-api-js:keystore:${accountId}:${networkId}`.
+- Prefer provider-level view calls over ad hoc JSON-RPC fetch code when the repo already wraps them.
+- When migrating older snippets, assume `WalletConnection` examples are legacy until proven otherwise.

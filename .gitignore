@@ -52,7 +52,9 @@ claudedocs/
 # AI Assistants
 .claude/
 .agent/
-.agents/
+.agents/*
+!.agents/skills/
+!.agents/skills/**
 
 # Cloudflare Wrangler
 workers/**/.wrangler/
