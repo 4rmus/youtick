@@ -39,7 +39,7 @@ cp .env.example .env.local
 
 Minimum `.env.local`:
 
-```env
+```txt
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 NEXT_PUBLIC_ONBOARDING_KEY=ed25519:...
@@ -112,4 +112,3 @@ cargo test
 | Follow user journeys | [User Flows](./guides/user-flows.md) |
 | Work on frontend modules | [Frontend](./frontend.md) |
 | Contract internals | [Smart Contract Architecture](./architecture/smart-contract.md) |
-
