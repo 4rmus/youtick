@@ -141,47 +141,56 @@ vi.mock('near-api-js', () => ({
 
 const mockKeyStore = new Map<string, MockKeyPair>();
 
-vi.mock('@/lib/keystore-v7', () => ({
-  BrowserKeyStore: vi.fn().mockImplementation(() => ({
-    getKey: vi.fn(async (networkId: string, accountId: string) => {
-      const key = `${accountId}:${networkId}`;
-      return mockKeyStore.get(key) || null;
-    }),
-    setKey: vi.fn(async (networkId: string, accountId: string, keyPair: MockKeyPair) => {
-      const key = `${accountId}:${networkId}`;
-      mockKeyStore.set(key, keyPair);
-    }),
-    removeKey: vi.fn(async (networkId: string, accountId: string) => {
-      const key = `${accountId}:${networkId}`;
-      mockKeyStore.delete(key);
-    }),
-    getSigner: vi.fn(async (networkId: string, accountId: string) => {
-      const keyPair = mockKeyStore.get(`${accountId}:${networkId}`);
-      if (!keyPair) return null;
-      return { keyPair, sign: (msg: Uint8Array) => keyPair.sign(msg) };
-    }),
-    clear: vi.fn(async () => mockKeyStore.clear()),
-    getAccounts: vi.fn(async (networkId: string) => {
-      const accounts: string[] = [];
-      for (const key of mockKeyStore.keys()) {
-        if (key.endsWith(`:${networkId}`)) {
-          accounts.push(key.replace(`:${networkId}`, ''));
-        }
+class MockBrowserKeyStore {
+  getKey = vi.fn(async (networkId: string, accountId: string) => {
+    const key = `${accountId}:${networkId}`;
+    return mockKeyStore.get(key) || null;
+  });
+
+  setKey = vi.fn(async (networkId: string, accountId: string, keyPair: MockKeyPair) => {
+    const key = `${accountId}:${networkId}`;
+    mockKeyStore.set(key, keyPair);
+  });
+
+  removeKey = vi.fn(async (networkId: string, accountId: string) => {
+    const key = `${accountId}:${networkId}`;
+    mockKeyStore.delete(key);
+  });
+
+  getSigner = vi.fn(async (networkId: string, accountId: string) => {
+    const keyPair = mockKeyStore.get(`${accountId}:${networkId}`);
+    if (!keyPair) return null;
+    return { keyPair, sign: (msg: Uint8Array) => keyPair.sign(msg) };
+  });
+
+  clear = vi.fn(async () => mockKeyStore.clear());
+
+  getAccounts = vi.fn(async (networkId: string) => {
+    const accounts: string[] = [];
+    for (const key of mockKeyStore.keys()) {
+      if (key.endsWith(`:${networkId}`)) {
+        accounts.push(key.replace(`:${networkId}`, ''));
       }
-      return accounts;
-    })
-  })),
-  InMemoryKeyStore: vi.fn().mockImplementation(() => ({
-    keys: new Map(),
-    getKey: vi.fn().mockResolvedValue(null),
-    setKey: vi.fn().mockResolvedValue(undefined),
-    removeKey: vi.fn().mockResolvedValue(undefined),
-    getSigner: vi.fn().mockResolvedValue(null),
-    clear: vi.fn().mockResolvedValue(undefined),
-    getAccounts: vi.fn().mockResolvedValue([])
-  })),
-  browserKeyStore: {},
-  inMemoryKeyStore: {}
+    }
+    return accounts;
+  });
+}
+
+class MockInMemoryKeyStore {
+  keys = new Map();
+  getKey = vi.fn().mockResolvedValue(null);
+  setKey = vi.fn().mockResolvedValue(undefined);
+  removeKey = vi.fn().mockResolvedValue(undefined);
+  getSigner = vi.fn().mockResolvedValue(null);
+  clear = vi.fn().mockResolvedValue(undefined);
+  getAccounts = vi.fn().mockResolvedValue([]);
+}
+
+vi.mock('@/lib/keystore-v7', () => ({
+  BrowserKeyStore: MockBrowserKeyStore,
+  InMemoryKeyStore: MockInMemoryKeyStore,
+  browserKeyStore: new MockBrowserKeyStore(),
+  inMemoryKeyStore: new MockInMemoryKeyStore()
 }));
 
 // ============================================================================
@@ -195,9 +204,27 @@ const localStorageMock = {
   setItem: vi.fn((key: string, value: string) => mockLocalStorage.set(key, value)),
   removeItem: vi.fn((key: string) => mockLocalStorage.delete(key)),
   clear: vi.fn(() => mockLocalStorage.clear()),
-  length: 0,
+  get length() {
+    return mockLocalStorage.size;
+  },
   key: vi.fn((index: number) => {
     const keys = Array.from(mockLocalStorage.keys());
+    return keys[index] || null;
+  })
+};
+
+const mockSessionStorage = new Map<string, string>();
+
+const sessionStorageMock = {
+  getItem: vi.fn((key: string) => mockSessionStorage.get(key) || null),
+  setItem: vi.fn((key: string, value: string) => mockSessionStorage.set(key, value)),
+  removeItem: vi.fn((key: string) => mockSessionStorage.delete(key)),
+  clear: vi.fn(() => mockSessionStorage.clear()),
+  get length() {
+    return mockSessionStorage.size;
+  },
+  key: vi.fn((index: number) => {
+    const keys = Array.from(mockSessionStorage.keys());
     return keys[index] || null;
   })
 };
@@ -207,13 +234,19 @@ Object.defineProperty(globalThis, 'localStorage', {
   writable: true,
 });
 
+Object.defineProperty(globalThis, 'sessionStorage', {
+  value: sessionStorageMock,
+  writable: true,
+});
+
 // ============================================================================
 // Mock window (for browser-only checks like "typeof window !== 'undefined'")
 // ============================================================================
 
 Object.defineProperty(globalThis, 'window', {
   value: {
-  localStorage: localStorageMock
+  localStorage: localStorageMock,
+  sessionStorage: sessionStorageMock,
   },
   writable: true,
 });
@@ -336,6 +369,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockKeyStore.clear();
   mockLocalStorage.clear();
+  mockSessionStorage.clear();
 
   // Restore default localStorage mock behavior after tests that override implementations
   localStorageMock.getItem.mockImplementation((key: string) => mockLocalStorage.get(key) || null);
@@ -344,6 +378,15 @@ beforeEach(() => {
   localStorageMock.clear.mockImplementation(() => mockLocalStorage.clear());
   localStorageMock.key.mockImplementation((index: number) => {
     const keys = Array.from(mockLocalStorage.keys());
+    return keys[index] || null;
+  });
+
+  sessionStorageMock.getItem.mockImplementation((key: string) => mockSessionStorage.get(key) || null);
+  sessionStorageMock.setItem.mockImplementation((key: string, value: string) => mockSessionStorage.set(key, value));
+  sessionStorageMock.removeItem.mockImplementation((key: string) => mockSessionStorage.delete(key));
+  sessionStorageMock.clear.mockImplementation(() => mockSessionStorage.clear());
+  sessionStorageMock.key.mockImplementation((index: number) => {
+    const keys = Array.from(mockSessionStorage.keys());
     return keys[index] || null;
   });
 });

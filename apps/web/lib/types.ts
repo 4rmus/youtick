@@ -210,14 +210,6 @@ export interface DeliveryManifestV2 {
     codec: string;
     contentType: 'video/mp4';
     durationMs: number;
-    fallbackFlatCid?: string;
-    legacyChunkManifest?: {
-        totalChunks: number;
-        originalSize: number;
-        chunkSize: number;
-        counterB64: string;
-        contentType: string;
-    };
     thumbnails?: {
         posterCid?: string;
     };

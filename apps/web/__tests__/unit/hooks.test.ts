@@ -136,8 +136,9 @@ describe('useEventDescription data logic', () => {
     it('should extract thumbnail URL from title metadata', async () => {
         const { parseTitleMetadata } = await import('@/lib/metadata-parser');
 
-        // Title with thumbnail CID embedded
-        const parsed = parseTitleMetadata('QmRealCid:::QmThumbCid:::My Video');
+        const parsed = parseTitleMetadata(
+            'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG:::QmThumbCid1234567890123456789012345678901234:::My Video',
+        );
         expect(parsed.title).toBe('My Video');
     });
 

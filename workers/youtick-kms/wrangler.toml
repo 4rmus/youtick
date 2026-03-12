@@ -32,7 +32,7 @@ name = "youtick-kms-testnet"
 
 [env.testnet.vars]
 ALLOWED_ORIGINS = "http://localhost:3000"
-NEAR_CONTRACT_ID = "dev-1772795729514-559838.v2-0.utick.testnet"
+NEAR_CONTRACT_ID = "dev-1773166541055-71144.v2-0.utick.testnet"
 NEAR_NETWORK = "testnet"
 
 [[env.testnet.kv_namespaces]]

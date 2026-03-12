@@ -50,10 +50,10 @@ describe('Upload Flow Integration', () => {
     });
 
     it('should validate supported file types', () => {
-      const supportedTypes = ['video/mp4', 'video/webm', 'video/quicktime'];
+      const supportedTypes = ['video/mp4', 'video/quicktime'];
 
       expect(supportedTypes).toContain('video/mp4');
-      expect(supportedTypes).toContain('video/webm');
+      expect(supportedTypes).toContain('video/quicktime');
       expect(supportedTypes).not.toContain('image/jpeg');
     });
 
@@ -69,16 +69,13 @@ describe('Upload Flow Integration', () => {
   });
 
   describe('Title Metadata Encoding', () => {
-    it('should encode metadata with CID and title', () => {
-      const encodeTitleMetadata = (realCid: string, title: string, thumbnailCid?: string) => {
-        if (thumbnailCid) {
-          return `${realCid}:::${thumbnailCid}:::${title}`;
-        }
-        return `${realCid}:::${title}`;
+    it('should encode manifest-first metadata for segmented playback', () => {
+      const encodeTitleMetadata = (manifestCid: string, title: string, thumbnailCid?: string) => {
+        return `${manifestCid}:::${thumbnailCid || ''}:::${title}`;
       };
 
-      const result = encodeTitleMetadata('QmRealCid', 'My Video', 'QmThumbCid');
-      expect(result).toBe('QmRealCid:::QmThumbCid:::My Video');
+      const result = encodeTitleMetadata('QmManifestCid', 'My Video', 'ipfs://QmThumbCid');
+      expect(result).toBe('QmManifestCid:::ipfs://QmThumbCid:::My Video');
     });
 
     it('should preserve special characters in title', () => {
