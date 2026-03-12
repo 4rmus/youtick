@@ -13,6 +13,15 @@ const KMS_BASE_URL =
 
 const AUTH_CACHE_PREFIX = 'youtick:kms-auth:';
 const AUTH_CACHE_SKEW_MS = 30_000;
+const KMS_HEALTH_CACHE_MS = 60_000;
+
+interface KMSHealthData {
+    network?: string;
+    contract?: string;
+}
+
+let kmsHealthValidatedAt = 0;
+let kmsHealthValidationPromise: Promise<void> | null = null;
 
 export interface KMSStoreResult {
     videoId: string;
@@ -48,6 +57,66 @@ export class KMSError extends Error {
         super(message);
         this.name = 'KMSError';
     }
+}
+
+async function ensureKmsConfigMatchesApp(): Promise<void> {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    if (Date.now() - kmsHealthValidatedAt < KMS_HEALTH_CACHE_MS) {
+        return;
+    }
+
+    if (kmsHealthValidationPromise) {
+        return kmsHealthValidationPromise;
+    }
+
+    kmsHealthValidationPromise = (async () => {
+        let response: Response;
+
+        try {
+            response = await fetch(`${KMS_BASE_URL}/health`, {
+                method: 'GET',
+            });
+        } catch {
+            return;
+        }
+
+        if (!response.ok) {
+            return;
+        }
+
+        let result: { ok: boolean; data?: KMSHealthData };
+        try {
+            result = await response.json() as { ok: boolean; data?: KMSHealthData };
+        } catch {
+            return;
+        }
+
+        const health = result.data;
+        if (!result.ok || !health) {
+            return;
+        }
+
+        const healthNetwork = health.network || 'unknown';
+        const healthContract = health.contract || 'unknown';
+        const networkMismatch = health.network && health.network !== NEAR_CONFIG.networkId;
+        const contractMismatch = health.contract && health.contract !== NEAR_CONFIG.contractId;
+
+        if (networkMismatch || contractMismatch) {
+            throw new KMSError(
+                'CONFIG_MISMATCH',
+                `KMS is using ${healthContract} on ${healthNetwork}, but the app is using ${NEAR_CONFIG.contractId} on ${NEAR_CONFIG.networkId}. Update NEXT_PUBLIC_KMS_URL or redeploy the worker with the matching NEAR_CONTRACT_ID.`,
+            );
+        }
+
+        kmsHealthValidatedAt = Date.now();
+    })().finally(() => {
+        kmsHealthValidationPromise = null;
+    });
+
+    return kmsHealthValidationPromise;
 }
 
 function authCacheKey(accountId: string, action: 'store' | 'retrieve', videoId: string): string {
@@ -341,6 +410,8 @@ export async function storeEncryptionKey(
     accountId: string,
     wallet: WalletInstance,
 ): Promise<KMSStoreResult> {
+    await ensureKmsConfigMatchesApp();
+
     const localResult = await tryLocalSignedKmsRequest<KMSStoreResult>(
         'store',
         accountId,
@@ -373,6 +444,8 @@ export async function retrieveEncryptionKey(
     accountId: string,
     wallet: WalletInstance,
 ): Promise<string> {
+    await ensureKmsConfigMatchesApp();
+
     const localResult = await tryLocalSignedKmsRequest<KMSRetrieveResult>(
         'retrieve',
         accountId,

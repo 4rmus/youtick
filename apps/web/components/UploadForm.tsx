@@ -6,9 +6,7 @@ import { useWallet } from '@/components/providers/WalletProvider';
 import { uploadToCrust } from '@/lib/crust';
 import {
     encryptBufferWithCounter,
-    encryptFileChunked,
     generateAESKey,
-    type VideoManifest,
 } from '@/lib/kms/encryption';
 import { storeEncryptionKey } from '@/lib/kms/client';
 import { SessionManager } from '@/lib/session-manager';
@@ -251,23 +249,20 @@ export function UploadForm() {
         packagedAsset: PackagedDeliveryAsset;
         accountId: string;
         encrypted: boolean;
-        fallbackFlatCid: string;
         aesKeyB64?: string;
         thumbnailRef?: string | null;
         posterBlob?: Blob | null;
-        legacyChunkManifest?: VideoManifest;
     }): Promise<{ manifestCid: string }> => {
         const {
             packagedAsset,
             accountId: uploaderAccountId,
             encrypted,
-            fallbackFlatCid,
             aesKeyB64,
             thumbnailRef,
             posterBlob,
-            legacyChunkManifest,
         } = params;
         const {
+            combinePackagedSegmentPayloads,
             createDeliverySegment,
             toDeliveryManifestV2,
             warmupGatewayCids,
@@ -309,30 +304,29 @@ export function UploadForm() {
             packagedAsset.segments,
             DELIVERY_UPLOAD_CONCURRENCY,
             async (segment) => {
-                const uploadedPayloads = await Promise.all(segment.payloads.map(async (payload): Promise<DeliverySegmentPayload> => {
-                    const payloadBytes = new Uint8Array(payload.buffer);
-                    let payloadCounterB64: string | undefined;
-                    let payloadBlob: Blob;
+                const payload = combinePackagedSegmentPayloads(segment.payloads);
+                const payloadBytes = new Uint8Array(payload.buffer);
+                let payloadCounterB64: string | undefined;
+                let payloadBlob: Blob;
 
-                    if (encrypted) {
-                        const encryptedPayload = await encryptBufferWithCounter(payloadBytes, aesKeyB64!);
-                        payloadCounterB64 = encryptedPayload.counterB64;
-                        payloadBlob = new Blob([toBlobPart(encryptedPayload.ciphertext)], { type: 'application/octet-stream' });
-                    } else {
-                        payloadBlob = new Blob([payloadBytes], { type: 'video/mp4' });
-                    }
+                if (encrypted) {
+                    const encryptedPayload = await encryptBufferWithCounter(payloadBytes, aesKeyB64!);
+                    payloadCounterB64 = encryptedPayload.counterB64;
+                    payloadBlob = new Blob([toBlobPart(encryptedPayload.ciphertext)], { type: 'application/octet-stream' });
+                } else {
+                    payloadBlob = new Blob([payloadBytes], { type: 'video/mp4' });
+                }
 
-                    const uploadResult = await uploadToCrust(payloadBlob, uploaderAccountId);
-                    return {
-                        cid: uploadResult.cid,
-                        trackId: payload.trackId,
-                        kind: payload.kind,
-                        byteLength: payload.byteLength,
-                        startMs: payload.startMs,
-                        endMs: payload.endMs,
-                        counterB64: payloadCounterB64,
-                    };
-                }));
+                const uploadResult = await uploadToCrust(payloadBlob, uploaderAccountId);
+                const uploadedPayloads: DeliverySegmentPayload[] = [{
+                    cid: uploadResult.cid,
+                    trackId: payload.trackId,
+                    kind: payload.kind,
+                    byteLength: payload.byteLength,
+                    startMs: payload.startMs,
+                    endMs: payload.endMs,
+                    counterB64: payloadCounterB64,
+                }];
 
                 uploadedSegmentCount += 1;
                 const progress = Math.round((uploadedSegmentCount / packagedAsset.segments.length) * 100);
@@ -351,10 +345,8 @@ export function UploadForm() {
             uploadedSegments,
             {
                 encrypted,
-                fallbackFlatCid,
                 posterCid,
                 initSegmentCounterB64: initCounterB64,
-                legacyChunkManifest,
             },
         );
 
@@ -375,13 +367,26 @@ export function UploadForm() {
 
     // Track thumbnail preview for cleanup
     const thumbnailPreviewRef = React.useRef<string | null>(null);
+    const fileSelectionVersionRef = React.useRef(0);
+
+    const revokeThumbnailPreview = () => {
+        if (thumbnailPreviewRef.current) {
+            URL.revokeObjectURL(thumbnailPreviewRef.current);
+            thumbnailPreviewRef.current = null;
+        }
+    };
+
+    const updateThumbnailPreview = (blob: Blob) => {
+        revokeThumbnailPreview();
+        const previewUrl = URL.createObjectURL(blob);
+        thumbnailPreviewRef.current = previewUrl;
+        setThumbnailPreview(previewUrl);
+    };
 
     // Cleanup thumbnail preview URL on unmount
     React.useEffect(() => {
         return () => {
-            if (thumbnailPreviewRef.current) {
-                URL.revokeObjectURL(thumbnailPreviewRef.current);
-            }
+            revokeThumbnailPreview();
         };
     }, []);
 
@@ -396,40 +401,70 @@ export function UploadForm() {
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
             const selectedFile = e.target.files[0];
+            const selectionVersion = fileSelectionVersionRef.current + 1;
+            fileSelectionVersionRef.current = selectionVersion;
 
             setFile(selectedFile);
+            setThumbnail(null);
             setPosterThumbnail(null);
+            revokeThumbnailPreview();
+            setThumbnailPreview(null);
 
             // Calculate storage fee
-            try {
-                const { getNearPrice, calculateStorageFee } = await import('@/lib/price');
-                const nearPrice = await getNearPrice();
-                const fee = calculateStorageFee(selectedFile.size, nearPrice);
-                dispatch({ type: 'SET_ESTIMATED_STORAGE_FEE', payload: fee });
-            } catch (err) {
-                console.error('[UploadForm] Error calculating storage fee:', err);
-            }
+            void (async () => {
+                try {
+                    const { getNearPrice, calculateStorageFee } = await import('@/lib/price');
+                    const nearPrice = await getNearPrice();
+                    const fee = calculateStorageFee(selectedFile.size, nearPrice);
+
+                    if (fileSelectionVersionRef.current !== selectionVersion) {
+                        return;
+                    }
+
+                    dispatch({ type: 'SET_ESTIMATED_STORAGE_FEE', payload: fee });
+                } catch (err) {
+                    console.error('[UploadForm] Error calculating storage fee:', err);
+                }
+            })();
 
             // Generate thumbnail
             if (selectedFile.type.startsWith('video/')) {
                 try {
                     setStatus('Generating thumbnail...');
-                    const [cardThumbBlob, posterThumbBlob] = await Promise.all([
-                        generateVideoThumbnail(selectedFile),
-                        generateVideoThumbnailVariant(selectedFile, {
+
+                    const cardThumbBlob = await generateVideoThumbnail(selectedFile);
+                    if (fileSelectionVersionRef.current !== selectionVersion) {
+                        return;
+                    }
+
+                    setThumbnail(cardThumbBlob);
+                    updateThumbnailPreview(cardThumbBlob);
+                    setStatus('');
+
+                    void generateVideoThumbnailVariant(selectedFile, {
                             maxWidth: POSTER_THUMBNAIL_WIDTH,
                             maxHeight: POSTER_THUMBNAIL_HEIGHT,
                             quality: POSTER_THUMBNAIL_QUALITY,
-                        }),
-                    ]);
-                    setThumbnail(cardThumbBlob);
-                    setPosterThumbnail(posterThumbBlob);
+                        })
+                        .then((posterThumbBlob) => {
+                            if (fileSelectionVersionRef.current !== selectionVersion) {
+                                return;
+                            }
 
-                    const previewUrl = URL.createObjectURL(cardThumbBlob);
-                    thumbnailPreviewRef.current = previewUrl; // Track for cleanup
-                    setThumbnailPreview(previewUrl);
-                    setStatus('');
+                            setPosterThumbnail(posterThumbBlob);
+                        })
+                        .catch((error) => {
+                            if (fileSelectionVersionRef.current !== selectionVersion) {
+                                return;
+                            }
+
+                            console.warn('Poster thumbnail generation failed:', error);
+                        });
                 } catch (error) {
+                    if (fileSelectionVersionRef.current !== selectionVersion) {
+                        return;
+                    }
+
                     console.error('Thumbnail generation failed:', error);
                     setThumbnail(null);
                     setPosterThumbnail(null);
@@ -438,6 +473,7 @@ export function UploadForm() {
             } else {
                 setThumbnail(null);
                 setPosterThumbnail(null);
+                setStatus('');
             }
         }
     };
@@ -488,61 +524,51 @@ export function UploadForm() {
                 shouldUseSegmentedDelivery,
             } = await import('@/lib/video-delivery');
             const canUseSegmentedDelivery = shouldUseSegmentedDelivery(file.type);
+            if (!canUseSegmentedDelivery) {
+                throw new Error('Only MP4 and MOV uploads are supported in the new playback flow.');
+            }
+
             let packagedDeliveryAsset: PackagedDeliveryAsset | null = null;
+            setStatus('Packaging video for segmented playback...');
+            try {
+                packagedDeliveryAsset = await packageVideoForDelivery(file);
+            } catch (packagingError) {
+                console.error('[UploadForm] Segmented packaging failed for supported video type:', {
+                    fileName: file.name,
+                    fileType: file.type,
+                    fileSize: file.size,
+                    error: packagingError,
+                });
 
-            if (canUseSegmentedDelivery) {
-                setStatus('Packaging video for segmented playback...');
-                try {
-                    packagedDeliveryAsset = await packageVideoForDelivery(file);
-                } catch (packagingError) {
-                    console.error('[UploadForm] Segmented packaging failed for supported video type:', {
-                        fileName: file.name,
-                        fileType: file.type,
-                        fileSize: file.size,
-                        error: packagingError,
-                    });
-
-                    if (STRICT_SEGMENTED_DELIVERY) {
-                        throw new Error(
-                            `Segmented delivery packaging failed for ${file.type}. Upload was stopped instead of falling back to the legacy player path.`,
-                        );
-                    }
-                }
-
-                if (!packagedDeliveryAsset && STRICT_SEGMENTED_DELIVERY) {
+                if (STRICT_SEGMENTED_DELIVERY) {
                     throw new Error(
-                        `Segmented delivery packaging did not produce an asset for ${file.type}. Upload was stopped.`,
+                        `Segmented delivery packaging failed for ${file.type}. Upload was stopped.`,
                     );
                 }
             }
 
-            let videoCid: string;
-            let manifestCid: string | undefined;
+            if (!packagedDeliveryAsset) {
+                throw new Error(
+                    `Segmented delivery packaging did not produce an asset for ${file.type}. Upload was stopped.`,
+                );
+            }
+
+            let manifestCid: string;
             const videoUuid = crypto.randomUUID();
-            const detectedDurationSeconds = packagedDeliveryAsset
-                ? Math.max(1, Math.round(packagedDeliveryAsset.durationMs / 1000))
-                : 0;
+            const detectedDurationSeconds = Math.max(1, Math.round(packagedDeliveryAsset.durationMs / 1000));
 
             if (isFreeVideo) {
                 updateStep('encrypt', 'complete');
                 updateStep('upload', 'loading');
                 updateStep('kms', 'complete');
-                setStatus('Uploading to IPFS...');
-
-                const result = await uploadToCrust(file, accountId);
-                videoCid = result.cid;
-
-                if (packagedDeliveryAsset) {
-                    const deliveryUpload = await uploadSegmentedDeliveryAsset({
-                        packagedAsset: packagedDeliveryAsset,
-                        accountId,
-                        encrypted: false,
-                        fallbackFlatCid: videoCid,
-                        thumbnailRef: thumbnailUrl,
-                        posterBlob: posterThumbnail,
-                    });
-                    manifestCid = deliveryUpload.manifestCid;
-                }
+                const deliveryUpload = await uploadSegmentedDeliveryAsset({
+                    packagedAsset: packagedDeliveryAsset,
+                    accountId,
+                    encrypted: false,
+                    thumbnailRef: thumbnailUrl,
+                    posterBlob: posterThumbnail,
+                });
+                manifestCid = deliveryUpload.manifestCid;
 
                 updateStep('upload', 'complete');
             } else {
@@ -550,53 +576,19 @@ export function UploadForm() {
                 setStatus('Generating encryption key...');
 
                 const aesKeyB64 = await generateAESKey();
-
-                setStatus('Encrypting video (AES-256-CTR)...');
-                const encryptedChunks: Uint8Array[] = [];
-                let legacyChunkManifest: VideoManifest | undefined;
-
-                for await (const { chunk, manifest: currentManifest } of encryptFileChunked(file, aesKeyB64)) {
-                    encryptedChunks.push(chunk.data);
-                    if (currentManifest) legacyChunkManifest = currentManifest;
-                    const progress = Math.round(((chunk.index + 1) / Math.ceil(file.size / (1024 * 1024))) * 100);
-                    dispatch({ type: 'SET_PROGRESS', payload: progress });
-                }
-
-                if (!legacyChunkManifest) {
-                    throw new Error('Encryption failed: no manifest generated');
-                }
                 updateStep('encrypt', 'complete');
 
                 updateStep('upload', 'loading');
-                setStatus('Uploading encrypted video to IPFS...');
-
-                const encryptedBlob = new Blob(encryptedChunks as unknown as BlobPart[], { type: 'application/octet-stream' });
-                const uploadResult = await uploadToCrust(encryptedBlob, accountId, {
-                    onProgress: (p) => dispatch({ type: 'SET_PROGRESS', payload: p.percentage }),
+                setStatus('Uploading encrypted delivery segments...');
+                const deliveryUpload = await uploadSegmentedDeliveryAsset({
+                    packagedAsset: packagedDeliveryAsset,
+                    accountId,
+                    encrypted: true,
+                    aesKeyB64,
+                    thumbnailRef: thumbnailUrl,
+                    posterBlob: posterThumbnail,
                 });
-                videoCid = uploadResult.cid;
-
-                if (packagedDeliveryAsset) {
-                    const deliveryUpload = await uploadSegmentedDeliveryAsset({
-                        packagedAsset: packagedDeliveryAsset,
-                        accountId,
-                        encrypted: true,
-                        fallbackFlatCid: videoCid,
-                        aesKeyB64,
-                        thumbnailRef: thumbnailUrl,
-                        posterBlob: posterThumbnail,
-                        legacyChunkManifest,
-                    });
-                    manifestCid = deliveryUpload.manifestCid;
-                } else {
-                    setStatus('Uploading manifest...');
-                    const manifestBlob = new Blob(
-                        [JSON.stringify(legacyChunkManifest)],
-                        { type: 'application/json' }
-                    );
-                    const manifestResult = await uploadToCrust(manifestBlob, accountId);
-                    manifestCid = manifestResult.cid;
-                }
+                manifestCid = deliveryUpload.manifestCid;
 
                 updateStep('upload', 'complete');
 
@@ -618,18 +610,11 @@ export function UploadForm() {
             setStatus('Minting NFT ticket on NEAR...');
             try {
                 let eventTitle: string;
-                if (manifestCid) {
-                    eventTitle = buildSegmentedEventTitle(
-                        videoCid,
-                        thumbnailUrl || undefined,
-                        manifestCid,
-                        title || file.name,
-                    );
-                } else if (thumbnailUrl) {
-                    eventTitle = `${videoCid}:::${thumbnailUrl}:::${title || file.name}`;
-                } else {
-                    eventTitle = `${videoCid}:::${title || file.name}`;
-                }
+                eventTitle = buildSegmentedEventTitle(
+                    thumbnailUrl || undefined,
+                    manifestCid,
+                    title || file.name,
+                );
 
                 const mediaUrl = thumbnailUrl || '';
 
@@ -968,7 +953,7 @@ export function UploadForm() {
                                 <Input
                                     id="video-file"
                                     type="file"
-                                    accept="video/*"
+                                    accept="video/mp4,video/quicktime,.mp4,.mov"
                                     onChange={handleFileChange}
                                     disabled={uploading || !accountId}
                                     className="cursor-pointer"

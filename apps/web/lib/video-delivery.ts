@@ -7,7 +7,11 @@ import type {
     DeliverySegmentPayload,
     DeliveryTrackInfo,
 } from './types';
-import type { VideoManifest } from './kms/encryption';
+import {
+    estimateSegmentSizeBytes,
+    groupPayloadsByVideoAnchor,
+    estimateSharedSegmentSampleCount,
+} from './video-delivery-segmentation';
 
 export const DELIVERY_MANIFEST_VERSION = 2 as const;
 export const DELIVERY_SEGMENT_DURATION_MS = 4_000;
@@ -77,16 +81,14 @@ export async function fetchDeliveryManifest(cid: string): Promise<unknown> {
 }
 
 export function buildSegmentedEventTitle(
-    primaryCid: string,
     thumbnailRef: string | undefined,
     manifestCid: string,
     title: string,
 ): string {
     const { delimiter } = METADATA_SCHEMA;
     return [
-        primaryCid,
-        thumbnailRef || '',
         manifestCid,
+        thumbnailRef || '',
         title,
     ].join(delimiter);
 }
@@ -192,10 +194,8 @@ export function toDeliveryManifestV2(
     segments: DeliverySegment[],
     options?: {
         encrypted?: boolean;
-        fallbackFlatCid?: string;
         posterCid?: string;
         initSegmentCounterB64?: string;
-        legacyChunkManifest?: VideoManifest;
     },
 ): DeliveryManifestV2 {
     return {
@@ -205,8 +205,6 @@ export function toDeliveryManifestV2(
         codec: asset.codec,
         contentType: 'video/mp4',
         durationMs: asset.durationMs,
-        fallbackFlatCid: options?.fallbackFlatCid,
-        legacyChunkManifest: options?.legacyChunkManifest,
         thumbnails: options?.posterCid ? { posterCid: options.posterCid } : undefined,
         initSegment: {
             cid: initSegmentCid,
@@ -229,6 +227,33 @@ export function createDeliverySegment(
         seq,
         durationMs: Math.max(1, end - start),
         payloads,
+    };
+}
+
+export function combinePackagedSegmentPayloads(
+    payloads: PackagedSegmentPayload[],
+): PackagedSegmentPayload {
+    const sortedPayloads = [...payloads].sort((a, b) => {
+        if (a.startMs !== b.startMs) {
+            return a.startMs - b.startMs;
+        }
+
+        if (a.kind === b.kind) {
+            return 0;
+        }
+
+        return a.kind === 'video' ? -1 : 1;
+    });
+    const primaryPayload = sortedPayloads.find((payload) => payload.kind === 'video') ?? sortedPayloads[0];
+
+    return {
+        trackId: primaryPayload.trackId,
+        kind: sortedPayloads.some((payload) => payload.kind === 'video') ? 'video' : primaryPayload.kind,
+        codec: primaryPayload.codec,
+        byteLength: sortedPayloads.reduce((sum, payload) => sum + payload.byteLength, 0),
+        startMs: Math.min(...sortedPayloads.map((payload) => payload.startMs)),
+        endMs: Math.max(...sortedPayloads.map((payload) => payload.endMs)),
+        buffer: concatenateArrayBuffers(sortedPayloads.map((payload) => payload.buffer)),
     };
 }
 
@@ -300,7 +325,13 @@ async function packageVideoForDeliveryOnMainThread(file: File): Promise<Packaged
     const sampleMaps = new Map<number, SampleLike[]>(
         selectedTracks.map((track) => [track.id, mp4boxFile.getTrackSamplesInfo(track.id) as SampleLike[]]),
     );
-    const payloadGroups = new Map<number, PackagedSegmentPayload[]>();
+    // mp4box requires the same nbSamples value across all fragmented tracks.
+    // Use the smallest 4s-equivalent count so video does not balloon into 10s+ segments.
+    const sharedSegmentSampleCount = estimateSharedSegmentSampleCount(
+        sampleMaps.values(),
+        DELIVERY_SEGMENT_DURATION_MS,
+    );
+    const payloads: PackagedSegmentPayload[] = [];
     const lastSampleByTrack = new Map<number, number>();
     const completedTracks = new Set<number>();
 
@@ -309,8 +340,14 @@ async function packageVideoForDeliveryOnMainThread(file: File): Promise<Packaged
             track.id,
             { trackId: track.id },
             {
-                nbSamples: estimateSegmentSampleCount(sampleMaps.get(track.id) ?? []),
-                sizePerSegment: estimateSegmentSizeBytes(track, fallbackDurationMs, file.size, selectedTracks.length),
+                nbSamples: sharedSegmentSampleCount,
+                sizePerSegment: estimateSegmentSizeBytes(
+                    track,
+                    fallbackDurationMs,
+                    file.size,
+                    selectedTracks.length,
+                    DELIVERY_SEGMENT_DURATION_MS,
+                ),
                 rapAlignement: !track.audio,
             },
         );
@@ -333,7 +370,6 @@ async function packageVideoForDeliveryOnMainThread(file: File): Promise<Packaged
                 const startMs = Math.round((segmentSamples[0].dts / segmentSamples[0].timescale) * 1_000);
                 const finalSample = segmentSamples[segmentSamples.length - 1];
                 const endMs = Math.round(((finalSample.dts + finalSample.duration) / finalSample.timescale) * 1_000);
-                const seq = Math.max(0, Math.floor(startMs / DELIVERY_SEGMENT_DURATION_MS));
                 const payload: PackagedSegmentPayload = {
                     trackId,
                     kind: track.kind,
@@ -344,9 +380,7 @@ async function packageVideoForDeliveryOnMainThread(file: File): Promise<Packaged
                     buffer: buffer.slice(0),
                 };
 
-                const group = payloadGroups.get(seq) ?? [];
-                group.push(payload);
-                payloadGroups.set(seq, group);
+                payloads.push(payload);
                 mp4boxFile.releaseUsedSamples(trackId, nextSample);
             }
 
@@ -363,21 +397,8 @@ async function packageVideoForDeliveryOnMainThread(file: File): Promise<Packaged
     mp4boxFile.flush();
     await done;
 
-    const segments = [...payloadGroups.entries()]
-        .sort((a, b) => a[0] - b[0])
-        .map(([seq, payloads]) => {
-            const sortedPayloads = [...payloads].sort((a, b) => {
-                if (a.startMs !== b.startMs) {
-                    return a.startMs - b.startMs;
-                }
-
-                if (a.kind === b.kind) {
-                    return 0;
-                }
-
-                return a.kind === 'video' ? -1 : 1;
-            });
-
+    const segments = groupPayloadsByVideoAnchor(payloads, DELIVERY_SEGMENT_DURATION_MS)
+        .map((sortedPayloads, seq) => {
             const startMs = Math.min(...sortedPayloads.map((payload) => payload.startMs));
             const endMs = Math.max(...sortedPayloads.map((payload) => payload.endMs));
 
@@ -403,39 +424,6 @@ async function packageVideoForDeliveryOnMainThread(file: File): Promise<Packaged
         tracks,
         segments,
     };
-}
-
-function estimateSegmentSizeBytes(
-    track: TrackLike,
-    durationMs: number,
-    totalFileSize: number,
-    trackCount: number,
-): number {
-    if (track.bitrate > 0) {
-        return Math.max(64 * 1024, Math.round((track.bitrate / 8) * (DELIVERY_SEGMENT_DURATION_MS / 1_000)));
-    }
-
-    const estimatedSegmentCount = Math.max(1, Math.ceil(durationMs / DELIVERY_SEGMENT_DURATION_MS));
-    return Math.max(64 * 1024, Math.round(totalFileSize / (estimatedSegmentCount * trackCount)));
-}
-
-function estimateSegmentSampleCount(samples: SampleLike[]): number {
-    if (samples.length === 0) {
-        return 1;
-    }
-
-    let accumulatedMs = 0;
-    let count = 0;
-
-    for (const sample of samples) {
-        accumulatedMs += (sample.duration / sample.timescale) * 1_000;
-        count += 1;
-        if (accumulatedMs >= DELIVERY_SEGMENT_DURATION_MS) {
-            break;
-        }
-    }
-
-    return Math.max(1, count);
 }
 
 function normalizeInitSegmentResult(

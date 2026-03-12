@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildManifestPosterUrl,
   buildSegmentedEventTitle,
+  combinePackagedSegmentPayloads,
   createDeliverySegment,
   isDeliveryManifestV2,
   shouldUseSegmentedPlayback,
@@ -16,9 +17,9 @@ describe('video delivery helpers', () => {
     expect(shouldUseSegmentedDelivery('video/webm')).toBe(false);
   });
 
-  it('builds segmented titles with the four-part schema', () => {
-    expect(buildSegmentedEventTitle('QmFlat', 'ipfs://QmThumb', 'QmManifest', 'My Title'))
-      .toBe('QmFlat:::ipfs://QmThumb:::QmManifest:::My Title');
+  it('builds segmented titles with the manifest-first schema', () => {
+    expect(buildSegmentedEventTitle('ipfs://QmThumb', 'QmManifest', 'My Title'))
+      .toBe('QmManifest:::ipfs://QmThumb:::My Title');
   });
 
   it('creates normalized grouped delivery segments', () => {
@@ -30,6 +31,36 @@ describe('video delivery helpers', () => {
     expect(segment.seq).toBe(2);
     expect(segment.durationMs).toBe(4000);
     expect(segment.payloads).toHaveLength(2);
+  });
+
+  it('combines same-window payloads into one uploadable buffer', () => {
+    const combined = combinePackagedSegmentPayloads([
+      {
+        trackId: 2,
+        kind: 'audio',
+        codec: 'mp4a.40.2',
+        byteLength: 3,
+        startMs: 4050,
+        endMs: 7900,
+        buffer: new Uint8Array([4, 5, 6]).buffer,
+      },
+      {
+        trackId: 1,
+        kind: 'video',
+        codec: 'avc1.64001f',
+        byteLength: 4,
+        startMs: 4000,
+        endMs: 8000,
+        buffer: new Uint8Array([0, 1, 2, 3]).buffer,
+      },
+    ]);
+
+    expect(combined.trackId).toBe(1);
+    expect(combined.kind).toBe('video');
+    expect(combined.byteLength).toBe(7);
+    expect(combined.startMs).toBe(4000);
+    expect(combined.endMs).toBe(8000);
+    expect(Array.from(new Uint8Array(combined.buffer))).toEqual([0, 1, 2, 3, 4, 5, 6]);
   });
 
   it('validates delivery manifest shape and resolves poster URLs', () => {

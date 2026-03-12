@@ -1,6 +1,11 @@
 import { createFile } from 'mp4box';
 
 import type { DeliveryTrackInfo } from './types';
+import {
+    estimateSegmentSizeBytes,
+    groupPayloadsByVideoAnchor,
+    estimateSharedSegmentSampleCount,
+} from './video-delivery-segmentation';
 
 const DELIVERY_MANIFEST_VERSION = 2 as const;
 const DELIVERY_SEGMENT_DURATION_MS = 4_000;
@@ -132,7 +137,13 @@ async function packageFile(file: File): Promise<PackagedDeliveryAsset> {
     const sampleMaps = new Map<number, SampleLike[]>(
         selectedTracks.map((track) => [track.id, mp4boxFile.getTrackSamplesInfo(track.id) as SampleLike[]]),
     );
-    const payloadGroups = new Map<number, PackagedSegmentPayload[]>();
+    // mp4box requires the same nbSamples value across all fragmented tracks.
+    // Use the smallest 4s-equivalent count so video does not balloon into 10s+ segments.
+    const sharedSegmentSampleCount = estimateSharedSegmentSampleCount(
+        sampleMaps.values(),
+        DELIVERY_SEGMENT_DURATION_MS,
+    );
+    const payloads: PackagedSegmentPayload[] = [];
     const lastSampleByTrack = new Map<number, number>();
     const completedTracks = new Set<number>();
 
@@ -141,8 +152,14 @@ async function packageFile(file: File): Promise<PackagedDeliveryAsset> {
             track.id,
             { trackId: track.id },
             {
-                nbSamples: estimateSegmentSampleCount(sampleMaps.get(track.id) ?? []),
-                sizePerSegment: estimateSegmentSizeBytes(track, fallbackDurationMs, file.size, selectedTracks.length),
+                nbSamples: sharedSegmentSampleCount,
+                sizePerSegment: estimateSegmentSizeBytes(
+                    track,
+                    fallbackDurationMs,
+                    file.size,
+                    selectedTracks.length,
+                    DELIVERY_SEGMENT_DURATION_MS,
+                ),
                 rapAlignement: !track.audio,
             },
         );
@@ -165,7 +182,6 @@ async function packageFile(file: File): Promise<PackagedDeliveryAsset> {
                 const startMs = Math.round((segmentSamples[0].dts / segmentSamples[0].timescale) * 1_000);
                 const finalSample = segmentSamples[segmentSamples.length - 1];
                 const endMs = Math.round(((finalSample.dts + finalSample.duration) / finalSample.timescale) * 1_000);
-                const seq = Math.max(0, Math.floor(startMs / DELIVERY_SEGMENT_DURATION_MS));
                 const payload: PackagedSegmentPayload = {
                     trackId,
                     kind: track.kind,
@@ -176,9 +192,7 @@ async function packageFile(file: File): Promise<PackagedDeliveryAsset> {
                     buffer: buffer.slice(0),
                 };
 
-                const group = payloadGroups.get(seq) ?? [];
-                group.push(payload);
-                payloadGroups.set(seq, group);
+                payloads.push(payload);
                 mp4boxFile.releaseUsedSamples(trackId, nextSample);
             }
 
@@ -195,21 +209,8 @@ async function packageFile(file: File): Promise<PackagedDeliveryAsset> {
     mp4boxFile.flush();
     await done;
 
-    const segments = [...payloadGroups.entries()]
-        .sort((a, b) => a[0] - b[0])
-        .map(([seq, payloads]) => {
-            const sortedPayloads = [...payloads].sort((a, b) => {
-                if (a.startMs !== b.startMs) {
-                    return a.startMs - b.startMs;
-                }
-
-                if (a.kind === b.kind) {
-                    return 0;
-                }
-
-                return a.kind === 'video' ? -1 : 1;
-            });
-
+    const segments = groupPayloadsByVideoAnchor(payloads, DELIVERY_SEGMENT_DURATION_MS)
+        .map((sortedPayloads, seq) => {
             const startMs = Math.min(...sortedPayloads.map((payload) => payload.startMs));
             const endMs = Math.max(...sortedPayloads.map((payload) => payload.endMs));
 
@@ -235,39 +236,6 @@ async function packageFile(file: File): Promise<PackagedDeliveryAsset> {
         tracks,
         segments,
     };
-}
-
-function estimateSegmentSizeBytes(
-    track: TrackLike,
-    durationMs: number,
-    totalFileSize: number,
-    trackCount: number,
-): number {
-    if (track.bitrate > 0) {
-        return Math.max(64 * 1024, Math.round((track.bitrate / 8) * (DELIVERY_SEGMENT_DURATION_MS / 1_000)));
-    }
-
-    const estimatedSegmentCount = Math.max(1, Math.ceil(durationMs / DELIVERY_SEGMENT_DURATION_MS));
-    return Math.max(64 * 1024, Math.round(totalFileSize / (estimatedSegmentCount * trackCount)));
-}
-
-function estimateSegmentSampleCount(samples: SampleLike[]): number {
-    if (samples.length === 0) {
-        return 1;
-    }
-
-    let accumulatedMs = 0;
-    let count = 0;
-
-    for (const sample of samples) {
-        accumulatedMs += (sample.duration / sample.timescale) * 1_000;
-        count += 1;
-        if (accumulatedMs >= DELIVERY_SEGMENT_DURATION_MS) {
-            break;
-        }
-    }
-
-    return Math.max(1, count);
 }
 
 function normalizeInitSegmentResult(
