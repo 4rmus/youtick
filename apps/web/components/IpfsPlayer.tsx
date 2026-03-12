@@ -1,10 +1,13 @@
 'use client';
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { streamKmsVideo } from '@/lib/kms/streaming';
 import { retrieveEncryptionKey } from '@/lib/kms/client';
-import { getGatewayUrls, resolveGatewayUrl } from '@/lib/crust';
-import { createDeliveryPlaybackSession, type DeliveryPlaybackSession } from '@/lib/video-delivery-player';
+import { getGatewayUrls } from '@/lib/crust';
+import {
+    createDeliveryPlaybackSession,
+    type DeliveryPlaybackMetrics,
+    type DeliveryPlaybackSession,
+} from '@/lib/video-delivery-player';
 import {
     buildManifestPosterUrl,
     fetchDeliveryManifest,
@@ -71,6 +74,14 @@ function formatTime(seconds: number): string {
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
+function formatReadySeconds(seconds: number): string {
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+        return '0.0';
+    }
+
+    return seconds.toFixed(seconds >= 10 ? 0 : 1);
+}
+
 function isTimeBuffered(video: HTMLVideoElement, targetTimeSeconds: number): boolean {
     for (let i = 0; i < video.buffered.length; i += 1) {
         if (
@@ -82,6 +93,19 @@ function isTimeBuffered(video: HTMLVideoElement, targetTimeSeconds: number): boo
     }
 
     return false;
+}
+
+async function playVideoSafely(video: HTMLVideoElement): Promise<boolean> {
+    try {
+        await video.play();
+        return true;
+    } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+            return false;
+        }
+
+        throw error;
+    }
 }
 
 export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPlayerProps) {
@@ -103,6 +127,8 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
     const [isMuted, setIsMuted] = useState(false);
     const [isScrubbing, setIsScrubbing] = useState(false);
     const [scrubTimeSeconds, setScrubTimeSeconds] = useState(0);
+    const [playbackMetrics, setPlaybackMetrics] = useState<DeliveryPlaybackMetrics | null>(null);
+    const [isWaitingForMedia, setIsWaitingForMedia] = useState(false);
     const videoRef = useRef<HTMLVideoElement>(null);
 
     // Track blob URL for cleanup
@@ -155,10 +181,19 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
         pendingSeekTimeRef.current = null;
         clearPendingSeekWaiters();
         setBackgroundStatus(null);
-        void video.play().catch(() => {
-            resumeAfterSeekRef.current = true;
-            pendingSeekTimeRef.current = targetTime;
-        });
+        void playVideoSafely(video)
+            .then((started) => {
+                if (started) {
+                    return;
+                }
+
+                resumeAfterSeekRef.current = true;
+                pendingSeekTimeRef.current = targetTime;
+            })
+            .catch(() => {
+                resumeAfterSeekRef.current = true;
+                pendingSeekTimeRef.current = targetTime;
+            });
     }, [clearPendingSeekWaiters]);
 
     // Revoke blob URL on unmount or when player state changes away from playing
@@ -200,6 +235,9 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
         pendingDeliverySessionRef.current = null;
         deliverySessionRef.current = session;
         session.start(videoRef.current);
+        void playVideoSafely(videoRef.current).catch((error) => {
+            console.warn('[IpfsPlayer] Initial playback request failed:', error);
+        });
     }, [playerState]);
 
     useEffect(() => {
@@ -212,10 +250,6 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             setCurrentTimeSeconds(video.currentTime || 0);
             setIsPaused(video.paused);
             setIsMuted(video.muted);
-            const bufferedEnd = video.buffered.length > 0
-                ? video.buffered.end(video.buffered.length - 1)
-                : 0;
-            setBufferedSeconds(bufferedEnd);
 
             const mediaDuration = Number.isFinite(video.duration) ? video.duration : null;
             if ((knownDurationSeconds === null || knownDurationSeconds <= 0) && mediaDuration && mediaDuration > 0) {
@@ -226,13 +260,11 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
         };
 
         const handleWaiting = () => {
-            if (resumeAfterSeekRef.current) {
-                setBackgroundStatus('Buffering...');
-            }
+            setIsWaitingForMedia(true);
         };
 
         const handlePlaying = () => {
-            setBackgroundStatus(null);
+            setIsWaitingForMedia(false);
         };
 
         video.addEventListener('timeupdate', syncState);
@@ -267,6 +299,45 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             video.removeEventListener('playing', handlePlaying);
         };
     }, [playerState, knownDurationSeconds, tryResumeAfterSeek]);
+
+    useEffect(() => {
+        if (playerState.type !== 'playing') {
+            return;
+        }
+
+        if (!playbackMetrics) {
+            if (isWaitingForMedia || resumeAfterSeekRef.current) {
+                setBackgroundStatus(resumeAfterSeekRef.current ? 'Buffering...' : 'Loading video...');
+            }
+            return;
+        }
+
+        const ready = formatReadySeconds(Math.min(
+            playbackMetrics.playableAheadSeconds,
+            playbackMetrics.targetPlayableAheadSeconds,
+        ));
+        const target = formatReadySeconds(playbackMetrics.targetPlayableAheadSeconds);
+        const details = `${ready}s / ${target}s ready`;
+
+        if (
+            playbackMetrics.phase === 'startup'
+            && playbackMetrics.playableAheadSeconds < playbackMetrics.targetPlayableAheadSeconds
+        ) {
+            setBackgroundStatus(`Loading video... ${details}`);
+            return;
+        }
+
+        if (
+            playbackMetrics.phase === 'seek'
+            || resumeAfterSeekRef.current
+            || isWaitingForMedia
+        ) {
+            setBackgroundStatus(`Buffering... ${details}`);
+            return;
+        }
+
+        setBackgroundStatus(null);
+    }, [isWaitingForMedia, playbackMetrics, playerState.type]);
 
     // Derived states from state machine
     const videoUrl = playerState.type === 'playing' ? playerState.videoUrl : null;
@@ -306,8 +377,10 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
         setBufferedSeconds(0);
         setKnownDurationSeconds(initialDurationSeconds ?? null);
         setIsPaused(false);
+        setIsWaitingForMedia(false);
         setIsScrubbing(false);
         setScrubTimeSeconds(0);
+        setPlaybackMetrics(null);
         clearPendingSeekWaiters();
         resumeAfterSeekRef.current = false;
         pendingSeekTimeRef.current = null;
@@ -330,7 +403,9 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
         }
 
         if (video.paused) {
-            void video.play();
+            void playVideoSafely(video).catch((error) => {
+                console.warn('[IpfsPlayer] Toggle play failed:', error);
+            });
         } else {
             video.pause();
         }
@@ -342,6 +417,8 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             return;
         }
 
+        const preferredSeekTime = deliverySessionRef.current?.getPreferredSeekTime(nextValue) ?? nextValue;
+
         const shouldResume = !video.paused;
         if (shouldResume) {
             video.pause();
@@ -349,19 +426,19 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
 
         clearPendingSeekWaiters();
         resumeAfterSeekRef.current = shouldResume;
-        pendingSeekTimeRef.current = nextValue;
+        pendingSeekTimeRef.current = preferredSeekTime;
         seekFrameReadyRef.current = !('requestVideoFrameCallback' in video)
             || typeof video.requestVideoFrameCallback !== 'function';
         setBackgroundStatus(shouldResume ? 'Buffering...' : null);
 
         if (!seekFrameReadyRef.current) {
-            const targetTime = nextValue;
+            const targetTime = preferredSeekTime;
             const handleVideoFrame = (_now: number, metadata: VideoFrameCallbackMetadata) => {
                 if (pendingSeekTimeRef.current === null) {
                     return;
                 }
 
-                if (Math.abs(metadata.mediaTime - targetTime) <= 0.35 || metadata.presentedFrames > 0) {
+                if (Math.abs(metadata.mediaTime - targetTime) <= 0.2) {
                     seekFrameReadyRef.current = true;
                     clearPendingSeekWaiters();
                     tryResumeAfterSeek();
@@ -373,20 +450,27 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
 
             pendingVideoFrameCallbackRef.current = video.requestVideoFrameCallback(handleVideoFrame);
             pendingSeekFallbackTimerRef.current = window.setTimeout(() => {
-                seekFrameReadyRef.current = true;
                 pendingVideoFrameCallbackRef.current = null;
                 pendingSeekFallbackTimerRef.current = null;
-                tryResumeAfterSeek();
-            }, 1200);
+
+                if (
+                    !video.seeking
+                    && Math.abs(video.currentTime - targetTime) <= 0.2
+                    && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+                ) {
+                    seekFrameReadyRef.current = true;
+                    tryResumeAfterSeek();
+                }
+            }, 2000);
         }
 
         if ('fastSeek' in video && typeof video.fastSeek === 'function') {
-            video.fastSeek(nextValue);
+            video.fastSeek(preferredSeekTime);
         } else {
-            video.currentTime = nextValue;
+            video.currentTime = preferredSeekTime;
         }
-        setCurrentTimeSeconds(nextValue);
-        setScrubTimeSeconds(nextValue);
+        setCurrentTimeSeconds(preferredSeekTime);
+        setScrubTimeSeconds(preferredSeekTime);
         setIsScrubbing(false);
     };
 
@@ -434,9 +518,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
 
         try {
             const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid);
-            let primaryCid = cid;
-            let manifestCid: string | undefined;
-            let eventPrice = '0';
+            let manifestCid: string | undefined = isUuid ? undefined : cid;
 
             if (isUuid) {
                 setPlayerState({ type: 'decrypting', message: 'Resolving Video Metadata...' });
@@ -457,9 +539,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                         return;
                     }
 
-                    eventPrice = event?.price || '0';
                     const parsed = parseTitleMetadata(event?.title, 'Untitled');
-                    primaryCid = parsed.realCid || cid;
                     manifestCid = parsed.manifestCid || undefined;
 
                     if (parsed.thumbnailCid && parsed.thumbnailUrl) {
@@ -471,201 +551,77 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                 }
             }
 
+            if (!manifestCid) {
+                throw new Error('This video does not have a segmented manifest.');
+            }
+
             const resolveAesKey = async (): Promise<string> => {
                 setPlayerState({ type: 'decrypting', message: 'Authorizing playback...' });
                 const wallet = await getWallet();
                 return await retrieveEncryptionKey(cid, accountId, wallet);
             };
 
-            const streamLegacyKms = async (
-                targetCid: string,
-                manifest: {
-                    totalChunks: number;
-                    originalSize: number;
-                    chunkSize: number;
-                    counterB64: string;
-                    contentType: string;
-                },
-                aesKeyB64: string,
-            ) => {
-                setPlayerState({ type: 'decrypting', message: 'Starting video stream...' });
+            setPlayerState({ type: 'decrypting', message: 'Resolving Video Manifest...' });
+            const manifestData = await fetchDeliveryManifest(manifestCid);
 
-                await streamKmsVideo(targetCid, aesKeyB64, manifest, {
-                    onProgress: (loaded: number, total: number) => {
-                        const pct = Math.round((loaded / total) * 100);
-                        if (playbackStartedRef.current) {
-                            setBackgroundStatus(`Loading... ${pct}%`);
-                        } else {
-                            setPlayerState({ type: 'decrypting', message: `Loading... ${pct}%` });
-                        }
-                    },
-                    onSourceUpdate: (url: string) => {
-                        playbackStartedRef.current = true;
-                        setBackgroundStatus(null);
-                        blobUrlRef.current = url;
-                        setPlayerState({ type: 'playing', videoUrl: url });
-                    },
-                });
-            };
-
-            let manifestData: unknown = null;
-            if (manifestCid) {
-                setPlayerState({ type: 'decrypting', message: 'Resolving Video Manifest...' });
-                manifestData = await fetchDeliveryManifest(manifestCid);
+            if (!isDeliveryManifestV2(manifestData)) {
+                throw new Error('Unsupported video manifest format.');
             }
 
-            if (isDeliveryManifestV2(manifestData)) {
-                console.info('[IpfsPlayer] Using segmented delivery manifest', {
+            console.info('[IpfsPlayer] Using segmented delivery manifest', {
+                manifestCid,
+                encrypted: manifestData.encrypted,
+                tracks: manifestData.tracks.length,
+                segments: manifestData.segments.length,
+            });
+            setKnownDurationSeconds(getEffectiveManifestDurationMs(manifestData) / 1000);
+            const posterUrl = buildManifestPosterUrl(manifestData);
+            if (posterUrl) {
+                setResolvedThumbnailUrl(posterUrl);
+            }
+
+            const canUseSegmentedPlayback = shouldUseSegmentedPlayback(manifestData);
+            if (!canUseSegmentedPlayback) {
+                console.warn('[IpfsPlayer] Manifest is not segmented enough for smooth seek', {
                     manifestCid,
-                    encrypted: manifestData.encrypted,
-                    tracks: manifestData.tracks.length,
                     segments: manifestData.segments.length,
                 });
-                setKnownDurationSeconds(getEffectiveManifestDurationMs(manifestData) / 1000);
-                const posterUrl = buildManifestPosterUrl(manifestData);
-                if (posterUrl) {
-                    setResolvedThumbnailUrl(posterUrl);
-                }
-
-                const canUseSegmentedPlayback = shouldUseSegmentedPlayback(manifestData);
-                if (!canUseSegmentedPlayback) {
-                    console.warn('[IpfsPlayer] Manifest is not segmented enough for smooth seek, using fallback playback', {
-                        manifestCid,
-                        segments: manifestData.segments.length,
-                    });
-
-                    if (manifestData.encrypted && manifestData.fallbackFlatCid && manifestData.legacyChunkManifest) {
-                        const aesKeyB64 = await resolveAesKey();
-                        await streamLegacyKms(
-                            manifestData.fallbackFlatCid,
-                            manifestData.legacyChunkManifest,
-                            aesKeyB64,
-                        );
-                        return;
-                    }
-
-                    if (manifestData.fallbackFlatCid) {
-                        setPlayerState({ type: 'decrypting', message: 'Selecting fastest IPFS gateway...' });
-                        const streamUrl = await resolveGatewayUrl(manifestData.fallbackFlatCid, {
-                            purpose: 'video',
-                            range: { start: 0, end: 65_535 },
-                        });
-                        setPlayerState({ type: 'playing', videoUrl: streamUrl });
-                        return;
-                    }
-                }
-
-                if (typeof MediaSource !== 'undefined') {
-                    const aesKeyB64 = manifestData.encrypted ? await resolveAesKey() : undefined;
-                    setPlayerState({ type: 'decrypting', message: 'Preparing segmented stream...' });
-
-                    const session = createDeliveryPlaybackSession(manifestData, {
-                        aesKeyB64,
-                        onProgress: (loaded, total) => {
-                            const pct = Math.round((loaded / total) * 100);
-                            if (playbackStartedRef.current) {
-                                setBackgroundStatus(`Loading... ${pct}%`);
-                            } else {
-                                setPlayerState({ type: 'decrypting', message: `Loading... ${pct}%` });
-                            }
-                        },
-                        onBufferedTimeChange: (bufferedTime) => {
-                            setBufferedSeconds(bufferedTime);
-                        },
-                        onError: async (sessionError) => {
-                            console.error('[IpfsPlayer] Segmented playback failed:', sessionError);
-                            cleanupPlaybackArtifacts();
-
-                            if (manifestData.encrypted && manifestData.fallbackFlatCid && manifestData.legacyChunkManifest) {
-                                try {
-                                    const fallbackKey = aesKeyB64 ?? await resolveAesKey();
-                                    await streamLegacyKms(
-                                        manifestData.fallbackFlatCid,
-                                        manifestData.legacyChunkManifest,
-                                        fallbackKey,
-                                    );
-                                    return;
-                                } catch (legacyError) {
-                                    console.error('[IpfsPlayer] Legacy encrypted fallback failed:', legacyError);
-                                }
-                            }
-
-                            if (manifestData.fallbackFlatCid) {
-                                try {
-                                    const streamUrl = await resolveGatewayUrl(manifestData.fallbackFlatCid, {
-                                        purpose: 'video',
-                                        range: { start: 0, end: 65_535 },
-                                    });
-                                    setPlayerState({ type: 'playing', videoUrl: streamUrl });
-                                    return;
-                                } catch (freeFallbackError) {
-                                    console.error('[IpfsPlayer] Flat fallback failed:', freeFallbackError);
-                                }
-                            }
-
-                            setPlayerState({
-                                type: 'error',
-                                message: sessionError.message || 'Failed to start segmented playback.',
-                            });
-                        },
-                    });
-
-                    playbackStartedRef.current = true;
-                    blobUrlRef.current = session.objectUrl;
-                    pendingDeliverySessionRef.current = session;
-                    setPlayerState({ type: 'playing', videoUrl: session.objectUrl });
-                    return;
-                }
-
-                if (manifestData.encrypted && manifestData.fallbackFlatCid && manifestData.legacyChunkManifest) {
-                    console.warn('[IpfsPlayer] MediaSource unavailable or segmented path failed, using legacy encrypted fallback');
-                    const aesKeyB64 = await resolveAesKey();
-                    await streamLegacyKms(
-                        manifestData.fallbackFlatCid,
-                        manifestData.legacyChunkManifest,
-                        aesKeyB64,
-                    );
-                    return;
-                }
-
-                if (manifestData.fallbackFlatCid) {
-                    console.warn('[IpfsPlayer] Segmented manifest present but using flat free-video fallback');
-                    setPlayerState({ type: 'decrypting', message: 'Selecting fastest IPFS gateway...' });
-                    const streamUrl = await resolveGatewayUrl(manifestData.fallbackFlatCid, {
-                        purpose: 'video',
-                        range: { start: 0, end: 65_535 },
-                    });
-                    setPlayerState({ type: 'playing', videoUrl: streamUrl });
-                    return;
-                }
             }
 
-            const isPaidLegacy = Boolean(eventPrice && eventPrice !== '0');
-
-            if (manifestData && isPaidLegacy) {
-                console.warn('[IpfsPlayer] Falling back to legacy chunk manifest playback');
-                const aesKeyB64 = await resolveAesKey();
-                await streamLegacyKms(primaryCid, manifestData as {
-                    totalChunks: number;
-                    originalSize: number;
-                    chunkSize: number;
-                    counterB64: string;
-                    contentType: string;
-                }, aesKeyB64);
+            if (typeof MediaSource === 'undefined') {
+                setPlayerState({
+                    type: 'error',
+                    message: 'This browser does not support segmented playback for this video.',
+                });
                 return;
             }
 
-            console.info('[IpfsPlayer] Using direct gateway playback', {
-                cid: primaryCid || cid,
-                isPaidLegacy,
-                hasManifest: Boolean(manifestData),
+            const aesKeyB64 = manifestData.encrypted ? await resolveAesKey() : undefined;
+            setPlayerState({ type: 'decrypting', message: 'Preparing segmented stream...' });
+
+            const session = createDeliveryPlaybackSession(manifestData, {
+                aesKeyB64,
+                onBufferedTimeChange: (bufferedTime) => {
+                    setBufferedSeconds(bufferedTime);
+                },
+                onMetricsChange: (metrics) => {
+                    setPlaybackMetrics(metrics);
+                },
+                onError: async (sessionError) => {
+                    console.error('[IpfsPlayer] Segmented playback failed:', sessionError);
+                    cleanupPlaybackArtifacts();
+                    setPlayerState({
+                        type: 'error',
+                        message: sessionError.message || 'Failed to start segmented playback.',
+                    });
+                },
             });
-            setPlayerState({ type: 'decrypting', message: 'Selecting fastest IPFS gateway...' });
-            const streamUrl = await resolveGatewayUrl(primaryCid || cid, {
-                purpose: 'video',
-                range: { start: 0, end: 65_535 },
-            });
-            setPlayerState({ type: 'playing', videoUrl: streamUrl });
+
+            playbackStartedRef.current = true;
+            blobUrlRef.current = session.objectUrl;
+            pendingDeliverySessionRef.current = session;
+            setBackgroundStatus('Loading video...');
+            setPlayerState({ type: 'playing', videoUrl: session.objectUrl });
         } catch (err: unknown) {
             console.error('Playback failed:', err);
             setPlayerState({ type: 'error', message: err instanceof Error ? err.message : 'Failed to load video' });
@@ -806,7 +762,6 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                         onError={handleVideoError}
                         onClick={handleTogglePlayback}
                         className="w-full h-full"
-                        autoPlay
                         playsInline
                         preload="auto"
                     />

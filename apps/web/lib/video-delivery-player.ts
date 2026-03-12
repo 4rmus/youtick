@@ -4,17 +4,39 @@ import {
     DELIVERY_BUFFER_AHEAD_MS,
     DELIVERY_BUFFER_BEHIND_MS,
     DELIVERY_FETCH_CONCURRENCY,
-    DELIVERY_STARTUP_SEGMENTS,
     getEffectiveManifestDurationMs,
 } from './video-delivery';
 import type { DeliveryManifestV2, DeliverySegment } from './types';
 
+export type DeliveryPlaybackPhase = 'startup' | 'seek' | 'steady';
+
+export interface DeliveryPlaybackMetrics {
+    phase: DeliveryPlaybackPhase;
+    currentTimeSeconds: number;
+    playableAheadSeconds: number;
+    playableUntilSeconds: number;
+    targetPlayableAheadSeconds: number;
+    fetchingSegments: number;
+    readySegments: number;
+    queuedSegments: number;
+    bufferedSegments: number;
+    bytesLoaded: number;
+    bytesTotal: number;
+}
+
 type BufferOperation =
-    | { type: 'append'; buffer: ArrayBuffer }
+    | { type: 'append'; buffer: ArrayBuffer; segmentSeq?: number; byteLength?: number }
     | { type: 'remove'; start: number; end: number };
+
+const BUFFER_TOLERANCE_MS = 250;
+const STARTUP_PLAYABLE_AHEAD_MS = Math.min(6_000, DELIVERY_BUFFER_AHEAD_MS);
+const SEEK_PLAYABLE_AHEAD_MS = 4_000;
+const STEADY_PLAYABLE_AHEAD_MS = Math.min(12_000, DELIVERY_BUFFER_AHEAD_MS);
+const PREFETCH_AHEAD_MS = Math.min(6_000, Math.max(0, DELIVERY_BUFFER_AHEAD_MS - STEADY_PLAYABLE_AHEAD_MS));
 
 export interface DeliveryPlaybackSession {
     objectUrl: string;
+    getPreferredSeekTime(targetSeconds: number): number;
     start(videoElement: HTMLVideoElement): void;
     destroy(): void;
 }
@@ -23,6 +45,7 @@ export interface DeliveryPlaybackOptions {
     aesKeyB64?: string;
     onProgress?: (loaded: number, total: number) => void;
     onBufferedTimeChange?: (bufferedSeconds: number) => void;
+    onMetricsChange?: (metrics: DeliveryPlaybackMetrics) => void;
     onError?: (error: Error) => void;
 }
 
@@ -49,19 +72,24 @@ export function createDeliveryPlaybackSession(
             (sum, segment) => sum + segment.payloads.reduce((inner, payload) => inner + payload.byteLength, 0),
             0,
         );
-    const loadedSegments = new Set<number>();
+    const bufferedSegments = new Set<number>();
     const loadingSegments = new Set<number>();
+    const queuedSegments = new Set<number>();
+    const countedSegments = new Set<number>();
+    const readySegments = new Map<number, { buffer: ArrayBuffer; byteLength: number }>();
     const operationQueue: BufferOperation[] = [];
     const activeRequests = new Set<AbortController>();
     let sourceBuffer: SourceBuffer | null = null;
     let video: HTMLVideoElement | null = null;
     let destroyed = false;
     let sourceOpened = false;
-    let startupCompleted = false;
+    let playbackPhase: DeliveryPlaybackPhase = 'startup';
     let loadedBytes = 0;
     let initSegmentCounted = false;
     let requestGeneration = 0;
     let lastPrunedBeforeMs = 0;
+    let activeOperation: BufferOperation | null = null;
+    let nextSegmentSeqToQueue = orderedSegments[0]?.seq ?? 0;
     const importedAesKeyPromise = manifest.encrypted && options.aesKeyB64
         ? importAESKey(options.aesKeyB64)
         : null;
@@ -75,27 +103,89 @@ export function createDeliveryPlaybackSession(
         options.onProgress?.(loadedBytes, totalBytes);
     };
 
-    const allSegmentsLoaded = () => loadedSegments.size >= orderedSegments.length;
+    const allSegmentsLoaded = () => countedSegments.size >= orderedSegments.length;
 
-    const reportBufferedTime = () => {
-        const buffered = video?.buffered;
-        if (buffered && buffered.length > 0) {
-            const currentTime = video?.currentTime ?? 0;
+    const getCurrentTimeMs = () => Math.max(0, Math.floor((video?.currentTime ?? 0) * 1_000));
 
-            for (let index = 0; index < buffered.length; index += 1) {
-                const start = buffered.start(index);
-                const end = buffered.end(index);
-                if (start <= currentTime + 0.25 && end >= currentTime) {
-                    options.onBufferedTimeChange?.(end);
-                    return;
-                }
-            }
+    const getTargetPlayableAheadMs = () => {
+        switch (playbackPhase) {
+            case 'seek':
+                return SEEK_PLAYABLE_AHEAD_MS;
+            case 'steady':
+                return STEADY_PLAYABLE_AHEAD_MS;
+            case 'startup':
+            default:
+                return STARTUP_PLAYABLE_AHEAD_MS;
+        }
+    };
 
-            options.onBufferedTimeChange?.(buffered.end(buffered.length - 1));
-            return;
+    const getBufferedRanges = () => {
+        if (sourceBuffer?.buffered && sourceBuffer.buffered.length > 0) {
+            return sourceBuffer.buffered;
         }
 
-        options.onBufferedTimeChange?.(0);
+        return video?.buffered;
+    };
+
+    const getPlayableWindow = (currentTimeMs: number) => {
+        const buffered = getBufferedRanges();
+        if (!buffered || buffered.length === 0) {
+            return {
+                playableUntilMs: currentTimeMs,
+                playableAheadMs: 0,
+            };
+        }
+
+        for (let index = 0; index < buffered.length; index += 1) {
+            const startMs = Math.max(0, Math.floor(buffered.start(index) * 1_000));
+            const endMs = Math.max(startMs, Math.floor(buffered.end(index) * 1_000));
+            const overlapsCurrentTime = startMs <= currentTimeMs + BUFFER_TOLERANCE_MS
+                && endMs >= Math.max(0, currentTimeMs - BUFFER_TOLERANCE_MS);
+
+            if (!overlapsCurrentTime) {
+                continue;
+            }
+
+            return {
+                playableUntilMs: endMs,
+                playableAheadMs: Math.max(0, endMs - currentTimeMs),
+            };
+        }
+
+        return {
+            playableUntilMs: currentTimeMs,
+            playableAheadMs: 0,
+        };
+    };
+
+    const advancePlaybackPhaseIfReady = (playableAheadMs: number) => {
+        if (playbackPhase === 'startup' && playableAheadMs >= STARTUP_PLAYABLE_AHEAD_MS) {
+            playbackPhase = 'steady';
+        } else if (playbackPhase === 'seek' && playableAheadMs >= SEEK_PLAYABLE_AHEAD_MS) {
+            playbackPhase = 'steady';
+        }
+    };
+
+    const reportMetrics = () => {
+        const currentTimeMs = getCurrentTimeMs();
+        const { playableUntilMs, playableAheadMs } = getPlayableWindow(currentTimeMs);
+        advancePlaybackPhaseIfReady(playableAheadMs);
+        const targetPlayableAheadMs = getTargetPlayableAheadMs();
+
+        options.onBufferedTimeChange?.(playableUntilMs / 1_000);
+        options.onMetricsChange?.({
+            phase: playbackPhase,
+            currentTimeSeconds: currentTimeMs / 1_000,
+            playableAheadSeconds: playableAheadMs / 1_000,
+            playableUntilSeconds: playableUntilMs / 1_000,
+            targetPlayableAheadSeconds: targetPlayableAheadMs / 1_000,
+            fetchingSegments: loadingSegments.size,
+            readySegments: readySegments.size,
+            queuedSegments: queuedSegments.size,
+            bufferedSegments: bufferedSegments.size,
+            bytesLoaded: loadedBytes,
+            bytesTotal: totalBytes,
+        });
     };
 
     const ensureFixedDuration = () => {
@@ -125,6 +215,8 @@ export function createDeliveryPlaybackSession(
         if (!operation) {
             return;
         }
+
+        activeOperation = operation;
 
         if (operation.type === 'append') {
             sourceBuffer.appendBuffer(operation.buffer);
@@ -164,9 +256,22 @@ export function createDeliveryPlaybackSession(
     };
 
     const clearPendingOperations = () => {
+        readySegments.clear();
+
+        for (const operation of operationQueue) {
+            if (operation.type === 'append' && typeof operation.segmentSeq === 'number') {
+                queuedSegments.delete(operation.segmentSeq);
+            }
+        }
         operationQueue.length = 0;
 
+        if (activeOperation?.type === 'append' && typeof activeOperation.segmentSeq === 'number') {
+            queuedSegments.delete(activeOperation.segmentSeq);
+        }
+
         if (!sourceBuffer?.updating) {
+            activeOperation = null;
+            reportMetrics();
             return;
         }
 
@@ -174,6 +279,37 @@ export function createDeliveryPlaybackSession(
             sourceBuffer.abort();
         } catch {
             // Ignore abort races during seek teardown.
+        }
+
+        activeOperation = null;
+        reportMetrics();
+    };
+
+    const advanceAppendCursor = () => {
+        while (bufferedSegments.has(nextSegmentSeqToQueue) || queuedSegments.has(nextSegmentSeqToQueue)) {
+            nextSegmentSeqToQueue += 1;
+        }
+    };
+
+    const queueReadySegmentsInOrder = () => {
+        advanceAppendCursor();
+
+        while (true) {
+            const nextReadySegment = readySegments.get(nextSegmentSeqToQueue);
+            if (!nextReadySegment) {
+                break;
+            }
+
+            readySegments.delete(nextSegmentSeqToQueue);
+            queuedSegments.add(nextSegmentSeqToQueue);
+            appendOperation({
+                type: 'append',
+                buffer: nextReadySegment.buffer,
+                segmentSeq: nextSegmentSeqToQueue,
+                byteLength: nextReadySegment.byteLength,
+            });
+            nextSegmentSeqToQueue += 1;
+            advanceAppendCursor();
         }
     };
 
@@ -200,18 +336,20 @@ export function createDeliveryPlaybackSession(
         }
 
         if (!hasBufferedContent) {
+            reportMetrics();
             return;
         }
 
         for (const segment of orderedSegments) {
             const window = segmentWindows.get(segment.seq);
             if (window && window.endMs < removeBeforeMs) {
-                loadedSegments.delete(segment.seq);
+                bufferedSegments.delete(segment.seq);
             }
         }
 
         lastPrunedBeforeMs = removeBeforeMs;
         appendOperation({ type: 'remove', start: 0, end: removeBeforeMs / 1_000 });
+        reportMetrics();
     };
 
     const fetchPayloadBuffer = async (
@@ -242,11 +380,19 @@ export function createDeliveryPlaybackSession(
     };
 
     const loadSegment = async (segment: DeliverySegment, generation: number) => {
-        if (destroyed || loadedSegments.has(segment.seq) || loadingSegments.has(segment.seq)) {
+        if (
+            destroyed
+            || bufferedSegments.has(segment.seq)
+            || loadingSegments.has(segment.seq)
+            || queuedSegments.has(segment.seq)
+            || readySegments.has(segment.seq)
+        ) {
+            reportMetrics();
             return;
         }
 
         loadingSegments.add(segment.seq);
+        reportMetrics();
         const controller = new AbortController();
         activeRequests.add(controller);
 
@@ -269,11 +415,12 @@ export function createDeliveryPlaybackSession(
                 return;
             }
 
-            loadedSegments.add(segment.seq);
-            loadedBytes += segment.payloads.reduce((sum, payload) => sum + payload.byteLength, 0);
-            reportProgress();
-            reportBufferedTime();
-            appendOperation({ type: 'append', buffer: concatenateArrayBuffers(buffers) });
+            readySegments.set(segment.seq, {
+                buffer: concatenateArrayBuffers(buffers),
+                byteLength: segment.payloads.reduce((sum, payload) => sum + payload.byteLength, 0),
+            });
+            queueReadySegmentsInOrder();
+            reportMetrics();
         } catch (error) {
             if (controller.signal.aborted) {
                 return;
@@ -284,6 +431,7 @@ export function createDeliveryPlaybackSession(
         } finally {
             loadingSegments.delete(segment.seq);
             activeRequests.delete(controller);
+            reportMetrics();
         }
     };
 
@@ -292,24 +440,35 @@ export function createDeliveryPlaybackSession(
             return;
         }
 
-        const currentMs = startupCompleted
-            ? Math.max(0, Math.floor(video.currentTime * 1_000))
-            : 0;
-        const startupTargetMs = startupCompleted
-            ? currentMs
-            : Math.max(
-                currentMs + DELIVERY_BUFFER_AHEAD_MS,
-                getStartupWindowEndMs(orderedSegments, DELIVERY_STARTUP_SEGMENTS),
-            );
-        const targetStartMs = Math.max(0, currentMs - 1_000);
-        const targetEndMs = startupTargetMs + DELIVERY_BUFFER_AHEAD_MS;
+        const currentMs = getCurrentTimeMs();
+        const { playableAheadMs } = getPlayableWindow(currentMs);
+        advancePlaybackPhaseIfReady(playableAheadMs);
+        const targetPlayableAheadMs = getTargetPlayableAheadMs();
+        const criticalEndMs = currentMs + targetPlayableAheadMs;
+        const targetStartMs = Math.max(0, currentMs - (playbackPhase === 'seek' ? 500 : 1_000));
+        const prefetchEndMs = playableAheadMs >= targetPlayableAheadMs
+            ? criticalEndMs + PREFETCH_AHEAD_MS
+            : criticalEndMs;
         const generation = requestGeneration;
 
         const candidates = orderedSegments.filter(
-            (segment) => segmentOverlapsWindow(segment, targetStartMs, targetEndMs)
-                && !loadedSegments.has(segment.seq)
-                && !loadingSegments.has(segment.seq),
-        );
+            (segment) => segmentOverlapsWindow(segment, targetStartMs, prefetchEndMs)
+                && !bufferedSegments.has(segment.seq)
+                && !loadingSegments.has(segment.seq)
+                && !queuedSegments.has(segment.seq)
+                && !readySegments.has(segment.seq),
+        ).sort((a, b) => {
+            const aWindow = segmentWindows.get(a.seq);
+            const bWindow = segmentWindows.get(b.seq);
+            const aPriority = getSegmentPriority(aWindow, currentMs, criticalEndMs);
+            const bPriority = getSegmentPriority(bWindow, currentMs, criticalEndMs);
+
+            if (aPriority !== bPriority) {
+                return aPriority - bPriority;
+            }
+
+            return a.seq - b.seq;
+        });
 
         void runWithConcurrency(
             candidates,
@@ -318,6 +477,7 @@ export function createDeliveryPlaybackSession(
         );
 
         pruneBufferedSegments(currentMs);
+        reportMetrics();
         finalizeIfComplete();
     };
 
@@ -331,10 +491,20 @@ export function createDeliveryPlaybackSession(
         sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${manifest.codec}"`);
         sourceBuffer.mode = 'segments';
         sourceBuffer.addEventListener('updateend', () => {
-            ensureFixedDuration();
-            if (!startupCompleted && loadedSegments.size >= Math.min(DELIVERY_STARTUP_SEGMENTS, orderedSegments.length)) {
-                startupCompleted = true;
+            if (activeOperation?.type === 'append' && typeof activeOperation.segmentSeq === 'number') {
+                queuedSegments.delete(activeOperation.segmentSeq);
+                bufferedSegments.add(activeOperation.segmentSeq);
+                if (!countedSegments.has(activeOperation.segmentSeq) && typeof activeOperation.byteLength === 'number') {
+                    countedSegments.add(activeOperation.segmentSeq);
+                    loadedBytes += activeOperation.byteLength;
+                    reportProgress();
+                }
             }
+
+            activeOperation = null;
+            ensureFixedDuration();
+            reportMetrics();
+            queueReadySegmentsInOrder();
             flushQueue();
             scheduleSegments();
             finalizeIfComplete();
@@ -351,6 +521,7 @@ export function createDeliveryPlaybackSession(
                 reportProgress();
             }
             appendOperation({ type: 'append', buffer: initBuffer });
+            reportMetrics();
             scheduleSegments();
         } catch (error) {
             options.onError?.(error instanceof Error ? error : new Error(String(error)));
@@ -362,15 +533,50 @@ export function createDeliveryPlaybackSession(
     };
 
     const handleSeeking = () => {
+        playbackPhase = 'seek';
         requestGeneration += 1;
         abortActiveRequests();
         clearPendingOperations();
         loadingSegments.clear();
         if (video) {
-            pruneBufferedSegments(Math.max(0, Math.floor(video.currentTime * 1_000)), true);
-            reportBufferedTime();
+            const currentMs = Math.max(0, Math.floor(video.currentTime * 1_000));
+            nextSegmentSeqToQueue = findSegmentSeqForTime(currentMs, orderedSegments);
+            pruneBufferedSegments(currentMs, true);
         }
+        queueReadySegmentsInOrder();
+        reportMetrics();
         scheduleSegments();
+    };
+
+    const getPreferredSeekTime = (targetSeconds: number): number => {
+        const targetMs = Math.max(0, Math.round(targetSeconds * 1_000));
+
+        const containingVideoSegment = orderedSegments.find((segment) => {
+            const window = segmentWindows.get(segment.seq);
+            return Boolean(window?.hasVideo && window.startMs <= targetMs && window.endMs >= targetMs);
+        });
+        if (containingVideoSegment) {
+            return (segmentWindows.get(containingVideoSegment.seq)?.startMs ?? targetMs) / 1_000;
+        }
+
+        const nextVideoSegment = orderedSegments.find((segment) => {
+            const window = segmentWindows.get(segment.seq);
+            return Boolean(window?.hasVideo && window.startMs > targetMs);
+        });
+        if (nextVideoSegment) {
+            return (segmentWindows.get(nextVideoSegment.seq)?.startMs ?? targetMs) / 1_000;
+        }
+
+        const previousVideoSegment = [...orderedSegments]
+            .reverse()
+            .find((segment) => {
+                const window = segmentWindows.get(segment.seq);
+                return Boolean(window?.hasVideo && window.startMs <= targetMs);
+            });
+
+        return previousVideoSegment
+            ? (segmentWindows.get(previousVideoSegment.seq)?.startMs ?? targetMs) / 1_000
+            : targetSeconds;
     };
 
     const start = (videoElement: HTMLVideoElement) => {
@@ -385,6 +591,8 @@ export function createDeliveryPlaybackSession(
         if (video.src !== objectUrl) {
             video.src = objectUrl;
         }
+
+        reportMetrics();
 
         if (mediaSource.readyState === 'open') {
             void handleSourceOpen();
@@ -424,9 +632,32 @@ export function createDeliveryPlaybackSession(
 
     return {
         objectUrl,
+        getPreferredSeekTime,
         start,
         destroy,
     };
+}
+
+function findSegmentSeqForTime(timeMs: number, segments: DeliverySegment[]): number {
+    if (segments.length === 0) {
+        return 0;
+    }
+
+    const containingSegment = segments.find((segment) => {
+        const start = Math.min(...segment.payloads.map((payload) => payload.startMs));
+        const end = Math.max(...segment.payloads.map((payload) => payload.endMs));
+        return start <= timeMs && end >= timeMs;
+    });
+    if (containingSegment) {
+        return containingSegment.seq;
+    }
+
+    const nextSegment = segments.find((segment) => {
+        const start = Math.min(...segment.payloads.map((payload) => payload.startMs));
+        return start > timeMs;
+    });
+
+    return nextSegment?.seq ?? segments[segments.length - 1].seq;
 }
 
 function segmentOverlapsWindow(segment: DeliverySegment, windowStartMs: number, windowEndMs: number): boolean {
@@ -435,14 +666,24 @@ function segmentOverlapsWindow(segment: DeliverySegment, windowStartMs: number, 
     return end >= windowStartMs && start <= windowEndMs;
 }
 
-function getStartupWindowEndMs(segments: DeliverySegment[], startupSegmentCount: number): number {
-    if (segments.length === 0) {
+function getSegmentPriority(
+    window: { startMs: number; endMs: number; hasVideo: boolean } | undefined,
+    currentMs: number,
+    criticalEndMs: number,
+): number {
+    if (!window) {
+        return 3;
+    }
+
+    if (window.startMs <= currentMs + BUFFER_TOLERANCE_MS && window.endMs >= currentMs - BUFFER_TOLERANCE_MS) {
         return 0;
     }
 
-    const targetIndex = Math.min(segments.length - 1, Math.max(0, startupSegmentCount - 1));
-    const targetSegment = segments[targetIndex];
-    return Math.max(...targetSegment.payloads.map((payload) => payload.endMs));
+    if (window.startMs <= criticalEndMs) {
+        return 1;
+    }
+
+    return 2;
 }
 
 async function runWithConcurrency<T>(
