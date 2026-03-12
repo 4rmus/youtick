@@ -1,47 +1,58 @@
 # Environment Configuration
 
-> Environment variables for the web app and KMS worker
+> Web uygulamasi ve KMS worker icin pratik ortam ayarlari
 
 ---
 
-## Web App (`apps/web/.env.local`)
+## Web App
 
-### Required
+`apps/web/.env.local` icin en sik kullanilan alanlar:
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `NEXT_PUBLIC_NEAR_NETWORK` | Target network (`mainnet` or `testnet`) | `mainnet` |
-| `NEXT_PUBLIC_NFT_CONTRACT_ID` | YouTick contract account | `youtick.near` |
+| Degisken | Zorunlu | Aciklama |
+|----------|:-------:|----------|
+| `NEXT_PUBLIC_NEAR_NETWORK` | Evet | `mainnet` veya `testnet` |
+| `NEXT_PUBLIC_NFT_CONTRACT_ID` | Evet | Kullanilan YouTick contract hesabi |
+| `NEXT_PUBLIC_KMS_URL` | Hayir | Varsayilan KMS worker adresini ezer |
+| `NEXT_PUBLIC_APP_URL` | Hayir | Hediye linklerinin taban adresi |
+| `NEXT_PUBLIC_ONBOARDING_KEY` | Hayir | Client-side trial olusturma anahtari |
+| `NEXT_PUBLIC_ONE_CLICK_API_TOKEN` | Hayir | 1Click quote ve swap tokeni |
+| `NEXT_PUBLIC_DEPLOY_TARGET` | Hayir | Web4 build secimi |
 
-### Optional
+### Ornek
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `NEXT_PUBLIC_KMS_URL` | Override KMS worker endpoint | `http://localhost:8787` |
-| `NEXT_PUBLIC_ONBOARDING_KEY` | Restricted onboarding function-call key | `ed25519:...` |
-
-### Example
-
-```env
+```txt
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
-NEXT_PUBLIC_KMS_URL=https://youtick-kms.<account>.workers.dev
+NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
+NEXT_PUBLIC_APP_URL=https://app.youtick.com
 NEXT_PUBLIC_ONBOARDING_KEY=ed25519:...
+NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
 ```
 
 ---
 
-## KMS Worker (`workers/youtick-kms`)
+## Server-only alanlar
 
-Set with Wrangler secrets/vars:
+Sadece sunucu/API tarafinda tutulmasi gerekenler:
 
-| Variable | Description |
-|----------|-------------|
-| `ALLOWED_ORIGINS` | Comma-separated allowed web origins |
-| `NEAR_CONTRACT_ID` | Contract used for ownership checks |
-| `NEAR_NETWORK` | `mainnet` or `testnet` |
+| Degisken | Aciklama |
+|----------|----------|
+| `RELAYER_ACCOUNT_ID` | Opsiyonel sponsored trial relayer hesabi |
+| `RELAYER_PRIVATE_KEY` | Relayer private key |
 
-Required KV bindings:
+---
+
+## KMS Worker
+
+`workers/youtick-kms` icin gerekenler:
+
+| Degisken | Aciklama |
+|----------|----------|
+| `ALLOWED_ORIGINS` | Izin verilen origin listesi |
+| `NEAR_CONTRACT_ID` | `has_ticket` kontrolu icin contract ID |
+| `NEAR_NETWORK` | `mainnet` veya `testnet` |
+
+KV binding'leri:
 
 - `VIDEO_KEYS`
 - `RATE_LIMIT`
@@ -49,9 +60,8 @@ Required KV bindings:
 
 ---
 
-## Runtime Notes
+## Kisa notlar
 
-- `NEXT_PUBLIC_*` vars are bundled into client code.
-- Keep private keys out of frontend variables.
-- KMS enforces signature + ownership checks before returning decryption keys.
-
+- `NEXT_PUBLIC_*` alanlari browser'a gider.
+- Gizli anahtarlar web uygulamasina degil worker veya API route'a konur.
+- KMS yetkisi URL ile degil, imza + on-chain sahiplik kontrolu ile verilir.
