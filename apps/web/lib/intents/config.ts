@@ -1,3 +1,4 @@
+import { NEAR_CONFIG } from '../constants';
 import type { TokenConfig, ChainId } from './types';
 
 /**
@@ -18,7 +19,7 @@ export const ONE_CLICK_CONFIG = {
     /** YouTick platform fee in basis points (50 = 0.5%) */
     platformFeeBps: 0,
     /** Platform fee recipient NEAR account */
-    platformFeeRecipient: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'youtick-prod-v1.near',
+    platformFeeRecipient: NEAR_CONFIG.marketContractId,
 } as const;
 
 /**

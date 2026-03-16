@@ -28,8 +28,10 @@ npm run build
 Minimum:
 
 ```env
-NEXT_PUBLIC_NEAR_NETWORK=mainnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
+NEXT_PUBLIC_NEAR_NETWORK=testnet
+NEXT_PUBLIC_MARKET_CONTRACT_ID=v1.utick.testnet
+NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.v1.utick.testnet
+NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.v1.utick.testnet
 ```
 
 Sik kullanilan opsiyoneller:
@@ -39,6 +41,7 @@ NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
 NEXT_PUBLIC_APP_URL=https://app.youtick.com
 NEXT_PUBLIC_ONBOARDING_KEY=ed25519:...
 NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
+NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
 ```
 
 ## Project Shape

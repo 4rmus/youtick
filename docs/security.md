@@ -1,92 +1,116 @@
 # Security Model
 
-> YouTick'te medya, anahtar ve erisim nasil korunur
+> How media, key shares, and authorization are protected in the live testnet architecture
 
 ---
 
-## Katmanlar
+## Layers
 
-| Katman | Ne korur | Aktif mekanizma |
-|--------|----------|-----------------|
-| Ulasim | Trafik | HTTPS |
-| Medya | Ham video | Browser tarafinda AES-CTR sifreleme |
-| Anahtar | AES key | KMS worker + KV |
-| Erisim | Kim izleyebilir | Contract tabanli sahiplik kontrolu |
-| Trial | Kotuye kullanim | Onboarding key + gunluk limit |
-| Moderation | Sorunlu icerik | Contract uzerinden ban/unban |
-
----
-
-## Medya guvenligi
-
-Ham video backend'e acik sekilde gitmez. Upload sirasinda browser:
-
-1. AES anahtari uretir
-2. videoyu sifreler
-3. sadece sifreli ciktiyi IPFS'e gonderir
-
-Bu sayede depolama katmani ham videoyu goremez.
+| Layer | What it protects | Current mechanism |
+|-------|------------------|-------------------|
+| Transport | Network traffic | HTTPS |
+| Media | Raw video | Browser-side AES-CTR encryption |
+| Key custody | Playback key material | Operator-encrypted secret shares |
+| Playback authorization | Who can decrypt and watch | Market + access + registry checks |
+| Trial flows | Abuse and relayer control | Registry-enforced relayer + rate limits |
+| Moderation | Harmful content | On-chain ban / unban |
 
 ---
 
-## KMS guvenligi
+## Media Security
 
-KMS worker iki ana gorev yapar:
+Raw media is not uploaded in plaintext. During upload the browser:
 
-1. upload sirasinda anahtari saklar
-2. playback sirasinda anahtari sadece yetkili isteklere verir
+1. generates an AES key
+2. encrypts the media locally
+3. uploads only encrypted output to IPFS
 
-Anahtar donusunde worker su kontrolleri yapar:
-
-- istek imzali mi
-- zaman damgasi gecerli mi
-- istek tekrari gibi gorunuyor mu
-- kullanici ilgili content icin ticket sahibi mi
-
-Bu kontrol tek basina UI'da degil, worker tarafinda oldugu icin daha guvenlidir.
+This means storage providers do not see the original video.
 
 ---
 
-## On-chain erisim kontrolu
+## Share-Based Key Security
 
-Son karar contract'tadir. Frontend bir kullanicinin sahip oldugunu dusunse bile, KMS worker contract uzerinden tekrar kontrol eder.
+The live playback model no longer treats the AES key as one secret held by one worker.
 
-Pratikte kritik view kontrolu:
+Instead:
 
-- `has_ticket`
+1. the browser splits the AES key into multiple shares
+2. each active operator stores only its own share
+3. each operator encrypts its share again with its own worker secret
+4. playback reconstructs the key in the browser after enough shares arrive
 
-Player'in gorevi sadece akisi tetiklemektir; erisim karari contract + worker tarafinda kesinlesir.
-
----
-
-## Gift ve trial guvenligi
-
-### Gift links
-
-- claim key tek kullanimliktir
-- claim sonrasi access key silinir
-- claim URL'deki gizli parca sayfa acilinca temizlenir
-
-### Trial hesaplar
-
-- onboarding key kisitli method listesiyle calisir
-- gunluk limit vardir
-- trial pool dusukse yeni hesap acilmayabilir
+This reduces dependence on a single key-release point.
 
 ---
 
-## Operasyon kontrol listesi
+## Authorization Security
 
-- `NEXT_PUBLIC_KMS_URL` dogru mu
-- KMS worker `ALLOWED_ORIGINS` dar mi
-- `NEAR_CONTRACT_ID` dogru contract'i gosteriyor mu
-- onboarding key hala yetkili mi
-- trial pool yeterli mi
-- IPFS gateway fallback'leri calisiyor mu
-- banli eventler satin alinabiliyor mu diye test edildi mi
+A decryption operator must pass all of these checks before returning a share:
+
+- the worker must be active in the registry
+- the playback request must have a valid short-lived access grant or equivalent allowed path
+- the viewer must have on-chain entitlement for the content
+
+The final decision is not made by the UI. It is enforced through contracts and the operator worker.
 
 ---
 
-## Uyum notu
+## Registry Security
 
-Kontratta `nova_group_id` veya `StorageType::Nova` gibi alanlar gorunse de yeni guvenlik modeli bunlara dayanmaz. Aktif koruma hattı browser sifreleme + KMS + on-chain sahiplik kontroludur.
+The registry is now an enforcement layer, not just a lookup table.
+
+It decides:
+
+- which operators are active
+- which relayers are active
+- what threshold the playback system expects
+
+In the current testnet rollout:
+
+- active operator count: `5`
+- playback threshold: `3-of-5`
+
+---
+
+## Upload Security
+
+Upload keeps its dedicated narrow session-key path.
+
+That path is still preferred because it preserves the low-friction single-approval UX while keeping permissions narrow:
+
+- limited method set
+- limited budget
+- short TTL
+
+This means upload and playback do not have to use the same auth primitive.
+
+---
+
+## Trial and Relayer Security
+
+Legacy trial flows still exist in the product surface, but the relayer route is now constrained by the registry:
+
+- inactive relayers are rejected
+- the relayer account must match the registry entry
+- rate limits remain active
+
+---
+
+## Operational Checklist
+
+- Is `NEXT_PUBLIC_KMS_URL` correct for the current environment?
+- Does the KMS worker point to the right market, access, and registry contracts?
+- Are the required operators active in the registry?
+- Are the required relayers active in the registry?
+- Are IPFS gateway fallbacks still healthy?
+- Are banned events blocked from new purchases?
+- Are playback traces showing reconstruction from shares rather than legacy fallback?
+
+---
+
+## Compatibility Note
+
+The repo still contains legacy fields and compatibility helpers, but the live protection path is now:
+
+> browser encryption + market entitlement + access grants + registry enforcement + operator share reconstruction

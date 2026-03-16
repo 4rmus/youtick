@@ -1,35 +1,38 @@
 # YouTick Documentation
 
-> Aktif YouTick mimarisi: KMS + Crust + NEAR
+> Current runtime: browser encryption, NEAR entitlements, registry-enforced operators, and share-based playback
 
-YouTick su anda istemci tarafinda sifreleme, Cloudflare KMS worker ile anahtar korumasi, Crust/IPFS depolama ve NEAR tabanli bilet sahipligi uzerinden calisir. Eski mimari anlatilari bu dokuman setinden cikarildi; kodla uyusmayan yerde kod kazanir.
+YouTick currently runs with client-side media encryption, a market/access/registry contract split, and a multi-operator playback path. When docs and code disagree, the codebase is the source of truth.
 
-**Contract:** `youtick.near` | **Network:** NEAR Mainnet | **Active encryption path:** Browser AES-CTR + KMS
+**Primary development network:** NEAR Testnet  
+**Current live playback path:** Browser AES-CTR + `3-of-5` operator share reconstruction
 
 ---
 
-## Hemen Basla
+## Get Started
 
 - [Prerequisites](getting-started/prerequisites.md)
 - [Installation](getting-started/installation.md)
 - [Configuration](getting-started/configuration.md)
 - [Quick Start](quick-start.md)
 
-## Mimari
+## Architecture
 
 - [System Architecture](architecture/README.md)
+- [Youtick Zero Trust Architecture v1](architecture/youtick-zero-trust-architecture-v1.md)
+- [Final Implementation Report](architecture/final-implementation-report.md)
 - [Storage & Delivery](architecture/storage.md)
 - [Session Keys & Upload Sessions](architecture/session-keys.md)
 - [Smart Contract](architecture/smart-contract.md)
 - [Product Differentiators](architecture/innovations.md)
 
-## Rehberler
+## Guides
 
 - [User Flows](guides/user-flows.md)
 - [Developer Guide](guides/developer-guide.md)
 - [Environment](guides/environment.md)
 
-## Referans
+## Reference
 
 - [Contract Methods](api/contract-methods.md)
 - [Frontend](frontend.md)
@@ -41,15 +44,17 @@ YouTick su anda istemci tarafinda sifreleme, Cloudflare KMS worker ile anahtar k
 
 ---
 
-## Okuma Sirasi
+## Suggested Reading Order
 
-Yeni biri icin en kisa yol:
+For a new engineer, the shortest path is:
 
 1. [Quick Start](quick-start.md)
 2. [System Architecture](architecture/README.md)
-3. [User Flows](guides/user-flows.md)
-4. [Contract Methods](api/contract-methods.md)
+3. [Final Implementation Report](architecture/final-implementation-report.md)
+4. [Youtick Zero Trust Architecture v1](architecture/youtick-zero-trust-architecture-v1.md)
+5. [User Flows](guides/user-flows.md)
+6. [Contract Methods](api/contract-methods.md)
 
 ---
 
-*Last Updated: March 11, 2026*
+*Last Updated: March 16, 2026*

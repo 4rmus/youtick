@@ -1,116 +1,148 @@
 # Storage and Delivery
 
-> Sifrelenmis videolarin browser'dan IPFS'e gidip tekrar player'a donus yolu
+> How encrypted media moves from the browser to IPFS and back into the player
 
 ---
 
-## Aktif Yol
+## Current Live Model
 
-YouTick bugun su modelle calisir:
+Today, YouTick runs through this storage and playback path:
 
-1. Browser AES-256-CTR anahtari uretir.
-2. Video chunk'lara veya segmentlere ayrilarak sifrelenir.
-3. Sifreli cikti Crust/IPFS'e yuklenir.
-4. AES anahtari KMS worker'da saklanir.
-5. Oynatma sirasinda anahtar KMS'den cekilir, medya IPFS'ten okunur ve browser'da cozulur.
+1. the browser generates an AES-256-CTR key
+2. the video is encrypted in chunks or segments
+3. encrypted output is uploaded to Crust/IPFS
+4. the AES key is split into shares
+5. shares are stored across active decryption operators
+6. playback reconstructs the AES key in the browser after enough shares arrive
 
-Bu sayede:
+This gives three benefits:
 
-- IPFS sadece sifreli veri gorur.
-- Anahtar ile medya ayni yerde tutulmaz.
-- Seek ve akici oynatma icin AES-CTR kullanilir.
-
----
-
-## Upload Akisi
-
-### 1. Sifreleme
-
-`apps/web/lib/kms/encryption.ts` modulu:
-
-- AES-256-CTR kullanir
-- Varsayilan `1 MB` chunk boyutu ile calisir
-- Rastgele erisim ve seek icin uygundur
-
-MP4 tabanli dosyalarda uygulama ek olarak segmentli delivery manifesti uretebilir. Bu sayede player tum dosyayi beklemeden daha hizli baslar.
-
-### 2. IPFS yukleme
-
-Medya su parcalardan biri ya da birkaci olarak yuklenir:
-
-- sifreli ana video blob'u
-- chunk manifesti
-- segmentli delivery manifesti
-- init segment ve media segmentleri
-- thumbnail ve poster dosyalari
-
-Yukleme Crust uzerinden yapilir. Okuma tarafinda birden fazla IPFS gateway kullanilir.
-
-### 3. Anahtar saklama
-
-KMS worker iki ana endpoint sunar:
-
-- `POST /store`
-- `POST /retrieve`
-
-Kayit ve cekme istekleri imzalanir. Worker ayrica contract tarafinda erisim kontrolu yapar.
+- IPFS only sees encrypted media
+- no single operator needs the full playback key
+- AES-CTR still supports fast seek and segmented playback
 
 ---
 
-## Playback Akisi
+## Upload Flow
 
-1. Player event bilgisini ve medya referanslarini cozer.
-2. Kullaniciya ait bilet varsa KMS'den anahtar ister.
-3. KMS contract'ta erisim kontrolu yapar.
-4. Player manifest varsa segmentli oynatimi dener.
-5. Gerekirse eski chunk manifestine veya duz okuma yoluna duser.
+### 1. Encryption
 
-Bu fallback yapisi `apps/web/components/IpfsPlayer.tsx` icinde tutulur.
+`apps/web/lib/kms/encryption.ts`:
+
+- uses AES-256-CTR
+- defaults to `1 MB` chunks
+- supports random-access decryption for seek
+
+For MP4-based uploads, the app can package segmented delivery manifests so playback can start earlier.
+
+### 2. IPFS Upload
+
+The upload can include:
+
+- encrypted video payloads
+- a segmented delivery manifest
+- init segments and media segments
+- thumbnail and poster assets
+
+Delivery assets are uploaded through Crust. Playback reads through multiple gateway options.
+
+### 3. Key Share Storage
+
+The browser no longer treats the AES key as one value that belongs to one KMS worker.
+
+Instead:
+
+- it reads the active operator set from the registry
+- it splits the AES key into shares
+- it stores one share per operator
+
+Each operator only stores its own encrypted share.
 
 ---
 
-## Gateway Stratejisi
+## Playback Flow
 
-Okuma zinciri tek bir gateway'e bagli degildir:
+```mermaid
+sequenceDiagram
+    participant APP as Browser App
+    participant REG as Registry
+    participant A as Access
+    participant OA as Operator A
+    participant OB as Operator B
+    participant OC as Operator C
+    participant IPFS as Crust/IPFS
 
-- once Crust okuma endpointleri denenir
-- sonra public IPFS gateway'lerine gecilir
-- range request desteklenirse parca parca okuma yapilir
-- range desteklenmezse tam dosya fallback'i kullanilir
+    APP->>REG: List active operators
+    APP->>A: Ensure Play grant
+    APP->>OA: retrieve share
+    APP->>OB: retrieve share
+    APP->>OC: retrieve share
+    OA-->>APP: share 1
+    OB-->>APP: share 2
+    OC-->>APP: share 3
+    APP->>APP: Reconstruct AES key
+    APP->>IPFS: Read encrypted media
+    APP->>APP: Decrypt and play
+```
 
-Bu tasarim yavas ya da sorunlu gateway durumlarinda oynatimi daha dayanikli hale getirir.
+The player:
+
+1. resolves the manifest and metadata
+2. checks ownership or creator entitlement
+3. requests shares from active operators in parallel
+4. reconstructs the key after enough shares arrive
+5. reads encrypted media from IPFS and decrypts in the browser
+
+The latest implementation also stops waiting once the threshold is reached.
 
 ---
 
-## Kontratta Ne Saklanir
+## Gateway Strategy
 
-Kontrat ham video veya AES anahtari saklamaz. Esas olarak sunlari tutar:
+Media delivery still does not depend on a single IPFS gateway:
+
+- Crust endpoints are tried first
+- public IPFS gateways remain available as fallback
+- range requests are used when supported
+- full-download fallback still exists for degraded cases
+
+This keeps playback resilient even if one media endpoint is slow or unreliable.
+
+---
+
+## What the Chain Stores
+
+The contract does not store raw video or the AES key.
+
+It stores:
 
 - `encrypted_cid`
-- event baslik ve aciklama bilgisi
-- fiyat
+- event title and description
+- price and optional USD price
 - video metadata
-- `storage_type`
+- entitlement ownership
 
-Aktif yeni yol `StorageType::Kms` olarak yazilir. `StorageType::Nova` sadece eski veriler icin gorulebilir.
-
----
-
-## Neden Bu Tasarim
-
-| Ihtiyac | Cozum |
-|--------|-------|
-| Ham videoyu korumak | Browser'da sifreleme |
-| Anahtari ayri tutmak | KMS worker |
-| Tek bir depoya bagli kalmamak | Crust + IPFS gateway failover |
-| Seek ve daha hizli baslangic | AES-CTR + segmentli delivery |
+Key material is handled off-chain by the operator layer, but entitlement remains on-chain.
 
 ---
 
-## Ilgili Dosyalar
+## Why This Design
+
+| Need | Current answer |
+|------|----------------|
+| Protect the raw video | Browser-side encryption |
+| Avoid one full-key holder | Share-based operator storage |
+| Keep playback fast | AES-CTR + segmented delivery |
+| Avoid a single operator bottleneck | `3-of-5` reconstruction |
+| Keep storage decentralized | Crust + IPFS gateway fallback |
+
+---
+
+## Related Files
 
 - `apps/web/lib/kms/encryption.ts`
-- `apps/web/lib/kms/streaming.ts`
+- `apps/web/lib/kms/shares.ts`
+- `apps/web/lib/kms/client.ts`
 - `apps/web/lib/video-delivery.ts`
 - `apps/web/lib/crust/*`
 - `workers/youtick-kms/src/index.ts`

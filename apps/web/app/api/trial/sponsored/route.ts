@@ -3,6 +3,49 @@ import { Account, KeyPair, KeyPairSigner, actions, type KeyPairString } from "ne
 import { trialAccountLimiter, trialDailyGlobalLimiter } from "@/lib/rate-limiter";
 import { addCorsHeaders, handleCorsPreflightRequest, checkCors } from "@/lib/cors";
 import { NEAR_CONFIG, GAS_CONSTANTS } from "@/lib/constants";
+import { getProvider, viewContract } from "@/lib/near";
+
+interface RegistryRelayerRecord {
+    account_id: string;
+    endpoint: string;
+    transport_public_key: string;
+    kind: "Relayer";
+    active: boolean;
+}
+
+async function verifyActiveRelayer(
+    relayerAccountId: string,
+    networkId: 'mainnet' | 'testnet',
+): Promise<RegistryRelayerRecord | null> {
+    const registryContractId = NEAR_CONFIG.registryContractId;
+    if (!registryContractId) {
+        return null;
+    }
+
+    try {
+        const provider = getProvider();
+        const record = await viewContract<RegistryRelayerRecord | null>(
+            provider,
+            registryContractId,
+            'get_relayer',
+            { account_id: relayerAccountId },
+        );
+
+        if (!record?.active) {
+            return null;
+        }
+
+        const expectedEndpoint = `near:${networkId}:${relayerAccountId}`;
+        if (record.endpoint !== expectedEndpoint) {
+            return null;
+        }
+
+        return record;
+    } catch (error) {
+        console.error('[REGISTRY] Failed to verify relayer:', error);
+        return null;
+    }
+}
 
 /**
  * Sponsored Trial API - Creates trial accounts as subaccounts of the contract
@@ -123,6 +166,20 @@ export async function POST(request: NextRequest) {
 
         const contractId = NEAR_CONFIG.contractId;
         const networkId = NEAR_CONFIG.networkId;
+
+        const activeRelayer = await verifyActiveRelayer(
+            relayerAccountId,
+            networkId,
+        );
+        if (!activeRelayer) {
+            return addCorsHeaders(
+                NextResponse.json(
+                    { error: "Relayer is not active in the registry.", code: "RELAYER_INACTIVE" },
+                    { status: 503 },
+                ),
+                request,
+            );
+        }
 
         // The new account will be: {username}.{contractId}
         const newAccountId = `${username}.${contractId}`;

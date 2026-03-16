@@ -1,10 +1,13 @@
 import type { KeyPair } from 'near-api-js';
+import { clearSessionGrantCache, ensureSessionGrant, signSessionGrantPayload, type SessionGrantScope } from '../access-grants';
 import { NEAR_CONFIG } from '../constants';
 import { BrowserKeyStore } from '../keystore-v7';
+import { getThresholdConfig, listActiveDecryptionOperatorEndpoints, listActiveDecryptionOperators } from '../registry';
 import { getActiveUploadSessionKey } from '../upload-session-manager';
 import type { WalletInstance } from '../types';
+import { reconstructSecretFromShares, splitSecretIntoShares, type SecretShare } from './shares';
 
-const KMS_BASE_URL =
+const DEFAULT_KMS_BASE_URL =
     process.env.NEXT_PUBLIC_KMS_URL ||
     (typeof window !== 'undefined' &&
         (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
@@ -20,8 +23,8 @@ interface KMSHealthData {
     contract?: string;
 }
 
-let kmsHealthValidatedAt = 0;
-let kmsHealthValidationPromise: Promise<void> | null = null;
+const kmsHealthValidatedAtByUrl = new Map<string, number>();
+const kmsHealthValidationPromiseByUrl = new Map<string, Promise<void>>();
 
 export interface KMSStoreResult {
     videoId: string;
@@ -29,7 +32,30 @@ export interface KMSStoreResult {
 }
 
 export interface KMSRetrieveResult {
-    aesKeyB64: string;
+    aesKeyB64?: string;
+    shareB64?: string;
+    shareId?: number;
+    totalShares?: number;
+    requiredShares?: number;
+    scheme?: string;
+    operatorAccountId?: string;
+}
+
+export interface KMSShareDebugTrace {
+    operatorEndpoint: string;
+    operatorAccountId?: string;
+    status: 'fulfilled' | 'rejected';
+    returned: 'full-key' | 'share' | 'none';
+    shareId?: number;
+    error?: string;
+}
+
+interface ShareStoreBody {
+    shareB64: string;
+    shareId: number;
+    totalShares: number;
+    requiredShares: number;
+    scheme: 'shamir-v1';
 }
 
 interface KMSAuthChallenge {
@@ -59,24 +85,39 @@ export class KMSError extends Error {
     }
 }
 
-async function ensureKmsConfigMatchesApp(): Promise<void> {
+async function listKmsBaseUrls(): Promise<string[]> {
+    const urls = [DEFAULT_KMS_BASE_URL];
+
+    try {
+        const registryUrls = await listActiveDecryptionOperatorEndpoints();
+        urls.push(...registryUrls);
+    } catch {
+        // Registry lookup is best-effort.
+    }
+
+    return Array.from(new Set(urls.filter(Boolean)));
+}
+
+async function ensureKmsConfigMatchesApp(baseUrl: string): Promise<void> {
     if (typeof window === 'undefined') {
         return;
     }
 
-    if (Date.now() - kmsHealthValidatedAt < KMS_HEALTH_CACHE_MS) {
+    const validatedAt = kmsHealthValidatedAtByUrl.get(baseUrl) || 0;
+    if (Date.now() - validatedAt < KMS_HEALTH_CACHE_MS) {
         return;
     }
 
-    if (kmsHealthValidationPromise) {
-        return kmsHealthValidationPromise;
+    const pendingPromise = kmsHealthValidationPromiseByUrl.get(baseUrl);
+    if (pendingPromise) {
+        return pendingPromise;
     }
 
-    kmsHealthValidationPromise = (async () => {
+    const validationPromise = (async () => {
         let response: Response;
 
         try {
-            response = await fetch(`${KMS_BASE_URL}/health`, {
+            response = await fetch(`${baseUrl}/health`, {
                 method: 'GET',
             });
         } catch {
@@ -111,16 +152,22 @@ async function ensureKmsConfigMatchesApp(): Promise<void> {
             );
         }
 
-        kmsHealthValidatedAt = Date.now();
+        kmsHealthValidatedAtByUrl.set(baseUrl, Date.now());
     })().finally(() => {
-        kmsHealthValidationPromise = null;
+        kmsHealthValidationPromiseByUrl.delete(baseUrl);
     });
 
-    return kmsHealthValidationPromise;
+    kmsHealthValidationPromiseByUrl.set(baseUrl, validationPromise);
+    return validationPromise;
 }
 
-function authCacheKey(accountId: string, action: 'store' | 'retrieve', videoId: string): string {
-    return `${AUTH_CACHE_PREFIX}${accountId}:${action}:${videoId}`;
+function authCacheKey(
+    baseUrl: string,
+    accountId: string,
+    action: 'store' | 'retrieve',
+    videoId: string,
+): string {
+    return `${AUTH_CACHE_PREFIX}${baseUrl}:${accountId}:${action}:${videoId}`;
 }
 
 function decodeBase64(base64: string): Uint8Array {
@@ -137,6 +184,7 @@ function encodeHex(bytes: Uint8Array): string {
 }
 
 function readCachedAuthToken(
+    baseUrl: string,
     accountId: string,
     action: 'store' | 'retrieve',
     videoId: string,
@@ -145,7 +193,7 @@ function readCachedAuthToken(
         return null;
     }
 
-    const raw = sessionStorage.getItem(authCacheKey(accountId, action, videoId));
+    const raw = sessionStorage.getItem(authCacheKey(baseUrl, accountId, action, videoId));
     if (!raw) {
         return null;
     }
@@ -153,28 +201,29 @@ function readCachedAuthToken(
     try {
         const token = JSON.parse(raw) as KMSAuthToken;
         if (Date.now() + AUTH_CACHE_SKEW_MS >= token.expiresAt) {
-            sessionStorage.removeItem(authCacheKey(accountId, action, videoId));
+            sessionStorage.removeItem(authCacheKey(baseUrl, accountId, action, videoId));
             return null;
         }
         return token;
     } catch {
-        sessionStorage.removeItem(authCacheKey(accountId, action, videoId));
+        sessionStorage.removeItem(authCacheKey(baseUrl, accountId, action, videoId));
         return null;
     }
 }
 
-function persistAuthToken(token: KMSAuthToken): void {
+function persistAuthToken(baseUrl: string, token: KMSAuthToken): void {
     if (typeof window === 'undefined') {
         return;
     }
 
     sessionStorage.setItem(
-        authCacheKey(token.accountId, token.action, token.videoId),
+        authCacheKey(baseUrl, token.accountId, token.action, token.videoId),
         JSON.stringify(token),
     );
 }
 
 function clearCachedAuthToken(
+    baseUrl: string,
     accountId: string,
     action: 'store' | 'retrieve',
     videoId: string,
@@ -183,7 +232,7 @@ function clearCachedAuthToken(
         return;
     }
 
-    sessionStorage.removeItem(authCacheKey(accountId, action, videoId));
+    sessionStorage.removeItem(authCacheKey(baseUrl, accountId, action, videoId));
 }
 
 export function clearKmsAuthCache(accountId?: string): void {
@@ -224,10 +273,12 @@ async function getLocalKmsSigningKey(accountId: string): Promise<KeyPair | null>
 }
 
 async function tryLocalSignedKmsRequest<T>(
+    baseUrl: string,
     endpoint: 'store' | 'retrieve',
     accountId: string,
     videoId: string,
     extraBody: Record<string, unknown>,
+    signal?: AbortSignal,
 ): Promise<T | null> {
     const keyPair = await getLocalKmsSigningKey(accountId);
     if (!keyPair) {
@@ -242,12 +293,13 @@ async function tryLocalSignedKmsRequest<T>(
         timestamp,
     });
 
-    const signature = keyPair.sign(new TextEncoder().encode(payload));
-    const response = await fetch(`${KMS_BASE_URL}/${endpoint}`, {
+    const signature = await keyPair.sign(new TextEncoder().encode(payload));
+    const response = await fetch(`${baseUrl}/${endpoint}`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
+        signal,
         body: JSON.stringify({
             ...extraBody,
             accountId,
@@ -273,28 +325,95 @@ async function tryLocalSignedKmsRequest<T>(
     );
 }
 
+async function trySessionGrantSignedKmsRequest<T>(
+    baseUrl: string,
+    endpoint: 'store' | 'retrieve',
+    accountId: string,
+    videoId: string,
+    extraBody: Record<string, unknown>,
+    wallet: WalletInstance,
+    signal?: AbortSignal,
+): Promise<T | null> {
+    const scope: SessionGrantScope = endpoint === 'store' ? 'Publish' : 'Play';
+    const grant = await ensureSessionGrant({
+        accountId,
+        scope,
+        resourceId: videoId,
+        wallet,
+    });
+
+    if (!grant) {
+        return null;
+    }
+
+    const timestamp = Date.now();
+    const payload = JSON.stringify({
+        action: endpoint,
+        videoId,
+        timestamp,
+        originHash: grant.originHash,
+        deviceHash: grant.deviceHash,
+    });
+
+    const signed = await signSessionGrantPayload(grant, payload);
+    const response = await fetch(`${baseUrl}/${endpoint}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        signal,
+        body: JSON.stringify({
+            ...extraBody,
+            timestamp,
+            signature: signed.signature,
+            publicKey: signed.publicKey,
+            originHash: signed.originHash,
+            deviceHash: signed.deviceHash,
+        }),
+    });
+
+    const result = await response.json() as { ok: boolean; error?: string; data?: T };
+
+    if (result.ok) {
+        return result.data as T;
+    }
+
+    if (response.status === 401) {
+        clearSessionGrantCache(accountId);
+        return null;
+    }
+
+    throw new KMSError(
+        endpoint === 'store' ? 'STORE_FAILED' : 'RETRIEVE_FAILED',
+        result.error || `Failed to ${endpoint} key`,
+    );
+}
+
 async function requestKmsAuthToken(
+    baseUrl: string,
     videoId: string,
     action: 'store' | 'retrieve',
     accountId: string,
     wallet: WalletInstance,
+    signal?: AbortSignal,
 ): Promise<KMSAuthToken> {
-    const cached = readCachedAuthToken(accountId, action, videoId);
+    const cached = readCachedAuthToken(baseUrl, accountId, action, videoId);
     if (cached) {
         return cached;
     }
 
     let challengeResponse: Response;
     try {
-        challengeResponse = await fetch(`${KMS_BASE_URL}/auth/challenge`, {
+        challengeResponse = await fetch(`${baseUrl}/auth/challenge`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal,
             body: JSON.stringify({ accountId, action, videoId }),
         });
     } catch (fetchError) {
         throw new KMSError(
             'NETWORK_ERROR',
-            `KMS Connection failed (${KMS_BASE_URL}). Ensure worker is running.`,
+            `KMS Connection failed (${baseUrl}). Ensure worker is running.`,
             fetchError as Error,
         );
     }
@@ -324,9 +443,10 @@ async function requestKmsAuthToken(
 
     let verifyResponse: Response;
     try {
-        verifyResponse = await fetch(`${KMS_BASE_URL}/auth/verify`, {
+        verifyResponse = await fetch(`${baseUrl}/auth/verify`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal,
             body: JSON.stringify({
                 challengeId: challengeResult.data.challengeId,
                 accountId: signedMessage.accountId,
@@ -337,7 +457,7 @@ async function requestKmsAuthToken(
     } catch (fetchError) {
         throw new KMSError(
             'NETWORK_ERROR',
-            `KMS Connection failed (${KMS_BASE_URL}). Ensure worker is running.`,
+            `KMS Connection failed (${baseUrl}). Ensure worker is running.`,
             fetchError as Error,
         );
     }
@@ -355,29 +475,32 @@ async function requestKmsAuthToken(
         );
     }
 
-    persistAuthToken(verifyResult.data);
+    persistAuthToken(baseUrl, verifyResult.data);
     return verifyResult.data;
 }
 
 async function fetchKmsWithToken<T>(
+    baseUrl: string,
     endpoint: 'store' | 'retrieve',
     body: Record<string, unknown>,
     token: KMSAuthToken,
+    signal?: AbortSignal,
 ): Promise<T> {
     let response: Response;
     try {
-        response = await fetch(`${KMS_BASE_URL}/${endpoint}`, {
+        response = await fetch(`${baseUrl}/${endpoint}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 Authorization: `Bearer ${token.token}`,
             },
+            signal,
             body: JSON.stringify(body),
         });
     } catch (fetchError) {
         throw new KMSError(
             'NETWORK_ERROR',
-            `KMS Connection failed (${KMS_BASE_URL}). Ensure worker is running.`,
+            `KMS Connection failed (${baseUrl}). Ensure worker is running.`,
             fetchError as Error,
         );
     }
@@ -386,7 +509,7 @@ async function fetchKmsWithToken<T>(
 
     if (!result.ok) {
         if (response.status === 401) {
-            clearCachedAuthToken(token.accountId, token.action, token.videoId);
+            clearCachedAuthToken(baseUrl, token.accountId, token.action, token.videoId);
             throw new KMSError('AUTH_EXPIRED', result.error || 'KMS authorization expired');
         }
         if (response.status === 403) {
@@ -404,39 +527,356 @@ async function fetchKmsWithToken<T>(
     return result.data as T;
 }
 
+async function executeKmsRequest<T>(
+    baseUrl: string,
+    endpoint: 'store' | 'retrieve',
+    accountId: string,
+    videoId: string,
+    extraBody: Record<string, unknown>,
+    wallet: WalletInstance,
+    options?: {
+        allowTokenFallback?: boolean;
+        signal?: AbortSignal;
+    },
+): Promise<T> {
+    await ensureKmsConfigMatchesApp(baseUrl);
+
+    const localResult = await tryLocalSignedKmsRequest<T>(
+        baseUrl,
+        endpoint,
+        accountId,
+        videoId,
+        extraBody,
+        options?.signal,
+    );
+    if (localResult) {
+        return localResult;
+    }
+
+    const sessionGrantResult = await trySessionGrantSignedKmsRequest<T>(
+        baseUrl,
+        endpoint,
+        accountId,
+        videoId,
+        extraBody,
+        wallet,
+        options?.signal,
+    );
+    if (sessionGrantResult) {
+        return sessionGrantResult;
+    }
+
+    if (options?.allowTokenFallback === false) {
+        throw new KMSError(
+            endpoint === 'store' ? 'STORE_FAILED' : 'RETRIEVE_FAILED',
+            `Token fallback disabled for ${endpoint}`,
+        );
+    }
+
+    const token = await requestKmsAuthToken(baseUrl, videoId, endpoint, accountId, wallet, options?.signal);
+    try {
+        return await fetchKmsWithToken<T>(
+            baseUrl,
+            endpoint,
+            extraBody,
+            token,
+            options?.signal,
+        );
+    } catch (error) {
+        if (error instanceof KMSError && error.code === 'AUTH_EXPIRED') {
+            const refreshed = await requestKmsAuthToken(baseUrl, videoId, endpoint, accountId, wallet);
+            return fetchKmsWithToken<T>(
+                baseUrl,
+                endpoint,
+                extraBody,
+                refreshed,
+                options?.signal,
+            );
+        }
+        throw error;
+    }
+}
+
+async function storeEncryptionKeyShares(
+    videoId: string,
+    aesKeyB64: string,
+    accountId: string,
+    wallet: WalletInstance,
+): Promise<KMSStoreResult | null> {
+    const operators = await listActiveDecryptionOperators();
+    const threshold = await getThresholdConfig();
+
+    const requiredShares = threshold?.required_shares ?? 0;
+    const totalShares = operators.length;
+
+    if (requiredShares < 2 || totalShares < requiredShares) {
+        return null;
+    }
+
+    const shares = splitSecretIntoShares(aesKeyB64, totalShares, requiredShares);
+    let successfulStores = 0;
+    let lastSuccess: KMSStoreResult | null = null;
+    let lastError: unknown = null;
+
+    for (let index = 0; index < operators.length; index += 1) {
+        const operator = operators[index];
+        const share = shares[index];
+        try {
+            const result = await executeKmsRequest<KMSStoreResult>(
+                operator.endpoint,
+                'store',
+                accountId,
+                videoId,
+                {
+                    videoId,
+                    ...({
+                        shareB64: share.shareB64,
+                        shareId: share.shareId,
+                        totalShares,
+                        requiredShares,
+                        scheme: 'shamir-v1',
+                    } satisfies ShareStoreBody),
+                },
+                wallet,
+            );
+            successfulStores += 1;
+            lastSuccess = result;
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    if (successfulStores >= requiredShares && lastSuccess) {
+        return lastSuccess;
+    }
+
+    if (lastError) {
+        throw lastError;
+    }
+
+    return null;
+}
+
+async function retrieveEncryptionKeyShares(
+    videoId: string,
+    accountId: string,
+    wallet: WalletInstance,
+): Promise<string | null> {
+    const operators = await listActiveDecryptionOperators();
+    const threshold = await getThresholdConfig();
+    const requiredShares = threshold?.required_shares ?? 0;
+
+    if (requiredShares < 2 || operators.length < requiredShares) {
+        return null;
+    }
+
+    const shares: SecretShare[] = [];
+    const debugTrace: KMSShareDebugTrace[] = [];
+    const controllers = operators.map(() => new AbortController());
+    const pendingResults = new Map(
+        operators.map((operator, index) => [
+            index,
+            executeKmsRequest<KMSRetrieveResult>(
+                operator.endpoint,
+                'retrieve',
+                accountId,
+                videoId,
+                { videoId },
+                wallet,
+                {
+                    allowTokenFallback: false,
+                    signal: controllers[index].signal,
+                },
+            ).then(
+                (value) => ({ index, status: 'fulfilled' as const, value }),
+                (reason) => ({ index, status: 'rejected' as const, reason }),
+            ),
+        ]),
+    );
+
+    while (pendingResults.size > 0) {
+        const settled = await Promise.race(pendingResults.values());
+        pendingResults.delete(settled.index);
+        const operator = operators[settled.index];
+
+        if (settled.status === 'rejected') {
+            if ((settled.reason as DOMException | undefined)?.name === 'AbortError') {
+                continue;
+            }
+
+            debugTrace.push({
+                operatorEndpoint: operator.endpoint,
+                status: 'rejected',
+                returned: 'none',
+                error: settled.reason instanceof Error ? settled.reason.message : String(settled.reason),
+            });
+            continue;
+        }
+
+        if (typeof settled.value.aesKeyB64 === 'string') {
+            controllers.forEach((controller) => controller.abort());
+            debugTrace.push({
+                operatorEndpoint: operator.endpoint,
+                operatorAccountId: settled.value.operatorAccountId,
+                status: 'fulfilled',
+                returned: 'full-key',
+            });
+            console.info('[KMS] Share retrieval trace', {
+                videoId,
+                accountId,
+                mode: 'legacy-full-key',
+                debugTrace,
+            });
+            return settled.value.aesKeyB64;
+        }
+
+        if (settled.value.shareB64 && typeof settled.value.shareId === 'number') {
+            shares.push({
+                shareB64: settled.value.shareB64,
+                shareId: settled.value.shareId,
+            });
+            debugTrace.push({
+                operatorEndpoint: operator.endpoint,
+                operatorAccountId: settled.value.operatorAccountId,
+                status: 'fulfilled',
+                returned: 'share',
+                shareId: settled.value.shareId,
+            });
+
+            if (shares.length >= requiredShares) {
+                controllers.forEach((controller) => controller.abort());
+                const reconstructed = reconstructSecretFromShares(shares, requiredShares);
+                console.info('[KMS] Share retrieval trace', {
+                    videoId,
+                    accountId,
+                    mode: 'reconstructed',
+                    requiredShares,
+                    collectedShares: shares.length,
+                    shareIds: shares.map((share) => share.shareId),
+                    debugTrace,
+                });
+                return reconstructed;
+            }
+        } else {
+            debugTrace.push({
+                operatorEndpoint: operator.endpoint,
+                operatorAccountId: settled.value.operatorAccountId,
+                status: 'fulfilled',
+                returned: 'none',
+            });
+        }
+    }
+
+    if (shares.length < requiredShares) {
+        console.warn('[KMS] Share retrieval trace', {
+            videoId,
+            accountId,
+            mode: 'insufficient-shares',
+            requiredShares,
+            collectedShares: shares.length,
+            debugTrace,
+        });
+        return null;
+    }
+
+    return reconstructSecretFromShares(shares, requiredShares);
+}
+
 export async function storeEncryptionKey(
     videoId: string,
     aesKeyB64: string,
     accountId: string,
     wallet: WalletInstance,
 ): Promise<KMSStoreResult> {
-    await ensureKmsConfigMatchesApp();
-
-    const localResult = await tryLocalSignedKmsRequest<KMSStoreResult>(
-        'store',
-        accountId,
+    const shareResult = await storeEncryptionKeyShares(
         videoId,
-        { videoId, aesKeyB64 },
+        aesKeyB64,
+        accountId,
+        wallet,
     );
-    if (localResult) {
-        return localResult;
+    if (shareResult) {
+        return shareResult;
     }
 
-    const token = await requestKmsAuthToken(videoId, 'store', accountId, wallet);
+    const baseUrls = await listKmsBaseUrls();
+    let lastError: unknown = null;
 
-    try {
-        return await fetchKmsWithToken<KMSStoreResult>(
-            'store',
-            { videoId, aesKeyB64 },
-            token,
-        );
-    } catch (error) {
-        if (error instanceof KMSError && error.code === 'AUTH_EXPIRED') {
-            const refreshed = await requestKmsAuthToken(videoId, 'store', accountId, wallet);
-            return fetchKmsWithToken<KMSStoreResult>('store', { videoId, aesKeyB64 }, refreshed);
+    for (const baseUrl of baseUrls) {
+        try {
+            await ensureKmsConfigMatchesApp(baseUrl);
+
+            const localResult = await tryLocalSignedKmsRequest<KMSStoreResult>(
+                baseUrl,
+                'store',
+                accountId,
+                videoId,
+                { videoId, aesKeyB64 },
+            );
+            if (localResult) {
+                return localResult;
+            }
+        } catch (error) {
+            lastError = error;
         }
-        throw error;
     }
+
+    for (const baseUrl of baseUrls) {
+        try {
+            await ensureKmsConfigMatchesApp(baseUrl);
+
+            const sessionGrantResult = await trySessionGrantSignedKmsRequest<KMSStoreResult>(
+                baseUrl,
+                'store',
+                accountId,
+                videoId,
+                { videoId, aesKeyB64 },
+                wallet,
+            );
+            if (sessionGrantResult) {
+                return sessionGrantResult;
+            }
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    for (const baseUrl of baseUrls) {
+        try {
+            await ensureKmsConfigMatchesApp(baseUrl);
+
+            const token = await requestKmsAuthToken(baseUrl, videoId, 'store', accountId, wallet);
+            try {
+                return await fetchKmsWithToken<KMSStoreResult>(
+                    baseUrl,
+                    'store',
+                    { videoId, aesKeyB64 },
+                    token,
+                );
+            } catch (error) {
+                if (error instanceof KMSError && error.code === 'AUTH_EXPIRED') {
+                    const refreshed = await requestKmsAuthToken(baseUrl, videoId, 'store', accountId, wallet);
+                    return fetchKmsWithToken<KMSStoreResult>(
+                        baseUrl,
+                        'store',
+                        { videoId, aesKeyB64 },
+                        refreshed,
+                    );
+                }
+                throw error;
+            }
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    if (lastError) {
+        throw lastError;
+    }
+
+    throw new KMSError(
+        'STORE_FAILED',
+        'No active KMS operator accepted the store request',
+    );
 }
 
 export async function retrieveEncryptionKey(
@@ -444,33 +884,100 @@ export async function retrieveEncryptionKey(
     accountId: string,
     wallet: WalletInstance,
 ): Promise<string> {
-    await ensureKmsConfigMatchesApp();
-
-    const localResult = await tryLocalSignedKmsRequest<KMSRetrieveResult>(
-        'retrieve',
-        accountId,
+    const shareResult = await retrieveEncryptionKeyShares(
         videoId,
-        { videoId },
+        accountId,
+        wallet,
     );
-    if (localResult) {
-        return localResult.aesKeyB64;
+    if (shareResult) {
+        return shareResult;
     }
 
-    const token = await requestKmsAuthToken(videoId, 'retrieve', accountId, wallet);
+    const baseUrls = await listKmsBaseUrls();
+    let lastError: unknown = null;
 
-    try {
-        const result = await fetchKmsWithToken<KMSRetrieveResult>(
-            'retrieve',
-            { videoId },
-            token,
-        );
-        return result.aesKeyB64;
-    } catch (error) {
-        if (error instanceof KMSError && error.code === 'AUTH_EXPIRED') {
-            const refreshed = await requestKmsAuthToken(videoId, 'retrieve', accountId, wallet);
-            const result = await fetchKmsWithToken<KMSRetrieveResult>('retrieve', { videoId }, refreshed);
-            return result.aesKeyB64;
+    for (const baseUrl of baseUrls) {
+        try {
+            await ensureKmsConfigMatchesApp(baseUrl);
+
+            const localResult = await tryLocalSignedKmsRequest<KMSRetrieveResult>(
+                baseUrl,
+                'retrieve',
+                accountId,
+                videoId,
+                { videoId },
+            );
+            if (localResult?.aesKeyB64) {
+                return localResult.aesKeyB64;
+            }
+        } catch (error) {
+            lastError = error;
         }
-        throw error;
     }
+
+    for (const baseUrl of baseUrls) {
+        try {
+            await ensureKmsConfigMatchesApp(baseUrl);
+
+            const sessionGrantResult = await trySessionGrantSignedKmsRequest<KMSRetrieveResult>(
+                baseUrl,
+                'retrieve',
+                accountId,
+                videoId,
+                { videoId },
+                wallet,
+            );
+            if (sessionGrantResult?.aesKeyB64) {
+                return sessionGrantResult.aesKeyB64;
+            }
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    for (const baseUrl of baseUrls) {
+        try {
+            await ensureKmsConfigMatchesApp(baseUrl);
+
+            const token = await requestKmsAuthToken(baseUrl, videoId, 'retrieve', accountId, wallet);
+            try {
+                const result = await fetchKmsWithToken<KMSRetrieveResult>(
+                    baseUrl,
+                    'retrieve',
+                    { videoId },
+                    token,
+                );
+                if (result.aesKeyB64) {
+                    return result.aesKeyB64;
+                }
+                throw new KMSError('RETRIEVE_FAILED', 'KMS did not return a reconstructed key');
+            } catch (error) {
+                if (error instanceof KMSError && error.code === 'AUTH_EXPIRED') {
+                    const refreshed = await requestKmsAuthToken(baseUrl, videoId, 'retrieve', accountId, wallet);
+                    const result = await fetchKmsWithToken<KMSRetrieveResult>(
+                        baseUrl,
+                        'retrieve',
+                        { videoId },
+                        refreshed,
+                    );
+                    if (result.aesKeyB64) {
+                        return result.aesKeyB64;
+                    }
+                    throw new KMSError('RETRIEVE_FAILED', 'KMS did not return a reconstructed key');
+                }
+                throw error;
+            }
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    if (lastError) {
+        throw lastError;
+    }
+
+    throw new KMSError(
+        'RETRIEVE_FAILED',
+        'No active KMS operator accepted the retrieve request',
+    );
 }

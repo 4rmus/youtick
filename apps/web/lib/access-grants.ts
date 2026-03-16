@@ -1,0 +1,216 @@
+import { actions, KeyPair, type KeyPairString } from 'near-api-js';
+import { GAS_CONSTANTS, NEAR_CONFIG } from './constants';
+import type { WalletInstance } from './types';
+
+const ACCESS_GRANT_CACHE_PREFIX = 'youtick:access-grant:';
+const ACCESS_GRANT_SKEW_MS = 30_000;
+const pendingGrantPromises = new Map<string, Promise<BrowserSessionGrant | null>>();
+
+export type SessionGrantScope = 'Play' | 'Publish' | 'ClaimGift' | 'ClaimTrial';
+
+export interface BrowserSessionGrant {
+    accountId: string;
+    sessionPublicKey: string;
+    secretKey: KeyPairString;
+    scope: SessionGrantScope;
+    resourceId: string | null;
+    expiresAt: number;
+    originHash: string | null;
+    deviceHash: string | null;
+}
+
+function cacheKey(accountId: string, scope: SessionGrantScope, resourceId?: string): string {
+    return `${ACCESS_GRANT_CACHE_PREFIX}${accountId}:${scope}:${resourceId || '*'}`;
+}
+
+function getScopeTtlMs(scope: SessionGrantScope): number {
+    switch (scope) {
+        case 'Play':
+            return 10 * 60 * 1000;
+        case 'Publish':
+            return 20 * 60 * 1000;
+        case 'ClaimGift':
+        case 'ClaimTrial':
+            return 15 * 60 * 1000;
+    }
+}
+
+async function hashString(input: string): Promise<string> {
+    if (typeof window === 'undefined') {
+        return input;
+    }
+
+    if (window.crypto?.subtle) {
+        const bytes = new TextEncoder().encode(input);
+        const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+        return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    return btoa(input);
+}
+
+async function getOriginHash(): Promise<string | null> {
+    if (typeof window === 'undefined' || !window.location?.origin) {
+        return null;
+    }
+
+    return hashString(window.location.origin);
+}
+
+async function getDeviceHash(): Promise<string | null> {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+        return null;
+    }
+
+    const seed = [
+        navigator.userAgent,
+        navigator.language,
+        navigator.platform,
+        String(navigator.hardwareConcurrency || 0),
+    ].join('::');
+
+    return hashString(seed);
+}
+
+function readCachedGrant(accountId: string, scope: SessionGrantScope, resourceId?: string): BrowserSessionGrant | null {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+
+    const raw = sessionStorage.getItem(cacheKey(accountId, scope, resourceId));
+    if (!raw) {
+        return null;
+    }
+
+    try {
+        const grant = JSON.parse(raw) as BrowserSessionGrant;
+        if (Date.now() + ACCESS_GRANT_SKEW_MS >= grant.expiresAt) {
+            sessionStorage.removeItem(cacheKey(accountId, scope, resourceId));
+            return null;
+        }
+        return grant;
+    } catch {
+        sessionStorage.removeItem(cacheKey(accountId, scope, resourceId));
+        return null;
+    }
+}
+
+function persistGrant(grant: BrowserSessionGrant): void {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    sessionStorage.setItem(
+        cacheKey(grant.accountId, grant.scope, grant.resourceId || undefined),
+        JSON.stringify(grant),
+    );
+}
+
+export function clearSessionGrantCache(accountId?: string): void {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    const prefix = accountId ? `${ACCESS_GRANT_CACHE_PREFIX}${accountId}:` : ACCESS_GRANT_CACHE_PREFIX;
+    const keysToRemove: string[] = [];
+
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+        const key = sessionStorage.key(i);
+        if (key?.startsWith(prefix)) {
+            keysToRemove.push(key);
+        }
+    }
+
+    for (const key of keysToRemove) {
+        sessionStorage.removeItem(key);
+        pendingGrantPromises.delete(key);
+    }
+}
+
+export async function ensureSessionGrant(params: {
+    accountId: string;
+    scope: SessionGrantScope;
+    resourceId?: string;
+    wallet: WalletInstance;
+}): Promise<BrowserSessionGrant | null> {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+
+    if (typeof params.wallet.signAndSendTransaction !== 'function') {
+        return null;
+    }
+
+    const cacheStorageKey = cacheKey(params.accountId, params.scope, params.resourceId);
+    const cached = readCachedGrant(params.accountId, params.scope, params.resourceId);
+    if (cached) {
+        return cached;
+    }
+
+    const pendingGrant = pendingGrantPromises.get(cacheStorageKey);
+    if (pendingGrant) {
+        return pendingGrant;
+    }
+
+    const grantPromise = (async () => {
+        const keyPair = KeyPair.fromRandom('ed25519');
+        const sessionPublicKey = keyPair.getPublicKey().toString();
+        const ttlMs = getScopeTtlMs(params.scope);
+        const originHash = await getOriginHash();
+        const deviceHash = await getDeviceHash();
+
+        await params.wallet.signAndSendTransaction({
+            receiverId: NEAR_CONFIG.accessContractId,
+            actions: [
+                actions.functionCall(
+                    'issue_session_grant',
+                    {
+                        session_pk: sessionPublicKey,
+                        scope: params.scope,
+                        resource_id: params.resourceId || null,
+                        ttl_ms: ttlMs,
+                        origin_hash: originHash,
+                        device_hash: deviceHash,
+                    },
+                    GAS_CONSTANTS.mediumGas,
+                    BigInt(0),
+                ),
+            ],
+        });
+
+        const grant: BrowserSessionGrant = {
+            accountId: params.accountId,
+            sessionPublicKey,
+            secretKey: keyPair.toString(),
+            scope: params.scope,
+            resourceId: params.resourceId || null,
+            expiresAt: Date.now() + ttlMs,
+            originHash,
+            deviceHash,
+        };
+
+        persistGrant(grant);
+        return grant;
+    })().finally(() => {
+        pendingGrantPromises.delete(cacheStorageKey);
+    });
+
+    pendingGrantPromises.set(cacheStorageKey, grantPromise);
+    return grantPromise;
+}
+
+export async function signSessionGrantPayload(
+    grant: BrowserSessionGrant,
+    payload: string,
+): Promise<{ signature: string; publicKey: string; originHash: string | null; deviceHash: string | null }> {
+    const keyPair = KeyPair.fromString(grant.secretKey);
+    const signature = await keyPair.sign(new TextEncoder().encode(payload));
+    const signatureHex = Array.from(signature.signature, (byte) => byte.toString(16).padStart(2, '0')).join('');
+
+    return {
+        signature: signatureHex,
+        publicKey: grant.sessionPublicKey,
+        originHash: grant.originHash,
+        deviceHash: grant.deviceHash,
+    };
+}

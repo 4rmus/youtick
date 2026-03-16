@@ -1,140 +1,82 @@
 # Contract Methods Reference
 
-> `contracts/nft-ticket/src/lib.rs` icindeki guncel method gruplari
+> Target contract surface for Youtick Zero Trust Architecture v1
 
-**Contract:** `youtick.near`
-
----
-
-## Bu sayfa nasil okunmali?
-
-Bu referans, aktif contract yuzeyini kisa ve temiz sekilde toplar. Eski uyumluluk methodlari ayri bir bolumde tutulur; yeni akis icin merkezde degildir.
+**Status:** Target v1 / not live runtime  
+**Contracts:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`
 
 ---
 
-## 1. Event methods
+## How to Read This Page
 
-| Method | Tip | Ne yapar |
-|--------|-----|----------|
-| `create_event` | Change | Yeni event olusturur |
-| `create_event_prepaid` | Change | Upload session akisi icin event olusturur |
-| `get_event` | View | Tek event doner |
-| `get_events` | View | Liste doner |
-| `get_events_paginated` | View | Cursor tabanli liste doner |
-| `get_events_count` | View | Banli olmayan event sayisini doner |
+This page documents the target v1 method surface, not the exact live runtime contract that exists today. The current live contract still centers on `contracts/nft-ticket/src/lib.rs`. For the full target-state explanation, read:
 
-Notlar:
+- [Youtick Zero Trust Architecture v1](../architecture/youtick-zero-trust-architecture-v1.md)
 
-- `create_event` icin depozit gerekir
-- `create_event_prepaid` upload session akisinda kullanilir
+This page keeps the method names identical to the ADR.
 
 ---
 
-## 2. Upload methods
+## 1. Core Types
 
-| Method | Tip | Ne yapar |
-|--------|-----|----------|
-| `create_upload_session` | Change | Kisa omurlu upload yetkisi acar |
-| `revoke_upload_session` | Change | Upload yetkisini kapatir |
-| `get_upload_session` | View | Session durumunu dondurur |
-| `nft_mint_prepaid` | Change | Upload akisi icin NFT mint eder |
-| `nft_mint_internal` | Private | Contract icinde kullanilir |
-| `on_nft_mint_prepaid_callback` | Private | Mint hatasinda geri yukleme yapar |
-
----
-
-## 3. Ticket and video methods
-
-| Method | Tip | Ne yapar |
-|--------|-----|----------|
-| `buy_ticket` | Change | Dogrudan satin alma yapar |
-| `buy_ticket_internal` | Private | Ic kullanim |
-| `gift_ticket` | Change | Creator bir kullaniciya ticket hediye eder |
-| `nft_mint` | Change | Manual/owner kontrollu mint |
-| `get_video_metadata` | View | Belirli token icin video metadata doner |
-| `get_videos` | View | Hesabin videolarini listeler |
-| `get_storage_type` | View | `Kms` veya eski kayitlarda `Nova` dondurebilir |
-| `has_ticket` | View | Hesabin ilgili event icin ticket'i var mi kontrol eder |
-| `verify_ownership` | View | Belirli token sahipligini kontrol eder |
-| `get_next_token_id` | View | Siradaki token id'yi doner |
-
-Aktif yeni kayitlarda `storage_type` degeri `Kms` olur.
+| Type | Purpose |
+|------|---------|
+| `SessionScope` | Scope class for `Play`, `Publish`, `ClaimGift`, `ClaimTrial` |
+| `SessionGrant` | Short-lived application session |
+| `ScopePolicy` | Scope-level TTL and binding policy |
+| `EventKind` | `TicketedVideo` or `AccessPass` |
+| `ThresholdConfig` | Total operators and required shares |
+| `OperatorRecord` | Operator or relayer registration record |
 
 ---
 
-## 4. Purchase and wNEAR methods
+## 2. `youtick.near`
 
-| Method | Tip | Ne yapar |
-|--------|-----|----------|
-| `ft_on_transfer` | Change | wNEAR ile satin alma giris noktasi |
-| `on_wnear_unwrap_for_purchase` | Private | wNEAR callback mantigi |
-| `get_purchase_log` | View | Tek satin alma kaydi |
-| `get_purchase_logs` | View | Kayit listesi |
-| `get_purchase_count` | View | Toplam kayit sayisi |
+This contract is the market, content, and entitlement source of truth.
 
-Ekonomi:
+### Change methods
 
-- `%98` creator
-- `%1` trial pool
-- `%1` commission pool
+| Method | Purpose |
+|--------|---------|
+| `publish_event` | Opens a new event and the initial entitlement shape |
+| `update_event_metadata` | Updates event metadata |
+| `set_event_price` | Updates the event price |
+| `buy_ticket` | Buys a ticket or access pass |
+| `create_gift_drop` | Creates a gift-claim drop |
+| `claim_gift` | Claims into an existing account |
+| `claim_gift_and_create_account` | Creates an account and claims the gift |
+| `create_trial_invite_drop` | Creates a trial-invite drop |
+| `claim_trial_invite_and_create_account` | Creates a trial account from an invite |
+| `fund_trial_pool` | Adds balance to the trial pool |
+| `withdraw_trial_pool` | Withdraws from the trial pool |
+| `grant_moderator` | Grants moderator permissions |
+| `revoke_moderator` | Revokes moderator permissions |
+| `ban_event` | Bans an event |
+| `unban_event` | Removes an event ban |
+| `set_owner` | Transfers owner authority |
 
----
+### View methods
 
-## 5. Gift methods
+| Method | Purpose |
+|--------|---------|
+| `get_event` | Returns a single event |
+| `get_events_paginated` | Returns paginated events |
+| `get_creator_events` | Returns a creator's events |
+| `get_gift_drop` | Returns gift-drop details |
+| `get_trial_invite_drop` | Returns trial-invite details |
+| `get_trial_pool_balance` | Returns the trial-pool balance |
+| `get_purchase_logs` | Lists purchase logs |
+| `get_purchase_count` | Returns purchase count |
+| `get_video_metadata` | Returns video metadata |
+| `has_ticket` | Checks ticket entitlement |
+| `has_access_pass` | Checks access-pass entitlement |
+| `has_entitlement` | Resolves the final entitlement answer |
+| `get_entitlement_snapshot` | Returns an explainable entitlement view |
+| `is_moderator` | Checks moderator status |
 
-| Method | Tip | Ne yapar |
-|--------|-----|----------|
-| `create_gift_drop` | Change | Gift key seti olusturur |
-| `claim_gift` | Change | Mevcut hesaba claim eder |
-| `claim_gift_and_create_account` | Change | Yeni hesap acip claim eder |
-| `on_account_created` | Private | Yeni hesap callback'i |
-| `is_gift_valid` | View | Link hala gecerli mi |
-| `get_gift_info` | View | Temel gift bilgisi |
-| `get_gift_info_full` | View | Ayrintili gift bilgisi |
+### NFT standard surface
 
----
-
-## 6. Trial and onboarding methods
-
-| Method | Tip | Ne yapar |
-|--------|-----|----------|
-| `add_onboarding_key` | Change | Yeni onboarding key ekler |
-| `remove_onboarding_key` | Change | Onboarding key siler |
-| `set_onboarding_config` | Change | Trial ayarlarini gunceller |
-| `is_onboarding_key` | View | Key yetkili mi kontrol eder |
-| `get_onboarding_config` | View | Trial ayarlarini doner |
-| `get_daily_trial_count` | View | Gunluk trial sayisi |
-| `create_sponsored_trial_direct` | Change | Client-side trial hesap acar |
-| `create_sponsored_trial` | Change | Alternatif sponsored trial yolu |
-| `claim_free_ticket_direct` | Change | Onboarding key ile free ticket claim |
-| `claim_free_ticket_sponsored` | Change | Sponsored free ticket claim |
-| `upgrade_trial_account` | Change | Trial hesaba yeni full-access key ekler |
-| `fund_trial_pool` | Change | Trial pool'a kaynak ekler |
-| `withdraw_trial_pool` | Change | Trial pool'dan ceker |
-| `get_trial_pool_balance` | View | Trial pool bakiyesi |
-
----
-
-## 7. Moderation and admin methods
-
-| Method | Tip | Ne yapar |
-|--------|-----|----------|
-| `ban_event` | Change | Event'i banlar |
-| `unban_event` | Change | Event ban'ini kaldirir |
-| `is_event_banned` | View | Ban durumunu doner |
-| `get_banned_events` | View | Banli event listesi |
-| `set_next_token_id` | Change | Admin duzeltme yardimcisi |
-| `get_commission_pool` | View | Komisyon havuzu |
-| `withdraw_commission` | Change | Komisyon cekimi |
-| `web4_get` | View | Web4 response doner |
-| `web4_set_static_url` | Change | Static URL ayarlar |
-| `web4_get_static_url` | View | Static URL doner |
-
----
-
-## 8. NFT standard methods
-
-Kontrat standart NEP-171 / 177 / 178 methodlarini da destekler:
+The standard NFT methods stay available:
 
 - `nft_token`
 - `nft_transfer`
@@ -151,39 +93,104 @@ Kontrat standart NEP-171 / 177 / 178 methodlarini da destekler:
 
 ---
 
-## 9. Legacy compatibility methods
+## 3. `access.youtick.near`
 
-Bu methodlar yeni KMS akisinin merkezi degildir:
+This contract is the session-grant and scope-policy source of truth.
 
-| Method | Durum |
-|--------|-------|
-| `set_nova_group` | Eski kayitlar icin uyumluluk |
-| `get_nova_group` | Eski metadata okuma yardimcisi |
-| `backfill_nova_groups` | Migration yardimcisi |
-| `get_nova_platform_account` | Artik `None` doner |
-| `get_nova_service_fee` | Artik `0` doner |
+### Change methods
 
-Runtime'dan kaldirilmis ve panic edenler:
+| Method | Purpose |
+|--------|---------|
+| `issue_session_grant` | Creates a short-lived session grant |
+| `revoke_session_grant` | Revokes one grant |
+| `revoke_subject_sessions` | Revokes every grant for one subject |
+| `set_scope_policy` | Updates scope policy |
+| `set_market_contract` | Updates the market-contract reference |
+| `set_registry_contract` | Updates the registry-contract reference |
+| `pause_scope` | Pauses one scope |
+| `unpause_scope` | Unpauses one scope |
+| `set_owner` | Transfers owner authority |
 
-- `fund_nova_platform`
-- `set_nova_platform_account`
-- `set_nova_service_fee`
+### View methods
+
+| Method | Purpose |
+|--------|---------|
+| `get_session_grant` | Returns one grant |
+| `list_session_grants` | Lists grants for one account |
+| `get_scope_policy` | Returns one scope policy |
+| `verify_session_grant` | Validates a session for off-chain services |
+| `can_execute` | Generic scope check |
+| `can_play` | Playback helper |
+| `can_publish` | Publish helper |
+| `can_claim_gift` | Gift-claim helper |
+| `can_claim_trial` | Trial-claim helper |
 
 ---
 
-## 10. Veri modeli notu
+## 4. `registry.youtick.near`
 
-`VideoMetadata` icinde su alanlar bulunur:
+This contract stores decryption operators and relayers.
 
-- `encrypted_cid`
-- `duration_seconds`
-- `event_date`
-- `content_type`
-- `nova_group_id` (legacy)
-- `storage_type`
+### Change methods
 
-Yeni kayit icin beklenen deger:
+| Method | Purpose |
+|--------|---------|
+| `upsert_decryption_operator` | Creates or updates an operator |
+| `deactivate_decryption_operator` | Deactivates an operator |
+| `upsert_relayer` | Creates or updates a relayer |
+| `deactivate_relayer` | Deactivates a relayer |
+| `set_threshold_config` | Updates threshold config such as `3-of-5` |
+| `set_owner` | Transfers owner authority |
 
-```text
-storage_type = Kms
-```
+### View methods
+
+| Method | Purpose |
+|--------|---------|
+| `get_decryption_operator` | Returns one operator |
+| `list_decryption_operators` | Lists operators |
+| `get_relayer` | Returns one relayer |
+| `list_relayers` | Lists relayers |
+| `get_threshold_config` | Returns threshold config |
+| `is_active_decryption_operator` | Checks operator activity |
+| `is_active_relayer` | Checks relayer activity |
+
+---
+
+## 5. Deprecated / Legacy
+
+The following methods are not part of the active v1 target path:
+
+| Method | Status |
+|--------|--------|
+| `create_upload_session` | Legacy publish helper |
+| `revoke_upload_session` | Legacy publish helper |
+| `get_upload_session` | Legacy publish helper |
+| `nft_mint_prepaid` | Legacy publish helper |
+| `create_event_prepaid` | Legacy publish helper |
+| `add_onboarding_key` | Removed with browser onboarding secrets |
+| `remove_onboarding_key` | Removed with browser onboarding secrets |
+| `create_sponsored_trial_direct` | Replaced by invite-based trial flow |
+| `claim_free_ticket_direct` | Replaced by gift or invite flow |
+| `create_sponsored_trial` | Replaced by invite-based trial flow |
+| `claim_free_ticket_sponsored` | Replaced by invite-based trial flow |
+
+Additional note:
+
+- the old magic `ACCESS_PASS` branch inside `has_ticket` is no longer a target-state pattern
+- `has_access_pass` and `has_entitlement` replace that behavior with explicit reads
+
+---
+
+## 6. Default Policy Values
+
+| Scope | Default TTL | Binding |
+|------|-------------|---------|
+| `Play` | 10 minutes | content + origin + device |
+| `Publish` | 20 minutes | creator + origin + device |
+| `ClaimGift` | 15 minutes | drop |
+| `ClaimTrial` | 15 minutes | invite |
+
+Relayer and operator rules:
+
+- relayers only sponsor gas and do not become the authority source
+- operators must not return shares without both `verify_session_grant` and `has_entitlement`

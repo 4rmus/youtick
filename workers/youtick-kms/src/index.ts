@@ -28,6 +28,10 @@ export interface Env {
     ACCESS_CACHE: KVNamespace;
     ALLOWED_ORIGINS: string;
     NEAR_CONTRACT_ID: string;
+    NEAR_ACCESS_CONTRACT_ID?: string;
+    NEAR_REGISTRY_CONTRACT_ID?: string;
+    REGISTRY_OPERATOR_ACCOUNT_ID?: string;
+    OPERATOR_SHARE_SECRET?: string;
     NEAR_NETWORK: string;
 }
 
@@ -35,19 +39,28 @@ interface StoreRequest {
     action: 'store';
     videoId: string;
     aesKeyB64: string;
-    accountId: string;
+    accountId?: string;
     timestamp: number;
     signature: string; // hex-encoded Ed25519 signature
     publicKey: string; // base58-encoded Ed25519 public key
+    originHash?: string | null;
+    deviceHash?: string | null;
+    shareB64?: string;
+    shareId?: number;
+    totalShares?: number;
+    requiredShares?: number;
+    scheme?: 'shamir-v1';
 }
 
 interface RetrieveRequest {
     action: 'retrieve';
     videoId: string;
-    accountId: string;
+    accountId?: string;
     timestamp: number;
     signature: string;
     publicKey: string;
+    originHash?: string | null;
+    deviceHash?: string | null;
 }
 
 interface AuthChallengeRequest {
@@ -82,6 +95,38 @@ interface AuthTokenClaims {
     expiresAt: number;
 }
 
+interface SessionGrantVerification {
+    valid: boolean;
+    owner_id?: string | null;
+    reason?: string | null;
+}
+
+interface UploadSessionView {
+    owner_id: string;
+    expires_at_ms: number;
+    status?: string | { [key: string]: unknown } | null;
+}
+
+interface ShareMetadataRecord {
+    scheme: 'shamir-v1';
+    totalShares: number;
+    requiredShares: number;
+}
+
+interface StoredShareRecord extends ShareMetadataRecord {
+    shareId: number;
+    nonceB64: string;
+    ciphertextB64: string;
+}
+
+interface RegistryOperatorRecord {
+    account_id: string;
+    endpoint: string;
+    transport_public_key: string;
+    kind: 'DecryptionOperator' | 'Relayer';
+    active: boolean;
+}
+
 interface KMSResponse {
     ok: boolean;
     error?: string;
@@ -113,6 +158,7 @@ const RATE_LIMIT_MAX_RETRIEVE = 120;
 
 /** Access cache TTL: 1 hour */
 const ACCESS_CACHE_TTL_S = 3600;
+const REGISTRY_CACHE_TTL_S = 300;
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const AUTH_TOKEN_TTL_MS = 10 * 60 * 1000;
 const NEP413_TAG = 2147484061;
@@ -426,6 +472,128 @@ async function getEventCreatorId(
     }
 }
 
+async function verifySessionGrantAccess(
+    env: Env,
+    publicKey: string,
+    scope: 'Play' | 'Publish',
+    videoId: string,
+    originHash?: string | null,
+    deviceHash?: string | null,
+): Promise<SessionGrantVerification> {
+    if (!env.NEAR_ACCESS_CONTRACT_ID) {
+        return {
+            valid: false,
+            reason: 'Access contract is not configured',
+        };
+    }
+
+    try {
+        return await nearViewCall<SessionGrantVerification>(
+            env,
+            env.NEAR_ACCESS_CONTRACT_ID,
+            'verify_session_grant',
+            {
+                session_pk: publicKey,
+                scope,
+                resource_id: videoId,
+                origin_hash: originHash ?? null,
+                device_hash: deviceHash ?? null,
+            },
+        );
+    } catch (error) {
+        console.error('[KMS] verifySessionGrantAccess failed:', error);
+        return {
+            valid: false,
+            reason: 'Access contract verification failed',
+        };
+    }
+}
+
+async function verifyUploadSessionAuthority(
+    env: Env,
+    accountId: string,
+    publicKey: string,
+): Promise<boolean> {
+    try {
+        const session = await nearViewCall<UploadSessionView | null>(
+            env,
+            env.NEAR_CONTRACT_ID,
+            'get_upload_session',
+            { public_key: publicKey },
+        );
+
+        if (!session) {
+            return false;
+        }
+
+        if (session.owner_id !== accountId) {
+            return false;
+        }
+
+        if (Date.now() > session.expires_at_ms) {
+            return false;
+        }
+
+        if (typeof session.status === 'string') {
+            return !['Completed', 'Revoked', 'Expired'].includes(session.status);
+        }
+
+        return true;
+    } catch (error) {
+        console.error('[KMS] verifyUploadSessionAuthority failed:', error);
+        return false;
+    }
+}
+
+async function verifyRegistryOperatorAuthority(
+    request: Request,
+    env: Env,
+): Promise<{ ok: boolean; reason?: string }> {
+    if (!env.NEAR_REGISTRY_CONTRACT_ID || !env.REGISTRY_OPERATOR_ACCOUNT_ID) {
+        return { ok: true };
+    }
+
+    const requestOrigin = new URL(request.url).origin;
+    const cacheKey = `registry:operator:${env.REGISTRY_OPERATOR_ACCOUNT_ID}:${requestOrigin}`;
+    const cached = await env.ACCESS_CACHE.get(cacheKey);
+    if (cached === 'true') {
+        return { ok: true };
+    }
+
+    try {
+        const record = await nearViewCall<RegistryOperatorRecord | null>(
+            env,
+            env.NEAR_REGISTRY_CONTRACT_ID,
+            'get_decryption_operator',
+            { account_id: env.REGISTRY_OPERATOR_ACCOUNT_ID },
+        );
+
+        if (!record || !record.active) {
+            return {
+                ok: false,
+                reason: 'Registry operator record is missing or inactive',
+            };
+        }
+
+        const endpointOrigin = new URL(record.endpoint).origin;
+        if (endpointOrigin !== requestOrigin) {
+            return {
+                ok: false,
+                reason: 'Registry operator endpoint does not match this worker',
+            };
+        }
+
+        await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: REGISTRY_CACHE_TTL_S });
+        return { ok: true };
+    } catch (error) {
+        console.error('[KMS] verifyRegistryOperatorAuthority failed:', error);
+        return {
+            ok: false,
+            reason: 'Registry operator verification failed',
+        };
+    }
+}
+
 // ============================================================================
 // Rate Limiting
 // ============================================================================
@@ -600,6 +768,74 @@ function concatBytes(...parts: Uint8Array[]): Uint8Array {
 async function hashBytes(bytes: Uint8Array): Promise<Uint8Array> {
     const digest = await crypto.subtle.digest('SHA-256', bytes);
     return new Uint8Array(digest);
+}
+
+function shareRecordKey(videoId: string, operatorAccountId: string): string {
+    return `share:${videoId}:${operatorAccountId}`;
+}
+
+function shareMetaKey(videoId: string): string {
+    return `sharemeta:${videoId}`;
+}
+
+async function importShareCipherKey(env: Env): Promise<CryptoKey> {
+    if (!env.OPERATOR_SHARE_SECRET) {
+        throw new Error('OPERATOR_SHARE_SECRET is not configured');
+    }
+
+    const rawKey = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(env.OPERATOR_SHARE_SECRET),
+    );
+
+    return crypto.subtle.importKey(
+        'raw',
+        rawKey,
+        { name: 'AES-GCM' },
+        false,
+        ['encrypt', 'decrypt'],
+    );
+}
+
+async function encryptShareRecord(
+    env: Env,
+    record: ShareMetadataRecord & { shareId: number; shareB64: string },
+): Promise<StoredShareRecord> {
+    const cipherKey = await importShareCipherKey(env);
+    const nonce = crypto.getRandomValues(new Uint8Array(12));
+    const plaintext = new TextEncoder().encode(record.shareB64);
+
+    const ciphertext = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: nonce },
+        cipherKey,
+        plaintext,
+    );
+
+    return {
+        shareId: record.shareId,
+        totalShares: record.totalShares,
+        requiredShares: record.requiredShares,
+        scheme: record.scheme,
+        nonceB64: bytesToBase64(nonce),
+        ciphertextB64: bytesToBase64(new Uint8Array(ciphertext)),
+    };
+}
+
+async function decryptShareRecord(
+    env: Env,
+    record: StoredShareRecord,
+): Promise<string> {
+    const cipherKey = await importShareCipherKey(env);
+    const nonce = base64ToBytes(record.nonceB64);
+    const ciphertext = base64ToBytes(record.ciphertextB64);
+
+    const plaintext = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: nonce },
+        cipherKey,
+        ciphertext,
+    );
+
+    return new TextDecoder().decode(new Uint8Array(plaintext));
 }
 
 async function serializeNep413Hash(payload: {
@@ -852,8 +1088,20 @@ async function handleStore(
     }
 
     const body = (await request.json()) as Partial<StoreRequest> & { videoId?: string; aesKeyB64?: string };
-    if (!body.videoId || !body.aesKeyB64) {
+    const isShareStore = Boolean(body.shareB64 && typeof body.shareId === 'number');
+    if (!body.videoId || (!body.aesKeyB64 && !isShareStore)) {
         return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
+    }
+
+    if (
+        isShareStore
+        && (
+            !body.scheme
+            || typeof body.totalShares !== 'number'
+            || typeof body.requiredShares !== 'number'
+        )
+    ) {
+        return jsonResponse({ ok: false, error: 'Missing share metadata fields' }, 400, request, env);
     }
 
     let accountId: string;
@@ -867,7 +1115,7 @@ async function handleStore(
         }
         accountId = auth.claims.accountId;
     } else {
-        if (!body.accountId || !body.timestamp || !body.signature || !body.publicKey) {
+        if (!body.timestamp || !body.signature || !body.publicKey) {
             return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
         }
 
@@ -877,26 +1125,73 @@ async function handleStore(
             return jsonResponse({ ok: false, error: 'Request timestamp expired' }, 401, request, env);
         }
 
-        // Verify Ed25519 signature
-        const payload = JSON.stringify({
-            action: 'store',
-            videoId: body.videoId,
-            accountId: body.accountId,
-            timestamp: body.timestamp,
-        });
+        // Legacy key-bound requests sign { action, videoId, accountId, timestamp }.
+        // Session-grant requests sign { action, videoId, timestamp, originHash, deviceHash }.
+        const payload = body.accountId
+            ? JSON.stringify({
+                action: 'store',
+                videoId: body.videoId,
+                accountId: body.accountId,
+                timestamp: body.timestamp,
+            })
+            : JSON.stringify({
+                action: 'store',
+                videoId: body.videoId,
+                timestamp: body.timestamp,
+                originHash: body.originHash ?? null,
+                deviceHash: body.deviceHash ?? null,
+            });
 
         const isValidSig = await verifyEd25519Signature(payload, body.signature, body.publicKey);
         if (!isValidSig) {
             return jsonResponse({ ok: false, error: 'Invalid signature' }, 401, request, env);
         }
 
-        // Legacy compatibility: body-signed auth still accepts any registered key.
-        const isKeyBound = await verifyPublicKeyBinding(env, body.accountId, body.publicKey);
-        if (!isKeyBound) {
-            return jsonResponse({ ok: false, error: 'Public key not registered on account' }, 401, request, env);
-        }
+        if (body.accountId) {
+            const isKeyBound = await verifyPublicKeyBinding(env, body.accountId, body.publicKey);
+            if (!isKeyBound) {
+                return jsonResponse({ ok: false, error: 'Public key not registered on account' }, 401, request, env);
+            }
 
-        accountId = body.accountId;
+            const isUploadSessionKey = await verifyUploadSessionAuthority(
+                env,
+                body.accountId,
+                body.publicKey,
+            );
+            if (!isUploadSessionKey) {
+                const isFullAccess = await verifyFullAccessKeyBinding(env, body.accountId, body.publicKey);
+                if (!isFullAccess) {
+                    return jsonResponse(
+                        { ok: false, error: 'Public key is not authorized for publish' },
+                        403,
+                        request,
+                        env,
+                    );
+                }
+            }
+
+            accountId = body.accountId;
+        } else {
+            const grantVerification = await verifySessionGrantAccess(
+                env,
+                body.publicKey,
+                'Publish',
+                body.videoId,
+                body.originHash,
+                body.deviceHash,
+            );
+
+            if (!grantVerification.valid || !grantVerification.owner_id) {
+                return jsonResponse(
+                    { ok: false, error: grantVerification.reason || 'Invalid session grant' },
+                    401,
+                    request,
+                    env,
+                );
+            }
+
+            accountId = grantVerification.owner_id;
+        }
     }
 
     const keyId = `key:${body.videoId}`;
@@ -927,8 +1222,36 @@ async function handleStore(
         }
     }
 
-    // Store AES key in KV and persist owner marker for overwrite protection.
-    await env.VIDEO_KEYS.put(keyId, body.aesKeyB64);
+    if (isShareStore) {
+        if (!env.REGISTRY_OPERATOR_ACCOUNT_ID) {
+            return jsonResponse({ ok: false, error: 'Registry operator account is not configured' }, 500, request, env);
+        }
+
+        const encryptedRecord = await encryptShareRecord(env, {
+            shareId: body.shareId as number,
+            shareB64: body.shareB64 as string,
+            totalShares: body.totalShares as number,
+            requiredShares: body.requiredShares as number,
+            scheme: body.scheme as 'shamir-v1',
+        });
+
+        await env.VIDEO_KEYS.put(
+            shareRecordKey(body.videoId, env.REGISTRY_OPERATOR_ACCOUNT_ID),
+            JSON.stringify(encryptedRecord),
+        );
+        await env.VIDEO_KEYS.put(
+            shareMetaKey(body.videoId),
+            JSON.stringify({
+                scheme: body.scheme as 'shamir-v1',
+                totalShares: body.totalShares as number,
+                requiredShares: body.requiredShares as number,
+            } satisfies ShareMetadataRecord),
+        );
+    } else {
+        // Store legacy AES key in KV and persist owner marker for overwrite protection.
+        await env.VIDEO_KEYS.put(keyId, body.aesKeyB64 as string);
+    }
+
     if (!recordedOwner) {
         await env.VIDEO_KEYS.put(ownerIdKey, accountId);
     }
@@ -966,7 +1289,7 @@ async function handleRetrieve(
         }
         accountId = auth.claims.accountId;
     } else {
-        if (!body.accountId || !body.timestamp || !body.signature || !body.publicKey) {
+        if (!body.timestamp || !body.signature || !body.publicKey) {
             return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
         }
 
@@ -976,25 +1299,56 @@ async function handleRetrieve(
             return jsonResponse({ ok: false, error: 'Request timestamp expired' }, 401, request, env);
         }
 
-        // Verify Ed25519 signature
-        const payload = JSON.stringify({
-            action: 'retrieve',
-            videoId: body.videoId,
-            accountId: body.accountId,
-            timestamp: body.timestamp,
-        });
+        // Legacy key-bound requests sign { action, videoId, accountId, timestamp }.
+        // Session-grant requests sign { action, videoId, timestamp, originHash, deviceHash }.
+        const payload = body.accountId
+            ? JSON.stringify({
+                action: 'retrieve',
+                videoId: body.videoId,
+                accountId: body.accountId,
+                timestamp: body.timestamp,
+            })
+            : JSON.stringify({
+                action: 'retrieve',
+                videoId: body.videoId,
+                timestamp: body.timestamp,
+                originHash: body.originHash ?? null,
+                deviceHash: body.deviceHash ?? null,
+            });
 
         const isValidSig = await verifyEd25519Signature(payload, body.signature, body.publicKey);
         if (!isValidSig) {
             return jsonResponse({ ok: false, error: 'Invalid signature' }, 401, request, env);
         }
 
-        const isKeyBound = await verifyPublicKeyBinding(env, body.accountId, body.publicKey);
-        if (!isKeyBound) {
-            return jsonResponse({ ok: false, error: 'Public key not registered on account' }, 401, request, env);
-        }
+        if (body.accountId) {
+            const isKeyBound = await verifyPublicKeyBinding(env, body.accountId, body.publicKey);
+            if (!isKeyBound) {
+                return jsonResponse({ ok: false, error: 'Public key not registered on account' }, 401, request, env);
+            }
 
-        accountId = body.accountId;
+            accountId = body.accountId;
+        } else {
+            const grantVerification = await verifySessionGrantAccess(
+                env,
+                body.publicKey,
+                'Play',
+                body.videoId,
+                body.originHash,
+                body.deviceHash,
+            );
+
+            if (!grantVerification.valid || !grantVerification.owner_id) {
+                return jsonResponse(
+                    { ok: false, error: grantVerification.reason || 'Invalid session grant' },
+                    401,
+                    request,
+                    env,
+                );
+            }
+
+            accountId = grantVerification.owner_id;
+        }
     }
 
     // Verify access: Either the user has a ticket, OR they are the original owner (creator)
@@ -1020,7 +1374,38 @@ async function handleRetrieve(
         return jsonResponse({ ok: false, error: 'Access denied: no valid ticket or ownership' }, 403, request, env);
     }
 
-    // Retrieve AES key from KV
+    const shareMetaRaw = await env.VIDEO_KEYS.get(shareMetaKey(body.videoId));
+    if (shareMetaRaw && env.REGISTRY_OPERATOR_ACCOUNT_ID) {
+        const shareRaw = await env.VIDEO_KEYS.get(
+            shareRecordKey(body.videoId, env.REGISTRY_OPERATOR_ACCOUNT_ID),
+        );
+
+        if (!shareRaw) {
+            return jsonResponse({ ok: false, error: 'Share not found for this operator' }, 404, request, env);
+        }
+
+        const shareRecord = JSON.parse(shareRaw) as StoredShareRecord;
+        const shareB64 = await decryptShareRecord(env, shareRecord);
+
+        return jsonResponse(
+            {
+                ok: true,
+                data: {
+                    shareB64,
+                    shareId: shareRecord.shareId,
+                    totalShares: shareRecord.totalShares,
+                    requiredShares: shareRecord.requiredShares,
+                    scheme: shareRecord.scheme,
+                    operatorAccountId: env.REGISTRY_OPERATOR_ACCOUNT_ID,
+                },
+            },
+            200,
+            request,
+            env,
+        );
+    }
+
+    // Retrieve legacy AES key from KV
     const aesKeyB64 = await env.VIDEO_KEYS.get(`key:${body.videoId}`);
     if (!aesKeyB64) {
         return jsonResponse({ ok: false, error: 'Key not found for this video' }, 404, request, env);
@@ -1057,6 +1442,8 @@ async function handleHealth(
         rpcOk = false;
     }
 
+    const registryOperator = await verifyRegistryOperatorAuthority(request, env);
+
     return jsonResponse(
         {
             ok: true,
@@ -1066,6 +1453,12 @@ async function handleHealth(
                 nearRpc: rpcOk ? 'ok' : 'degraded',
                 network: env.NEAR_NETWORK,
                 contract: env.NEAR_CONTRACT_ID,
+                accessContract: env.NEAR_ACCESS_CONTRACT_ID || null,
+                registryContract: env.NEAR_REGISTRY_CONTRACT_ID || null,
+                registryOperatorAccount: env.REGISTRY_OPERATOR_ACCOUNT_ID || null,
+                registryOperatorActive: registryOperator.ok,
+                registryOperatorReason: registryOperator.reason || null,
+                shareMode: env.OPERATOR_SHARE_SECRET ? 'operator-encrypted-share' : 'legacy-single-key',
             },
         },
         200,
@@ -1109,6 +1502,16 @@ export default {
         const withinLimit = await checkRateLimit(env, ip, action);
         if (!withinLimit) {
             return jsonResponse({ ok: false, error: 'Rate limit exceeded' }, 429, request, env);
+        }
+
+        const registryOperator = await verifyRegistryOperatorAuthority(request, env);
+        if (!registryOperator.ok) {
+            return jsonResponse(
+                { ok: false, error: registryOperator.reason || 'Registry operator verification failed' },
+                503,
+                request,
+                env,
+            );
         }
 
         // Route

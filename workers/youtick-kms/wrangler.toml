@@ -6,6 +6,10 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,http://localhost:3000"
 NEAR_CONTRACT_ID = "youtick.near"
+NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
+NEAR_REGISTRY_CONTRACT_ID = ""
+REGISTRY_OPERATOR_ACCOUNT_ID = ""
+OPERATOR_SHARE_SECRET = ""
 NEAR_NETWORK = "mainnet"
 
 # KV namespace for AES encryption keys
@@ -32,7 +36,11 @@ name = "youtick-kms-testnet"
 
 [env.testnet.vars]
 ALLOWED_ORIGINS = "http://localhost:3000"
-NEAR_CONTRACT_ID = "dev-1773166541055-71144.v2-0.utick.testnet"
+NEAR_CONTRACT_ID = "dev-1773607954211-252231.v2-0.utick.testnet"
+NEAR_ACCESS_CONTRACT_ID = "access-1773606802388.v2-0.utick.testnet"
+NEAR_REGISTRY_CONTRACT_ID = "registry-1773606802388.v2-0.utick.testnet"
+REGISTRY_OPERATOR_ACCOUNT_ID = "kms-a.v2-0.utick.testnet"
+OPERATOR_SHARE_SECRET = "testnet-share-secret-a-v1"
 NEAR_NETWORK = "testnet"
 
 [[env.testnet.kv_namespaces]]
@@ -44,5 +52,101 @@ binding = "RATE_LIMIT"
 id = "d6371b2b2d3d4cf382af02a341f865da"
 
 [[env.testnet.kv_namespaces]]
+binding = "ACCESS_CACHE"
+id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+
+[env.testnet_b]
+name = "youtick-kms-testnet-b"
+
+[env.testnet_b.vars]
+ALLOWED_ORIGINS = "http://localhost:3000"
+NEAR_CONTRACT_ID = "dev-1773607954211-252231.v2-0.utick.testnet"
+NEAR_ACCESS_CONTRACT_ID = "access-1773606802388.v2-0.utick.testnet"
+NEAR_REGISTRY_CONTRACT_ID = "registry-1773606802388.v2-0.utick.testnet"
+REGISTRY_OPERATOR_ACCOUNT_ID = "kms-b.v2-0.utick.testnet"
+OPERATOR_SHARE_SECRET = "testnet-share-secret-b-v1"
+NEAR_NETWORK = "testnet"
+
+[[env.testnet_b.kv_namespaces]]
+binding = "VIDEO_KEYS"
+id = "7af9ebeeffaa4f4bace8e0347963d165"
+
+[[env.testnet_b.kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "d6371b2b2d3d4cf382af02a341f865da"
+
+[[env.testnet_b.kv_namespaces]]
+binding = "ACCESS_CACHE"
+id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+
+[env.testnet_c]
+name = "youtick-kms-testnet-c"
+
+[env.testnet_c.vars]
+ALLOWED_ORIGINS = "http://localhost:3000"
+NEAR_CONTRACT_ID = "dev-1773607954211-252231.v2-0.utick.testnet"
+NEAR_ACCESS_CONTRACT_ID = "access-1773606802388.v2-0.utick.testnet"
+NEAR_REGISTRY_CONTRACT_ID = "registry-1773606802388.v2-0.utick.testnet"
+REGISTRY_OPERATOR_ACCOUNT_ID = "kms-c.v2-0.utick.testnet"
+OPERATOR_SHARE_SECRET = "testnet-share-secret-c-v1"
+NEAR_NETWORK = "testnet"
+
+[[env.testnet_c.kv_namespaces]]
+binding = "VIDEO_KEYS"
+id = "7af9ebeeffaa4f4bace8e0347963d165"
+
+[[env.testnet_c.kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "d6371b2b2d3d4cf382af02a341f865da"
+
+[[env.testnet_c.kv_namespaces]]
+binding = "ACCESS_CACHE"
+id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+
+[env.testnet_d]
+name = "youtick-kms-testnet-d"
+
+[env.testnet_d.vars]
+ALLOWED_ORIGINS = "http://localhost:3000"
+NEAR_CONTRACT_ID = "dev-1773607954211-252231.v2-0.utick.testnet"
+NEAR_ACCESS_CONTRACT_ID = "access-1773606802388.v2-0.utick.testnet"
+NEAR_REGISTRY_CONTRACT_ID = "registry-1773606802388.v2-0.utick.testnet"
+REGISTRY_OPERATOR_ACCOUNT_ID = "kms-d.v2-0.utick.testnet"
+OPERATOR_SHARE_SECRET = "testnet-share-secret-d-v1"
+NEAR_NETWORK = "testnet"
+
+[[env.testnet_d.kv_namespaces]]
+binding = "VIDEO_KEYS"
+id = "7af9ebeeffaa4f4bace8e0347963d165"
+
+[[env.testnet_d.kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "d6371b2b2d3d4cf382af02a341f865da"
+
+[[env.testnet_d.kv_namespaces]]
+binding = "ACCESS_CACHE"
+id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+
+[env.testnet_e]
+name = "youtick-kms-testnet-e"
+
+[env.testnet_e.vars]
+ALLOWED_ORIGINS = "http://localhost:3000"
+NEAR_CONTRACT_ID = "dev-1773607954211-252231.v2-0.utick.testnet"
+NEAR_ACCESS_CONTRACT_ID = "access-1773606802388.v2-0.utick.testnet"
+NEAR_REGISTRY_CONTRACT_ID = "registry-1773606802388.v2-0.utick.testnet"
+REGISTRY_OPERATOR_ACCOUNT_ID = "kms-e.v2-0.utick.testnet"
+OPERATOR_SHARE_SECRET = "testnet-share-secret-e-v1"
+NEAR_NETWORK = "testnet"
+
+[[env.testnet_e.kv_namespaces]]
+binding = "VIDEO_KEYS"
+id = "7af9ebeeffaa4f4bace8e0347963d165"
+
+[[env.testnet_e.kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "d6371b2b2d3d4cf382af02a341f865da"
+
+[[env.testnet_e.kv_namespaces]]
 binding = "ACCESS_CACHE"
 id = "aeb0fda6a8c448b88cf04d69a3b9373b"
