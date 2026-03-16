@@ -40,10 +40,11 @@ cp .env.example .env.local
 Minimum `.env.local`:
 
 ```txt
-NEXT_PUBLIC_NEAR_NETWORK=mainnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
-NEXT_PUBLIC_ONBOARDING_KEY=ed25519:...
-# Optional: override KMS worker endpoint
+NEXT_PUBLIC_NEAR_NETWORK=testnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
+NEXT_PUBLIC_MARKET_CONTRACT_ID=v1.utick.testnet
+NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.v1.utick.testnet
+NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.v1.utick.testnet
 NEXT_PUBLIC_KMS_URL=http://localhost:8787
 ```
 

@@ -8,6 +8,7 @@ import {
     getSupportedChains,
     getDryQuote,
 } from '@/lib/intents';
+import { NEAR_CONFIG } from '@/lib/constants';
 import { getNearPrice, formatUsdCents } from '@/lib/price';
 
 interface PaymentMethodSelectorProps {
@@ -66,7 +67,7 @@ export function PaymentMethodSelector({
 
         try {
             // Use accountId if available, otherwise a placeholder for dry quote estimation
-            const quoteRecipient = accountId || 'youtick.near';
+            const quoteRecipient = accountId || NEAR_CONFIG.marketContractId;
             const dryQuote = await getDryQuote(method, chain, usdCents, quoteRecipient);
             setQuote(dryQuote);
         } catch (err) {

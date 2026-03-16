@@ -4,8 +4,9 @@ const { pathToFileURL } = require("url");
 
 const NETWORK_ID = "testnet";
 const RPC_URL = "https://rpc.testnet.near.org";
-const MASTER_ACCOUNT_ID = "v2-0.utick.testnet";
-const MASTER_KEY = "REDACTED";
+const MASTER_ACCOUNT_ID = process.env.MASTER_ACCOUNT_ID || "v2-0.utick.testnet";
+const MASTER_KEY = process.env.MASTER_SECRET_KEY || "REDACTED";
+const INITIAL_BALANCE_NEAR = process.env.INITIAL_BALANCE_NEAR || "5";
 const WASM_PATH = path.join(
     __dirname,
     "../contracts/nft-ticket/target/near/youtick_nft.wasm",
@@ -54,7 +55,7 @@ async function main() {
     await masterAccount.createSubAccount({
         accountOrPrefix: contractPrefix,
         publicKey: contractKeyPair.getPublicKey(),
-        nearToTransfer: nearToYocto("10"),
+        nearToTransfer: nearToYocto(INITIAL_BALANCE_NEAR),
     });
     console.log("Sub-account created.");
 

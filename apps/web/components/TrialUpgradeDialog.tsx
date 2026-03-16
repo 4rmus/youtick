@@ -15,6 +15,7 @@ import { Copy, Check, AlertTriangle, Wallet, ArrowRight, ExternalLink } from 'lu
 import { KeyPair, type KeyPairString } from 'near-api-js';
 import { generateSeedPhrase } from 'near-seed-phrase';
 import { useLanguage } from '@/components/providers/LanguageContext';
+import { NEAR_CONFIG } from '@/lib/constants';
 
 interface TrialUpgradeDialogProps {
     accountId: string;
@@ -41,7 +42,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
             const { seedPhrase: phrase, publicKey: pk } = generateSeedPhrase();
 
             // Get stored trial key from localStorage
-            const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
+            const networkId = NEAR_CONFIG.networkId;
             const storedKey = localStorage.getItem(`near-api-js:keystore:${accountId}:${networkId}`);
 
             if (!storedKey) {
@@ -285,7 +286,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                             <Button
                                 className="w-full bg-purple-600 hover:bg-purple-700"
                                 onClick={() => {
-                                    const networkId = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
+                                    const networkId = NEAR_CONFIG.networkId;
                                     window.open(networkId === 'mainnet'
                                         ? 'https://app.mynearwallet.com/create'
                                         : 'https://testnet.mynearwallet.com/create', '_blank');

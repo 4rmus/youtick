@@ -103,6 +103,30 @@ class MockAccount {
   }
 }
 
+class MockJsonRpcProvider {
+  url: string;
+
+  constructor(options: { url: string }) {
+    this.url = options.url;
+  }
+
+  query = vi.fn().mockResolvedValue({
+    result: Buffer.from('"1000000000000000000000000"').toJSON().data
+  });
+}
+
+class MockFailoverRpcProvider {
+  providers: unknown[];
+
+  constructor(providers: unknown[]) {
+    this.providers = providers;
+  }
+
+  query = vi.fn().mockResolvedValue({
+    result: Buffer.from('"1000000000000000000000000"').toJSON().data
+  });
+}
+
 // ============================================================================
 // Mock near-api-js
 // ============================================================================
@@ -111,12 +135,8 @@ vi.mock('near-api-js', () => ({
   KeyPair: MockKeyPair,
   Account: MockAccount,
   KeyPairSigner: MockKeyPairSigner,
-  JsonRpcProvider: vi.fn().mockImplementation((options: { url: string }) => ({
-    url: options.url,
-    query: vi.fn().mockResolvedValue({
-      result: Buffer.from('"1000000000000000000000000"').toJSON().data
-    })
-  })),
+  FailoverRpcProvider: MockFailoverRpcProvider,
+  JsonRpcProvider: MockJsonRpcProvider,
   actions: {
     functionCall: vi.fn((methodName, args, gas, deposit) => ({
       type: 'FunctionCall', methodName, args, gas, deposit

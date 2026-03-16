@@ -1,4 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { setupMockSessionKey } from '../setup';
+
+vi.mock('@/lib/registry', () => ({
+  listActiveDecryptionOperatorEndpoints: vi.fn(async () => []),
+  listActiveDecryptionOperators: vi.fn(async () => []),
+  getThresholdConfig: vi.fn(async () => null),
+}));
 
 describe('kms/client', () => {
   beforeEach(() => {
@@ -123,5 +130,52 @@ describe('kms/client', () => {
 
     expect(result).toBe('encrypted-key');
     expect(wallet.signMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('prefers a local session key before opening a session-grant or token auth flow', async () => {
+    setupMockSessionKey('alice.testnet');
+
+    const wallet = {
+      signMessage: vi.fn(),
+      signAndSendTransaction: vi.fn(),
+    };
+
+    global.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+
+      if (url === 'https://kms.example.workers.dev/health') {
+        return new Response(JSON.stringify({
+          ok: true,
+          data: {
+            network: 'testnet',
+            contract: 'app-contract.testnet',
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url === 'https://kms.example.workers.dev/retrieve') {
+        return new Response(JSON.stringify({
+          ok: true,
+          data: {
+            aesKeyB64: 'local-key-result',
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+
+    const { retrieveEncryptionKey } = await import('@/lib/kms/client');
+    const result = await retrieveEncryptionKey('video-1', 'alice.testnet', wallet as never);
+
+    expect(result).toBe('local-key-result');
+    expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+    expect(wallet.signMessage).not.toHaveBeenCalled();
   });
 });

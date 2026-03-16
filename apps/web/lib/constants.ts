@@ -10,15 +10,52 @@
 // APPLICATION CONFIGURATION
 // ============================================================================
 
+export type NetworkId = 'testnet' | 'mainnet';
+
+const DEFAULT_CONTRACT_IDS: Record<NetworkId, {
+    marketContractId: string;
+    accessContractId: string;
+    registryContractId: string;
+}> = {
+    testnet: {
+        marketContractId: 'v1.utick.testnet',
+        accessContractId: 'access.v1.utick.testnet',
+        registryContractId: 'registry.v1.utick.testnet',
+    },
+    mainnet: {
+        marketContractId: 'youtick.near',
+        accessContractId: 'access.youtick.near',
+        registryContractId: 'registry.youtick.near',
+    },
+};
+
+const configuredNetworkId = (process.env.NEXT_PUBLIC_NEAR_NETWORK as NetworkId | undefined) || 'testnet';
+const defaultContracts = DEFAULT_CONTRACT_IDS[configuredNetworkId];
+const configuredMarketContractId =
+    process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID
+    || process.env.NEXT_PUBLIC_NFT_CONTRACT_ID
+    || defaultContracts.marketContractId;
+
 /**
  * NEAR Protocol Configuration
  */
 export const NEAR_CONFIG = {
-    /** NFT Contract ID (e.g., youtick-prod-v1.near) */
-    contractId: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'youtick.near',
+    /** Active network ID. Zero-trust work starts on testnet by default. */
+    networkId: configuredNetworkId,
 
-    /** Network ID (testnet or mainnet) */
-    networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet',
+    /** Market contract ID. `contractId` remains as a compatibility alias. */
+    contractId: configuredMarketContractId,
+    marketContractId: configuredMarketContractId,
+
+    /** Zero-trust access/session contract ID */
+    accessContractId:
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID
+        || defaultContracts.accessContractId,
+
+    /** Zero-trust registry contract ID */
+    registryContractId:
+        process.env.NEXT_PUBLIC_REGISTRY_CONTRACT_ID
+        || defaultContracts.registryContractId,
 } as const;
 
 /**
@@ -101,9 +138,6 @@ export const METADATA_SCHEMA = {
     /** Current format version */
     formatVersion: 2,
 } as const;
-
-// Type exports
-export type NetworkId = 'testnet' | 'mainnet';
 
 // ============================================================================
 // DESIGN SYSTEM CONSTANTS

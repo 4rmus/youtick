@@ -7,6 +7,7 @@ import type { WalletSelectorModal } from '@near-wallet-selector/modal-ui';
 import { NEAR_CONFIG } from '@/lib/constants';
 import type { WalletInstance } from '@/lib/types';
 import { clearKmsAuthCache } from '@/lib/kms/client';
+import { clearSessionGrantCache } from '@/lib/access-grants';
 import { clearW3AuthCache } from '@/lib/crust/w3auth';
 
 interface WalletContextValue {
@@ -89,7 +90,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             }
         }
 
-        const network = (process.env.NEXT_PUBLIC_NEAR_NETWORK as 'testnet' | 'mainnet') || 'mainnet';
+        const network = NEAR_CONFIG.networkId;
 
         if (typeof window !== 'undefined') {
             localStorage.removeItem('DEV__METEOR_WALLET_BASE_URL');
@@ -183,6 +184,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const signOut = useCallback(async (): Promise<void> => {
         if (activeAccountId) {
             clearKmsAuthCache(activeAccountId);
+            clearSessionGrantCache(activeAccountId);
             clearW3AuthCache(activeAccountId);
         }
         if (isTrial && trialAccountId) {

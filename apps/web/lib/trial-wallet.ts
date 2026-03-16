@@ -1,8 +1,9 @@
 // lib/trial-wallet.ts - near-api-js v7 compatible
 import { Account, KeyPairSigner, type Action } from "near-api-js";
 import { BrowserKeyStore } from "./keystore-v7";
+import { NEAR_CONFIG } from "./constants";
 
-const NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet';
+const NETWORK_ID = NEAR_CONFIG.networkId;
 const RPC_URL = NETWORK_ID === 'mainnet'
     ? 'https://free.rpc.fastnear.com'
     : 'https://test.rpc.fastnear.com';
