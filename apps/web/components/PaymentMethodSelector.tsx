@@ -8,6 +8,7 @@ import {
     getSupportedChains,
     getDryQuote,
 } from '@/lib/intents';
+import { FEATURE_FLAGS, NEAR_CONFIG } from '@/lib/constants';
 import { getNearPrice, formatUsdCents } from '@/lib/price';
 
 interface PaymentMethodSelectorProps {
@@ -38,6 +39,7 @@ export function PaymentMethodSelector({
     accountId,
     onSelectionChange,
 }: PaymentMethodSelectorProps) {
+    const crossChainEnabled = FEATURE_FLAGS.enableCrossChainCheckout;
     const [method, setMethod] = useState<PaymentMethod>('NEAR');
     const [chain, setChain] = useState<ChainId>('near');
     const [nearPrice, setNearPrice] = useState<number>(0);
@@ -66,7 +68,7 @@ export function PaymentMethodSelector({
 
         try {
             // Use accountId if available, otherwise a placeholder for dry quote estimation
-            const quoteRecipient = accountId || 'youtick.near';
+            const quoteRecipient = accountId || NEAR_CONFIG.marketContractId;
             const dryQuote = await getDryQuote(method, chain, usdCents, quoteRecipient);
             setQuote(dryQuote);
         } catch (err) {
@@ -91,6 +93,10 @@ export function PaymentMethodSelector({
     }, [method, chain, quote, priceNear, onSelectionChange]);
 
     const availableChains = method !== 'NEAR' ? getSupportedChains(method) : [];
+
+    if (!crossChainEnabled) {
+        return null;
+    }
 
     return (
         <div className="space-y-3">

@@ -15,11 +15,15 @@ let initialized = false;
  * Initialize the 1Click SDK with API credentials
  */
 function ensureInitialized() {
+    if (!ONE_CLICK_CONFIG.enabled) {
+        throw new Error('Cross-chain checkout is currently disabled for this launch.');
+    }
+    if (!ONE_CLICK_CONFIG.apiToken) {
+        throw new Error('Cross-chain checkout is not configured. Missing NEXT_PUBLIC_ONE_CLICK_API_TOKEN.');
+    }
     if (initialized) return;
     OpenAPI.BASE = ONE_CLICK_CONFIG.baseUrl;
-    if (ONE_CLICK_CONFIG.apiToken) {
-        OpenAPI.TOKEN = ONE_CLICK_CONFIG.apiToken;
-    }
+    OpenAPI.TOKEN = ONE_CLICK_CONFIG.apiToken;
     initialized = true;
 }
 

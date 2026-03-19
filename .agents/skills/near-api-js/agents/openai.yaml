@@ -1,0 +1,4 @@
+interface:
+  display_name: "NEAR API JS"
+  short_description: "NEAR RPC, keys, actions, and wallet interop"
+  default_prompt: "Use $near-api-js to work on NEAR RPC, keys, actions, or wallet interop in this repo."

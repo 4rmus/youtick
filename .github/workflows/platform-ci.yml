@@ -1,0 +1,95 @@
+name: Platform CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'contracts/**'
+      - 'workers/**'
+      - 'docs/**'
+      - '.github/workflows/platform-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'contracts/**'
+      - 'workers/**'
+      - 'docs/**'
+      - '.github/workflows/platform-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: apps/web
+      - name: Lint web
+        run: npm run lint
+        working-directory: apps/web
+      - name: Test web
+        run: npm test -- --run
+        working-directory: apps/web
+      - name: Build web
+        run: npm run build
+        working-directory: apps/web
+      - name: Build Web4 export
+        run: npm run build:web4
+        working-directory: apps/web
+
+  contracts:
+    name: Contract Tests (${{ matrix.path }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        path:
+          - contracts/nft-ticket
+          - contracts/access-control
+          - contracts/operator-registry
+          - contracts/nft-ticket-tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run cargo test
+        run: cargo test
+        working-directory: ${{ matrix.path }}
+
+  workers:
+    name: Worker Typecheck (${{ matrix.path }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        path:
+          - workers/youtick-kms
+          - workers/web4-proxy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.path }}/package-lock.json
+      - name: Install worker dependencies
+        run: npm ci
+        working-directory: ${{ matrix.path }}
+      - name: Typecheck worker
+        run: npx tsc --noEmit
+        working-directory: ${{ matrix.path }}

@@ -4,8 +4,8 @@ import { useLanguage } from '@/components/providers/LanguageContext';
 
 interface CostReceiptProps {
     storageFee: string;
-    currentBalance: string;
-    payAmount: string;
+    currentBalance?: string;
+    payAmount?: string;
     loading?: boolean;
     gasBalance?: number;
     requiredGas?: number;

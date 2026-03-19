@@ -30,6 +30,7 @@ export {
 export {
   getGatewayUrl,
   getGatewayUrls,
+  resolveGatewayUrl,
   fetchFromGateways,
   markGatewayUnhealthy,
   getBestGateway,

@@ -10,15 +10,67 @@
 // APPLICATION CONFIGURATION
 // ============================================================================
 
+export type NetworkId = 'testnet' | 'mainnet';
+
+const DEFAULT_CONTRACT_IDS: Record<NetworkId, {
+    marketContractId: string;
+    accessContractId: string;
+    registryContractId: string;
+}> = {
+    testnet: {
+        marketContractId: 'dev-fresh-kurulum-3.testnet',
+        accessContractId: 'access-1773606802388.v2-0.utick.testnet',
+        registryContractId: 'registry-1773606802388.v2-0.utick.testnet',
+    },
+    mainnet: {
+        marketContractId: 'youtick.near',
+        accessContractId: 'access.youtick.near',
+        registryContractId: 'registry.youtick.near',
+    },
+};
+
+const configuredNetworkId = (process.env.NEXT_PUBLIC_NEAR_NETWORK as NetworkId | undefined) || 'mainnet';
+const defaultContracts = DEFAULT_CONTRACT_IDS[configuredNetworkId];
+const configuredMarketContractId =
+    process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID
+    || process.env.NEXT_PUBLIC_NFT_CONTRACT_ID
+    || defaultContracts.marketContractId;
+const configuredAppUrl =
+    process.env.NEXT_PUBLIC_APP_URL
+    || (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'https://youtick.net');
+
 /**
  * NEAR Protocol Configuration
  */
 export const NEAR_CONFIG = {
-    /** NFT Contract ID (e.g., youtick-prod-v1.near) */
-    contractId: process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'youtick.near',
+    /** Active network ID. Defaults to mainnet when NEXT_PUBLIC_NEAR_NETWORK is not set. */
+    networkId: configuredNetworkId,
 
-    /** Network ID (testnet or mainnet) */
-    networkId: process.env.NEXT_PUBLIC_NEAR_NETWORK || 'mainnet',
+    /** Market contract ID. `contractId` remains as a compatibility alias. */
+    contractId: configuredMarketContractId,
+    marketContractId: configuredMarketContractId,
+
+    /** Zero-trust access/session contract ID */
+    accessContractId:
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID
+        || defaultContracts.accessContractId,
+
+    /** Zero-trust registry contract ID */
+    registryContractId:
+        process.env.NEXT_PUBLIC_REGISTRY_CONTRACT_ID
+        || defaultContracts.registryContractId,
+} as const;
+
+export const FEATURE_FLAGS = {
+    /** Launch scope is core-only until cross-chain checkout completes its own readiness review. */
+    enableCrossChainCheckout: process.env.NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT === 'true',
+
+    /** Legacy upload fallback stays opt-in so mainnet publish uses upload sessions by default. */
+    enableLegacyUploadFallback: process.env.NEXT_PUBLIC_ENABLE_LEGACY_UPLOAD_FALLBACK === 'true',
+} as const;
+
+export const APP_CONFIG = {
+    publicAppUrl: configuredAppUrl,
 } as const;
 
 /**
@@ -26,8 +78,8 @@ export const NEAR_CONFIG = {
  * Uses ipfs.io as primary gateway for best availability
  */
 export const IPFS_CONFIG = {
-    /** Primary Gateway URL - Crust IPFS for decentralized pinning */
-    gatewayUrl: 'https://crustipfs.xyz/ipfs',
+    /** Primary public gateway URL used only for legacy fallback cases */
+    gatewayUrl: 'https://ipfs.io/ipfs',
 
     /** Default placeholder image - uses a minimal data URI for guaranteed availability */
     placeholderImage: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjIyNSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjMTgxODFiIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IiM3MTcxN2YiIGZvbnQtZmFtaWx5PSJzeXN0ZW0tdWkiIGZvbnQtc2l6ZT0iMjQiPvCfjqwgVmlkZW88L3RleHQ+PC9zdmc+',
@@ -101,9 +153,6 @@ export const METADATA_SCHEMA = {
     /** Current format version */
     formatVersion: 2,
 } as const;
-
-// Type exports
-export type NetworkId = 'testnet' | 'mainnet';
 
 // ============================================================================
 // DESIGN SYSTEM CONSTANTS

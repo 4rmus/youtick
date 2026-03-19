@@ -1,138 +1,51 @@
 ---
 name: near-smart-contracts
 description: >
-  NEAR Protocol smart contract development in Rust. Use when writing, reviewing, or deploying NEAR
-  smart contracts. Covers contract structure, state management, cross-contract calls, testing,
-  security, and optimization patterns.
-version: 1.0.0
+  Review and implement NEAR smart contracts in Rust using near-sdk 5.x, cargo-near, storage-safe
+  state patterns, integration tests, and secure cross-contract calls. Use when editing contracts/*
+  or reviewing Rust NEAR contract behavior, macros, storage accounting, callbacks, or deployment.
 license: MIT
-platforms:
-  - claude
-  - gemini
-  - openai
-  - markdown
-tags:
-  - near-protocol
-  - smart-contracts
-  - rust
-  - near-sdk
-  - blockchain
-  - web3
-  - security
 metadata:
   author: near
-  version: "1.0.0"
 ---
 
-# NEAR Smart Contracts Development
+# NEAR Smart Contracts
 
-Comprehensive guide for developing secure and efficient smart contracts on NEAR Protocol using Rust and the NEAR SDK.
+Use this skill when the task touches Rust contracts on NEAR.
 
-## When to Apply
+## 2026 Stable Guidance
 
-Reference these guidelines when:
-- Writing new NEAR smart contracts in Rust
-- Reviewing existing contract code for security and optimization
-- Implementing cross-contract calls and callbacks
-- Managing contract state and storage
-- Testing and deploying NEAR contracts
-- Optimizing gas usage and performance
+- Target `near-sdk 5.x` and build with `cargo near build`.
+- For new contracts, prefer `#[near(contract_state)]` on state and `#[near]` on `impl` blocks.
+- Keep `#[near_bindgen]` only when maintaining an older codebase that already uses it consistently.
+- Use `near-contract-standards` for FT, NFT, and related standards instead of reimplementing them from scratch.
+- Use integration tests with Workspaces and unit tests for pure business logic.
+- Treat attached deposit, storage growth, callback privacy, and panic or error messages as first-order review concerns.
 
-## Rule Categories by Priority
+## Repo Mapping
 
-| Priority | Category | Impact | Prefix |
-|----------|----------|--------|--------|
-| 1 | Security & Safety | CRITICAL | `security-` |
-| 2 | Contract Structure | HIGH | `structure-` |
-| 3 | State Management | HIGH | `state-` |
-| 4 | Cross-Contract Calls | MEDIUM-HIGH | `xcc-` |
-| 5 | Gas Optimization | MEDIUM | `gas-` |
-| 6 | Testing | MEDIUM | `testing-` |
-| 7 | Best Practices | MEDIUM | `best-` |
+- `contracts/nft-ticket`: primary contract.
+- `contracts/nft-ticket-tests`: integration-style test workspace.
 
-## Quick Reference
+## Read The Relevant Rules
 
-### 1. Security & Safety (CRITICAL)
+- `rules/structure-near-bindgen.md` for contract macro and initialization patterns.
+- `rules/state-collections.md` for collection choice and pagination.
+- `rules/xcc-promise-chaining.md` for cross-contract execution.
+- `rules/security-storage-checks.md` for storage safety and attached-deposit handling.
+- `rules/testing-integration-tests.md` for sandbox and integration testing.
 
-- `security-storage-checks` - Always validate storage operations
-- `security-access-control` - Implement proper access control for sensitive functions
-- `security-reentrancy` - Protect against reentrancy attacks
-- `security-overflow` - Use checked arithmetic to prevent overflow
-- `security-callback-validation` - Validate callback results and handle failures
-- `security-private-callbacks` - Mark callbacks as private
-- `security-yoctonear-validation` - Validate attached deposits
+## Review Priorities
 
-### 2. Contract Structure (HIGH)
+1. Can the method accidentally trap or lose funds?
+2. Is storage growth paid for or intentionally subsidized?
+3. Are callbacks private and failure-aware?
+4. Does state shape allow migration or pagination?
+5. Are tests covering real deployment paths, not only pure Rust logic?
 
-- `structure-near-bindgen` - Use #[near_bindgen] macro for contract struct
-- `structure-initialization` - Implement proper initialization patterns
-- `structure-versioning` - Plan for contract upgrades with versioning
-- `structure-events` - Emit events for important state changes
-- `structure-standards` - Follow NEAR Enhancement Proposals (NEPs)
+## Guardrails
 
-### 3. State Management (HIGH)
-
-- `state-collections` - Use NEAR SDK collections (Vector, LookupMap, UnorderedMap, etc.)
-- `state-serialization` - Use efficient serialization (Borsh)
-- `state-lazy-loading` - Load state lazily to save gas
-- `state-pagination` - Implement pagination for large datasets
-- `state-migration` - Plan state migration strategies
-
-### 4. Cross-Contract Calls (MEDIUM-HIGH)
-
-- `xcc-promise-chaining` - Chain promises correctly
-- `xcc-callback-handling` - Handle all callback scenarios (success, failure)
-- `xcc-gas-management` - Allocate appropriate gas for cross-contract calls
-- `xcc-error-handling` - Implement robust error handling
-- `xcc-result-unwrap` - Never unwrap promise results without checks
-
-### 5. Gas Optimization (MEDIUM)
-
-- `gas-batch-operations` - Batch operations to reduce transaction costs
-- `gas-minimal-state-reads` - Minimize state reads and writes
-- `gas-efficient-collections` - Choose appropriate collection types
-- `gas-view-functions` - Mark read-only functions as view
-- `gas-avoid-cloning` - Avoid unnecessary cloning of large data
-
-### 6. Testing (MEDIUM)
-
-- `testing-unit-tests` - Write comprehensive unit tests
-- `testing-integration-tests` - Use workspaces-rs for integration tests
-- `testing-simulation-tests` - Test with near-sdk-sim or workspaces
-- `testing-edge-cases` - Test boundary conditions and edge cases
-- `testing-gas-profiling` - Profile gas usage in tests
-
-### 7. Best Practices (MEDIUM)
-
-- `best-panic-messages` - Provide clear panic messages
-- `best-logging` - Use env::log_str for debugging
-- `best-documentation` - Document public methods and complex logic
-- `best-error-types` - Define custom error types
-- `best-constants` - Use constants for magic numbers
-
-## How to Use
-
-Read individual rule files for detailed explanations and code examples:
-
-```
-rules/security-storage-checks.md
-rules/structure-near-bindgen.md
-```
-
-Each rule file contains:
-- Brief explanation of why it matters
-- Incorrect code example with explanation
-- Correct code example with explanation
-- Additional context and NEAR-specific considerations
-
-## Resources
-
-- NEAR Documentation: https://docs.near.org
-- NEAR SDK Rust: https://docs.near.org/sdk/rust/introduction
-- NEAR Examples: https://github.com/near-examples
-- NEAR Standards (NEPs): https://github.com/near/NEPs
-- Security Best Practices: https://docs.near.org/develop/contracts/security/welcome
-
-## Full Compiled Document
-
-For the complete guide with all rules expanded: `AGENTS.md`
+- Do not cargo-cult legacy `near_bindgen` snippets into new contracts.
+- Avoid `unwrap()` in callback paths where promise failure is expected behavior.
+- Expose paginated views for unbounded collections.
+- Keep serialization choices explicit and backward-compatible.

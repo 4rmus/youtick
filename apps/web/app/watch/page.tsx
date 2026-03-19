@@ -39,6 +39,11 @@ function WatchContent() {
         }
         return eventThumbnail || tokenThumbnail;
     };
+    const getActiveDurationSeconds = () => {
+        const activeToken = tokens.find(t => t.video_metadata?.encrypted_cid === playCid);
+        const duration = activeToken?.video_metadata?.duration_seconds;
+        return duration && duration > 0 ? duration : undefined;
+    };
 
 
 
@@ -79,8 +84,10 @@ function WatchContent() {
 
                     {/* The Player */}
                     <VideoPlayer
+                        key={playCid}
                         cid={playCid}
                         thumbnailUrl={getActiveThumbnail()}
+                        initialDurationSeconds={getActiveDurationSeconds()}
                     />
 
                     {/* Description - Below Player */}

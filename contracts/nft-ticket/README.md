@@ -1,92 +1,75 @@
 # YouTick NFT Ticket Contract
 
-NEAR smart contract for video NFT minting and ticketed events.
+NEAR smart contract for event creation, NFT tickets, gifts, trials and upload-session based publishing.
 
-## Overview
+---
 
-This contract implements:
-- **NEP-171** compliant NFT tokens
-- **Event system** for pay-per-view video access
-- **GasTank** prepaid balance for session key operations
+## Ana basliklar
+
+- NEP-171 tabanli NFT ticket yapisi
+- Event olusturma ve listeleme
+- Ticket satin alma
+- Gift drop ve claim
+- Trial hesap olusturma
+- Upload session ile signless publish
+- Moderation ve purchase loglari
+
+---
 
 ## Build
 
 ```bash
-# Prerequisites
 rustup target add wasm32-unknown-unknown
-
-# Build
 cargo build --target wasm32-unknown-unknown --release
-
-# Optimize (optional but recommended)
-wasm-opt -Oz -o target/.../youtick_nft_opt.wasm \
-             target/.../youtick_nft.wasm
 ```
 
-## Deploy
+## Test
 
 ```bash
-# Create account
-near create-account YOUR_ACCOUNT.testnet --useFaucet
-
-# Deploy with init
-near deploy YOUR_ACCOUNT.testnet \
-     target/wasm32-unknown-unknown/release/youtick_nft.wasm \
-     --initFunction new \
-     --initArgs '{"owner_id":"YOUR_ACCOUNT.testnet"}'
+cargo test
 ```
 
-## Contract Functions
+## Onemli method gruplari
 
-### Write Functions
+### Event
 
-| Function | Description | Args |
-|----------|-------------|------|
-| `new(owner_id)` | Initialize contract | Owner account ID |
-| `nft_mint(...)` | Mint video NFT | Token metadata |
-| `create_event(...)` | Create ticketed event | CID, title, price |
-| `buy_ticket(cid)` | Purchase event ticket | Encrypted CID |
-| `deposit_funds()` | Add to GasTank | Attached deposit |
-| `withdraw_funds(amount)` | Withdraw from GasTank | Amount in yoctoNEAR |
+- `create_event`
+- `create_event_prepaid`
+- `get_event`
+- `get_events_paginated`
 
-### View Functions
+### Upload
 
-| Function | Description |
-|----------|-------------|
-| `nft_metadata()` | Contract metadata |
-| `nft_tokens(from_index, limit)` | List all tokens |
-| `nft_tokens_for_owner(account_id, ...)` | User's tokens |
-| `get_event(encrypted_cid)` | Event details |
-| `get_user_balance(account_id)` | GasTank balance |
+- `create_upload_session`
+- `revoke_upload_session`
+- `get_upload_session`
+- `nft_mint_prepaid`
 
-## Testing
+### Ticket
 
-```bash
-# View metadata
-near view CONTRACT.testnet nft_metadata '{}'
+- `buy_ticket`
+- `gift_ticket`
+- `get_videos`
+- `has_ticket`
 
-# List tokens
-near view CONTRACT.testnet nft_tokens '{"from_index":"0","limit":10}'
+### Gift / Trial
 
-# Get event
-near view CONTRACT.testnet get_event '{"encrypted_cid":"..."}'
-```
+- `create_gift_drop`
+- `claim_gift`
+- `claim_gift_and_create_account`
+- `create_sponsored_trial_direct`
+- `claim_free_ticket_direct`
+- `upgrade_trial_account`
 
-## Storage Keys
+### Admin
 
-Contract uses versioned storage keys to prevent collisions:
-- `StorageKeyV2::NonFungibleToken`
-- `StorageKeyV2::TokenMetadata`
-- `StorageKeyV2::Enumeration`
-- `StorageKeyV2::Approval`
-- `StorageKeyV2::VideoMetadata`
-- `StorageKeyV2::Events`
+- `ban_event`
+- `unban_event`
+- `get_banned_events`
+- `withdraw_commission`
 
-## Dependencies
+---
 
-```toml
-near-sdk = "5.1.0"
-near-contract-standards = "5.1.0"
-serde = "1.0"
-serde_json = "1.0"
-```
+## Uyum notu
+
+Kontratta bazi eski uyumluluk alanlari hala bulunur. Bunlar yeni KMS akisinin merkezi degildir; sadece eski kayitlarla uyum icin tutulur.

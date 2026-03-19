@@ -23,6 +23,8 @@ export interface StreamingPlayerOptions {
     gatewayUrl?: string;
     /** How many chunks to buffer ahead */
     bufferAhead?: number;
+    /** Minimum decrypted bytes to prepare before first playback */
+    initialBufferBytes?: number;
     /** Callback for playback progress */
     onProgress?: (loaded: number, total: number) => void;
     /** Callback for errors */
@@ -31,6 +33,7 @@ export interface StreamingPlayerOptions {
 
 const DEFAULT_GATEWAY = 'https://ipfs.io/ipfs';
 const RANGE_NOT_SUPPORTED = 'RANGE_NOT_SUPPORTED';
+const DEFAULT_INITIAL_BUFFER_BYTES = 4 * 1024 * 1024;
 
 interface GatewayFetchResult {
     gateway: string;
@@ -92,39 +95,81 @@ async function fetchRangeFromGateways(
     gateways: string[],
     preferredGateway?: string,
 ): Promise<GatewayFetchResult> {
-    const orderedGateways = prioritizeGateway(gateways, preferredGateway);
     const errors: string[] = [];
     const noRangeGateways: string[] = [];
+    const normalizedPreferred = preferredGateway ? normalizeGatewayBase(preferredGateway) : undefined;
 
-    for (const gateway of orderedGateways) {
-        const url = `${gateway}/${cid}`;
+    if (normalizedPreferred) {
         try {
-            const response = await fetchWithTimeout(url, {
-                headers: { Range: `bytes=${start}-${end}` },
-            });
-
-            if (response.status === 206) {
-                return { gateway, response };
-            }
-
-            // Range header ignored, continue trying the next gateway.
-            if (response.ok && response.status === 200) {
-                noRangeGateways.push(gateway);
-                continue;
-            }
-
-            errors.push(`${gateway}: HTTP ${response.status}`);
+            return await fetchRangeFromGateway(cid, start, end, normalizedPreferred);
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            errors.push(`${gateway}: ${msg}`);
+            if (msg.startsWith(RANGE_NOT_SUPPORTED)) {
+                noRangeGateways.push(normalizedPreferred);
+            } else {
+                errors.push(msg);
+            }
+        }
+    }
+
+    const raceGateways = prioritizeGateway(gateways, normalizedPreferred)
+        .filter((gateway) => gateway !== normalizedPreferred)
+        .slice(0, 3);
+
+    try {
+        return await Promise.any(
+            raceGateways.map(async (gateway) => await fetchRangeFromGateway(cid, start, end, gateway)),
+        );
+    } catch (err: unknown) {
+        if (err instanceof AggregateError) {
+            for (const entry of err.errors) {
+                const msg = entry instanceof Error ? entry.message : String(entry);
+                if (msg.startsWith(RANGE_NOT_SUPPORTED)) {
+                    noRangeGateways.push(msg.slice(RANGE_NOT_SUPPORTED.length + 2));
+                } else {
+                    errors.push(msg);
+                }
+            }
         }
     }
 
     if (noRangeGateways.length > 0) {
-        throw new Error(`${RANGE_NOT_SUPPORTED}: ${noRangeGateways.join(', ')}`);
+        throw new Error(`${RANGE_NOT_SUPPORTED}: ${[...new Set(noRangeGateways)].join(', ')}`);
     }
 
     throw new Error(`IPFS range fetch failed: ${errors.join('; ')}`);
+}
+
+async function fetchRangeFromGateway(
+    cid: string,
+    start: number,
+    end: number,
+    gateway: string,
+): Promise<GatewayFetchResult> {
+    const url = `${gateway}/${cid}`;
+
+    try {
+        const response = await fetchWithTimeout(url, {
+            headers: { Range: `bytes=${start}-${end}` },
+        });
+
+        if (response.status === 206) {
+            return { gateway, response };
+        }
+
+        if (response.ok && response.status === 200) {
+            throw new Error(`${RANGE_NOT_SUPPORTED}: ${gateway}`);
+        }
+
+        throw new Error(`${gateway}: HTTP ${response.status}`);
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.startsWith(RANGE_NOT_SUPPORTED) || msg.startsWith(`${gateway}:`)) {
+            throw err instanceof Error ? err : new Error(msg);
+        }
+
+        throw new Error(`${gateway}: ${msg}`);
+    }
 }
 
 async function fetchFullFromGateways(
@@ -132,23 +177,9 @@ async function fetchFullFromGateways(
     gateways: string[],
     preferredGateway?: string,
 ): Promise<GatewayFetchResult> {
-    const orderedGateways = prioritizeGateway(gateways, preferredGateway);
     const errors: string[] = [];
 
-    for (const gateway of orderedGateways) {
-        const url = `${gateway}/${cid}`;
-        try {
-            const response = await fetchWithTimeout(url, {});
-            if (response.ok) {
-                return { gateway, response };
-            }
-            errors.push(`${gateway}: HTTP ${response.status}`);
-        } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            errors.push(`${gateway}: ${msg}`);
-        }
-    }
-
+    // Full-file reads for app-uploaded encrypted videos are most reliable via Crust API.
     for (const endpoint of [CRUST_CONSTANTS.READ_ENDPOINT, CRUST_CONSTANTS.READ_ENDPOINT_FALLBACK]) {
         try {
             const response = await fetchWithTimeout(`${endpoint}?arg=${cid}`, {
@@ -164,6 +195,21 @@ async function fetchFullFromGateways(
         }
     }
 
+    const orderedGateways = prioritizeGateway(gateways, preferredGateway);
+    for (const gateway of orderedGateways) {
+        const url = `${gateway}/${cid}`;
+        try {
+            const response = await fetchWithTimeout(url, {});
+            if (response.ok) {
+                return { gateway, response };
+            }
+            errors.push(`${gateway}: HTTP ${response.status}`);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            errors.push(`${gateway}: ${msg}`);
+        }
+    }
+
     throw new Error(`IPFS fetch failed across all gateways: ${errors.join('; ')}`);
 }
 
@@ -174,6 +220,46 @@ async function fetchFullFromGateways(
 /** Convert a Uint8Array to a Blob-safe ArrayBuffer view */
 function toBlobPart(data: Uint8Array): ArrayBuffer {
     return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+}
+
+function getChunkByteRange(manifest: VideoManifest, chunkIndex: number): { start: number; end: number } {
+    const start = chunkIndex * manifest.chunkSize;
+    const end = Math.min(start + manifest.chunkSize, manifest.originalSize) - 1;
+    return { start, end };
+}
+
+async function downloadDecryptedChunk(
+    cid: string,
+    aesKeyB64: string,
+    manifest: VideoManifest,
+    chunkIndex: number,
+    gateways: string[],
+    preferredGateway?: string,
+): Promise<{ decrypted: Uint8Array; gateway: string }> {
+    const { start, end } = getChunkByteRange(manifest, chunkIndex);
+    const { response, gateway } = await fetchRangeFromGateways(
+        cid,
+        start,
+        end,
+        gateways,
+        preferredGateway,
+    );
+    const encrypted = new Uint8Array(await response.arrayBuffer());
+    const decrypted = await decryptChunk(encrypted, aesKeyB64, manifest, chunkIndex);
+
+    return { decrypted, gateway };
+}
+
+function getInitialChunkCount(manifest: VideoManifest, initialBufferBytes?: number): number {
+    const targetBytes = Math.max(
+        manifest.chunkSize,
+        initialBufferBytes ?? DEFAULT_INITIAL_BUFFER_BYTES,
+    );
+
+    return Math.min(
+        manifest.totalChunks,
+        Math.max(1, Math.ceil(targetBytes / manifest.chunkSize)),
+    );
 }
 
 // ============================================================================
@@ -219,22 +305,16 @@ export async function createDecryptedBlobUrl(
     let loadedBytes = 0;
 
     for (let i = 0; i < manifest.totalChunks; i++) {
-        const chunkStart = i * manifest.chunkSize;
-        const chunkEnd = Math.min(chunkStart + manifest.chunkSize, manifest.originalSize) - 1;
-
         try {
-            // Fetch the encrypted chunk via Range Request
-            const { response, gateway } = await fetchRangeFromGateways(
+            const { decrypted, gateway } = await downloadDecryptedChunk(
                 cid,
-                chunkStart,
-                chunkEnd,
+                aesKeyB64,
+                manifest,
+                i,
                 gateways,
                 activeGateway,
             );
             activeGateway = gateway;
-
-            const encrypted = new Uint8Array(await response.arrayBuffer());
-            const decrypted = await decryptChunk(encrypted, aesKeyB64, manifest, i);
             decryptedChunks[i] = toBlobPart(decrypted);
 
             loadedBytes += decrypted.length;
@@ -271,23 +351,27 @@ export async function streamKmsVideo(
         }
 
         // Multi-chunk progressive approach:
-        // 1. Download + decrypt first chunk immediately
+        // 1. Download + decrypt an initial playback buffer
         // 2. Return the blob for immediate playback
         // 3. Download remaining chunks in background (non-blocking)
-
-        const firstChunkEnd = Math.min(manifest.chunkSize, manifest.originalSize) - 1;
-        let firstChunkDecrypted: Uint8Array;
+        const initialChunkCount = getInitialChunkCount(manifest, options.initialBufferBytes);
+        const initialChunks: ArrayBuffer[] = [];
+        let initialLoadedBytes = 0;
         try {
-            const { response, gateway } = await fetchRangeFromGateways(
-                cid,
-                0,
-                firstChunkEnd,
-                gateways,
-                activeGateway,
-            );
-            activeGateway = gateway;
-            const encrypted = new Uint8Array(await response.arrayBuffer());
-            firstChunkDecrypted = await decryptChunk(encrypted, aesKeyB64, manifest, 0);
+            for (let i = 0; i < initialChunkCount; i++) {
+                const { decrypted, gateway } = await downloadDecryptedChunk(
+                    cid,
+                    aesKeyB64,
+                    manifest,
+                    i,
+                    gateways,
+                    activeGateway,
+                );
+                activeGateway = gateway;
+                initialChunks.push(toBlobPart(decrypted));
+                initialLoadedBytes += decrypted.length;
+                options.onProgress?.(initialLoadedBytes, manifest.originalSize);
+            }
         } catch {
             // Fallback to full download if Range not supported
             const blobUrl = await fallbackFullDownload(cid, aesKeyB64, manifest, gateways, activeGateway);
@@ -295,34 +379,34 @@ export async function streamKmsVideo(
             return;
         }
 
-        // Start playback with just the first chunk
-        const firstBlob = new Blob([toBlobPart(firstChunkDecrypted)], { type: manifest.contentType });
+        // Start playback with a larger initial buffer so MP4 metadata is more likely to be available.
+        const firstBlob = new Blob(initialChunks, { type: manifest.contentType });
         if (options.onSourceUpdate) options.onSourceUpdate(URL.createObjectURL(firstBlob));
 
-        options.onProgress?.(firstChunkDecrypted.length, manifest.originalSize);
+        if (initialChunkCount >= manifest.totalChunks) {
+            return;
+        }
 
         // Download remaining chunks in background non-blocking
         (async () => {
             try {
-                const allChunks: ArrayBuffer[] = [toBlobPart(firstChunkDecrypted)];
-                let loadedBytes = firstChunkDecrypted.length;
+                const allChunks: ArrayBuffer[] = new Array(manifest.totalChunks);
+                for (let i = 0; i < initialChunkCount; i++) {
+                    allChunks[i] = initialChunks[i];
+                }
+                let loadedBytes = initialLoadedBytes;
 
-                for (let i = 1; i < manifest.totalChunks; i++) {
-                    const chunkStart = i * manifest.chunkSize;
-                    const chunkEnd = Math.min(chunkStart + manifest.chunkSize, manifest.originalSize) - 1;
-
-                    const { response, gateway } = await fetchRangeFromGateways(
+                for (let i = initialChunkCount; i < manifest.totalChunks; i++) {
+                    const { decrypted, gateway } = await downloadDecryptedChunk(
                         cid,
-                        chunkStart,
-                        chunkEnd,
+                        aesKeyB64,
+                        manifest,
+                        i,
                         gateways,
                         activeGateway,
                     );
                     activeGateway = gateway;
-
-                    const encrypted = new Uint8Array(await response.arrayBuffer());
-                    const decrypted = await decryptChunk(encrypted, aesKeyB64, manifest, i);
-                    allChunks.push(toBlobPart(decrypted));
+                    allChunks[i] = toBlobPart(decrypted);
                     loadedBytes += decrypted.length;
                     options.onProgress?.(loadedBytes, manifest.originalSize);
                 }
@@ -341,7 +425,6 @@ export async function streamKmsVideo(
                 }
             }
         })();
-
     } catch (error) {
         options.onError?.(error instanceof Error ? error : new Error(String(error)));
         throw error;

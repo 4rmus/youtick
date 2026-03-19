@@ -4,7 +4,7 @@ impact: MEDIUM
 tags: intents, balance, architecture
 ---
 
-Alternative architecture where your app operates with intents.near balances instead of chain-to-chain. Choose ONE mode for your app.
+Alternative architecture where your app operates with `INTENTS` balances instead of always settling back to an external chain. Choose one operating mode intentionally.
 
 ## Deposit to Intents Balance
 
@@ -50,18 +50,22 @@ const quote = await fetch('https://1click.chaindefuser.com/v0/quote', {
 ## Query Balance
 
 ```typescript
-import { connect, keyStores } from 'near-api-js';
+import { JsonRpcProvider } from 'near-api-js';
 
-const near = await connect({
-  networkId: 'mainnet',
-  keyStore: new keyStores.InMemoryKeyStore(),
-  nodeUrl: 'https://rpc.mainnet.near.org',
+const provider = new JsonRpcProvider({
+  url: 'https://rpc.mainnet.near.org',
 });
 
-const account = await near.account(accountId);
-const balance = await account.viewFunction({
-  contractId: 'intents.near',
-  methodName: 'mt_balance_of',
-  args: { account_id: accountId, token_id: tokenId },
-});
+const response = await provider.query({
+  request_type: 'call_function',
+  account_id: 'intents.near',
+  method_name: 'mt_balance_of',
+  args_base64: Buffer.from(JSON.stringify({
+    account_id: accountId,
+    token_id: tokenId,
+  })).toString('base64'),
+  finality: 'final',
+}) as { result: number[] };
+
+const balance = JSON.parse(Buffer.from(response.result).toString());
 ```

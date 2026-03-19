@@ -9,13 +9,14 @@
 import { KeyPair, Account, KeyPairSigner, nearToYocto, actions, type KeyPairString } from "near-api-js";
 import type { WalletInstance } from "./types";
 
-import { NEAR_CONFIG, GAS_CONSTANTS } from './constants';
+import { APP_CONFIG, NEAR_CONFIG, GAS_CONSTANTS } from './constants';
+import { recordMetric } from './decentralization-metrics';
 import { getCurrentRpcUrl } from './rpc-failover';
 
 // Contract ID from centralized config
 const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
 const NETWORK_ID = NEAR_CONFIG.networkId;
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const APP_URL = APP_CONFIG.publicAppUrl;
 
 // Cost per gift link (account creation + NFT storage + buffer)
 const DEPOSIT_PER_LINK = "0.15"; // 0.15 NEAR
@@ -286,10 +287,23 @@ export async function createSponsoredTrial(
     const directResult = await createSponsoredTrialDirect(username);
 
     if (directResult.success) {
+        recordMetric('trial_direct_success');
         console.log(`[DECENTRALIZATION_METRIC] {"operation":"trial_create","method":"direct","username":"${username}","timestamp":${Date.now()}}`);
+        return { ...directResult, method: 'direct' };
     }
 
-    return { ...directResult, method: 'direct' };
+    const relayerResult = await createSponsoredTrialRelayer(username);
+    if (relayerResult.success) {
+        recordMetric('trial_relayer_fallback');
+        console.log(`[DECENTRALIZATION_METRIC] {"operation":"trial_create","method":"relayer","username":"${username}","timestamp":${Date.now()}}`);
+        return { ...relayerResult, method: 'relayer' };
+    }
+
+    return {
+        success: false,
+        method: 'direct',
+        error: relayerResult.error || directResult.error || "Failed to create trial account",
+    };
 }
 
 /**

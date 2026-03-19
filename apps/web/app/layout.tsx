@@ -1,18 +1,15 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import "@near-wallet-selector/modal-ui/styles.css";
 import { WalletProvider } from "@/components/providers/WalletProvider";
 import { QueryProvider } from "@/components/providers/QueryProvider";
-import { EvmProvider } from "@/components/providers/EvmProvider";
+import { OptionalEvmProvider } from "@/components/providers/OptionalEvmProvider";
 import { Navbar } from "@/components/Navbar";
 import { LanguageProvider } from "@/components/providers/LanguageContext";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { GoogleAnalytics } from "@next/third-parties/google";
 import { OnboardingKeyInit } from "@/components/OnboardingKeyInit";
-
-const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
     title: {
@@ -91,6 +88,14 @@ export default function RootLayout({
     return (
         <html lang="en" suppressHydrationWarning>
             <head>
+                <link rel="dns-prefetch" href="https://ipfs.io" />
+                <link rel="dns-prefetch" href="https://dweb.link" />
+                <link rel="dns-prefetch" href="https://4everland.io" />
+                <link rel="dns-prefetch" href="https://gateway.lighthouse.storage" />
+                <link rel="preconnect" href="https://ipfs.io" crossOrigin="" />
+                <link rel="preconnect" href="https://dweb.link" crossOrigin="" />
+                <link rel="preconnect" href="https://4everland.io" crossOrigin="" />
+                <link rel="preconnect" href="https://gateway.lighthouse.storage" crossOrigin="" />
                 {/* ChunkLoadError recovery: reload page on failed dynamic imports (IPFS gateway blips) */}
                 <script dangerouslySetInnerHTML={{
                     __html: `
@@ -116,10 +121,10 @@ export default function RootLayout({
                     })();
                 `}} />
             </head>
-            <body className={inter.className}>
+            <body className="antialiased">
                 <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
                     <QueryProvider>
-                        <EvmProvider>
+                        <OptionalEvmProvider>
                             <LanguageProvider>
                                 <WalletProvider>
                                     <OnboardingKeyInit />
@@ -132,7 +137,7 @@ export default function RootLayout({
                                     <LanguageSwitcher />
                                 </WalletProvider>
                             </LanguageProvider>
-                        </EvmProvider>
+                        </OptionalEvmProvider>
                     </QueryProvider>
                 </ThemeProvider>
             </body>
