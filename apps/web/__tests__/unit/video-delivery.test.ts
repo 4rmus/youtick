@@ -6,6 +6,7 @@ import {
   combinePackagedSegmentPayloads,
   createDeliverySegment,
   isDeliveryManifestV2,
+  pickPreferredPosterUrl,
   shouldUseSegmentedPlayback,
   shouldUseSegmentedDelivery,
 } from '@/lib/video-delivery';
@@ -81,6 +82,8 @@ describe('video delivery helpers', () => {
 
     expect(isDeliveryManifestV2(manifest)).toBe(true);
     expect(buildManifestPosterUrl(manifest)).toBe('ipfs://QmPoster');
+    expect(pickPreferredPosterUrl('ipfs://QmThumb', manifest)).toBe('ipfs://QmPoster');
+    expect(pickPreferredPosterUrl('ipfs://QmThumb', undefined)).toBe('ipfs://QmThumb');
   });
 
   it('rejects pathological manifests for segmented playback', () => {

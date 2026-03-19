@@ -20,16 +20,16 @@ describe('NEAR_CONFIG', () => {
         resetNearEnv();
     });
 
-    it('defaults to testnet-first contract IDs', async () => {
+    it('defaults to mainnet contract IDs', async () => {
         resetNearEnv();
 
         const { NEAR_CONFIG } = await import('@/lib/constants');
 
-        expect(NEAR_CONFIG.networkId).toBe('testnet');
-        expect(NEAR_CONFIG.contractId).toBe('v1.utick.testnet');
-        expect(NEAR_CONFIG.marketContractId).toBe('v1.utick.testnet');
-        expect(NEAR_CONFIG.accessContractId).toBe('access.v1.utick.testnet');
-        expect(NEAR_CONFIG.registryContractId).toBe('registry.v1.utick.testnet');
+        expect(NEAR_CONFIG.networkId).toBe('mainnet');
+        expect(NEAR_CONFIG.contractId).toBe('youtick.near');
+        expect(NEAR_CONFIG.marketContractId).toBe('youtick.near');
+        expect(NEAR_CONFIG.accessContractId).toBe('access.youtick.near');
+        expect(NEAR_CONFIG.registryContractId).toBe('registry.youtick.near');
     });
 
     it('respects explicit mainnet contract overrides', async () => {
@@ -55,7 +55,7 @@ describe('NEAR_CONFIG', () => {
 
         expect(NEAR_CONFIG.contractId).toBe('legacy-market.testnet');
         expect(NEAR_CONFIG.marketContractId).toBe('legacy-market.testnet');
-        expect(NEAR_CONFIG.accessContractId).toBe('access.v1.utick.testnet');
-        expect(NEAR_CONFIG.registryContractId).toBe('registry.v1.utick.testnet');
+        expect(NEAR_CONFIG.accessContractId).toBe('access-1773606802388.v2-0.utick.testnet');
+        expect(NEAR_CONFIG.registryContractId).toBe('registry-1773606802388.v2-0.utick.testnet');
     });
 });

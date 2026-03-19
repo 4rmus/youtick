@@ -1,18 +1,15 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import "@near-wallet-selector/modal-ui/styles.css";
 import { WalletProvider } from "@/components/providers/WalletProvider";
 import { QueryProvider } from "@/components/providers/QueryProvider";
-import { EvmProvider } from "@/components/providers/EvmProvider";
+import { OptionalEvmProvider } from "@/components/providers/OptionalEvmProvider";
 import { Navbar } from "@/components/Navbar";
 import { LanguageProvider } from "@/components/providers/LanguageContext";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { GoogleAnalytics } from "@next/third-parties/google";
 import { OnboardingKeyInit } from "@/components/OnboardingKeyInit";
-
-const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
     title: {
@@ -124,10 +121,10 @@ export default function RootLayout({
                     })();
                 `}} />
             </head>
-            <body className={inter.className}>
+            <body className="antialiased">
                 <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
                     <QueryProvider>
-                        <EvmProvider>
+                        <OptionalEvmProvider>
                             <LanguageProvider>
                                 <WalletProvider>
                                     <OnboardingKeyInit />
@@ -140,7 +137,7 @@ export default function RootLayout({
                                     <LanguageSwitcher />
                                 </WalletProvider>
                             </LanguageProvider>
-                        </EvmProvider>
+                        </OptionalEvmProvider>
                     </QueryProvider>
                 </ThemeProvider>
             </body>

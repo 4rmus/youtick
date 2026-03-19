@@ -18,9 +18,9 @@ const DEFAULT_CONTRACT_IDS: Record<NetworkId, {
     registryContractId: string;
 }> = {
     testnet: {
-        marketContractId: 'v1.utick.testnet',
-        accessContractId: 'access.v1.utick.testnet',
-        registryContractId: 'registry.v1.utick.testnet',
+        marketContractId: 'dev-fresh-kurulum-3.testnet',
+        accessContractId: 'access-1773606802388.v2-0.utick.testnet',
+        registryContractId: 'registry-1773606802388.v2-0.utick.testnet',
     },
     mainnet: {
         marketContractId: 'youtick.near',
@@ -29,18 +29,21 @@ const DEFAULT_CONTRACT_IDS: Record<NetworkId, {
     },
 };
 
-const configuredNetworkId = (process.env.NEXT_PUBLIC_NEAR_NETWORK as NetworkId | undefined) || 'testnet';
+const configuredNetworkId = (process.env.NEXT_PUBLIC_NEAR_NETWORK as NetworkId | undefined) || 'mainnet';
 const defaultContracts = DEFAULT_CONTRACT_IDS[configuredNetworkId];
 const configuredMarketContractId =
     process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID
     || process.env.NEXT_PUBLIC_NFT_CONTRACT_ID
     || defaultContracts.marketContractId;
+const configuredAppUrl =
+    process.env.NEXT_PUBLIC_APP_URL
+    || (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'https://youtick.net');
 
 /**
  * NEAR Protocol Configuration
  */
 export const NEAR_CONFIG = {
-    /** Active network ID. Zero-trust work starts on testnet by default. */
+    /** Active network ID. Defaults to mainnet when NEXT_PUBLIC_NEAR_NETWORK is not set. */
     networkId: configuredNetworkId,
 
     /** Market contract ID. `contractId` remains as a compatibility alias. */
@@ -58,13 +61,25 @@ export const NEAR_CONFIG = {
         || defaultContracts.registryContractId,
 } as const;
 
+export const FEATURE_FLAGS = {
+    /** Launch scope is core-only until cross-chain checkout completes its own readiness review. */
+    enableCrossChainCheckout: process.env.NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT === 'true',
+
+    /** Legacy upload fallback stays opt-in so mainnet publish uses upload sessions by default. */
+    enableLegacyUploadFallback: process.env.NEXT_PUBLIC_ENABLE_LEGACY_UPLOAD_FALLBACK === 'true',
+} as const;
+
+export const APP_CONFIG = {
+    publicAppUrl: configuredAppUrl,
+} as const;
+
 /**
  * IPFS Configuration
  * Uses ipfs.io as primary gateway for best availability
  */
 export const IPFS_CONFIG = {
-    /** Primary Gateway URL - Crust IPFS for decentralized pinning */
-    gatewayUrl: 'https://crustipfs.xyz/ipfs',
+    /** Primary public gateway URL used only for legacy fallback cases */
+    gatewayUrl: 'https://ipfs.io/ipfs',
 
     /** Default placeholder image - uses a minimal data URI for guaranteed availability */
     placeholderImage: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjIyNSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjMTgxODFiIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IiM3MTcxN2YiIGZvbnQtZmFtaWx5PSJzeXN0ZW0tdWkiIGZvbnQtc2l6ZT0iMjQiPvCfjqwgVmlkZW88L3RleHQ+PC9zdmc+',

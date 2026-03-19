@@ -24,7 +24,7 @@ YouTick is an open-source VOD platform where creators upload encrypted videos to
 | Crust/IPFS Delivery | Sifreli medya birden fazla gateway ile okunur |
 | Gift Links | Paylasilabilir tek kullanimlik linkler |
 | Trial Accounts | Onboarding key ile dusuk surtunmeli baslangic |
-| Cross-Chain Checkout | Deneysel 1Click + MetaMask yolu |
+| Cross-Chain Checkout | Deneysel 1Click + MetaMask yolu, varsayilan olarak kapali |
 
 ---
 
@@ -64,6 +64,12 @@ Minimum env:
 ```env
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
+NEXT_PUBLIC_MARKET_CONTRACT_ID=youtick.near
+NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.youtick.near
+NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
+NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
+NEXT_PUBLIC_APP_URL=https://youtick.net
+NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
 ```
 
 ---
@@ -75,6 +81,7 @@ NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 - [Storage and delivery](./docs/architecture/storage.md)
 - [User flows](./docs/guides/user-flows.md)
 - [Contract methods](./docs/api/contract-methods.md)
+- [Mainnet runbook](./docs/operations/mainnet-runbook.md)
 
 ---
 

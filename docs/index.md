@@ -34,4 +34,6 @@ features:
 - [Youtick Zero Trust Architecture v1](architecture/youtick-zero-trust-architecture-v1.md) -- Target-state ADR
 - [Contract Methods](api/contract-methods.md) -- Contract API reference
 - [User Flows](guides/user-flows.md) -- Upload, purchase, claim, trial
+- [Mainnet Runbook](operations/mainnet-runbook.md) -- Launch, rollback, smoke checklist
+- [Mainnet Task Owners](operations/mainnet-task-owners.md) -- Role sahipligi ve handoff sirasi
 - [Roadmap](roadmap.md) -- Planned milestones

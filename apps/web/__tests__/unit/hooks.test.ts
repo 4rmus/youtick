@@ -10,12 +10,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock constants
 vi.mock('@/lib/constants', () => ({
+    APP_CONFIG: {
+        publicAppUrl: 'https://app.youtick.io'
+    },
+    FEATURE_FLAGS: {
+        enableCrossChainCheckout: false,
+        enableLegacyUploadFallback: false
+    },
     NEAR_CONFIG: {
         contractId: 'test-contract.testnet',
         networkId: 'testnet'
     },
     IPFS_CONFIG: {
-        gatewayUrl: 'https://crustipfs.xyz/ipfs',
+        gatewayUrl: 'https://ipfs.io/ipfs',
         placeholderImage: '/placeholder.svg'
     },
     METADATA_SCHEMA: {
@@ -31,62 +38,37 @@ vi.mock('@/lib/near', () => ({
 }));
 
 // Import after mocks
-import { viewContract } from '@/lib/near';
-const mockedViewContract = vi.mocked(viewContract);
-
 describe('useAllVideos data logic', () => {
     beforeEach(() => {
         vi.clearAllMocks();
     });
 
-    it('should transform contract events into TokenWithVideo format', async () => {
+    it('should transform contract events into TokenWithVideo format and sort newest first', async () => {
         const mockEvents = [
             ['QmTestCid1', {
                 title: 'Test Video',
                 description: 'A test video',
                 creator_id: 'creator.testnet',
-                price: '1000000000000000000000000'
+                price: '1000000000000000000000000',
+                created_at: '100'
             }],
             ['QmTestCid2', {
                 title: 'Another Video',
                 description: '',
                 creator_id: 'creator2.testnet',
-                price: '0'
-            }]
+                price: '0',
+                created_at: '200'
+            }],
         ];
 
-        mockedViewContract.mockResolvedValueOnce(mockEvents);
-
-        const { parseTitleMetadata } = await import('@/lib/metadata-parser');
-        // Simulate the transformation logic from useAllVideos
-        const events = mockEvents;
-        const tokens = events.map((item, index) => {
-            const [cid, event] = item as [string, { title: string; description: string; creator_id: string; price: string }];
-            const parsed = parseTitleMetadata(event.title);
-
-            return {
-                token_id: `event-${index}`,
-                owner_id: event.creator_id,
-                metadata: {
-                    title: parsed.title,
-                    description: event.description || `NFT ticket`,
-                    media: parsed.thumbnailUrl,
-                    copies: 1
-                },
-                video_metadata: {
-                    encrypted_cid: cid,
-                    duration_seconds: 0,
-                    content_type: "Exclusive",
-                    price: event.price
-                }
-            };
-        });
+        const { mapEventRowsToTokens } = await import('@/hooks/useAllVideos');
+        const tokens = mapEventRowsToTokens(mockEvents as never);
 
         expect(tokens).toHaveLength(2);
-        expect(tokens[0].video_metadata.encrypted_cid).toBe('QmTestCid1');
-        expect(tokens[0].owner_id).toBe('creator.testnet');
-        expect(tokens[0].metadata.title).toBe('Test Video');
-        expect(tokens[1].metadata.description).toBe('NFT ticket');
+        expect(tokens[0].video_metadata?.encrypted_cid).toBe('QmTestCid2');
+        expect(tokens[0].owner_id).toBe('creator2.testnet');
+        expect(tokens[0].metadata?.title).toBe('Another Video');
+        expect(tokens[1].metadata?.description).toBe('A test video');
     });
 
     it('should handle empty events response', () => {
@@ -112,7 +94,7 @@ describe('useOwnedTokens data logic', () => {
         expect(isValid).toBe(false);
 
         // Real IPFS URL should be valid
-        const realMedia = 'https://crustipfs.xyz/ipfs/QmTest';
+        const realMedia = 'https://ipfs.io/ipfs/QmTest';
         const isRealValid = isValidMediaUrl(realMedia) && !realMedia.includes('token.png');
         expect(isRealValid).toBe(true);
 

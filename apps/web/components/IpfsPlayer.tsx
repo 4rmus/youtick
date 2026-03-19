@@ -2,17 +2,16 @@
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { retrieveEncryptionKey } from '@/lib/kms/client';
-import { getGatewayUrls } from '@/lib/crust';
 import {
     createDeliveryPlaybackSession,
     type DeliveryPlaybackMetrics,
     type DeliveryPlaybackSession,
 } from '@/lib/video-delivery-player';
 import {
-    buildManifestPosterUrl,
     fetchDeliveryManifest,
     getEffectiveManifestDurationMs,
     isDeliveryManifestV2,
+    pickPreferredPosterUrl,
     shouldUseSegmentedPlayback,
 } from '@/lib/video-delivery';
 import { useWallet } from '@/components/providers/WalletProvider';
@@ -24,6 +23,14 @@ import { TicketPurchaseCard } from './TicketPurchaseCard';
 import { NEAR_CONFIG } from '@/lib/constants';
 import { getProvider, viewContract } from '@/lib/near';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
+import {
+    extractIpfsCid,
+    getIpfsMediaCandidates,
+    getIpfsMediaSourceKey,
+    getNextIpfsMediaUrl,
+    rememberFailedIpfsMediaUrl,
+    resolveIpfsMediaUrl,
+} from '@/lib/ipfs-media';
 
 interface IpfsPlayerProps {
     cid: string;
@@ -40,22 +47,6 @@ type PlayerState =
     | { type: 'error'; message: string };
 
 const initialState: PlayerState = { type: 'idle' };
-
-function resolvePosterUrl(input?: string): string | undefined {
-    if (!input) {
-        return undefined;
-    }
-
-    if (input.startsWith('http://') || input.startsWith('https://') || input.startsWith('data:') || input.startsWith('/')) {
-        return input;
-    }
-
-    const cid = input.startsWith('ipfs://')
-        ? input.slice('ipfs://'.length)
-        : input;
-
-    return getGatewayUrls(cid)[0];
-}
 
 function formatTime(seconds: number): string {
     if (!Number.isFinite(seconds) || seconds < 0) {
@@ -119,6 +110,13 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
     // Tracks successful purchase — forces transition from purchase card to player
     const [purchased, setPurchased] = useState(false);
     const [resolvedThumbnailUrl, setResolvedThumbnailUrl] = useState<string | undefined>(thumbnailUrl);
+    const [posterUrl, setPosterUrl] = useState<string | undefined>(() => {
+        const sourceKey = getIpfsMediaSourceKey(thumbnailUrl);
+        return getIpfsMediaCandidates(thumbnailUrl, {
+            sourceKey,
+            purpose: 'image',
+        })[0];
+    });
     const [backgroundStatus, setBackgroundStatus] = useState<string | null>(null);
     const [knownDurationSeconds, setKnownDurationSeconds] = useState<number | null>(initialDurationSeconds ?? null);
     const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0);
@@ -217,6 +215,39 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
     useEffect(() => {
         setResolvedThumbnailUrl(thumbnailUrl);
     }, [thumbnailUrl, cid]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const sourceKey = getIpfsMediaSourceKey(resolvedThumbnailUrl);
+        const nextCandidates = getIpfsMediaCandidates(resolvedThumbnailUrl, {
+            sourceKey,
+            purpose: 'image',
+        });
+
+        setPosterUrl(nextCandidates[0]);
+
+        if (!resolvedThumbnailUrl) {
+            setPosterUrl(undefined);
+            return () => {
+                cancelled = true;
+            };
+        }
+
+        void resolveIpfsMediaUrl(resolvedThumbnailUrl, {
+            sourceKey,
+            purpose: 'image',
+        }).then((resolvedUrl) => {
+            if (cancelled) {
+                return;
+            }
+
+            setPosterUrl(resolvedUrl ?? nextCandidates[0]);
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [resolvedThumbnailUrl]);
 
     useEffect(() => {
         setPurchased(false);
@@ -344,7 +375,6 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
     const loading = playerState.type === 'decrypting';
     const error = playerState.type === 'error' ? playerState.message : null;
     const status = playerState.type === 'decrypting' ? playerState.message : '';
-    const posterUrl = resolvePosterUrl(resolvedThumbnailUrl);
 
     // Derived access state from React Query
     const hasAccess = hasOwnership === true;
@@ -575,9 +605,9 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                 segments: manifestData.segments.length,
             });
             setKnownDurationSeconds(getEffectiveManifestDurationMs(manifestData) / 1000);
-            const posterUrl = buildManifestPosterUrl(manifestData);
-            if (posterUrl) {
-                setResolvedThumbnailUrl(posterUrl);
+            const preferredPosterUrl = pickPreferredPosterUrl(resolvedThumbnailUrl ?? null, manifestData);
+            if (preferredPosterUrl) {
+                setResolvedThumbnailUrl(preferredPosterUrl);
             }
 
             const canUseSegmentedPlayback = shouldUseSegmentedPlayback(manifestData);
@@ -626,7 +656,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             console.error('Playback failed:', err);
             setPlayerState({ type: 'error', message: err instanceof Error ? err.message : 'Failed to load video' });
         }
-    }, [accountId, cid, cleanupPlaybackArtifacts, getWallet]);
+    }, [accountId, cid, cleanupPlaybackArtifacts, getWallet, resolvedThumbnailUrl]);
 
     const handlePlay = () => playVideo(false);
 
@@ -641,16 +671,24 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             return;
         }
 
-        // Try extracting CID to fallback
-        const cidMatch = playerState.videoUrl.match(/\/ipfs\/([a-zA-Z0-9]+)$/);
-        if (!cidMatch) return;
-        const videoCid = cidMatch[1];
+        const videoCid = extractIpfsCid(playerState.videoUrl);
+        if (!videoCid) return;
 
         console.warn(`Video load error from ${playerState.videoUrl}. Attempting fallback...`);
 
-        const candidates = getGatewayUrls(videoCid);
-        const currentIndex = candidates.findIndex((candidate) => candidate === playerState.videoUrl);
-        const nextUrl = candidates.slice(currentIndex + 1).find(Boolean);
+        const videoSource = `ipfs://${videoCid}`;
+        const sourceKey = getIpfsMediaSourceKey(videoSource);
+        rememberFailedIpfsMediaUrl(playerState.videoUrl, {
+            input: videoSource,
+            sourceKey,
+            purpose: 'video',
+        });
+
+        const nextUrl = getNextIpfsMediaUrl(videoSource, {
+            currentUrl: playerState.videoUrl,
+            sourceKey,
+            purpose: 'video',
+        });
 
         if (nextUrl) {
             setPlayerState({ type: 'playing', videoUrl: nextUrl });

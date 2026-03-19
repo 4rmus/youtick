@@ -173,9 +173,9 @@ export const translations = {
         },
         roadmap: {
             title: "Roadmap",
-            subtitle: "Our journey to revolutionizing video streaming.",
+            subtitle: "Building the future of premium video, one milestone at a time.",
             phases: [
-                { year: "2026 Q1", title: "Mainnet Launch", desc: "NEAR Mainnet is live. Production-ready infrastructure serving real users." },
+                { year: "2026 Q1", title: "Mainnet Live", desc: "NEAR Mainnet is live. Encrypted video, NFT tickets, gift links, and trial onboarding are all running in production." },
                 { year: "2026 Q2", title: "Fast Auth", desc: "Seamless email/social login integration. Auto-wallet creation for zero-friction onboarding." },
                 { year: "2026 Q3", title: "Live Broadcast", desc: "Distributed live streaming with real-time token gating and chat." },
                 { year: "2026 Q4", title: "DAO Governance", desc: "Community-driven platform decisions, treasury management, and protocol upgrades." },
@@ -723,9 +723,9 @@ export const translations = {
         },
         roadmap: {
             title: "Yol Haritası",
-            subtitle: "Video yayıncılığında devrim yaratma yolculuğumuz.",
+            subtitle: "Premium videonun geleceğini, adım adım inşa ediyoruz.",
             phases: [
-                { year: "2026 Q1", title: "Mainnet Lansmanı", desc: "NEAR Mainnet yayında. Gerçek kullanıcılara hizmet veren üretime hazır altyapı." },
+                { year: "2026 Q1", title: "Mainnet Yayında", desc: "NEAR Mainnet aktif. Şifreli video, NFT bilet, hediye linkleri ve trial hesap açma — hepsi canlıda çalışıyor." },
                 { year: "2026 Q2", title: "Fast Auth (Hızlı Giriş)", desc: "Sorunsuz email/sosyal giriş entegrasyonu. Sıfır sürtünme için otomatik cüzdan oluşturma." },
                 { year: "2026 Q3", title: "Canlı Yayın", desc: "Gerçek zamanlı token kontrolü ve sohbet ile dağıtık canlı yayın." },
                 { year: "2026 Q4", title: "DAO Yönetişimi", desc: "Topluluk odaklı platform kararları, hazine yönetimi ve protokol güncellemeleri." },

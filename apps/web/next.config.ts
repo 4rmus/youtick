@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import path from "path";
 
 const isWeb4 = process.env.NEXT_PUBLIC_DEPLOY_TARGET === 'web4';
 
@@ -30,6 +31,18 @@ const nextConfig: NextConfig = {
 
   // Poweredby header not useful for decentralized deployment
   poweredByHeader: false,
+
+  turbopack: {
+    root: path.resolve(__dirname),
+  },
+
+  webpack: (config) => {
+    config.resolve.alias = {
+      ...(config.resolve.alias || {}),
+      '@react-native-async-storage/async-storage': false,
+    };
+    return config;
+  },
 
   // Generate build ID deterministically for cache coherence
   generateBuildId: isWeb4

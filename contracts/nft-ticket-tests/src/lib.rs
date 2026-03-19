@@ -329,51 +329,37 @@ async fn test_buy_free_ticket() -> anyhow::Result<()> {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// PREPAID BALANCE TESTS
+// LEGACY API REMOVAL TESTS
 // ═══════════════════════════════════════════════════════════════
 
 #[tokio::test]
 async fn test_deposit_and_withdraw_funds() -> anyhow::Result<()> {
     let (contract, _, buyer) = init().await?;
 
-    // Deposit funds
-    buyer
+    let deposit_result = buyer
         .call(contract.id(), "deposit_funds")
         .args_json(json!({}))
         .deposit(NearToken::from_near(2))
         .transact()
-        .await?
-        .into_result()?;
+        .await?;
+    assert!(deposit_result.is_failure());
 
-    // Check balance
-    let balance: String = contract
-        .view("get_user_balance")
-        .args_json(json!({"account_id": buyer.id()}))
-        .await?
-        .json()?;
-
-    assert_eq!(balance, "2000000000000000000000000"); // 2 NEAR
-
-    // Withdraw funds (requires 1 yocto deposit)
-    buyer
+    let withdraw_result = buyer
         .call(contract.id(), "withdraw_funds")
         .args_json(json!({}))
         .deposit(NearToken::from_yoctonear(1))
         .gas(near_workspaces::types::Gas::from_tgas(50))
         .transact()
-        .await?
-        .into_result()?;
+        .await?;
+    assert!(withdraw_result.is_failure());
 
-    // Check balance is now 0
-    let balance_after: String = contract
+    let balance_result = contract
         .view("get_user_balance")
         .args_json(json!({"account_id": buyer.id()}))
-        .await?
-        .json()?;
+        .await;
+    assert!(balance_result.is_err());
 
-    assert_eq!(balance_after, "0");
-
-    println!("✅ Deposit and withdraw funds test passed");
+    println!("✅ Legacy prepaid balance methods are removed");
     Ok(())
 }
 
@@ -395,17 +381,8 @@ async fn test_buy_ticket_prepaid() -> anyhow::Result<()> {
         .await?
         .into_result()?;
 
-    // Deposit funds first
-    buyer
-        .call(contract.id(), "deposit_funds")
-        .args_json(json!({}))
-        .deposit(NearToken::from_near(1)) // Deposit 1 NEAR
-        .transact()
-        .await?
-        .into_result()?;
-
-    // Buy with prepaid (no deposit needed in the call)
-    buyer
+    // Legacy prepaid path is disabled.
+    let result = buyer
         .call(contract.id(), "buy_ticket_prepaid")
         .args_json(json!({
             "receiver_id": buyer.id(),
@@ -413,30 +390,11 @@ async fn test_buy_ticket_prepaid() -> anyhow::Result<()> {
         }))
         .gas(near_workspaces::types::Gas::from_tgas(300))
         .transact()
-        .await?
-        .into_result()?;
+        .await?;
 
-    // Verify NFT was minted
-    let tokens: Vec<serde_json::Value> = contract
-        .view("nft_tokens_for_owner")
-        .args_json(json!({"account_id": buyer.id()}))
-        .await?
-        .json()?;
+    assert!(result.is_failure());
 
-    assert_eq!(tokens.len(), 1);
-
-    // Verify prepaid balance was deducted
-    let balance: String = contract
-        .view("get_user_balance")
-        .args_json(json!({"account_id": buyer.id()}))
-        .await?
-        .json()?;
-
-    // Should have ~0.49 NEAR left (1 - 0.5 price - 0.01 storage)
-    let balance_yocto: u128 = balance.parse()?;
-    assert!(balance_yocto < 500_000_000_000_000_000_000_000); // Less than 0.5 NEAR
-
-    println!("✅ Buy ticket prepaid test passed");
+    println!("✅ Legacy prepaid buy path is removed");
     Ok(())
 }
 
@@ -702,16 +660,7 @@ async fn test_event_not_found() -> anyhow::Result<()> {
 async fn test_signless_withdraw_limit() -> anyhow::Result<()> {
     let (contract, _, buyer) = init().await?;
 
-    // Deposit more than signless limit (0.1 NEAR)
-    buyer
-        .call(contract.id(), "deposit_funds")
-        .args_json(json!({}))
-        .deposit(NearToken::from_millinear(200)) // 0.2 NEAR
-        .transact()
-        .await?
-        .into_result()?;
-
-    // Try signless withdraw (should fail - over 0.1 NEAR limit)
+    // Legacy signless withdraw path is removed.
     let result = buyer
         .call(contract.id(), "withdraw_funds_prepaid")
         .args_json(json!({}))
@@ -728,33 +677,16 @@ async fn test_signless_withdraw_limit() -> anyhow::Result<()> {
 async fn test_signless_withdraw_within_limit() -> anyhow::Result<()> {
     let (contract, _, buyer) = init().await?;
 
-    // Deposit exactly at limit (0.1 NEAR)
-    buyer
-        .call(contract.id(), "deposit_funds")
-        .args_json(json!({}))
-        .deposit(NearToken::from_millinear(100)) // 0.1 NEAR
-        .transact()
-        .await?
-        .into_result()?;
-
-    // Signless withdraw should work
-    buyer
+    // Legacy signless withdraw path is removed even within the old limit.
+    let result = buyer
         .call(contract.id(), "withdraw_funds_prepaid")
         .args_json(json!({}))
         .gas(near_workspaces::types::Gas::from_tgas(50))
         .transact()
-        .await?
-        .into_result()?;
+        .await?;
 
-    // Verify balance is now 0
-    let balance: String = contract
-        .view("get_user_balance")
-        .args_json(json!({"account_id": buyer.id()}))
-        .await?
-        .json()?;
+    assert!(result.is_failure());
 
-    assert_eq!(balance, "0");
-
-    println!("✅ Signless withdraw within limit test passed");
+    println!("✅ Legacy signless withdraw path is removed");
     Ok(())
 }

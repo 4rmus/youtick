@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "build:web4": "mv app/api app/_api_dev 2>/dev/null; NEXT_PUBLIC_DEPLOY_TARGET=web4 next build; EXIT=$?; mv app/_api_dev app/api 2>/dev/null; exit $EXIT",
+    "build": "next build --webpack",
+    "build:web4": "mv app/api app/_api_dev 2>/dev/null; NEXT_PUBLIC_DEPLOY_TARGET=web4 next build --webpack; EXIT=$?; mv app/_api_dev app/api 2>/dev/null; exit $EXIT",
     "start": "next start",
     "lint": "eslint",
     "postinstall": "patch-package",

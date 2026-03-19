@@ -10,6 +10,13 @@ import { clearMockLocalStorage, setupMockSessionKey, MockKeyPair } from '../setu
 
 // Mock modules
 vi.mock('@/lib/constants', () => ({
+  APP_CONFIG: {
+    publicAppUrl: 'https://app.youtick.io'
+  },
+  FEATURE_FLAGS: {
+    enableCrossChainCheckout: false,
+    enableLegacyUploadFallback: false
+  },
   NFT_CONTRACT_ID: 'test-contract.testnet',
   NETWORK_ID: 'testnet',
   IPFS_CONFIG: {
