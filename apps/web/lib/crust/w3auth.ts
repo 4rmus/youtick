@@ -11,6 +11,7 @@
 
 import { BrowserKeyStore } from '../keystore-v7';
 import { NEAR_CONFIG } from '../constants';
+import { getActiveUploadSessionKey } from '../upload-session-manager';
 import { CrustAuthToken, CrustError } from './types';
 import { CRUST_CONSTANTS } from './config';
 
@@ -36,14 +37,16 @@ export async function generateW3AuthToken(accountId: string): Promise<CrustAuthT
   }
 
   try {
-    // Retrieve Session Key from localStorage
-    const keyStore = new BrowserKeyStore();
-    const sessionKey = await keyStore.getKey(NEAR_CONFIG.networkId, accountId);
+    // Upload-session keys are kept in memory; legacy session keys live in localStorage.
+    const activeUploadSessionKey = getActiveUploadSessionKey(accountId);
+    const sessionKey =
+      activeUploadSessionKey ??
+      await new BrowserKeyStore().getKey(NEAR_CONFIG.networkId, accountId);
 
     if (!sessionKey) {
       throw new CrustError(
         'NO_SESSION_KEY',
-        'Session Key not found in localStorage. Please create a Session Key first.'
+        'Session Key not found in the active upload session or localStorage. Please create a Session Key first.'
       );
     }
 

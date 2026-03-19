@@ -1,133 +1,132 @@
 # Configuration Reference
 
-> Environment variables and configuration for YouTick
+> Gercekten kullanilan ortam degiskenleri ve ne ise yaradiklari
 
 ---
 
-## Environment Variables
+## Web App
 
-Create `apps/web/.env.local` from the template:
+`apps/web/.env.local` dosyasi icin temel ayarlar:
 
-```bash
-cp apps/web/.env.example apps/web/.env.local
-```
-
-### Network Configuration
-
-| Variable | Required | Default | Description |
-|----------|:--------:|---------|-------------|
-| `NEXT_PUBLIC_NEAR_NETWORK` | Yes | — | NEAR network (`mainnet` or `testnet`) |
-| `NEXT_PUBLIC_NFT_CONTRACT_ID` | Yes | — | NFT ticket contract account ID |
-
-```env
-# Mainnet
+```txt
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
+NEXT_PUBLIC_MARKET_CONTRACT_ID=youtick.near
+NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.youtick.near
+NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
-
-# Testnet
-NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
 ```
 
-### Nova Protocol
+Bu alanlar olmadan uygulama dogru contract setine ve ağa baglanamaz.
 
-| Variable | Required | Default | Description |
-|----------|:--------:|---------|-------------|
-| `NEXT_PUBLIC_NOVA_NETWORK` | Yes | — | Nova network (`mainnet` or `testnet`) |
-| `NEXT_PUBLIC_NOVA_CONTRACT_ID` | Yes | — | Nova SDK contract ID |
-| `NEXT_PUBLIC_NOVA_API_KEY` | Yes | — | Nova API authentication key |
-| `NEXT_PUBLIC_NOVA_ACCOUNT_ID` | Yes | — | Nova service account ID |
+### Gerekli
 
-```env
-# Mainnet
-NEXT_PUBLIC_NOVA_NETWORK=mainnet
-NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk.near
+| Degisken | Aciklama | Ornek |
+|----------|----------|-------|
+| `NEXT_PUBLIC_NEAR_NETWORK` | `mainnet` veya `testnet` | `mainnet` |
+| `NEXT_PUBLIC_MARKET_CONTRACT_ID` | Pazar ve sahiplik contract'i | `youtick.near` |
+| `NEXT_PUBLIC_ACCESS_CONTRACT_ID` | Session grant contract'i | `access.youtick.near` |
+| `NEXT_PUBLIC_REGISTRY_CONTRACT_ID` | Operator ve relayer registry contract'i | `registry.youtick.near` |
+| `NEXT_PUBLIC_NFT_CONTRACT_ID` | Eski uyumluluk alias'i | `youtick.near` |
 
-# Testnet
-NEXT_PUBLIC_NOVA_NETWORK=testnet
-NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk-6.testnet
-```
+### Opsiyonel
 
-### Trial Account System (Optional)
+| Degisken | Aciklama | Ne zaman gerekir |
+|----------|----------|------------------|
+| `NEXT_PUBLIC_KMS_URL` | Varsayilan KMS worker adresini ezer | Kendi KMS worker'in varsa |
+| `NEXT_PUBLIC_APP_URL` | Hediye linklerinde kullanilan ana URL | Farkli domain veya local tunnel kullaniyorsan |
+| `NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT` | 1Click + MetaMask yolunu acar | Ayrica readiness review gectiyse |
+| `NEXT_PUBLIC_ENABLE_LEGACY_UPLOAD_FALLBACK` | Eski upload fallback yolunu acar | Sadece bilincli gecis surecinde |
+| `NEXT_PUBLIC_ONBOARDING_KEY` | Trial olusturma icin kisitli onboarding key | Client-side trial akisini acik tutmak istiyorsan |
+| `NEXT_PUBLIC_ONE_CLICK_API_TOKEN` | 1Click quote ve swap istekleri icin partner tokeni | Arbitrum/Base odemelerini kullanacaksan |
+| `NEXT_PUBLIC_DEPLOY_TARGET` | Web4 build davranisini degistirir | `npm run build:web4` kullaniyorsan |
 
-| Variable | Required | Default | Description |
-|----------|:--------:|---------|-------------|
-| `RELAYER_ACCOUNT_ID` | No | — | Relayer account for sponsored transactions |
-| `RELAYER_PRIVATE_KEY` | No | — | Relayer private key (`ed25519:...`) |
+### Sunucu tarafinda kalanlar
 
-```env
-RELAYER_ACCOUNT_ID=relayer.youtick.near
-RELAYER_PRIVATE_KEY=ed25519:...
-```
+Bu degiskenler browser bundle'ina gitmemeli:
 
-> Trial accounts can also be created without a relayer using Onboarding Keys (client-side).
+| Degisken | Aciklama |
+|----------|----------|
+| `RELAYER_ACCOUNT_ID` | Opsiyonel trial relayer hesabi |
+| `RELAYER_PRIVATE_KEY` | Relayer private key |
+
+Relayer fallback kullaniliyorsa bu hesap registry'de aktif olmali ve mevcut contract yuzeyinde trial olusturma yetkisine sahip olmali.
 
 ---
 
-## RPC Endpoints
+## Ornek Konfigurasyonlar
 
-YouTick uses multi-endpoint failover for NEAR RPC:
+### Minimum mainnet
 
-**Mainnet (in priority order):**
-1. `https://free.rpc.fastnear.com`
-2. `https://rpc.mainnet.near.org`
-3. `https://near.lava.build`
-
-**Testnet:**
-1. `https://rpc.testnet.near.org`
-2. `https://rpc.testnet.pagoda.co`
-
-RPC failover is automatic — no configuration needed.
-
----
-
-## IPFS Gateways
-
-YouTick uses multi-gateway failover for IPFS content retrieval:
-
-1. `crustipfs.xyz` (Crust API, POST — primary)
-2. `ipfs.io` (IPFS Foundation)
-3. `dweb.link` (IPFS Foundation)
-4. `trustless-gateway.link`
-5. `4everland.io`
-6. `gateway.lighthouse.storage`
-7. `w3s.link`
-
-Gateway failover is automatic — no configuration needed.
-
----
-
-## Development vs Production
-
-| Setting | Development (Testnet) | Production (Mainnet) |
-|---------|----------------------|---------------------|
-| Network | `testnet` | `mainnet` |
-| Contract | `v1.utick.testnet` | `youtick.near` |
-| Nova Contract | `nova-sdk-6.testnet` | `nova-sdk.near` |
-| Wallet | Testnet wallets | Mainnet wallets |
-| NEAR Faucet | Available | N/A |
-
-### Minimal Testnet Configuration
-
-```env
-NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
-NEXT_PUBLIC_NOVA_NETWORK=testnet
-NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk-6.testnet
-NEXT_PUBLIC_NOVA_API_KEY=your-testnet-api-key
-NEXT_PUBLIC_NOVA_ACCOUNT_ID=your-testnet-account
-```
-
-### Minimal Mainnet Configuration
-
-```env
+```txt
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
+NEXT_PUBLIC_MARKET_CONTRACT_ID=youtick.near
+NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.youtick.near
+NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
-NEXT_PUBLIC_NOVA_NETWORK=mainnet
-NEXT_PUBLIC_NOVA_CONTRACT_ID=nova-sdk.near
-NEXT_PUBLIC_NOVA_API_KEY=your-mainnet-api-key
-NEXT_PUBLIC_NOVA_ACCOUNT_ID=your-mainnet-account
+NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
+NEXT_PUBLIC_APP_URL=https://youtick.net
+NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
+NEXT_PUBLIC_ENABLE_LEGACY_UPLOAD_FALLBACK=false
 ```
+
+### Local gelistirme
+
+```txt
+NEXT_PUBLIC_NEAR_NETWORK=testnet
+NEXT_PUBLIC_MARKET_CONTRACT_ID=dev-1773607954211-252231.v2-0.utick.testnet
+NEXT_PUBLIC_ACCESS_CONTRACT_ID=access-1773606802388.v2-0.utick.testnet
+NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry-1773606802388.v2-0.utick.testnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=dev-1773607954211-252231.v2-0.utick.testnet
+NEXT_PUBLIC_KMS_URL=http://localhost:8787
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+### Trial + cross-chain acik
+
+```txt
+NEXT_PUBLIC_NEAR_NETWORK=mainnet
+NEXT_PUBLIC_MARKET_CONTRACT_ID=youtick.near
+NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.youtick.near
+NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
+NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
+NEXT_PUBLIC_APP_URL=https://youtick.net
+NEXT_PUBLIC_ONBOARDING_KEY=ed25519:...
+NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
+NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true
+```
+
+---
+
+## KMS Worker
+
+`workers/youtick-kms` tarafinda gereken ayarlar:
+
+| Degisken | Aciklama |
+|----------|----------|
+| `ALLOWED_ORIGINS` | Izin verilen origin listesi |
+| `NEAR_CONTRACT_ID` | Sahiplik kontrolu icin kullanilan contract |
+| `NEAR_ACCESS_CONTRACT_ID` | Session grant dogrulamasi icin kullanilan contract |
+| `NEAR_REGISTRY_CONTRACT_ID` | Active operator ve relayer kaydi icin kullanilan contract |
+| `REGISTRY_OPERATOR_ACCOUNT_ID` | Bu worker'in registry kaydindaki operator hesabi |
+| `OPERATOR_SHARE_SECRET` | Share sifreleme icin worker sirri |
+| `NEAR_NETWORK` | `mainnet` veya `testnet` |
+
+Gerekli KV binding'leri:
+
+- `VIDEO_KEYS`
+- `RATE_LIMIT`
+- `ACCESS_CACHE`
+
+Mainnet ve testnet icin ayri KV namespace kullan. Ayni namespace ID'lerini iki ortamda da kullanma.
+
+---
+
+## Notlar
+
+- `NEXT_PUBLIC_*` ile baslayan tum degiskenler istemciye gider.
+- Gercek sirlar sadece worker veya API route tarafinda tutulmali.
+- KMS anahtar korumasi icin browser degil, worker tarafindaki imza ve sahiplik kontrolleri esas alinir.
 
 ---
 

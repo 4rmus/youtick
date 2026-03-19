@@ -7,7 +7,7 @@ import { Loader2, Copy, Check, Download, Link2 } from "lucide-react";
 import { useWallet } from "@/components/providers/WalletProvider";
 import { useLanguage } from "@/components/providers/LanguageContext";
 import { actions as nearActions } from "near-api-js";
-import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from "@/lib/constants";
+import { APP_CONFIG, NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from "@/lib/constants";
 
 interface GiftLinkGeneratorProps {
     eventCid: string;
@@ -91,7 +91,7 @@ export function GiftLinkGenerator({
                 ]
             });
 
-            const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+            const baseUrl = APP_CONFIG.publicAppUrl;
             const claimLinks = secretKeys.map((secret: string) =>
                 `${baseUrl}/claim?secret=${encodeURIComponent(secret)}&eventCid=${encodeURIComponent(eventCid)}`
             );

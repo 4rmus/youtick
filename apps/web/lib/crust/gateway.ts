@@ -15,6 +15,15 @@ import { CRUST_GATEWAYS, CRUST_CONSTANTS } from './config';
  * Runtime gateway state (cloned from config to allow mutation)
  */
 const gateways: GatewayConfig[] = CRUST_GATEWAYS.map(g => ({ ...g }));
+const preferredGatewayByPurpose = new Map<string, string>();
+
+interface GatewayProbeOptions {
+  timeout?: number;
+  range?: { start: number; end: number };
+  purpose?: 'video' | 'image' | 'generic';
+  acceptStatuses?: number[];
+  signal?: AbortSignal;
+}
 
 /**
  * Get full URL for a CID from the best available gateway
@@ -47,6 +56,66 @@ export function getGatewayUrls(cid: string): string[] {
 }
 
 /**
+ * Resolve a latency-aware gateway URL for media playback.
+ *
+ * Unlike getGatewayUrl(), this actively probes healthy gateways and returns
+ * the first responsive URL, which avoids waiting on a slow-but-not-failing
+ * primary gateway before the browser starts loading media.
+ */
+export async function resolveGatewayUrl(
+  cid: string,
+  options?: GatewayProbeOptions,
+): Promise<string> {
+  const purpose = options?.purpose ?? 'generic';
+  const timeout = options?.timeout ?? Math.min(CRUST_CONSTANTS.FETCH_TIMEOUT, 4_000);
+  const acceptStatuses = options?.acceptStatuses ?? (options?.range ? [206] : [200, 206]);
+  const preferredGateway = preferredGatewayByPurpose.get(purpose);
+  const candidates = getProbeCandidates(preferredGateway);
+  const errors: string[] = [];
+
+  if (preferredGateway) {
+    const preferredUrl = `${preferredGateway}/${cid}`;
+    try {
+      await probeGatewayUrl(preferredUrl, {
+        timeout,
+        range: options?.range,
+        acceptStatuses,
+      });
+      return preferredUrl;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`${preferredGateway}: ${msg}`);
+      preferredGatewayByPurpose.delete(purpose);
+    }
+  }
+
+  try {
+    const winner = await Promise.any(
+      candidates.map(async (gateway) => {
+        const url = `${gateway.url}/${cid}`;
+        await probeGatewayUrl(url, {
+          timeout,
+          range: options?.range,
+          acceptStatuses,
+        });
+        preferredGatewayByPurpose.set(purpose, gateway.url);
+        return url;
+      }),
+    );
+    return winner;
+  } catch (err: unknown) {
+    const msg = err instanceof AggregateError
+      ? err.errors.map((entry) => entry instanceof Error ? entry.message : String(entry)).join('; ')
+      : err instanceof Error ? err.message : String(err);
+
+    throw new CrustError(
+      'GATEWAY_UNAVAILABLE',
+      `Could not resolve a responsive gateway for CID ${cid}: ${[...errors, msg].filter(Boolean).join('; ')}`,
+    );
+  }
+}
+
+/**
  * Fetch content from Crust API first, then public IPFS gateways as fallback.
  *
  * Crust API (POST /api/v0/cat?arg={CID}) is tried first because:
@@ -61,72 +130,26 @@ export function getGatewayUrls(cid: string): string[] {
  */
 export async function fetchFromGateways(
   cid: string,
-  options?: { timeout?: number }
+  options?: { timeout?: number; signal?: AbortSignal }
 ): Promise<Response> {
   const timeout = options?.timeout || CRUST_CONSTANTS.FETCH_TIMEOUT;
   const errors: string[] = [];
 
-  // 1. Try public IPFS gateways first (Fastest, CDN cached, Range support)
-  const sortedGateways = getHealthyGateways();
-
-  if (sortedGateways.length === 0) {
-    // Reset all gateways and try again if none are marked healthy
-    resetGatewayHealth();
-    sortedGateways.push(...getHealthyGateways());
-  }
-
-  // Pick top 3 gateways for a race to minimize latency
-  const raceGateways = sortedGateways.slice(0, 3);
-
-  if (raceGateways.length > 0) {
-    try {
-      const racePromises = raceGateways.map(async (gateway) => {
-        const url = `${gateway.url}/${cid}`;
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeout);
-
-        try {
-          const response = await fetch(url, { signal: controller.signal });
-          clearTimeout(timer);
-
-          if (response.ok) {
-            return response;
-          }
-
-          errors.push(`${gateway.name}: HTTP ${response.status}`);
-          markGatewayUnhealthy(gateway.name);
-          throw new Error(`HTTP ${response.status}`);
-        } catch (err: unknown) {
-          clearTimeout(timer);
-          const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`${gateway.name}: ${msg}`);
-          markGatewayUnhealthy(gateway.name);
-          throw err;
-        }
-      });
-
-      // Return the first successful response
-      const fastestResponse = await Promise.any(racePromises);
-      return fastestResponse;
-    } catch {
-      // All race gateways failed, we will fall back to Crust API below
-      console.warn(`[Gateway Race] All top gateways failed for ${cid}. Falling back to Crust API.`);
-    }
-  }
-
-  // 2. Fall back to Crust API endpoints (POST /api/v0/cat)
-  // Guaranteed availability for Crust-pinned content, but slower and no Range support.
-  const crustEndpoints = [CRUST_CONSTANTS.READ_ENDPOINT, CRUST_CONSTANTS.READ_ENDPOINT_FALLBACK];
+  // 1. Try Crust API endpoints first.
+  // For app-uploaded content this avoids public gateway propagation delays and noisy 4xx/5xxs.
+  const crustEndpoints = [
+    CRUST_CONSTANTS.READ_ENDPOINT,
+    CRUST_CONSTANTS.READ_ENDPOINT_FALLBACK,
+  ].flatMap((endpoint) => (endpoint && endpoint.startsWith('https://') ? [endpoint] : []));
   for (const endpoint of crustEndpoints) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
+    const { controller, cleanup } = createAbortableController(timeout, options?.signal);
 
     try {
       const response = await fetch(`${endpoint}?arg=${cid}`, {
         method: 'POST',
         signal: controller.signal,
       });
-      clearTimeout(timer);
+      cleanup();
 
       if (response.ok) {
         return response;
@@ -134,9 +157,76 @@ export async function fetchFromGateways(
 
       errors.push(`crust-api(${endpoint.includes('crustfiles') ? 'fallback' : 'primary'}): HTTP ${response.status}`);
     } catch (err: unknown) {
-      clearTimeout(timer);
+      cleanup();
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`crust-api: ${msg}`);
+      if (options?.signal?.aborted) {
+        throw err;
+      }
+    }
+  }
+
+  // 2. Fall back to public IPFS gateways when Crust API is unavailable.
+  const sortedGateways = getHealthyGateways();
+
+  if (sortedGateways.length === 0) {
+    resetGatewayHealth();
+    sortedGateways.push(...getHealthyGateways());
+  }
+
+  const raceGateways = sortedGateways.slice(0, 3);
+
+  if (raceGateways.length > 0) {
+    try {
+      const raceControllers = raceGateways.map(() => createAbortableController(timeout, options?.signal));
+      let winnerIndex = -1;
+      const abortLosers = (winningIndex: number) => {
+        winnerIndex = winningIndex;
+        raceControllers.forEach(({ controller, cleanup }, index) => {
+          if (index === winningIndex) {
+            cleanup();
+            return;
+          }
+
+          controller.abort();
+          cleanup();
+        });
+      };
+
+      const racePromises = raceGateways.map(async (gateway, index) => {
+        const url = `${gateway.url}/${cid}`;
+        const { controller, cleanup } = raceControllers[index];
+
+        try {
+          const response = await fetch(url, { signal: controller.signal });
+
+          if (response.ok) {
+            abortLosers(index);
+            return response;
+          }
+
+          cleanup();
+          errors.push(`${gateway.name}: HTTP ${response.status}`);
+          markGatewayUnhealthy(gateway.name);
+          throw new Error(`HTTP ${response.status}`);
+        } catch (err: unknown) {
+          cleanup();
+          if (winnerIndex >= 0 && controller.signal.aborted) {
+            throw err;
+          }
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`${gateway.name}: ${msg}`);
+          markGatewayUnhealthy(gateway.name);
+          if (options?.signal?.aborted) {
+            throw err;
+          }
+          throw err;
+        }
+      });
+
+      return await Promise.any(racePromises);
+    } catch {
+      // Ignore individual gateway noise; the aggregate error below is enough.
     }
   }
 
@@ -144,6 +234,83 @@ export async function fetchFromGateways(
     'GATEWAY_UNAVAILABLE',
     `All gateways and Crust API failed for CID ${cid}: ${errors.join(', ')}`
   );
+}
+
+function getProbeCandidates(preferredGateway?: string): GatewayConfig[] {
+  refreshGatewayHealth();
+
+  const healthy = getHealthyGateways();
+  if (healthy.length === 0) {
+    resetGatewayHealth();
+  }
+
+  const refreshed = getHealthyGateways();
+  const preferred = preferredGateway
+    ? refreshed.find((gateway) => gateway.url === preferredGateway)
+    : undefined;
+  const rest = refreshed.filter((gateway) => gateway.url !== preferredGateway);
+  const ordered = preferred ? [preferred, ...rest] : rest;
+
+  return ordered.slice(0, 3);
+}
+
+async function probeGatewayUrl(
+  url: string,
+  options: Required<Pick<GatewayProbeOptions, 'timeout' | 'acceptStatuses'>> & Pick<GatewayProbeOptions, 'range'>,
+): Promise<void> {
+  const { controller, cleanup } = createAbortableController(options.timeout);
+  const headers = options.range
+    ? { Range: `bytes=${options.range.start}-${options.range.end}` }
+    : undefined;
+
+  try {
+    const response = await fetch(url, {
+      headers,
+      signal: controller.signal,
+    });
+
+    if (!options.acceptStatuses.includes(response.status)) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+  } finally {
+    cleanup();
+  }
+}
+
+function createAbortableController(timeout: number, signal?: AbortSignal): {
+  controller: AbortController;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  if (!signal) {
+    return {
+      controller,
+      cleanup: () => clearTimeout(timer),
+    };
+  }
+
+  const handleAbort = () => controller.abort();
+
+  if (signal.aborted) {
+    controller.abort();
+    clearTimeout(timer);
+    return {
+      controller,
+      cleanup: () => {},
+    };
+  }
+
+  signal.addEventListener('abort', handleAbort, { once: true });
+
+  return {
+    controller,
+    cleanup: () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', handleAbort);
+    },
+  };
 }
 
 /**
@@ -156,7 +323,6 @@ export function markGatewayUnhealthy(name: string): void {
   if (gateway) {
     gateway.healthy = false;
     gateway.lastCheck = Date.now();
-    console.warn(`[CRUST Gateway] Marked ${name} as unhealthy`);
   }
 }
 

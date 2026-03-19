@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getProvider, viewContract } from '@/lib/near';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { NEAR_CONFIG } from '@/lib/constants';
+import { resolvePreferredMediaUrl } from '@/lib/video-delivery';
 
 const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
 
@@ -34,10 +35,13 @@ async function fetchEventDescription(encrypted_cid: string): Promise<EventDescri
     }
 
     const parsed = parseTitleMetadata(event.title);
+    const thumbnailUrl = parsed.thumbnailCid
+        ? await resolvePreferredMediaUrl(parsed.thumbnailUrl ?? null, parsed.manifestCid)
+        : null;
 
     return {
         description: event.description || null,
-        thumbnailUrl: parsed.thumbnailCid ? (parsed.thumbnailUrl ?? null) : null,
+        thumbnailUrl,
         creatorId: event.creator_id || null,
     };
 }

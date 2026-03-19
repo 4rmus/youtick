@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "build:web4": "mv app/api app/_api_dev 2>/dev/null; NEXT_PUBLIC_DEPLOY_TARGET=web4 next build; EXIT=$?; mv app/_api_dev app/api 2>/dev/null; exit $EXIT",
+    "build": "next build --webpack",
+    "build:web4": "mv app/api app/_api_dev 2>/dev/null; NEXT_PUBLIC_DEPLOY_TARGET=web4 next build --webpack; EXIT=$?; mv app/_api_dev app/api 2>/dev/null; exit $EXIT",
     "start": "next start",
     "lint": "eslint",
     "postinstall": "patch-package",
@@ -30,6 +30,7 @@
     "clsx": "^2.1.1",
     "dotenv": "^17.2.3",
     "lucide-react": "^0.555.0",
+    "mp4box": "^2.3.0",
     "multiformats": "^13.4.2",
     "near-api-js": "^7.0.3",
     "near-seed-phrase": "^0.2.1",

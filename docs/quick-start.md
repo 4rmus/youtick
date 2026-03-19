@@ -39,11 +39,12 @@ cp .env.example .env.local
 
 Minimum `.env.local`:
 
-```env
-NEXT_PUBLIC_NEAR_NETWORK=mainnet
-NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
-NEXT_PUBLIC_ONBOARDING_KEY=ed25519:...
-# Optional: override KMS worker endpoint
+```txt
+NEXT_PUBLIC_NEAR_NETWORK=testnet
+NEXT_PUBLIC_NFT_CONTRACT_ID=dev-1773607954211-252231.v2-0.utick.testnet
+NEXT_PUBLIC_MARKET_CONTRACT_ID=dev-1773607954211-252231.v2-0.utick.testnet
+NEXT_PUBLIC_ACCESS_CONTRACT_ID=access-1773606802388.v2-0.utick.testnet
+NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry-1773606802388.v2-0.utick.testnet
 NEXT_PUBLIC_KMS_URL=http://localhost:8787
 ```
 
@@ -112,4 +113,3 @@ cargo test
 | Follow user journeys | [User Flows](./guides/user-flows.md) |
 | Work on frontend modules | [Frontend](./frontend.md) |
 | Contract internals | [Smart Contract Architecture](./architecture/smart-contract.md) |
-

@@ -18,6 +18,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { NEAR_CONFIG } from './constants';
 import { getCurrentRpcUrl } from './rpc-failover';
 
 const isServer = typeof window === 'undefined';
@@ -296,7 +297,7 @@ class DailyGlobalLimiter {
         if (!isServer) return;
         try {
             this.lastSync = Date.now();
-            const contractId = process.env.NEXT_PUBLIC_NFT_CONTRACT_ID || 'youtick.near';
+            const contractId = NEAR_CONFIG.marketContractId;
 
             const rpcUrl = getCurrentRpcUrl();
 

@@ -1,87 +1,69 @@
-# Structure: NEAR Bindgen
+# Structure: Contract Macros
 
-Use `#[near_bindgen]` macro to properly expose contract methods and state.
+For `near-sdk 5.x`, prefer the newer macro style for new contracts.
 
-## Why It Matters
+## Recommended Default
 
-The `#[near_bindgen]` macro is essential for NEAR smart contracts as it:
-- Generates serialization/deserialization code
-- Exposes methods to the NEAR runtime
-- Handles contract state management
-- Enables proper initialization
+Use:
+
+- `#[near(contract_state)]` on the main state struct
+- `#[near]` on the implementation block
+- `#[init]` on initialization methods
+
+Keep `#[near_bindgen]` only when maintaining a contract that already uses it consistently and where a macro migration would add unnecessary risk.
 
 ## ❌ Incorrect
 
 ```rust
-// Missing #[near_bindgen] macro
 pub struct Contract {
     pub owner: AccountId,
-    pub data: UnorderedMap<AccountId, String>,
 }
 
 impl Contract {
     pub fn new(owner: AccountId) -> Self {
-        Self {
-            owner,
-            data: UnorderedMap::new(b"d"),
-        }
+        Self { owner }
     }
 }
 ```
 
-**Problems:**
-- Contract methods won't be callable
-- State won't be properly serialized
-- Runtime won't recognize the contract
-- No initialization validation
+Problems:
 
-## ✅ Correct
+- The runtime macros are missing.
+- Initialization rules are not enforced.
+- The state layout is not clearly marked for the contract framework.
+
+## ✅ Correct For New Code
 
 ```rust
-use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::UnorderedMap;
-use near_sdk::{env, near_bindgen, AccountId, PanicOnDefault};
+use near_sdk::{env, near, AccountId, PanicOnDefault};
 
-#[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
+#[near(contract_state)]
+#[derive(PanicOnDefault)]
 pub struct Contract {
     owner: AccountId,
-    data: UnorderedMap<AccountId, String>,
 }
 
-#[near_bindgen]
+#[near]
 impl Contract {
     #[init]
     pub fn new(owner: AccountId) -> Self {
         assert!(!env::state_exists(), "Contract already initialized");
-        Self {
-            owner,
-            data: UnorderedMap::new(b"d"),
-        }
+        Self { owner }
     }
-    
+
     pub fn get_owner(&self) -> AccountId {
         self.owner.clone()
     }
 }
 ```
 
-**Benefits:**
-- Proper contract structure with serialization
-- Methods are callable from outside
-- State management works correctly
-- Initialization is validated with `#[init]`
-- Uses `PanicOnDefault` to prevent uninitialized state
+## Legacy-Compatible Pattern
+
+If the contract already uses `#[near_bindgen]`, keep it consistent inside that codebase instead of mixing macro styles piecemeal.
 
 ## Additional Considerations
 
-- Always derive `BorshDeserialize` and `BorshSerialize`
-- Use `#[init]` for initialization methods
-- Consider `PanicOnDefault` to prevent accidental default initialization
-- Mark view functions with `&self` (not `&mut self`)
-- Use proper collection prefixes (unique single-byte identifiers)
-
-## References
-
-- [Smart Contract Structure](https://docs.near.org/sdk/rust/contract-structure/near-bindgen)
-- [Initialization](https://docs.near.org/sdk/rust/contract-structure/initialization)
+- Derive only what the state actually needs.
+- Keep initialization explicit and single-use.
+- Mark view methods with `&self` and state-changing methods with `&mut self`.
+- Use stable collection prefixes and think about migration before shipping state changes.

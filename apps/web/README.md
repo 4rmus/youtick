@@ -1,108 +1,86 @@
 # YouTick Web Application
 
-Next.js frontend for the YouTick decentralized video platform.
+Next.js frontend for the YouTick video platform.
 
-> **Client-First Architecture** - Core media/ticket flows run in-browser, with minimal backend services for KMS and sponsored onboarding.
-
-> For comprehensive documentation, see the [docs/](../../docs/) folder.
+> Aktif akis: browser tarafinda sifreleme, KMS key retrieval, Crust/IPFS delivery, NEAR ticket sahipligi.
 
 ## Documentation
 
-| Topic | Document |
-|-------|----------|
+| Konu | Dokuman |
+|------|---------|
+| System Architecture | [docs/architecture/README.md](../../docs/architecture/README.md) |
+| Storage & Delivery | [docs/architecture/storage.md](../../docs/architecture/storage.md) |
+| Upload Sessions | [docs/architecture/session-keys.md](../../docs/architecture/session-keys.md) |
 | Smart Contract | [docs/architecture/smart-contract.md](../../docs/architecture/smart-contract.md) |
-| Encryption & KMS | [docs/architecture/storage.md](../../docs/architecture/storage.md) |
-| Session Keys | [docs/architecture/session-keys.md](../../docs/architecture/session-keys.md) |
-| Chain Signatures | [docs/architecture/chain-signatures.md](../../docs/architecture/chain-signatures.md) |
 | User Flows | [docs/guides/user-flows.md](../../docs/guides/user-flows.md) |
 | Contract Methods | [docs/api/contract-methods.md](../../docs/api/contract-methods.md) |
 
 ## Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Start dev server
 npm run dev
-
-# Build for production
 npm run build
 ```
 
-## Environment Variables
+## Environment
 
-Create `.env.local` (see [.env.example](.env.example) for template):
+Minimum:
 
 ```env
-# Required - NEAR Network
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
+NEXT_PUBLIC_MARKET_CONTRACT_ID=youtick.near
+NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.youtick.near
+NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
-
-# Optional - KMS worker URL override
 NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
+NEXT_PUBLIC_APP_URL=https://youtick.net
+NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
 ```
 
-## Project Structure
+Sik kullanilan opsiyoneller:
 
-```
-app/              # Next.js App Router pages
-  ├── discover/   # Video discovery page
-  ├── upload/     # Video upload page
-  ├── watch/      # Video playback page
-  ├── profile/    # User profile page
-  └── ticket/     # Ticket purchase page
-
-components/       # React components
-  ├── landing/    # Landing page sections
-  ├── ui/         # Reusable UI components
-  └── providers/  # Context providers
-
-hooks/            # Custom React hooks
-  ├── useAllVideos.ts
-  ├── useOwnedTokens.ts
-  └── useNearWallet.ts
-
-lib/              # Utilities & services
-  ├── kms/        # Cloudflare Edge KMS integration
-  │   ├── client.ts       # Store/retrieve encryption keys
-  │   ├── crypto.ts       # AES encryption helpers
-  │   └── signatures.ts   # Request signing helpers
-  ├── session-manager.ts  # NEAR Session Keys (signless)
-  ├── chain-signatures.ts # NEAR MPC (ETH address derivation)
-  ├── gift-service.ts     # Gift link system
-  └── translations.ts     # i18n (TR/EN)
+```env
+NEXT_PUBLIC_ONBOARDING_KEY=ed25519:...
+NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
+NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true
+NEXT_PUBLIC_ENABLE_LEGACY_UPLOAD_FALLBACK=true
 ```
 
-## Key Components
+## Project Shape
 
-| Component | Description |
-|-----------|-------------|
-| `UploadForm` | Video upload with client-side encryption + KMS key storage |
-| `IpfsPlayer` | Decrypted video playback via KMS authorized key retrieval |
-| `TicketPurchaseCard` | Event ticket purchasing |
-| `WalletSelector` | NEAR wallet connection |
+```text
+app/                    # App Router pages
+components/             # Upload, player, ticket, gift, provider components
+hooks/                  # UI hooks
+lib/
+  kms/                  # Key storage, auth and decryption helpers
+  crust/                # Upload and gateway logic
+  intents/              # 1Click quote/swap helpers
+  evm/                  # MetaMask and EVM helpers
+  session-manager.ts    # Legacy session-key helper
+  upload-session-manager.ts
+  gift-service.ts
+```
 
-## Technologies
+## Core Components
 
-- **Next.js 16** with App Router
-- **React 19** with Server Components
-- **Tailwind CSS 4** for styling
-- **near-api-js v7** for NEAR blockchain
-- **@near-wallet-selector** for wallet integration
-- **Cloudflare Worker + KV** for key custody and access checks
-- **IPFS** for decentralized video storage
+| Bilesen | Gorev |
+|---------|-------|
+| `UploadForm` | Sifreleme, upload ve publish akisi |
+| `IpfsPlayer` | KMS + IPFS tabanli playback |
+| `TicketPurchaseCard` | NEAR satin alma, launch sonrasi acilabilir cross-chain yolu |
+| `GiftLinkGenerator` | Hediye link uretimi |
+| `OnboardingKeyInit` | Trial onboarding key bootstrap |
 
-## Decentralization
+## Runtime Model
 
-All core operations run client-side:
-
-| Operation | Method |
-|-----------|--------|
-| Video Encryption | Browser AES (client-side) |
-| Key Custody | KMS Worker (signed requests + on-chain access checks) |
-| IPFS Upload | Crust gateway (encrypted blobs) |
-| IPFS Retrieval | Multi-gateway failover |
-| NFT Minting | NEAR contract (prepaid balance) |
-| Payments | On-chain (98% creator, 2% platform) |
-| Access Control | NFT ownership + contract `has_ticket` checks |
+| Islem | Aktif yol |
+|------|-----------|
+| Video encryption | Browser AES-CTR |
+| Key custody | KMS worker |
+| IPFS upload | Crust |
+| Playback | Gateway failover + browser decrypt |
+| Publish auth | Upload session |
+| Ticket purchase | On-chain NEAR call |
+| Experimental checkout | Feature flag aciksa 1Click + MetaMask + implicit NEAR account |

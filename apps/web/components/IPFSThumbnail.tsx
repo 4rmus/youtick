@@ -1,64 +1,16 @@
 'use client';
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
-import { getGatewayUrls } from '@/lib/crust';
-
-// Module-level cache to avoid repeated URL resolution work
-const resolvedUrlCache = new Map<string, string[]>();
-
-/**
- * Extract IPFS CID from various URL formats.
- * Returns null if URL doesn't contain an IPFS CID.
- */
-function extractCidFromUrl(url: string): string | null {
-  const ipfsMatch = url.match(/\/ipfs\/([A-Za-z0-9]{46,})/);
-  if (ipfsMatch) return ipfsMatch[1];
-
-  if (/^(Qm[1-9A-HJ-NP-Za-km-z]{44,}|ba[a-z2-7]{57,})$/.test(url)) {
-    return url;
-  }
-
-  if (url.startsWith('ipfs://')) {
-    return url.replace('ipfs://', '');
-  }
-
-  return null;
-}
-
-function getThumbnailGatewayUrls(cid: string): string[] {
-  const publicGateways = getGatewayUrls(cid);
-  const crustDirect = `https://crustipfs.xyz/ipfs/${cid}`;
-  return [...publicGateways, crustDirect];
-}
-
-function resolveUrlCandidates(inputUrl: string): string[] {
-  const cached = resolvedUrlCache.get(inputUrl);
-  if (cached) return cached;
-
-  if (inputUrl.startsWith('data:')) {
-    const result = [inputUrl];
-    resolvedUrlCache.set(inputUrl, result);
-    return result;
-  }
-
-  const cid = extractCidFromUrl(inputUrl);
-  if (cid) {
-    const result = getThumbnailGatewayUrls(cid);
-    resolvedUrlCache.set(inputUrl, result);
-    return result;
-  }
-
-  if (inputUrl.startsWith('http://') || inputUrl.startsWith('https://') || inputUrl.startsWith('/')) {
-    const result = [inputUrl];
-    resolvedUrlCache.set(inputUrl, result);
-    return result;
-  }
-
-  const result = [inputUrl];
-  resolvedUrlCache.set(inputUrl, result);
-  return result;
-}
+import {
+  DEFAULT_IPFS_MEDIA_TIMEOUT_MS,
+  getIpfsMediaCandidates,
+  getIpfsMediaSourceKey,
+  getNextIpfsMediaUrl,
+  rememberFailedIpfsMediaUrl,
+  rememberSuccessfulIpfsMediaUrl,
+  resolveIpfsMediaUrl,
+} from '@/lib/ipfs-media';
 
 interface IPFSThumbnailProps {
   /** URL to display - supports IPFS CIDs, gateway URLs, and direct URLs */
@@ -73,13 +25,14 @@ interface IPFSThumbnailProps {
   onLoad?: () => void;
   /** Called when image fails to load */
   onError?: (error: Error) => void;
+  /** Browser loading hint */
+  loading?: 'lazy' | 'eager';
+  /** Probe timeout before trying the next gateway candidate */
+  timeoutMs?: number;
 }
 
 /**
- * IPFS thumbnail with gateway fallback chain.
- *
- * This component intentionally avoids effect-driven state updates.
- * Fallback attempts are tracked per source URL and updated only in event handlers.
+ * IPFS thumbnail with latency-aware gateway selection.
  */
 export function IPFSThumbnail({
   url,
@@ -88,49 +41,115 @@ export function IPFSThumbnail({
   fallbackUrl = '/placeholder-video.svg',
   onLoad,
   onError,
+  loading = 'lazy',
+  timeoutMs = DEFAULT_IPFS_MEDIA_TIMEOUT_MS,
 }: IPFSThumbnailProps) {
-  const sourceKey = url || '__fallback__';
+  const sourceKey = getIpfsMediaSourceKey(url);
   const candidates = useMemo(
-    () => (url ? resolveUrlCandidates(url) : [fallbackUrl]),
-    [url, fallbackUrl],
+    () => getIpfsMediaCandidates(url, {
+      sourceKey,
+      purpose: 'image',
+      fallbackUrl,
+    }),
+    [fallbackUrl, sourceKey, url],
   );
+  const [orderedCandidates, setOrderedCandidates] = useState<string[]>(() => candidates.length > 0 ? candidates : [fallbackUrl]);
+  const [imageUrl, setImageUrl] = useState<string>(() => candidates[0] ?? fallbackUrl);
 
-  // Per-source attempt counters so changing `url` naturally resets attempts.
-  const [attemptsBySource, setAttemptsBySource] = useState<Record<string, number>>({});
-  const attempt = attemptsBySource[sourceKey] || 0;
+  useEffect(() => {
+    let cancelled = false;
 
-  const imageUrl = attempt < candidates.length
-    ? candidates[attempt]
-    : fallbackUrl;
+    async function resolveBestCandidate() {
+      const nextFallbackCandidates = getIpfsMediaCandidates(url, {
+        sourceKey,
+        purpose: 'image',
+        fallbackUrl,
+      });
 
-  const handleImageError = useCallback(() => {
-    const nextAttempt = attempt + 1;
+      setOrderedCandidates(nextFallbackCandidates);
+      setImageUrl(nextFallbackCandidates[0] ?? fallbackUrl);
 
-    if (nextAttempt < candidates.length) {
-      setAttemptsBySource((prev) => ({ ...prev, [sourceKey]: nextAttempt }));
+      if (!url || nextFallbackCandidates.length <= 1) {
+        return;
+      }
+
+      try {
+        const resolvedUrl = await resolveIpfsMediaUrl(url, {
+          sourceKey,
+          purpose: 'image',
+          timeoutMs,
+          fallbackUrl,
+        });
+        if (cancelled) return;
+
+        const nextCandidates = resolvedUrl
+          ? [resolvedUrl, ...nextFallbackCandidates.filter((candidate) => candidate !== resolvedUrl)]
+          : nextFallbackCandidates;
+        setOrderedCandidates(nextCandidates);
+        setImageUrl(nextCandidates[0] ?? fallbackUrl);
+      } catch {
+        if (cancelled) return;
+        setOrderedCandidates([fallbackUrl]);
+        setImageUrl(fallbackUrl);
+        onError?.(new Error('All gateways failed'));
+      }
+    }
+
+    void resolveBestCandidate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fallbackUrl, onError, sourceKey, timeoutMs, url]);
+
+  const handleImageError = () => {
+    if (imageUrl && imageUrl !== fallbackUrl) {
+      rememberFailedIpfsMediaUrl(imageUrl, {
+        input: url,
+        sourceKey,
+        purpose: 'image',
+      });
+    }
+
+    const nextCandidate = getNextIpfsMediaUrl(url, {
+      currentUrl: imageUrl,
+      sourceKey,
+      purpose: 'image',
+      fallbackUrl,
+    }) ?? orderedCandidates.find((candidate) => candidate !== imageUrl && candidate !== fallbackUrl);
+    if (nextCandidate) {
+      setImageUrl(nextCandidate);
       return;
     }
 
-    // Exhausted all candidates; move to fallback state and notify caller.
-    setAttemptsBySource((prev) => ({ ...prev, [sourceKey]: candidates.length }));
-    onError?.(new Error('All gateways failed'));
-  }, [attempt, candidates, sourceKey, onError]);
+    onError?.(new Error('Image load failed'));
+    setImageUrl(fallbackUrl);
+  };
 
-  const handleImageLoad = useCallback(() => {
+  const handleImageLoad = () => {
+    if (imageUrl !== fallbackUrl) {
+      rememberSuccessfulIpfsMediaUrl(imageUrl, {
+        sourceKey,
+        purpose: 'image',
+      });
+    }
     onLoad?.();
-  }, [onLoad]);
+  };
 
   return (
-    <Image
-      src={imageUrl}
-      alt={alt}
-      className={className}
-      width={1600}
-      height={900}
-      sizes="100vw"
-      unoptimized
-      onError={handleImageError}
-      onLoad={handleImageLoad}
-    />
+    <span className="contents">
+      <Image
+        src={imageUrl}
+        alt={alt}
+        className={className}
+        width={1600}
+        height={900}
+        sizes="100vw"
+        unoptimized
+        loading={loading}
+        onError={handleImageError}
+        onLoad={handleImageLoad}
+      />
+    </span>
   );
 }

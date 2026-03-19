@@ -1,72 +1,62 @@
 # YouTick Documentation
 
-> Decentralized Video-on-Demand Platform on NEAR Protocol
+> Current runtime: browser encryption, NEAR entitlements, registry-enforced operators, and share-based playback
 
-YouTick is an open-source token-gated video platform. Creators upload videos, encrypt paid content client-side (AES-CTR), store ciphertext on IPFS/Crust, and keep decryption keys in an Edge KMS worker. Access is enforced by NFT ownership on NEAR.
+YouTick currently runs with client-side media encryption, a market/access/registry contract split, and a multi-operator playback path. When docs and code disagree, the codebase is the source of truth.
 
-**Contract:** `youtick.near` | **Network:** NEAR Mainnet | **Encryption:** Client-side AES-CTR + Cloudflare KMS
-
----
-
-## Quick Navigation
-
-### Getting Started
-
-- [Prerequisites](getting-started/prerequisites.md) -- System requirements
-- [Installation](getting-started/installation.md) -- Clone, install, run
-- [Configuration](getting-started/configuration.md) -- App/environment setup
-- [Quick Start](quick-start.md) -- Minimal local setup flow
-
-### Architecture
-
-- [System Architecture](architecture/README.md) -- High-level design and data flow
-- [Smart Contract](architecture/smart-contract.md) -- NEAR contract structure and methods
-- [Session Keys](architecture/session-keys.md) -- Signless UX model
-- [Storage](architecture/storage.md) -- IPFS + Crust retrieval model
-
-### API Reference
-
-- [Contract Methods](api/contract-methods.md) -- Public method catalog
-
-### Guides
-
-- [User Flows](guides/user-flows.md) -- Upload, purchase, claim, trial journeys
-- [Developer Guide](guides/developer-guide.md) -- Development workflow and conventions
-- [Environment](guides/environment.md) -- Environment variables
-
-### Project
-
-- [Overview](overview.md) -- Product and value proposition
-- [Security](security.md) -- Threat model and controls
-- [Testing](testing.md) -- Test strategy and commands
-- [Contributing](contributing.md) -- Contribution workflow
-- [Roadmap](roadmap.md) -- Planned work
-- [Frontend](frontend.md) -- Frontend architecture and modules
+**Mainnet target:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`  
+**Current playback path:** Browser AES-CTR + registry-enforced operator share reconstruction
 
 ---
 
-## Reading Order
+## Get Started
 
-### New Contributors
+- [Prerequisites](getting-started/prerequisites.md)
+- [Installation](getting-started/installation.md)
+- [Configuration](getting-started/configuration.md)
+- [Quick Start](quick-start.md)
+
+## Architecture
+
+- [System Architecture](architecture/README.md)
+- [Youtick Zero Trust Architecture v1](architecture/youtick-zero-trust-architecture-v1.md)
+- [Final Implementation Report](architecture/final-implementation-report.md)
+- [Storage & Delivery](architecture/storage.md)
+- [Session Keys & Upload Sessions](architecture/session-keys.md)
+- [Smart Contract](architecture/smart-contract.md)
+- [Product Differentiators](architecture/innovations.md)
+
+## Guides
+
+- [User Flows](guides/user-flows.md)
+- [Developer Guide](guides/developer-guide.md)
+- [Environment](guides/environment.md)
+- [Mainnet Runbook](operations/mainnet-runbook.md)
+- [Mainnet Task Owners](operations/mainnet-task-owners.md)
+
+## Reference
+
+- [Contract Methods](api/contract-methods.md)
+- [Frontend](frontend.md)
+- [Security](security.md)
+- [Testing](testing.md)
+- [Contributing](contributing.md)
+- [Roadmap](roadmap.md)
+- [Overview](overview.md)
+
+---
+
+## Suggested Reading Order
+
+For a new engineer, the shortest path is:
 
 1. [Quick Start](quick-start.md)
 2. [System Architecture](architecture/README.md)
-3. [Developer Guide](guides/developer-guide.md)
-4. [Contributing](contributing.md)
-
-### Frontend Contributors
-
-1. [Frontend](frontend.md)
-2. [Session Keys](architecture/session-keys.md)
-3. [Storage](architecture/storage.md)
-4. [Testing](testing.md)
-
-### Contract Contributors
-
-1. [Smart Contract](architecture/smart-contract.md)
-2. [Contract Methods](api/contract-methods.md)
-3. [Testing](testing.md)
+3. [Final Implementation Report](architecture/final-implementation-report.md)
+4. [Youtick Zero Trust Architecture v1](architecture/youtick-zero-trust-architecture-v1.md)
+5. [User Flows](guides/user-flows.md)
+6. [Contract Methods](api/contract-methods.md)
 
 ---
 
-*Last Updated: March 5, 2026*
+*Last Updated: March 16, 2026*

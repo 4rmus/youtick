@@ -27,12 +27,33 @@ function isStaticAsset(pathname: string): boolean {
     return STATIC_EXTENSIONS.has(pathname.slice(lastDot).toLowerCase());
 }
 
+function getAllowedDomains(env: Env): Set<string> {
+    return new Set(
+        env.ALLOWED_DOMAINS
+            .split(',')
+            .map((domain) => domain.trim().toLowerCase())
+            .filter(Boolean),
+    );
+}
+
 export default {
     async fetch(request: Request, env: Env): Promise<Response> {
         const url = new URL(request.url);
+        const hostname = url.hostname.toLowerCase();
+        const allowedDomains = getAllowedDomains(env);
 
         // --- Logging ---
         console.log(`[Proxy] Handling request for: ${url.hostname}${url.pathname}`);
+
+        if (!allowedDomains.has(hostname)) {
+            return new Response('Host is not allowed for this proxy.', { status: 421 });
+        }
+
+        if (hostname === 'www.youtick.net') {
+            const redirectUrl = new URL(request.url);
+            redirectUrl.hostname = 'youtick.net';
+            return Response.redirect(redirectUrl.toString(), 308);
+        }
 
         // --- Health check endpoint ---
         if (url.pathname === '/__health') {
@@ -40,6 +61,7 @@ export default {
                 status: 'ok',
                 proxy: 'web4-proxy',
                 origin: env.WEB4_ORIGIN,
+                canonicalHost: 'youtick.net',
                 timestamp: new Date().toISOString(),
             }), {
                 headers: { 'Content-Type': 'application/json' },

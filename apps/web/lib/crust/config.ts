@@ -20,8 +20,8 @@ export const CRUST_CONSTANTS = {
    */
   READ_ENDPOINT: 'https://crustipfs.xyz/api/v0/cat',
 
-  /** Fallback Crust read endpoint */
-  READ_ENDPOINT_FALLBACK: 'https://gw.crustfiles.app/api/v0/cat',
+  /** Optional fallback Crust read endpoint (disabled until TLS issues are resolved) */
+  READ_ENDPOINT_FALLBACK: '',
 
   /** W3Auth token cache duration (30 minutes) */
   AUTH_CACHE_DURATION: 30 * 60 * 1000,
@@ -49,13 +49,12 @@ export const CRUST_CONSTANTS = {
  * @see https://ipfs.github.io/public-gateway-checker/ — live status
  */
 export const CRUST_GATEWAYS: GatewayConfig[] = [
-  // IPFS Foundation gateways (reliable, CORS ✓)  - HIGHEST PRIORITY NOW
+  // Prioritize gateways that have been reliable for encrypted video reads.
   { name: 'ipfs-io', url: 'https://ipfs.io/ipfs', priority: 1, healthy: true, lastCheck: 0 },
-  { name: 'dweb', url: 'https://dweb.link/ipfs', priority: 2, healthy: true, lastCheck: 0 },
-  { name: 'trustless', url: 'https://trustless-gateway.link/ipfs', priority: 3, healthy: true, lastCheck: 0 },
   // Third-party gateways (CORS ✓)
-  { name: '4everland', url: 'https://4everland.io/ipfs', priority: 4, healthy: true, lastCheck: 0 },
-  { name: 'lighthouse', url: 'https://gateway.lighthouse.storage/ipfs', priority: 5, healthy: true, lastCheck: 0 },
-  { name: 'w3s', url: 'https://w3s.link/ipfs', priority: 6, healthy: true, lastCheck: 0 },
+  { name: '4everland', url: 'https://4everland.io/ipfs', priority: 2, healthy: true, lastCheck: 0 },
+  { name: 'w3s', url: 'https://w3s.link/ipfs', priority: 3, healthy: true, lastCheck: 0 },
+  { name: 'lighthouse', url: 'https://gateway.lighthouse.storage/ipfs', priority: 4, healthy: true, lastCheck: 0 },
+  { name: 'dweb', url: 'https://dweb.link/ipfs', priority: 5, healthy: true, lastCheck: 0 },
   // Crust-operated gateways are excluded as they have TLS/CORS issues currently.
 ];

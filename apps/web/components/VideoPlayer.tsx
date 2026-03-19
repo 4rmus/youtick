@@ -7,6 +7,7 @@ interface VideoPlayerProps {
     // IPFS data
     cid?: string;
     thumbnailUrl?: string;
+    initialDurationSeconds?: number;
 
     // Player settings
     className?: string;
@@ -18,6 +19,7 @@ interface VideoPlayerProps {
 export function VideoPlayer({
     cid,
     thumbnailUrl,
+    initialDurationSeconds,
     className = '',
 }: VideoPlayerProps) {
     if (cid) {
@@ -26,6 +28,7 @@ export function VideoPlayer({
                 <IpfsPlayer
                     cid={cid}
                     thumbnailUrl={thumbnailUrl}
+                    initialDurationSeconds={initialDurationSeconds}
                 />
                 <p className="text-xs text-zinc-500 mt-2 text-center">
                     🌐 Decentralized playback via IPFS
