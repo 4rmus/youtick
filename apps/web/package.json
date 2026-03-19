@@ -8,7 +8,7 @@
     "build:web4": "mv app/api app/_api_dev 2>/dev/null; NEXT_PUBLIC_DEPLOY_TARGET=web4 next build --webpack; EXIT=$?; mv app/_api_dev app/api 2>/dev/null; exit $EXIT",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "patch-package",
+    "postinstall": "node scripts/patch-meteor-wallet.mjs",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage"
