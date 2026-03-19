@@ -73,8 +73,6 @@ jobs:
       - name: Install web dependencies
         run: npm ci
         working-directory: apps/web
-      - name: Install near-cli-rs
-        run: npm install -g near-cli-rs@0.22.2
       - name: Prepare NEAR mainnet access key
         env:
           NEAR_MAINNET_ACCESS_KEY_JSON: ${{ secrets.NEAR_MAINNET_ACCESS_KEY_JSON }}

@@ -66,7 +66,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.86.0
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Build NFT wasm for sandbox tests
+        if: ${{ matrix.path == 'contracts/nft-ticket' || matrix.path == 'contracts/nft-ticket-tests' }}
+        run: |
+          cargo build --manifest-path contracts/nft-ticket/Cargo.toml --target wasm32-unknown-unknown --release
+          mkdir -p contracts/nft-ticket/target/near
+          cp contracts/nft-ticket/target/wasm32-unknown-unknown/release/youtick_nft.wasm contracts/nft-ticket/target/near/youtick_nft.wasm
       - name: Run cargo test
         run: cargo test
         working-directory: ${{ matrix.path }}

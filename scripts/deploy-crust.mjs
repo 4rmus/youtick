@@ -10,11 +10,11 @@
  * Prerequisites:
  *   - Node.js 18+
  *   - NEAR credentials at ~/.near-credentials/mainnet/<contract>.json
- *   - near-cli-rs installed (for --set-url)
  */
 
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join, relative } from 'path';
+import { pathToFileURL } from 'url';
 import { createPrivateKey, createPublicKey, sign as cryptoSign } from 'crypto';
 import { execSync } from 'child_process';
 
@@ -166,6 +166,39 @@ function buildMultipartBody(files) {
   };
 }
 
+async function loadNearApiJs() {
+  const moduleUrl = pathToFileURL(
+    join(WEB_DIR, 'node_modules/near-api-js/lib/index.js'),
+  ).href;
+
+  return import(moduleUrl);
+}
+
+async function updateWeb4StaticUrl(cid) {
+  const { Account, KeyPair, KeyPairSigner, actions } = await loadNearApiJs();
+  const creds = JSON.parse(readFileSync(CREDS_PATH, 'utf-8'));
+  const privateKey = creds.private_key || creds.secret_key;
+
+  if (!privateKey) {
+    throw new Error(`No private_key or secret_key found in ${CREDS_PATH}`);
+  }
+
+  const signer = new KeyPairSigner(KeyPair.fromString(privateKey));
+  const account = new Account(CONTRACT_ID, 'https://rpc.mainnet.fastnear.com', signer);
+
+  return account.signAndSendTransaction({
+    receiverId: CONTRACT_ID,
+    actions: [
+      actions.functionCall(
+        'web4_set_static_url',
+        { url: `ipfs://${cid}` },
+        '30000000000000',
+        '0',
+      ),
+    ],
+  });
+}
+
 // ─── Main ────────────────────────────────────────────────────
 
 async function main() {
@@ -243,24 +276,17 @@ async function main() {
   console.log(`  Contract: ${CONTRACT_ID}`);
   console.log(`  New URL:  ipfs://${cid}\n`);
 
-  const setUrlCommand =
-    `near contract call-function as-transaction ${CONTRACT_ID} web4_set_static_url json-args '{"url":"ipfs://${cid}"}' ` +
-    `prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as ${CONTRACT_ID} network-config mainnet ` +
-    `sign-with-access-key-file ${CREDS_PATH} send`;
-
   if (SET_URL) {
     console.log('  Updating contract...');
     try {
-      execSync(setUrlCommand, { stdio: 'inherit' });
+      await updateWeb4StaticUrl(cid);
       console.log('\n  ✓ Contract updated!');
     } catch (err) {
-      console.error('  ERROR: Contract update failed. Run manually:');
-      console.log(`  ${setUrlCommand}`);
+      console.error('  ERROR: Contract update failed.');
+      console.error(`  ${err instanceof Error ? err.message : String(err)}`);
     }
   } else {
-    console.log('  To update the contract URL, run:');
-    console.log(`  ${setUrlCommand}`);
-    console.log('\n  Or re-run with --set-url flag');
+    console.log('  Re-run with --set-url flag to update the contract URL automatically.');
   }
 
   console.log('\n============================================');
