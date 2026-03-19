@@ -7,7 +7,6 @@ on:
       - 'apps/web/**'
       - 'contracts/**'
       - 'workers/**'
-      - 'docs/**'
       - '.github/workflows/platform-ci.yml'
   pull_request:
     branches: [main]
@@ -15,7 +14,6 @@ on:
       - 'apps/web/**'
       - 'contracts/**'
       - 'workers/**'
-      - 'docs/**'
       - '.github/workflows/platform-ci.yml'
 
 permissions:
@@ -69,6 +67,11 @@ jobs:
       - name: Install NFT wasm build toolchain
         if: ${{ matrix.path == 'contracts/nft-ticket' }}
         run: rustup toolchain install 1.86.0 --target wasm32-unknown-unknown --profile minimal --no-self-update
+      - name: Install cargo-near system dependencies
+        if: ${{ matrix.path == 'contracts/nft-ticket' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libudev-dev
       - name: Install cargo-near
         if: ${{ matrix.path == 'contracts/nft-ticket' }}
         run: cargo install cargo-near --locked --version 0.18.0
