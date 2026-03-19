@@ -9,8 +9,7 @@
 | Layer | Tooling | Location |
 |------|---------|----------|
 | Frontend unit/integration | Vitest | `apps/web/__tests__/` |
-| Contract unit/integration | cargo test | `contracts/nft-ticket/` |
-| Contract workspace tests | near-workspaces | `contracts/nft-ticket-tests/` |
+| Contract unit + sandbox integration | cargo test + near-workspaces | `contracts/nft-ticket/` |
 
 ---
 
@@ -51,9 +50,6 @@ npm test -- --coverage
 ```bash
 cd contracts/nft-ticket
 cargo test
-
-cd ../nft-ticket-tests
-cargo test
 ```
 
 ---
@@ -75,4 +71,3 @@ cargo test
 | hooks/services | 70%+ |
 | UI components | 60%+ |
 | contract core logic | 80%+ |
-

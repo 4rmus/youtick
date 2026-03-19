@@ -101,5 +101,4 @@ npm run build:web4
 cd contracts/nft-ticket && cargo test
 cd contracts/access-control && cargo test
 cd contracts/operator-registry && cargo test
-cd contracts/nft-ticket-tests && cargo test
 ```
