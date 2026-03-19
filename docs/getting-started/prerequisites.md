@@ -89,7 +89,7 @@ npx near-cli view youtick.near nft_metadata '{}'
 | Network | Contract ID | RPC Endpoint |
 |---------|-------------|-------------|
 | **Mainnet** | `youtick.near` | `https://free.rpc.fastnear.com` |
-| **Testnet** | `v1.utick.testnet` | `https://rpc.testnet.near.org` |
+| **Testnet** | `dev-1773607954211-252231.v2-0.utick.testnet` | `https://rpc.testnet.near.org` |
 
 ---
 

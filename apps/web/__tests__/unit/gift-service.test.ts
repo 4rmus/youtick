@@ -341,15 +341,24 @@ describe('Gift Service', () => {
   });
 
   describe('createSponsoredTrial', () => {
-    it('should return direct error when onboarding key is missing', async () => {
-      // We just verify the function returns a result
+    it('should fall back to relayer when onboarding key is missing', async () => {
       vi.mocked(localStorage.getItem).mockReturnValue(null);
+
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          account_id: 'user123.test-contract.testnet'
+        })
+      });
 
       const result = await createSponsoredTrial('user123');
 
-      expect(result.success).toBe(false);
-      expect(result.method).toBe('direct');
-      expect(result.error).toContain('Onboarding key unavailable');
+      expect(result.success).toBe(true);
+      expect(result.method).toBe('relayer');
+      expect(result.accountId).toBe('user123.test-contract.testnet');
+
+      global.fetch = originalFetch;
     });
 
     it('should return secretKey on direct success', async () => {
@@ -376,25 +385,33 @@ describe('Gift Service', () => {
       global.fetch = originalFetch;
     });
 
-    it('should return error when onboarding key is unauthorized', async () => {
+    it('should fall back to relayer when onboarding key is unauthorized', async () => {
       const onboardingKey = generateKeyPairs(1)[0].secretKey;
       setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
 
       const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          result: {
-            result: Array.from(Buffer.from('false'))
-          }
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            result: {
+              result: Array.from(Buffer.from('false'))
+            }
+          })
         })
-      });
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            account_id: 'failuser.test-contract.testnet'
+          })
+        });
 
       const result = await createSponsoredTrial('failuser');
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Onboarding key unavailable');
-      expect(result.method).toBe('direct');
+      expect(result.success).toBe(true);
+      expect(result.method).toBe('relayer');
+      expect(result.accountId).toBe('failuser.test-contract.testnet');
 
       global.fetch = originalFetch;
     });

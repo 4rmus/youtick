@@ -101,6 +101,13 @@ export function buildManifestPosterUrl(manifest: DeliveryManifestV2): string | n
     return `ipfs://${manifest.thumbnails.posterCid}`;
 }
 
+export function pickPreferredPosterUrl(
+    thumbnailUrl: string | null | undefined,
+    manifest?: DeliveryManifestV2 | null,
+): string | null {
+    return (manifest ? buildManifestPosterUrl(manifest) : null) ?? thumbnailUrl ?? null;
+}
+
 export function getEffectiveManifestDurationMs(manifest: DeliveryManifestV2): number {
     const segmentEndMs = manifest.segments.length > 0
         ? Math.max(...manifest.segments.flatMap((segment) => segment.payloads.map((payload) => payload.endMs)))
@@ -144,7 +151,7 @@ export async function resolvePreferredMediaUrl(
     try {
         const manifest = await fetchDeliveryManifest(manifestCid);
         if (isDeliveryManifestV2(manifest)) {
-            return buildManifestPosterUrl(manifest) ?? thumbnailUrl;
+            return pickPreferredPosterUrl(thumbnailUrl, manifest);
         }
     } catch {
         // Fall back to the title-embedded thumbnail below.

@@ -12,7 +12,7 @@ describe('access-grants', () => {
 
     it('issues and caches a testnet session grant', async () => {
         process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
-        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access.v1.utick.testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';
 
         const wallet = {
             signAndSendTransaction: vi.fn(async () => ({})),
@@ -34,7 +34,7 @@ describe('access-grants', () => {
         expect(firstGrant?.sessionPublicKey).toContain('ed25519:');
         expect(wallet.signAndSendTransaction).toHaveBeenCalledTimes(1);
         expect((wallet.signAndSendTransaction as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
-            receiverId: 'access.v1.utick.testnet',
+            receiverId: 'access-1773606802388.v2-0.utick.testnet',
         });
 
         const secondGrant = await ensureSessionGrant({
@@ -62,7 +62,7 @@ describe('access-grants', () => {
 
     it('reuses a pending session grant request so only one wallet transaction is opened', async () => {
         process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
-        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access.v1.utick.testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';
 
         let resolveTx: (() => void) | null = null;
         const wallet = {

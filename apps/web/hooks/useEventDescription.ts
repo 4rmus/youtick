@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getProvider, viewContract } from '@/lib/near';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { NEAR_CONFIG } from '@/lib/constants';
-import { buildManifestPosterUrl, fetchDeliveryManifest, isDeliveryManifestV2 } from '@/lib/video-delivery';
+import { resolvePreferredMediaUrl } from '@/lib/video-delivery';
 
 const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
 
@@ -35,18 +35,9 @@ async function fetchEventDescription(encrypted_cid: string): Promise<EventDescri
     }
 
     const parsed = parseTitleMetadata(event.title);
-    let thumbnailUrl = parsed.thumbnailCid ? (parsed.thumbnailUrl ?? null) : null;
-
-    if (parsed.manifestCid) {
-        try {
-            const manifest = await fetchDeliveryManifest(parsed.manifestCid);
-            if (isDeliveryManifestV2(manifest)) {
-                thumbnailUrl = buildManifestPosterUrl(manifest) ?? thumbnailUrl;
-            }
-        } catch (manifestError) {
-            console.warn('[useEventDescription] Poster manifest fetch failed:', manifestError);
-        }
-    }
+    const thumbnailUrl = parsed.thumbnailCid
+        ? await resolvePreferredMediaUrl(parsed.thumbnailUrl ?? null, parsed.manifestCid)
+        : null;
 
     return {
         description: event.description || null,

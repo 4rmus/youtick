@@ -5,6 +5,7 @@ import type { TokenConfig, ChainId } from './types';
  * 1Click API Configuration
  */
 export const ONE_CLICK_CONFIG = {
+    enabled: process.env.NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT === 'true',
     baseUrl: 'https://1click.chaindefuser.com',
     /** JWT token from Partners Portal (partners.near-intents.org) */
     apiToken: process.env.NEXT_PUBLIC_ONE_CLICK_API_TOKEN || '',

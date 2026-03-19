@@ -14,7 +14,7 @@ interface DiscoverViewProps {
 
 export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
   const { t } = useLanguage();
-  const { tokens, loading, error } = useAllVideos();
+  const { tokens, loading, error, hasNextPage, isFetchingNextPage, fetchNextPage } = useAllVideos();
   const { nearToUsdStr } = useNearPrice();
 
   // Loading State
@@ -82,6 +82,23 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
             />
           ))}
         </div>
+
+        {hasNextPage && (
+          <div className="flex justify-center pt-4">
+            <Button
+              onClick={() => fetchNextPage()}
+              disabled={isFetchingNextPage}
+              variant="outline"
+              className="border-white/20 text-zinc-300 hover:bg-white/5"
+            >
+              {isFetchingNextPage ? (
+                <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading...</>
+              ) : (
+                'Load More'
+              )}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

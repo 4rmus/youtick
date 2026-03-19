@@ -2,7 +2,7 @@ import type { KeyPair } from 'near-api-js';
 import { clearSessionGrantCache, ensureSessionGrant, signSessionGrantPayload, type SessionGrantScope } from '../access-grants';
 import { NEAR_CONFIG } from '../constants';
 import { BrowserKeyStore } from '../keystore-v7';
-import { getThresholdConfig, listActiveDecryptionOperatorEndpoints, listActiveDecryptionOperators } from '../registry';
+import { getThresholdConfig, listActiveDecryptionOperatorEndpoints, listActiveDecryptionOperators, type RegistryOperatorRecord } from '../registry';
 import { getActiveUploadSessionKey } from '../upload-session-manager';
 import type { WalletInstance } from '../types';
 import { reconstructSecretFromShares, splitSecretIntoShares, type SecretShare } from './shares';
@@ -12,19 +12,35 @@ const DEFAULT_KMS_BASE_URL =
     (typeof window !== 'undefined' &&
         (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
         ? 'http://localhost:8787'
-        : 'https://youtick-kms.araafatsum.workers.dev');
+        : '');
 
 const AUTH_CACHE_PREFIX = 'youtick:kms-auth:';
 const AUTH_CACHE_SKEW_MS = 30_000;
 const KMS_HEALTH_CACHE_MS = 60_000;
+const KMS_OPERATOR_STATS_STORAGE_KEY = 'youtick:kms-operator-stats:v1';
+const KMS_OPERATOR_FAILURE_COOLDOWN_MS = 60_000;
+const KMS_OPERATOR_PRIMARY_BATCH_EXTRA = 1;
+const KMS_OPERATOR_HEDGE_DELAY_MS = 250;
+const KMS_DEFAULT_LATENCY_MS = 5_000;
 
 interface KMSHealthData {
     network?: string;
     contract?: string;
 }
 
+interface KmsEndpointStats {
+    avgLatencyMs?: number;
+    successCount?: number;
+    failureCount?: number;
+    lastSuccessAt?: number;
+    lastFailureAt?: number;
+}
+
+type KmsEndpointStatsStore = Record<string, KmsEndpointStats>;
+
 const kmsHealthValidatedAtByUrl = new Map<string, number>();
 const kmsHealthValidationPromiseByUrl = new Map<string, Promise<void>>();
+let cachedKmsEndpointStats: KmsEndpointStatsStore | null = null;
 
 export interface KMSStoreResult {
     videoId: string;
@@ -58,6 +74,24 @@ interface ShareStoreBody {
     scheme: 'shamir-v1';
 }
 
+interface SettledSuccess<T> {
+    index: number;
+    status: 'fulfilled';
+    value: T;
+}
+
+interface SettledFailure {
+    index: number;
+    status: 'rejected';
+    reason: unknown;
+}
+
+interface LaunchBackupSignal {
+    type: 'launch-backup';
+}
+
+type SettledTaskResult<T> = SettledSuccess<T> | SettledFailure;
+
 interface KMSAuthChallenge {
     challengeId: string;
     message: string;
@@ -86,7 +120,7 @@ export class KMSError extends Error {
 }
 
 async function listKmsBaseUrls(): Promise<string[]> {
-    const urls = [DEFAULT_KMS_BASE_URL];
+    const urls = DEFAULT_KMS_BASE_URL ? [DEFAULT_KMS_BASE_URL] : [];
 
     try {
         const registryUrls = await listActiveDecryptionOperatorEndpoints();
@@ -95,7 +129,7 @@ async function listKmsBaseUrls(): Promise<string[]> {
         // Registry lookup is best-effort.
     }
 
-    return Array.from(new Set(urls.filter(Boolean)));
+    return sortUrlsByKmsPreference(Array.from(new Set(urls.filter(Boolean))));
 }
 
 async function ensureKmsConfigMatchesApp(baseUrl: string): Promise<void> {
@@ -159,6 +193,160 @@ async function ensureKmsConfigMatchesApp(baseUrl: string): Promise<void> {
 
     kmsHealthValidationPromiseByUrl.set(baseUrl, validationPromise);
     return validationPromise;
+}
+
+function readKmsEndpointStats(): KmsEndpointStatsStore {
+    if (cachedKmsEndpointStats) {
+        return cachedKmsEndpointStats;
+    }
+
+    if (typeof window === 'undefined') {
+        cachedKmsEndpointStats = {};
+        return cachedKmsEndpointStats;
+    }
+
+    try {
+        const raw = localStorage.getItem(KMS_OPERATOR_STATS_STORAGE_KEY);
+        cachedKmsEndpointStats = raw ? JSON.parse(raw) as KmsEndpointStatsStore : {};
+    } catch {
+        cachedKmsEndpointStats = {};
+    }
+
+    return cachedKmsEndpointStats;
+}
+
+function persistKmsEndpointStats(stats: KmsEndpointStatsStore): void {
+    cachedKmsEndpointStats = stats;
+
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    try {
+        localStorage.setItem(KMS_OPERATOR_STATS_STORAGE_KEY, JSON.stringify(stats));
+    } catch {
+        // Ignore storage failures; ordering falls back to registry order.
+    }
+}
+
+function updateKmsEndpointStats(
+    endpoint: string,
+    updater: (current: KmsEndpointStats) => KmsEndpointStats,
+): void {
+    const stats = {
+        ...readKmsEndpointStats(),
+    };
+
+    stats[endpoint] = updater(stats[endpoint] || {});
+    persistKmsEndpointStats(stats);
+}
+
+function recordKmsEndpointSuccess(endpoint: string, latencyMs: number): void {
+    updateKmsEndpointStats(endpoint, (current) => ({
+        avgLatencyMs: current.avgLatencyMs
+            ? Math.round((current.avgLatencyMs * 0.7) + (latencyMs * 0.3))
+            : latencyMs,
+        successCount: (current.successCount || 0) + 1,
+        failureCount: current.failureCount || 0,
+        lastSuccessAt: Date.now(),
+        lastFailureAt: current.lastFailureAt,
+    }));
+}
+
+function recordKmsEndpointFailure(endpoint: string): void {
+    updateKmsEndpointStats(endpoint, (current) => ({
+        avgLatencyMs: current.avgLatencyMs,
+        successCount: current.successCount || 0,
+        failureCount: (current.failureCount || 0) + 1,
+        lastSuccessAt: current.lastSuccessAt,
+        lastFailureAt: Date.now(),
+    }));
+}
+
+function isKmsEndpointCoolingDown(endpoint: string): boolean {
+    const stats = readKmsEndpointStats()[endpoint];
+    if (!stats?.lastFailureAt) {
+        return false;
+    }
+
+    if ((stats.lastSuccessAt || 0) >= stats.lastFailureAt) {
+        return false;
+    }
+
+    return (Date.now() - stats.lastFailureAt) < KMS_OPERATOR_FAILURE_COOLDOWN_MS;
+}
+
+function sortUrlsByKmsPreference(urls: string[]): string[] {
+    const stats = readKmsEndpointStats();
+
+    return [...urls]
+        .map((url, index) => ({
+            url,
+            index,
+            stats: stats[url],
+            coolingDown: isKmsEndpointCoolingDown(url),
+        }))
+        .sort((a, b) => {
+            if (a.coolingDown !== b.coolingDown) {
+                return a.coolingDown ? 1 : -1;
+            }
+
+            const aLatency = a.stats?.avgLatencyMs ?? (KMS_DEFAULT_LATENCY_MS + a.index);
+            const bLatency = b.stats?.avgLatencyMs ?? (KMS_DEFAULT_LATENCY_MS + b.index);
+            if (aLatency !== bLatency) {
+                return aLatency - bLatency;
+            }
+
+            const aFailures = a.stats?.failureCount ?? 0;
+            const bFailures = b.stats?.failureCount ?? 0;
+            if (aFailures !== bFailures) {
+                return aFailures - bFailures;
+            }
+
+            return a.index - b.index;
+        })
+        .map((entry) => entry.url);
+}
+
+function sortOperatorsByKmsPreference<T extends { endpoint: string }>(operators: T[]): T[] {
+    const orderedEndpoints = sortUrlsByKmsPreference(operators.map((operator) => operator.endpoint));
+    const endpointRank = new Map(orderedEndpoints.map((endpoint, index) => [endpoint, index]));
+
+    return [...operators].sort(
+        (a, b) => (endpointRank.get(a.endpoint) ?? 0) - (endpointRank.get(b.endpoint) ?? 0),
+    );
+}
+
+function shouldRecordKmsEndpointFailure(error: unknown): boolean {
+    if ((error as DOMException | undefined)?.name === 'AbortError') {
+        return false;
+    }
+
+    if (error instanceof KMSError) {
+        return !['ACCESS_DENIED', 'NOT_FOUND', 'AUTH_REJECTED', 'CONFIG_MISMATCH'].includes(error.code);
+    }
+
+    return true;
+}
+
+function getPrimaryOperatorBatchSize(totalOperators: number, requiredShares: number): number {
+    return Math.min(
+        totalOperators,
+        Math.max(requiredShares + KMS_OPERATOR_PRIMARY_BATCH_EXTRA, requiredShares),
+    );
+}
+
+function createSettledPromise<T>(index: number, promise: Promise<T>): Promise<SettledTaskResult<T>> {
+    return promise.then(
+        (value) => ({ index, status: 'fulfilled' as const, value }),
+        (reason) => ({ index, status: 'rejected' as const, reason }),
+    );
+}
+
+function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
 }
 
 function authCacheKey(
@@ -253,6 +441,16 @@ export function clearKmsAuthCache(accountId?: string): void {
     for (const key of keysToRemove) {
         sessionStorage.removeItem(key);
     }
+}
+
+export function clearKmsOperatorStats(): void {
+    cachedKmsEndpointStats = null;
+
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    localStorage.removeItem(KMS_OPERATOR_STATS_STORAGE_KEY);
 }
 
 async function getLocalKmsSigningKey(accountId: string): Promise<KeyPair | null> {
@@ -597,6 +795,107 @@ async function executeKmsRequest<T>(
     }
 }
 
+async function executeTimedKmsRequest<T>(
+    baseUrl: string,
+    endpoint: 'store' | 'retrieve',
+    accountId: string,
+    videoId: string,
+    extraBody: Record<string, unknown>,
+    wallet: WalletInstance,
+    options?: {
+        allowTokenFallback?: boolean;
+        signal?: AbortSignal;
+    },
+): Promise<T> {
+    const startedAt = Date.now();
+
+    try {
+        const result = await executeKmsRequest<T>(
+            baseUrl,
+            endpoint,
+            accountId,
+            videoId,
+            extraBody,
+            wallet,
+            options,
+        );
+
+        recordKmsEndpointSuccess(baseUrl, Math.max(1, Date.now() - startedAt));
+        return result;
+    } catch (error) {
+        if (shouldRecordKmsEndpointFailure(error)) {
+            recordKmsEndpointFailure(baseUrl);
+        }
+        throw error;
+    }
+}
+
+async function storeShareBatch(
+    entries: Array<{ operator: RegistryOperatorRecord; share: SecretShare }>,
+    videoId: string,
+    accountId: string,
+    wallet: WalletInstance,
+    totalShares: number,
+    requiredShares: number,
+    initialState?: {
+        successfulStores: number;
+        lastSuccess: KMSStoreResult | null;
+        lastError: unknown;
+    },
+): Promise<{
+    successfulStores: number;
+    lastSuccess: KMSStoreResult | null;
+    lastError: unknown;
+}> {
+    let successfulStores = initialState?.successfulStores || 0;
+    let lastSuccess: KMSStoreResult | null = initialState?.lastSuccess || null;
+    let lastError: unknown = initialState?.lastError ?? null;
+
+    const pendingResults = new Map(
+        entries.map((entry, index) => [
+            index,
+            createSettledPromise(
+                index,
+                executeTimedKmsRequest<KMSStoreResult>(
+                    entry.operator.endpoint,
+                    'store',
+                    accountId,
+                    videoId,
+                    {
+                        videoId,
+                        ...({
+                            shareB64: entry.share.shareB64,
+                            shareId: entry.share.shareId,
+                            totalShares,
+                            requiredShares,
+                            scheme: 'shamir-v1',
+                        } satisfies ShareStoreBody),
+                    },
+                    wallet,
+                ),
+            ),
+        ]),
+    );
+
+    while (pendingResults.size > 0) {
+        const settled = await Promise.race(pendingResults.values());
+        pendingResults.delete(settled.index);
+
+        if (settled.status === 'fulfilled') {
+            successfulStores += 1;
+            lastSuccess = settled.value;
+            if (successfulStores >= requiredShares) {
+                return { successfulStores, lastSuccess, lastError };
+            }
+            continue;
+        }
+
+        lastError = settled.reason;
+    }
+
+    return { successfulStores, lastSuccess, lastError };
+}
+
 async function storeEncryptionKeyShares(
     videoId: string,
     aesKeyB64: string,
@@ -613,45 +912,63 @@ async function storeEncryptionKeyShares(
         return null;
     }
 
+    const orderedOperators = sortOperatorsByKmsPreference(operators);
     const shares = splitSecretIntoShares(aesKeyB64, totalShares, requiredShares);
-    let successfulStores = 0;
-    let lastSuccess: KMSStoreResult | null = null;
-    let lastError: unknown = null;
+    const entries = orderedOperators.map((operator, index) => ({
+        operator,
+        share: shares[index],
+    }));
+    const primaryBatchSize = getPrimaryOperatorBatchSize(entries.length, requiredShares);
 
-    for (let index = 0; index < operators.length; index += 1) {
-        const operator = operators[index];
-        const share = shares[index];
-        try {
-            const result = await executeKmsRequest<KMSStoreResult>(
-                operator.endpoint,
+    let state = await storeShareBatch(
+        entries.slice(0, primaryBatchSize),
+        videoId,
+        accountId,
+        wallet,
+        totalShares,
+        requiredShares,
+    );
+
+    if (state.successfulStores >= requiredShares && state.lastSuccess) {
+        for (const entry of entries.slice(primaryBatchSize)) {
+            void executeTimedKmsRequest<KMSStoreResult>(
+                entry.operator.endpoint,
                 'store',
                 accountId,
                 videoId,
                 {
                     videoId,
                     ...({
-                        shareB64: share.shareB64,
-                        shareId: share.shareId,
+                        shareB64: entry.share.shareB64,
+                        shareId: entry.share.shareId,
                         totalShares,
                         requiredShares,
                         scheme: 'shamir-v1',
                     } satisfies ShareStoreBody),
                 },
                 wallet,
-            );
-            successfulStores += 1;
-            lastSuccess = result;
-        } catch (error) {
-            lastError = error;
+            ).catch(() => undefined);
         }
+
+        return state.lastSuccess;
     }
 
-    if (successfulStores >= requiredShares && lastSuccess) {
-        return lastSuccess;
+    state = await storeShareBatch(
+        entries.slice(primaryBatchSize),
+        videoId,
+        accountId,
+        wallet,
+        totalShares,
+        requiredShares,
+        state,
+    );
+
+    if (state.successfulStores >= requiredShares && state.lastSuccess) {
+        return state.lastSuccess;
     }
 
-    if (lastError) {
-        throw lastError;
+    if (state.lastError) {
+        throw state.lastError;
     }
 
     return null;
@@ -670,34 +987,70 @@ async function retrieveEncryptionKeyShares(
         return null;
     }
 
+    const orderedOperators = sortOperatorsByKmsPreference(operators);
     const shares: SecretShare[] = [];
     const debugTrace: KMSShareDebugTrace[] = [];
-    const controllers = operators.map(() => new AbortController());
-    const pendingResults = new Map(
-        operators.map((operator, index) => [
-            index,
-            executeKmsRequest<KMSRetrieveResult>(
-                operator.endpoint,
-                'retrieve',
-                accountId,
-                videoId,
-                { videoId },
-                wallet,
-                {
-                    allowTokenFallback: false,
-                    signal: controllers[index].signal,
-                },
-            ).then(
-                (value) => ({ index, status: 'fulfilled' as const, value }),
-                (reason) => ({ index, status: 'rejected' as const, reason }),
-            ),
-        ]),
-    );
+    const controllers = orderedOperators.map(() => new AbortController());
+    const pendingResults = new Map<number, Promise<SettledTaskResult<KMSRetrieveResult>>>();
+    const primaryBatchSize = getPrimaryOperatorBatchSize(orderedOperators.length, requiredShares);
+    let launchedCount = 0;
 
-    while (pendingResults.size > 0) {
-        const settled = await Promise.race(pendingResults.values());
+    const queueRetrieveBatch = (endExclusive: number): void => {
+        for (let index = launchedCount; index < endExclusive; index += 1) {
+            const operator = orderedOperators[index];
+            pendingResults.set(
+                index,
+                createSettledPromise(
+                    index,
+                    executeTimedKmsRequest<KMSRetrieveResult>(
+                        operator.endpoint,
+                        'retrieve',
+                        accountId,
+                        videoId,
+                        { videoId },
+                        wallet,
+                        {
+                            allowTokenFallback: false,
+                            signal: controllers[index].signal,
+                        },
+                    ),
+                ),
+            );
+        }
+
+        launchedCount = endExclusive;
+    };
+
+    queueRetrieveBatch(primaryBatchSize);
+
+    let backupSignal: Promise<LaunchBackupSignal> | null =
+        launchedCount < orderedOperators.length
+            ? delay(KMS_OPERATOR_HEDGE_DELAY_MS).then(() => ({ type: 'launch-backup' as const }))
+            : null;
+
+    while (pendingResults.size > 0 || launchedCount < orderedOperators.length) {
+        if (pendingResults.size === 0 && launchedCount < orderedOperators.length) {
+            queueRetrieveBatch(orderedOperators.length);
+            backupSignal = null;
+            continue;
+        }
+
+        const raceCandidates: Array<Promise<SettledTaskResult<KMSRetrieveResult> | LaunchBackupSignal>> = [
+            ...pendingResults.values(),
+        ];
+        if (backupSignal) {
+            raceCandidates.push(backupSignal);
+        }
+
+        const settled = await Promise.race(raceCandidates);
+        if ('type' in settled) {
+            queueRetrieveBatch(orderedOperators.length);
+            backupSignal = null;
+            continue;
+        }
+
         pendingResults.delete(settled.index);
-        const operator = operators[settled.index];
+        const operator = orderedOperators[settled.index];
 
         if (settled.status === 'rejected') {
             if ((settled.reason as DOMException | undefined)?.name === 'AbortError') {
@@ -799,6 +1152,12 @@ export async function storeEncryptionKey(
     }
 
     const baseUrls = await listKmsBaseUrls();
+    if (baseUrls.length === 0) {
+        throw new KMSError(
+            'CONFIG_MISSING',
+            'No KMS endpoint is configured. Set NEXT_PUBLIC_KMS_URL or register active operators in the registry.',
+        );
+    }
     let lastError: unknown = null;
 
     for (const baseUrl of baseUrls) {
@@ -894,6 +1253,12 @@ export async function retrieveEncryptionKey(
     }
 
     const baseUrls = await listKmsBaseUrls();
+    if (baseUrls.length === 0) {
+        throw new KMSError(
+            'CONFIG_MISSING',
+            'No KMS endpoint is configured. Set NEXT_PUBLIC_KMS_URL or register active operators in the registry.',
+        );
+    }
     let lastError: unknown = null;
 
     for (const baseUrl of baseUrls) {

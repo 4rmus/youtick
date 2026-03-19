@@ -20,8 +20,8 @@ export const CRUST_CONSTANTS = {
    */
   READ_ENDPOINT: 'https://crustipfs.xyz/api/v0/cat',
 
-  /** Fallback Crust read endpoint */
-  READ_ENDPOINT_FALLBACK: 'https://gw.crustfiles.app/api/v0/cat',
+  /** Optional fallback Crust read endpoint (disabled until TLS issues are resolved) */
+  READ_ENDPOINT_FALLBACK: '',
 
   /** W3Auth token cache duration (30 minutes) */
   AUTH_CACHE_DURATION: 30 * 60 * 1000,

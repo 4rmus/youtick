@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button"
 import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
+import { FEATURE_FLAGS } from '@/lib/constants';
 import { getNearPrice, usdToNear } from '@/lib/price';
 import type { DeliverySegmentPayload } from '@/lib/types';
 import type { PackagedDeliveryAsset } from '@/lib/video-delivery';
@@ -609,8 +610,7 @@ export function UploadForm() {
             updateStep('mint', 'loading');
             setStatus('Minting NFT ticket on NEAR...');
             try {
-                let eventTitle: string;
-                eventTitle = buildSegmentedEventTitle(
+                const eventTitle = buildSegmentedEventTitle(
                     thumbnailUrl || undefined,
                     manifestCid,
                     title || file.name,
@@ -737,6 +737,12 @@ export function UploadForm() {
 
             if (!isMissingUploadSessionMethod(error)) {
                 throw error;
+            }
+
+            if (!FEATURE_FLAGS.enableLegacyUploadFallback) {
+                throw new Error(
+                    'This contract does not support upload sessions and legacy fallback is disabled for the mainnet launch.',
+                );
             }
 
             console.warn(

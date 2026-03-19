@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/constants', () => ({
+  APP_CONFIG: {
+    publicAppUrl: 'https://app.youtick.io',
+  },
+  FEATURE_FLAGS: {
+    enableCrossChainCheckout: false,
+    enableLegacyUploadFallback: false,
+  },
   IPFS_CONFIG: {
-    gatewayUrl: 'https://crustipfs.xyz/ipfs',
+    gatewayUrl: 'https://ipfs.io/ipfs',
     placeholderImage: '/placeholder.svg',
   },
   METADATA_SCHEMA: {
@@ -45,6 +52,17 @@ describe('Metadata Parser', () => {
 
       expect(result.title).toBe('Title');
       expect(result.thumbnailUrl).toBe('https://example.com/thumb.jpg');
+    });
+
+    it('keeps bare thumbnail CIDs in protocol-native format', () => {
+      const manifestCid = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+      const thumbnailCid = 'QmThumbCid123456789012345678901234567890123456';
+      const result = parseTitleMetadata(
+        `${manifestCid}:::${thumbnailCid}:::Title`,
+      );
+
+      expect(result.thumbnailCid).toBe(thumbnailCid);
+      expect(result.thumbnailUrl).toBe(`ipfs://${thumbnailCid}`);
     });
 
     it('keeps titles with embedded delimiters', () => {

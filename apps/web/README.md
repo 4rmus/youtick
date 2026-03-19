@@ -28,20 +28,23 @@ npm run build
 Minimum:
 
 ```env
-NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_MARKET_CONTRACT_ID=v1.utick.testnet
-NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.v1.utick.testnet
-NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.v1.utick.testnet
+NEXT_PUBLIC_NEAR_NETWORK=mainnet
+NEXT_PUBLIC_MARKET_CONTRACT_ID=youtick.near
+NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.youtick.near
+NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
+NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
+NEXT_PUBLIC_APP_URL=https://youtick.net
+NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
 ```
 
 Sik kullanilan opsiyoneller:
 
 ```env
-NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
-NEXT_PUBLIC_APP_URL=https://app.youtick.com
 NEXT_PUBLIC_ONBOARDING_KEY=ed25519:...
 NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
-NEXT_PUBLIC_NFT_CONTRACT_ID=v1.utick.testnet
+NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true
+NEXT_PUBLIC_ENABLE_LEGACY_UPLOAD_FALLBACK=true
 ```
 
 ## Project Shape
@@ -66,7 +69,7 @@ lib/
 |---------|-------|
 | `UploadForm` | Sifreleme, upload ve publish akisi |
 | `IpfsPlayer` | KMS + IPFS tabanli playback |
-| `TicketPurchaseCard` | NEAR ve deneysel cross-chain satin alma |
+| `TicketPurchaseCard` | NEAR satin alma, launch sonrasi acilabilir cross-chain yolu |
 | `GiftLinkGenerator` | Hediye link uretimi |
 | `OnboardingKeyInit` | Trial onboarding key bootstrap |
 
@@ -80,4 +83,4 @@ lib/
 | Playback | Gateway failover + browser decrypt |
 | Publish auth | Upload session |
 | Ticket purchase | On-chain NEAR call |
-| Experimental checkout | 1Click + MetaMask + implicit NEAR account |
+| Experimental checkout | Feature flag aciksa 1Click + MetaMask + implicit NEAR account |

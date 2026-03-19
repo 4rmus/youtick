@@ -4,8 +4,8 @@
 
 YouTick currently runs with client-side media encryption, a market/access/registry contract split, and a multi-operator playback path. When docs and code disagree, the codebase is the source of truth.
 
-**Primary development network:** NEAR Testnet  
-**Current live playback path:** Browser AES-CTR + `3-of-5` operator share reconstruction
+**Mainnet target:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`  
+**Current playback path:** Browser AES-CTR + registry-enforced operator share reconstruction
 
 ---
 
@@ -31,6 +31,8 @@ YouTick currently runs with client-side media encryption, a market/access/regist
 - [User Flows](guides/user-flows.md)
 - [Developer Guide](guides/developer-guide.md)
 - [Environment](guides/environment.md)
+- [Mainnet Runbook](operations/mainnet-runbook.md)
+- [Mainnet Task Owners](operations/mainnet-task-owners.md)
 
 ## Reference
 

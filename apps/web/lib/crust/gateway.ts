@@ -137,7 +137,10 @@ export async function fetchFromGateways(
 
   // 1. Try Crust API endpoints first.
   // For app-uploaded content this avoids public gateway propagation delays and noisy 4xx/5xxs.
-  const crustEndpoints = [CRUST_CONSTANTS.READ_ENDPOINT, CRUST_CONSTANTS.READ_ENDPOINT_FALLBACK];
+  const crustEndpoints = [
+    CRUST_CONSTANTS.READ_ENDPOINT,
+    CRUST_CONSTANTS.READ_ENDPOINT_FALLBACK,
+  ].flatMap((endpoint) => (endpoint && endpoint.startsWith('https://') ? [endpoint] : []));
   for (const endpoint of crustEndpoints) {
     const { controller, cleanup } = createAbortableController(timeout, options?.signal);
 

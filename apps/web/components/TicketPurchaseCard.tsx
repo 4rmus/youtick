@@ -6,7 +6,7 @@ import { actions, KeyPair, KeyPairSigner, Account, yoctoToNear, nearToYocto, typ
 import { getProvider, viewContract } from '@/lib/near';
 import { useIsCreator } from '@/lib/hooks/useSessionState';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
-import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
+import { FEATURE_FLAGS, NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
 import { IPFSThumbnail } from './IPFSThumbnail';
 import { PaymentMethodSelector } from './PaymentMethodSelector';
 import { useStablecoinPayment } from '@/lib/hooks/useStablecoinPayment';
@@ -495,7 +495,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
     // Handle the purchase button click based on payment method
     const handlePurchase = async () => {
-        if (paymentSelection.method === 'NEAR') {
+        if (!FEATURE_FLAGS.enableCrossChainCheckout || paymentSelection.method === 'NEAR') {
             await handleNearPurchase();
         } else {
             await handleStablecoinPurchase();
@@ -515,6 +515,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     const priceNear = parseFloat(eventDetails.price) || 0;
     const isFree = priceNear === 0;
     const isCreator = isCreatorData === true || (accountId && eventDetails.uploader === accountId);
+    const crossChainEnabled = FEATURE_FLAGS.enableCrossChainCheckout;
     const isStablecoinFlow = paymentSelection.method !== 'NEAR';
     const isEvmChain = paymentSelection.chain === 'arb' || paymentSelection.chain === 'base';
     const isSwapInProgress = swapStatus === 'awaiting_deposit' || swapStatus === 'processing' || swapStatus === 'quoting';
@@ -586,7 +587,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 </div>
 
                 {/* Payment Method Selector (paid tickets, non-creator — always visible so MetaMask-only users can pick EVM chain) */}
-                {!isFree && !isCreator && !isSwapInProgress && !swapNearReady && (
+                {!isFree && !isCreator && !isSwapInProgress && !swapNearReady && crossChainEnabled && (
                     <PaymentMethodSelector
                         priceNear={priceNear}
                         priceUsdCents={eventDetails.priceUsdCents}
@@ -755,7 +756,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 {!isCreator && !isSwapInProgress && !swapNearReady && (
                     <>
                         {/* MetaMask connect button (for EVM chains when MetaMask not yet connected) */}
-                        {isStablecoinFlow && isEvmChain && !isEvmConnected ? (
+                        {crossChainEnabled && isStablecoinFlow && isEvmChain && !isEvmConnected ? (
                             <Button
                                 onClick={connectMetaMask}
                                 disabled={actionLoading}
@@ -780,9 +781,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                         <Ticket className="h-5 w-5 mr-2" />
                                         {isFree
                                             ? 'Claim Free Ticket'
-                                            : isStablecoinFlow && isEvmChain
+                                            : crossChainEnabled && isStablecoinFlow && isEvmChain
                                                 ? `Pay with MetaMask • ${paymentSelection.method}`
-                                                : isStablecoinFlow
+                                                : crossChainEnabled && isStablecoinFlow
                                                     ? `Pay with ${paymentSelection.method}`
                                                     : eventDetails.priceUsdCents
                                                         ? `Buy Ticket • $${(eventDetails.priceUsdCents / 100).toFixed(2)}`

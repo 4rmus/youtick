@@ -133,6 +133,11 @@ interface KMSResponse {
     data?: Record<string, unknown>;
 }
 
+interface WorkerReadiness {
+    ready: boolean;
+    errors: string[];
+}
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -158,10 +163,15 @@ const RATE_LIMIT_MAX_RETRIEVE = 120;
 
 /** Access cache TTL: 1 hour */
 const ACCESS_CACHE_TTL_S = 3600;
+const EVENT_CREATOR_CACHE_TTL_S = 3600;
 const REGISTRY_CACHE_TTL_S = 300;
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const AUTH_TOKEN_TTL_MS = 10 * 60 * 1000;
 const NEP413_TAG = 2147484061;
+const RPC_REQUEST_TIMEOUT_MS = 2_500;
+const RPC_HEALTH_TIMEOUT_MS = 1_500;
+
+const preferredRpcUrlByNetwork = new Map<string, string>();
 
 // ============================================================================
 // CORS
@@ -174,6 +184,27 @@ function getAllowedOrigins(env: Env): Set<string> {
             .map((o) => o.trim())
             .filter(Boolean),
     );
+}
+
+function getWorkerReadiness(env: Env): WorkerReadiness {
+    const errors: string[] = [];
+
+    if (env.NEAR_NETWORK === 'mainnet') {
+        if (!env.NEAR_REGISTRY_CONTRACT_ID) {
+            errors.push('NEAR_REGISTRY_CONTRACT_ID is required on mainnet');
+        }
+        if (!env.REGISTRY_OPERATOR_ACCOUNT_ID) {
+            errors.push('REGISTRY_OPERATOR_ACCOUNT_ID is required on mainnet');
+        }
+        if (!env.OPERATOR_SHARE_SECRET) {
+            errors.push('OPERATOR_SHARE_SECRET is required on mainnet');
+        }
+    }
+
+    return {
+        ready: errors.length === 0,
+        errors,
+    };
 }
 
 function corsHeaders(request: Request, env: Env): Record<string, string> {
@@ -215,6 +246,35 @@ function getRpcPool(env: Env): string[] {
     return env.NEAR_NETWORK === 'testnet' ? TESTNET_RPC_POOL : RPC_POOL;
 }
 
+function getOrderedRpcPool(env: Env): string[] {
+    const rpcPool = getRpcPool(env);
+    const preferred = preferredRpcUrlByNetwork.get(env.NEAR_NETWORK);
+
+    if (!preferred || !rpcPool.includes(preferred)) {
+        return rpcPool;
+    }
+
+    return [preferred, ...rpcPool.filter((rpcUrl) => rpcUrl !== preferred)];
+}
+
+async function fetchWithTimeout(
+    input: string,
+    init: RequestInit,
+    timeoutMs: number,
+): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        return await fetch(input, {
+            ...init,
+            signal: controller.signal,
+        });
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
 /**
  * Call a NEAR view function via RPC with automatic failover.
  * Uses raw fetch — no near-api-js dependency needed in Worker.
@@ -225,7 +285,7 @@ async function nearViewCall<T>(
     methodName: string,
     args: Record<string, unknown> = {},
 ): Promise<T> {
-    const rpcPool = getRpcPool(env);
+    const rpcPool = getOrderedRpcPool(env);
     const argsBase64 = btoa(JSON.stringify(args));
 
     const body = JSON.stringify({
@@ -245,11 +305,11 @@ async function nearViewCall<T>(
 
     for (const rpcUrl of rpcPool) {
         try {
-            const response = await fetch(rpcUrl, {
+            const response = await fetchWithTimeout(rpcUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body,
-            });
+            }, RPC_REQUEST_TIMEOUT_MS);
 
             if (!response.ok) {
                 lastError = new Error(`RPC ${rpcUrl} returned ${response.status}`);
@@ -271,6 +331,7 @@ async function nearViewCall<T>(
                 continue;
             }
 
+            preferredRpcUrlByNetwork.set(env.NEAR_NETWORK, rpcUrl);
             const resultStr = String.fromCharCode(...json.result.result);
             return JSON.parse(resultStr) as T;
         } catch (e) {
@@ -290,7 +351,7 @@ async function nearRpcQuery<T>(
     env: Env,
     params: Record<string, unknown>,
 ): Promise<T> {
-    const rpcPool = getRpcPool(env);
+    const rpcPool = getOrderedRpcPool(env);
     const body = JSON.stringify({
         jsonrpc: '2.0',
         id: 'dontcare',
@@ -302,11 +363,11 @@ async function nearRpcQuery<T>(
 
     for (const rpcUrl of rpcPool) {
         try {
-            const response = await fetch(rpcUrl, {
+            const response = await fetchWithTimeout(rpcUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body,
-            });
+            }, RPC_REQUEST_TIMEOUT_MS);
 
             if (!response.ok) {
                 lastError = new Error(`RPC ${rpcUrl} returned ${response.status}`);
@@ -324,6 +385,7 @@ async function nearRpcQuery<T>(
                 continue;
             }
 
+            preferredRpcUrlByNetwork.set(env.NEAR_NETWORK, rpcUrl);
             return json.result as T;
         } catch (e) {
             lastError = e instanceof Error ? e : new Error(String(e));
@@ -458,6 +520,12 @@ async function getEventCreatorId(
     env: Env,
     encryptedCid: string,
 ): Promise<string | null> {
+    const cacheKey = `eventcreator:${encryptedCid}`;
+    const cached = await env.ACCESS_CACHE.get(cacheKey);
+    if (cached) {
+        return cached === '__null__' ? null : cached;
+    }
+
     try {
         const event = await nearViewCall<{ creator_id: string } | null>(
             env,
@@ -465,7 +533,13 @@ async function getEventCreatorId(
             'get_event',
             { encrypted_cid: encryptedCid },
         );
-        return event?.creator_id ?? null;
+        const creatorId = event?.creator_id ?? null;
+        await env.ACCESS_CACHE.put(
+            cacheKey,
+            creatorId || '__null__',
+            { expirationTtl: EVENT_CREATOR_CACHE_TTL_S },
+        );
+        return creatorId;
     } catch (error) {
         console.error('[KMS] getEventCreatorId failed:', error);
         return null;
@@ -550,6 +624,12 @@ async function verifyRegistryOperatorAuthority(
     env: Env,
 ): Promise<{ ok: boolean; reason?: string }> {
     if (!env.NEAR_REGISTRY_CONTRACT_ID || !env.REGISTRY_OPERATOR_ACCOUNT_ID) {
+        if (env.NEAR_NETWORK === 'mainnet') {
+            return {
+                ok: false,
+                reason: 'Registry operator configuration is incomplete for mainnet',
+            };
+        }
         return { ok: true };
     }
 
@@ -1196,9 +1276,11 @@ async function handleStore(
 
     const keyId = `key:${body.videoId}`;
     const ownerIdKey = `owner:${body.videoId}`;
-    const existingKey = await env.VIDEO_KEYS.get(keyId);
-    const recordedOwner = await env.VIDEO_KEYS.get(ownerIdKey);
-    const eventCreatorId = await getEventCreatorId(env, body.videoId);
+    const [existingKey, recordedOwner, eventCreatorId] = await Promise.all([
+        env.VIDEO_KEYS.get(keyId),
+        env.VIDEO_KEYS.get(ownerIdKey),
+        getEventCreatorId(env, body.videoId),
+    ]);
 
     // Event exists: only event creator can store/update key.
     if (eventCreatorId && eventCreatorId !== accountId) {
@@ -1423,34 +1505,60 @@ async function handleHealth(
     request: Request,
     env: Env,
 ): Promise<Response> {
-    // Quick RPC health check
-    let rpcOk = false;
+    const readiness = getWorkerReadiness(env);
+    const rpcPool = getOrderedRpcPool(env);
+    const rpcChecks = await Promise.all(
+        rpcPool.map(async (rpcUrl) => {
+            try {
+                const response = await fetchWithTimeout(rpcUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        id: 'health',
+                        method: 'status',
+                        params: [],
+                    }),
+                }, RPC_HEALTH_TIMEOUT_MS);
+
+                return response.ok;
+            } catch {
+                return false;
+            }
+        }),
+    );
+    const rpcHealthyEndpoints = rpcChecks.filter(Boolean).length;
+
+    let kvOk = true;
     try {
-        const rpcPool = getRpcPool(env);
-        const response = await fetch(rpcPool[0], {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                jsonrpc: '2.0',
-                id: 'health',
-                method: 'status',
-                params: [],
-            }),
-        });
-        rpcOk = response.ok;
+        await Promise.all([
+            env.VIDEO_KEYS.get('__health__'),
+            env.RATE_LIMIT.get('__health__'),
+            env.ACCESS_CACHE.get('__health__'),
+        ]);
     } catch {
-        rpcOk = false;
+        kvOk = false;
     }
 
     const registryOperator = await verifyRegistryOperatorAuthority(request, env);
+    const ready =
+        readiness.ready
+        && rpcHealthyEndpoints > 0
+        && kvOk
+        && registryOperator.ok;
 
     return jsonResponse(
         {
-            ok: true,
+            ok: ready,
             data: {
                 service: 'youtick-kms',
                 version: '1.0.0',
-                nearRpc: rpcOk ? 'ok' : 'degraded',
+                ready,
+                readinessErrors: readiness.errors,
+                nearRpc: rpcHealthyEndpoints > 0 ? 'ok' : 'degraded',
+                nearRpcHealthyEndpoints: rpcHealthyEndpoints,
+                nearRpcTotalEndpoints: rpcPool.length,
+                kv: kvOk ? 'ok' : 'degraded',
                 network: env.NEAR_NETWORK,
                 contract: env.NEAR_CONTRACT_ID,
                 accessContract: env.NEAR_ACCESS_CONTRACT_ID || null,
@@ -1461,7 +1569,7 @@ async function handleHealth(
                 shareMode: env.OPERATOR_SHARE_SECRET ? 'operator-encrypted-share' : 'legacy-single-key',
             },
         },
-        200,
+        ready ? 200 : 503,
         request,
         env,
     );
@@ -1485,6 +1593,16 @@ export default {
         // Health check
         if (path === '/health' && request.method === 'GET') {
             return handleHealth(request, env);
+        }
+
+        const readiness = getWorkerReadiness(env);
+        if (!readiness.ready) {
+            return jsonResponse(
+                { ok: false, error: readiness.errors.join('; ') },
+                503,
+                request,
+                env,
+            );
         }
 
         // Only POST for auth/store/retrieve

@@ -32,7 +32,7 @@ function isValidThumbnailRef(ref: string | null | undefined): boolean {
     return isIpfsUrl(ref) || isDirectUrl(ref) || isValidThumbnailCid(ref);
 }
 
-function resolveThumbnailUrl(ref: string | null | undefined, gatewayUrl: string, placeholderImage: string): string {
+function resolveThumbnailUrl(ref: string | null | undefined, placeholderImage: string): string {
     if (!ref || ref.trim() === '') {
         return placeholderImage;
     }
@@ -42,7 +42,7 @@ function resolveThumbnailUrl(ref: string | null | undefined, gatewayUrl: string,
     }
 
     if (isValidThumbnailCid(ref)) {
-        return `${gatewayUrl}/${ref}`;
+        return `ipfs://${ref}`;
     }
 
     return placeholderImage;
@@ -60,7 +60,7 @@ export function parseTitleMetadata(
     fallbackTitle: string = 'Untitled',
 ): ParsedMetadata {
     const { delimiter } = METADATA_SCHEMA;
-    const { gatewayUrl, placeholderImage } = IPFS_CONFIG;
+    const { placeholderImage } = IPFS_CONFIG;
 
     if (!rawTitle || rawTitle.trim() === '') {
         return {
@@ -91,7 +91,7 @@ export function parseTitleMetadata(
         return {
             title: title || fallbackTitle,
             thumbnailCid: hasValidThumbnail ? thumbnailRef : null,
-            thumbnailUrl: resolveThumbnailUrl(thumbnailRef, gatewayUrl, placeholderImage),
+            thumbnailUrl: resolveThumbnailUrl(thumbnailRef, placeholderImage),
             manifestCid,
         };
     }
@@ -105,7 +105,7 @@ export function parseTitleMetadata(
         return {
             title: title || fallbackTitle,
             thumbnailCid: hasValidThumbnail ? thumbnailRef : null,
-            thumbnailUrl: resolveThumbnailUrl(thumbnailRef, gatewayUrl, placeholderImage),
+            thumbnailUrl: resolveThumbnailUrl(thumbnailRef, placeholderImage),
             manifestCid,
         };
     }

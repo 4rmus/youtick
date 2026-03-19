@@ -6,6 +6,7 @@
 
 ## Tamamlanan temel taslar
 
+- **Mainnet launch** — `youtick.near`, `access.youtick.near`, `registry.youtick.near` uretimde
 - KMS tabanli anahtar korumasi
 - Browser tarafinda medya sifreleme
 - Crust/IPFS uzerinden sifreli delivery

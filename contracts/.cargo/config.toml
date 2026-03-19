@@ -1,0 +1,4 @@
+# near-workspaces sandbox uses a fixed local RPC port.
+# Run Rust tests serially so parallel tests do not race on the same port.
+[env]
+RUST_TEST_THREADS = "1"

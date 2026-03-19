@@ -11,13 +11,19 @@ import { generateKeyPairs, parseGiftLink } from '@/lib/gift-service';
 
 // Mock modules
 vi.mock('@/lib/constants', () => ({
+  APP_CONFIG: {
+    publicAppUrl: 'https://app.youtick.io'
+  },
+  FEATURE_FLAGS: {
+    enableCrossChainCheckout: false,
+    enableLegacyUploadFallback: false
+  },
   NFT_CONTRACT_ID: 'test-contract.testnet',
   NETWORK_ID: 'testnet',
   NEAR_CONFIG: {
     contractId: 'test-contract.testnet',
     networkId: 'testnet',
   },
-  APP_URL: 'https://app.youtick.io',
   GIFT_LINK_CONFIG: {
     maxLinks: 50,
     depositPerLink: '150000000000000000000000' // 0.15 NEAR

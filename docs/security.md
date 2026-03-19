@@ -1,6 +1,6 @@
 # Security Model
 
-> How media, key shares, and authorization are protected in the live testnet architecture
+> How media, key shares, and authorization are protected in the hardened mainnet path
 
 ---
 
@@ -66,7 +66,7 @@ It decides:
 - which relayers are active
 - what threshold the playback system expects
 
-In the current testnet rollout:
+In the current mainnet-target rollout:
 
 - active operator count: `5`
 - playback threshold: `3-of-5`
@@ -101,8 +101,10 @@ Legacy trial flows still exist in the product surface, but the relayer route is 
 
 - Is `NEXT_PUBLIC_KMS_URL` correct for the current environment?
 - Does the KMS worker point to the right market, access, and registry contracts?
+- Does the worker fail health if `REGISTRY_OPERATOR_ACCOUNT_ID` or `OPERATOR_SHARE_SECRET` is missing?
 - Are the required operators active in the registry?
 - Are the required relayers active in the registry?
+- Are mainnet and testnet using separate KV namespaces?
 - Are IPFS gateway fallbacks still healthy?
 - Are banned events blocked from new purchases?
 - Are playback traces showing reconstruction from shares rather than legacy fallback?
