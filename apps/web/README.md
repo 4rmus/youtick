@@ -41,11 +41,12 @@ NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
 Sik kullanilan opsiyoneller:
 
 ```env
-NEXT_PUBLIC_ONBOARDING_KEY=ed25519:...
 NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
 NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true
 NEXT_PUBLIC_ENABLE_LEGACY_UPLOAD_FALLBACK=true
 ```
+
+Trial olusturma icin birinci yol artik server-side relayer akisi. Browser onboarding key sadece kontrollu local fallback olarak dusunulmeli.
 
 ## Project Shape
 
@@ -71,7 +72,7 @@ lib/
 | `IpfsPlayer` | KMS + IPFS tabanli playback |
 | `TicketPurchaseCard` | NEAR satin alma, launch sonrasi acilabilir cross-chain yolu |
 | `GiftLinkGenerator` | Hediye link uretimi |
-| `OnboardingKeyInit` | Trial onboarding key bootstrap |
+| `OnboardingKeyInit` | Trial pool health ve local fallback onboarding key kontrolu |
 
 ## Runtime Model
 

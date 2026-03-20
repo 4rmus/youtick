@@ -6,15 +6,15 @@
 
 ## Required
 
-### Node.js (18+)
+### Node.js (20.9+)
 
 ```bash
 # Check version
-node --version   # Should be 18.x or higher
+node --version   # Should be 20.9.x or higher
 
 # Install via nvm (recommended)
-nvm install 18
-nvm use 18
+nvm install 20
+nvm use 20
 ```
 
 ### npm (9+)

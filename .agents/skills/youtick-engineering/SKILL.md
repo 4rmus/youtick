@@ -1,12 +1,11 @@
 ---
 name: youtick-engineering
 description: >
-  Engineering playbook for the YouTick repo. Use when implementing, refactoring,
-  debugging, testing, or reviewing code in this workspace: Next.js frontend,
-  NEAR smart contract, Cloudflare workers, upload/playback flows, wallet/session
-  logic, IPFS/Crust, KMS, gifts, trials, or architecture decisions specific to
-  YouTick.
-version: 1.1.0
+  Engineering playbook for the YouTick repo. Use when implementing, debugging,
+  testing, reviewing, profiling, triaging incidents, or hardening releases
+  across the Next.js app, NEAR contracts, workers, wallet/session logic,
+  upload/playback flows, IPFS/Crust, KMS, gifts, or trials.
+version: 1.3.0
 license: MIT
 platforms:
   - claude
@@ -22,319 +21,206 @@ tags:
   - ipfs
 metadata:
   author: youtick
-  version: "1.1.0"
+  version: "1.3.0"
 ---
 
 # youtick-engineering
 
-Engineering guide for shipping safely inside the YouTick codebase.
+Engineering guide for making safe changes in the live YouTick product.
+
+## Do not use this skill when
+
+- the task is mainly UI layout or interaction design
+- the task is mainly positioning, landing copy, or campaign messaging
+- the task is mainly roadmap, KPI, or launch-planning work
 
 ## First read
 
-Open `../_shared/youtick-analysis.md` first.
+Open these first:
 
-Use the shared analysis for:
+- `../_shared/youtick-analysis.md`
+- `../_shared/references/live-code-map.md`
+- `../_shared/references/logic-guardrails.md`
 
-- product context
-- user journey context
-- repo map
-- known docs drift
+Then inspect the live route, component, or service you are changing.
 
-Then inspect live code before trusting older docs.
+## What this skill optimizes for
 
-Useful supporting docs:
+- preserve the main user journey
+- keep wallet friction low
+- protect access and payout logic
+- avoid "transaction succeeded but user is still blocked"
+- prefer live-code truth over old architecture stories
 
-- `docs/architecture/storage.md`
-- `docs/architecture/session-keys.md`
-- `docs/architecture/smart-contract.md`
+## Choose the journey before you patch
 
-## Core engineering principles
+Classify the work first:
 
-### 1. Code beats docs
+- upload and publish
+- discover
+- purchase and watch
+- gift and claim
+- trial onboarding
+- profile and creator operations
+- contract-only or worker-only change
 
-Some architecture docs still describe Nova-heavy flows. The current app uses:
+Do not start from a utility file unless you already know which journey broke.
 
-- `apps/web/lib/kms/*`
-- `workers/youtick-kms/src/index.ts`
-- `apps/web/lib/crust/*`
-
-Treat the current code as source of truth.
-
-### 2. Preserve the client-first feel
-
-The product promise depends on keeping core actions close to the browser:
-
-- upload should feel direct
-- purchase should minimize wallet interruptions
-- playback should unlock fast once access is valid
-
-Do not add backend dependency or extra round-trips unless they clearly improve
-security, reliability, or conversion.
-
-### 3. Wallet friction is a product bug
-
-When changing upload, purchase, gift, or trial flows:
-
-- minimize wallet popups
-- preserve session/prepaid flows where possible
-- keep retry and fallback behavior intact
-- avoid breaking trial and implicit-account paths
-
-### 4. Security boundaries matter
-
-Treat these as security-critical:
-
-- ticket ownership checks
-- KMS signed request flow
-- onboarding keys
-- trial pool usage
-- gift claim logic
-- contract payout logic
-
-Any shortcut here is a product risk, not just a code smell.
-
-### 5. Mainnet assumptions are real
-
-Defaults point to mainnet and `youtick.near`.
-
-Be careful with:
-
-- contract IDs
-- storage deposits
-- gas constants
-- irreversible contract behavior
-- public claim/gift URLs
-
-### 6. Operational dependencies are product dependencies
-
-If you touch trial, gift, or onboarding flows, account for:
-
-- onboarding key authorization
-- trial pool balance
-- daily trial limits
-- KMS auth cache behavior
-- rate-limiter behavior in `apps/web/lib/rate-limiter.ts`
-
-If these are ignored, the UI may look correct while real users still fail.
-
-## High-value code surfaces
+## Live surfaces to inspect first
 
 ### Upload and publish
 
-Read first:
-
 - `apps/web/components/UploadForm.tsx`
-- `apps/web/lib/session-manager.ts`
 - `apps/web/lib/upload-session-manager.ts`
-- `apps/web/lib/batch-transactions.ts`
-- `apps/web/lib/kms/encryption.ts`
-- `apps/web/lib/crust/client.ts`
+- `apps/web/lib/session-manager.ts`
+- `apps/web/lib/kms/client.ts`
+- `apps/web/lib/video-delivery.ts`
 
-Guardrails:
+Watch for:
 
-- keep file-size logic aligned with pricing logic
-- keep status/progress steps understandable
-- preserve fallback from upload sessions to legacy session keys
-- avoid regressions in thumbnail/poster generation
+- upload-session path vs legacy fallback
+- segmented-delivery packaging
+- storage-fee math and user copy staying aligned
+- publish success meaning both chain write and usable media path
 
 ### Purchase and watch
-
-Read first:
 
 - `apps/web/components/TicketPurchaseCard.tsx`
 - `apps/web/components/IpfsPlayer.tsx`
 - `apps/web/app/watch/page.tsx`
-- `apps/web/hooks/useOwnedTokens.ts`
-- `apps/web/hooks/useEventDescription.ts`
+- `apps/web/lib/access-grants.ts`
 
-Guardrails:
+Watch for:
 
-- success is "can play" not only "tx succeeded"
-- keep free ticket, trial, NEAR wallet, and EVM paths separate in your mind
-- label experimental flows clearly in code and UI
-- preserve ownership checks before KMS retrieval
+- ownership refresh timing
+- KMS grant and auth flow
+- playback manifest quality gates
+- feature-flagged EVM checkout staying clearly secondary
 
-### Gifts and onboarding
+### Gift and trial
 
-Read first:
-
-- `apps/web/components/GiftLinkGenerator.tsx`
 - `apps/web/app/claim/page.tsx`
 - `apps/web/components/TrialOnboarding.tsx`
-- `apps/web/lib/gift-service.ts`
 - `apps/web/components/OnboardingKeyInit.tsx`
+- `apps/web/lib/gift-service.ts`
+- `apps/web/lib/rate-limiter.ts`
 
-Guardrails:
+Watch for:
 
-- gift claim can create a new account or target an existing account
-- onboarding key validity and trial pool health affect user success
-- do not weaken claim-link secrecy or URL cleanup behavior
+- claim link secrecy and URL cleanup
+- onboarding-key validity
+- trial pool and daily-limit dependency
+- localStorage/sessionStorage state carrying old auth
 
 ### Wallet and account state
-
-Read first:
 
 - `apps/web/components/providers/WalletProvider.tsx`
 - `apps/web/lib/trial-wallet.ts`
 - `apps/web/lib/keystore-v7.ts`
 
-Guardrails:
+Watch for:
 
-- active account may be normal wallet, trial account, or EVM-linked implicit account
-- sign-out must clear cached auth state
-- wallet changes can affect KMS and Crust auth caches
+- account priority: wallet, then trial, then EVM-linked account
+- sign-out clearing all relevant caches
+- wallet state changes affecting KMS, access grants, and Crust auth
 
-### Contract work
-
-Read first:
+### Contract and worker
 
 - `contracts/nft-ticket/src/lib.rs`
-- `contracts/nft-ticket/tests/sandbox.rs`
-- `contracts/nft-ticket/README.md`
-
-Guardrails:
-
-- preserve 98 / 1 / 1 economics
-- preserve gift, trial, and free-ticket invariants
-- preserve upload session and prepaid flows
-- preserve KMS-first behavior while keeping legacy Nova compatibility markers untouched unless you fully migrate them
-- be careful with storage, callbacks, and owner-only methods
-
-### Worker work
-
-Read first:
-
 - `workers/youtick-kms/src/index.ts`
 - `workers/web4-proxy/src/index.ts`
 
-Guardrails:
+Watch for:
 
-- KMS changes touch auth, replay safety, CORS, rate limiting, and access checks
-- proxy changes touch caching, headers, and custom-domain behavior
+- payout invariants
+- access control and replay protection
+- operator and registry assumptions on mainnet
+- legacy compatibility fields that still affect live reads
 
-## Engineering workflow
+## Working method
 
-### For a bug fix
+### For a bug
 
-1. Find the exact user journey.
-2. Reproduce from the page or component entry point.
-3. Check contract/worker dependencies before patching the UI.
-4. Prefer the smallest fix that preserves existing flow structure.
-5. Add or update tests near the affected layer.
+1. Start from the user-visible page.
+2. Reproduce the exact path in code.
+3. Check cache and account-state layers.
+4. Check contract or worker dependency before changing UI behavior.
+5. Fix the smallest thing that keeps the main path stable.
 
 ### For a new feature
 
-1. Decide which journey changes: upload, discover, purchase, watch, gift, trial, profile.
-2. Map the affected layers: frontend only, frontend + worker, or frontend + contract.
-3. Identify state and storage implications: React Query, localStorage, sessionStorage, access keys, auth tokens.
-4. Preserve bilingual text coverage if UI copy changes.
-5. Verify the happy path and at least one failure path.
+1. Name the journey that changes.
+2. List affected layers: UI, lib, worker, contract.
+3. Note which local or remote state is touched.
+4. Keep bilingual text coverage if copy changes.
+5. Verify happy path plus at least one failure path.
 
-### For refactors
+### For a refactor
 
-Refactor only after identifying which behavior is fragile:
+Refactor only after naming the fragile behavior:
 
-- wallet/session interactions
-- async purchase state
-- video delivery/decryption
-- claim/create-account flows
+- upload authorization
+- payment completion
+- playback unlock
+- claim/create-account flow
+- wallet handoff
 
-If the flow is user-money or user-access sensitive, prefer clarity over cleverness.
+If money or access is involved, prefer clarity over cleverness.
+
+## High-value guardrails
+
+- Do not remove fallback logic just because it looks old.
+- Do not treat experimental payment code as the benchmark path.
+- Do not assume a successful chain call means the user can proceed.
+- Do not forget session grants, KMS auth cache, and local account state.
+- Do not change creator economics casually.
 
 ## Testing expectations
 
-Frontend tests already exist under `apps/web/__tests__`.
+Read and extend nearby tests when behavior changes.
 
-Useful targets:
+Good starting points:
 
 - `apps/web/__tests__/integration/upload-flow.test.ts`
 - `apps/web/__tests__/integration/gift-claim-flow.test.ts`
-- `apps/web/__tests__/unit/session-manager.test.ts`
+- `apps/web/__tests__/unit/access-grants.test.ts`
 - `apps/web/__tests__/unit/kms-streaming.test.ts`
-- `apps/web/__tests__/unit/video-delivery.test.ts`
-- `apps/web/__tests__/unit/video-delivery-segmentation.test.ts`
-
-Contract tests:
-
+- `apps/web/__tests__/unit/video-delivery-player.test.ts`
 - `contracts/nft-ticket/tests/sandbox.rs`
 
-When you change behavior, validate:
+Always think through:
 
-- wallet-connected path
-- trial/no-wallet path if relevant
+- connected-wallet path
+- trial or no-wallet path when relevant
 - success state
-- failure state
-- loading/retry state
+- loading and retry state
+- failure and recovery state
 
-## Common failure patterns
+## When to pair this skill with another
 
-### Docs mismatch
-
-If a doc mentions `lib/nova/*`, confirm whether the live code still uses that path.
-In this repo, KMS-based code is the stronger signal.
-
-### Hidden user state
-
-A bug may be caused by:
-
-- cached KMS auth tokens
-- cached W3Auth token state
-- trial account ID in localStorage
-- EVM-linked implicit account in localStorage
-- stale onboarding key
-
-### "Transaction succeeded but user still blocked"
-
-Check:
-
-- ownership refresh timing
-- ticket query cache
-- KMS access verification
-- delayed playback re-init
-- post-purchase access sync assumptions
-
-### Performance regressions
-
-Watch for:
-
-- repeated RPC calls instead of using existing helpers
-- large blob copies in upload/playback
-- gateway retries that block UI too long
-- excessive rerenders in purchase/player components
-
-### Anti-abuse and trial edge cases
-
-Check:
-
-- onboarding key validity
-- contract-side daily limits
-- local best-effort rate limiting
-- fallback behavior when trial creation is unavailable
+- Use `near-api-js` for NEAR RPC, keys, and action wiring.
+- Use `near-smart-contracts` for Rust contract edits or reviews.
+- Use `crust-network` for upload or IPFS gateway work.
+- Use `near-intents` for cross-chain checkout logic.
 
 ## Repo-specific do and don't
 
 Do:
 
-- keep text changes aligned with `apps/web/lib/translations.ts`
-- preserve creator-first economics in copy and UI
-- preserve empty/error/loading states on major routes
-- respect dirty git state and avoid unrelated files
-- keep security-related logs and rate limits understandable
+- follow the journey from route to lib to contract or worker
+- preserve creator-first economics and low-friction access
+- keep loading, empty, and error states intact
+- respect existing feature flags and rollout boundaries
 
 Don't:
 
-- assume a server can be added casually
-- remove fallback logic without proving the live contract no longer needs it
-- present experimental payment paths as the default path
-- break trial onboarding while improving wallet-connected UX
-- trust old docs over current code
+- trust old names more than live behavior
+- weaken access checks for convenience
+- break trial onboarding while polishing wallet-first UX
+- count a successful transaction as the whole user outcome
 
 ## Useful references
 
 - `../_shared/youtick-analysis.md`
-- `README.md`
-- `docs/guides/user-flows.md`
-- `docs/architecture/README.md`
-- `docs/architecture/storage.md`
-- `docs/architecture/session-keys.md`
-- `docs/architecture/smart-contract.md`
+- `../_shared/references/live-code-map.md`
+- `../_shared/references/logic-guardrails.md`

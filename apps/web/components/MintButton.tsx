@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from "@/components/ui/button";
 import { Loader2, Coins, Ticket } from "lucide-react";
-import { actions, yoctoToNear, nearToYocto } from 'near-api-js';
+import { actions, yoctoToNear } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
 import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from '@/lib/constants';
+import { nearAmountToYocto } from '@/lib/near-amount';
 import { useNearPrice } from '@/hooks/useNearPrice';
 
 interface MintButtonProps {
@@ -67,7 +68,7 @@ export function MintButton({ cid }: MintButtonProps) {
             // SALES FLOW: Buy Ticket
             if (cid && price) {
                 // v7: Use nearToYocto for conversion
-                const depositYocto = nearToYocto(parseFloat(price));
+                const depositYocto = nearAmountToYocto(price);
                 // v7: Use actions.functionCall instead of transactions.functionCall
                 const action = actions.functionCall(
                     'buy_ticket',
@@ -76,7 +77,7 @@ export function MintButton({ cid }: MintButtonProps) {
                         encrypted_cid: cid
                     },
                     GAS_CONSTANTS.smallGas, // 30 Tgas
-                    BigInt(depositYocto) + BigInt('12000000000000000000000') // Price + 0.012 NEAR (Storage + commission buffer)
+                    depositYocto + BigInt('12000000000000000000000') // Price + 0.012 NEAR (Storage + commission buffer)
                 );
 
                 await wallet.signAndSendTransaction({

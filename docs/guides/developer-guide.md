@@ -57,7 +57,8 @@ cargo test
 ### Gift / Trial
 
 - claim key akisi
-- onboarding key akisi
+- sponsored trial relayer akisi
+- local onboarding key fallback'i (yalnizca kontrollu durumlarda)
 
 ### Cross-chain
 

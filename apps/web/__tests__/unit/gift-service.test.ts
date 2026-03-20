@@ -366,14 +366,20 @@ describe('Gift Service', () => {
       setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
 
       const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          result: {
-            result: Array.from(Buffer.from('true'))
-          }
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          json: async () => ({ error: 'relayer unavailable' })
         })
-      });
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            result: {
+              result: Array.from(Buffer.from('true'))
+            }
+          })
+        });
 
       const result = await createSponsoredTrial('newaccount');
 
@@ -385,21 +391,13 @@ describe('Gift Service', () => {
       global.fetch = originalFetch;
     });
 
-    it('should fall back to relayer when onboarding key is unauthorized', async () => {
+    it('should prefer relayer even when onboarding key exists', async () => {
       const onboardingKey = generateKeyPairs(1)[0].secretKey;
       setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
 
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            result: {
-              result: Array.from(Buffer.from('false'))
-            }
-          })
-        })
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({

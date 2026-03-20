@@ -2,11 +2,10 @@
 import { Account, KeyPairSigner, type Action } from "near-api-js";
 import { BrowserKeyStore } from "./keystore-v7";
 import { NEAR_CONFIG } from "./constants";
+import { getCurrentRpcUrl } from "./rpc-failover";
+import { clearManagedNearAccount, readManagedNearAccount } from "./managed-near-account";
 
 const NETWORK_ID = NEAR_CONFIG.networkId;
-const RPC_URL = NETWORK_ID === 'mainnet'
-    ? 'https://free.rpc.fastnear.com'
-    : 'https://test.rpc.fastnear.com';
 
 /**
  * TrialWallet behaves like a Wallet Selector wallet but uses local browser keys
@@ -30,7 +29,7 @@ export class TrialWallet {
             if (!signer) {
                 throw new Error(`No key found for account ${this.accountId}`);
             }
-            this.account = new Account(this.accountId, RPC_URL, signer);
+            this.account = new Account(this.accountId, getCurrentRpcUrl(), signer);
         }
         return this.account;
     }
@@ -63,8 +62,10 @@ export class TrialWallet {
 
     async signOut() {
         if (typeof window !== "undefined") {
-            localStorage.removeItem("trialAccountId");
-            // Also remove the key from keystore
+            const managed = readManagedNearAccount();
+            if (managed?.accountId === this.accountId) {
+                clearManagedNearAccount();
+            }
             await this.keyStore.removeKey(NETWORK_ID, this.accountId);
         }
     }

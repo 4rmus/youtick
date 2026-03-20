@@ -36,7 +36,6 @@ Bu alanlar olmadan uygulama dogru contract setine ve ağa baglanamaz.
 | `NEXT_PUBLIC_APP_URL` | Hediye linklerinde kullanilan ana URL | Farkli domain veya local tunnel kullaniyorsan |
 | `NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT` | 1Click + MetaMask yolunu acar | Ayrica readiness review gectiyse |
 | `NEXT_PUBLIC_ENABLE_LEGACY_UPLOAD_FALLBACK` | Eski upload fallback yolunu acar | Sadece bilincli gecis surecinde |
-| `NEXT_PUBLIC_ONBOARDING_KEY` | Trial olusturma icin kisitli onboarding key | Client-side trial akisini acik tutmak istiyorsan |
 | `NEXT_PUBLIC_ONE_CLICK_API_TOKEN` | 1Click quote ve swap istekleri icin partner tokeni | Arbitrum/Base odemelerini kullanacaksan |
 | `NEXT_PUBLIC_DEPLOY_TARGET` | Web4 build davranisini degistirir | `npm run build:web4` kullaniyorsan |
 
@@ -91,10 +90,11 @@ NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
 NEXT_PUBLIC_APP_URL=https://youtick.net
-NEXT_PUBLIC_ONBOARDING_KEY=ed25519:...
 NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
 NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true
 ```
+
+Trial olusturma icin relayer kullaniliyorsa `RELAYER_ACCOUNT_ID` ve `RELAYER_PRIVATE_KEY` server-side kalmali. Browser bundle'ina onboarding key koyma.
 
 ---
 

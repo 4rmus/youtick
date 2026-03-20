@@ -1,5 +1,6 @@
+import type { TokenResponse } from '@defuse-protocol/one-click-sdk-typescript';
 import { NEAR_CONFIG } from '../constants';
-import type { TokenConfig, ChainId } from './types';
+import type { TokenConfig, ChainId, PaymentMethod } from './types';
 
 /**
  * 1Click API Configuration
@@ -79,6 +80,73 @@ export const STABLECOIN_TOKENS: Record<string, TokenConfig[]> = {
     ],
 };
 
+type SupportedStablecoin = Exclude<PaymentMethod, 'NEAR'>;
+
+const SUPPORTED_STABLECOINS: SupportedStablecoin[] = ['USDC', 'USDT'];
+
+const BLOCKCHAIN_TO_CHAIN: Partial<Record<TokenResponse.blockchain, ChainId>> = {
+    near: 'near',
+    arb: 'arb',
+    base: 'base',
+};
+
+let tokenCatalogOverrides: Partial<Record<SupportedStablecoin, TokenConfig[]>> = {};
+
+function cloneTokenConfig(token: TokenConfig): TokenConfig {
+    return { ...token };
+}
+
+function normalizeTokenConfig(symbol: SupportedStablecoin, token: TokenResponse): TokenConfig | null {
+    const chainId = BLOCKCHAIN_TO_CHAIN[token.blockchain];
+    if (!chainId) return null;
+    if (token.symbol !== symbol) return null;
+
+    return {
+        assetId: token.assetId,
+        symbol,
+        decimals: token.decimals,
+        chainId,
+        chainName: CHAIN_CONFIG[chainId].name,
+    };
+}
+
+function dedupeTokenConfigs(tokens: TokenConfig[]): TokenConfig[] {
+    const seen = new Set<string>();
+    return tokens.filter((token) => {
+        const key = `${token.chainId}:${token.assetId}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+export function updateSupportedTokenCatalog(tokens: TokenResponse[]): void {
+    const nextOverrides: Partial<Record<SupportedStablecoin, TokenConfig[]>> = {};
+
+    for (const symbol of SUPPORTED_STABLECOINS) {
+        const dynamicTokens = dedupeTokenConfigs(
+            tokens
+                .map((token) => normalizeTokenConfig(symbol, token))
+                .filter((token): token is TokenConfig => token !== null)
+        );
+
+        if (dynamicTokens.length > 0) {
+            nextOverrides[symbol] = dynamicTokens;
+        }
+    }
+
+    tokenCatalogOverrides = nextOverrides;
+}
+
+function getTokenCatalog(symbol: SupportedStablecoin): TokenConfig[] {
+    const dynamicTokens = tokenCatalogOverrides[symbol];
+    if (dynamicTokens && dynamicTokens.length > 0) {
+        return dynamicTokens.map(cloneTokenConfig);
+    }
+
+    return (STABLECOIN_TOKENS[symbol] || []).map(cloneTokenConfig);
+}
+
 /**
  * Chain display configuration
  */
@@ -92,12 +160,14 @@ export const CHAIN_CONFIG: Record<ChainId, { name: string; icon: string }> = {
  * Get token config by symbol and chain
  */
 export function getTokenConfig(symbol: string, chainId: ChainId): TokenConfig | undefined {
-    return STABLECOIN_TOKENS[symbol]?.find(t => t.chainId === chainId);
+    if (symbol === 'NEAR') return undefined;
+    return getTokenCatalog(symbol as SupportedStablecoin).find(t => t.chainId === chainId);
 }
 
 /**
  * Get all supported chains for a token symbol
  */
 export function getSupportedChains(symbol: string): TokenConfig[] {
-    return STABLECOIN_TOKENS[symbol] || [];
+    if (symbol === 'NEAR') return [];
+    return getTokenCatalog(symbol as SupportedStablecoin);
 }

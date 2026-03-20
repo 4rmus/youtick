@@ -53,7 +53,7 @@ Temel fikir cok basit:
 
 - creator paylasilabilir hediye linki uretir
 - alici mevcut hesaba ya da yeni hesaba claim eder
-- onboarding key varsa trial hesap client-side acilabilir
+- trial hesap olusturma icin ana yol relayer'dir; local onboarding key yalnizca kontrollu fallback olarak dusunulmelidir
 
 ---
 

@@ -9,7 +9,7 @@ import { Loader2 } from "lucide-react";
 function TrialContent() {
     const searchParams = useSearchParams();
     const redirect = searchParams.get("redirect");
-    const { accountId, connect } = useWallet();
+    const { accountId, connect, setManagedAccount } = useWallet();
 
     // When wallet gets connected, redirect back to the original page
     useEffect(() => {
@@ -18,10 +18,12 @@ function TrialContent() {
         }
     }, [accountId, redirect]);
 
-    const handleTrialCreated = (accountId: string) => {
-        // Store in localStorage for session persistence
+    const handleAccountCreated = (accountId: string, kind: 'guest' | 'trial') => {
         if (typeof window !== "undefined") {
-            localStorage.setItem("trialAccountId", accountId);
+            setManagedAccount(accountId, kind);
+            if (redirect) {
+                window.location.href = redirect;
+            }
         }
     };
 
@@ -37,7 +39,7 @@ function TrialContent() {
     return (
         <main className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-black flex items-center justify-center p-4">
             <TrialOnboarding
-                onTrialCreated={handleTrialCreated}
+                onAccountCreated={handleAccountCreated}
                 onConnectWallet={handleConnectWallet}
             />
         </main>

@@ -30,9 +30,9 @@ features:
 
 - [Prerequisites](getting-started/prerequisites.md) -- System requirements
 - [Installation](getting-started/installation.md) -- Clone, install, configure
-- [Final Implementation Report](architecture/final-implementation-report.md) -- Live implementation summary
-- [Youtick Zero Trust Architecture v1](architecture/youtick-zero-trust-architecture-v1.md) -- Target-state ADR
-- [Contract Methods](api/contract-methods.md) -- Contract API reference
+- [Final Implementation Report](architecture/final-implementation-report.md) -- LIVE implementation summary
+- [Youtick Zero Trust Architecture v1](architecture/youtick-zero-trust-architecture-v1.md) -- TARGET-state ADR
+- [Contract Methods](api/contract-methods.md) -- TARGET contract API reference
 - [User Flows](guides/user-flows.md) -- Upload, purchase, claim, trial
 - [Mainnet Runbook](operations/mainnet-runbook.md) -- Launch, rollback, smoke checklist
 - [Mainnet Task Owners](operations/mainnet-task-owners.md) -- Role sahipligi ve handoff sirasi

@@ -22,6 +22,10 @@ export const DELIVERY_UPLOAD_CONCURRENCY = 4;
 export const DELIVERY_FETCH_CONCURRENCY = 2;
 export const DELIVERY_WARMUP_GATEWAYS = 3;
 export const SEGMENTED_VIDEO_TYPES = new Set(['video/mp4', 'video/quicktime']);
+export const DISPLAY_MEDIA_MANIFEST_TIMEOUT_MS = 2_500;
+
+const resolvedDisplayMediaCache = new Map<string, string | null>();
+const pendingDisplayMediaCache = new Map<string, Promise<string | null>>();
 
 export interface PackagedSegmentPayload {
     trackId: number;
@@ -75,8 +79,14 @@ export function isDeliveryManifestV2(value: unknown): value is DeliveryManifestV
         && Array.isArray(manifest.segments);
 }
 
-export async function fetchDeliveryManifest(cid: string): Promise<unknown> {
-    const response = await fetchFromGateways(cid);
+export async function fetchDeliveryManifest(
+    cid: string,
+    options?: { timeout?: number },
+): Promise<unknown> {
+    const response = await fetchFromGateways(cid, {
+        purpose: 'manifest',
+        timeout: options?.timeout,
+    });
     return await response.json();
 }
 
@@ -148,16 +158,40 @@ export async function resolvePreferredMediaUrl(
         return thumbnailUrl;
     }
 
-    try {
-        const manifest = await fetchDeliveryManifest(manifestCid);
-        if (isDeliveryManifestV2(manifest)) {
-            return pickPreferredPosterUrl(thumbnailUrl, manifest);
-        }
-    } catch {
-        // Fall back to the title-embedded thumbnail below.
+    const cacheKey = `${manifestCid}::${thumbnailUrl ?? ''}`;
+    if (resolvedDisplayMediaCache.has(cacheKey)) {
+        return resolvedDisplayMediaCache.get(cacheKey) ?? thumbnailUrl;
     }
 
-    return thumbnailUrl;
+    const pending = pendingDisplayMediaCache.get(cacheKey);
+    if (pending) {
+        return await pending;
+    }
+
+    const resolution = (async () => {
+        try {
+            const manifest = await fetchDeliveryManifest(manifestCid, {
+                timeout: DISPLAY_MEDIA_MANIFEST_TIMEOUT_MS,
+            });
+            if (isDeliveryManifestV2(manifest)) {
+                return pickPreferredPosterUrl(thumbnailUrl, manifest);
+            }
+        } catch {
+            // Fall back to the title-embedded thumbnail below.
+        }
+
+        return thumbnailUrl;
+    })()
+        .then((resolvedUrl) => {
+            resolvedDisplayMediaCache.set(cacheKey, resolvedUrl);
+            return resolvedUrl;
+        })
+        .finally(() => {
+            pendingDisplayMediaCache.delete(cacheKey);
+        });
+
+    pendingDisplayMediaCache.set(cacheKey, resolution);
+    return await resolution;
 }
 
 export async function packageVideoForDelivery(file: File): Promise<PackagedDeliveryAsset | null> {

@@ -176,8 +176,7 @@ Additional rules:
 ScopePolicy {
   max_ttl_ms,
   require_origin,
-  require_device,
-  require_full_access_bootstrap
+  require_device
 }
 
 ThresholdConfig {

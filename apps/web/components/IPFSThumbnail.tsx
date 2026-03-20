@@ -69,7 +69,11 @@ export function IPFSThumbnail({
       setOrderedCandidates(nextFallbackCandidates);
       setImageUrl(nextFallbackCandidates[0] ?? fallbackUrl);
 
-      if (!url || nextFallbackCandidates.length <= 1) {
+      if (!url) {
+        return;
+      }
+
+      if (nextFallbackCandidates.length <= 1) {
         return;
       }
 
@@ -127,7 +131,7 @@ export function IPFSThumbnail({
   };
 
   const handleImageLoad = () => {
-    if (imageUrl !== fallbackUrl) {
+    if (imageUrl !== fallbackUrl && !imageUrl.startsWith('blob:')) {
       rememberSuccessfulIpfsMediaUrl(imageUrl, {
         sourceKey,
         purpose: 'image',

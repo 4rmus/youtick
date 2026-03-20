@@ -5,9 +5,9 @@ import {
     PublicKey,
     actions,
     getTransactionLastResult,
-    nearToYocto,
 } from 'near-api-js';
 import { GAS_CONSTANTS, NEAR_CONFIG } from './constants';
+import { nearAmountToYocto } from './near-amount';
 import { getCurrentRpcUrl } from './rpc-failover';
 import type { WalletInstance } from './types';
 
@@ -39,8 +39,8 @@ export class UploadSessionManager {
 
         const keyPair = KeyPair.fromRandom('ed25519');
         const publicKey = keyPair.getPublicKey().toString();
-        const budgetYocto = BigInt(nearToYocto(parseFloat(budgetNear)));
-        const allowanceYocto = BigInt(nearToYocto(parseFloat(allowanceNear)));
+        const budgetYocto = nearAmountToYocto(budgetNear);
+        const allowanceYocto = nearAmountToYocto(allowanceNear);
 
         uploadSessionKeys.set(this.accountId, keyPair);
 

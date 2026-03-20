@@ -99,20 +99,20 @@ Claim basarili olunca ilgili gift key tek kullanimlik olarak kapanir.
 
 ## 5. Trial onboarding
 
-Yeni kullanici icin iki yol vardir:
+Yeni kullanici icin bugun ana yol relayer uzerinden trial olusturmaktir.
 
-### Client-side onboarding key
+### Primary: relayer path
 
-- browser onboarding key'i localStorage veya env'den alir
-- `create_sponsored_trial_direct` cagrilir
+- browser `/api/trial/sponsored` akisini cagirir
+- server-side relayer kontratta `create_sponsored_trial` cagirir
 - yeni alt hesap olusur
 
-### Relayer fallback
+### Legacy local fallback
 
-- onboarding key yoksa veya tercih ediliyorsa
-- `/api/trial/sponsored` uzerinden fallback akisi kullanilabilir
+- sadece kontrollu local/test durumlari icin
+- local onboarding key varsa `create_sponsored_trial_direct` kullanilabilir
 
-Bu iki yolun amaci aynidir: kullaniciyi ilk adimda agir wallet kurulumu ile yormamak.
+Bu iki yolun amaci aynidir: kullaniciyi ilk adimda agir wallet kurulumu ile yormamak. Canli akista tercih edilen yol relayer'dir.
 
 ---
 

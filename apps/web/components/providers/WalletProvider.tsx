@@ -9,10 +9,18 @@ import type { WalletInstance } from '@/lib/types';
 import { clearKmsAuthCache } from '@/lib/kms/client';
 import { clearSessionGrantCache } from '@/lib/access-grants';
 import { clearW3AuthCache } from '@/lib/crust/w3auth';
+import {
+    clearManagedNearAccount,
+    migrateLegacyManagedNearAccount,
+    readManagedNearAccount,
+    type ManagedNearAccountKind,
+    writeManagedNearAccount,
+} from '@/lib/managed-near-account';
 
 interface WalletContextValue {
     accountId: string | null;
     isTrial: boolean;
+    managedAccountKind: ManagedNearAccountKind | null;
     /** Active wallet ID: 'my-near-wallet' | 'meteor-wallet' | null */
     walletType: string | null;
     getWallet: () => Promise<WalletInstance>;
@@ -20,6 +28,7 @@ interface WalletContextValue {
     connect: () => Promise<void>;
     /** Activate an EVM-linked implicit NEAR account without page refresh */
     setEvmLinkedAccount: (accountId: string) => void;
+    setManagedAccount: (accountId: string, kind: ManagedNearAccountKind) => void;
     isReady: boolean;
 }
 
@@ -70,23 +79,18 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const subscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
     const [accountId, setAccountId] = useState<string | null>(null);
     const [walletType, setWalletType] = useState<string | null>(null);
-    const [trialAccountId, setTrialAccountId] = useState<string | null>(null);
-    const [evmLinkedAccountId, setEvmLinkedAccountId] = useState<string | null>(null);
+    const [managedAccountId, setManagedAccountId] = useState<string | null>(null);
+    const [managedAccountKind, setManagedAccountKind] = useState<ManagedNearAccountKind | null>(null);
     const [isReady, setIsReady] = useState(false);
 
     useEffect(() => {
         let mounted = true;
 
-        // Check for trial account
         if (typeof window !== 'undefined') {
-            const storedTrial = localStorage.getItem('trialAccountId');
-            if (storedTrial) {
-                setTrialAccountId(storedTrial);
-            }
-            // Check for EVM-linked implicit NEAR account (MetaMask-only users)
-            const storedEvmAccount = localStorage.getItem('evmLinkedNearAccount');
-            if (storedEvmAccount) {
-                setEvmLinkedAccountId(storedEvmAccount);
+            const migrated = migrateLegacyManagedNearAccount() || readManagedNearAccount();
+            if (migrated) {
+                setManagedAccountId(migrated.accountId);
+                setManagedAccountKind(migrated.kind);
             }
         }
 
@@ -159,27 +163,22 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         };
     }, []);
 
-    // Determine active account (Wallet > Trial > EVM-linked implicit)
-    const activeAccountId = accountId || trialAccountId || evmLinkedAccountId;
-    const isTrial = !accountId && !!trialAccountId;
-    const isEvmLinked = !accountId && !trialAccountId && !!evmLinkedAccountId;
+    // Determine active account (Wallet > managed local account)
+    const activeAccountId = accountId || managedAccountId;
+    const isTrial = !accountId && (managedAccountKind === 'trial' || managedAccountKind === 'guest');
+    const isManagedLocalAccount = !accountId && !!managedAccountId;
 
     const getWallet = useCallback(async (): Promise<WalletInstance> => {
-        if (isTrial && trialAccountId) {
+        if (isManagedLocalAccount && managedAccountId) {
             const { TrialWallet } = await import('@/lib/trial-wallet');
-            return new TrialWallet(trialAccountId);
-        }
-        // EVM-linked implicit account uses same BrowserKeyStore format
-        if (isEvmLinked && evmLinkedAccountId) {
-            const { TrialWallet } = await import('@/lib/trial-wallet');
-            return new TrialWallet(evmLinkedAccountId);
+            return new TrialWallet(managedAccountId);
         }
         if (selectorRef.current) {
             const wallet = await selectorRef.current.wallet();
             return createWalletAdapter(wallet);
         }
         throw new Error('No wallet connected');
-    }, [isTrial, trialAccountId, isEvmLinked, evmLinkedAccountId]);
+    }, [isManagedLocalAccount, managedAccountId]);
 
     const signOut = useCallback(async (): Promise<void> => {
         if (activeAccountId) {
@@ -187,20 +186,21 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             clearSessionGrantCache(activeAccountId);
             clearW3AuthCache(activeAccountId);
         }
-        if (isTrial && trialAccountId) {
+        if (isManagedLocalAccount && managedAccountId) {
             const { TrialWallet } = await import('@/lib/trial-wallet');
-            const trialWallet = new TrialWallet(trialAccountId);
-            await trialWallet.signOut();
-            setTrialAccountId(null);
-        } else if (isEvmLinked && evmLinkedAccountId) {
-            localStorage.removeItem('evmLinkedNearAccount');
-            setEvmLinkedAccountId(null);
+            const managedWallet = new TrialWallet(managedAccountId);
+            await managedWallet.signOut();
+            setManagedAccountId(null);
+            setManagedAccountKind(null);
         } else if (selectorRef.current) {
             const wallet = await selectorRef.current.wallet();
             await wallet.signOut();
+            clearManagedNearAccount();
+            setManagedAccountId(null);
+            setManagedAccountKind(null);
         }
         setWalletType(null);
-    }, [activeAccountId, isTrial, trialAccountId, isEvmLinked, evmLinkedAccountId]);
+    }, [activeAccountId, isManagedLocalAccount, managedAccountId]);
 
     const connect = useCallback(async (): Promise<void> => {
         if (modalRef.current) {
@@ -209,18 +209,28 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }, []);
 
     const setEvmLinkedAccount = useCallback((id: string) => {
-        setEvmLinkedAccountId(id);
+        writeManagedNearAccount(id, 'evm');
+        setManagedAccountId(id);
+        setManagedAccountKind('evm');
+    }, []);
+
+    const setManagedAccount = useCallback((id: string, kind: ManagedNearAccountKind) => {
+        writeManagedNearAccount(id, kind);
+        setManagedAccountId(id);
+        setManagedAccountKind(kind);
     }, []);
 
     return (
         <WalletContext.Provider value={{
             accountId: activeAccountId,
             isTrial,
+            managedAccountKind,
             walletType,
             getWallet,
             signOut,
             connect,
             setEvmLinkedAccount,
+            setManagedAccount,
             isReady,
         }}>
             {children}

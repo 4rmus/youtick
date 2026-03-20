@@ -44,7 +44,6 @@ Sik kullanilan opsiyoneller:
 ```txt
 NEXT_PUBLIC_KMS_URL=http://localhost:8787
 NEXT_PUBLIC_APP_URL=http://localhost:3000
-NEXT_PUBLIC_ONBOARDING_KEY=ed25519:...
 NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
 ```
 

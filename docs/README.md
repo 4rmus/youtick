@@ -7,6 +7,12 @@ YouTick currently runs with client-side media encryption, a market/access/regist
 **Mainnet target:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`  
 **Current playback path:** Browser AES-CTR + registry-enforced operator share reconstruction
 
+## Reading Labels
+
+- `LIVE`: bugun kodda aktif olan veya operasyonu dogrudan etkileyen yuzey
+- `TARGET`: hedef mimari veya gelecekte tamamlanacak tasarim
+- `LEGACY`: uyumluluk icin duran eski yol
+
 ---
 
 ## Get Started
@@ -18,12 +24,12 @@ YouTick currently runs with client-side media encryption, a market/access/regist
 
 ## Architecture
 
-- [System Architecture](architecture/README.md)
-- [Youtick Zero Trust Architecture v1](architecture/youtick-zero-trust-architecture-v1.md)
-- [Final Implementation Report](architecture/final-implementation-report.md)
-- [Storage & Delivery](architecture/storage.md)
-- [Session Keys & Upload Sessions](architecture/session-keys.md)
-- [Smart Contract](architecture/smart-contract.md)
+- [System Architecture](architecture/README.md) `LIVE`
+- [Youtick Zero Trust Architecture v1](architecture/youtick-zero-trust-architecture-v1.md) `TARGET`
+- [Final Implementation Report](architecture/final-implementation-report.md) `LIVE`
+- [Storage & Delivery](architecture/storage.md) `LIVE`
+- [Session Keys & Upload Sessions](architecture/session-keys.md) `LIVE + LEGACY`
+- [Smart Contract](architecture/smart-contract.md) `LIVE`
 - [Product Differentiators](architecture/innovations.md)
 
 ## Guides
@@ -36,7 +42,7 @@ YouTick currently runs with client-side media encryption, a market/access/regist
 
 ## Reference
 
-- [Contract Methods](api/contract-methods.md)
+- [Contract Methods](api/contract-methods.md) `TARGET`
 - [Frontend](frontend.md)
 - [Security](security.md)
 - [Testing](testing.md)

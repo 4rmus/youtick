@@ -75,6 +75,32 @@ class MockKeyPairSigner {
   }
 }
 
+class MockPublicKey {
+  data: Uint8Array;
+
+  constructor(data?: Uint8Array) {
+    this.data = data || new Uint8Array(32);
+  }
+
+  static fromString(value: string): MockPublicKey {
+    const payload = value.replace(/^ed25519:/, '');
+    try {
+      const bytes = Buffer.from(payload, 'base64');
+      if (bytes.length > 0) {
+        return new MockPublicKey(new Uint8Array(bytes.slice(0, 32)));
+      }
+    } catch {
+      // Fall through to zero bytes
+    }
+
+    return new MockPublicKey(new Uint8Array(32));
+  }
+
+  toString(): string {
+    return `ed25519:${Buffer.from(this.data).toString('base64')}`;
+  }
+}
+
 class MockAccount {
   accountId: string;
   rpcUrl?: string;
@@ -133,6 +159,7 @@ class MockFailoverRpcProvider {
 
 vi.mock('near-api-js', () => ({
   KeyPair: MockKeyPair,
+  PublicKey: MockPublicKey,
   Account: MockAccount,
   KeyPairSigner: MockKeyPairSigner,
   FailoverRpcProvider: MockFailoverRpcProvider,
@@ -321,7 +348,9 @@ global.fetch = vi.fn().mockImplementation(async (_url: string, options?: { body?
             result: Array.from(Buffer.from(JSON.stringify({
               title: 'Test Event',
               description: 'Test Description',
-              creator_id: 'creator.testnet'
+              creator_id: 'creator.testnet',
+              price: '0',
+              access_mode: 'public_free',
             })))
           }
         })

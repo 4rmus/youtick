@@ -16,6 +16,7 @@ import { KeyPair, type KeyPairString } from 'near-api-js';
 import { generateSeedPhrase } from 'near-seed-phrase';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { NEAR_CONFIG } from '@/lib/constants';
+import { getCurrentRpcUrl } from '@/lib/rpc-failover';
 
 interface TrialUpgradeDialogProps {
     accountId: string;
@@ -55,13 +56,9 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
             // v7: Import Account, KeyPairSigner, PublicKey, and actions
             const { Account, KeyPairSigner, PublicKey, actions } = await import('near-api-js');
 
-            const rpcUrl = networkId === 'mainnet'
-                ? 'https://rpc.fastnear.com'
-                : 'https://test.rpc.fastnear.com';
-
             // v7: Create Account with signer
             const signer = new KeyPairSigner(trialKeyPair);
-            const account = new Account(accountId, rpcUrl, signer);
+            const account = new Account(accountId, getCurrentRpcUrl(), signer);
 
             // Add the new Full Access Key derived from seed phrase
             // v7: Use actions.addFullAccessKey with signAndSendTransaction

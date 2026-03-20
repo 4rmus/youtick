@@ -1,5 +1,8 @@
 // contracts/nft-ticket/src/lib.rs
 use near_contract_standards::non_fungible_token::{
+    approval::NonFungibleTokenApproval,
+    core::{NonFungibleTokenCore, NonFungibleTokenResolver},
+    enumeration::NonFungibleTokenEnumeration,
     metadata::{NFTContractMetadata, TokenMetadata, NFT_METADATA_SPEC},
     NonFungibleToken, Token, TokenId,
 };
@@ -34,11 +37,14 @@ impl StorageKey {
     pub const GIFT_DROPS: Self = Self(b"g8");
     pub const ONBOARDING_KEYS: Self = Self(b"o8");
     pub const DAILY_TRIAL_COUNTS: Self = Self(b"t8");
+    pub const TRIAL_RELAYERS: Self = Self(b"tr8");
     pub const PURCHASE_LOGS: Self = Self(b"p8");
     pub const EVENT_NOVA_GROUPS: Self = Self(b"ng8");
     pub const EVENT_PRICE_USD: Self = Self(b"pu8");
+    pub const EVENT_ACCESS_MODES: Self = Self(b"am8");
     pub const BANNED_EVENTS: Self = Self(b"be8");
     pub const UPLOAD_SESSIONS: Self = Self(b"us8");
+    pub const TRIAL_INVITES: Self = Self(b"ti8");
 }
 
 /// Storage cost constants to avoid repeated allocations
@@ -68,6 +74,7 @@ pub struct EventResponse {
     pub creator_id: AccountId,
     pub created_at: u64,
     pub price_usd: Option<u128>,
+    pub access_mode: String,
     pub banned: Option<bool>,
     pub ban_reason: Option<String>,
 }
@@ -120,6 +127,15 @@ pub struct GiftDrop {
     pub remaining_claims: u32,
     pub deposit_per_claim: U128, // Amount reserved for each claim
     pub created_at: u64,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
+pub struct TrialInvite {
+    pub sponsor_id: AccountId,
+    pub remaining_claims: u32,
+    pub created_at_ms: u64,
+    pub expires_at_ms: Option<u64>,
 }
 
 #[near(serializers = [borsh, json])]
@@ -317,6 +333,10 @@ impl Contract {
         LookupMap::new(StorageKey::EVENT_PRICE_USD)
     }
 
+    fn lazy_event_access_modes(&self) -> LookupMap<String, String> {
+        LookupMap::new(StorageKey::EVENT_ACCESS_MODES)
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // LAZY STORAGE HELPER (banned_events stored outside Contract borsh)
     // ═══════════════════════════════════════════════════════════════
@@ -327,6 +347,52 @@ impl Contract {
 
     fn lazy_upload_sessions(&self) -> LookupMap<PublicKey, UploadSession> {
         LookupMap::new(StorageKey::UPLOAD_SESSIONS)
+    }
+
+    fn lazy_trial_invites(&self) -> LookupMap<String, TrialInvite> {
+        LookupMap::new(StorageKey::TRIAL_INVITES)
+    }
+
+    fn lazy_trial_relayers(&self) -> LookupSet<AccountId> {
+        LookupSet::new(StorageKey::TRIAL_RELAYERS)
+    }
+
+    fn normalize_access_mode(&self, access_mode: Option<String>, price_yocto: u128) -> String {
+        let raw = access_mode.unwrap_or_else(|| {
+            if price_yocto == 0 {
+                "public_free".to_string()
+            } else {
+                "paid".to_string()
+            }
+        });
+
+        let normalized = raw.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "paid" => {
+                require!(price_yocto > 0, "Paid events must have a price greater than zero");
+                normalized
+            }
+            "free_collectible" | "public_free" => {
+                require!(price_yocto == 0, "Free access modes require zero price");
+                normalized
+            }
+            _ => env::panic_str("Invalid access mode"),
+        }
+    }
+
+    fn resolve_event_access_mode(&self, cid: &str, price_yocto: u128) -> String {
+        self.lazy_event_access_modes().get(&cid.to_string()).unwrap_or_else(|| {
+            if price_yocto == 0 {
+                "public_free".to_string()
+            } else {
+                "paid".to_string()
+            }
+        })
+    }
+
+    fn store_event_access_mode(&mut self, cid: &str, access_mode: String) {
+        self.lazy_event_access_modes()
+            .insert(&cid.to_string(), &access_mode);
     }
 
     fn minimum_upload_session_budget() -> NearToken {
@@ -435,6 +501,54 @@ impl Contract {
         }
     }
 
+    fn restore_gift_drop_claim(&mut self, signer_public_key: &PublicKey) {
+        let signer_pk = String::from(signer_public_key);
+        if let Some(mut gift_drop) = self.gift_drops.get(&signer_pk) {
+            gift_drop.remaining_claims = 1;
+            self.gift_drops.insert(&signer_pk, &gift_drop);
+        }
+    }
+
+    fn restore_trial_invite_claim(&mut self, signer_public_key: &PublicKey) {
+        let signer_pk = String::from(signer_public_key);
+        let mut trial_invites = self.lazy_trial_invites();
+        if let Some(mut trial_invite) = trial_invites.get(&signer_pk) {
+            trial_invite.remaining_claims = 1;
+            trial_invites.insert(&signer_pk, &trial_invite);
+        }
+    }
+
+    fn is_trial_invite_expired(invite: &TrialInvite) -> bool {
+        invite
+            .expires_at_ms
+            .map(|expires_at_ms| Self::current_time_ms() > expires_at_ms)
+            .unwrap_or(false)
+    }
+
+    fn implicit_account_id_from_public_key(public_key: &PublicKey) -> AccountId {
+        let public_key_str = String::from(public_key);
+        let encoded = public_key_str
+            .strip_prefix("ed25519:")
+            .unwrap_or_else(|| env::panic_str("Trial invites only support ed25519 keys"));
+        let decoded = bs58::decode(encoded)
+            .into_vec()
+            .unwrap_or_else(|_| env::panic_str("Invalid public key encoding"));
+
+        require!(
+            decoded.len() == 32,
+            "Trial invites only support ed25519 keys",
+        );
+
+        let implicit_id = decoded
+            .iter()
+            .map(|byte| format!("{:02x}", byte))
+            .collect::<String>();
+
+        implicit_id
+            .parse()
+            .unwrap_or_else(|_| env::panic_str("Invalid implicit account id"))
+    }
+
     /// DRY helper: build EventResponse with ban status and price_usd
     fn build_event_response(&self, cid: &str, event: &Event) -> EventResponse {
         let cid_string = cid.to_string();
@@ -447,6 +561,7 @@ impl Contract {
             creator_id: event.creator_id.clone(),
             created_at: event.created_at,
             price_usd,
+            access_mode: self.resolve_event_access_mode(&cid_string, event.price.0),
             banned: if ban_info.is_some() { Some(true) } else { None },
             ban_reason: ban_info.map(|i| match i.reason {
                 BanReason::SexualContent => "sexual_content".to_string(),
@@ -760,6 +875,119 @@ impl Contract {
         };
     }
 
+    #[payable]
+    pub fn create_trial_invite_drop(&mut self, public_keys: Vec<PublicKey>, ttl_ms: Option<u64>) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can create trial invites"
+        );
+
+        let num_keys = public_keys.len() as u32;
+        require!(
+            num_keys > 0 && num_keys <= 50,
+            "Must create 1-50 trial invites"
+        );
+
+        let invite_storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        let total_required = invite_storage_cost.saturating_mul(num_keys as u128);
+        require!(
+            env::attached_deposit() >= total_required,
+            &format!(
+                "Requires {} NEAR for {} trial invites",
+                total_required, num_keys
+            )
+        );
+
+        if let Some(ttl_ms) = ttl_ms {
+            require!(ttl_ms > 0, "Trial invite TTL must be greater than zero");
+            require!(
+                ttl_ms <= 7 * 24 * 60 * 60 * 1000,
+                "Trial invite TTL cannot exceed 7 days"
+            );
+        }
+
+        let created_at_ms = Self::current_time_ms();
+        let expires_at_ms = ttl_ms.map(|ttl_ms| created_at_ms.saturating_add(ttl_ms));
+
+        for public_key in public_keys {
+            let trial_invite = TrialInvite {
+                sponsor_id: env::predecessor_account_id(),
+                remaining_claims: 1,
+                created_at_ms,
+                expires_at_ms,
+            };
+
+            Promise::new(env::current_account_id())
+                .add_access_key_allowance(
+                    public_key.clone(),
+                    near_sdk::Allowance::Limited(
+                        NonZeroU128::new(NearToken::from_millinear(50).as_yoctonear()).unwrap(),
+                    ),
+                    env::current_account_id(),
+                    "claim_trial_invite_with_implicit_account".to_string(),
+                )
+                .then(
+                    Self::ext(env::current_account_id())
+                        .with_static_gas(near_sdk::Gas::from_tgas(20))
+                        .on_trial_invite_access_key_added(
+                            public_key,
+                            trial_invite,
+                            U128(invite_storage_cost.as_yoctonear()),
+                        ),
+                )
+                .detach();
+        }
+    }
+
+    #[private]
+    pub fn on_trial_invite_access_key_added(
+        &mut self,
+        public_key: PublicKey,
+        trial_invite: TrialInvite,
+        refund_amount: U128,
+    ) -> bool {
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+
+        if succeeded {
+            let pk_str = String::from(&public_key);
+            self.lazy_trial_invites().insert(&pk_str, &trial_invite);
+            return true;
+        }
+
+        Promise::new(trial_invite.sponsor_id.clone())
+            .transfer(NearToken::from_yoctonear(refund_amount.0))
+            .detach();
+        env::log_str("Trial invite access key creation failed; refunded reserved deposit.");
+        false
+    }
+
+    /// Add an authorized relayer account for the sponsored trial fallback path.
+    pub fn add_trial_relayer(&mut self, account_id: AccountId) {
+        require!(
+            self.can_manage_trial_relayer(&env::predecessor_account_id()),
+            "Only owner can manage trial relayers"
+        );
+        self.lazy_trial_relayers().insert(&account_id);
+    }
+
+    /// Remove an authorized relayer account from the sponsored trial allowlist.
+    pub fn remove_trial_relayer(&mut self, account_id: AccountId) {
+        require!(
+            self.can_manage_trial_relayer(&env::predecessor_account_id()),
+            "Only owner can manage trial relayers"
+        );
+        self.lazy_trial_relayers().remove(&account_id);
+    }
+
+    /// View: Check whether an account is authorized to call create_sponsored_trial.
+    pub fn is_trial_relayer(&self, account_id: AccountId) -> bool {
+        self.lazy_trial_relayers().contains(&account_id)
+    }
+
     /// View: Check if a key is authorized for onboarding
     pub fn is_onboarding_key(&self, public_key: PublicKey) -> bool {
         self.onboarding_keys.contains(&public_key)
@@ -768,6 +996,17 @@ impl Contract {
     /// View: Get onboarding configuration
     pub fn get_onboarding_config(&self) -> OnboardingConfig {
         self.onboarding_config.clone()
+    }
+
+    pub fn is_trial_invite_valid(&self, public_key: String) -> bool {
+        match self.lazy_trial_invites().get(&public_key) {
+            Some(invite) => invite.remaining_claims > 0 && !Self::is_trial_invite_expired(&invite),
+            None => false,
+        }
+    }
+
+    pub fn get_trial_invite_info(&self, public_key: String) -> Option<TrialInvite> {
+        self.lazy_trial_invites().get(&public_key)
     }
 
     /// View: Get today's trial count
@@ -785,6 +1024,11 @@ impl Contract {
 
     /// Internal: Check and increment daily trial count
     fn check_and_increment_daily_limit(&mut self) -> bool {
+        self.increment_daily_limit_if_allowed().is_some()
+    }
+
+    /// Internal: Check limit and return the day bucket that was incremented.
+    fn increment_daily_limit_if_allowed(&mut self) -> Option<u64> {
         let today = Self::get_day_timestamp();
         let current_count = self.daily_trial_counts.get(&today).unwrap_or(0);
 
@@ -792,12 +1036,36 @@ impl Contract {
         if self.onboarding_config.daily_limit > 0
             && current_count >= self.onboarding_config.daily_limit
         {
-            return false;
+            return None;
         }
 
         // Increment count
         self.daily_trial_counts.insert(&today, &(current_count + 1));
-        true
+        Some(today)
+    }
+
+    /// Internal: Roll back a previously incremented daily limit bucket.
+    fn rollback_daily_limit(&mut self, day_timestamp: u64) {
+        let current_count = self.daily_trial_counts.get(&day_timestamp).unwrap_or(0);
+        if current_count == 0 {
+            return;
+        }
+
+        if current_count == 1 {
+            self.daily_trial_counts.remove(&day_timestamp);
+            return;
+        }
+
+        self.daily_trial_counts
+            .insert(&day_timestamp, &(current_count - 1));
+    }
+
+    fn can_manage_trial_relayer(&self, account_id: &AccountId) -> bool {
+        self.tokens.owner_id == *account_id
+    }
+
+    fn can_create_sponsored_trial(&self, account_id: &AccountId) -> bool {
+        self.tokens.owner_id == *account_id || self.lazy_trial_relayers().contains(account_id)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -850,6 +1118,7 @@ impl Contract {
         description: String,
         price: U128,
         price_usd: Option<u128>,
+        access_mode: Option<String>,
     ) {
         let deposit = env::attached_deposit();
         require!(
@@ -863,6 +1132,8 @@ impl Contract {
             "Event with this CID already exists"
         );
 
+        let normalized_access_mode = self.normalize_access_mode(access_mode, price.0);
+
         let event = Event {
             title,
             description,
@@ -872,6 +1143,7 @@ impl Contract {
         };
 
         self.events.insert(&encrypted_cid, &event);
+        self.store_event_access_mode(&encrypted_cid, normalized_access_mode);
 
         // Store USD price in separate map (backward-compatible)
         if let Some(usd) = price_usd {
@@ -992,12 +1264,15 @@ impl Contract {
         description: String,
         price: U128,
         price_usd: Option<u128>,
+        access_mode: Option<String>,
     ) {
         // SECURITY: Prevent overwriting existing events
         require!(
             self.events.get(&encrypted_cid).is_none(),
             "Event with this CID already exists"
         );
+
+        let normalized_access_mode = self.normalize_access_mode(access_mode, price.0);
 
         let account_id = env::predecessor_account_id();
         let session_public_key = self.use_upload_session(
@@ -1016,6 +1291,7 @@ impl Contract {
         };
 
         self.events.insert(&encrypted_cid, &event);
+        self.store_event_access_mode(&encrypted_cid, normalized_access_mode);
 
         // Store USD price in separate map (backward-compatible)
         if let Some(usd) = price_usd {
@@ -1489,7 +1765,7 @@ impl Contract {
         }
 
         // Native NEAR is now in the contract's balance.
-        // Process ticket purchase with the same pricing rules as a direct buy.
+        // Mint first so funds do not leave the contract before entitlement exists.
         let event = self
             .events
             .get(&encrypted_cid)
@@ -1497,6 +1773,8 @@ impl Contract {
 
         let required_price = NearToken::from_yoctonear(event.price.0);
         let storage_cost = STORAGE_COST_NFT;
+        let token =
+            self.internal_mint_ticket(buyer_id.clone(), &event, encrypted_cid.clone(), false);
 
         // Calculate and apply commission (2% platform, 98% creator)
         let (creator_amount, commission) = self.apply_commission(required_price);
@@ -1522,18 +1800,12 @@ impl Contract {
             buyer_id.clone(),
             event.creator_id.clone(),
             encrypted_cid.clone(),
-            self.next_token_id.to_string(),
+            token.token_id,
             price_yocto,
             creator_amount,
             commission,
             PurchaseType::Direct,
         );
-
-        // Mint NFT with storage deposit from contract balance
-        Self::ext(env::current_account_id())
-            .with_attached_deposit(storage_cost)
-            .buy_ticket_internal(buyer_id, encrypted_cid)
-            .detach();
 
         // Return "0" to ft_resolve_transfer → all wNEAR was used (no refund needed)
         U128(0)
@@ -1679,6 +1951,100 @@ impl Contract {
         Promise::new(env::predecessor_account_id()).transfer(withdraw_amount)
     }
 
+    pub fn claim_trial_invite_with_implicit_account(
+        &mut self,
+        new_public_key: PublicKey,
+    ) -> Promise {
+        require!(
+            self.onboarding_config.enabled,
+            "Onboarding is currently disabled"
+        );
+
+        let signer_public_key = env::signer_account_pk();
+        let signer_pk = String::from(&signer_public_key);
+        let mut trial_invites = self.lazy_trial_invites();
+
+        let mut trial_invite = trial_invites
+            .get(&signer_pk)
+            .expect("Invalid or already claimed trial invite key");
+
+        require!(
+            trial_invite.remaining_claims > 0,
+            "Trial invite already claimed"
+        );
+        require!(
+            !Self::is_trial_invite_expired(&trial_invite),
+            "Trial invite expired"
+        );
+
+        let day_timestamp = self.increment_daily_limit_if_allowed().unwrap_or_else(|| {
+            env::panic_str("Daily trial limit reached. Please try again tomorrow.")
+        });
+
+        let account_cost = STORAGE_COST_ACCOUNT;
+        require!(
+            self.trial_pool >= account_cost,
+            "Trial pool empty. Please contact the platform owner."
+        );
+
+        let implicit_account_id = Self::implicit_account_id_from_public_key(&new_public_key);
+
+        self.trial_pool = self.trial_pool.saturating_sub(account_cost);
+        trial_invite.remaining_claims = 0;
+        trial_invites.insert(&signer_pk, &trial_invite);
+
+        Promise::new(implicit_account_id.clone())
+            .transfer(account_cost)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(20))
+                    .on_trial_invite_funded(
+                        implicit_account_id,
+                        signer_public_key,
+                        U128(account_cost.as_yoctonear()),
+                        Some(day_timestamp),
+                    ),
+            )
+    }
+
+    #[private]
+    pub fn on_trial_invite_funded(
+        &mut self,
+        implicit_account_id: AccountId,
+        signer_public_key: PublicKey,
+        account_cost: U128,
+        rollback_day_timestamp: Option<u64>,
+    ) -> bool {
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+
+        if succeeded {
+            let signer_pk = String::from(&signer_public_key);
+            self.lazy_trial_invites().remove(&signer_pk);
+            Promise::new(env::current_account_id())
+                .delete_key(signer_public_key)
+                .detach();
+            env::log_str(&format!(
+                "Trial invite funded implicit account {} successfully.",
+                implicit_account_id
+            ));
+            return true;
+        }
+
+        self.trial_pool = self
+            .trial_pool
+            .saturating_add(NearToken::from_yoctonear(account_cost.0));
+        if let Some(day_timestamp) = rollback_day_timestamp {
+            self.rollback_daily_limit(day_timestamp);
+        }
+        self.restore_trial_invite_claim(&signer_public_key);
+        env::log_str("Trial invite funding failed; restored invite and refunded trial pool.");
+        false
+    }
+
     /// RELAYER-LESS: Create a sponsored trial account directly from client
     ///
     /// This function can ONLY be called via an onboarding Function Call Access Key.
@@ -1708,10 +2074,9 @@ impl Contract {
         );
 
         // Anti-abuse check 3: Daily rate limiting (DoS prevention)
-        require!(
-            self.check_and_increment_daily_limit(),
-            "Daily trial limit reached. Please try again tomorrow."
-        );
+        let day_timestamp = self.increment_daily_limit_if_allowed().unwrap_or_else(|| {
+            env::panic_str("Daily trial limit reached. Please try again tomorrow.")
+        });
 
         // Validate username
         require!(
@@ -1747,6 +2112,14 @@ impl Contract {
             .create_account()
             .add_full_access_key(new_public_key)
             .transfer(account_cost)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(10))
+                    .on_sponsored_trial_account_created(
+                        U128(account_cost.as_yoctonear()),
+                        Some(day_timestamp),
+                    ),
+            )
     }
 
     /// Claim a FREE ticket directly via onboarding key (signless, no deposit needed)
@@ -1816,11 +2189,16 @@ impl Contract {
         username: String,
         new_public_key: PublicKey,
     ) -> Promise {
-        // SECURITY: Only contract owner can create sponsored trials via relayer method
+        // SECURITY: Only contract owner or an explicitly authorized relayer can call this path.
+        let caller = env::predecessor_account_id();
         require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can create sponsored trials"
+            self.can_create_sponsored_trial(&caller),
+            "Only owner or authorized relayer can create sponsored trials"
         );
+
+        let day_timestamp = self.increment_daily_limit_if_allowed().unwrap_or_else(|| {
+            env::panic_str("Daily trial limit reached. Please try again tomorrow.")
+        });
 
         // Validate username
         require!(
@@ -1856,6 +2234,114 @@ impl Contract {
             .create_account()
             .add_full_access_key(new_public_key)
             .transfer(account_cost)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(10))
+                    .on_sponsored_trial_account_created(
+                        U128(account_cost.as_yoctonear()),
+                        Some(day_timestamp),
+                    ),
+            )
+    }
+
+    /// Callback for sponsored trial account creation.
+    /// Refunds the trial pool and rolls back the daily limit if account creation fails.
+    #[private]
+    pub fn on_sponsored_trial_account_created(
+        &mut self,
+        account_cost: U128,
+        rollback_day_timestamp: Option<u64>,
+    ) -> bool {
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+
+        if succeeded {
+            return true;
+        }
+
+        let refund_amount = NearToken::from_yoctonear(account_cost.0);
+        self.trial_pool = self.trial_pool.saturating_add(refund_amount);
+
+        if let Some(day_timestamp) = rollback_day_timestamp {
+            self.rollback_daily_limit(day_timestamp);
+        }
+
+        env::log_str("Sponsored trial account creation failed; refunded trial pool.");
+        false
+    }
+
+    pub fn sponsor_implicit_guest(&mut self, new_public_key: PublicKey) -> Promise {
+        require!(
+            self.onboarding_config.enabled,
+            "Onboarding is currently disabled"
+        );
+
+        let caller = env::predecessor_account_id();
+        require!(
+            self.can_create_sponsored_trial(&caller),
+            "Only owner or authorized relayer can sponsor guest accounts"
+        );
+
+        let day_timestamp = self.increment_daily_limit_if_allowed().unwrap_or_else(|| {
+            env::panic_str("Daily trial limit reached. Please try again tomorrow.")
+        });
+
+        let account_cost = STORAGE_COST_ACCOUNT;
+        require!(
+            self.trial_pool >= account_cost,
+            "Trial pool empty. Please contact the platform owner."
+        );
+
+        let implicit_account_id = Self::implicit_account_id_from_public_key(&new_public_key);
+        self.trial_pool = self.trial_pool.saturating_sub(account_cost);
+
+        Promise::new(implicit_account_id.clone())
+            .transfer(account_cost)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(20))
+                    .on_sponsor_implicit_guest_funded(
+                        implicit_account_id,
+                        U128(account_cost.as_yoctonear()),
+                        Some(day_timestamp),
+                    ),
+            )
+    }
+
+    #[private]
+    pub fn on_sponsor_implicit_guest_funded(
+        &mut self,
+        implicit_account_id: AccountId,
+        account_cost: U128,
+        rollback_day_timestamp: Option<u64>,
+    ) -> bool {
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+
+        if succeeded {
+            env::log_str(&format!(
+                "Sponsored implicit guest {} successfully.",
+                implicit_account_id
+            ));
+            return true;
+        }
+
+        self.trial_pool = self
+            .trial_pool
+            .saturating_add(NearToken::from_yoctonear(account_cost.0));
+
+        if let Some(day_timestamp) = rollback_day_timestamp {
+            self.rollback_daily_limit(day_timestamp);
+        }
+
+        env::log_str("Sponsored implicit guest funding failed; refunded trial pool.");
+        false
     }
 
     /// View: Get trial pool balance
@@ -1896,10 +2382,10 @@ impl Contract {
         receiver_id: AccountId,
         encrypted_cid: String,
     ) -> Promise {
-        // SECURITY: Only owner can trigger sponsored free ticket claims
+        let caller = env::predecessor_account_id();
         require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can call sponsored free ticket claims"
+            self.can_create_sponsored_trial(&caller),
+            "Only owner or authorized relayer can call sponsored free ticket claims"
         );
 
         let event = self.events.get(&encrypted_cid).expect("Event not found");
@@ -1912,6 +2398,10 @@ impl Contract {
         require!(
             event.price.0 == 0,
             "This ticket is not free. Use buy_ticket for paid tickets."
+        );
+        require!(
+            self.resolve_event_access_mode(&encrypted_cid, event.price.0) != "paid",
+            "This event is not claimable as free content."
         );
 
         // Storage cost for minting
@@ -2102,34 +2592,57 @@ impl Contract {
             &format!("Requires {} NEAR for {} keys", total_required, num_keys)
         );
 
-        for pk in public_keys {
-            // Store gift drop info mapped to the Public Key
-            let pk_str: String = String::from(&pk);
+        let created_at = env::block_timestamp();
 
+        for pk in public_keys {
             let gift_drop = GiftDrop {
                 creator_id: event.creator_id.clone(),
                 event_cid: event_cid.clone(),
                 remaining_claims: 1,
                 deposit_per_claim: U128(deposit_per_claim.as_yoctonear()),
-                created_at: env::block_timestamp(),
+                created_at,
             };
-
-            self.gift_drops.insert(&pk_str, &gift_drop);
 
             // Add Function Call Access Key to THIS contract
             // This allows the holder of the Private Key to call claim functions
             // Allowance: 0.05 NEAR for gas fees (enough for claim tx)
             Promise::new(env::current_account_id())
                 .add_access_key_allowance(
-                    pk,
+                    pk.clone(),
                     near_sdk::Allowance::Limited(
                         NonZeroU128::new(NearToken::from_millinear(50).as_yoctonear()).unwrap(),
                     ),
                     env::current_account_id(),
                     "claim_gift,claim_gift_and_create_account".to_string(),
                 )
+                .then(
+                    Self::ext(env::current_account_id())
+                        .with_static_gas(near_sdk::Gas::from_tgas(20))
+                        .on_gift_access_key_added(pk, gift_drop),
+                )
                 .detach();
         }
+    }
+
+    #[private]
+    pub fn on_gift_access_key_added(&mut self, public_key: PublicKey, gift_drop: GiftDrop) -> bool {
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+
+        if succeeded {
+            let pk_str = String::from(&public_key);
+            self.gift_drops.insert(&pk_str, &gift_drop);
+            return true;
+        }
+
+        Promise::new(gift_drop.creator_id.clone())
+            .transfer(NearToken::from_yoctonear(gift_drop.deposit_per_claim.0))
+            .detach();
+        env::log_str("Gift access key creation failed; refunded reserved deposit.");
+        false
     }
 
     /// Claim a gift - creates trial account and mints NFT
@@ -2146,15 +2659,6 @@ impl Contract {
 
         require!(gift_drop.remaining_claims > 0, "Gift already claimed");
 
-        // Mark as claimed and cleanup
-        gift_drop.remaining_claims = 0;
-        self.gift_drops.remove(&signer_pk); // Remove from map
-
-        // DELETE the Access Key to prevent reuse
-        Promise::new(env::current_account_id())
-            .delete_key(env::signer_account_pk())
-            .detach();
-
         // Get event details for NFT metadata
         let event = self
             .events
@@ -2168,7 +2672,15 @@ impl Contract {
         );
 
         // Mint NFT using helper (is_gift = true for "Gift ticket:" prefix)
-        self.internal_mint_ticket(receiver_id, &event, gift_drop.event_cid, true)
+        let token = self.internal_mint_ticket(receiver_id, &event, gift_drop.event_cid, true);
+
+        gift_drop.remaining_claims = 0;
+        self.gift_drops.remove(&signer_pk);
+        Promise::new(env::current_account_id())
+            .delete_key(env::signer_account_pk())
+            .detach();
+
+        token
     }
 
     /// View function: Check if a gift key is valid
@@ -2204,7 +2716,8 @@ impl Contract {
         new_public_key: near_sdk::PublicKey,
     ) -> Promise {
         // Identify the drop via the Signer's Public Key
-        let signer_pk: String = String::from(&env::signer_account_pk());
+        let signer_public_key = env::signer_account_pk();
+        let signer_pk: String = String::from(&signer_public_key);
 
         let mut gift_drop = self
             .gift_drops
@@ -2213,15 +2726,6 @@ impl Contract {
 
         require!(gift_drop.remaining_claims > 0, "Gift already claimed");
 
-        // Mark as claimed and cleanup
-        gift_drop.remaining_claims = 0;
-        self.gift_drops.remove(&signer_pk); // Remove from map
-
-        // DELETE the Access Key to prevent reuse
-        Promise::new(env::current_account_id())
-            .delete_key(env::signer_account_pk())
-            .detach();
-
         // Check event is not banned
         require!(
             self.lazy_banned_events()
@@ -2229,6 +2733,10 @@ impl Contract {
                 .is_none(),
             "This event has been banned and gift tickets cannot be claimed"
         );
+
+        let event_cid = gift_drop.event_cid.clone();
+        gift_drop.remaining_claims = 0;
+        self.gift_drops.insert(&signer_pk, &gift_drop);
 
         // Account creation costs ~0.1 NEAR + access key storage ~0.0075 NEAR
         let account_creation_cost = NearToken::from_millinear(110); // 0.11 NEAR
@@ -2245,29 +2753,84 @@ impl Contract {
             .then(
                 Self::ext(env::current_account_id())
                     .with_static_gas(near_sdk::Gas::from_tgas(50))
-                    .with_attached_deposit(nft_storage_cost)
-                    .on_account_created(new_account_id, gift_drop.event_cid),
+                    .on_gift_account_created(
+                        new_account_id,
+                        event_cid,
+                        signer_public_key,
+                        U128(nft_storage_cost.as_yoctonear()),
+                    ),
             )
     }
 
-    /// Callback after account creation - mints the NFT
-    #[payable]
+    /// Callback after account creation - continues the gift claim safely.
     #[private]
-    pub fn on_account_created(&mut self, receiver_id: AccountId, event_cid: String) -> Token {
-        // Check if account creation succeeded
+    pub fn on_gift_account_created(
+        &mut self,
+        receiver_id: AccountId,
+        event_cid: String,
+        signer_public_key: PublicKey,
+        nft_storage_cost: U128,
+    ) -> PromiseOrValue<bool> {
         #[allow(deprecated)]
         match env::promise_result(0) {
-            near_sdk::PromiseResult::Successful(_) => {
-                // Account created successfully, now mint NFT
-                let event = self.events.get(&event_cid).expect("Event not found");
-
-                // Mint NFT using helper (is_gift = true for "Gift ticket:" prefix)
-                self.internal_mint_ticket(receiver_id, &event, event_cid, true)
-            }
+            near_sdk::PromiseResult::Successful(_) => PromiseOrValue::Promise(
+                Self::ext(env::current_account_id())
+                    .with_attached_deposit(NearToken::from_yoctonear(nft_storage_cost.0))
+                    .with_static_gas(near_sdk::Gas::from_tgas(30))
+                    .finalize_gift_claim_after_account_created(receiver_id, event_cid)
+                    .then(
+                        Self::ext(env::current_account_id())
+                            .with_static_gas(near_sdk::Gas::from_tgas(10))
+                            .on_finalize_gift_claim_after_account_created(signer_public_key),
+                    ),
+            ),
             _ => {
-                env::panic_str("Account creation failed. The account may already exist.");
+                self.restore_gift_drop_claim(&signer_public_key);
+                env::log_str("Gift account creation failed; restored claim state.");
+                PromiseOrValue::Value(false)
             }
         }
+    }
+
+    #[payable]
+    #[private]
+    pub fn finalize_gift_claim_after_account_created(
+        &mut self,
+        receiver_id: AccountId,
+        event_cid: String,
+    ) -> Token {
+        let event = self.events.get(&event_cid).expect("Event not found");
+        require!(
+            self.lazy_banned_events().get(&event_cid).is_none(),
+            "This event has been banned and gift tickets cannot be claimed"
+        );
+
+        self.internal_mint_ticket(receiver_id, &event, event_cid, true)
+    }
+
+    #[private]
+    pub fn on_finalize_gift_claim_after_account_created(
+        &mut self,
+        signer_public_key: PublicKey,
+    ) -> bool {
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+
+        if !succeeded {
+            self.restore_gift_drop_claim(&signer_public_key);
+            env::log_str("Gift mint after account creation failed; restored claim state.");
+            return false;
+        }
+
+        let signer_pk = String::from(&signer_public_key);
+        self.gift_drops.remove(&signer_pk);
+        Promise::new(env::current_account_id())
+            .delete_key(signer_public_key)
+            .detach();
+        true
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -2394,10 +2957,315 @@ impl Contract {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use near_sdk::test_utils::VMContextBuilder;
+    use near_sdk::{testing_env, PromiseResult};
+
+    fn account(value: &str) -> AccountId {
+        value.parse().unwrap()
+    }
+
+    fn context(predecessor: &str, current: &str) -> VMContextBuilder {
+        let mut builder = VMContextBuilder::new();
+        builder.predecessor_account_id(account(predecessor));
+        builder.current_account_id(account(current));
+        builder
+    }
+
+    fn sample_public_key(seed: u8) -> PublicKey {
+        let key = format!("ed25519:{}", bs58::encode(vec![seed; 32]).into_string());
+        key.parse().unwrap()
+    }
+
+    #[test]
+    fn gift_drop_is_inserted_only_after_access_key_success() {
+        let owner_id = account("owner.testnet");
+        let contract_id = account("contract.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+        let public_key = sample_public_key(7);
+        let gift_drop = GiftDrop {
+            creator_id: owner_id,
+            event_cid: "gift-event".to_string(),
+            remaining_claims: 1,
+            deposit_per_claim: U128(NearToken::from_millinear(150).as_yoctonear()),
+            created_at: 1,
+        };
+
+        testing_env!(
+            context(contract_id.as_str(), contract_id.as_str()).build(),
+            near_sdk::test_vm_config(),
+            near_sdk::RuntimeFeesConfig::test(),
+            Default::default(),
+            vec![PromiseResult::Successful(vec![])],
+        );
+
+        assert!(contract.on_gift_access_key_added(public_key.clone(), gift_drop.clone()));
+
+        let stored = contract
+            .gift_drops
+            .get(&String::from(&public_key))
+            .expect("gift drop should be stored after successful callback");
+        assert_eq!(stored.event_cid, gift_drop.event_cid);
+        assert_eq!(stored.remaining_claims, 1);
+    }
+
+    #[test]
+    fn gift_drop_is_not_inserted_when_access_key_creation_fails() {
+        let owner_id = account("owner.testnet");
+        let contract_id = account("contract.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+        let public_key = sample_public_key(8);
+        let gift_drop = GiftDrop {
+            creator_id: owner_id,
+            event_cid: "gift-event".to_string(),
+            remaining_claims: 1,
+            deposit_per_claim: U128(NearToken::from_millinear(150).as_yoctonear()),
+            created_at: 1,
+        };
+
+        testing_env!(
+            context(contract_id.as_str(), contract_id.as_str()).build(),
+            near_sdk::test_vm_config(),
+            near_sdk::RuntimeFeesConfig::test(),
+            Default::default(),
+            vec![PromiseResult::Failed],
+        );
+
+        assert!(!contract.on_gift_access_key_added(public_key.clone(), gift_drop));
+        assert!(contract
+            .gift_drops
+            .get(&String::from(&public_key))
+            .is_none());
+    }
+
+    #[test]
+    fn trial_invite_is_inserted_only_after_access_key_success() {
+        let owner_id = account("owner.testnet");
+        let contract_id = account("contract.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+        let public_key = sample_public_key(9);
+        let trial_invite = TrialInvite {
+            sponsor_id: owner_id,
+            remaining_claims: 1,
+            created_at_ms: 1,
+            expires_at_ms: Some(1000),
+        };
+
+        testing_env!(
+            context(contract_id.as_str(), contract_id.as_str()).build(),
+            near_sdk::test_vm_config(),
+            near_sdk::RuntimeFeesConfig::test(),
+            Default::default(),
+            vec![PromiseResult::Successful(vec![])],
+        );
+
+        assert!(contract.on_trial_invite_access_key_added(
+            public_key.clone(),
+            trial_invite.clone(),
+            U128(NearToken::from_millinear(10).as_yoctonear()),
+        ));
+
+        let stored = contract
+            .lazy_trial_invites()
+            .get(&String::from(&public_key))
+            .expect("trial invite should be stored after successful callback");
+        assert_eq!(stored.remaining_claims, trial_invite.remaining_claims);
+    }
+
+    #[test]
+    fn implicit_account_id_is_derived_from_public_key() {
+        let public_key = sample_public_key(10);
+        let implicit_account_id = Contract::implicit_account_id_from_public_key(&public_key);
+        let implicit_account_id = implicit_account_id.as_str();
+
+        assert_eq!(implicit_account_id.len(), 64);
+        assert!(implicit_account_id.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn event_access_mode_defaults_are_resolved_from_price() {
+        let owner_id = account("owner.testnet");
+        let contract = Contract::new(owner_id.clone());
+
+        let free_event = Event {
+            title: "Free".to_string(),
+            description: "Public".to_string(),
+            price: U128(0),
+            creator_id: owner_id.clone(),
+            created_at: 1,
+        };
+        let paid_event = Event {
+            title: "Paid".to_string(),
+            description: "Premium".to_string(),
+            price: U128(NearToken::from_near(1).as_yoctonear()),
+            creator_id: owner_id,
+            created_at: 1,
+        };
+
+        assert_eq!(
+            contract.build_event_response("free-cid", &free_event).access_mode,
+            "public_free"
+        );
+        assert_eq!(
+            contract.build_event_response("paid-cid", &paid_event).access_mode,
+            "paid"
+        );
+    }
+
+    #[test]
+    fn sponsor_implicit_guest_deducts_trial_pool() {
+        let owner_id = account("owner.testnet");
+        let relayer_id = account("relayer.testnet");
+        let contract_id = account("contract.testnet");
+        let mut contract = Contract::new(owner_id);
+        contract.trial_pool = STORAGE_COST_ACCOUNT;
+        contract.lazy_trial_relayers().insert(&relayer_id);
+
+        testing_env!(context(relayer_id.as_str(), contract_id.as_str()).build());
+
+        let _ = contract.sponsor_implicit_guest(sample_public_key(11));
+
+        assert_eq!(contract.trial_pool, NearToken::from_yoctonear(0));
+        assert_eq!(contract.get_daily_trial_count(), 1);
+    }
+
+    #[test]
+    fn sponsor_implicit_guest_callback_refunds_trial_pool_on_failure() {
+        let owner_id = account("owner.testnet");
+        let contract_id = account("contract.testnet");
+        let mut contract = Contract::new(owner_id);
+        let day_timestamp = Contract::get_day_timestamp();
+        contract.daily_trial_counts.insert(&day_timestamp, &1);
+
+        testing_env!(
+            context(contract_id.as_str(), contract_id.as_str()).build(),
+            near_sdk::test_vm_config(),
+            near_sdk::RuntimeFeesConfig::test(),
+            Default::default(),
+            vec![PromiseResult::Failed],
+        );
+
+        assert!(!contract.on_sponsor_implicit_guest_funded(
+            account("implicit.testnet"),
+            U128(STORAGE_COST_ACCOUNT.as_yoctonear()),
+            Some(day_timestamp),
+        ));
+        assert_eq!(contract.trial_pool, STORAGE_COST_ACCOUNT);
+        assert_eq!(contract.get_daily_trial_count(), 0);
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // NEP-171 IMPLEMENTATION (Required)
 // ═══════════════════════════════════════════════════════════════════
 
-near_contract_standards::impl_non_fungible_token_core!(Contract, tokens);
-near_contract_standards::impl_non_fungible_token_enumeration!(Contract, tokens);
-near_contract_standards::impl_non_fungible_token_approval!(Contract, tokens);
+#[near]
+impl NonFungibleTokenCore for Contract {
+    #[payable]
+    fn nft_transfer(
+        &mut self,
+        receiver_id: AccountId,
+        token_id: TokenId,
+        approval_id: Option<u64>,
+        memo: Option<String>,
+    ) {
+        self.tokens
+            .nft_transfer(receiver_id, token_id, approval_id, memo);
+    }
+
+    #[payable]
+    fn nft_transfer_call(
+        &mut self,
+        receiver_id: AccountId,
+        token_id: TokenId,
+        approval_id: Option<u64>,
+        memo: Option<String>,
+        msg: String,
+    ) -> PromiseOrValue<bool> {
+        self.tokens
+            .nft_transfer_call(receiver_id, token_id, approval_id, memo, msg)
+    }
+
+    fn nft_token(&self, token_id: TokenId) -> Option<Token> {
+        self.tokens.nft_token(token_id)
+    }
+}
+
+#[near]
+impl NonFungibleTokenResolver for Contract {
+    #[private]
+    fn nft_resolve_transfer(
+        &mut self,
+        previous_owner_id: AccountId,
+        receiver_id: AccountId,
+        token_id: TokenId,
+        approved_account_ids: Option<std::collections::HashMap<AccountId, u64>>,
+    ) -> bool {
+        self.tokens.nft_resolve_transfer(
+            previous_owner_id,
+            receiver_id,
+            token_id,
+            approved_account_ids,
+        )
+    }
+}
+
+#[near]
+impl NonFungibleTokenEnumeration for Contract {
+    fn nft_total_supply(&self) -> U128 {
+        self.tokens.nft_total_supply()
+    }
+
+    fn nft_tokens(&self, from_index: Option<U128>, limit: Option<u64>) -> Vec<Token> {
+        self.tokens.nft_tokens(from_index, limit)
+    }
+
+    fn nft_supply_for_owner(&self, account_id: AccountId) -> U128 {
+        self.tokens.nft_supply_for_owner(account_id)
+    }
+
+    fn nft_tokens_for_owner(
+        &self,
+        account_id: AccountId,
+        from_index: Option<U128>,
+        limit: Option<u64>,
+    ) -> Vec<Token> {
+        self.tokens
+            .nft_tokens_for_owner(account_id, from_index, limit)
+    }
+}
+
+#[near]
+impl NonFungibleTokenApproval for Contract {
+    #[payable]
+    fn nft_approve(
+        &mut self,
+        token_id: TokenId,
+        account_id: AccountId,
+        msg: Option<String>,
+    ) -> Option<Promise> {
+        self.tokens.nft_approve(token_id, account_id, msg)
+    }
+
+    #[payable]
+    fn nft_revoke(&mut self, token_id: TokenId, account_id: AccountId) {
+        self.tokens.nft_revoke(token_id, account_id);
+    }
+
+    #[payable]
+    fn nft_revoke_all(&mut self, token_id: TokenId) {
+        self.tokens.nft_revoke_all(token_id);
+    }
+
+    fn nft_is_approved(
+        &self,
+        token_id: TokenId,
+        approved_account_id: AccountId,
+        approval_id: Option<u64>,
+    ) -> bool {
+        self.tokens
+            .nft_is_approved(token_id, approved_account_id, approval_id)
+    }
+}

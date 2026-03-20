@@ -28,7 +28,13 @@ function WatchContent() {
     const [selectedCid, setSelectedCid] = useState('');
     const playCid = selectedCid || initialCid;
     const { tokens, loading, error } = useOwnedTokens();
-    const { description: eventDescription, thumbnailUrl: eventThumbnail, creatorId, loading: descLoading } = useEventDescription(playCid);
+    const {
+        title: eventTitle,
+        description: eventDescription,
+        thumbnailUrl: eventThumbnail,
+        creatorId,
+        loading: descLoading,
+    } = useEventDescription(playCid);
 
     // Get thumbnail from tokens first, fallback to event data
     const getActiveThumbnail = () => {
@@ -63,19 +69,19 @@ function WatchContent() {
                     {/* Video Title & Uploader - Above Player */}
                     {(() => {
                         const activeToken = tokens.find(t => t.video_metadata?.encrypted_cid === playCid);
-                        if (!activeToken) return null;
+                        if (!activeToken && !eventTitle) return null;
 
                         return (
                             <div className="space-y-2">
                                 <h2 className="text-2xl font-bold text-white leading-tight">
-                                    {activeToken.metadata?.title || t.watch_page.untitled}
+                                    {activeToken?.metadata?.title || eventTitle || t.watch_page.untitled}
                                 </h2>
                                 <div className="flex items-center gap-2">
                                     <div className="w-6 h-6 rounded-full bg-zinc-700 flex items-center justify-center text-[10px] font-bold text-white">
-                                        {(creatorId || activeToken.owner_id).substring(0, 2).toUpperCase()}
+                                        {(creatorId || activeToken?.owner_id || '??').substring(0, 2).toUpperCase()}
                                     </div>
                                     <p className="text-sm text-zinc-400">
-                                        Uploaded by <span className="text-zinc-200 font-medium">{creatorId || activeToken.owner_id}</span>
+                                        Uploaded by <span className="text-zinc-200 font-medium">{creatorId || activeToken?.owner_id || 'unknown'}</span>
                                     </p>
                                 </div>
                             </div>
@@ -93,7 +99,7 @@ function WatchContent() {
                     {/* Description - Below Player */}
                     {(() => {
                         const activeToken = tokens.find(t => t.video_metadata?.encrypted_cid === playCid);
-                        if (!activeToken) return null;
+                        if (!activeToken && !eventDescription) return null;
 
                         return (
                             <div className="p-6 bg-zinc-900/50 rounded-xl border border-white/5">
@@ -102,7 +108,7 @@ function WatchContent() {
                                     <p className="text-sm text-zinc-500 italic">{t.watch_page.loading_desc}</p>
                                 ) : (
                                     <p className="text-sm text-zinc-400 whitespace-pre-wrap leading-relaxed">
-                                        {eventDescription || activeToken.metadata?.description || t.watch_page.no_desc}
+                                        {eventDescription || activeToken?.metadata?.description || t.watch_page.no_desc}
                                     </p>
                                 )}
                             </div>

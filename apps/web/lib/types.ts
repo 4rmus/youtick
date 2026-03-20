@@ -119,6 +119,7 @@ export interface VideoMetadata {
     content_type: string;
     price?: string;
     price_usd?: number | null;
+    access_mode?: 'paid' | 'free_collectible' | 'public_free';
 }
 
 /**
@@ -149,6 +150,7 @@ export interface NFTEvent {
     price: string;
     price_usd?: number | null;
     created_at?: number;
+    access_mode?: 'paid' | 'free_collectible' | 'public_free';
     banned?: boolean;
     ban_reason?: string;
 }
@@ -267,6 +269,7 @@ export interface WalletInstance {
 export interface WalletContextType {
     accountId: string | null;
     isTrial: boolean;
+    managedAccountKind?: 'guest' | 'trial' | 'evm' | null;
     /** Active wallet ID: 'my-near-wallet' | 'meteor-wallet' | null */
     walletType: string | null;
     getWallet: () => Promise<WalletInstance>;

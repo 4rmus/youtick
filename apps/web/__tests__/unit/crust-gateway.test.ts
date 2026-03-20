@@ -95,6 +95,52 @@ describe('crust gateway probing', () => {
     });
 
     expect(reusedUrl).toBe('https://dweb.link/ipfs/QmAnotherCid');
+    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(0);
+  });
+
+  it('reuses the last successful read route for the same fetch purpose', async () => {
+    global.fetch = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+
+      if (url.includes('crust-primary')) {
+        return new Promise<Response>((resolve) => {
+          setTimeout(() => resolve(new Response('slow', { status: 200 })), 700);
+        });
+      }
+
+      if (url.includes('dweb.link')) {
+        return new Promise<Response>((resolve) => {
+          setTimeout(() => resolve(new Response('fast', { status: 200 })), 10);
+        });
+      }
+
+      return Promise.reject(new Error(`Unexpected gateway ${url}`));
+    }) as unknown as typeof fetch;
+
+    const { fetchFromGateways } = await import('@/lib/crust/gateway');
+
+    const first = await fetchFromGateways('QmVideoCid', {
+      purpose: 'segment',
+      timeout: 500,
+    });
+
+    expect(await first.text()).toBe('fast');
+
+    global.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (!url.includes('dweb.link')) {
+        throw new Error(`Unexpected follow-up gateway ${url}`);
+      }
+
+      return new Response('cached-fast', { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const second = await fetchFromGateways('QmAnotherVideoCid', {
+      purpose: 'segment',
+      timeout: 500,
+    });
+
+    expect(await second.text()).toBe('cached-fast');
     expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(1);
   });
 
@@ -118,6 +164,6 @@ describe('crust gateway probing', () => {
     controller.abort();
 
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
-    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(global.fetch).mock.calls.length).toBeLessThanOrEqual(1);
   });
 });

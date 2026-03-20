@@ -358,6 +358,7 @@ export function createDeliveryPlaybackSession(
         signal?: AbortSignal,
     ): Promise<ArrayBuffer> => {
         const response = await fetchFromGateways(cid, {
+            purpose: 'segment',
             signal,
             timeout: 8_000,
         });

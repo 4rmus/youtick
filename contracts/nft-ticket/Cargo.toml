@@ -10,13 +10,13 @@ crate-type = ["cdylib", "rlib"]
 near-sdk = { version = "5.5.0", features = ["unit-testing"] }
 near-contract-standards = "5.5.0"
 schemars = { version = "0.8", features = ["derive"] }
+bs58 = "0.5"
 
 [dev-dependencies]
 near-sdk = { version = "5.5.0", features = ["unit-testing"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-bs58 = "0.5"
-near-workspaces = "0.14"
+near-workspaces = { version = "0.14", features = ["unstable"] }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
 
@@ -27,4 +27,3 @@ lto = true
 debug = false
 panic = "abort"
 overflow-checks = true
-

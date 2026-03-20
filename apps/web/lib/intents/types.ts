@@ -16,6 +16,7 @@ export interface TokenConfig {
 export interface SwapQuote {
     quote: QuoteResponse;
     depositAddress: string;
+    depositMemo?: string;
     amountIn: string;
     amountInFormatted: string;
     amountOut: string;

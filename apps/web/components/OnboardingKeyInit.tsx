@@ -2,23 +2,22 @@
 
 import { useEffect } from 'react';
 import { NEAR_CONFIG } from '@/lib/constants';
+import { isYoctoAmountBelowNear } from '@/lib/near-amount';
 import { getCurrentRpcUrl } from '@/lib/rpc-failover';
 
 /**
- * Bootstraps onboarding key from env (if configured), validates cached key,
- * and monitors trial pool health.
+ * Validates any manually provisioned onboarding key and monitors trial pool health.
  */
 export function OnboardingKeyInit() {
     useEffect(() => {
         const storageKey = `onboarding_key:${NEAR_CONFIG.contractId}`;
-        const envKey = process.env.NEXT_PUBLIC_ONBOARDING_KEY;
         const existingKey = localStorage.getItem(storageKey);
 
-        // Keep local cache in sync with configured onboarding key.
-        if (envKey && envKey !== existingKey) {
-            localStorage.setItem(storageKey, envKey);
-            validateOnboardingKey(envKey).catch(() => {});
-        } else if (existingKey) {
+        if (process.env.NEXT_PUBLIC_ONBOARDING_KEY) {
+            console.warn('[ONBOARDING_KEY] Ignoring NEXT_PUBLIC_ONBOARDING_KEY. Public onboarding key bootstrap is disabled.');
+        }
+
+        if (existingKey) {
             // Validate key is still usable (non-blocking)
             validateOnboardingKey(existingKey).catch(() => {});
         }
@@ -110,11 +109,10 @@ async function monitorTrialPool(): Promise<void> {
         viewCall('get_daily_trial_count'),
     ]);
 
-    const poolYocto = typeof poolBalanceRaw === 'string' ? BigInt(poolBalanceRaw) : BigInt(0);
-    const poolNear = Number(poolYocto) / 1e24;
+    const poolYocto = typeof poolBalanceRaw === 'string' ? poolBalanceRaw : '0';
     const count = typeof dailyCount === 'number' ? dailyCount : 0;
 
-    if (poolNear < 1) {
+    if (isYoctoAmountBelowNear(poolYocto, '1')) {
         console.warn('[ONBOARDING_MONITOR] WARNING: Trial pool balance < 1 NEAR — new trials may fail');
     }
     if (count > 80) {

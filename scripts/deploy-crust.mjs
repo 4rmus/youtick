@@ -27,6 +27,7 @@ const OUT_DIR = join(WEB_DIR, 'out');
 
 const SET_URL = process.argv.includes('--set-url');
 const SKIP_BUILD = process.argv.includes('--skip-build');
+const ALLOW_SKIP_BUILD = process.env.ALLOW_SKIP_BUILD === 'true';
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -199,6 +200,46 @@ async function updateWeb4StaticUrl(cid) {
   });
 }
 
+async function fetchText(url) {
+  const response = await fetch(url, { redirect: 'follow' });
+  const text = await response.text();
+  return { response, text };
+}
+
+async function warmAndVerifyDeployment(baseUrl, expectedAssets = []) {
+  const htmlResult = await fetchText(baseUrl);
+  if (!htmlResult.response.ok) {
+    throw new Error(`Smoke check failed for ${baseUrl}: ${htmlResult.response.status}`);
+  }
+
+  const watchUrl = `${baseUrl.replace(/\/$/, '')}/watch`;
+  const watchResult = await fetchText(watchUrl);
+  if (!watchResult.response.ok) {
+    throw new Error(`Smoke check failed for ${watchUrl}: ${watchResult.response.status}`);
+  }
+
+  const htmlAssets = Array.from(
+    new Set(
+      [...htmlResult.text.matchAll(/\/_next\/static\/[^"' ]+/g)].map((match) => match[0]),
+    ),
+  );
+  const assetsToWarm = [...new Set([...htmlAssets.slice(0, 12), ...expectedAssets])];
+
+  for (const assetPath of assetsToWarm) {
+    const assetUrl = `${baseUrl.replace(/\/$/, '')}${assetPath}`;
+    const assetResponse = await fetch(assetUrl, { redirect: 'follow' });
+    if (!assetResponse.ok) {
+      throw new Error(`Asset warm-up failed for ${assetUrl}: ${assetResponse.status}`);
+    }
+  }
+
+  return {
+    htmlStatus: htmlResult.response.status,
+    watchStatus: watchResult.response.status,
+    warmedAssets: assetsToWarm.length,
+  };
+}
+
 // ─── Main ────────────────────────────────────────────────────
 
 async function main() {
@@ -212,6 +253,10 @@ async function main() {
     execSync('npm run build:web4', { cwd: WEB_DIR, stdio: 'inherit' });
     console.log('');
   } else {
+    if (!ALLOW_SKIP_BUILD) {
+      console.error('ERROR: --skip-build is disabled by default. Use a fresh build or set ALLOW_SKIP_BUILD=true intentionally.');
+      process.exit(1);
+    }
     console.log('[1/3] Skipping build (--skip-build)\n');
   }
 
@@ -281,6 +326,23 @@ async function main() {
     try {
       await updateWeb4StaticUrl(cid);
       console.log('\n  ✓ Contract updated!');
+
+      console.log('');
+      console.log('[4/4] Running live smoke + warm-up...');
+      const expectedAssets = files
+        .map((file) => `/${file.relative}`)
+        .filter((file) => file.startsWith('/_next/static/'))
+        .slice(0, 12);
+
+      const nearPageResult = await warmAndVerifyDeployment(`https://${CONTRACT_ID}.near.page`, expectedAssets);
+      console.log(`  ✓ near.page ok (html=${nearPageResult.htmlStatus}, watch=${nearPageResult.watchStatus}, assets=${nearPageResult.warmedAssets})`);
+
+      try {
+        const customDomainResult = await warmAndVerifyDeployment('https://youtick.net', expectedAssets);
+        console.log(`  ✓ youtick.net ok (html=${customDomainResult.htmlStatus}, watch=${customDomainResult.watchStatus}, assets=${customDomainResult.warmedAssets})`);
+      } catch (customDomainError) {
+        console.warn(`  ! youtick.net warm-up skipped: ${customDomainError instanceof Error ? customDomainError.message : String(customDomainError)}`);
+      }
     } catch (err) {
       console.error('  ERROR: Contract update failed.');
       console.error(`  ${err instanceof Error ? err.message : String(err)}`);

@@ -20,11 +20,11 @@ Crust/IPFS stores encrypted media assets and manifests. The browser is still the
 
 This page describes the current live model. For the original target ADR, see:
 
-- [Youtick Zero Trust Architecture v1](./youtick-zero-trust-architecture-v1.md)
+- [Youtick Zero Trust Architecture v1](./youtick-zero-trust-architecture-v1.md) `TARGET`
 
 For the implemented state and rollout report, see:
 
-- [Final Implementation Report](./final-implementation-report.md)
+- [Final Implementation Report](./final-implementation-report.md) `LIVE`
 
 ---
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "YouTick Product"
+  short_description: "Product strategy grounded in live flows"
+  default_prompt: "Use $youtick-product-mgmt to plan YouTick roadmap, PRDs, metrics, or release decisions around real product behavior."

@@ -28,7 +28,6 @@ pub struct ScopePolicy {
     pub max_ttl_ms: u64,
     pub require_origin: bool,
     pub require_device: bool,
-    pub require_full_access_bootstrap: bool,
 }
 
 #[near(serializers = [borsh, json])]
@@ -95,7 +94,6 @@ impl AccessControlContract {
                 max_ttl_ms: 10 * 60 * 1000,
                 require_origin: true,
                 require_device: true,
-                require_full_access_bootstrap: true,
             },
         );
         contract.set_scope_policy_internal(
@@ -104,7 +102,6 @@ impl AccessControlContract {
                 max_ttl_ms: 20 * 60 * 1000,
                 require_origin: true,
                 require_device: true,
-                require_full_access_bootstrap: true,
             },
         );
         contract.set_scope_policy_internal(
@@ -113,7 +110,6 @@ impl AccessControlContract {
                 max_ttl_ms: 15 * 60 * 1000,
                 require_origin: false,
                 require_device: false,
-                require_full_access_bootstrap: true,
             },
         );
         contract.set_scope_policy_internal(
@@ -122,7 +118,6 @@ impl AccessControlContract {
                 max_ttl_ms: 15 * 60 * 1000,
                 require_origin: false,
                 require_device: false,
-                require_full_access_bootstrap: true,
             },
         );
 

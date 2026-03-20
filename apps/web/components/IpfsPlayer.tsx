@@ -38,6 +38,8 @@ interface IpfsPlayerProps {
     initialDurationSeconds?: number;
 }
 
+type EventAccessMode = 'paid' | 'free_collectible' | 'public_free';
+
 // State machine for player states
 type PlayerState =
     | { type: 'idle' }
@@ -127,6 +129,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
     const [scrubTimeSeconds, setScrubTimeSeconds] = useState(0);
     const [playbackMetrics, setPlaybackMetrics] = useState<DeliveryPlaybackMetrics | null>(null);
     const [isWaitingForMedia, setIsWaitingForMedia] = useState(false);
+    const [eventAccessMode, setEventAccessMode] = useState<EventAccessMode | null>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
 
     // Track blob URL for cleanup
@@ -215,6 +218,52 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
     useEffect(() => {
         setResolvedThumbnailUrl(thumbnailUrl);
     }, [thumbnailUrl, cid]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const resolveEventAccess = async () => {
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid);
+            if (!isUuid) {
+                setEventAccessMode('public_free');
+                return;
+            }
+
+            try {
+                const event = await viewContract<{
+                    price: string;
+                    access_mode?: EventAccessMode;
+                    banned?: boolean;
+                }>(
+                    getProvider(),
+                    NEAR_CONFIG.contractId,
+                    'get_event',
+                    { encrypted_cid: cid },
+                );
+
+                if (cancelled) {
+                    return;
+                }
+
+                if (event?.banned) {
+                    setPlayerState({ type: 'banned' });
+                    return;
+                }
+
+                setEventAccessMode(event?.access_mode ?? (event?.price === '0' ? 'public_free' : 'paid'));
+            } catch {
+                if (!cancelled) {
+                    setEventAccessMode(null);
+                }
+            }
+        };
+
+        void resolveEventAccess();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [cid]);
 
     useEffect(() => {
         let cancelled = false;
@@ -378,15 +427,16 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
 
     // Derived access state from React Query
     const hasAccess = hasOwnership === true;
+    const isPublicFree = eventAccessMode === 'public_free';
 
     // Show inline purchase card when no access, no error, not loading, and not in special states
     const showPurchaseCard = !videoUrl
         && playerState.type !== 'banned'
         && !checkingAccess
         && !loading
-        && hasAccess === false
         && !purchased
         && !error;
+    const shouldRenderPurchaseCard = showPurchaseCard && ((isPublicFree && hasOwnership !== true) || hasAccess === false);
     const effectiveDurationSeconds = knownDurationSeconds && knownDurationSeconds > 0
         ? knownDurationSeconds
         : Math.max(currentTimeSeconds, 1);
@@ -533,11 +583,6 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
     };
 
     const playVideo = useCallback(async (isRetry: boolean = false) => {
-        if (!accountId) {
-            setPlayerState({ type: 'error', message: "Please connect your wallet to watch." });
-            return;
-        }
-
         cleanupPlaybackArtifacts();
         setBackgroundStatus(null);
 
@@ -549,6 +594,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
         try {
             const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid);
             let manifestCid: string | undefined = isUuid ? undefined : cid;
+            let resolvedAccessMode = eventAccessMode;
 
             if (isUuid) {
                 setPlayerState({ type: 'decrypting', message: 'Resolving Video Metadata...' });
@@ -561,6 +607,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                         title: string;
                         price: string;
                         creator_id: string;
+                        access_mode?: EventAccessMode;
                         banned?: boolean;
                     }>(provider, contractId, 'get_event', { encrypted_cid: cid });
 
@@ -568,6 +615,9 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                         setPlayerState({ type: 'banned' });
                         return;
                     }
+
+                    resolvedAccessMode = event?.access_mode ?? (event?.price === '0' ? 'public_free' : 'paid');
+                    setEventAccessMode(resolvedAccessMode);
 
                     const parsed = parseTitleMetadata(event?.title, 'Untitled');
                     manifestCid = parsed.manifestCid || undefined;
@@ -586,6 +636,9 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             }
 
             const resolveAesKey = async (): Promise<string> => {
+                if (!accountId) {
+                    throw new Error('Please connect your wallet or create a temporary account to watch this video.');
+                }
                 setPlayerState({ type: 'decrypting', message: 'Authorizing playback...' });
                 const wallet = await getWallet();
                 return await retrieveEncryptionKey(cid, accountId, wallet);
@@ -626,6 +679,17 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                 return;
             }
 
+            const inferredAccessMode = resolvedAccessMode
+                ?? (manifestData.encrypted ? 'free_collectible' : 'public_free');
+
+            if (inferredAccessMode === 'public_free' && manifestData.encrypted) {
+                throw new Error('This public free video is still encrypted. Republish it as public free.');
+            }
+
+            if (manifestData.encrypted && !accountId) {
+                throw new Error('Please connect your wallet or create a temporary account to watch this video.');
+            }
+
             const aesKeyB64 = manifestData.encrypted ? await resolveAesKey() : undefined;
             setPlayerState({ type: 'decrypting', message: 'Preparing segmented stream...' });
 
@@ -656,7 +720,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             console.error('Playback failed:', err);
             setPlayerState({ type: 'error', message: err instanceof Error ? err.message : 'Failed to load video' });
         }
-    }, [accountId, cid, cleanupPlaybackArtifacts, getWallet, resolvedThumbnailUrl]);
+    }, [accountId, cid, cleanupPlaybackArtifacts, eventAccessMode, getWallet, resolvedThumbnailUrl]);
 
     const handlePlay = () => playVideo(false);
 
@@ -726,7 +790,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                             <Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-primary" />
                             <p className="text-sm text-slate-300">{status}</p>
                         </div>
-                    ) : hasAccess === false && !purchased && !error ? (
+                    ) : shouldRenderPurchaseCard ? (
                         // SHOW INLINE PURCHASE CARD
                         <div className="z-10 flex flex-col items-center bg-black/95 backdrop-blur-md w-full p-4">
                             <TicketPurchaseCard
