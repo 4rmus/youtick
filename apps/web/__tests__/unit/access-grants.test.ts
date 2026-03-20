@@ -64,7 +64,7 @@ describe('access-grants', () => {
         process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
         process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';
 
-        let resolveTx: (() => void) | null = null;
+        let resolveTx: () => void = () => {};
         const wallet = {
             signAndSendTransaction: vi.fn(
                 () =>
@@ -92,7 +92,7 @@ describe('access-grants', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(wallet.signAndSendTransaction).toHaveBeenCalledTimes(1);
 
-        resolveTx?.();
+        resolveTx();
 
         const [firstGrant, secondGrant] = await Promise.all([firstPromise, secondPromise]);
         expect(firstGrant?.sessionPublicKey).toBe(secondGrant?.sessionPublicKey);

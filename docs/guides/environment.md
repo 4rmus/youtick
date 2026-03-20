@@ -19,7 +19,6 @@ Most-used fields in `apps/web/.env.local`:
 | `NEXT_PUBLIC_APP_URL` | No | Base URL used in generated links |
 | `NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT` | No | Enables 1Click + MetaMask checkout |
 | `NEXT_PUBLIC_ENABLE_LEGACY_UPLOAD_FALLBACK` | No | Re-enables legacy publish fallback |
-| `NEXT_PUBLIC_ONBOARDING_KEY` | No | Legacy browser onboarding key |
 | `NEXT_PUBLIC_ONE_CLICK_API_TOKEN` | No | 1Click quote and swap token |
 | `NEXT_PUBLIC_DEPLOY_TARGET` | No | Web4 build selector |
 
@@ -60,7 +59,7 @@ These must remain server-side only:
 | `RELAYER_ACCOUNT_ID` | Optional relayer account for sponsored trial flows |
 | `RELAYER_PRIVATE_KEY` | Relayer private key |
 
-If you keep relayer fallback enabled, the relayer must also be active in the registry and able to execute the current owner-gated sponsored trial path.
+Sponsored trial olusturma icin relayer ana yoldur. Relayer registry'de aktif olmali ve kontratta yetkili olmali. Public onboarding key artik default akisin parcasi olarak dusunulmemeli.
 
 ---
 

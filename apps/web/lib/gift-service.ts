@@ -6,12 +6,14 @@
  * Uses contract methods: create_gift_drop, claim_gift, claim_gift_and_create_account
  */
 
-import { KeyPair, Account, KeyPairSigner, nearToYocto, actions, type KeyPairString } from "near-api-js";
+import { KeyPair, Account, KeyPairSigner, actions, type KeyPairString } from "near-api-js";
 import type { WalletInstance } from "./types";
 
 import { APP_CONFIG, NEAR_CONFIG, GAS_CONSTANTS } from './constants';
 import { recordMetric } from './decentralization-metrics';
+import { nearAmountToYocto } from './near-amount';
 import { getCurrentRpcUrl } from './rpc-failover';
+import { persistManagedKeyPair, writeManagedNearAccount } from './managed-near-account';
 
 // Contract ID from centralized config
 const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
@@ -39,6 +41,13 @@ export interface SponsoredTrialResult {
     accountId?: string;
     secretKey?: string;
     error?: string;
+}
+
+export interface TrialInviteInfo {
+    sponsorId: string;
+    remainingClaims: number;
+    createdAtMs: number;
+    expiresAtMs?: number | null;
 }
 
 function onboardingStorageKey(): string {
@@ -187,11 +196,8 @@ export async function createSponsoredTrialDirect(
         // Determine new account ID
         const accountId = `${username}.${NFT_CONTRACT_ID}`;
 
-        // Store the user's key for future use
-        if (typeof window !== "undefined") {
-            localStorage.setItem(`near-api-js:keystore:${accountId}:${NETWORK_ID}`, userSecretKey);
-            localStorage.setItem("trialAccountId", accountId);
-        }
+        await persistManagedKeyPair(accountId, userSecretKey);
+        writeManagedNearAccount(accountId, 'trial');
 
         return {
             success: true,
@@ -254,11 +260,8 @@ export async function createSponsoredTrialRelayer(
 
         const accountId = data.account_id;
 
-        // Store the key for future use
-        if (typeof window !== "undefined") {
-            localStorage.setItem(`near-api-js:keystore:${accountId}:${NETWORK_ID}`, secretKey);
-            localStorage.setItem("trialAccountId", accountId);
-        }
+        await persistManagedKeyPair(accountId, secretKey);
+        writeManagedNearAccount(accountId, 'trial');
 
         return {
             success: true,
@@ -275,8 +278,9 @@ export async function createSponsoredTrialRelayer(
 }
 
 /**
- * Create a sponsored trial account using the onboarding key.
- * This preserves on-chain anti-abuse controls (authorized key + daily limit).
+ * Create a sponsored trial account.
+ * Prefer the server relayer so onboarding keys do not need to be exposed to the browser.
+ * A locally provisioned onboarding key is kept only as a manual fallback.
  *
  * @param username - Just the username prefix (e.g. "alice")
  * @returns The full account ID and method used
@@ -284,14 +288,6 @@ export async function createSponsoredTrialRelayer(
 export async function createSponsoredTrial(
     username: string
 ): Promise<SponsoredTrialResult & { method?: 'direct' | 'relayer' }> {
-    const directResult = await createSponsoredTrialDirect(username);
-
-    if (directResult.success) {
-        recordMetric('trial_direct_success');
-        console.log(`[DECENTRALIZATION_METRIC] {"operation":"trial_create","method":"direct","username":"${username}","timestamp":${Date.now()}}`);
-        return { ...directResult, method: 'direct' };
-    }
-
     const relayerResult = await createSponsoredTrialRelayer(username);
     if (relayerResult.success) {
         recordMetric('trial_relayer_fallback');
@@ -299,10 +295,25 @@ export async function createSponsoredTrial(
         return { ...relayerResult, method: 'relayer' };
     }
 
+    if (hasOnboardingKey()) {
+        const directResult = await createSponsoredTrialDirect(username);
+        if (directResult.success) {
+            recordMetric('trial_direct_success');
+            console.log(`[DECENTRALIZATION_METRIC] {"operation":"trial_create","method":"direct","username":"${username}","timestamp":${Date.now()}}`);
+            return { ...directResult, method: 'direct' };
+        }
+
+        return {
+            success: false,
+            method: 'direct',
+            error: directResult.error || relayerResult.error || "Failed to create trial account",
+        };
+    }
+
     return {
         success: false,
-        method: 'direct',
-        error: relayerResult.error || directResult.error || "Failed to create trial account",
+        method: 'relayer',
+        error: relayerResult.error || "Failed to create trial account",
     };
 }
 
@@ -357,8 +368,7 @@ export async function claimFreeTicketDirect(
 }
 
 /**
- * Store an onboarding key for direct trial creation
- * This should be called by admin/setup process
+ * Store an onboarding key for manual recovery or controlled local testing.
  */
 export function setOnboardingKey(secretKey: string): void {
     if (typeof window !== "undefined") {
@@ -367,7 +377,7 @@ export function setOnboardingKey(secretKey: string): void {
 }
 
 /**
- * Check if an onboarding key is available
+ * Check if a locally provisioned onboarding key is available
  */
 export function hasOnboardingKey(): boolean {
     if (typeof window === "undefined") return false;
@@ -466,6 +476,64 @@ export function generateKeyPairs(count: number): { publicKey: string; secretKey:
     return pairs;
 }
 
+function implicitAccountIdFromPublicKeyBytes(bytes: Uint8Array): string {
+    return Array.from(bytes)
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+export function generateImplicitTrialAccount(): {
+    accountId: string;
+    publicKey: string;
+    secretKey: string;
+} {
+    const keyPair = KeyPair.fromRandom("ed25519");
+    return {
+        accountId: implicitAccountIdFromPublicKeyBytes(keyPair.getPublicKey().data),
+        publicKey: keyPair.getPublicKey().toString(),
+        secretKey: keyPair.toString(),
+    };
+}
+
+export async function createTrialInviteLinks(
+    numLinks: number,
+    wallet: WalletInstance,
+    ttlMs?: number,
+): Promise<GiftLinkResult[]> {
+    if (numLinks < 1 || numLinks > 50) {
+        throw new Error("Must create 1-50 trial invites");
+    }
+
+    const keyPairs = generateKeyPairs(numLinks);
+    const publicKeys = keyPairs.map((kp) => kp.publicKey);
+    const depositPerInvite = nearAmountToYocto('0.01');
+    const totalDeposit = (depositPerInvite * BigInt(numLinks)).toString();
+
+    await wallet.signAndSendTransaction({
+        receiverId: NFT_CONTRACT_ID,
+        actions: [
+            {
+                type: "FunctionCall",
+                params: {
+                    methodName: "create_trial_invite_drop",
+                    args: {
+                        public_keys: publicKeys,
+                        ttl_ms: ttlMs ?? null,
+                    },
+                    gas: GAS_CONSTANTS.mediumGas.toString(),
+                    deposit: totalDeposit,
+                },
+            },
+        ],
+    });
+
+    return keyPairs.map((kp) => ({
+        publicKey: kp.publicKey,
+        secretKey: kp.secretKey,
+        link: `${APP_URL}/trial?key=${encodeURIComponent(kp.secretKey)}`,
+    }));
+}
+
 /**
  * Create gift links by calling contract's create_gift_drop
  * Creator pays 0.15 NEAR per link
@@ -483,9 +551,8 @@ export async function createGiftLinks(
     const keyPairs = generateKeyPairs(numLinks);
     const publicKeys = keyPairs.map(kp => kp.publicKey);
 
-    // v7: Calculate total deposit using nearToYocto (requires number)
-    const depositPerLink = nearToYocto(parseFloat(DEPOSIT_PER_LINK));
-    const totalDeposit = (BigInt(depositPerLink) * BigInt(numLinks)).toString();
+    const depositPerLink = nearAmountToYocto(DEPOSIT_PER_LINK);
+    const totalDeposit = (depositPerLink * BigInt(numLinks)).toString();
 
     // Call contract's create_gift_drop
     await wallet.signAndSendTransaction({
@@ -560,6 +627,51 @@ export async function validateGiftLink(publicKey: string): Promise<GiftInfo | nu
     }
 }
 
+export async function validateTrialInviteLink(publicKey: string): Promise<TrialInviteInfo | null> {
+    try {
+        const response = await fetch(`${getCurrentRpcUrl()}/`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: "trial-invite-info",
+                method: "query",
+                params: {
+                    request_type: "call_function",
+                    finality: "final",
+                    account_id: NFT_CONTRACT_ID,
+                    method_name: "get_trial_invite_info",
+                    args_base64: Buffer.from(JSON.stringify({ public_key: publicKey })).toString("base64"),
+                },
+            }),
+        });
+
+        const data = await response.json();
+        if (data.error || !data.result?.result) {
+            return null;
+        }
+
+        const result = JSON.parse(Buffer.from(data.result.result).toString());
+        if (!result || result.remaining_claims <= 0) {
+            return null;
+        }
+
+        if (result.expires_at_ms && Date.now() > result.expires_at_ms) {
+            return null;
+        }
+
+        return {
+            sponsorId: result.sponsor_id,
+            remainingClaims: result.remaining_claims,
+            createdAtMs: result.created_at_ms,
+            expiresAtMs: result.expires_at_ms ?? null,
+        };
+    } catch (error) {
+        console.error("Error validating trial invite:", error);
+        return null;
+    }
+}
+
 /**
  * Claim a gift and create a new account
  * Uses the Access Key from the gift link to sign the transaction
@@ -599,6 +711,45 @@ export async function claimGiftAndCreateAccount(
         return {
             success: false,
             error: error instanceof Error ? error.message : "Failed to claim gift",
+        };
+    }
+}
+
+export async function claimTrialInviteWithImplicitAccount(
+    secretKey: string,
+): Promise<SponsoredTrialResult> {
+    try {
+        const inviteKeyPair = KeyPair.fromString(secretKey as KeyPairString);
+        const implicitAccount = generateImplicitTrialAccount();
+
+        const signer = new KeyPairSigner(inviteKeyPair);
+        const account = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), signer);
+
+        await account.signAndSendTransaction({
+            receiverId: NFT_CONTRACT_ID,
+            actions: [
+                actions.functionCall(
+                    "claim_trial_invite_with_implicit_account",
+                    { new_public_key: implicitAccount.publicKey },
+                    GAS_CONSTANTS.mediumGas,
+                    BigInt(0),
+                ),
+            ],
+        });
+
+        await persistManagedKeyPair(implicitAccount.accountId, implicitAccount.secretKey);
+        writeManagedNearAccount(implicitAccount.accountId, 'trial');
+
+        return {
+            success: true,
+            accountId: implicitAccount.accountId,
+            secretKey: implicitAccount.secretKey,
+        };
+    } catch (error: unknown) {
+        console.error("Error claiming trial invite:", error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Failed to claim trial invite",
         };
     }
 }

@@ -281,8 +281,8 @@ describe('video delivery playback session', () => {
   });
 
   it('appends fetched segments in timeline order even when IPFS returns later segments first', async () => {
-    let resolveSeg0: ((response: Response) => void) | null = null;
-    let resolveSeg1: ((response: Response) => void) | null = null;
+    let resolveSeg0: (response: Response) => void = () => {};
+    let resolveSeg1: (response: Response) => void = () => {};
 
     fetchFromGateways.mockImplementation((cid: string) => {
       if (cid === 'QmInit') {
@@ -316,12 +316,12 @@ describe('video delivery playback session', () => {
     mediaSource?.sourceBuffer.flushNext();
     await flushAsyncWork();
 
-    resolveSeg1?.(new Response(Uint8Array.from([101]), { status: 200 }));
+    resolveSeg1(new Response(Uint8Array.from([101]), { status: 200 }));
     await flushAsyncWork();
 
     expect(mediaSource?.sourceBuffer.operations).toHaveLength(0);
 
-    resolveSeg0?.(new Response(Uint8Array.from([100]), { status: 200 }));
+    resolveSeg0(new Response(Uint8Array.from([100]), { status: 200 }));
     await flushAsyncWork();
 
     expect(getFirstOperationByte(mediaSource?.sourceBuffer as FakeSourceBuffer)).toBe(100);

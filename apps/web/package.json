@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build --webpack",
-    "build:web4": "mv app/api app/_api_dev 2>/dev/null; NEXT_PUBLIC_DEPLOY_TARGET=web4 next build --webpack; EXIT=$?; mv app/_api_dev app/api 2>/dev/null; exit $EXIT",
+    "build:web4": "node scripts/build-web4.mjs",
     "start": "next start",
     "lint": "eslint",
     "postinstall": "node scripts/patch-meteor-wallet.mjs",

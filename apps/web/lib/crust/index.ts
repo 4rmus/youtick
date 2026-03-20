@@ -33,6 +33,7 @@ export {
   resolveGatewayUrl,
   fetchFromGateways,
   markGatewayUnhealthy,
+  markGatewayUnhealthyByUrl,
   getBestGateway,
 } from './gateway';
 

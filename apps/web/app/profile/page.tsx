@@ -6,12 +6,13 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getProvider, viewContract } from '@/lib/near';
 import { NEAR_CONFIG } from '@/lib/constants';
-import { User, Wallet, Ticket, Loader2, ArrowLeft, Gift, Video } from 'lucide-react';
+import { User, Wallet, Ticket, Loader2, ArrowLeft, Gift, Video, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from '@/components/Web4Link';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { GiftLinkGenerator } from "@/components/GiftLinkGenerator";
+import { TrialInviteGenerator } from "@/components/TrialInviteGenerator";
 import { TrialUpgradeDialog } from "@/components/TrialUpgradeDialog";
 import { IPFSThumbnail } from "@/components/IPFSThumbnail";
 import { useNearPrice } from '@/hooks/useNearPrice';
@@ -33,6 +34,7 @@ export default function ProfilePage() {
     // Gift Modal State
     const [showGiftModal, setShowGiftModal] = useState(false);
     const [selectedEventForGift, setSelectedEventForGift] = useState<CreatedEvent | null>(null);
+    const [showTrialInviteModal, setShowTrialInviteModal] = useState(false);
 
     // Wallet balance via React Query + FailoverRpcProvider
     const { data: walletBalance, isLoading: loadingBalances } = useQuery({
@@ -119,16 +121,28 @@ export default function ProfilePage() {
                         </div>
                     </div>
 
-                    {/* Gift Button */}
-                    {createdEvents.length > 0 && (
-                        <Button
-                            onClick={() => setShowGiftModal(true)}
-                            className="bg-near-green text-near-black hover:bg-near-green/80 font-semibold gap-2"
-                        >
-                            <Gift className="w-4 h-4" />
-                            {t.profile_page.gift_button}
-                        </Button>
-                    )}
+                    <div className="flex items-center gap-2">
+                        {accountId === NEAR_CONFIG.contractId && (
+                            <Button
+                                onClick={() => setShowTrialInviteModal(true)}
+                                variant="outline"
+                                className="border-zinc-700 text-zinc-200 hover:bg-zinc-800 gap-2"
+                            >
+                                <Sparkles className="w-4 h-4" />
+                                Trial Invites
+                            </Button>
+                        )}
+
+                        {createdEvents.length > 0 && (
+                            <Button
+                                onClick={() => setShowGiftModal(true)}
+                                className="bg-near-green text-near-black hover:bg-near-green/80 font-semibold gap-2"
+                            >
+                                <Gift className="w-4 h-4" />
+                                {t.profile_page.gift_button}
+                            </Button>
+                        )}
+                    </div>
                 </div>
 
                 {/* Account Info Cards */}
@@ -463,6 +477,24 @@ export default function ProfilePage() {
                             />
                         </div>
                     )}
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={showTrialInviteModal} onOpenChange={setShowTrialInviteModal}>
+                <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-[550px] max-h-[85vh] overflow-y-auto flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Sparkles className="w-5 h-5 text-zinc-400" />
+                            Trial Invites
+                        </DialogTitle>
+                        <DialogDescription>
+                            Create invite-only trial links that open implicit NEAR accounts directly.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="mt-4 w-full">
+                        <TrialInviteGenerator />
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>

@@ -99,6 +99,15 @@ class RateLimiter {
         return true;
     }
 
+    rollback(identifier: string): void {
+        const entry = this.cache.get(identifier);
+        if (!entry || entry.timestamps.length === 0) {
+            return;
+        }
+
+        entry.timestamps.pop();
+    }
+
     /**
      * Get remaining requests for an identifier
      */
@@ -237,6 +246,12 @@ class DailyGlobalLimiter {
 
         this.count++;
         return true;
+    }
+
+    rollback(): void {
+        if (this.count > 0) {
+            this.count--;
+        }
     }
 
     getRemaining(): number {

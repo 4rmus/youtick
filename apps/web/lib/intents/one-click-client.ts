@@ -5,11 +5,13 @@ import {
     QuoteRequest,
     type QuoteResponse,
     type GetExecutionStatusResponse,
+    type TokenResponse,
 } from '@defuse-protocol/one-click-sdk-typescript';
-import { ONE_CLICK_CONFIG, NEAR_NATIVE_ASSET, getTokenConfig } from './config';
+import { ONE_CLICK_CONFIG, NEAR_NATIVE_ASSET, getTokenConfig, updateSupportedTokenCatalog } from './config';
 import type { PaymentMethod, ChainId, SwapQuote } from './types';
 
 let initialized = false;
+let supportedTokensPromise: Promise<void> | null = null;
 
 /**
  * Initialize the 1Click SDK with API credentials
@@ -25,6 +27,23 @@ function ensureInitialized() {
     OpenAPI.BASE = ONE_CLICK_CONFIG.baseUrl;
     OpenAPI.TOKEN = ONE_CLICK_CONFIG.apiToken;
     initialized = true;
+}
+
+async function refreshSupportedTokens(): Promise<void> {
+    ensureInitialized();
+
+    if (!supportedTokensPromise) {
+        supportedTokensPromise = OneClickService.getTokens()
+            .then((tokens: TokenResponse[]) => {
+                updateSupportedTokenCatalog(tokens);
+            })
+            .catch((error) => {
+                supportedTokensPromise = null;
+                throw error;
+            });
+    }
+
+    await supportedTokensPromise;
 }
 
 /**
@@ -71,6 +90,12 @@ export async function getSwapQuote(
 
     if (token === 'NEAR') {
         throw new Error('Cannot swap NEAR to NEAR. Use direct NEAR payment.');
+    }
+
+    try {
+        await refreshSupportedTokens();
+    } catch (error) {
+        console.warn('[1Click] Failed to refresh supported tokens, using local fallback:', error);
     }
 
     const tokenConfig = getTokenConfig(token, chain);
@@ -134,6 +159,7 @@ export async function getSwapQuote(
     return {
         quote: response,
         depositAddress: response.quote.depositAddress || '',
+        depositMemo: response.quote.depositMemo || undefined,
         amountIn: response.quote.amountIn,
         amountInFormatted: response.quote.amountInFormatted,
         amountOut: response.quote.amountOut,
@@ -169,9 +195,10 @@ export async function getDryQuote(
  */
 export async function getSwapStatus(
     depositAddress: string,
+    depositMemo?: string,
 ): Promise<GetExecutionStatusResponse> {
     ensureInitialized();
-    return OneClickService.getExecutionStatus(depositAddress);
+    return OneClickService.getExecutionStatus(depositAddress, depositMemo);
 }
 
 /**
@@ -181,12 +208,14 @@ export async function submitDeposit(
     txHash: string,
     depositAddress: string,
     nearSenderAccount?: string,
+    memo?: string,
 ) {
     ensureInitialized();
     return OneClickService.submitDepositTx({
         txHash,
         depositAddress,
         nearSenderAccount,
+        memo,
     });
 }
 
@@ -195,5 +224,7 @@ export async function submitDeposit(
  */
 export async function getSupportedTokens() {
     ensureInitialized();
-    return OneClickService.getTokens();
+    const tokens = await OneClickService.getTokens();
+    updateSupportedTokenCatalog(tokens);
+    return tokens;
 }

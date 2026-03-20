@@ -1,0 +1,4 @@
+interface:
+  display_name: "YouTick Marketing"
+  short_description: "Believable messaging from real product strengths"
+  default_prompt: "Use $youtick-marketing to write YouTick positioning, launch copy, or growth messaging that matches the live product."

@@ -12,6 +12,7 @@ interface Env {
     WEB4_ORIGIN: string;
     ALLOWED_DOMAINS: string;
     CACHE_TTL: string;
+    CACHE_VERSION?: string;
 }
 
 /** Content types that should be cached aggressively */
@@ -37,7 +38,7 @@ function getAllowedDomains(env: Env): Set<string> {
 }
 
 export default {
-    async fetch(request: Request, env: Env): Promise<Response> {
+    async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
         const url = new URL(request.url);
         const hostname = url.hostname.toLowerCase();
         const allowedDomains = getAllowedDomains(env);
@@ -70,6 +71,31 @@ export default {
 
         // --- Build target URL: youtick.net/path → youtick.near.page/path ---
         const targetUrl = `${env.WEB4_ORIGIN}${url.pathname}${url.search}`;
+        const canUseCache = request.method === 'GET' && url.pathname !== '/__health';
+        const cacheUrl = new URL(request.url);
+        if (env.CACHE_VERSION) {
+            cacheUrl.searchParams.set('__cv', env.CACHE_VERSION);
+        }
+        const cacheKey = canUseCache ? new Request(cacheUrl.toString(), { method: 'GET' }) : null;
+        const cache = canUseCache ? caches.default : null;
+
+        if (cache && cacheKey) {
+            const cached = await cache.match(cacheKey);
+            if (cached) {
+                const cachedHeaders = applyProxyHeaders(
+                    cached.headers,
+                    url.pathname,
+                    env.WEB4_ORIGIN,
+                    'HIT',
+                    parseInt(env.CACHE_TTL || '300', 10),
+                );
+                return new Response(cached.body, {
+                    status: cached.status,
+                    statusText: cached.statusText,
+                    headers: cachedHeaders,
+                });
+            }
+        }
 
         try {
             // Forward request to Web4 gateway
@@ -80,38 +106,26 @@ export default {
             });
 
             // Build proxied response
-            const responseHeaders = new Headers(originResponse.headers);
-
-            // Remove headers that shouldn't be forwarded
-            responseHeaders.delete('server');
-            responseHeaders.delete('x-powered-by');
-
-            // Set proxy identification
-            responseHeaders.set('X-Proxy', 'youtick-web4');
-            responseHeaders.set('X-Web4-Origin', env.WEB4_ORIGIN);
-
-            // Security headers
-            responseHeaders.set('X-Content-Type-Options', 'nosniff');
-            responseHeaders.set('X-Frame-Options', 'DENY');
-            responseHeaders.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-
-            // Cache control
             const cacheTtl = parseInt(env.CACHE_TTL || '300', 10);
-            if (isStaticAsset(url.pathname)) {
-                // Static assets: cache aggressively (1 year for hashed files)
-                const isHashed = url.pathname.includes('/_next/static/');
-                const maxAge = isHashed ? 31536000 : cacheTtl;
-                responseHeaders.set('Cache-Control', `public, max-age=${maxAge}, immutable`);
-            } else {
-                // HTML pages: short cache with revalidation
-                responseHeaders.set('Cache-Control', `public, max-age=60, s-maxage=${cacheTtl}, stale-while-revalidate=86400`);
-            }
+            const responseHeaders = applyProxyHeaders(
+                originResponse.headers,
+                url.pathname,
+                env.WEB4_ORIGIN,
+                'MISS',
+                cacheTtl,
+            );
 
-            return new Response(originResponse.body, {
+            const proxiedResponse = new Response(originResponse.body, {
                 status: originResponse.status,
                 statusText: originResponse.statusText,
                 headers: responseHeaders,
             });
+
+            if (cache && cacheKey && originResponse.ok) {
+                ctx.waitUntil(cache.put(cacheKey, proxiedResponse.clone()));
+            }
+
+            return proxiedResponse;
         } catch (error) {
             // Origin unreachable — return friendly error
             console.error('Web4 proxy error:', error);
@@ -165,4 +179,35 @@ function buildOriginHeaders(request: Request, env: Env): Headers {
     }
 
     return headers;
+}
+
+function applyProxyHeaders(
+    headers: Headers,
+    pathname: string,
+    web4Origin: string,
+    cacheState: 'HIT' | 'MISS',
+    cacheTtl: number,
+): Headers {
+    const responseHeaders = new Headers(headers);
+
+    responseHeaders.delete('server');
+    responseHeaders.delete('x-powered-by');
+
+    responseHeaders.set('X-Proxy', 'youtick-web4');
+    responseHeaders.set('X-Web4-Origin', web4Origin);
+    responseHeaders.set('X-Proxy-Cache', cacheState);
+    responseHeaders.set('X-Content-Type-Options', 'nosniff');
+    responseHeaders.set('X-Frame-Options', 'DENY');
+    responseHeaders.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+    if (isStaticAsset(pathname)) {
+        const isHashed = pathname.includes('/_next/static/');
+        const maxAge = isHashed ? 31536000 : cacheTtl;
+        responseHeaders.set('Cache-Control', `public, max-age=${maxAge}, immutable`);
+    } else {
+        // Keep browser HTML cache near-zero so old pages do not point at missing chunk hashes.
+        responseHeaders.set('Cache-Control', `public, max-age=0, must-revalidate, s-maxage=${cacheTtl}, stale-while-revalidate=30`);
+    }
+
+    return responseHeaders;
 }

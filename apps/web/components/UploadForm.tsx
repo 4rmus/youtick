@@ -22,7 +22,6 @@ import {
     POSTER_THUMBNAIL_QUALITY,
     POSTER_THUMBNAIL_WIDTH,
 } from '@/lib/video-utils';
-import { nearToYocto } from 'near-api-js';
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -31,7 +30,8 @@ import { Button } from "@/components/ui/button"
 import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { FEATURE_FLAGS } from '@/lib/constants';
+import { FEATURE_FLAGS, NEAR_CONFIG } from '@/lib/constants';
+import { nearAmountToYocto } from '@/lib/near-amount';
 import { getNearPrice, usdToNear } from '@/lib/price';
 import type { DeliverySegmentPayload } from '@/lib/types';
 import type { PackagedDeliveryAsset } from '@/lib/video-delivery';
@@ -138,12 +138,16 @@ export function UploadForm() {
     const [priceUsd, setPriceUsd] = useState(''); // USD amount (e.g. "5.00"), empty = free
     const [nearPrice, setNearPrice] = useState<number>(0); // NEAR/USD rate
     const [fileSizeError, setFileSizeError] = useState<string | null>(null);
+    const [publicFreeEnabled, setPublicFreeEnabled] = useState(true);
 
     // Derived NEAR price from USD input
     const priceUsdNum = parseFloat(priceUsd) || 0;
     const priceNearDerived = nearPrice > 0 ? usdToNear(priceUsdNum, nearPrice) : 0;
     // Keep 'price' as NEAR string for backward compat with CostReceipt etc.
     const price = priceUsdNum > 0 ? priceNearDerived.toFixed(6) : '0';
+    const accessMode: 'paid' | 'free_collectible' | 'public_free' = priceUsdNum > 0
+        ? 'paid'
+        : (publicFreeEnabled ? 'public_free' : 'free_collectible');
 
     // Fetch NEAR/USD price on mount
     React.useEffect(() => {
@@ -176,6 +180,11 @@ export function UploadForm() {
     const estimatedStorageFee = us.estimatedStorageFee;
     const payAmount = us.payAmount;
     const verifiedStorageFee = us.verifiedStorageFee;
+    const uploadStepsRef = React.useRef(uploadSteps);
+
+    React.useEffect(() => {
+        uploadStepsRef.current = uploadSteps;
+    }, [uploadSteps]);
 
     // Helper functions that dispatch to reducer
     const updateStep = (stepId: string, stepStatus: StepStatus) => {
@@ -204,8 +213,22 @@ export function UploadForm() {
         const message = getErrorText(error).toLowerCase();
         return (
             message.includes('contract method is not found') ||
+            message.includes('method not found') ||
             message.includes('methodnotfound') ||
-            (message.includes('create_upload_session') && message.includes('method'))
+            message.includes('method resolve error') ||
+            message.includes('methodresolveerror') ||
+            message.includes('unknown method') ||
+            message.includes('method does not exist') ||
+            (message.includes('create_upload_session') &&
+                (message.includes('method') || message.includes('does not exist')))
+        );
+    };
+
+    const shouldUseLegacyUploadAuthorizationFirst = (): boolean => {
+        return (
+            FEATURE_FLAGS.enableLegacyUploadFallback &&
+            NEAR_CONFIG.networkId === 'mainnet' &&
+            NEAR_CONFIG.contractId === 'youtick.near'
         );
     };
 
@@ -518,7 +541,7 @@ export function UploadForm() {
                 updateStep('thumbnail', 'complete');
             }
 
-            const isFreeVideo = parseFloat(price) === 0 || price === '';
+            const isPublicFreeVideo = accessMode === 'public_free';
             const {
                 buildSegmentedEventTitle,
                 packageVideoForDelivery,
@@ -558,7 +581,7 @@ export function UploadForm() {
             const videoUuid = crypto.randomUUID();
             const detectedDurationSeconds = Math.max(1, Math.round(packagedDeliveryAsset.durationMs / 1000));
 
-            if (isFreeVideo) {
+            if (isPublicFreeVideo) {
                 updateStep('encrypt', 'complete');
                 updateStep('upload', 'loading');
                 updateStep('kms', 'complete');
@@ -618,7 +641,7 @@ export function UploadForm() {
 
                 const mediaUrl = thumbnailUrl || '';
 
-                const priceYocto = nearToYocto(parseFloat(price) || 0);
+                const priceYocto = nearAmountToYocto(price || '0').toString();
 
                 const videoMetadata = {
                     receiver_id: accountId,
@@ -644,6 +667,7 @@ export function UploadForm() {
                     description: description || 'No description provided',
                     price: priceYocto.toString(),
                     price_usd: priceUsdCents,
+                    access_mode: accessMode,
                 };
 
                 setStatus('Minting NFT ticket & publishing event...');
@@ -675,13 +699,14 @@ export function UploadForm() {
             setTitle('');
             setDescription('');
             setPriceUsd('');
+            setPublicFreeEnabled(true);
             setThumbnail(null);
             setPosterThumbnail(null);
             setThumbnailPreview(null);
 
         } catch (error: unknown) {
             console.error('Upload failed:', error);
-            const currentStep = us.steps.find(s => s.status === 'loading');
+            const currentStep = uploadStepsRef.current.find(s => s.status === 'loading');
             if (currentStep) {
                 updateStep(currentStep.id, 'error');
             }
@@ -723,6 +748,15 @@ export function UploadForm() {
     const authorizeUpload = async (
         wallet: Awaited<ReturnType<typeof getWallet>>,
     ): Promise<{ sessionManager: SignlessUploadManager; cleanup: () => void }> => {
+        if (shouldUseLegacyUploadAuthorizationFirst()) {
+            setStatus('Using legacy upload authorization for the current mainnet contract...');
+            const legacySessionManager = await prepareLegacyUploadAuthorization(wallet);
+            return {
+                sessionManager: legacySessionManager,
+                cleanup: () => undefined,
+            };
+        }
+
         const sessionManager = new UploadSessionManager(accountId!);
 
         try {
@@ -966,6 +1000,24 @@ export function UploadForm() {
                                 />
                             </div>
                         </div>
+
+                        {priceUsdNum === 0 && (
+                            <label className="flex items-start gap-3 rounded-xl border border-white/10 bg-zinc-900/50 px-4 py-3 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={publicFreeEnabled}
+                                    onChange={(event) => setPublicFreeEnabled(event.target.checked)}
+                                    disabled={uploading || !accountId}
+                                    className="mt-1 h-4 w-4 rounded border-zinc-600 bg-zinc-950 text-near-green"
+                                />
+                                <div className="space-y-1">
+                                    <p className="text-sm font-medium text-white">Herkes izleyebilsin</p>
+                                    <p className="text-xs text-zinc-400">
+                                        Açıkken video anonim olarak oynar. Kapalıysa video ücretsiz olur ama izlemek için önce hesaba eklenir.
+                                    </p>
+                                </div>
+                            </label>
+                        )}
 
                         {file && (
                             <p className="text-xs text-muted-foreground">

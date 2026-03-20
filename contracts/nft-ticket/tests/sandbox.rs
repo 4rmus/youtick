@@ -1,11 +1,22 @@
 use near_workspaces::{types::NearToken, Account, Contract};
 use serde_json::json;
+use tokio::sync::OnceCell;
 
-const WASM_FILEPATH: &str = "./target/near/youtick_nft.wasm";
+static CONTRACT_WASM: OnceCell<Vec<u8>> = OnceCell::const_new();
+
+async fn load_contract_wasm() -> anyhow::Result<&'static Vec<u8>> {
+    CONTRACT_WASM
+        .get_or_try_init(|| async {
+            near_workspaces::compile_project(".")
+                .await
+                .map_err(anyhow::Error::from)
+        })
+        .await
+}
 
 async fn init() -> anyhow::Result<(Contract, Account, Account)> {
     let worker = near_workspaces::sandbox().await?;
-    let wasm = std::fs::read(WASM_FILEPATH)?;
+    let wasm = load_contract_wasm().await?;
     let contract = worker.dev_deploy(&wasm).await?;
 
     // Initialize contract with owner
@@ -87,6 +98,7 @@ async fn test_create_event() -> anyhow::Result<()> {
     let event = event.unwrap();
     assert_eq!(event["title"], "Test Concert");
     assert_eq!(event["price"], "1000000000000000000000000");
+    assert_eq!(event["access_mode"], "paid");
 
     println!("✅ Create event test passed");
     Ok(())
@@ -421,6 +433,174 @@ async fn test_trial_pool() -> anyhow::Result<()> {
     assert_eq!(pool_balance, "5000000000000000000000000"); // 5 NEAR
 
     println!("✅ Trial pool test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_authorized_trial_relayer_can_create_sponsored_trial() -> anyhow::Result<()> {
+    let worker = near_workspaces::sandbox().await?;
+    let wasm = load_contract_wasm().await?;
+    let contract = worker.dev_deploy(wasm).await?;
+
+    let owner = worker.dev_create_account().await?;
+    contract
+        .call("new")
+        .args_json(json!({"owner_id": owner.id()}))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let relayer = worker.dev_create_account().await?;
+    let relayer_public_key = relayer.secret_key().public_key().to_string();
+
+    owner
+        .call(contract.id(), "fund_trial_pool")
+        .args_json(json!({}))
+        .deposit(NearToken::from_near(1))
+        .transact()
+        .await?
+        .into_result()?;
+
+    owner
+        .call(contract.id(), "add_trial_relayer")
+        .args_json(json!({ "account_id": relayer.id() }))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let relayer_status: bool = contract
+        .view("is_trial_relayer")
+        .args_json(json!({ "account_id": relayer.id() }))
+        .await?
+        .json()?;
+    assert!(relayer_status);
+
+    relayer
+        .call(contract.id(), "create_sponsored_trial")
+        .args_json(json!({
+            "username": "relayuser",
+            "new_public_key": relayer_public_key
+        }))
+        .gas(near_workspaces::types::Gas::from_tgas(200))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let count: u32 = contract
+        .view("get_daily_trial_count")
+        .args_json(json!({}))
+        .await?
+        .json()?;
+    assert_eq!(count, 1);
+
+    println!("✅ Authorized trial relayer test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_unauthorized_trial_relayer_is_rejected() -> anyhow::Result<()> {
+    let worker = near_workspaces::sandbox().await?;
+    let wasm = load_contract_wasm().await?;
+    let contract = worker.dev_deploy(wasm).await?;
+
+    let owner = worker.dev_create_account().await?;
+    contract
+        .call("new")
+        .args_json(json!({"owner_id": owner.id()}))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let relayer = worker.dev_create_account().await?;
+    let relayer_public_key = relayer.secret_key().public_key().to_string();
+
+    owner
+        .call(contract.id(), "fund_trial_pool")
+        .args_json(json!({}))
+        .deposit(NearToken::from_near(1))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let result = relayer
+        .call(contract.id(), "create_sponsored_trial")
+        .args_json(json!({
+            "username": "relayuser",
+            "new_public_key": relayer_public_key
+        }))
+        .gas(near_workspaces::types::Gas::from_tgas(200))
+        .transact()
+        .await?;
+
+    assert!(result.is_failure());
+    println!("✅ Unauthorized trial relayer rejection test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_authorized_trial_relayer_can_claim_free_ticket() -> anyhow::Result<()> {
+    let worker = near_workspaces::sandbox().await?;
+    let wasm = load_contract_wasm().await?;
+    let contract = worker.dev_deploy(wasm).await?;
+
+    let owner = worker.dev_create_account().await?;
+    contract
+        .call("new")
+        .args_json(json!({"owner_id": owner.id()}))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let relayer = worker.dev_create_account().await?;
+    let buyer = worker.dev_create_account().await?;
+
+    owner
+        .call(contract.id(), "create_event")
+        .args_json(json!({
+            "encrypted_cid": "QmFreeRelayerEvent",
+            "title": "Free Event",
+            "description": "Relayer-sponsored free claim",
+            "price": "0"
+        }))
+        .deposit(NearToken::from_millinear(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    owner
+        .call(contract.id(), "fund_trial_pool")
+        .args_json(json!({}))
+        .deposit(NearToken::from_near(1))
+        .transact()
+        .await?
+        .into_result()?;
+
+    owner
+        .call(contract.id(), "add_trial_relayer")
+        .args_json(json!({ "account_id": relayer.id() }))
+        .transact()
+        .await?
+        .into_result()?;
+
+    relayer
+        .call(contract.id(), "claim_free_ticket_sponsored")
+        .args_json(json!({
+            "receiver_id": buyer.id(),
+            "encrypted_cid": "QmFreeRelayerEvent"
+        }))
+        .gas(near_workspaces::types::Gas::from_tgas(200))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let tokens: Vec<serde_json::Value> = contract
+        .view("nft_tokens_for_owner")
+        .args_json(json!({ "account_id": buyer.id() }))
+        .await?
+        .json()?;
+
+    assert_eq!(tokens.len(), 1);
+    println!("✅ Authorized relayer free ticket claim test passed");
     Ok(())
 }
 

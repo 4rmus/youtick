@@ -1,5 +1,6 @@
-import { actions, nearToYocto, PublicKey } from 'near-api-js';
+import { actions, PublicKey } from 'near-api-js';
 import { GAS_CONSTANTS } from './constants';
+import { nearAmountToYocto } from './near-amount';
 import type { WalletInstance } from './types';
 
 export interface SignlessUploadManager {
@@ -28,7 +29,7 @@ export async function batchInitialSetup(
                         'deposit_funds',
                         {},
                         GAS_CONSTANTS.smallGas,
-                        BigInt(nearToYocto(parseFloat(gasAmount))),
+                        nearAmountToYocto(gasAmount),
                     ),
                 ],
             },
@@ -39,7 +40,7 @@ export async function batchInitialSetup(
                         publicKey,
                         contractId,
                         [],
-                        BigInt(nearToYocto('0.25')),
+                        nearAmountToYocto('0.25'),
                     ),
                 ],
             },
@@ -70,6 +71,7 @@ export async function batchUploadActionsSignless(
         description: string;
         price: string;
         price_usd?: number | null;
+        access_mode?: 'paid' | 'free_collectible' | 'public_free';
     }
 ) {
     await sessionManager.callMethod('nft_mint_prepaid', videoMetadata);
@@ -80,5 +82,6 @@ export async function batchUploadActionsSignless(
         description: eventMetadata.description,
         price: eventMetadata.price,
         price_usd: eventMetadata.price_usd ?? null,
+        access_mode: eventMetadata.access_mode ?? null,
     });
 }

@@ -6,13 +6,13 @@ import {
     TypedError,
     actions,
     getTransactionLastResult,
-    nearToYocto,
     yoctoToNear,
     type KeyPairString,
 } from 'near-api-js';
 import { batchInitialSetup } from './batch-transactions';
 import { BrowserKeyStore } from './keystore-v7';
 import { GAS_CONSTANTS, NEAR_CONFIG } from './constants';
+import { nearAmountToYocto } from './near-amount';
 import { getCurrentRpcUrl, withRpcFailover } from './rpc-failover';
 import type { WalletInstance } from './types';
 
@@ -163,7 +163,7 @@ export class SessionManager {
                     'deposit_funds',
                     {},
                     GAS_CONSTANTS.smallGas,
-                    BigInt(nearToYocto(parseFloat(amount))),
+                    nearAmountToYocto(amount),
                 ),
             ],
         });

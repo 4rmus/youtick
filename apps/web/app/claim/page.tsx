@@ -10,6 +10,7 @@ import { parseTitleMetadata } from "@/lib/metadata-parser";
 import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from "@/lib/constants";
 import { getCurrentRpcUrl } from "@/lib/rpc-failover";
 import { IPFSThumbnail } from "@/components/IPFSThumbnail";
+import { writeManagedNearAccount } from "@/lib/managed-near-account";
 
 const NETWORK_ID = NEAR_CONFIG.networkId;
 const NFT_CONTRACT = NEAR_CONFIG.contractId;
@@ -56,7 +57,7 @@ function ClaimContent() {
     const [txHash, setTxHash] = useState<string | null>(null);
 
     // Account existence check
-    const [accountCheckStatus, setAccountCheckStatus] = useState<"idle" | "checking" | "available" | "taken">("idle");
+    const [accountCheckStatus, setAccountCheckStatus] = useState<"idle" | "checking" | "available" | "taken" | "error">("idle");
 
     // Auto-check account availability when username changes
     useEffect(() => {
@@ -82,13 +83,18 @@ function ClaimContent() {
                         finality: 'final'
                     });
                     setAccountCheckStatus("taken");
-                } catch {
-                    // Account doesn't exist = available
-                    setAccountCheckStatus("available");
+                } catch (queryError) {
+                    const message = queryError instanceof Error ? queryError.message : String(queryError);
+                    if (message.includes('does not exist') || message.includes('UNKNOWN_ACCOUNT') || message.includes('unknown account')) {
+                        setAccountCheckStatus("available");
+                        return;
+                    }
+
+                    throw queryError;
                 }
             } catch (err) {
                 console.error("Account check error:", err);
-                setAccountCheckStatus("idle");
+                setAccountCheckStatus("error");
             }
         };
 
@@ -203,7 +209,7 @@ function ClaimContent() {
             const browserKeyStore = new BrowserKeyStore();
             await browserKeyStore.setKey(NETWORK_ID, fullAccountId, newAccountKeyPair);
 
-            localStorage.setItem("trialAccountId", fullAccountId);
+            writeManagedNearAccount(fullAccountId, 'trial');
             localStorage.setItem("trialAccountNetwork", NETWORK_ID);
 
             setClaimedAccountId(fullAccountId);
@@ -444,6 +450,11 @@ function ClaimContent() {
                                 {accountCheckStatus === "taken" && (
                                     <p className="text-red-400 text-xs flex items-center gap-2">
                                         <AlertCircle className="w-3 h-3" /> {t.claim_page?.username_taken || "Account already exists"}
+                                    </p>
+                                )}
+                                {accountCheckStatus === "error" && (
+                                    <p className="text-amber-400 text-xs flex items-center gap-2">
+                                        <AlertCircle className="w-3 h-3" /> {((t.claim_page as Record<string, string> | undefined)?.account_check_failed) || "Could not verify username right now"}
                                     </p>
                                 )}
                                 <Button

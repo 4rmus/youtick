@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
+import { useLanguage } from '@/components/providers/LanguageContext';
 import { Button } from "@/components/ui/button";
 import { Loader2, Ticket, AlertCircle, Play, ChevronDown, ChevronUp, Check, Wallet } from "lucide-react";
-import { actions, KeyPair, KeyPairSigner, Account, yoctoToNear, nearToYocto, type KeyPairString } from 'near-api-js';
+import { actions, KeyPair, KeyPairSigner, Account, yoctoToNear, type KeyPairString } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
 import { useIsCreator } from '@/lib/hooks/useSessionState';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { FEATURE_FLAGS, NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
+import { nearAmountToYocto } from '@/lib/near-amount';
 import { IPFSThumbnail } from './IPFSThumbnail';
 import { PaymentMethodSelector } from './PaymentMethodSelector';
 import { useStablecoinPayment } from '@/lib/hooks/useStablecoinPayment';
@@ -14,7 +16,10 @@ import { getTokenConfig, submitDeposit, type PaymentMethod, type ChainId, type S
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { useEvmPayment } from '@/lib/evm/useEvmPayment';
 import { claimFreeTicketDirect, hasOnboardingKey } from '@/lib/gift-service';
+import { claimFreeTicketAsGuest, getOrCreateGuestIdentity } from '@/lib/guest-account';
+import { persistManagedKeyPair } from '@/lib/managed-near-account';
 import { resolvePreferredMediaUrl } from '@/lib/video-delivery';
+import { DEPOSIT_CONSTANTS } from '@/lib/constants';
 
 interface TicketPurchaseCardProps {
     cid: string;
@@ -25,6 +30,7 @@ interface TicketPurchaseCardProps {
 interface EventDetails {
     price: string;
     priceUsdCents: number | null;
+    accessMode: 'paid' | 'free_collectible' | 'public_free';
     title: string;
     media?: string;
     uploader?: string;
@@ -41,7 +47,8 @@ const STORAGE_DEPOSIT_NEAR = 0.01;
 const GAS_BUFFER_NEAR = 0.01;
 
 export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: TicketPurchaseCardProps) {
-    const { accountId, isTrial, getWallet, connect, setEvmLinkedAccount } = useWallet();
+    const { accountId, isTrial, managedAccountKind, getWallet, connect, setEvmLinkedAccount, setManagedAccount } = useWallet();
+    const { t } = useLanguage();
 
     const { data: isCreatorData } = useIsCreator(accountId, cid);
     const { nearPrice, nearToUsdStr } = useNearPrice();
@@ -104,9 +111,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             const signer = new KeyPairSigner(keyPair);
             const account = new Account(implicitId, getCurrentRpcUrl(), signer);
 
-            const priceYocto = nearToYocto(parseFloat(eventDetails.price));
-            const storageCostYocto = BigInt(nearToYocto(STORAGE_DEPOSIT_NEAR));
-            const totalDeposit = BigInt(priceYocto) + storageCostYocto;
+            const priceYocto = nearAmountToYocto(eventDetails.price);
+            const storageCostYocto = nearAmountToYocto(STORAGE_DEPOSIT_NEAR);
+            const totalDeposit = priceYocto + storageCostYocto;
 
             await account.signAndSendTransaction({
                 receiverId: contractId,
@@ -123,11 +130,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             console.log('[MetaMask Flow] Purchase complete on implicit account:', implicitId);
 
             // Store keypair for future access (viewing purchased content)
-            if (typeof window !== 'undefined') {
-                const networkId = NEAR_CONFIG.networkId;
-                localStorage.setItem(`near-api-js:keystore:${implicitId}:${networkId}`, secretKey);
-                localStorage.setItem('evmLinkedNearAccount', implicitId);
-            }
+            await persistManagedKeyPair(implicitId, secretKey);
 
             // KMS access control uses ticket ownership — no group management needed
 
@@ -188,6 +191,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     price: string;
                     creator_id: string;
                     price_usd?: number | null;
+                    access_mode?: 'paid' | 'free_collectible' | 'public_free';
                     banned?: boolean;
                 }>(provider, contractId, 'get_event', { encrypted_cid: cid });
 
@@ -204,6 +208,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     setEventDetails({
                         price: yoctoToNear(BigInt(event.price)),
                         priceUsdCents: event.price_usd ?? null,
+                        accessMode: event.access_mode ?? (event.price === '0' ? 'public_free' : 'paid'),
                         title: parsed.title,
                         media: media ?? parsed.thumbnailUrl,
                         uploader: event.creator_id
@@ -228,7 +233,42 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     // Claim FREE Ticket (sponsored onboarding key or wallet fallback)
     const handleFreeTicketClaim = async () => {
         if (!eventDetails) return;
+        const isGuestManagedAccount = managedAccountKind === 'guest';
+
+        if (isGuestManagedAccount) {
+            setActionLoading(true);
+            setError(null);
+            try {
+                const identity = await getOrCreateGuestIdentity();
+                const result = await claimFreeTicketAsGuest(cid, identity);
+                setManagedAccount(result.accountId, 'guest');
+                if (onPurchaseSuccess) onPurchaseSuccess();
+            } catch (e: unknown) {
+                console.error("Guest free ticket claim failed:", e);
+                setError(e instanceof Error ? e.message : t.watch_page.claim_free_ticket);
+            } finally {
+                setActionLoading(false);
+            }
+            return;
+        }
+
         if (!accountId) {
+            if (eventDetails.accessMode === 'public_free') {
+                setActionLoading(true);
+                setError(null);
+                try {
+                    const identity = await getOrCreateGuestIdentity();
+                    const result = await claimFreeTicketAsGuest(cid, identity);
+                    setManagedAccount(result.accountId, 'guest');
+                    if (onPurchaseSuccess) onPurchaseSuccess();
+                } catch (e: unknown) {
+                    console.error("Anonymous free ticket claim failed:", e);
+                    setError(e instanceof Error ? e.message : t.watch_page.claim_free_ticket);
+                } finally {
+                    setActionLoading(false);
+                }
+                return;
+            }
             // Redirect to trial page where user can connect wallet or create trial account
             const redirectUrl = encodeURIComponent(`/watch?cid=${cid}`);
             window.location.href = `/trial?redirect=${redirectUrl}`;
@@ -239,18 +279,18 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         try {
             // Preferred path: sponsored claim via onboarding key (signless + no user deposit).
             // This path enforces contract-level onboarding checks and daily limits.
-            if (isTrial || hasOnboardingKey()) {
+            if (hasOnboardingKey()) {
                 const result = await claimFreeTicketDirect(accountId, cid);
                 if (!result.success) {
-                    // Trial users must use the onboarding key path.
-                    if (isTrial) {
-                        throw new Error(result.error || "Failed to claim free ticket");
-                    }
                     console.warn("[FreeClaim] Direct claim unavailable, falling back to wallet/session path:", result.error);
                 } else {
                     if (onPurchaseSuccess) onPurchaseSuccess();
                     return;
                 }
+            }
+
+            if (isTrial) {
+                throw new Error("Secure sponsored free ticket claim is not configured for this trial account yet. Use a gift link or connect a wallet.");
             }
 
             const contractId = NEAR_CONFIG.contractId;
@@ -262,7 +302,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         'buy_ticket',
                         { receiver_id: accountId, encrypted_cid: cid },
                         GAS_CONSTANTS.mediumGas,
-                        BigInt(0)
+                        DEPOSIT_CONSTANTS.smallStorageDeposit
                     ),
                 ],
             });
@@ -290,8 +330,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         try {
             const wallet = await getWallet();
             const contractId = NEAR_CONFIG.contractId;
-            const storageCostYocto = BigInt(nearToYocto(STORAGE_DEPOSIT_NEAR));
-            const priceYocto = BigInt(nearToYocto(parseFloat(eventDetails.price)));
+            const storageCostYocto = nearAmountToYocto(STORAGE_DEPOSIT_NEAR);
+            const priceYocto = nearAmountToYocto(eventDetails.price);
             const totalDeposit = priceYocto + storageCostYocto;
 
             await wallet.signAndSendTransaction({
@@ -452,6 +492,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                     {
                                         receiver_id: swapQuote.depositAddress,
                                         amount: swapQuote.amountIn,
+                                        ...(swapQuote.depositMemo ? { memo: swapQuote.depositMemo } : {}),
                                     },
                                     GAS_CONSTANTS.smallGas,
                                     BigInt(1) // 1 yoctoNEAR required
@@ -473,7 +514,12 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     const depositTxHash = txHashes[txHashes.length - 1]; // Last tx is the ft_transfer
                     if (depositTxHash && swapQuote.depositAddress) {
                         console.log('[1Click] Submitting deposit tx:', depositTxHash, 'to address:', swapQuote.depositAddress);
-                        const depositResult = await submitDeposit(depositTxHash, swapQuote.depositAddress, nearRecipient);
+                        const depositResult = await submitDeposit(
+                            depositTxHash,
+                            swapQuote.depositAddress,
+                            nearRecipient,
+                            swapQuote.depositMemo,
+                        );
                         console.log('[1Click] Deposit submission result:', depositResult);
                     } else {
                         console.warn('[1Click] Missing tx hash or deposit address:', { depositTxHash: txHashes, depositAddress: swapQuote.depositAddress });
@@ -514,6 +560,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
     const priceNear = parseFloat(eventDetails.price) || 0;
     const isFree = priceNear === 0;
+    const isPublicFree = isFree && eventDetails.accessMode === 'public_free';
     const isCreator = isCreatorData === true || (accountId && eventDetails.uploader === accountId);
     const crossChainEnabled = FEATURE_FLAGS.enableCrossChainCheckout;
     const isStablecoinFlow = paymentSelection.method !== 'NEAR';
@@ -562,7 +609,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         </div>
                         <div>
                             {isFree ? (
-                                <p className="text-2xl font-bold text-white">FREE</p>
+                                <p className="text-2xl font-bold text-white">{t.watch_page.free_badge}</p>
                             ) : eventDetails.priceUsdCents ? (
                                 <>
                                     <p className="text-2xl font-bold text-white">
@@ -755,8 +802,30 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 {/* Action Button */}
                 {!isCreator && !isSwapInProgress && !swapNearReady && (
                     <>
-                        {/* MetaMask connect button (for EVM chains when MetaMask not yet connected) */}
-                        {crossChainEnabled && isStablecoinFlow && isEvmChain && !isEvmConnected ? (
+                        {isPublicFree ? (
+                            <div className="space-y-3">
+                                <Button
+                                    onClick={handleFreeTicketClaim}
+                                    disabled={actionLoading}
+                                    className="w-full h-12 bg-gradient-to-r from-near-green to-emerald-500 hover:from-near-green/90 hover:to-emerald-500/90 text-near-black font-bold text-base rounded-xl shadow-lg shadow-near-green/20 transition-all duration-300"
+                                >
+                                    {actionLoading ? (
+                                        <>
+                                            <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                                            {t.watch_page.processing_claim}
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Ticket className="h-5 w-5 mr-2" />
+                                            {!accountId ? t.watch_page.test_account_claim : t.watch_page.claim_and_watch}
+                                        </>
+                                    )}
+                                </Button>
+                                <p className="text-xs text-zinc-400 text-center">
+                                    {t.watch_page.public_free_claim_helper}
+                                </p>
+                            </div>
+                        ) : crossChainEnabled && isStablecoinFlow && isEvmChain && !isEvmConnected ? (
                             <Button
                                 onClick={connectMetaMask}
                                 disabled={actionLoading}
@@ -780,7 +849,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                     <>
                                         <Ticket className="h-5 w-5 mr-2" />
                                         {isFree
-                                            ? 'Claim Free Ticket'
+                                            ? t.watch_page.claim_free_ticket
                                             : crossChainEnabled && isStablecoinFlow && isEvmChain
                                                 ? `Pay with MetaMask • ${paymentSelection.method}`
                                                 : crossChainEnabled && isStablecoinFlow

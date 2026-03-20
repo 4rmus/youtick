@@ -88,7 +88,7 @@ export function useStablecoinPayment({
         consecutiveErrorsRef.current = 0;
     }, []);
 
-    const startPolling = useCallback((address: string) => {
+    const startPolling = useCallback((address: string, depositMemo?: string) => {
         stopPolling();
         pollStartTimeRef.current = Date.now();
         consecutiveErrorsRef.current = 0;
@@ -112,7 +112,7 @@ export function useStablecoinPayment({
             }
 
             try {
-                const result = await getSwapStatus(address);
+                const result = await getSwapStatus(address, depositMemo);
                 if (!mountedRef.current) return;
 
                 // Reset consecutive error counter on success
@@ -205,7 +205,7 @@ export function useStablecoinPayment({
 
             // Start polling for deposit status
             if (swapQuote.depositAddress) {
-                startPolling(swapQuote.depositAddress);
+                startPolling(swapQuote.depositAddress, swapQuote.depositMemo);
             }
 
             return swapQuote;
@@ -222,12 +222,12 @@ export function useStablecoinPayment({
         if (!depositAddress) return;
 
         try {
-            await submitDeposit(txHash, depositAddress, accountId);
+            await submitDeposit(txHash, depositAddress, accountId, quote?.depositMemo);
             setStatus('processing');
         } catch {
             // Non-critical: swap will still be detected automatically
         }
-    }, [depositAddress, accountId]);
+    }, [depositAddress, accountId, quote]);
 
     const reset = useCallback(() => {
         stopPolling();

@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getGatewayUrlsMock = vi.fn();
+const markGatewayUnhealthyByUrlMock = vi.fn();
 const resolveGatewayUrlMock = vi.fn();
 
 vi.mock('@/lib/crust', () => ({
   getGatewayUrls: getGatewayUrlsMock,
+  markGatewayUnhealthyByUrl: markGatewayUnhealthyByUrlMock,
   resolveGatewayUrl: resolveGatewayUrlMock,
 }));
 
@@ -69,5 +71,8 @@ describe('ipfs media helper', () => {
     });
 
     expect(nextUrl).toBe('https://dweb.link/ipfs/QmPosterCid123456789012345678901234567890123456');
+    expect(markGatewayUnhealthyByUrlMock).toHaveBeenCalledWith(
+      'https://ipfs.io/ipfs/QmPosterCid123456789012345678901234567890123456',
+    );
   });
 });

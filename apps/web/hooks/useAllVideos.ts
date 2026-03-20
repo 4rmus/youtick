@@ -15,6 +15,7 @@ export type EventRow = [string, {
     creator_id: string;
     price: string;
     price_usd?: number | null;
+    access_mode?: 'paid' | 'free_collectible' | 'public_free';
     created_at?: number | string | null;
     banned?: boolean;
 }];
@@ -68,6 +69,7 @@ export function mapEventRowsToTokens(events: EventRow[]): TokenWithVideo[] {
                     content_type: 'Exclusive',
                     price: event.price,
                     price_usd: event.price_usd ?? null,
+                    access_mode: event.access_mode ?? (event.price === '0' ? 'public_free' : 'paid'),
                 },
             };
         });

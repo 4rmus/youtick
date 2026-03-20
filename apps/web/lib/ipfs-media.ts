@@ -1,4 +1,4 @@
-import { getGatewayUrls, resolveGatewayUrl } from './crust';
+import { getGatewayUrls, markGatewayUnhealthyByUrl, resolveGatewayUrl } from './crust';
 
 export type IpfsMediaPurpose = 'image' | 'video' | 'generic';
 
@@ -6,6 +6,7 @@ const resolvedCandidateCache = new Map<string, string[]>();
 const selectedUrlCache = new Map<string, string>();
 const pendingSelectionCache = new Map<string, Promise<string>>();
 const failedUrlCache = new Map<string, Set<string>>();
+const preconnectedOrigins = new Set<string>();
 
 export const DEFAULT_IPFS_MEDIA_TIMEOUT_MS = 1_800;
 export const MAX_IPFS_MEDIA_CANDIDATES = 3;
@@ -63,6 +64,28 @@ function getBaseCandidates(input: string, limit: number): string[] {
 
     resolvedCandidateCache.set(input, result);
     return result;
+}
+
+function preconnectMediaOrigin(url: string): void {
+    if (typeof document === 'undefined' || !url.startsWith('http://') && !url.startsWith('https://')) {
+        return;
+    }
+
+    try {
+        const origin = new URL(url).origin;
+        if (preconnectedOrigins.has(origin)) {
+            return;
+        }
+
+        const link = document.createElement('link');
+        link.rel = 'preconnect';
+        link.href = origin;
+        link.crossOrigin = 'anonymous';
+        document.head.appendChild(link);
+        preconnectedOrigins.add(origin);
+    } catch {
+        // Ignore malformed URLs and DOM edge cases.
+    }
 }
 
 export function getIpfsMediaCandidates(
@@ -129,12 +152,14 @@ export async function resolveIpfsMediaUrl(
     const selected = selectedUrlCache.get(cacheKey);
 
     if (selected && candidates.includes(selected)) {
+        preconnectMediaOrigin(selected);
         return selected;
     }
 
     if (!cid || candidates.length <= 1) {
         if (candidates[0] && candidates[0] !== options?.fallbackUrl) {
             selectedUrlCache.set(cacheKey, candidates[0]);
+            preconnectMediaOrigin(candidates[0]);
         }
         return candidates[0];
     }
@@ -145,6 +170,7 @@ export async function resolveIpfsMediaUrl(
         try {
             const winner = await existing;
             if (candidates.includes(winner)) {
+                preconnectMediaOrigin(winner);
                 return winner;
             }
         } catch {
@@ -160,6 +186,7 @@ export async function resolveIpfsMediaUrl(
         .then((winner) => {
             if (candidates.includes(winner)) {
                 selectedUrlCache.set(cacheKey, winner);
+                preconnectMediaOrigin(winner);
                 return winner;
             }
 
@@ -190,6 +217,7 @@ export function rememberSuccessfulIpfsMediaUrl(
     const cacheKey = getCacheKey(sourceKey, purpose);
 
     selectedUrlCache.set(cacheKey, url);
+    preconnectMediaOrigin(url);
 
     const failed = failedUrlCache.get(cacheKey);
     if (!failed) {
@@ -217,6 +245,7 @@ export function rememberFailedIpfsMediaUrl(
 
     failed.add(url);
     failedUrlCache.set(cacheKey, failed);
+    markGatewayUnhealthyByUrl(url);
 
     if (selectedUrlCache.get(cacheKey) === url) {
         selectedUrlCache.delete(cacheKey);

@@ -161,8 +161,9 @@ const RATE_LIMIT_WINDOW_S = 60;
 const RATE_LIMIT_MAX_STORE = 20;
 const RATE_LIMIT_MAX_RETRIEVE = 120;
 
-/** Access cache TTL: 1 hour */
-const ACCESS_CACHE_TTL_S = 3600;
+/** Access cache TTLs: keep auth caches short so revokes and transfers take effect quickly */
+const KEY_BINDING_CACHE_TTL_S = 300;
+const TICKET_ACCESS_CACHE_TTL_S = 60;
 const EVENT_CREATOR_CACHE_TTL_S = 3600;
 const REGISTRY_CACHE_TTL_S = 300;
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -423,7 +424,7 @@ async function verifyPublicKeyBinding(
         });
 
         // If we get here, the key exists on this account
-        await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: ACCESS_CACHE_TTL_S });
+        await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: KEY_BINDING_CACHE_TTL_S });
         return true;
     } catch (error) {
         // Key not found on account OR RPC error
@@ -457,7 +458,7 @@ async function verifyFullAccessKeyBinding(
 
         const isFullAccess = accessKey.permission === 'FullAccess';
         if (isFullAccess) {
-            await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: ACCESS_CACHE_TTL_S });
+            await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: KEY_BINDING_CACHE_TTL_S });
         }
         return isFullAccess;
     } catch (error) {
@@ -500,7 +501,7 @@ async function verifyTicketAccess(
         );
 
         if (hasTicket) {
-            await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: ACCESS_CACHE_TTL_S });
+            await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: TICKET_ACCESS_CACHE_TTL_S });
             return true;
         }
 

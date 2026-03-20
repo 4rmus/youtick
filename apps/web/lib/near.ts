@@ -13,7 +13,7 @@ import {
 const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
 const NETWORK_ID = NEAR_CONFIG.networkId;
 
-// Primary RPC URL (first in list) - used for Account instances that need a single URL
+// Primary RPC URL (first in list) - exposed for compatibility/debugging.
 const RPC_URL = getPrimaryRpcUrl();
 
 // Failover provider with all RPC endpoints for resilient queries
@@ -46,14 +46,14 @@ async function viewContract<T>(
  */
 export async function getAccount(accountId: string): Promise<Account> {
     const signer = await browserKeyStore.getSigner(NETWORK_ID, accountId);
-    return new Account(accountId, RPC_URL, signer || undefined);
+    return new Account(accountId, getCurrentRpcUrl(), signer || undefined);
 }
 
 /**
  * Get a read-only NEAR Account (no signer, for view calls)
  */
 export function getReadOnlyAccount(accountId: string): Account {
-    return new Account(accountId, RPC_URL);
+    return new Account(accountId, getCurrentRpcUrl());
 }
 
 /**

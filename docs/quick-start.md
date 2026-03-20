@@ -8,7 +8,7 @@
 
 | Requirement | Version |
 |-------------|---------|
-| Node.js | 18+ |
+| Node.js | 20.9+ |
 | npm | 9+ |
 | Rust (optional) | Stable |
 | NEAR wallet | Any supported wallet |
@@ -64,7 +64,7 @@ Open [http://localhost:3000](http://localhost:3000).
 
 1. Connect wallet.
 2. Upload video metadata and file.
-3. For paid videos, app encrypts with AES-CTR, uploads ciphertext to IPFS, stores key in KMS, then creates event/NFT on-chain.
+3. For paid videos, app encrypts with AES-CTR, uploads ciphertext to IPFS, stores key material through KMS flow, then creates event/NFT on-chain.
 4. Browse from `/discover` and open `/watch`.
 
 ---

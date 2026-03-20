@@ -12,12 +12,15 @@ interface EventData {
     price: string;
     creator_id: string;
     created_at: number;
+    access_mode?: 'paid' | 'free_collectible' | 'public_free';
 }
 
 interface EventDescription {
+    title: string | null;
     description: string | null;
     thumbnailUrl: string | null;
     creatorId: string | null;
+    accessMode: 'paid' | 'free_collectible' | 'public_free' | null;
 }
 
 async function fetchEventDescription(encrypted_cid: string): Promise<EventDescription> {
@@ -31,7 +34,7 @@ async function fetchEventDescription(encrypted_cid: string): Promise<EventDescri
     );
 
     if (!event) {
-        return { description: null, thumbnailUrl: null, creatorId: null };
+        return { title: null, description: null, thumbnailUrl: null, creatorId: null, accessMode: null };
     }
 
     const parsed = parseTitleMetadata(event.title);
@@ -40,9 +43,11 @@ async function fetchEventDescription(encrypted_cid: string): Promise<EventDescri
         : null;
 
     return {
+        title: parsed.title || null,
         description: event.description || null,
         thumbnailUrl,
         creatorId: event.creator_id || null,
+        accessMode: event.access_mode ?? (event.price === '0' ? 'public_free' : 'paid'),
     };
 }
 
@@ -56,9 +61,11 @@ export function useEventDescription(encrypted_cid: string | null) {
     });
 
     return {
+        title: query.data?.title ?? null,
         description: query.data?.description ?? null,
         thumbnailUrl: query.data?.thumbnailUrl ?? null,
         creatorId: query.data?.creatorId ?? null,
+        accessMode: query.data?.accessMode ?? null,
         loading: query.isLoading,
     };
 }
