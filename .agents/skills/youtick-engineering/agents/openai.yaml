@@ -1,4 +1,0 @@
-interface:
-  display_name: "YouTick Engineering"
-  short_description: "Live code paths, flows, and safety rails"
-  default_prompt: "Use $youtick-engineering to work on YouTick code, flows, or logic without breaking the main user journey."

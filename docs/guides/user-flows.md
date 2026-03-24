@@ -10,23 +10,19 @@ Creator tarafindaki aktif akis:
 
 1. Cuzdan baglanir
 2. Video ve metadata secilir
-3. Upload yetkisi acilir
-4. Video browser'da sifrelenir
+3. Upload session acilir (dar kapsamli, kisa omurlu)
+4. Video browser'da AES-CTR ile sifrelenir
 5. Sifreli medya Crust/IPFS'e yuklenir
-6. AES anahtari KMS'e kaydedilir
+6. AES anahtari Shamir ile paylara bolunur, her pay bir KMS operator'e gonderilir
 7. `nft_mint_prepaid` ve `create_event_prepaid` ile yayin tamamlanir
-
-### Onemli not
-
-Tercih edilen publish yolu `create_upload_session` tabanlidir. Eğer canli contract bu methodu desteklemiyorsa frontend eski session-key fallback'ini deneyebilir.
 
 ### Kullanicinin gordugu adimlar
 
-- yetkilendirme
+- yetkilendirme (tek popup)
 - thumbnail/poster olusturma
 - sifreleme
 - IPFS upload
-- KMS key storage
+- share dagitimi
 - mint ve event olusturma
 
 ---
@@ -39,9 +35,12 @@ Viewer `/watch` sayfasina gelir.
 
 1. Event bilgisi okunur
 2. Sahiplik durumu kontrol edilir
-3. KMS'den anahtar istenir
-4. Player IPFS'ten manifest veya media ceker
-5. Browser videoyu cozer ve oynatir
+3. Access-control kontratinda Play grant olusturulur
+4. Operator registry'den aktif operator'ler ve threshold config okunur
+5. KMS operator'lerden paylara paralel istenir
+6. Yeterli pay gelince AES anahtari browser'da reconstruct edilir
+7. Player IPFS'ten manifest/media ceker
+8. Browser videoyu cozer ve oynatir
 
 ### Ticket yoksa
 
@@ -55,7 +54,7 @@ Viewer `/watch` sayfasina gelir.
 
 ## 3. Buy ticket
 
-Su anki aktif satin alma yolları:
+Su anki aktif satin alma yollari:
 
 ### NEAR wallet
 
@@ -84,7 +83,7 @@ Creator bir event icin birden fazla hediye linki uretebilir.
 1. Browser yeni key pair'ler uretir
 2. Public key'ler contract'a gonderilir
 3. Contract `create_gift_drop` ile claim yetkilerini kaydeder
-4. Secret key'lerden paylasilabilir linkler olusur
+4. Secret key'lerden paylasilabilir linkler olusur (hash-based URL)
 
 ### Claim
 
@@ -107,7 +106,7 @@ Yeni kullanici icin bugun ana yol relayer uzerinden trial olusturmaktir.
 - server-side relayer kontratta `create_sponsored_trial` cagirir
 - yeni alt hesap olusur
 
-### Legacy local fallback
+### Local fallback
 
 - sadece kontrollu local/test durumlari icin
 - local onboarding key varsa `create_sponsored_trial_direct` kullanilabilir
@@ -116,29 +115,17 @@ Bu iki yolun amaci aynidir: kullaniciyi ilk adimda agir wallet kurulumu ile yorm
 
 ---
 
-## 6. Erişim kararinin nerede verildigi
+## 6. Erisim kararinin nerede verildigi
 
 Bu akislarda en kritik konu su:
 
 - UI tek basina erisim vermez
-- son karar contract + KMS worker birlikte verir
+- son karar contract + access-control + KMS operator'ler birlikte verir
 
 Pratikte:
 
-1. frontend sahiplik durumunu okur
-2. KMS ayni icerik icin on-chain kontrolu tekrar yapar
-3. sadece yetkili isteklerde anahtar doner
-
----
-
-## 7. Eski uyumluluk notlari
-
-Repoda bazi eski uyumluluk alanlari ve eski session-key yardimcilari duruyor olabilir. Bunlar yeni dokumanlarda ana akis sayilmaz.
-
-Bugun esas alman gereken yol:
-
-- browser sifreleme
-- KMS key custody
-- Crust/IPFS delivery
-- upload session tabanli publish
-- gift ve onboarding key akislari
+1. Frontend sahiplik durumunu okur
+2. Access-control kontratinda Play grant olusturulur
+3. Her KMS operator, grant ve sahiplik dogrulamasi yapar
+4. Sadece yetkili isteklerde operator kendi payini doner
+5. Browser yeterli payi alinca anahtari reconstruct eder

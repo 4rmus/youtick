@@ -17,6 +17,8 @@ use near_sdk::{
 use std::collections::HashMap;
 use std::num::NonZeroU128;
 
+mod migrate;
+
 pub struct StorageKey(pub &'static [u8]);
 
 impl near_sdk::IntoStorageKey for StorageKey {
@@ -39,7 +41,6 @@ impl StorageKey {
     pub const DAILY_TRIAL_COUNTS: Self = Self(b"t8");
     pub const TRIAL_RELAYERS: Self = Self(b"tr8");
     pub const PURCHASE_LOGS: Self = Self(b"p8");
-    pub const EVENT_NOVA_GROUPS: Self = Self(b"ng8");
     pub const EVENT_PRICE_USD: Self = Self(b"pu8");
     pub const EVENT_ACCESS_MODES: Self = Self(b"am8");
     pub const BANNED_EVENTS: Self = Self(b"be8");
@@ -101,13 +102,12 @@ pub struct PaginatedEventsResponse {
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
 pub struct VideoMetadata {
-    pub encrypted_cid: String,     // IPFS CID (NOVA encrypted)
-    pub duration_seconds: u32,     // Video duration
-    pub event_date: Option<u64>,   // Event timestamp (concerts, etc)
-    pub content_type: ContentType, // Concert, Cinema, Exclusive
-    // NOVA integration fields
-    pub nova_group_id: Option<String>, // NOVA group ID for access control
-    pub storage_type: StorageType,     // Storage/encryption method
+    pub encrypted_cid: String,
+    pub duration_seconds: u32,
+    pub event_date: Option<u64>,
+    pub content_type: ContentType,
+    pub nova_group_id: Option<String>, // Borsh placeholder — always None for new tokens
+    pub storage_type: StorageType,     // Borsh placeholder — always Kms for new tokens
 }
 
 #[near(serializers = [borsh, json])]
@@ -119,12 +119,11 @@ pub enum ContentType {
     LiveEvent,
 }
 
-// Storage/encryption type
 #[near(serializers = [borsh, json])]
 #[derive(Clone, PartialEq)]
 pub enum StorageType {
-    Nova, // Legacy: NOVA TEE (deprecated, kept for backward compat)
-    Kms,  // Cloudflare Edge KMS + AES-CTR chunked encryption
+    Nova, // Borsh-compatible placeholder — new uploads always use Kms
+    Kms,
 }
 
 // NEW: Gift drop for trial account creation
@@ -180,13 +179,12 @@ impl Default for OnboardingConfig {
     }
 }
 
-// Purchase type for audit trail
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
 pub enum PurchaseType {
-    Direct,  // buy_ticket (attached deposit)
-    Prepaid, // Legacy purchase type kept for backward-compatible logs
-    Free,    // price == 0
+    Direct,
+    Prepaid, // Borsh-compatible placeholder — never constructed in current code
+    Free,
 }
 
 // Purchase log entry for traceability
@@ -279,14 +277,8 @@ pub struct Contract {
     // V6: Purchase logs for audit trail and traceability
     purchase_logs: UnorderedMap<u64, PurchaseLog>,
     next_purchase_id: u64,
-    // V7: Event CID → Nova Group ID mapping for ticket copies
-    event_nova_groups: LookupMap<String, String>,
-    // V8: Nova platform auto-funding (already in on-chain state)
-    nova_platform_account: Option<AccountId>,
-    nova_service_fee: NearToken,
-    // V9: Web4 static URL for NEARFS gateway (e.g., "/ipfs/CID")
+    // V10: Nova fields removed via state migration (see migrate.rs)
     pub web4_static_url: Option<String>,
-    // NOTE: event_price_usd uses lazy LookupMap (separate storage) to avoid migration.
 }
 
 // SECURITY: Use #[init] to prevent re-initialization attacks
@@ -327,9 +319,6 @@ impl Contract {
             commission_pool: NearToken::from_yoctonear(0),
             purchase_logs: UnorderedMap::new(StorageKey::PURCHASE_LOGS),
             next_purchase_id: 0,
-            event_nova_groups: LookupMap::new(StorageKey::EVENT_NOVA_GROUPS),
-            nova_platform_account: None,
-            nova_service_fee: NearToken::from_yoctonear(0),
             web4_static_url: None,
         }
     }
@@ -713,30 +702,6 @@ impl Contract {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // NOVA PLATFORM AUTO-FUNDING ADMIN FUNCTIONS
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Nova platform funding has been removed from the runtime surface.
-    pub fn set_nova_platform_account(&mut self, _account_id: AccountId) {
-        env::panic_str("Nova platform funding has been removed");
-    }
-
-    /// Nova platform funding has been removed from the runtime surface.
-    pub fn set_nova_service_fee(&mut self, _fee: U128) {
-        env::panic_str("Nova platform funding has been removed");
-    }
-
-    /// View: Get Nova platform account
-    pub fn get_nova_platform_account(&self) -> Option<AccountId> {
-        None
-    }
-
-    /// View: Get Nova service fee per ticket
-    pub fn get_nova_service_fee(&self) -> U128 {
-        U128(0)
-    }
-
-    // ═══════════════════════════════════════════════════════════════
     // CONTENT MODERATION (BAN/UNBAN) ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════
 
@@ -788,7 +753,6 @@ impl Contract {
     }
 
     /// Admin: Remove events and all associated data by encrypted_cid list.
-    /// Cleans up: events, video_metadata, event_nova_groups, price_usd, ban_info.
     pub fn admin_remove_events(&mut self, encrypted_cids: Vec<String>) {
         require!(
             env::predecessor_account_id() == self.tokens.owner_id,
@@ -796,17 +760,10 @@ impl Contract {
         );
 
         for cid in &encrypted_cids {
-            // Remove event
             self.events.remove(cid);
-
-            // Remove nova group mapping
-            self.event_nova_groups.remove(cid);
-
-            // Remove ban info if any
             self.lazy_banned_events().remove(cid);
-
-            // Remove price_usd if any
             self.lazy_event_price_usd().remove(cid);
+            self.lazy_event_access_modes().remove(&cid.to_string());
 
             // Find and remove associated video_metadata entries
             // video_metadata is keyed by token_id, so we need to scan
@@ -1388,7 +1345,6 @@ impl Contract {
         let mut commission: u128 = 0;
 
         if !is_free {
-            // Paid ticket - require full payment plus storage plus Nova service fee
             let min_deposit = required_price.saturating_add(storage_cost);
             require!(
                 deposit >= min_deposit,
@@ -1497,7 +1453,6 @@ impl Contract {
 
     /// Internal helper to mint a ticket NFT
     /// Consolidates duplicated minting logic across buy_ticket, claim_gift, etc.
-    /// Automatically copies nova_group_id from event-level mapping
     fn internal_mint_ticket(
         &mut self,
         receiver_id: AccountId,
@@ -1508,15 +1463,12 @@ impl Contract {
         let token_id = self.next_token_id.to_string();
         self.next_token_id += 1;
 
-        // Look up nova_group_id from event-level mapping (set during creator's nft_mint)
-        let nova_group_id = self.event_nova_groups.get(&event_cid);
-
         let video_metadata = VideoMetadata {
             encrypted_cid: event_cid.clone(),
             duration_seconds: 0,
             event_date: Some(event.created_at),
             content_type: ContentType::Exclusive,
-            nova_group_id,
+            nova_group_id: None,
             storage_type: StorageType::Kms,
         };
         self.video_metadata.insert(&token_id, &video_metadata);
@@ -1546,52 +1498,6 @@ impl Contract {
             .internal_mint(token_id.clone(), receiver_id, Some(token_metadata))
     }
 
-    /// Backfill nova_group_id for existing tokens (migration helper)
-    /// Reads nova_group_id from the master token and stores in event_nova_groups mapping
-    /// Also updates all ticket copies for the same event_cid
-    /// Only callable by contract owner
-    pub fn backfill_nova_groups(&mut self) -> u32 {
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can backfill nova groups"
-        );
-
-        let mut backfilled: u32 = 0;
-
-        // Phase 1: Index all nova_group_id from existing master tokens into event_nova_groups
-        let keys: Vec<TokenId> = self.video_metadata.keys().collect();
-        for token_id in &keys {
-            if let Some(metadata) = self.video_metadata.get(token_id) {
-                if let Some(ref group_id) = metadata.nova_group_id {
-                    // Store in event-level mapping if not already present
-                    if self
-                        .event_nova_groups
-                        .get(&metadata.encrypted_cid)
-                        .is_none()
-                    {
-                        self.event_nova_groups
-                            .insert(&metadata.encrypted_cid, group_id);
-                    }
-                }
-            }
-        }
-
-        // Phase 2: Fix all tokens that have nova_group_id = None but have a mapping
-        for token_id in &keys {
-            if let Some(mut metadata) = self.video_metadata.get(token_id) {
-                if metadata.nova_group_id.is_none() {
-                    if let Some(group_id) = self.event_nova_groups.get(&metadata.encrypted_cid) {
-                        metadata.nova_group_id = Some(group_id.clone());
-                        self.video_metadata.insert(token_id, &metadata);
-                        backfilled += 1;
-                    }
-                }
-            }
-        }
-
-        backfilled
-    }
-
     /// Mint a new video NFT ticket
     /// SECURITY: Only contract owner can directly mint NFTs
     #[payable]
@@ -1616,22 +1522,8 @@ impl Contract {
         let token_id = self.next_token_id.to_string();
         self.next_token_id += 1;
 
-        // Store nova_group_id in event-level mapping for ticket copies (only if not already set)
-        if let Some(ref group_id) = video_metadata.nova_group_id {
-            if self
-                .event_nova_groups
-                .get(&video_metadata.encrypted_cid)
-                .is_none()
-            {
-                self.event_nova_groups
-                    .insert(&video_metadata.encrypted_cid, group_id);
-            }
-        }
-
-        // Store video metadata
         self.video_metadata.insert(&token_id, &video_metadata);
 
-        // Mint NFT using standard
         self.tokens
             .internal_mint(token_id.clone(), receiver_id, Some(token_metadata))
     }
@@ -1815,11 +1707,6 @@ impl Contract {
         U128(0)
     }
 
-    /// Nova platform funding has been removed from the runtime surface.
-    pub fn fund_nova_platform(&mut self, _amount: U128) -> Promise {
-        env::panic_str("Nova platform funding has been removed");
-    }
-
     /// Mint NFT using pre-paid funds (Callable via Session Key)
     ///
     /// Deducts storage cost from user's prepaid balance, then mints via
@@ -1868,22 +1755,8 @@ impl Contract {
         let token_id = self.next_token_id.to_string();
         self.next_token_id += 1;
 
-        // Store nova_group_id in event-level mapping for ticket copies
-        if let Some(ref group_id) = video_metadata.nova_group_id {
-            if self
-                .event_nova_groups
-                .get(&video_metadata.encrypted_cid)
-                .is_none()
-            {
-                self.event_nova_groups
-                    .insert(&video_metadata.encrypted_cid, group_id);
-            }
-        }
-
-        // Store video metadata
         self.video_metadata.insert(&token_id, &video_metadata);
 
-        // Mint NFT using standard
         self.tokens
             .internal_mint(token_id, receiver_id, Some(token_metadata))
     }
@@ -2590,15 +2463,12 @@ impl Contract {
         let token_id = self.next_token_id.to_string();
         self.next_token_id += 1;
 
-        // Look up nova_group_id from event-level mapping
-        let nova_group_id = self.event_nova_groups.get(&encrypted_cid);
-
         let video_metadata = VideoMetadata {
             encrypted_cid: encrypted_cid.clone(),
             duration_seconds: 0,
             event_date: Some(event.created_at),
             content_type: ContentType::Exclusive,
-            nova_group_id,
+            nova_group_id: None,
             storage_type: StorageType::Kms,
         };
 
@@ -2622,10 +2492,6 @@ impl Contract {
         self.tokens
             .internal_mint(token_id.clone(), receiver_id, Some(token_metadata))
     }
-
-    // ═══════════════════════════════════════════════════════════════
-    // GIFT DROP FUNCTIONS (Replaces Keypom)
-    // ═══════════════════════════════════════════════════════════════
 
     // ═══════════════════════════════════════════════════════════════
     // GIFT DROP FUNCTIONS (Access Key Based)
@@ -2927,49 +2793,6 @@ impl Contract {
     // ═══════════════════════════════════════════════════════════════
     // NOVA SECURE FILE-SHARING INTEGRATION
     // ═══════════════════════════════════════════════════════════════
-
-    /// Set NOVA group ID for existing video (migration helper)
-    /// Only callable by the original event creator (not just any token holder)
-    /// Also stores in event_nova_groups mapping for future ticket copies
-    pub fn set_nova_group(&mut self, token_id: TokenId, nova_group_id: String) {
-        let caller = env::predecessor_account_id();
-
-        let owner = self
-            .tokens
-            .owner_by_id
-            .get(&token_id)
-            .expect("Token not found");
-
-        require!(caller == owner, "Only token owner can set NOVA group");
-
-        let mut metadata = self
-            .video_metadata
-            .get(&token_id)
-            .expect("Video metadata not found");
-
-        // SECURITY: Verify caller is the original event creator before modifying event-level mapping
-        if let Some(event) = self.events.get(&metadata.encrypted_cid) {
-            require!(
-                caller == event.creator_id,
-                "Only event creator can set NOVA group for event-level mapping"
-            );
-        }
-
-        // Store in event-level mapping for ticket copies
-        self.event_nova_groups
-            .insert(&metadata.encrypted_cid, &nova_group_id);
-
-        metadata.nova_group_id = Some(nova_group_id);
-        metadata.storage_type = StorageType::Nova;
-        self.video_metadata.insert(&token_id, &metadata);
-    }
-
-    /// Get NOVA group ID for a video
-    pub fn get_nova_group(&self, token_id: TokenId) -> Option<String> {
-        self.video_metadata
-            .get(&token_id)
-            .and_then(|metadata| metadata.nova_group_id.clone())
-    }
 
     /// Get storage type for a video
     pub fn get_storage_type(&self, token_id: TokenId) -> Option<StorageType> {

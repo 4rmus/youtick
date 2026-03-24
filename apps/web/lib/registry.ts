@@ -20,6 +20,10 @@ let cachedAt = 0;
 let cachedOperators: RegistryOperatorRecord[] = [];
 let pendingOperatorsPromise: Promise<RegistryOperatorRecord[]> | null = null;
 
+let thresholdCachedAt = 0;
+let cachedThreshold: ThresholdConfig | null = null;
+let pendingThresholdPromise: Promise<ThresholdConfig | null> | null = null;
+
 export async function listActiveDecryptionOperators(): Promise<RegistryOperatorRecord[]> {
     if (Date.now() - cachedAt < REGISTRY_CACHE_MS) {
         return cachedOperators;
@@ -64,21 +68,41 @@ export async function listActiveDecryptionOperatorEndpoints(): Promise<string[]>
 }
 
 export async function getThresholdConfig(): Promise<ThresholdConfig | null> {
-    try {
-        const provider = getProvider();
-        return await viewContract<ThresholdConfig>(
-            provider,
-            NEAR_CONFIG.registryContractId,
-            'get_threshold_config',
-            {},
-        );
-    } catch {
-        return null;
+    if (cachedThreshold && Date.now() - thresholdCachedAt < REGISTRY_CACHE_MS) {
+        return cachedThreshold;
     }
+
+    if (pendingThresholdPromise) {
+        return pendingThresholdPromise;
+    }
+
+    pendingThresholdPromise = (async () => {
+        try {
+            const provider = getProvider();
+            const config = await viewContract<ThresholdConfig>(
+                provider,
+                NEAR_CONFIG.registryContractId,
+                'get_threshold_config',
+                {},
+            );
+            cachedThreshold = config;
+            thresholdCachedAt = Date.now();
+            return cachedThreshold;
+        } catch {
+            return cachedThreshold;
+        } finally {
+            pendingThresholdPromise = null;
+        }
+    })();
+
+    return pendingThresholdPromise;
 }
 
 export function clearRegistryCache(): void {
     cachedAt = 0;
     cachedOperators = [];
     pendingOperatorsPromise = null;
+    thresholdCachedAt = 0;
+    cachedThreshold = null;
+    pendingThresholdPromise = null;
 }

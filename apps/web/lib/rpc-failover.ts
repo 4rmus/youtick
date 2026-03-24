@@ -124,14 +124,3 @@ export async function withRpcFailover<T>(
     throw lastError || new Error('All RPC endpoints failed');
 }
 
-/**
- * Execute with RPC failover (no callback, simpler API)
- * Returns the current RPC URL for manual usage
- *
- * @example
- * const rpcUrl = getRpcUrlWithFallback();
- * const provider = new JsonRpcProvider({ url: rpcUrl });
- */
-export function getRpcUrlWithFallback(): string {
-    return getCurrentRpcUrl();
-}

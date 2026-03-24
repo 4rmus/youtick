@@ -64,11 +64,13 @@ export interface CrustPsaPinResult {
   /** Pin request ID from Crust PSA */
   requestId: string;
   /** Pin status */
-  status: 'queued' | 'pinning' | 'pinned' | 'failed';
+  status: 'queued' | 'pinning' | 'pinned' | 'failed' | 'rate_limited';
   /** IPFS CID */
   cid: string;
   /** Timestamp of pin request */
   createdAt: number;
+  /** Milliseconds to wait before retrying (set on 429 responses) */
+  retryAfterMs?: number;
 }
 
 /**

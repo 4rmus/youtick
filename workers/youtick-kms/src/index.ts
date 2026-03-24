@@ -1,18 +1,20 @@
 /**
  * Youtick KMS — Cloudflare Worker
  *
- * A lightweight, zero-dependency Key Management Service (KMS) for Youtick.
- * Uses Cloudflare Edge + KV for AES key storage/retrieval.
+ * Multi-operator Key Management Service for Youtick.
+ * Each operator stores one Shamir share of the AES content key,
+ * encrypted at rest with a per-operator secret.
  *
  * Endpoints:
- *   POST /store   — Store an AES key (content creator, Ed25519 signed)
- *   POST /retrieve — Retrieve an AES key (viewer, Ed25519 signed, ticket verified)
- *   GET  /health  — Health check
+ *   POST /store    — Store an encrypted share (creator, Ed25519 / session-grant signed)
+ *   POST /retrieve — Retrieve a share (viewer, ticket-verified via access-control grant)
+ *   GET  /health   — Operator health + registry status
  *
  * Security:
  *   - Ed25519 signature verification on every request
- *   - NEAR RPC view_call to verify ticket ownership
- *   - Timestamp-based replay attack protection (5-min window)
+ *   - Session-grant verification via access-control contract
+ *   - NEAR RPC ticket ownership check + creator self-access
+ *   - Timestamp-based replay protection (5-min window)
  *   - Per-IP rate limiting via KV
  *   - CORS allowlist enforcement
  *   - Access cache for repeated ticket checks (1-hour TTL)
@@ -32,6 +34,7 @@ export interface Env {
     NEAR_REGISTRY_CONTRACT_ID?: string;
     REGISTRY_OPERATOR_ACCOUNT_ID?: string;
     OPERATOR_SHARE_SECRET?: string;
+    OPERATOR_SHARE_SECRET_PREVIOUS?: string;
     NEAR_NETWORK: string;
 }
 
@@ -859,14 +862,10 @@ function shareMetaKey(videoId: string): string {
     return `sharemeta:${videoId}`;
 }
 
-async function importShareCipherKey(env: Env): Promise<CryptoKey> {
-    if (!env.OPERATOR_SHARE_SECRET) {
-        throw new Error('OPERATOR_SHARE_SECRET is not configured');
-    }
-
+async function importShareCipherKeyFromSecret(secret: string): Promise<CryptoKey> {
     const rawKey = await crypto.subtle.digest(
         'SHA-256',
-        new TextEncoder().encode(env.OPERATOR_SHARE_SECRET),
+        new TextEncoder().encode(secret),
     );
 
     return crypto.subtle.importKey(
@@ -876,6 +875,13 @@ async function importShareCipherKey(env: Env): Promise<CryptoKey> {
         false,
         ['encrypt', 'decrypt'],
     );
+}
+
+async function importShareCipherKey(env: Env): Promise<CryptoKey> {
+    if (!env.OPERATOR_SHARE_SECRET) {
+        throw new Error('OPERATOR_SHARE_SECRET is not configured');
+    }
+    return importShareCipherKeyFromSecret(env.OPERATOR_SHARE_SECRET);
 }
 
 async function encryptShareRecord(
@@ -906,17 +912,30 @@ async function decryptShareRecord(
     env: Env,
     record: StoredShareRecord,
 ): Promise<string> {
-    const cipherKey = await importShareCipherKey(env);
     const nonce = base64ToBytes(record.nonceB64);
     const ciphertext = base64ToBytes(record.ciphertextB64);
 
-    const plaintext = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: nonce },
-        cipherKey,
-        ciphertext,
-    );
+    const cipherKey = await importShareCipherKey(env);
+    try {
+        const plaintext = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: nonce },
+            cipherKey,
+            ciphertext,
+        );
+        return new TextDecoder().decode(new Uint8Array(plaintext));
+    } catch (currentKeyError) {
+        if (!env.OPERATOR_SHARE_SECRET_PREVIOUS) {
+            throw currentKeyError;
+        }
 
-    return new TextDecoder().decode(new Uint8Array(plaintext));
+        const previousKey = await importShareCipherKeyFromSecret(env.OPERATOR_SHARE_SECRET_PREVIOUS);
+        const plaintext = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: nonce },
+            previousKey,
+            ciphertext,
+        );
+        return new TextDecoder().decode(new Uint8Array(plaintext));
+    }
 }
 
 async function serializeNep413Hash(payload: {
@@ -1168,19 +1187,10 @@ async function handleStore(
         return jsonResponse({ ok: false, error: auth.error }, auth.status || 401, request, env);
     }
 
-    const body = (await request.json()) as Partial<StoreRequest> & { videoId?: string; aesKeyB64?: string };
+    const body = (await request.json()) as Partial<StoreRequest> & { videoId?: string };
     const isShareStore = Boolean(body.shareB64 && typeof body.shareId === 'number');
-    if (!body.videoId || (!body.aesKeyB64 && !isShareStore)) {
-        return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
-    }
-
-    if (!isShareStore && env.NEAR_NETWORK === 'mainnet') {
-        return jsonResponse(
-            { ok: false, error: 'Legacy plaintext key storage is disabled on mainnet. Use share-based storage.' },
-            400,
-            request,
-            env,
-        );
+    if (!body.videoId || !isShareStore) {
+        return jsonResponse({ ok: false, error: 'Missing required fields. Share-based storage is required.' }, 400, request, env);
     }
 
     if (
@@ -1284,34 +1294,32 @@ async function handleStore(
         }
     }
 
-    const keyId = `key:${body.videoId}`;
     const ownerIdKey = `owner:${body.videoId}`;
-    const [existingKey, recordedOwner, eventCreatorId] = await Promise.all([
-        env.VIDEO_KEYS.get(keyId),
+    const existingShareKey = isShareStore && env.REGISTRY_OPERATOR_ACCOUNT_ID
+        ? shareRecordKey(body.videoId, env.REGISTRY_OPERATOR_ACCOUNT_ID)
+        : null;
+
+    const [recordedOwner, eventCreatorId, existingShare] = await Promise.all([
         env.VIDEO_KEYS.get(ownerIdKey),
         getEventCreatorId(env, body.videoId),
+        existingShareKey ? env.VIDEO_KEYS.get(existingShareKey) : Promise.resolve(null),
     ]);
 
-    // Event exists: only event creator can store/update key.
     if (eventCreatorId && eventCreatorId !== accountId) {
         return jsonResponse({ ok: false, error: 'Only the content creator can store keys' }, 403, request, env);
     }
 
-    // Existing key overwrite protection.
-    // If a key already exists and ownership cannot be proven, deny overwrite (fail-closed).
-    if (existingKey) {
-        if (recordedOwner && recordedOwner !== accountId) {
-            return jsonResponse({ ok: false, error: 'Only the original uploader can overwrite keys' }, 403, request, env);
-        }
+    if (existingShare && recordedOwner && recordedOwner !== accountId) {
+        return jsonResponse({ ok: false, error: 'Only the original uploader can overwrite keys' }, 403, request, env);
+    }
 
-        if (!recordedOwner && !eventCreatorId) {
-            return jsonResponse(
-                { ok: false, error: 'Cannot verify ownership for existing key; overwrite denied' },
-                403,
-                request,
-                env,
-            );
-        }
+    if (existingShare && !recordedOwner && !eventCreatorId) {
+        return jsonResponse(
+            { ok: false, error: 'Cannot verify ownership for existing key; overwrite denied' },
+            403,
+            request,
+            env,
+        );
     }
 
     if (isShareStore) {
@@ -1339,9 +1347,6 @@ async function handleStore(
                 requiredShares: body.requiredShares as number,
             } satisfies ShareMetadataRecord),
         );
-    } else {
-        // Store legacy AES key in KV and persist owner marker for overwrite protection.
-        await env.VIDEO_KEYS.put(keyId, body.aesKeyB64 as string);
     }
 
     if (!recordedOwner) {
@@ -1443,22 +1448,12 @@ async function handleRetrieve(
         }
     }
 
-    // Verify access: Either the user has a ticket, OR they are the original owner (creator)
-    console.log(`[KMS] Verify access for ${accountId} on video ${body.videoId}`);
     let hasAccess = await verifyTicketAccess(env, accountId, body.videoId);
-    console.log(`[KMS] verifyTicketAccess: ${hasAccess}`);
 
     if (!hasAccess) {
-        // Fallback: Check if they are the original owner (creator) of the video
-        // body.videoId is the encrypted_cid (UUID), not the NFT token_id
-        console.log(`[KMS] Checking ownership fallback for ${body.videoId}`);
         const eventCreatorId = await getEventCreatorId(env, body.videoId);
-        console.log(`[KMS] get_event creator:`, eventCreatorId);
         if (eventCreatorId && eventCreatorId === accountId) {
-            console.log(`[KMS] Ownership verified: ${eventCreatorId} matches ${accountId}`);
             hasAccess = true;
-        } else {
-            console.log(`[KMS] Ownership check failed. Creator: ${eventCreatorId}, Signer: ${accountId}`);
         }
     }
 
@@ -1497,20 +1492,7 @@ async function handleRetrieve(
         );
     }
 
-    // Legacy AES key fallback (read-only for backward compatibility during migration)
-    const aesKeyB64 = await env.VIDEO_KEYS.get(`key:${body.videoId}`);
-    if (!aesKeyB64) {
-        return jsonResponse({ ok: false, error: 'Key not found for this video' }, 404, request, env);
-    }
-
-    console.warn(`[KMS] DEPRECATION: Legacy plaintext key retrieved for video ${body.videoId}. Migrate to share-based storage.`);
-
-    return jsonResponse(
-        { ok: true, data: { aesKeyB64 } },
-        200,
-        request,
-        env,
-    );
+    return jsonResponse({ ok: false, error: 'Key shares not found for this video' }, 404, request, env);
 }
 
 async function handleHealth(
@@ -1578,7 +1560,7 @@ async function handleHealth(
                 registryOperatorAccount: env.REGISTRY_OPERATOR_ACCOUNT_ID || null,
                 registryOperatorActive: registryOperator.ok,
                 registryOperatorReason: registryOperator.reason || null,
-                shareMode: env.OPERATOR_SHARE_SECRET ? 'operator-encrypted-share' : 'legacy-single-key',
+                shareMode: env.OPERATOR_SHARE_SECRET ? 'operator-encrypted-share' : 'unconfigured',
             },
         },
         ready ? 200 : 503,

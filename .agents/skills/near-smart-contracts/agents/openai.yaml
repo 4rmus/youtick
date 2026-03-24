@@ -1,4 +1,0 @@
-interface:
-  display_name: "NEAR Smart Contracts"
-  short_description: "Rust NEAR contract review and implementation"
-  default_prompt: "Use $near-smart-contracts to review or update Rust contracts, tests, and storage-safety patterns."

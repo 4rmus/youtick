@@ -59,8 +59,7 @@ lib/
   crust/                # Upload and gateway logic
   intents/              # 1Click quote/swap helpers
   evm/                  # MetaMask and EVM helpers
-  session-manager.ts    # Legacy session-key helper
-  upload-session-manager.ts
+  upload-session-manager.ts  # Upload session key management
   gift-service.ts
 ```
 
@@ -79,9 +78,10 @@ lib/
 | Islem | Aktif yol |
 |------|-----------|
 | Video encryption | Browser AES-CTR |
-| Key custody | KMS worker |
+| Key custody | Shamir shares across multi-operator KMS workers |
+| Playback auth | Access-control grant + operator registry |
 | IPFS upload | Crust |
-| Playback | Gateway failover + browser decrypt |
+| Playback | Share reconstruction + gateway failover + browser decrypt |
 | Publish auth | Upload session |
 | Ticket purchase | On-chain NEAR call |
 | Experimental checkout | Feature flag aciksa 1Click + MetaMask + implicit NEAR account |
