@@ -113,6 +113,21 @@ export function getCachedW3AuthToken(accountId: string): CrustAuthToken | undefi
   return undefined;
 }
 
+const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+
+/**
+ * Return a token that is guaranteed to be valid for at least TOKEN_REFRESH_BUFFER_MS.
+ * If the cached token is close to expiry, it is evicted and regenerated.
+ */
+export async function ensureFreshW3AuthToken(accountId: string): Promise<CrustAuthToken> {
+  const cached = tokenCache.get(accountId);
+  if (cached && Date.now() < cached.expiresAt - TOKEN_REFRESH_BUFFER_MS) {
+    return cached;
+  }
+  tokenCache.delete(accountId);
+  return generateW3AuthToken(accountId);
+}
+
 /**
  * Clear W3Auth token cache
  *

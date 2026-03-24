@@ -10,6 +10,7 @@ export type {
   CrustAuthToken,
   CrustUploadResult,
   CrustPinResult,
+  CrustPsaPinResult,
   GatewayConfig,
   CrustErrorCode,
   StorageOrderTrack,
@@ -24,6 +25,7 @@ export {
   generateW3AuthToken,
   getCachedW3AuthToken,
   clearW3AuthCache,
+  ensureFreshW3AuthToken,
 } from './w3auth';
 
 // Gateway
@@ -45,4 +47,14 @@ export {
 } from './client';
 
 // Storage Orders
-export { placeStorageOrder, checkStorageOrderStatus } from './storage-order';
+export {
+  placeStorageOrder,
+  placeStorageOrders,
+  checkStorageOrderStatus,
+  verifyStorageOrders,
+} from './storage-order';
+export type { StorageOrderBatchResult, StorageOrderVerifyResult } from './storage-order';
+
+// CID Collector
+export { CidCollector } from './cid-collector';
+export type { UploadedAsset, UploadedAssetType } from './cid-collector';

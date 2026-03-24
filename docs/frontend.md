@@ -1,6 +1,6 @@
 # Frontend Implementation
 
-> Next.js App Router frontend (`apps/web`) with NEAR wallet flows, KMS encryption, and IPFS playback
+> Next.js App Router frontend (`apps/web`) with NEAR wallet flows, share-based KMS encryption, and IPFS playback
 
 ---
 
@@ -25,9 +25,11 @@ apps/web/
 ├── components/             # UI components and feature modules
 ├── hooks/                  # Route-level hooks
 ├── lib/
-│   ├── kms/                # KMS client + AES-CTR encryption + streaming
+│   ├── kms/                # Multi-operator KMS client + AES-CTR encryption + streaming
 │   ├── crust/              # Upload/retrieval gateway logic
-│   ├── session-manager.ts  # Session key lifecycle
+│   ├── access-grants.ts    # Session grant lifecycle for playback
+│   ├── registry.ts         # Operator registry queries
+│   ├── upload-session-manager.ts  # Upload session key lifecycle
 │   ├── batch-transactions.ts
 │   ├── gift-service.ts
 │   └── ...
@@ -41,33 +43,39 @@ apps/web/
 ### Upload (`components/UploadForm.tsx`)
 
 1. Validate metadata and file constraints.
-2. Ensure session key + prepaid balance.
+2. Ensure upload session + prepaid balance.
 3. Upload thumbnail to Crust.
-4. Paid video path: AES-CTR encrypt -> upload ciphertext + manifest -> store AES key in KMS.
+4. Paid video path: AES-CTR encrypt -> upload ciphertext + manifest -> split key into Shamir shares -> distribute shares to KMS operators.
 5. Submit batched on-chain actions (mint ticket + create event).
 
 ### Playback (`components/IpfsPlayer.tsx`)
 
 1. Resolve event metadata from `encrypted_cid`.
-2. Verify ownership state.
-3. If encrypted: fetch manifest, retrieve AES key from KMS using signed request, stream decrypt.
-4. If free: direct IPFS gateway playback with fallback.
+2. Verify ticket ownership.
+3. Ensure a Play grant in the access-control contract.
+4. Query operator registry for active operators and threshold config.
+5. Request key shares in parallel from operators.
+6. Reconstruct AES key from threshold shares.
+7. Stream-decrypt and play.
 
 ### Ticket Purchase (`components/TicketPurchaseCard.tsx`)
 
 - Reads event details from contract.
-- Supports wallet/session flows.
+- Supports wallet flows.
 - Triggers ownership re-check for instant access after purchase.
 
 ---
 
 ## Important Modules
 
-- `lib/kms/client.ts`: stores/retrieves AES keys from KMS worker.
+- `lib/kms/client.ts`: distributes/collects Shamir shares across KMS operators.
+- `lib/kms/shares.ts`: Shamir Secret Sharing split/reconstruct over GF(256).
 - `lib/kms/encryption.ts`: AES-CTR chunk encryption/decryption.
 - `lib/kms/streaming.ts`: progressive decrypted playback.
+- `lib/access-grants.ts`: session grant creation and verification.
+- `lib/registry.ts`: operator registry queries and caching.
 - `lib/crust/gateway.ts`: multi-gateway read failover.
-- `lib/session-manager.ts`: session key creation/import/check/calls.
+- `lib/upload-session-manager.ts`: upload session key creation and cleanup.
 - `lib/metadata-parser.ts`: title/CID/thumbnail metadata parsing.
 
 ---
@@ -81,4 +89,3 @@ npm run lint
 npm run test -- --run
 npm run build
 ```
-

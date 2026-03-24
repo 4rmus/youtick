@@ -9,6 +9,7 @@ import { CrustUploadResult, CrustPinResult, CrustError } from './types';
 import { CRUST_CONSTANTS } from './config';
 import { generateW3AuthToken } from './w3auth';
 import { getGatewayUrl } from './gateway';
+import { recordMetric } from '../decentralization-metrics';
 
 /**
  * Upload a file to Crust IPFS
@@ -37,55 +38,78 @@ export async function uploadToCrust(
 
     const timeout = options?.timeout || CRUST_CONSTANTS.UPLOAD_TIMEOUT;
 
-    // Use XMLHttpRequest for progress tracking
-    const result = await new Promise<CrustUploadResult>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      const timer = setTimeout(() => {
-        xhr.abort();
-        reject(new CrustError('TIMEOUT', `Upload timed out after ${timeout}ms`));
-      }, timeout);
+    // Try primary endpoint, then fallbacks
+    const endpoints = [
+      CRUST_CONSTANTS.UPLOAD_ENDPOINT,
+      ...CRUST_CONSTANTS.UPLOAD_ENDPOINTS_FALLBACK,
+    ];
 
-      xhr.upload.addEventListener('progress', (event) => {
-        if (event.lengthComputable && options?.onProgress) {
-          options.onProgress({
-            loaded: event.loaded,
-            total: event.total,
-            percentage: Math.round((event.loaded / event.total) * 100),
+    let lastError: Error | null = null;
+    let result: CrustUploadResult | null = null;
+
+    for (const endpoint of endpoints) {
+      try {
+        result = await new Promise<CrustUploadResult>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          const timer = setTimeout(() => {
+            xhr.abort();
+            reject(new CrustError('TIMEOUT', `Upload timed out after ${timeout}ms`));
+          }, timeout);
+
+          xhr.upload.addEventListener('progress', (event) => {
+            if (event.lengthComputable && options?.onProgress) {
+              options.onProgress({
+                loaded: event.loaded,
+                total: event.total,
+                percentage: Math.round((event.loaded / event.total) * 100),
+              });
+            }
           });
-        }
-      });
 
-      xhr.addEventListener('load', () => {
-        clearTimeout(timer);
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const response = JSON.parse(xhr.responseText);
-            resolve({
-              cid: response.Hash,
-              size: Number(response.Size) || file.size,
-            });
-          } catch {
-            reject(new CrustError('UPLOAD_FAILED', `Invalid response from Crust: ${xhr.responseText}`));
-          }
-        } else {
-          reject(new CrustError('UPLOAD_FAILED', `Crust upload returned HTTP ${xhr.status}: ${xhr.responseText}`));
-        }
-      });
+          xhr.addEventListener('load', () => {
+            clearTimeout(timer);
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const response = JSON.parse(xhr.responseText);
+                resolve({
+                  cid: response.Hash,
+                  size: Number(response.Size) || file.size,
+                });
+              } catch {
+                reject(new CrustError('UPLOAD_FAILED', `Invalid response from Crust: ${xhr.responseText}`));
+              }
+            } else {
+              reject(new CrustError('UPLOAD_FAILED', `Crust upload returned HTTP ${xhr.status}: ${xhr.responseText}`));
+            }
+          });
 
-      xhr.addEventListener('error', () => {
-        clearTimeout(timer);
-        reject(new CrustError('UPLOAD_FAILED', 'Network error during Crust upload'));
-      });
+          xhr.addEventListener('error', () => {
+            clearTimeout(timer);
+            reject(new CrustError('UPLOAD_FAILED', `Network error during Crust upload to ${endpoint}`));
+          });
 
-      xhr.addEventListener('abort', () => {
-        clearTimeout(timer);
-        reject(new CrustError('TIMEOUT', 'Crust upload aborted'));
-      });
+          xhr.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new CrustError('TIMEOUT', 'Crust upload aborted'));
+          });
 
-      xhr.open('POST', CRUST_CONSTANTS.UPLOAD_ENDPOINT);
-      xhr.setRequestHeader('Authorization', authToken.header);
-      xhr.send(formData);
-    });
+          xhr.open('POST', endpoint);
+          xhr.setRequestHeader('Authorization', authToken.header);
+          xhr.send(formData);
+        });
+        break; // Success — stop trying fallbacks
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        console.warn(`[Crust] Upload failed on ${endpoint}, trying next...`, lastError.message);
+        continue;
+      }
+    }
+
+    if (!result) {
+      throw lastError ?? new CrustError('UPLOAD_FAILED', 'All Crust upload endpoints failed');
+    }
+
+    recordMetric('crust_upload_success');
 
     console.log('[DECENTRALIZATION_METRIC] crust_upload_success', {
       accountId,

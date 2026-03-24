@@ -9,7 +9,24 @@
 
 import { CrustPsaPinResult } from './types';
 import { CRUST_CONSTANTS } from './config';
-import { generateW3AuthToken } from './w3auth';
+import { generateW3AuthToken, ensureFreshW3AuthToken } from './w3auth';
+import type { UploadedAsset } from './cid-collector';
+import { recordMetric } from '../decentralization-metrics';
+
+/** Result of a batch storage order operation */
+export interface StorageOrderBatchResult {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: CrustPsaPinResult[];
+}
+
+/** Result of a batch verification operation */
+export interface StorageOrderVerifyResult {
+  verified: number;
+  pending: number;
+  failed: number;
+}
 
 /**
  * Place a Crust storage order via the Pinning Service API
@@ -44,15 +61,35 @@ export async function placeStorageOrder(
       body: JSON.stringify({
         cid,
         name: `youtick-${cid.slice(0, 12)}`,
+        meta: {
+          file_size: String(fileSize),
+          app_id: 'youtick',
+        },
       }),
       signal: controller.signal,
     });
     clearTimeout(timer);
 
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('Retry-After');
+      const retryAfterMs = retryAfter
+        ? (Number(retryAfter) || 0) * 1000
+        : 10_000;
+      recordMetric('crust_storage_order_rate_limited');
+      return {
+        requestId: '',
+        status: 'rate_limited',
+        cid,
+        createdAt: Date.now(),
+        retryAfterMs,
+      };
+    }
+
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`[CRUST Storage Order] 🚨 CRITICAL FAILURE: PSA request to ${CRUST_CONSTANTS.PSA_ENDPOINT} returned ${response.status}`, errorText);
       console.error(`[CRUST Storage Order] This means CID ${cid} may be lost to garbage collection soon!`);
+      recordMetric('crust_storage_order_failed');
       return {
         requestId: '',
         status: 'failed',
@@ -62,6 +99,8 @@ export async function placeStorageOrder(
     }
 
     const data = await response.json();
+
+    recordMetric('crust_storage_order_placed');
 
     console.log('[DECENTRALIZATION_METRIC] crust_storage_order_placed', {
       cid,
@@ -81,6 +120,7 @@ export async function placeStorageOrder(
     clearTimeout(timer);
     const msg = error instanceof Error ? error.message : String(error);
     console.warn('[CRUST Storage Order] Failed (non-blocking):', msg);
+    recordMetric('crust_storage_order_failed');
 
     return {
       requestId: '',
@@ -145,6 +185,179 @@ export async function checkStorageOrderStatus(
       createdAt: Date.now(),
     };
   }
+}
+
+/**
+ * Place storage orders for all uploaded assets in parallel with retry.
+ *
+ * @param assets - All CID + size pairs collected during upload
+ * @param accountId - NEAR account ID (for W3Auth)
+ * @param options - Concurrency and retry settings
+ * @returns Aggregated batch result
+ */
+export async function placeStorageOrders(
+  assets: UploadedAsset[],
+  accountId: string,
+  options?: { concurrency?: number; retries?: number; retryBaseMs?: number },
+): Promise<StorageOrderBatchResult> {
+  await ensureFreshW3AuthToken(accountId);
+
+  const concurrency = options?.concurrency ?? 3;
+  const maxRetries = options?.retries ?? 3;
+  const retryBaseMs = options?.retryBaseMs ?? 1_000;
+  const results: CrustPsaPinResult[] = new Array(assets.length);
+  let nextIndex = 0;
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, assets.length || 1) },
+    async () => {
+      while (nextIndex < assets.length) {
+        const current = nextIndex;
+        nextIndex += 1;
+        results[current] = await placeWithRetry(
+          assets[current],
+          accountId,
+          maxRetries,
+          retryBaseMs,
+        );
+      }
+    },
+  );
+
+  await Promise.all(workers);
+
+  const succeeded = results.filter((r) => r.status !== 'failed' && r.status !== 'rate_limited').length;
+  const failed = results.filter((r) => r.status === 'failed' || r.status === 'rate_limited').length;
+
+  console.log('[DECENTRALIZATION_METRIC] crust_storage_orders_batch', {
+    total: assets.length,
+    succeeded,
+    failed,
+    accountId,
+  });
+
+  return { total: assets.length, succeeded, failed, results };
+}
+
+/**
+ * Verify that storage orders have reached "pinning" or "pinned" status.
+ *
+ * Only polls orders that are still "queued". Returns once all are resolved
+ * or the timeout expires.
+ *
+ * @param results - Results from placeStorageOrders
+ * @param accountId - NEAR account ID (for W3Auth)
+ * @param options - Timeout and poll interval
+ */
+export async function verifyStorageOrders(
+  results: CrustPsaPinResult[],
+  accountId: string,
+  options?: { timeoutMs?: number; pollIntervalMs?: number },
+): Promise<StorageOrderVerifyResult> {
+  const timeoutMs = options?.timeoutMs ?? 30_000;
+  const pollIntervalMs = options?.pollIntervalMs ?? 5_000;
+
+  const trackable = results.filter(
+    (r) => r.status === 'queued' && r.requestId,
+  );
+
+  if (trackable.length === 0) {
+    const verified = results.filter(
+      (r) => r.status === 'pinned' || r.status === 'pinning',
+    ).length;
+    const failed = results.filter((r) => r.status === 'failed').length;
+    return { verified, pending: 0, failed };
+  }
+
+  const statuses = new Map(
+    trackable.map((r) => [r.requestId, r.status]),
+  );
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    await sleep(pollIntervalMs);
+    await ensureFreshW3AuthToken(accountId);
+
+    const queued = [...statuses.entries()].filter(
+      ([, status]) => status === 'queued',
+    );
+
+    if (queued.length === 0) break;
+
+    await Promise.all(
+      queued.map(async ([requestId]) => {
+        const updated = await checkStorageOrderStatus(requestId, accountId);
+        if (updated.status !== 'queued') {
+          statuses.set(requestId, updated.status);
+        }
+      }),
+    );
+  }
+
+  let verified = 0;
+  let pending = 0;
+  let failed = 0;
+
+  for (const r of results) {
+    const finalStatus = statuses.get(r.requestId) ?? r.status;
+    if (finalStatus === 'pinned' || finalStatus === 'pinning') {
+      verified += 1;
+      recordMetric('crust_storage_status_found');
+    } else if (finalStatus === 'failed') {
+      failed += 1;
+      recordMetric('crust_storage_status_missing');
+    } else {
+      pending += 1;
+    }
+  }
+
+  console.log('[DECENTRALIZATION_METRIC] crust_storage_orders_verified', {
+    verified,
+    pending,
+    failed,
+    accountId,
+  });
+
+  return { verified, pending, failed };
+}
+
+async function placeWithRetry(
+  asset: UploadedAsset,
+  accountId: string,
+  maxRetries: number,
+  retryBaseMs: number = 1_000,
+): Promise<CrustPsaPinResult> {
+  let lastResult: CrustPsaPinResult | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0 && lastResult?.status !== 'rate_limited') {
+      const delayMs = Math.pow(2, attempt) * retryBaseMs;
+      await sleep(delayMs);
+    }
+
+    if (lastResult?.status === 'rate_limited') {
+      const waitMs = lastResult.retryAfterMs ?? Math.pow(2, attempt) * retryBaseMs;
+      await sleep(waitMs);
+      attempt = Math.max(0, attempt - 1);
+    }
+
+    lastResult = await placeStorageOrder(asset.cid, asset.size, accountId);
+
+    if (lastResult.status !== 'failed' && lastResult.status !== 'rate_limited') {
+      return lastResult;
+    }
+
+    console.warn(
+      `[DECENTRALIZATION_METRIC] crust_storage_order_retry`,
+      { cid: asset.cid, type: asset.type, attempt: attempt + 1, maxRetries, status: lastResult.status },
+    );
+  }
+
+  return lastResult!;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**

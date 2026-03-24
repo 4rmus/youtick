@@ -10,6 +10,7 @@
 
 interface Env {
     WEB4_ORIGIN: string;
+    WEB4_FALLBACK_ORIGIN?: string;
     ALLOWED_DOMAINS: string;
     CACHE_TTL: string;
     CACHE_VERSION?: string;
@@ -43,9 +44,6 @@ export default {
         const hostname = url.hostname.toLowerCase();
         const allowedDomains = getAllowedDomains(env);
 
-        // --- Logging ---
-        console.log(`[Proxy] Handling request for: ${url.hostname}${url.pathname}`);
-
         if (!allowedDomains.has(hostname)) {
             return new Response('Host is not allowed for this proxy.', { status: 421 });
         }
@@ -69,8 +67,12 @@ export default {
             });
         }
 
-        // --- Build target URL: youtick.net/path → youtick.near.page/path ---
-        const targetUrl = `${env.WEB4_ORIGIN}${url.pathname}${url.search}`;
+        // --- Build origin chain for failover ---
+        const origins = [env.WEB4_ORIGIN];
+        if (env.WEB4_FALLBACK_ORIGIN) {
+            origins.push(env.WEB4_FALLBACK_ORIGIN);
+        }
+
         const canUseCache = request.method === 'GET' && url.pathname !== '/__health';
         const cacheUrl = new URL(request.url);
         if (env.CACHE_VERSION) {
@@ -97,40 +99,50 @@ export default {
             }
         }
 
-        try {
-            // Forward request to Web4 gateway
-            const originResponse = await fetch(targetUrl, {
-                method: request.method,
-                headers: buildOriginHeaders(request, env),
-                redirect: 'follow',
-            });
+        let lastError: unknown;
+        for (const origin of origins) {
+            try {
+                const targetUrl = `${origin}${url.pathname}${url.search}`;
+                const originResponse = await fetch(targetUrl, {
+                    method: request.method,
+                    headers: buildOriginHeaders(request, env, origin),
+                    redirect: 'follow',
+                });
 
-            // Build proxied response
-            const cacheTtl = parseInt(env.CACHE_TTL || '300', 10);
-            const responseHeaders = applyProxyHeaders(
-                originResponse.headers,
-                url.pathname,
-                env.WEB4_ORIGIN,
-                'MISS',
-                cacheTtl,
-            );
+                if (!originResponse.ok && origin !== origins[origins.length - 1]) {
+                    lastError = new Error(`Origin ${origin} returned ${originResponse.status}`);
+                    continue;
+                }
 
-            const proxiedResponse = new Response(originResponse.body, {
-                status: originResponse.status,
-                statusText: originResponse.statusText,
-                headers: responseHeaders,
-            });
+                const cacheTtl = parseInt(env.CACHE_TTL || '300', 10);
+                const responseHeaders = applyProxyHeaders(
+                    originResponse.headers,
+                    url.pathname,
+                    origin,
+                    'MISS',
+                    cacheTtl,
+                );
 
-            if (cache && cacheKey && originResponse.ok) {
-                ctx.waitUntil(cache.put(cacheKey, proxiedResponse.clone()));
+                const proxiedResponse = new Response(originResponse.body, {
+                    status: originResponse.status,
+                    statusText: originResponse.statusText,
+                    headers: responseHeaders,
+                });
+
+                if (cache && cacheKey && originResponse.ok) {
+                    ctx.waitUntil(cache.put(cacheKey, proxiedResponse.clone()));
+                }
+
+                return proxiedResponse;
+            } catch (error) {
+                lastError = error;
+                console.warn(`Web4 proxy: origin ${origin} failed, trying next...`, error);
             }
+        }
 
-            return proxiedResponse;
-        } catch (error) {
-            // Origin unreachable — return friendly error
-            console.error('Web4 proxy error:', error);
-            return new Response(
-                `<!DOCTYPE html>
+        console.error('Web4 proxy: all origins failed', lastError);
+        return new Response(
+            `<!DOCTYPE html>
 <html>
 <head><title>YouTick — Temporarily Unavailable</title></head>
 <body style="font-family:system-ui;text-align:center;padding:4rem">
@@ -139,15 +151,14 @@ export default {
   <p style="color:#888">You can also visit <a href="${env.WEB4_ORIGIN}">${env.WEB4_ORIGIN}</a> directly.</p>
 </body>
 </html>`,
-                {
-                    status: 502,
-                    headers: {
-                        'Content-Type': 'text/html; charset=utf-8',
-                        'Cache-Control': 'no-store',
-                    },
+            {
+                status: 502,
+                headers: {
+                    'Content-Type': 'text/html; charset=utf-8',
+                    'Cache-Control': 'no-store',
                 },
-            );
-        }
+            },
+        );
     },
 } satisfies ExportedHandler<Env>;
 
@@ -155,11 +166,10 @@ export default {
  * Build headers to send to the Web4 origin.
  * Preserves important client headers while setting the correct Host.
  */
-function buildOriginHeaders(request: Request, env: Env): Headers {
+function buildOriginHeaders(request: Request, env: Env, origin?: string): Headers {
     const headers = new Headers();
 
-    // Set correct Host for the Web4 gateway
-    const originUrl = new URL(env.WEB4_ORIGIN);
+    const originUrl = new URL(origin || env.WEB4_ORIGIN);
     headers.set('Host', originUrl.hostname);
 
     // Forward client IP for logging

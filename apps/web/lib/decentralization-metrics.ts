@@ -33,6 +33,7 @@ type MetricEvent =
   | 'crust_upload_success'
   | 'crust_storage_order_placed'
   | 'crust_storage_order_failed'
+  | 'crust_storage_order_rate_limited'
   | 'crust_storage_status_found'
   | 'crust_storage_status_missing';
 
@@ -78,6 +79,7 @@ export function recordMetric(event: MetricEvent): void {
       state.lastUpdated.storage = now;
       break;
     case 'crust_storage_order_failed':
+    case 'crust_storage_order_rate_limited':
     case 'crust_storage_status_missing':
       state.storage.centralized++;
       state.lastUpdated.storage = now;

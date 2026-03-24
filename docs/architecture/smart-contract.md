@@ -194,4 +194,4 @@ Yeni mantikta kontratin aktif rolu:
 - satin alma ve hediye dagitimi
 - upload session koordinasyonu
 
-Medya sifreleme ve anahtar saklama ise artik kontratin degil, browser + KMS worker hattinin isidir.
+Medya sifreleme ve anahtar saklama ise artik kontratin degil, browser + multi-operator KMS + access-control + operator-registry hattinin isidir.

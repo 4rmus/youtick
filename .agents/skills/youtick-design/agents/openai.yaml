@@ -1,4 +1,0 @@
-interface:
-  display_name: "YouTick Design"
-  short_description: "UI and UX guidance for the live product"
-  default_prompt: "Use $youtick-design to shape YouTick UI, UX, or copy placement while keeping the product premium and clear."

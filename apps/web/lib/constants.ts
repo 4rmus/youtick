@@ -64,9 +64,6 @@ export const NEAR_CONFIG = {
 export const FEATURE_FLAGS = {
     /** Launch scope is core-only until cross-chain checkout completes its own readiness review. */
     enableCrossChainCheckout: process.env.NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT === 'true',
-
-    /** Legacy upload fallback stays opt-in so mainnet publish uses upload sessions by default. */
-    enableLegacyUploadFallback: process.env.NEXT_PUBLIC_ENABLE_LEGACY_UPLOAD_FALLBACK === 'true',
 } as const;
 
 export const APP_CONFIG = {
@@ -166,17 +163,6 @@ export const METADATA_SCHEMA = {
 // DESIGN SYSTEM CONSTANTS
 // ============================================================================
 
-// NEAR Brand Colors
-export const NEAR_COLORS = {
-  black: '#000000',
-  white: '#FFFFFF',
-  offWhite: '#f2f1e9',
-  green: '#00ec97',
-  red: '#ff7966',
-  purple: '#9797ff',
-  blue: '#17d9d4',
-} as const;
-
 export const COLORS = {
   background: {
     primary: 'bg-black',
@@ -211,17 +197,6 @@ export const COLORS = {
   },
 } as const;
 
-export const BRANDING = {
-  name: {
-    part1: 'you',
-    part2: 'tick',
-  },
-  logo: {
-    primary: 'text-white',
-    secondary: 'text-zinc-500',
-  },
-} as const;
-
 export const ANIMATION = {
   transition: {
     default: 'transition-all',
@@ -241,20 +216,3 @@ export const ANIMATION = {
   },
 } as const;
 
-export const LAYOUT = {
-  container: 'container mx-auto px-4',
-  section: {
-    padding: 'py-32',
-    paddingSmall: 'py-20',
-  },
-  nav: {
-    height: 'h-20',
-    heightSmall: 'h-16',
-  },
-} as const;
-
-export const STATS = {
-  ticketCapacity: 1000000,
-  potentialEvents: 50000,
-  fraudRate: 0,
-} as const;
