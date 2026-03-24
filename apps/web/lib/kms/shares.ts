@@ -114,7 +114,20 @@ export function reconstructSecretFromShares(
         throw new Error('Not enough shares to reconstruct secret');
     }
 
-    const selectedShares = shares.slice(0, requiredShares).map((share) => ({
+    const seen = new Set<number>();
+    const uniqueShares: SecretShare[] = [];
+    for (const share of shares) {
+        if (!seen.has(share.shareId)) {
+            seen.add(share.shareId);
+            uniqueShares.push(share);
+        }
+    }
+
+    if (uniqueShares.length < requiredShares) {
+        throw new Error('Not enough unique shares to reconstruct secret');
+    }
+
+    const selectedShares = uniqueShares.slice(0, requiredShares).map((share) => ({
         x: share.shareId,
         bytes: base64ToUint8Array(share.shareB64),
     }));

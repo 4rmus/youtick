@@ -93,7 +93,7 @@ export function GiftLinkGenerator({
 
             const baseUrl = APP_CONFIG.publicAppUrl;
             const claimLinks = secretKeys.map((secret: string) =>
-                `${baseUrl}/claim?secret=${encodeURIComponent(secret)}&eventCid=${encodeURIComponent(eventCid)}`
+                `${baseUrl}/claim#key=${encodeURIComponent(secret)}`
             );
 
             setLinks(claimLinks);

@@ -9,7 +9,6 @@ import {
     generateAESKey,
 } from '@/lib/kms/encryption';
 import { storeEncryptionKey } from '@/lib/kms/client';
-import { SessionManager } from '@/lib/session-manager';
 import { UploadSessionManager } from '@/lib/upload-session-manager';
 import {
     batchUploadActionsSignless,
@@ -30,7 +29,7 @@ import { Button } from "@/components/ui/button"
 import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { FEATURE_FLAGS, NEAR_CONFIG } from '@/lib/constants';
+import { NEAR_CONFIG } from '@/lib/constants';
 import { nearAmountToYocto } from '@/lib/near-amount';
 import { getNearPrice, usdToNear } from '@/lib/price';
 import type { DeliverySegmentPayload } from '@/lib/types';
@@ -54,8 +53,6 @@ const INITIAL_STEPS: UploadStep[] = [
 // File size limits (KMS-based flow)
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB for paid
 const MAX_FREE_FILE_SIZE = 100 * 1024 * 1024; // 100MB for free
-const LEGACY_UPLOAD_PREPAID_NEAR = 0.2;
-const LEGACY_MIN_SESSION_SETUP_NEAR = 0.5;
 const STRICT_SEGMENTED_DELIVERY = true;
 
 interface UploadState {
@@ -207,29 +204,6 @@ export function UploadForm() {
         } catch {
             return String(error);
         }
-    };
-
-    const isMissingUploadSessionMethod = (error: unknown): boolean => {
-        const message = getErrorText(error).toLowerCase();
-        return (
-            message.includes('contract method is not found') ||
-            message.includes('method not found') ||
-            message.includes('methodnotfound') ||
-            message.includes('method resolve error') ||
-            message.includes('methodresolveerror') ||
-            message.includes('unknown method') ||
-            message.includes('method does not exist') ||
-            (message.includes('create_upload_session') &&
-                (message.includes('method') || message.includes('does not exist')))
-        );
-    };
-
-    const shouldUseLegacyUploadAuthorizationFirst = (): boolean => {
-        return (
-            FEATURE_FLAGS.enableLegacyUploadFallback &&
-            NEAR_CONFIG.networkId === 'mainnet' &&
-            NEAR_CONFIG.contractId === 'youtick.near'
-        );
     };
 
     const extractIpfsCid = (ref: string | null | undefined): string | null => {
@@ -682,6 +656,16 @@ export function UploadForm() {
                 updateStep('mint', 'complete');
                 setStatus('Success! Video uploaded & ticket sales started!');
 
+                // Fire-and-forget: place Crust storage orders for long-term persistence
+                void (async () => {
+                    try {
+                        const { placeStorageOrder } = await import('@/lib/crust/storage-order');
+                        await placeStorageOrder(manifestCid, 0, accountId);
+                    } catch {
+                        // Non-blocking: storage order failure doesn't affect the user
+                    }
+                })();
+
             } catch (mintError: unknown) {
                 console.error('Minting/Event failed:', mintError);
                 updateStep('mint', 'error');
@@ -715,80 +699,17 @@ export function UploadForm() {
         }
     };
 
-    const prepareLegacyUploadAuthorization = async (
-        wallet: Awaited<ReturnType<typeof getWallet>>,
-    ): Promise<SessionManager> => {
-        const sessionManager = new SessionManager(accountId!);
-
-        await sessionManager.importWalletFunctionCallKey();
-
-        let prepaidBalance = await sessionManager.getAccountBalance();
-        const hasValidKey = await sessionManager.hasSessionKey();
-
-        if (!hasValidKey) {
-            setStatus('Live contract is missing upload sessions. Creating legacy session key...');
-            await sessionManager.createSessionKey(
-                wallet,
-                LEGACY_MIN_SESSION_SETUP_NEAR.toFixed(2),
-            );
-            prepaidBalance = await sessionManager.getAccountBalance();
-        }
-
-        if (prepaidBalance < LEGACY_UPLOAD_PREPAID_NEAR) {
-            const topUpAmount = Math.ceil(
-                (LEGACY_UPLOAD_PREPAID_NEAR - prepaidBalance) * 100,
-            ) / 100;
-            setStatus(`Funding legacy prepaid balance (${topUpAmount.toFixed(2)} NEAR)...`);
-            await sessionManager.topUpGas(wallet, topUpAmount.toFixed(2));
-        }
-
-        return sessionManager;
-    };
-
     const authorizeUpload = async (
         wallet: Awaited<ReturnType<typeof getWallet>>,
     ): Promise<{ sessionManager: SignlessUploadManager; cleanup: () => void }> => {
-        if (shouldUseLegacyUploadAuthorizationFirst()) {
-            setStatus('Using legacy upload authorization for the current mainnet contract...');
-            const legacySessionManager = await prepareLegacyUploadAuthorization(wallet);
-            return {
-                sessionManager: legacySessionManager,
-                cleanup: () => undefined,
-            };
-        }
-
         const sessionManager = new UploadSessionManager(accountId!);
 
-        try {
-            setStatus('Authorizing upload session...');
-            await sessionManager.createSession(wallet);
-            return {
-                sessionManager,
-                cleanup: () => sessionManager.clearSession(),
-            };
-        } catch (error) {
-            sessionManager.clearSession();
-
-            if (!isMissingUploadSessionMethod(error)) {
-                throw error;
-            }
-
-            if (!FEATURE_FLAGS.enableLegacyUploadFallback) {
-                throw new Error(
-                    'This contract does not support upload sessions and legacy fallback is disabled for the mainnet launch.',
-                );
-            }
-
-            console.warn(
-                '[UploadForm] create_upload_session is unavailable on the live contract; falling back to legacy session keys.',
-            );
-
-            const legacySessionManager = await prepareLegacyUploadAuthorization(wallet);
-            return {
-                sessionManager: legacySessionManager,
-                cleanup: () => undefined,
-            };
-        }
+        setStatus('Authorizing upload session...');
+        await sessionManager.createSession(wallet);
+        return {
+            sessionManager,
+            cleanup: () => sessionManager.clearSession(),
+        };
     };
 
     // Retry handler

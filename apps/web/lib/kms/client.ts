@@ -428,14 +428,17 @@ export function clearKmsAuthCache(accountId?: string): void {
         return;
     }
 
-    const prefix = accountId ? `${AUTH_CACHE_PREFIX}${accountId}:` : AUTH_CACHE_PREFIX;
     const keysToRemove: string[] = [];
 
     for (let i = 0; i < sessionStorage.length; i++) {
         const key = sessionStorage.key(i);
-        if (key?.startsWith(prefix)) {
-            keysToRemove.push(key);
+        if (!key?.startsWith(AUTH_CACHE_PREFIX)) {
+            continue;
         }
+        if (accountId && !key.includes(`:${accountId}:`)) {
+            continue;
+        }
+        keysToRemove.push(key);
     }
 
     for (const key of keysToRemove) {
@@ -1151,90 +1154,9 @@ export async function storeEncryptionKey(
         return shareResult;
     }
 
-    const baseUrls = await listKmsBaseUrls();
-    if (baseUrls.length === 0) {
-        throw new KMSError(
-            'CONFIG_MISSING',
-            'No KMS endpoint is configured. Set NEXT_PUBLIC_KMS_URL or register active operators in the registry.',
-        );
-    }
-    let lastError: unknown = null;
-
-    for (const baseUrl of baseUrls) {
-        try {
-            await ensureKmsConfigMatchesApp(baseUrl);
-
-            const localResult = await tryLocalSignedKmsRequest<KMSStoreResult>(
-                baseUrl,
-                'store',
-                accountId,
-                videoId,
-                { videoId, aesKeyB64 },
-            );
-            if (localResult) {
-                return localResult;
-            }
-        } catch (error) {
-            lastError = error;
-        }
-    }
-
-    for (const baseUrl of baseUrls) {
-        try {
-            await ensureKmsConfigMatchesApp(baseUrl);
-
-            const sessionGrantResult = await trySessionGrantSignedKmsRequest<KMSStoreResult>(
-                baseUrl,
-                'store',
-                accountId,
-                videoId,
-                { videoId, aesKeyB64 },
-                wallet,
-            );
-            if (sessionGrantResult) {
-                return sessionGrantResult;
-            }
-        } catch (error) {
-            lastError = error;
-        }
-    }
-
-    for (const baseUrl of baseUrls) {
-        try {
-            await ensureKmsConfigMatchesApp(baseUrl);
-
-            const token = await requestKmsAuthToken(baseUrl, videoId, 'store', accountId, wallet);
-            try {
-                return await fetchKmsWithToken<KMSStoreResult>(
-                    baseUrl,
-                    'store',
-                    { videoId, aesKeyB64 },
-                    token,
-                );
-            } catch (error) {
-                if (error instanceof KMSError && error.code === 'AUTH_EXPIRED') {
-                    const refreshed = await requestKmsAuthToken(baseUrl, videoId, 'store', accountId, wallet);
-                    return fetchKmsWithToken<KMSStoreResult>(
-                        baseUrl,
-                        'store',
-                        { videoId, aesKeyB64 },
-                        refreshed,
-                    );
-                }
-                throw error;
-            }
-        } catch (error) {
-            lastError = error;
-        }
-    }
-
-    if (lastError) {
-        throw lastError;
-    }
-
     throw new KMSError(
-        'STORE_FAILED',
-        'No active KMS operator accepted the store request',
+        'SHARE_STORE_FAILED',
+        'Share-based key storage failed. Ensure active operators are registered in the registry and threshold config is valid.',
     );
 }
 

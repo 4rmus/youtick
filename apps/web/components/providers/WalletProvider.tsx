@@ -154,7 +154,6 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }).catch((err) => {
             if (!mounted) return;
             console.error('Failed to setup wallet selector:', err);
-            setIsReady(true);
         });
 
         return () => {

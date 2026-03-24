@@ -74,8 +74,18 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
         const parseUrlParams = async () => {
             if (typeof window === "undefined") return;
 
+            const hash = window.location.hash.substring(1);
+            const hashParams = new URLSearchParams(hash);
+            const hashKey = hashParams.get("key");
+
             const urlParams = new URLSearchParams(window.location.search);
-            const secretKey = urlParams.get("secret") || urlParams.get("key");
+            const queryKey = urlParams.get("secret") || urlParams.get("key");
+
+            const secretKey = hashKey || queryKey;
+
+            if (secretKey) {
+                window.history.replaceState(null, "", window.location.pathname);
+            }
 
             if (!secretKey) {
                 // No gift link - allow direct trial creation

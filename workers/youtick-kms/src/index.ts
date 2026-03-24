@@ -1174,6 +1174,15 @@ async function handleStore(
         return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
     }
 
+    if (!isShareStore && env.NEAR_NETWORK === 'mainnet') {
+        return jsonResponse(
+            { ok: false, error: 'Legacy plaintext key storage is disabled on mainnet. Use share-based storage.' },
+            400,
+            request,
+            env,
+        );
+    }
+
     if (
         isShareStore
         && (
@@ -1488,11 +1497,13 @@ async function handleRetrieve(
         );
     }
 
-    // Retrieve legacy AES key from KV
+    // Legacy AES key fallback (read-only for backward compatibility during migration)
     const aesKeyB64 = await env.VIDEO_KEYS.get(`key:${body.videoId}`);
     if (!aesKeyB64) {
         return jsonResponse({ ok: false, error: 'Key not found for this video' }, 404, request, env);
     }
+
+    console.warn(`[KMS] DEPRECATION: Legacy plaintext key retrieved for video ${body.videoId}. Migrate to share-based storage.`);
 
     return jsonResponse(
         { ok: true, data: { aesKeyB64 } },
