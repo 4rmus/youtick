@@ -53,6 +53,15 @@ const STORAGE_COST_ACCOUNT: NearToken = NearToken::from_millinear(100); // 0.1 N
 const UPLOAD_SESSION_MAX_TTL_MS: u64 = 15 * 60 * 1000;
 const UPLOAD_SESSION_TOTAL_CALLS: u8 = 2;
 
+fn wrap_near_account_id() -> AccountId {
+    let current = env::current_account_id();
+    if current.as_str().ends_with(".testnet") {
+        "wrap.testnet".parse().unwrap()
+    } else {
+        "wrap.near".parse().unwrap()
+    }
+}
+
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
 pub struct Event {
@@ -1022,11 +1031,6 @@ impl Contract {
         now_s / 86400 * 86400 // Round to day start
     }
 
-    /// Internal: Check and increment daily trial count
-    fn check_and_increment_daily_limit(&mut self) -> bool {
-        self.increment_daily_limit_if_allowed().is_some()
-    }
-
     /// Internal: Check limit and return the day bucket that was incremented.
     fn increment_daily_limit_if_allowed(&mut self) -> Option<u64> {
         let today = Self::get_day_timestamp();
@@ -1652,11 +1656,11 @@ impl Contract {
         amount: U128,
         msg: String,
     ) -> PromiseOrValue<U128> {
-        // SECURITY: Only accept wNEAR from wrap.near
+        let wrap_account = wrap_near_account_id();
         let predecessor = env::predecessor_account_id();
         require!(
-            predecessor.as_str() == "wrap.near",
-            "Only wNEAR (wrap.near) is accepted"
+            predecessor == wrap_account,
+            "Only wNEAR is accepted"
         );
 
         // Parse the message
@@ -1724,13 +1728,13 @@ impl Contract {
         // Step 1: Call near_withdraw on wrap.near to unwrap wNEAR → native NEAR
         // Step 2: Callback processes the ticket purchase using the unwrapped NEAR
         PromiseOrValue::Promise(
-            Promise::new("wrap.near".parse::<AccountId>().unwrap())
+            Promise::new(wrap_near_account_id())
                 .function_call(
                     "near_withdraw".to_string(),
                     near_sdk::serde_json::json!({ "amount": amount.0.to_string() })
                         .to_string()
                         .into_bytes(),
-                    NearToken::from_yoctonear(1), // 1 yoctoNEAR required by wrap.near
+                    NearToken::from_yoctonear(1),
                     near_sdk::Gas::from_tgas(10),
                 )
                 .then(
@@ -1838,11 +1842,11 @@ impl Contract {
         // Then callback to verify success and refund on failure
         Self::ext(env::current_account_id())
             .with_attached_deposit(STORAGE_COST_ACCOUNT)
-            .with_static_gas(near_sdk::Gas::from_tgas(30))
+            .with_static_gas(near_sdk::Gas::from_tgas(60))
             .nft_mint_internal(receiver_id, token_metadata, video_metadata)
             .then(
                 Self::ext(env::current_account_id())
-                    .with_static_gas(near_sdk::Gas::from_tgas(5))
+                    .with_static_gas(near_sdk::Gas::from_tgas(10))
                     .on_nft_mint_prepaid_callback(
                         account_id,
                         session_public_key,
@@ -1885,14 +1889,15 @@ impl Contract {
     }
 
     /// Callback after nft_mint_prepaid XCC completes.
-    /// Refunds user's prepaid balance if the mint failed.
+    /// Returns true on success, false on failure (session restored to AwaitingMint).
+    /// The client MUST check this return value before calling create_event_prepaid.
     #[private]
     pub fn on_nft_mint_prepaid_callback(
         &mut self,
         account_id: AccountId,
         session_public_key: PublicKey,
         charge_amount: U128,
-    ) {
+    ) -> bool {
         #[allow(deprecated)]
         let succeeded = matches!(
             env::promise_result(0),
@@ -1917,6 +1922,8 @@ impl Contract {
                 charge_amount.0, account_id
             ));
         }
+
+        succeeded
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -2147,11 +2154,10 @@ impl Contract {
             "Unauthorized: Signer's key is not an onboarding key"
         );
 
-        // Daily rate limiting
-        require!(
-            self.check_and_increment_daily_limit(),
-            "Daily limit reached. Please try again tomorrow."
-        );
+        // Daily rate limiting (capture day_timestamp for rollback)
+        let day_timestamp = self.increment_daily_limit_if_allowed().unwrap_or_else(|| {
+            env::panic_str("Daily limit reached. Please try again tomorrow.")
+        });
 
         // Verify event exists, is not banned, and is free
         let event = self.events.get(&encrypted_cid).expect("Event not found");
@@ -2171,10 +2177,43 @@ impl Contract {
         // Deduct from trial pool
         self.trial_pool = self.trial_pool.saturating_sub(storage_cost);
 
-        // Mint via internal call with storage deposit
+        // Mint via internal call with callback for rollback on failure
         Self::ext(env::current_account_id())
             .with_attached_deposit(storage_cost)
             .buy_ticket_internal(receiver_id, encrypted_cid)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(5))
+                    .on_free_ticket_claim_complete(
+                        U128::from(storage_cost.as_yoctonear()),
+                        day_timestamp,
+                    ),
+            )
+    }
+
+    #[private]
+    pub fn on_free_ticket_claim_complete(
+        &mut self,
+        storage_cost: U128,
+        rollback_day_timestamp: u64,
+    ) -> bool {
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+
+        if succeeded {
+            return true;
+        }
+
+        self.trial_pool = self.trial_pool.saturating_add(
+            NearToken::from_yoctonear(storage_cost.0),
+        );
+        self.rollback_daily_limit(rollback_day_timestamp);
+
+        env::log_str("Free ticket claim failed; refunded trial pool and rolled back daily limit.");
+        false
     }
 
     /// Create a sponsored trial account as a subaccount of this contract
@@ -2415,10 +2454,40 @@ impl Contract {
         // Deduct from trial pool
         self.trial_pool = self.trial_pool.saturating_sub(storage_cost);
 
-        // Call internal minting with storage from contract
+        // Call internal minting with rollback callback on failure
         Self::ext(env::current_account_id())
             .with_attached_deposit(storage_cost)
             .buy_ticket_internal(receiver_id, encrypted_cid)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(5))
+                    .on_sponsored_free_ticket_complete(
+                        U128::from(storage_cost.as_yoctonear()),
+                    ),
+            )
+    }
+
+    #[private]
+    pub fn on_sponsored_free_ticket_complete(
+        &mut self,
+        storage_cost: U128,
+    ) -> bool {
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+
+        if succeeded {
+            return true;
+        }
+
+        self.trial_pool = self.trial_pool.saturating_add(
+            NearToken::from_yoctonear(storage_cost.0),
+        );
+
+        env::log_str("Sponsored free ticket claim failed; refunded trial pool.");
+        false
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -34,9 +34,27 @@ id = "d6371b2b2d3d4cf382af02a341f865da"
 binding = "ACCESS_CACHE"
 id = "aeb0fda6a8c448b88cf04d69a3b9373b"
 
-# Multi-operator production examples.
-# Deploy each environment separately and attach a unique OPERATOR_SHARE_SECRET
-# plus unique KV namespaces per operator.
+# ═══════════════════════════════════════════════════════════════════════════════
+# Multi-operator production environments
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# CRITICAL: Each operator MUST have its own isolated KV namespaces.
+# Sharing KV namespaces across operators breaks the Shamir threshold security
+# model — any operator could read/overwrite another operator's share data.
+#
+# Before deploying each operator:
+#   1. Create dedicated KV namespaces:
+#        wrangler kv:namespace create VIDEO_KEYS   --env operator_a
+#        wrangler kv:namespace create RATE_LIMIT   --env operator_a
+#        wrangler kv:namespace create ACCESS_CACHE --env operator_a
+#   2. Replace the placeholder IDs below with the real IDs from step 1.
+#   3. Set unique secrets per operator:
+#        wrangler secret put OPERATOR_SHARE_SECRET --env operator_a
+#        wrangler secret put REGISTRY_OPERATOR_ACCOUNT_ID --env operator_a
+#
+# NEVER reuse KV namespace IDs across operators.
+# ═══════════════════════════════════════════════════════════════════════════════
+
 [env.operator_a]
 name = "youtick-kms-a"
 
@@ -45,20 +63,19 @@ ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.you
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
 NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"
-REGISTRY_OPERATOR_ACCOUNT_ID = "kms-a.youtick.near"
 NEAR_NETWORK = "mainnet"
 
 [[env.operator_a.kv_namespaces]]
 binding = "VIDEO_KEYS"
-id = "7af9ebeeffaa4f4bace8e0347963d165"
+id = "<replace-with-operator-a-video-keys-namespace-id>"
 
 [[env.operator_a.kv_namespaces]]
 binding = "RATE_LIMIT"
-id = "d6371b2b2d3d4cf382af02a341f865da"
+id = "<replace-with-operator-a-rate-limit-namespace-id>"
 
 [[env.operator_a.kv_namespaces]]
 binding = "ACCESS_CACHE"
-id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+id = "<replace-with-operator-a-access-cache-namespace-id>"
 
 [env.operator_b]
 name = "youtick-kms-b"
@@ -68,20 +85,19 @@ ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.you
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
 NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"
-REGISTRY_OPERATOR_ACCOUNT_ID = "kms-b.youtick.near"
 NEAR_NETWORK = "mainnet"
 
 [[env.operator_b.kv_namespaces]]
 binding = "VIDEO_KEYS"
-id = "7af9ebeeffaa4f4bace8e0347963d165"
+id = "<replace-with-operator-b-video-keys-namespace-id>"
 
 [[env.operator_b.kv_namespaces]]
 binding = "RATE_LIMIT"
-id = "d6371b2b2d3d4cf382af02a341f865da"
+id = "<replace-with-operator-b-rate-limit-namespace-id>"
 
 [[env.operator_b.kv_namespaces]]
 binding = "ACCESS_CACHE"
-id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+id = "<replace-with-operator-b-access-cache-namespace-id>"
 
 [env.operator_c]
 name = "youtick-kms-c"
@@ -91,20 +107,19 @@ ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.you
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
 NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"
-REGISTRY_OPERATOR_ACCOUNT_ID = "kms-c.youtick.near"
 NEAR_NETWORK = "mainnet"
 
 [[env.operator_c.kv_namespaces]]
 binding = "VIDEO_KEYS"
-id = "7af9ebeeffaa4f4bace8e0347963d165"
+id = "<replace-with-operator-c-video-keys-namespace-id>"
 
 [[env.operator_c.kv_namespaces]]
 binding = "RATE_LIMIT"
-id = "d6371b2b2d3d4cf382af02a341f865da"
+id = "<replace-with-operator-c-rate-limit-namespace-id>"
 
 [[env.operator_c.kv_namespaces]]
 binding = "ACCESS_CACHE"
-id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+id = "<replace-with-operator-c-access-cache-namespace-id>"
 
 [env.operator_d]
 name = "youtick-kms-d"
@@ -114,20 +129,19 @@ ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.you
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
 NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"
-REGISTRY_OPERATOR_ACCOUNT_ID = "kms-d.youtick.near"
 NEAR_NETWORK = "mainnet"
 
 [[env.operator_d.kv_namespaces]]
 binding = "VIDEO_KEYS"
-id = "7af9ebeeffaa4f4bace8e0347963d165"
+id = "<replace-with-operator-d-video-keys-namespace-id>"
 
 [[env.operator_d.kv_namespaces]]
 binding = "RATE_LIMIT"
-id = "d6371b2b2d3d4cf382af02a341f865da"
+id = "<replace-with-operator-d-rate-limit-namespace-id>"
 
 [[env.operator_d.kv_namespaces]]
 binding = "ACCESS_CACHE"
-id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+id = "<replace-with-operator-d-access-cache-namespace-id>"
 
 [env.operator_e]
 name = "youtick-kms-e"
@@ -137,20 +151,19 @@ ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.you
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
 NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"
-REGISTRY_OPERATOR_ACCOUNT_ID = "kms-e.youtick.near"
 NEAR_NETWORK = "mainnet"
 
 [[env.operator_e.kv_namespaces]]
 binding = "VIDEO_KEYS"
-id = "7af9ebeeffaa4f4bace8e0347963d165"
+id = "<replace-with-operator-e-video-keys-namespace-id>"
 
 [[env.operator_e.kv_namespaces]]
 binding = "RATE_LIMIT"
-id = "d6371b2b2d3d4cf382af02a341f865da"
+id = "<replace-with-operator-e-rate-limit-namespace-id>"
 
 [[env.operator_e.kv_namespaces]]
 binding = "ACCESS_CACHE"
-id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+id = "<replace-with-operator-e-access-cache-namespace-id>"
 
 # Testnet environment — local development only
 [env.testnet]

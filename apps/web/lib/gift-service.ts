@@ -530,7 +530,7 @@ export async function createTrialInviteLinks(
     return keyPairs.map((kp) => ({
         publicKey: kp.publicKey,
         secretKey: kp.secretKey,
-        link: `${APP_URL}/trial?key=${encodeURIComponent(kp.secretKey)}`,
+        link: `${APP_URL}/trial#key=${encodeURIComponent(kp.secretKey)}`,
     }));
 }
 

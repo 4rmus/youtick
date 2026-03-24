@@ -1,8 +1,3 @@
-import { actions, PublicKey } from 'near-api-js';
-import { GAS_CONSTANTS } from './constants';
-import { nearAmountToYocto } from './near-amount';
-import type { WalletInstance } from './types';
-
 export interface SignlessUploadManager {
     callMethod(
         method: string,
@@ -11,41 +6,15 @@ export interface SignlessUploadManager {
     ): Promise<unknown>;
 }
 
-export async function batchInitialSetup(
-    wallet: WalletInstance,
-    accountId: string,
-    contractId: string,
-    sessionKeyPublicKey: string,
-    gasAmount: string = '1',
-) {
-    const publicKey = PublicKey.fromString(sessionKeyPublicKey);
-
-    return await wallet.signAndSendTransactions({
-        transactions: [
-            {
-                receiverId: contractId,
-                actions: [
-                    actions.functionCall(
-                        'deposit_funds',
-                        {},
-                        GAS_CONSTANTS.smallGas,
-                        nearAmountToYocto(gasAmount),
-                    ),
-                ],
-            },
-            {
-                receiverId: accountId,
-                actions: [
-                    actions.addFunctionCallAccessKey(
-                        publicKey,
-                        contractId,
-                        [],
-                        nearAmountToYocto('0.25'),
-                    ),
-                ],
-            },
-        ],
-    });
+export class BatchPublishError extends Error {
+    constructor(
+        message: string,
+        public readonly phase: 'mint' | 'event',
+        public readonly retryable: boolean,
+    ) {
+        super(message);
+        this.name = 'BatchPublishError';
+    }
 }
 
 export async function batchUploadActionsSignless(
@@ -74,14 +43,30 @@ export async function batchUploadActionsSignless(
         access_mode?: 'paid' | 'free_collectible' | 'public_free';
     }
 ) {
-    await sessionManager.callMethod('nft_mint_prepaid', videoMetadata);
+    const mintResult = await sessionManager.callMethod('nft_mint_prepaid', videoMetadata);
 
-    return await sessionManager.callMethod('create_event_prepaid', {
-        encrypted_cid: eventMetadata.encrypted_cid,
-        title: eventMetadata.title,
-        description: eventMetadata.description,
-        price: eventMetadata.price,
-        price_usd: eventMetadata.price_usd ?? null,
-        access_mode: eventMetadata.access_mode ?? null,
-    });
+    if (mintResult === false) {
+        throw new BatchPublishError(
+            'NFT minting failed on-chain. The upload session has been restored – please try again.',
+            'mint',
+            true,
+        );
+    }
+
+    try {
+        return await sessionManager.callMethod('create_event_prepaid', {
+            encrypted_cid: eventMetadata.encrypted_cid,
+            title: eventMetadata.title,
+            description: eventMetadata.description,
+            price: eventMetadata.price,
+            price_usd: eventMetadata.price_usd ?? null,
+            access_mode: eventMetadata.access_mode ?? null,
+        });
+    } catch (error) {
+        throw new BatchPublishError(
+            `NFT minted but event creation failed. Session key is still valid – retry publishing. Original error: ${error instanceof Error ? error.message : String(error)}`,
+            'event',
+            true,
+        );
+    }
 }
