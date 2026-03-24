@@ -4,8 +4,10 @@ compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-# NEAR Web4 gateway URL for the youtick.near contract
-WEB4_ORIGIN = "https://youtick.near.page"
+# Primary origin — Cloudflare Pages (fast, reliable)
+WEB4_ORIGIN = "https://youtick-static.pages.dev"
+# Fallback origin — NEAR Web4 gateway (used if primary is unreachable or returns error)
+WEB4_FALLBACK_ORIGIN = "https://youtick.near.page"
 
 # Domains that this proxy will serve (for Host header validation)
 ALLOWED_DOMAINS = "youtick.net,www.youtick.net"

@@ -6,7 +6,6 @@ vi.mock('@/lib/constants', () => ({
   },
   FEATURE_FLAGS: {
     enableCrossChainCheckout: false,
-    enableLegacyUploadFallback: false,
   },
   IPFS_CONFIG: {
     gatewayUrl: 'https://ipfs.io/ipfs',

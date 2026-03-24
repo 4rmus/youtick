@@ -1,12 +1,12 @@
-# Session Keys and Upload Sessions
+# Upload Sessions
 
 > YouTick'te dusuk popup'li yetkilendirme modeli
 
 ---
 
-## Bugun hangi yol aktif?
+## Aktif yol
 
-Aktif ve tercih edilen yol **upload session** modelidir.
+Tercih edilen publish yolu **upload session** modelidir.
 
 Bu modelde frontend:
 
@@ -56,21 +56,6 @@ sequenceDiagram
 
 ---
 
-## Legacy yardimcilar
-
-Frontend icinde hala `SessionManager` sinifi bulunur:
-
-- eski function-call key import etme
-- eski deploy'lar icin fallback davranisi
-- `UploadForm` icinde son care olarak kullanilabilen legacy akis
-
-Bu yol yeni dokumanlarda ana akis olarak kabul edilmez. Yani:
-
-- yeni gelistirmede once upload session dusun
-- eski session-key yardimcilarini sadece uyumluluk katmani gibi gor
-
----
-
 ## Guvenlik sinirlari
 
 Upload session modelinde yetki dar tutulur:
@@ -86,7 +71,7 @@ Bu model, "bir kere izin ver ve uzun sure kullan" mantigindan daha guvenlidir.
 
 ## Dikkat edilmesi gerekenler
 
-1. Upload session kontratta yoksa frontend legacy fallback'e duser.
+1. Upload session kontratta yoksa frontend hata verir ve upload'a izin vermez.
 2. KMS auth cache temizligi ile wallet durumunun birlikte dusunulmesi gerekir.
 3. Upload akisinda hata olursa session temizligi unutulmamalidir.
 
@@ -95,6 +80,5 @@ Bu model, "bir kere izin ver ve uzun sure kullan" mantigindan daha guvenlidir.
 ## Ilgili Dosyalar
 
 - `apps/web/lib/upload-session-manager.ts`
-- `apps/web/lib/session-manager.ts`
 - `apps/web/lib/batch-transactions.ts`
 - `apps/web/components/UploadForm.tsx`

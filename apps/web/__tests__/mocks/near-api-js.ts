@@ -110,13 +110,7 @@ export class MockJsonRpcProvider {
     this.url = options.url;
   }
 
-  async query(params: { method_name?: string }): Promise<{ result: number[] } | { result: unknown[] }> {
-    if (params.method_name === 'get_user_balance') {
-      // Return 1 NEAR in yoctoNEAR
-      return {
-        result: Buffer.from('"1000000000000000000000000"').toJSON().data
-      };
-    }
+  async query(): Promise<{ result: unknown[] }> {
     return { result: [] };
   }
 }

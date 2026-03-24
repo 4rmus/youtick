@@ -8,9 +8,9 @@
 
 Video once browser'da sifrelenir, sonra depolamaya gider. Bu, ham medyanin merkezi bir sunucuda acik halde dolasmamasini saglar.
 
-## 2. KMS-backed playback access
+## 2. Threshold share-based playback access
 
-IPFS tek basina yetmez. Oynatma icin gereken AES anahtari KMS worker tarafinda tutulur ve erisim zincir verisiyle dogrulanir.
+IPFS tek basina yetmez. AES anahtari Shamir Secret Sharing ile paylara bolunur ve birden fazla KMS operator'e dagitilir. Oynatma icin yeterli sayida operatorun (threshold, orn. 3/5) pay dondurmesi gerekir. Tek bir operator anahtari tek basina reconstruct edemez.
 
 ## 3. Short-lived upload authorization
 
@@ -37,10 +37,4 @@ Bu parcilar birlikte su sonucu verir:
 - creator icin yuksek gelir payi
 - izleyici icin daha kolay ulasim
 - urun icin daha az merkezi bagimlilik
-- playback aninda daha guvenli anahtar akisi
-
----
-
-## Artik kullanilmayan eski anlatilar
-
-Bu repoda bir donem farkli bir sifreleme modeli anlatiliyordu. Aktif uygulama artik o modele dayanmadigi icin yeni dokumanlarda esas fark olarak KMS, upload sessions, gift ve trial akislari anlatilir.
+- playback aninda daha guvenli anahtar akisi (tek noktali basarisizlik yok)

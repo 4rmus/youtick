@@ -1,4 +1,0 @@
-interface:
-  display_name: "Crust Network"
-  short_description: "Crust uploads, auth, and storage-order guidance"
-  default_prompt: "Use $crust-network to update Crust auth, gateway, or storage-order integrations in this repo."
