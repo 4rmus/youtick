@@ -2,7 +2,7 @@
  * Gift Claim Flow Integration Tests
  *
  * Tests the complete gift link claiming workflow from link parsing to NFT transfer.
- * These tests verify the integration between gift-service, session-manager, and contract interactions.
+ * Verifies the integration between gift-service and contract interactions.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -15,8 +15,7 @@ vi.mock('@/lib/constants', () => ({
     publicAppUrl: 'https://app.youtick.io'
   },
   FEATURE_FLAGS: {
-    enableCrossChainCheckout: false,
-    enableLegacyUploadFallback: false
+    enableCrossChainCheckout: false
   },
   NFT_CONTRACT_ID: 'test-contract.testnet',
   NETWORK_ID: 'testnet',

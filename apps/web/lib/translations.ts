@@ -93,7 +93,12 @@ export const translations = {
                 signless_upload: "Signless Upload",
                 balance_sufficient: "Balance sufficient - signless upload ready",
                 balance_low: "Auto top-up via wallet - 1 signature needed",
-                additional_payment: "Additional Payment"
+                additional_payment: "Additional Payment",
+                ipfs_persistence: "IPFS Persistence (Crust)",
+                persistence_free: "Free",
+                persistence_status_success: "Persistent",
+                persistence_status_partial: "Processing",
+                persistence_status_failed: "Temporary"
             },
             progress_title: "Upload Progress",
             file_too_large_free: "File exceeds the 20 MB limit for free videos. Set a price to upload up to 500 MB.",
@@ -104,7 +109,9 @@ export const translations = {
                 key_setup: "Preparing Key Storage",
                 encrypt: "Encrypting Video",
                 upload: "Uploading to IPFS",
-                mint: "Minting NFT Ticket"
+                mint: "Minting NFT Ticket",
+                storage: "Persistent Storage Order",
+                verify: "Verifying Storage"
             }
         },
         watch_page: {
@@ -655,7 +662,12 @@ export const translations = {
                 signless_upload: "İmzasız Yükleme",
                 balance_sufficient: "Bakiye yeterli - imzasız yükleme hazır",
                 balance_low: "Cüzdandan otomatik yüklenir - 1 imza gerekli",
-                additional_payment: "Ek Ödeme"
+                additional_payment: "Ek Ödeme",
+                ipfs_persistence: "IPFS Kalıcı Depolama (Crust)",
+                persistence_free: "Ücretsiz",
+                persistence_status_success: "Kalıcı",
+                persistence_status_partial: "İşleniyor",
+                persistence_status_failed: "Geçici"
             },
             progress_title: "Yükleme Durumu",
             file_too_large_free: "Dosya ücretsiz videolar için 20 MB sınırını aşıyor. 500 MB'ye kadar yüklemek için bir fiyat belirleyin.",
@@ -666,7 +678,9 @@ export const translations = {
                 key_setup: "Anahtar Depolama Hazırlanıyor",
                 encrypt: "Video Şifreleniyor",
                 upload: "IPFS'e Yükleniyor",
-                mint: "NFT Bilet Basılıyor"
+                mint: "NFT Bilet Basılıyor",
+                storage: "Kalıcı Depolama Siparişi",
+                verify: "Depolama Doğrulanıyor"
             }
         },
         watch_page: {

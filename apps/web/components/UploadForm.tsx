@@ -4,6 +4,8 @@ import React, { useState, useReducer } from 'react';
 import Image from 'next/image';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { uploadToCrust } from '@/lib/crust';
+import { CidCollector } from '@/lib/crust/cid-collector';
+import type { UploadedAssetType } from '@/lib/crust/cid-collector';
 import {
     encryptBufferWithCounter,
     generateAESKey,
@@ -48,6 +50,8 @@ const INITIAL_STEPS: UploadStep[] = [
     { id: 'upload', label: 'Uploading to IPFS', status: 'pending' },
     { id: 'kms', label: 'Storing Encryption Key', status: 'pending' },
     { id: 'mint', label: 'Minting NFT Ticket', status: 'pending' },
+    { id: 'storage', label: 'Persistent Storage Order', status: 'pending' },
+    { id: 'verify', label: 'Verifying Storage', status: 'pending' },
 ];
 
 // File size limits (KMS-based flow)
@@ -64,6 +68,7 @@ interface UploadState {
     verifiedStorageFee: string;
     estimatedStorageFee: string;
     payAmount: string;
+    storageOrderStatus: 'pending' | 'success' | 'partial' | 'failed' | null;
 }
 
 const initialUploadState: UploadState = {
@@ -75,6 +80,7 @@ const initialUploadState: UploadState = {
     verifiedStorageFee: '0',
     estimatedStorageFee: '0',
     payAmount: '0',
+    storageOrderStatus: null,
 };
 
 type UploadAction =
@@ -87,6 +93,7 @@ type UploadAction =
     | { type: 'SET_VERIFIED_STORAGE_FEE'; payload: string }
     | { type: 'SET_ESTIMATED_STORAGE_FEE'; payload: string }
     | { type: 'SET_PAY_AMOUNT'; payload: string }
+    | { type: 'SET_STORAGE_ORDER_STATUS'; payload: UploadState['storageOrderStatus'] }
     | { type: 'RESET' };
 
 function uploadReducer(state: UploadState, action: UploadAction): UploadState {
@@ -114,6 +121,8 @@ function uploadReducer(state: UploadState, action: UploadAction): UploadState {
             return { ...state, estimatedStorageFee: action.payload };
         case 'SET_PAY_AMOUNT':
             return { ...state, payAmount: action.payload };
+        case 'SET_STORAGE_ORDER_STATUS':
+            return { ...state, storageOrderStatus: action.payload };
         case 'RESET':
             return initialUploadState;
         default:
@@ -250,6 +259,7 @@ export function UploadForm() {
         aesKeyB64?: string;
         thumbnailRef?: string | null;
         posterBlob?: Blob | null;
+        collector: CidCollector;
     }): Promise<{ manifestCid: string }> => {
         const {
             packagedAsset,
@@ -258,6 +268,7 @@ export function UploadForm() {
             aesKeyB64,
             thumbnailRef,
             posterBlob,
+            collector,
         } = params;
         const {
             combinePackagedSegmentPayloads,
@@ -277,6 +288,7 @@ export function UploadForm() {
                 setStatus('Uploading poster image...');
                 const posterResult = await uploadToCrust(posterBlob, uploaderAccountId);
                 posterCid = posterResult.cid;
+                collector.add(posterResult.cid, posterResult.size, 'poster');
             } catch (posterError) {
                 console.warn('[UploadForm] Poster upload failed, continuing without poster:', posterError);
             }
@@ -296,6 +308,7 @@ export function UploadForm() {
         }
 
         const initUpload = await uploadToCrust(initUploadBlob, uploaderAccountId);
+        collector.add(initUpload.cid, initUpload.size, 'init-segment');
 
         let uploadedSegmentCount = 0;
         const uploadedSegments = await runWithConcurrency(
@@ -316,6 +329,7 @@ export function UploadForm() {
                 }
 
                 const uploadResult = await uploadToCrust(payloadBlob, uploaderAccountId);
+                collector.add(uploadResult.cid, uploadResult.size, 'media-segment');
                 const uploadedPayloads: DeliverySegmentPayload[] = [{
                     cid: uploadResult.cid,
                     trackId: payload.trackId,
@@ -350,6 +364,7 @@ export function UploadForm() {
 
         const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
         const manifestResult = await uploadToCrust(manifestBlob, uploaderAccountId);
+        collector.add(manifestResult.cid, manifestResult.size, 'manifest');
 
         const warmupItems = [
             extractIpfsCid(thumbnailRef) ? { cid: extractIpfsCid(thumbnailRef)!, kind: 'image' as const } : null,
@@ -487,6 +502,8 @@ export function UploadForm() {
         }
 
         try {
+            const collector = new CidCollector();
+
             console.log('[DECENTRALIZATION_METRIC] upload_process_start', {
                 accountId,
                 storage: 'kms_aes_ctr_encryption'
@@ -503,12 +520,11 @@ export function UploadForm() {
                         thumbnail,
                         accountId
                     );
-                    // Store protocol-native reference so reads are not pinned to one gateway.
                     thumbnailUrl = `ipfs://${thumbResult.cid}`;
+                    collector.add(thumbResult.cid, thumbResult.size, 'thumbnail');
                     updateStep('thumbnail', 'complete');
                 } catch (thumbError) {
                     console.error('[Thumbnail] Upload failed:', thumbError);
-                    // Continue without thumbnail
                     updateStep('thumbnail', 'complete');
                 }
             } else {
@@ -565,6 +581,7 @@ export function UploadForm() {
                     encrypted: false,
                     thumbnailRef: thumbnailUrl,
                     posterBlob: posterThumbnail,
+                    collector,
                 });
                 manifestCid = deliveryUpload.manifestCid;
 
@@ -585,6 +602,7 @@ export function UploadForm() {
                     aesKeyB64,
                     thumbnailRef: thumbnailUrl,
                     posterBlob: posterThumbnail,
+                    collector,
                 });
                 manifestCid = deliveryUpload.manifestCid;
 
@@ -654,17 +672,6 @@ export function UploadForm() {
 
                 blockchainPublishSucceeded = true;
                 updateStep('mint', 'complete');
-                setStatus('Success! Video uploaded & ticket sales started!');
-
-                // Fire-and-forget: place Crust storage orders for long-term persistence
-                void (async () => {
-                    try {
-                        const { placeStorageOrder } = await import('@/lib/crust/storage-order');
-                        await placeStorageOrder(manifestCid, 0, accountId);
-                    } catch {
-                        // Non-blocking: storage order failure doesn't affect the user
-                    }
-                })();
 
             } catch (mintError: unknown) {
                 console.error('Minting/Event failed:', mintError);
@@ -672,11 +679,67 @@ export function UploadForm() {
                 setStatus(`Video uploaded but blockchain actions failed: ${mintError instanceof Error ? mintError.message : String(mintError)}`);
             }
 
-            setUploading(false);
-
             if (!blockchainPublishSucceeded) {
+                setUploading(false);
                 return;
             }
+
+            // Place storage orders for ALL uploaded CIDs (not just manifest)
+            const collectedAssets = collector.getAll();
+            if (collectedAssets.length > 0) {
+                updateStep('storage', 'loading');
+                setStatus('Placing persistent storage orders...');
+
+                try {
+                    const { placeStorageOrders, verifyStorageOrders } = await import('@/lib/crust/storage-order');
+                    const batchResult = await placeStorageOrders(collectedAssets, accountId);
+
+                    if (batchResult.succeeded === 0) {
+                        updateStep('storage', 'error');
+                        dispatch({ type: 'SET_STORAGE_ORDER_STATUS', payload: 'failed' });
+                        setStatus('Storage orders failed — video is accessible but long-term persistence is not guaranteed.');
+                    } else if (batchResult.failed > 0) {
+                        updateStep('storage', 'complete');
+                        dispatch({ type: 'SET_STORAGE_ORDER_STATUS', payload: 'partial' });
+                        setStatus(`Storage orders: ${batchResult.succeeded}/${batchResult.total} placed.`);
+                    } else {
+                        updateStep('storage', 'complete');
+                        dispatch({ type: 'SET_STORAGE_ORDER_STATUS', payload: 'success' });
+                    }
+
+                    // Verify orders that were successfully placed
+                    const verifiable = batchResult.results.filter((r) => r.status !== 'failed' && r.status !== 'rate_limited');
+                    if (verifiable.length > 0) {
+                        updateStep('verify', 'loading');
+                        setStatus('Verifying storage status...');
+
+                        const verifyResult = await verifyStorageOrders(verifiable, accountId);
+
+                        if (verifyResult.verified === verifiable.length) {
+                            updateStep('verify', 'complete');
+                        } else if (verifyResult.verified > 0 || verifyResult.pending > 0) {
+                            updateStep('verify', 'complete');
+                            setStatus('Storage is being processed — your video is safe.');
+                        } else {
+                            updateStep('verify', 'error');
+                        }
+                    } else {
+                        updateStep('verify', 'complete');
+                    }
+                } catch (storageError) {
+                    console.error('[Storage Order] Batch failed:', storageError);
+                    updateStep('storage', 'error');
+                    updateStep('verify', 'complete');
+                    dispatch({ type: 'SET_STORAGE_ORDER_STATUS', payload: 'failed' });
+                    setStatus('Storage order failed — video is accessible but long-term persistence is not guaranteed.');
+                }
+            } else {
+                updateStep('storage', 'complete');
+                updateStep('verify', 'complete');
+            }
+
+            setStatus('Success! Video uploaded & ticket sales started!');
+            setUploading(false);
 
             // Clear form
             setFile(null);
@@ -989,7 +1052,7 @@ export function UploadForm() {
                         <div className="px-6 pb-2">
                             <CostReceipt
                                 storageFee={estimatedStorageFee}
-                                payAmount={payAmount}
+                                storageOrderStatus={us.storageOrderStatus}
                             />
                         </div>
                     )}

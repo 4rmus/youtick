@@ -48,7 +48,6 @@ export interface KMSStoreResult {
 }
 
 export interface KMSRetrieveResult {
-    aesKeyB64?: string;
     shareB64?: string;
     shareId?: number;
     totalShares?: number;
@@ -1069,23 +1068,6 @@ async function retrieveEncryptionKeyShares(
             continue;
         }
 
-        if (typeof settled.value.aesKeyB64 === 'string') {
-            controllers.forEach((controller) => controller.abort());
-            debugTrace.push({
-                operatorEndpoint: operator.endpoint,
-                operatorAccountId: settled.value.operatorAccountId,
-                status: 'fulfilled',
-                returned: 'full-key',
-            });
-            console.info('[KMS] Share retrieval trace', {
-                videoId,
-                accountId,
-                mode: 'legacy-full-key',
-                debugTrace,
-            });
-            return settled.value.aesKeyB64;
-        }
-
         if (settled.value.shareB64 && typeof settled.value.shareId === 'number') {
             shares.push({
                 shareB64: settled.value.shareB64,
@@ -1174,97 +1156,8 @@ export async function retrieveEncryptionKey(
         return shareResult;
     }
 
-    const baseUrls = await listKmsBaseUrls();
-    if (baseUrls.length === 0) {
-        throw new KMSError(
-            'CONFIG_MISSING',
-            'No KMS endpoint is configured. Set NEXT_PUBLIC_KMS_URL or register active operators in the registry.',
-        );
-    }
-    let lastError: unknown = null;
-
-    for (const baseUrl of baseUrls) {
-        try {
-            await ensureKmsConfigMatchesApp(baseUrl);
-
-            const localResult = await tryLocalSignedKmsRequest<KMSRetrieveResult>(
-                baseUrl,
-                'retrieve',
-                accountId,
-                videoId,
-                { videoId },
-            );
-            if (localResult?.aesKeyB64) {
-                return localResult.aesKeyB64;
-            }
-        } catch (error) {
-            lastError = error;
-        }
-    }
-
-    for (const baseUrl of baseUrls) {
-        try {
-            await ensureKmsConfigMatchesApp(baseUrl);
-
-            const sessionGrantResult = await trySessionGrantSignedKmsRequest<KMSRetrieveResult>(
-                baseUrl,
-                'retrieve',
-                accountId,
-                videoId,
-                { videoId },
-                wallet,
-            );
-            if (sessionGrantResult?.aesKeyB64) {
-                return sessionGrantResult.aesKeyB64;
-            }
-        } catch (error) {
-            lastError = error;
-        }
-    }
-
-    for (const baseUrl of baseUrls) {
-        try {
-            await ensureKmsConfigMatchesApp(baseUrl);
-
-            const token = await requestKmsAuthToken(baseUrl, videoId, 'retrieve', accountId, wallet);
-            try {
-                const result = await fetchKmsWithToken<KMSRetrieveResult>(
-                    baseUrl,
-                    'retrieve',
-                    { videoId },
-                    token,
-                );
-                if (result.aesKeyB64) {
-                    return result.aesKeyB64;
-                }
-                throw new KMSError('RETRIEVE_FAILED', 'KMS did not return a reconstructed key');
-            } catch (error) {
-                if (error instanceof KMSError && error.code === 'AUTH_EXPIRED') {
-                    const refreshed = await requestKmsAuthToken(baseUrl, videoId, 'retrieve', accountId, wallet);
-                    const result = await fetchKmsWithToken<KMSRetrieveResult>(
-                        baseUrl,
-                        'retrieve',
-                        { videoId },
-                        refreshed,
-                    );
-                    if (result.aesKeyB64) {
-                        return result.aesKeyB64;
-                    }
-                    throw new KMSError('RETRIEVE_FAILED', 'KMS did not return a reconstructed key');
-                }
-                throw error;
-            }
-        } catch (error) {
-            lastError = error;
-        }
-    }
-
-    if (lastError) {
-        throw lastError;
-    }
-
     throw new KMSError(
         'RETRIEVE_FAILED',
-        'No active KMS operator accepted the retrieve request',
+        'Could not reconstruct encryption key from operator shares. Ensure operators are active and threshold is met.',
     );
 }

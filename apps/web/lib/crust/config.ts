@@ -10,8 +10,12 @@ import { GatewayConfig } from './types';
  * Crust configuration constants
  */
 export const CRUST_CONSTANTS = {
-  /** Crust IPFS upload endpoint */
+  /** Crust IPFS upload endpoints (primary + fallbacks) */
   UPLOAD_ENDPOINT: 'https://crustipfs.xyz/api/v0/add',
+  UPLOAD_ENDPOINTS_FALLBACK: [
+    'https://gw.crustfiles.app/api/v0/add',
+    'https://gw-seattle.crustcloud.io/api/v0/add',
+  ] as readonly string[],
 
   /**
    * Crust IPFS read endpoint (POST only, supports CORS)

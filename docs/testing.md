@@ -21,12 +21,17 @@ apps/web/__tests__/
 │   ├── upload-flow.test.ts
 │   └── gift-claim-flow.test.ts
 ├── unit/
+│   ├── access-grants.test.ts
+│   ├── constants.test.ts
 │   ├── gift-service.test.ts
 │   ├── hooks.test.ts
+│   ├── kms-client.test.ts
+│   ├── kms-shares.test.ts
+│   ├── kms-streaming.test.ts
 │   ├── metadata-parser.test.ts
 │   ├── price.test.ts
 │   ├── rate-limiter.test.ts
-│   └── session-manager.test.ts
+│   └── registry.test.ts
 ├── mocks/
 │   └── near-api-js.ts
 └── setup.ts

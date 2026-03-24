@@ -14,8 +14,7 @@ vi.mock('@/lib/constants', () => ({
     publicAppUrl: 'https://app.youtick.io'
   },
   FEATURE_FLAGS: {
-    enableCrossChainCheckout: false,
-    enableLegacyUploadFallback: false
+    enableCrossChainCheckout: false
   },
   NFT_CONTRACT_ID: 'test-contract.testnet',
   NETWORK_ID: 'testnet',

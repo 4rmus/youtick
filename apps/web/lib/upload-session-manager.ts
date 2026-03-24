@@ -8,7 +8,7 @@ import {
 } from 'near-api-js';
 import { GAS_CONSTANTS, NEAR_CONFIG } from './constants';
 import { nearAmountToYocto } from './near-amount';
-import { getCurrentRpcUrl } from './rpc-failover';
+import { withRpcFailover } from './rpc-failover';
 import type { WalletInstance } from './types';
 
 const CONTRACT_ID = NEAR_CONFIG.contractId;
@@ -93,16 +93,41 @@ export class UploadSessionManager {
             throw new Error('No active upload session. Start a new upload authorization first.');
         }
 
-        const signer = new KeyPairSigner(keyPair);
-        const account = new Account(this.accountId, getCurrentRpcUrl(), signer);
-        const outcome = await account.signAndSendTransaction({
-            receiverId: CONTRACT_ID,
-            actions: [
-                actions.functionCall(method, args, BigInt(gas), BigInt(0)),
-            ],
-        });
+        return withRpcFailover(async (rpcUrl) => {
+            const signer = new KeyPairSigner(keyPair);
+            const account = new Account(this.accountId, rpcUrl, signer);
+            const outcome = await account.signAndSendTransaction({
+                receiverId: CONTRACT_ID,
+                actions: [
+                    actions.functionCall(method, args, BigInt(gas), BigInt(0)),
+                ],
+            });
 
-        return getTransactionLastResult(outcome);
+            const outcomeAny = outcome as Record<string, unknown>;
+            const receiptsOutcome = (outcomeAny as { receipts_outcome?: Array<{
+                outcome?: { status?: unknown };
+            }> }).receipts_outcome;
+            if (Array.isArray(receiptsOutcome)) {
+                for (const receipt of receiptsOutcome) {
+                    const status = receipt?.outcome?.status;
+                    if (status && typeof status === 'object' && 'Failure' in status) {
+                        const txHash = (outcomeAny as { transaction_outcome?: { id?: string } })
+                            .transaction_outcome?.id ?? 'unknown';
+                        throw new Error(
+                            `Cross-contract call failed in ${method} (tx: ${txHash}): ${JSON.stringify(status)}`,
+                        );
+                    }
+                }
+            }
+
+            const result = getTransactionLastResult(outcome);
+
+            if (method === 'nft_mint_prepaid') {
+                console.log(`[UploadSession] ${method} result:`, result);
+            }
+
+            return result;
+        });
     }
 
     getPublicKey(): string | null {
