@@ -15,24 +15,18 @@ NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
 NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"
 NEAR_NETWORK = "mainnet"
 
-# KV namespace for AES encryption keys
-# Create with: wrangler kv:namespace create VIDEO_KEYS
-# Then replace the IDs below with the actual IDs from Cloudflare dashboard
+# Default environment reuses operator_a namespaces for local dev / wrangler dev
 [[kv_namespaces]]
 binding = "VIDEO_KEYS"
-id = "7af9ebeeffaa4f4bace8e0347963d165"
+id = "0c3ebfd61c164582a792f8cf47d28c6f"
 
-# KV namespace for rate limiting
-# Create with: wrangler kv:namespace create RATE_LIMIT
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
-id = "d6371b2b2d3d4cf382af02a341f865da"
+id = "1dec41d4ba52438cbe1a9729d6d9bcf5"
 
-# KV namespace for access cache (ticket verification cache)
-# Create with: wrangler kv:namespace create ACCESS_CACHE
 [[kv_namespaces]]
 binding = "ACCESS_CACHE"
-id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+id = "0646e10da6cb4e3c9d9bdc1c40d1ef07"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Multi-operator production environments
@@ -68,19 +62,15 @@ REGISTRY_OPERATOR_ACCOUNT_ID = "kms-a.youtick.near"
 
 [[env.operator_a.kv_namespaces]]
 binding = "VIDEO_KEYS"
-# TODO(kv-isolation): Replace with operator_a-specific namespace ID
-# Run: scripts/create-operator-kv-namespaces.sh then scripts/migrate-operator-kv.sh
-id = "7af9ebeeffaa4f4bace8e0347963d165"
+id = "0c3ebfd61c164582a792f8cf47d28c6f"
 
 [[env.operator_a.kv_namespaces]]
 binding = "RATE_LIMIT"
-# TODO(kv-isolation): Replace with operator_a-specific namespace ID
-id = "d6371b2b2d3d4cf382af02a341f865da"
+id = "1dec41d4ba52438cbe1a9729d6d9bcf5"
 
 [[env.operator_a.kv_namespaces]]
 binding = "ACCESS_CACHE"
-# TODO(kv-isolation): Replace with operator_a-specific namespace ID
-id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+id = "0646e10da6cb4e3c9d9bdc1c40d1ef07"
 
 [env.operator_b]
 name = "youtick-kms-b"
@@ -95,18 +85,15 @@ REGISTRY_OPERATOR_ACCOUNT_ID = "kms-b.youtick.near"
 
 [[env.operator_b.kv_namespaces]]
 binding = "VIDEO_KEYS"
-# TODO(kv-isolation): Replace with operator_b-specific namespace ID
-id = "7af9ebeeffaa4f4bace8e0347963d165"
+id = "47fc34cea8574690957e06f18e8ecc6f"
 
 [[env.operator_b.kv_namespaces]]
 binding = "RATE_LIMIT"
-# TODO(kv-isolation): Replace with operator_b-specific namespace ID
-id = "d6371b2b2d3d4cf382af02a341f865da"
+id = "74a25ceaeba049049a13d4721942225e"
 
 [[env.operator_b.kv_namespaces]]
 binding = "ACCESS_CACHE"
-# TODO(kv-isolation): Replace with operator_b-specific namespace ID
-id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+id = "16acc6f75a56489f89c02cdd4c4d658a"
 
 [env.operator_c]
 name = "youtick-kms-c"
@@ -121,18 +108,15 @@ REGISTRY_OPERATOR_ACCOUNT_ID = "kms-c.youtick.near"
 
 [[env.operator_c.kv_namespaces]]
 binding = "VIDEO_KEYS"
-# TODO(kv-isolation): Replace with operator_c-specific namespace ID
-id = "7af9ebeeffaa4f4bace8e0347963d165"
+id = "15a5b1d1f76e4517b5c4796348625302"
 
 [[env.operator_c.kv_namespaces]]
 binding = "RATE_LIMIT"
-# TODO(kv-isolation): Replace with operator_c-specific namespace ID
-id = "d6371b2b2d3d4cf382af02a341f865da"
+id = "5ed00da9a7af488288a59d61638d10f3"
 
 [[env.operator_c.kv_namespaces]]
 binding = "ACCESS_CACHE"
-# TODO(kv-isolation): Replace with operator_c-specific namespace ID
-id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+id = "e0dcc7009ce64eb480a3697974c72fca"
 
 [env.operator_d]
 name = "youtick-kms-d"
@@ -147,18 +131,15 @@ REGISTRY_OPERATOR_ACCOUNT_ID = "kms-d.youtick.near"
 
 [[env.operator_d.kv_namespaces]]
 binding = "VIDEO_KEYS"
-# TODO(kv-isolation): Replace with operator_d-specific namespace ID
-id = "7af9ebeeffaa4f4bace8e0347963d165"
+id = "28b426fbf61044178c9e0008f38834be"
 
 [[env.operator_d.kv_namespaces]]
 binding = "RATE_LIMIT"
-# TODO(kv-isolation): Replace with operator_d-specific namespace ID
-id = "d6371b2b2d3d4cf382af02a341f865da"
+id = "8186839f0d1b42f6ad1e1df4b3ec8157"
 
 [[env.operator_d.kv_namespaces]]
 binding = "ACCESS_CACHE"
-# TODO(kv-isolation): Replace with operator_d-specific namespace ID
-id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+id = "64dc579a07f044dda4a1b875fa1c68f3"
 
 [env.operator_e]
 name = "youtick-kms-e"
@@ -173,18 +154,15 @@ REGISTRY_OPERATOR_ACCOUNT_ID = "kms-e.youtick.near"
 
 [[env.operator_e.kv_namespaces]]
 binding = "VIDEO_KEYS"
-# TODO(kv-isolation): Replace with operator_e-specific namespace ID
-id = "7af9ebeeffaa4f4bace8e0347963d165"
+id = "a679af437f2743c88194a209887ee48a"
 
 [[env.operator_e.kv_namespaces]]
 binding = "RATE_LIMIT"
-# TODO(kv-isolation): Replace with operator_e-specific namespace ID
-id = "d6371b2b2d3d4cf382af02a341f865da"
+id = "f37060c41fe24ee1a1cb43f7a80d7793"
 
 [[env.operator_e.kv_namespaces]]
 binding = "ACCESS_CACHE"
-# TODO(kv-isolation): Replace with operator_e-specific namespace ID
-id = "aeb0fda6a8c448b88cf04d69a3b9373b"
+id = "40ab545a0fa7479abe635f37292ca94b"
 
 # Testnet environment — local development only
 [env.testnet]

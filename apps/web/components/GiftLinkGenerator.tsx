@@ -53,9 +53,9 @@ export function GiftLinkGenerator({
         fetchEventDetails();
     }, [eventCid]);
 
-    const GIFT_COST_PER_TICKET = 0.12;
     const displayPrice = eventPrice === "0" ? 0 : (Number(eventPrice) / 1e24);
-    const estimatedCost = (ticketCount * (displayPrice + GIFT_COST_PER_TICKET)).toFixed(2);
+    const giftDeposit = Number(DEPOSIT_CONSTANTS.giftDepositPerLink) / 1e24;
+    const estimatedCost = (ticketCount * (displayPrice + giftDeposit)).toFixed(2);
 
     const handleGenerate = async () => {
         setGenerating(true);

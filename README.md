@@ -79,9 +79,11 @@ NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
 - [Docs index](./docs/README.md)
 - [System architecture](./docs/architecture/README.md)
 - [Storage and delivery](./docs/architecture/storage.md)
-- [User flows](./docs/guides/user-flows.md)
+- [Quick start](./docs/quick-start.md)
+- [Configuration](./docs/getting-started/configuration.md)
 - [Contract methods](./docs/api/contract-methods.md)
-- [Mainnet runbook](./docs/operations/mainnet-runbook.md)
+- [Security](./docs/security.md)
+- [Business (TR)](./docs/business/youtick-avrupa-sirketlesme-raporu-2026-04.md)
 
 ---
 
