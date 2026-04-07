@@ -51,6 +51,7 @@ impl Contract {
             user_deposits: old.user_deposits,
             events: old.events,
             next_token_id: old.next_token_id,
+            active_event_count: 0, // rebuilt via rebuild_event_counter after migration
             gift_drops: old.gift_drops,
             trial_pool: old.trial_pool,
             onboarding_keys: old.onboarding_keys,

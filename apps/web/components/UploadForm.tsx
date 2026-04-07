@@ -281,6 +281,7 @@ export function UploadForm() {
         if (encrypted && !aesKeyB64) {
             throw new Error('Segmented encrypted delivery requires an AES key');
         }
+        const encryptionKey = aesKeyB64;
 
         let posterCid: string | undefined;
         if (posterBlob) {
@@ -300,7 +301,7 @@ export function UploadForm() {
         let initUploadBlob: Blob;
 
         if (encrypted) {
-            const encryptedInit = await encryptBufferWithCounter(initBytes, aesKeyB64!);
+            const encryptedInit = await encryptBufferWithCounter(initBytes, encryptionKey as string);
             initCounterB64 = encryptedInit.counterB64;
             initUploadBlob = new Blob([toBlobPart(encryptedInit.ciphertext)], { type: 'application/octet-stream' });
         } else {
@@ -321,7 +322,7 @@ export function UploadForm() {
                 let payloadBlob: Blob;
 
                 if (encrypted) {
-                    const encryptedPayload = await encryptBufferWithCounter(payloadBytes, aesKeyB64!);
+                    const encryptedPayload = await encryptBufferWithCounter(payloadBytes, encryptionKey as string);
                     payloadCounterB64 = encryptedPayload.counterB64;
                     payloadBlob = new Blob([toBlobPart(encryptedPayload.ciphertext)], { type: 'application/octet-stream' });
                 } else {
