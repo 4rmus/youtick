@@ -12,7 +12,7 @@ Next.js frontend for the YouTick video platform.
 | Storage & Delivery | [docs/architecture/storage.md](../../docs/architecture/storage.md) |
 | Upload Sessions | [docs/architecture/session-keys.md](../../docs/architecture/session-keys.md) |
 | Smart Contract | [docs/architecture/smart-contract.md](../../docs/architecture/smart-contract.md) |
-| User Flows | [docs/guides/user-flows.md](../../docs/guides/user-flows.md) |
+| Quick start | [docs/quick-start.md](../../docs/quick-start.md) |
 | Contract Methods | [docs/api/contract-methods.md](../../docs/api/contract-methods.md) |
 
 ## Development

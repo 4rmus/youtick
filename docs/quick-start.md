@@ -48,7 +48,7 @@ NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry-1773606802388.v2-0.utick.testnet
 NEXT_PUBLIC_KMS_URL=http://localhost:8787
 ```
 
-See full variable list in [Environment Reference](./guides/environment.md).
+See full variable list in [Configuration Reference](./getting-started/configuration.md).
 
 ### 4. Start app
 
@@ -110,6 +110,6 @@ cargo test
 | Goal | Read |
 |------|------|
 | Understand architecture | [Architecture Overview](./architecture/README.md) |
-| Follow user journeys | [User Flows](./guides/user-flows.md) |
+| Storage & playback model | [Storage & Delivery](./architecture/storage.md) |
 | Work on frontend modules | [Frontend](./frontend.md) |
 | Contract internals | [Smart Contract Architecture](./architecture/smart-contract.md) |

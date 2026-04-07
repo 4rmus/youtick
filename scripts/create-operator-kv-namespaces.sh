@@ -29,11 +29,18 @@ for op in "${OPERATORS[@]}"; do
         echo -n "  Creating ${title}... "
 
         output=$(npx wrangler kv namespace create "${title}" 2>&1)
-        id=$(echo "$output" | grep -oP 'id = "\K[^"]+' || echo "")
+        # Parse 'id = "xxx"' format (portable — no grep -P needed)
+        id=$(echo "$output" | sed -n 's/.*id = "\([^"]*\)".*/\1/p' | head -1)
 
         if [ -z "$id" ]; then
-            # Try alternate parsing
-            id=$(echo "$output" | grep -oP '"id":\s*"\K[^"]+' || echo "FAILED")
+            # Try JSON format: "id": "xxx"
+            id=$(echo "$output" | sed -n 's/.*"id":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+        fi
+
+        if [ -z "$id" ]; then
+            echo "FAILED — parse output manually:"
+            echo "$output"
+            continue
         fi
 
         echo "${id}"

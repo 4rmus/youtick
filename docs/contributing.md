@@ -47,6 +47,8 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
 ```
 
+Tam degisken listesi ve aciklamalar: [Configuration Reference](getting-started/configuration.md).
+
 ---
 
 ## PR oncesi kontrol

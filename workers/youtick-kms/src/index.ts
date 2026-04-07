@@ -268,11 +268,15 @@ async function fetchWithTimeout(
 ): Promise<Response> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const externalSignal = init.signal;
+    const signal = externalSignal
+        ? AbortSignal.any([controller.signal, externalSignal])
+        : controller.signal;
 
     try {
         return await fetch(input, {
             ...init,
-            signal: controller.signal,
+            signal,
         });
     } finally {
         clearTimeout(timeout);
@@ -280,8 +284,9 @@ async function fetchWithTimeout(
 }
 
 /**
- * Call a NEAR view function via RPC with automatic failover.
- * Uses raw fetch — no near-api-js dependency needed in Worker.
+ * Call a NEAR view function via RPC with parallel failover.
+ * All RPC endpoints are queried concurrently; the first successful
+ * response wins and the remaining requests are aborted.
  */
 async function nearViewCall<T>(
     env: Env,
@@ -305,19 +310,21 @@ async function nearViewCall<T>(
         },
     });
 
-    let lastError: Error | null = null;
+    const errors = new Map<string, Error>();
+    const abortControllers = rpcPool.map(() => new AbortController());
 
-    for (const rpcUrl of rpcPool) {
+    const promises = rpcPool.map(async (rpcUrl, index) => {
         try {
+            const controller = abortControllers[index];
             const response = await fetchWithTimeout(rpcUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body,
+                signal: controller.signal,
             }, RPC_REQUEST_TIMEOUT_MS);
 
             if (!response.ok) {
-                lastError = new Error(`RPC ${rpcUrl} returned ${response.status}`);
-                continue;
+                throw new Error(`RPC ${rpcUrl} returned ${response.status}`);
             }
 
             const json = (await response.json()) as {
@@ -326,30 +333,42 @@ async function nearViewCall<T>(
             };
 
             if (json.error) {
-                lastError = new Error(`RPC error: ${json.error.message}`);
-                continue;
+                throw new Error(`RPC error: ${json.error.message}`);
             }
 
             if (!json.result?.result) {
-                lastError = new Error(`RPC ${rpcUrl}: no result`);
-                continue;
+                throw new Error(`RPC ${rpcUrl}: no result`);
             }
 
             preferredRpcUrlByNetwork.set(env.NEAR_NETWORK, rpcUrl);
+
+            // Abort remaining requests
+            abortControllers.forEach((ac, i) => {
+                if (i !== index) ac.abort();
+            });
+
             const resultStr = String.fromCharCode(...json.result.result);
             return JSON.parse(resultStr) as T;
         } catch (e) {
-            lastError = e instanceof Error ? e : new Error(String(e));
-            continue;
+            const error = e instanceof Error ? e : new Error(String(e));
+            errors.set(rpcUrl, error);
+            throw error;
         }
-    }
+    });
 
-    throw lastError || new Error('All RPC endpoints failed');
+    // Race all RPC calls — first success wins. If all fail, throw the last error.
+    try {
+        return await Promise.any(promises);
+    } catch {
+        const lastError = Array.from(errors.values()).pop();
+        console.error('[KMS] nearViewCall: all RPC endpoints failed:', [...errors.entries()]);
+        throw lastError || new Error('All RPC endpoints failed');
+    }
 }
 
 /**
  * Raw NEAR RPC query (non-contract, e.g. view_access_key).
- * Attempts failover across RPC pool.
+ * Parallel failover across RPC pool — first success wins.
  */
 async function nearRpcQuery<T>(
     env: Env,
@@ -363,19 +382,21 @@ async function nearRpcQuery<T>(
         params,
     });
 
-    let lastError: Error | null = null;
+    const errors = new Map<string, Error>();
+    const abortControllers = rpcPool.map(() => new AbortController());
 
-    for (const rpcUrl of rpcPool) {
+    const promises = rpcPool.map(async (rpcUrl, index) => {
         try {
+            const controller = abortControllers[index];
             const response = await fetchWithTimeout(rpcUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body,
+                signal: controller.signal,
             }, RPC_REQUEST_TIMEOUT_MS);
 
             if (!response.ok) {
-                lastError = new Error(`RPC ${rpcUrl} returned ${response.status}`);
-                continue;
+                throw new Error(`RPC ${rpcUrl} returned ${response.status}`);
             }
 
             const json = (await response.json()) as {
@@ -384,20 +405,30 @@ async function nearRpcQuery<T>(
             };
 
             if (json.error) {
-                // "does not exist" means the key is NOT on the account
-                lastError = new Error(`RPC error: ${json.error.message}`);
-                continue;
+                throw new Error(`RPC error: ${json.error.message}`);
             }
+
+            // Abort remaining requests
+            abortControllers.forEach((ac, i) => {
+                if (i !== index) ac.abort();
+            });
 
             preferredRpcUrlByNetwork.set(env.NEAR_NETWORK, rpcUrl);
             return json.result as T;
         } catch (e) {
-            lastError = e instanceof Error ? e : new Error(String(e));
-            continue;
+            const error = e instanceof Error ? e : new Error(String(e));
+            errors.set(rpcUrl, error);
+            throw error;
         }
-    }
+    });
 
-    throw lastError || new Error('All RPC endpoints failed');
+    try {
+        return await Promise.any(promises);
+    } catch {
+        const lastError = Array.from(errors.values()).pop();
+        console.error('[KMS] nearRpcQuery: all RPC endpoints failed:', [...errors.entries()]);
+        throw lastError || new Error('All RPC endpoints failed');
+    }
 }
 
 /**
@@ -747,37 +778,7 @@ async function verifyEd25519Signature(
 // Utility: Base58 & Hex
 // ============================================================================
 
-const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-
-function base58Decode(str: string): Uint8Array {
-    // Handle ed25519: prefix from NEAR keys
-    const cleanStr = str.replace(/^ed25519:/, '');
-
-    const bytes: number[] = [0];
-    for (const char of cleanStr) {
-        const idx = BASE58_ALPHABET.indexOf(char);
-        if (idx < 0) throw new Error(`Invalid base58 char: ${char}`);
-
-        let carry = idx;
-        for (let j = 0; j < bytes.length; j++) {
-            carry += bytes[j] * 58;
-            bytes[j] = carry & 0xff;
-            carry >>= 8;
-        }
-        while (carry > 0) {
-            bytes.push(carry & 0xff);
-            carry >>= 8;
-        }
-    }
-
-    // Handle leading zeros
-    for (const char of cleanStr) {
-        if (char !== '1') break;
-        bytes.push(0);
-    }
-
-    return new Uint8Array(bytes.reverse());
-}
+import { base58Decode } from '../../shared/src/base58';
 
 function hexToBytes(hex: string): Uint8Array {
     const bytes = new Uint8Array(hex.length / 2);
