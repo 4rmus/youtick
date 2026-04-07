@@ -20,7 +20,7 @@ export default withMermaid(
         { text: 'Getting Started', link: '/getting-started/prerequisites' },
         { text: 'Architecture', link: '/architecture/' },
         { text: 'API', link: '/api/contract-methods' },
-        { text: 'Guides', link: '/guides/user-flows' },
+        { text: 'Quick Start', link: '/quick-start' },
       ],
 
       sidebar: [
@@ -52,14 +52,6 @@ export default withMermaid(
           ],
         },
         {
-          text: 'Guides',
-          items: [
-            { text: 'User Flows', link: '/guides/user-flows' },
-            { text: 'Developer Guide', link: '/guides/developer-guide' },
-            { text: 'Environment', link: '/guides/environment' },
-          ],
-        },
-        {
           text: 'Project',
           items: [
             { text: 'Overview', link: '/overview' },
@@ -68,6 +60,10 @@ export default withMermaid(
             { text: 'Testing', link: '/testing' },
             { text: 'Contributing', link: '/contributing' },
             { text: 'Frontend', link: '/frontend' },
+            {
+              text: 'Business (TR)',
+              link: '/business/youtick-avrupa-sirketlesme-raporu-2026-04',
+            },
           ],
         },
       ],

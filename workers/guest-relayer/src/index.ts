@@ -1,4 +1,5 @@
 import { Account, KeyPair, KeyPairSigner, JsonRpcProvider, actions, type KeyPairString } from 'near-api-js';
+import { base58Decode } from '../../shared/src/base58';
 
 export interface Env {
     ALLOWED_ORIGINS: string;
@@ -186,38 +187,6 @@ async function hasTicket(env: Env, accountId: string, encryptedCid: string): Pro
             }),
         },
     });
-}
-
-function base58Decode(value: string): Uint8Array {
-    const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-    const clean = value.replace(/^ed25519:/, '');
-    const bytes: number[] = [0];
-
-    for (const char of clean) {
-        const index = alphabet.indexOf(char);
-        if (index < 0) {
-            throw new Error(`Invalid base58 character: ${char}`);
-        }
-
-        let carry = index;
-        for (let i = 0; i < bytes.length; i += 1) {
-            carry += bytes[i] * 58;
-            bytes[i] = carry & 0xff;
-            carry >>= 8;
-        }
-
-        while (carry > 0) {
-            bytes.push(carry & 0xff);
-            carry >>= 8;
-        }
-    }
-
-    for (const char of clean) {
-        if (char !== '1') break;
-        bytes.push(0);
-    }
-
-    return new Uint8Array(bytes.reverse());
 }
 
 function publicKeyToImplicitAccountId(publicKey: string): string {

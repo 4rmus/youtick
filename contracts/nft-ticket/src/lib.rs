@@ -17,6 +17,7 @@ use near_sdk::{
 use std::collections::HashMap;
 use std::num::NonZeroU128;
 
+mod events;
 mod migrate;
 
 pub struct StorageKey(pub &'static [u8]);
@@ -261,6 +262,8 @@ pub struct Contract {
     user_deposits: LookupMap<AccountId, NearToken>,
     events: UnorderedMap<String, Event>, // Key: encrypted_cid (UUID)
     next_token_id: u64,
+    /// Cached count of non-banned events to avoid O(N) iteration in get_events_count.
+    active_event_count: u64,
     // Gift drop system
     gift_drops: LookupMap<String, GiftDrop>, // Key: hash of secret key
     // Sponsored trial pool - contract pays for trial account creation
@@ -311,6 +314,7 @@ impl Contract {
             user_deposits: LookupMap::new(StorageKey::USER_DEPOSITS),
             events: UnorderedMap::new(StorageKey::EVENTS),
             next_token_id: 0,
+            active_event_count: 0,
             gift_drops: LookupMap::new(StorageKey::GIFT_DROPS),
             trial_pool: NearToken::from_yoctonear(0),
             onboarding_keys: LookupSet::new(StorageKey::ONBOARDING_KEYS),
@@ -698,6 +702,10 @@ impl Contract {
             env::predecessor_account_id() == self.tokens.owner_id,
             "Only owner can set next token ID"
         );
+        require!(
+            new_id >= self.next_token_id,
+            "New token ID must be greater than or equal to current next token ID"
+        );
         self.next_token_id = new_id;
     }
 
@@ -721,6 +729,8 @@ impl Contract {
         };
 
         self.lazy_banned_events().insert(&encrypted_cid, &ban_info);
+        // Event banned — decrement active counter for O(1) get_events_count
+        self.active_event_count = self.active_event_count.saturating_sub(1);
     }
 
     /// Unban an event (owner only). Restores event to normal listings.
@@ -732,6 +742,8 @@ impl Contract {
 
         let removed = self.lazy_banned_events().remove(&encrypted_cid);
         require!(removed.is_some(), "Event is not banned");
+        // Event unbanned — increment active counter for O(1) get_events_count
+        self.active_event_count = self.active_event_count.saturating_add(1);
     }
 
     /// View: Check if an event is banned (public)
@@ -1106,6 +1118,9 @@ impl Contract {
         self.events.insert(&encrypted_cid, &event);
         self.store_event_access_mode(&encrypted_cid, normalized_access_mode);
 
+        // Increment active event counter for O(1) get_events_count
+        self.active_event_count = self.active_event_count.saturating_add(1);
+
         // Store USD price in separate map (backward-compatible)
         if let Some(usd) = price_usd {
             self.lazy_event_price_usd().insert(&encrypted_cid, &usd);
@@ -1133,20 +1148,10 @@ impl Contract {
     /// Cursor-based paginated event listing.
     /// - `cursor`: CID to start after (None = start from beginning)
     /// - `limit`: max items to return (default 50, capped at 100)
-    pub fn get_events_paginated(
-        &self,
-        cursor: Option<String>,
-        limit: Option<u64>,
-    ) -> PaginatedEventsResponse {
+    pub fn get_events_paginated(&self, cursor: Option<String>, limit: Option<u64>) -> PaginatedEventsResponse {
         let limit = limit.unwrap_or(50).min(100) as usize;
         let banned = self.lazy_banned_events();
-
-        // Count non-banned events for total_count
-        let total_count = self
-            .events
-            .iter()
-            .filter(|(cid, _)| banned.get(cid).is_none())
-            .count() as u64;
+        let total_count = self.active_event_count;
 
         // Build an iterator that skips past the cursor if provided
         let mut iter = self.events.iter();
@@ -1202,13 +1207,9 @@ impl Contract {
         }
     }
 
-    /// Returns the total number of non-banned events.
+    /// Returns the total number of non-banned events in O(1).
     pub fn get_events_count(&self) -> u64 {
-        let banned = self.lazy_banned_events();
-        self.events
-            .iter()
-            .filter(|(cid, _)| banned.get(cid).is_none())
-            .count() as u64
+        self.active_event_count
     }
 
     pub fn get_event(&self, encrypted_cid: String) -> Option<EventResponse> {
@@ -1253,6 +1254,9 @@ impl Contract {
 
         self.events.insert(&encrypted_cid, &event);
         self.store_event_access_mode(&encrypted_cid, normalized_access_mode);
+
+        // Increment active event counter for O(1) get_events_count
+        self.active_event_count = self.active_event_count.saturating_add(1);
 
         // Store USD price in separate map (backward-compatible)
         if let Some(usd) = price_usd {
@@ -1327,7 +1331,9 @@ impl Contract {
     /// explicitly transfers to creator. No automatic refund to buyer.
     #[payable]
     pub fn buy_ticket(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Token {
-        let event = self.events.get(&encrypted_cid).expect("Event not found");
+        let maybe_event = self.events.get(&encrypted_cid);
+        require!(maybe_event.is_some(), "Event not found");
+        let event = maybe_event.unwrap();
         require!(
             self.lazy_banned_events().get(&encrypted_cid).is_none(),
             "This event has been banned and tickets cannot be purchased"
@@ -1397,12 +1403,19 @@ impl Contract {
         self.log_purchase(
             env::predecessor_account_id(),
             event.creator_id.clone(),
-            encrypted_cid,
+            encrypted_cid.clone(),
             token.token_id.clone(),
             required_price.as_yoctonear(),
             creator_amount,
             commission,
             purchase_type,
+        );
+
+        events::emit_nft_purchased(
+            token.token_id.clone(),
+            receiver_id.clone(),
+            Some(encrypted_cid.clone()),
+            if is_free { None } else { Some(required_price.as_yoctonear().to_string()) },
         );
 
         token
@@ -1412,14 +1425,27 @@ impl Contract {
     #[payable]
     #[private]
     pub fn buy_ticket_internal(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Token {
-        let event = self.events.get(&encrypted_cid).expect("Event not found");
+        let maybe_event = self.events.get(&encrypted_cid);
+        require!(maybe_event.is_some(), "Event not found");
+        let event = maybe_event.unwrap();
         require!(
             self.lazy_banned_events().get(&encrypted_cid).is_none(),
             "This event has been banned and tickets cannot be purchased"
         );
 
+        let price_yoctonear = event.price.0;
+
         // Mint the NFT using helper (storage paid by attached deposit from contract)
-        self.internal_mint_ticket(receiver_id, &event, encrypted_cid, false)
+        let token = self.internal_mint_ticket(receiver_id.clone(), &event, encrypted_cid.clone(), false);
+
+        events::emit_nft_purchased(
+            token.token_id.clone(),
+            receiver_id.clone(),
+            Some(encrypted_cid),
+            Some(price_yoctonear.to_string()),
+        );
+
+        token
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -2033,7 +2059,9 @@ impl Contract {
         });
 
         // Verify event exists, is not banned, and is free
-        let event = self.events.get(&encrypted_cid).expect("Event not found");
+        let maybe_event = self.events.get(&encrypted_cid);
+        require!(maybe_event.is_some(), "Event not found");
+        let event = maybe_event.unwrap();
         require!(
             self.lazy_banned_events().get(&encrypted_cid).is_none(),
             "This event has been banned and tickets cannot be claimed"
@@ -2300,7 +2328,9 @@ impl Contract {
             "Only owner or authorized relayer can call sponsored free ticket claims"
         );
 
-        let event = self.events.get(&encrypted_cid).expect("Event not found");
+        let maybe_event = self.events.get(&encrypted_cid);
+        require!(maybe_event.is_some(), "Event not found");
+        let event = maybe_event.unwrap();
         require!(
             self.lazy_banned_events().get(&encrypted_cid).is_none(),
             "This event has been banned and tickets cannot be claimed"
@@ -2444,7 +2474,9 @@ impl Contract {
     /// SECURITY: Requires deposit for storage (0.01 NEAR)
     #[payable]
     pub fn gift_ticket(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Token {
-        let event = self.events.get(&encrypted_cid).expect("Event not found");
+        let maybe_event = self.events.get(&encrypted_cid);
+        require!(maybe_event.is_some(), "Event not found");
+        let event = maybe_event.unwrap();
 
         // Verify caller is the event creator
         require!(
@@ -2506,7 +2538,9 @@ impl Contract {
         require!(num_keys > 0 && num_keys <= 50, "Must create 1-50 keys");
 
         // Verify event exists
-        let event = self.events.get(&event_cid).expect("Event not found");
+        let maybe_event = self.events.get(&event_cid);
+        require!(maybe_event.is_some(), "Event not found");
+        let event = maybe_event.unwrap();
         require!(
             self.lazy_banned_events().get(&event_cid).is_none(),
             "This event has been banned and gift drops cannot be created"
@@ -2587,10 +2621,9 @@ impl Contract {
         // Identify the drop via the Signer's Public Key
         let signer_pk: String = String::from(&env::signer_account_pk());
 
-        let mut gift_drop = self
-            .gift_drops
-            .get(&signer_pk)
-            .expect("Invalid or already claimed gift key");
+        let maybe_gift = self.gift_drops.get(&signer_pk);
+        require!(maybe_gift.is_some(), "Invalid or already claimed gift key");
+        let mut gift_drop = maybe_gift.unwrap();
 
         require!(gift_drop.remaining_claims > 0, "Gift already claimed");
 
@@ -2654,10 +2687,9 @@ impl Contract {
         let signer_public_key = env::signer_account_pk();
         let signer_pk: String = String::from(&signer_public_key);
 
-        let mut gift_drop = self
-            .gift_drops
-            .get(&signer_pk)
-            .expect("Invalid or already claimed gift key");
+        let maybe_gift = self.gift_drops.get(&signer_pk);
+        require!(maybe_gift.is_some(), "Invalid or already claimed gift key");
+        let mut gift_drop = maybe_gift.unwrap();
 
         require!(gift_drop.remaining_claims > 0, "Gift already claimed");
 

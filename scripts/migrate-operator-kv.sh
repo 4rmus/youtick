@@ -27,21 +27,21 @@ set -euo pipefail
 
 SHARED_KV_ID="${SHARED_KV_ID:?Set SHARED_KV_ID to the current shared VIDEO_KEYS namespace ID}"
 
-declare -A OP_KV_MAP=(
-    ["kms-a.youtick.near"]="${OP_A_KV_ID:?Set OP_A_KV_ID}"
-    ["kms-b.youtick.near"]="${OP_B_KV_ID:?Set OP_B_KV_ID}"
-    ["kms-c.youtick.near"]="${OP_C_KV_ID:?Set OP_C_KV_ID}"
-    ["kms-d.youtick.near"]="${OP_D_KV_ID:?Set OP_D_KV_ID}"
-    ["kms-e.youtick.near"]="${OP_E_KV_ID:?Set OP_E_KV_ID}"
-)
+# Operator account → KV ID mapping (bash 3.2 compatible, no associative arrays)
+OP_ACCOUNTS="kms-a.youtick.near kms-b.youtick.near kms-c.youtick.near kms-d.youtick.near kms-e.youtick.near"
+OP_KV_IDS="${OP_A_KV_ID:?Set OP_A_KV_ID} ${OP_B_KV_ID:?Set OP_B_KV_ID} ${OP_C_KV_ID:?Set OP_C_KV_ID} ${OP_D_KV_ID:?Set OP_D_KV_ID} ${OP_E_KV_ID:?Set OP_E_KV_ID}"
 
 echo "Listing all keys from shared KV namespace..."
 ALL_KEYS=$(npx wrangler kv key list --namespace-id "$SHARED_KV_ID" 2>/dev/null)
 
 echo "Found keys in shared namespace."
 
-for OP_ACCOUNT in "${!OP_KV_MAP[@]}"; do
-    TARGET_KV="${OP_KV_MAP[$OP_ACCOUNT]}"
+# Iterate using indexed arrays (bash 3.2 compatible)
+set -- $OP_ACCOUNTS
+i=0
+for OP_ACCOUNT in $OP_ACCOUNTS; do
+    i=$((i + 1))
+    TARGET_KV=$(echo "$OP_KV_IDS" | cut -d' ' -f"$i")
     echo ""
     echo "=== Migrating data for ${OP_ACCOUNT} -> ${TARGET_KV} ==="
 

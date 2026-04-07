@@ -349,11 +349,16 @@ async function placeWithRetry(
 
     console.warn(
       `[DECENTRALIZATION_METRIC] crust_storage_order_retry`,
-      { cid: asset.cid, type: asset.type, attempt: attempt + 1, maxRetries, status: lastResult.status },
+      { cid: asset.cid, type: asset.type, attempt: attempt + 1, maxRetries, status: lastResult?.status ?? 'unknown' },
     );
   }
 
-  return lastResult!;
+  return lastResult ?? {
+    requestId: '',
+    status: 'failed',
+    cid: asset.cid,
+    createdAt: Date.now(),
+  };
 }
 
 function sleep(ms: number): Promise<void> {
