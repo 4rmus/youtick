@@ -219,14 +219,17 @@ function corsHeaders(request: Request, env: Env): Record<string, string> {
     const origin = request.headers.get('Origin') || '';
     const allowed = getAllowedOrigins(env);
 
-    // Development support: explicitly allow localhost and 127.0.0.1 variants
+    // CORS-1 fix: localhost origins are only allowed in non-mainnet environments.
+    // On mainnet, only explicitly listed origins in ALLOWED_ORIGINS are accepted.
     const isLocalhost =
         origin.startsWith('http://localhost:') ||
         origin.startsWith('http://127.0.0.1:') ||
         origin === 'http://localhost' ||
         origin === 'http://127.0.0.1';
 
-    if (!isLocalhost && !allowed.has(origin)) {
+    const localhostAllowed = env.NEAR_NETWORK !== 'mainnet' && isLocalhost;
+
+    if (!localhostAllowed && !allowed.has(origin)) {
         return {};
     }
 
