@@ -76,7 +76,7 @@ export async function importAESKey(keyB64: string): Promise<CryptoKey> {
     const keyBytes = base64Decode(keyB64);
     return await crypto.subtle.importKey(
         'raw',
-        keyBytes,
+        keyBytes as BufferSource,
         { name: 'AES-CTR', length: AES_KEY_BITS },
         false,
         ['encrypt', 'decrypt'],
