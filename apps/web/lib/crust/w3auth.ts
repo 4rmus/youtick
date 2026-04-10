@@ -55,13 +55,15 @@ export async function generateW3AuthToken(accountId: string): Promise<CrustAuthT
     const address = publicKeyStr.replace('ed25519:', '');
 
     // Sign the address (public key bytes) with session key
-    const message = Buffer.from(address);
+    const message = new TextEncoder().encode(address);
     const signResult = await sessionKey.sign(message);
-    const signatureHex = Buffer.from(signResult.signature).toString('hex');
+    const signatureHex = Array.from(new Uint8Array(signResult.signature))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
 
     // Build W3Auth payload: near-{address}:{signature_hex}
     const payload = `near-${address}:${signatureHex}`;
-    const header = `Basic ${Buffer.from(payload).toString('base64')}`;
+    const header = `Basic ${btoa(payload)}`;
 
     const now = Date.now();
     const token: CrustAuthToken = {

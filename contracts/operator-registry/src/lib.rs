@@ -38,6 +38,7 @@ enum StorageKey {
 #[derive(PanicOnDefault)]
 pub struct OperatorRegistryContract {
     owner_id: AccountId,
+    pending_owner_id: Option<AccountId>,
     threshold_config: ThresholdConfig,
     decryption_operators: LookupMap<AccountId, OperatorRecord>,
     decryption_operator_ids: UnorderedSet<AccountId>,
@@ -51,6 +52,7 @@ impl OperatorRegistryContract {
     pub fn new(owner_id: AccountId) -> Self {
         Self {
             owner_id,
+            pending_owner_id: None,
             threshold_config: ThresholdConfig {
                 total_operators: 5,
                 required_shares: 3,
@@ -123,6 +125,12 @@ impl OperatorRegistryContract {
             required_shares <= total_operators,
             "Required shares cannot exceed total operators",
         );
+        // OR-1 fix: Validate total_operators matches actual registered operator count
+        let actual_operator_count = self.decryption_operator_ids.len() as u8;
+        require!(
+            total_operators == actual_operator_count,
+            "total_operators must match actual registered operator count",
+        );
 
         self.threshold_config = ThresholdConfig {
             total_operators,
@@ -130,9 +138,29 @@ impl OperatorRegistryContract {
         };
     }
 
+    // OW-1 fix: Two-step ownership transfer (propose + accept)
+    pub fn propose_owner(&mut self, proposed_owner_id: AccountId) {
+        self.assert_owner();
+        self.pending_owner_id = Some(proposed_owner_id);
+    }
+
+    pub fn accept_ownership(&mut self) {
+        let pending = self.pending_owner_id.take();
+        require!(pending.is_some(), "No pending ownership transfer");
+        let new_owner = pending.unwrap();
+        require!(
+            env::predecessor_account_id() == new_owner,
+            "Only the proposed owner can accept ownership",
+        );
+        self.owner_id = new_owner;
+    }
+
+    /// Legacy: kept for backward compatibility, delegates to two-step flow
+    #[deprecated(note = "Use propose_owner + accept_ownership for safe transfers")]
     pub fn set_owner(&mut self, owner_id: AccountId) {
         self.assert_owner();
-        self.owner_id = owner_id;
+        self.pending_owner_id = Some(owner_id);
+        env::log_str("WARNING: set_owner is deprecated. Use propose_owner + accept_ownership.");
     }
 
     pub fn get_decryption_operator(&self, account_id: AccountId) -> Option<OperatorRecord> {
@@ -238,10 +266,29 @@ mod tests {
         testing_env!(context("owner.testnet").build());
         let mut contract = OperatorRegistryContract::new(account("owner.testnet"));
 
-        contract.set_threshold_config(5, 3);
+        // Register 3 operators first to match threshold config
+        for i in 1..=3 {
+            contract.upsert_decryption_operator(
+                account(&format!("operator-{}.testnet", i)),
+                format!("https://operator-{}.example", i),
+                format!("ed25519:key-{}", i),
+            );
+        }
+
+        contract.set_threshold_config(3, 2);
         let config = contract.get_threshold_config();
 
-        assert_eq!(config.total_operators, 5);
-        assert_eq!(config.required_shares, 3);
+        assert_eq!(config.total_operators, 3);
+        assert_eq!(config.required_shares, 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "total_operators must match actual registered operator count")]
+    fn rejects_threshold_mismatch_with_actual_operators() {
+        testing_env!(context("owner.testnet").build());
+        let mut contract = OperatorRegistryContract::new(account("owner.testnet"));
+
+        // No operators registered, but trying to set total_operators = 5
+        contract.set_threshold_config(5, 3);
     }
 }
