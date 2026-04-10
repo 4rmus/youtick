@@ -85,10 +85,11 @@ cd "$PROJECT_ROOT"
 echo ""
 echo "5. Verifying Claude config..."
 CLAUDE_DIR="$PROJECT_ROOT/.claude"
-if [ -f "$CLAUDE_DIR/agents.md" ]; then
-    print_status "agents.md found in .claude/"
+if [ -f "$CLAUDE_DIR/agents/agents.md" ]; then
+    AGENT_COUNT=$(find "$CLAUDE_DIR/agents" -name "*-agent.md" | wc -l)
+    print_status "Agent registry found with $AGENT_COUNT agent definitions"
 else
-    print_warning "agents.md not found"
+    print_warning "Agent registry not found at .claude/agents/agents.md"
 fi
 
 # 6. Check environment variables
@@ -135,12 +136,13 @@ echo "MCP Servers:"
 echo "  - near-cli-mcp: $MCP_DIR/near-cli/dist/index.js"
 
 echo ""
-echo "Sub-Agents (in .claude/agents.md):"
-echo "  - @contract (Rust/NEAR)"
-echo "  - @frontend (React/Next.js)"
-echo "  - @web3 (Protocol integration)"
+echo "Sub-Agents (in .claude/agents/):"
+echo "  - @contract (Rust/NEAR smart contracts)"
+echo "  - @frontend (React/Next.js quality)"
+echo "  - @kms (KMS worker, cryptography)"
 echo "  - @security (Security audit)"
-echo "  - @devops (Deployment)"
+echo "  - @devops (Build and deploy)"
+echo "  - @integrator (Cross-component consistency)"
 
 echo ""
 echo "========================================"
