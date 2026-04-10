@@ -64,6 +64,13 @@ async function resolveRelayerPrivateKey(networkId: 'mainnet' | 'testnet', accoun
         return process.env.RELAYER_PRIVATE_KEY;
     }
 
+    // SECURITY: In production (mainnet), only accept the environment variable.
+    // Filesystem credential loading is restricted to testnet for development convenience.
+    if (networkId === 'mainnet') {
+        console.error('[SECURITY] RELAYER_PRIVATE_KEY env var is required on mainnet');
+        return null;
+    }
+
     const candidatePaths = [
         ...getWorkspaceRoots().map((root) => path.join(root, ".near-credentials", networkId, `${accountId}.json`)),
         path.join(homedir(), ".near-credentials", networkId, `${accountId}.json`),
@@ -151,8 +158,12 @@ export async function POST(request: NextRequest) {
 
     try {
         // Get client IP for rate limiting
-        const forwardedFor = request.headers.get('x-forwarded-for');
-        clientIp = forwardedFor?.split(',')[0]?.trim() || 'unknown';
+        // Use platform-provided IP (trusted proxy) over client-controlled x-forwarded-for header
+        // Vercel/Next.js populates request.ip from the trusted edge proxy layer
+        // IP-1 fix: prefer request.ip when available (Vercel edge), fallback to x-forwarded-for
+        clientIp = (request as unknown as { ip?: string }).ip
+            || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+            || 'unknown';
 
         const body = await request.json();
         const { username, new_public_key } = body;
@@ -197,7 +208,7 @@ export async function POST(request: NextRequest) {
             return addCorsHeaders(
                 NextResponse.json(
                     {
-                        error: "Trial relayer is not configured on this machine. Add RELAYER_ACCOUNT_ID and RELAYER_PRIVATE_KEY.",
+                        error: "Trial service is not configured.",
                         code: "RELAYER_CREDENTIALS_MISSING",
                     },
                     { status: 503 }
@@ -275,31 +286,18 @@ export async function POST(request: NextRequest) {
         const signer = new KeyPairSigner(keyPair);
         const relayerAccount = new Account(relayerAccountId, getCurrentRpcUrl(), signer);
 
-        let result;
-        try {
-            // Call contract's create_sponsored_trial with username using v7 actions
-            result = await relayerAccount.signAndSendTransaction({
-                receiverId: contractId,
-                actions: [
-                    actions.functionCall(
-                        "create_sponsored_trial",
-                        { username, new_public_key },
-                        GAS_CONSTANTS.highGas, // 200 TGas
-                        BigInt(0) // No deposit
-                    )
-                ]
-            });
-        } catch (error) {
-            if (globalLimitReserved) {
-                trialDailyGlobalLimiter.rollback();
-                globalLimitReserved = false;
-            }
-            if (ipLimitReserved) {
-                trialAccountLimiter.rollback(clientIp);
-                ipLimitReserved = false;
-            }
-            throw error;
-        }
+        // Call contract's create_sponsored_trial with username using v7 actions
+        const result = await relayerAccount.signAndSendTransaction({
+            receiverId: contractId,
+            actions: [
+                actions.functionCall(
+                    "create_sponsored_trial",
+                    { username, new_public_key },
+                    GAS_CONSTANTS.highGas, // 200 TGas
+                    BigInt(0) // No deposit
+                )
+            ]
+        });
 
         const successRes = NextResponse.json({
             success: true,
@@ -331,7 +329,7 @@ export async function POST(request: NextRequest) {
         } else if (errorMessage.includes("RELAYER_CREDENTIALS_MISSING")) {
             errorRes = NextResponse.json(
                 {
-                    error: "Trial relayer is not configured on this machine. Add RELAYER_ACCOUNT_ID and RELAYER_PRIVATE_KEY.",
+                    error: "Trial service is not configured.",
                     code: "RELAYER_CREDENTIALS_MISSING"
                 },
                 { status: 503 }

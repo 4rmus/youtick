@@ -8,6 +8,8 @@
  * inflation that can trigger 413 errors on upload endpoints.
  */
 
+import { base64Decode as decodeBase64, base64Encode as encodeBase64 } from './codec';
+
 const IV_LENGTH = 12;
 const KEY_LENGTH = 32; // 256 bits
 
@@ -18,7 +20,7 @@ const KEY_LENGTH = 32; // 256 bits
  */
 export async function generateEncryptionKey(): Promise<string> {
   const keyBytes = crypto.getRandomValues(new Uint8Array(KEY_LENGTH));
-  return uint8ToBase64(keyBytes);
+  return encodeBase64(keyBytes);
 }
 
 /**
@@ -35,7 +37,7 @@ export async function encryptFile(
   data: Uint8Array,
   keyB64: string,
 ): Promise<Uint8Array> {
-  const keyBytes = base64ToUint8(keyB64);
+  const keyBytes = decodeBase64(keyB64);
   const cryptoKey = await crypto.subtle.importKey(
     'raw',
     keyBytes.buffer as ArrayBuffer,
@@ -79,7 +81,7 @@ export async function decryptFile(
     throw new Error('Encrypted data too short (missing IV or authTag)');
   }
 
-  const keyBytes = base64ToUint8(keyB64);
+  const keyBytes = decodeBase64(keyB64);
   const cryptoKey = await crypto.subtle.importKey(
     'raw',
     keyBytes.buffer as ArrayBuffer,
@@ -100,31 +102,3 @@ export async function decryptFile(
   return new Uint8Array(decrypted);
 }
 
-// ============================================================================
-// Base64 Helpers
-// ============================================================================
-
-function uint8ToBase64(bytes: Uint8Array): string {
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(bytes).toString('base64');
-  }
-  // Browser fallback
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-function base64ToUint8(b64: string): Uint8Array {
-  if (typeof Buffer !== 'undefined') {
-    return new Uint8Array(Buffer.from(b64, 'base64'));
-  }
-  // Browser fallback
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}

@@ -62,6 +62,7 @@ enum StorageKey {
 #[derive(PanicOnDefault)]
 pub struct AccessControlContract {
     owner_id: AccountId,
+    pending_owner_id: Option<AccountId>,
     market_contract_id: AccountId,
     registry_contract_id: AccountId,
     grants: LookupMap<String, SessionGrant>,
@@ -80,6 +81,7 @@ impl AccessControlContract {
     ) -> Self {
         let mut contract = Self {
             owner_id,
+            pending_owner_id: None,
             market_contract_id,
             registry_contract_id,
             grants: LookupMap::new(StorageKey::Grants),
@@ -133,6 +135,16 @@ impl AccessControlContract {
         origin_hash: Option<String>,
         device_hash: Option<String>,
     ) -> SessionGrant {
+        // Authorization: only contract owner, market contract, or registry contract
+        // may issue session grants.
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == self.owner_id
+                || caller == self.market_contract_id
+                || caller == self.registry_contract_id,
+            "Unauthorized: caller cannot issue session grants",
+        );
+
         let scope_key = scope.as_key().to_string();
         require!(!self.paused_scopes.contains(&scope_key), "Scope is paused");
 
@@ -233,9 +245,29 @@ impl AccessControlContract {
         self.paused_scopes.remove(&scope.as_key().to_string());
     }
 
+    // OW-1 fix: Two-step ownership transfer (propose + accept)
+    pub fn propose_owner(&mut self, proposed_owner_id: AccountId) {
+        self.assert_owner();
+        self.pending_owner_id = Some(proposed_owner_id);
+    }
+
+    pub fn accept_ownership(&mut self) {
+        let pending = self.pending_owner_id.take();
+        require!(pending.is_some(), "No pending ownership transfer");
+        let new_owner = pending.unwrap();
+        require!(
+            env::predecessor_account_id() == new_owner,
+            "Only the proposed owner can accept ownership",
+        );
+        self.owner_id = new_owner;
+    }
+
+    /// Legacy: kept for backward compatibility, delegates to two-step flow
+    #[deprecated(note = "Use propose_owner + accept_ownership for safe transfers")]
     pub fn set_owner(&mut self, owner_id: AccountId) {
         self.assert_owner();
-        self.owner_id = owner_id;
+        self.pending_owner_id = Some(owner_id);
+        env::log_str("WARNING: set_owner is deprecated. Use propose_owner + accept_ownership.");
     }
 
     pub fn get_session_grant(&self, session_pk: String) -> Option<SessionGrant> {
@@ -394,7 +426,7 @@ mod tests {
     #[test]
     fn issues_play_grant_with_policy_defaults() {
         let owner = account("owner.testnet");
-        testing_env!(context("alice.testnet", 1_000).build());
+        testing_env!(context("market.testnet", 1_000).build());
         let mut contract = AccessControlContract::new(
             owner,
             account("market.testnet"),
@@ -410,15 +442,15 @@ mod tests {
             Some("device".to_string()),
         );
 
-        assert_eq!(grant.owner_id, account("alice.testnet"));
-        assert!(contract.can_play(account("alice.testnet"), Some("cid-1".to_string())));
+        assert_eq!(grant.owner_id, account("market.testnet"));
+        assert!(contract.can_play(account("market.testnet"), Some("cid-1".to_string())));
     }
 
     #[test]
     #[should_panic(expected = "TTL exceeds scope policy")]
     fn rejects_grant_ttl_above_scope_limit() {
         let owner = account("owner.testnet");
-        testing_env!(context("alice.testnet", 1_000).build());
+        testing_env!(context("market.testnet", 1_000).build());
         let mut contract = AccessControlContract::new(
             owner,
             account("market.testnet"),
@@ -438,7 +470,7 @@ mod tests {
     #[test]
     fn revoke_and_pause_work_as_expected() {
         let owner = account("owner.testnet");
-        testing_env!(context("alice.testnet", 1_000).build());
+        testing_env!(context("market.testnet", 1_000).build());
         let mut contract = AccessControlContract::new(
             owner.clone(),
             account("market.testnet"),
@@ -454,10 +486,31 @@ mod tests {
             Some("device".to_string()),
         );
         contract.revoke_session_grant("session-1".to_string());
-        assert!(!contract.can_play(account("alice.testnet"), Some("cid-1".to_string())));
+        assert!(!contract.can_play(account("market.testnet"), Some("cid-1".to_string())));
 
         testing_env!(context("owner.testnet", 2_000).build());
         contract.pause_scope(SessionScope::Publish);
         assert!(contract.get_scope_policy(SessionScope::Publish).is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "Unauthorized: caller cannot issue session grants")]
+    fn rejects_unauthorized_grant_issuance() {
+        let owner = account("owner.testnet");
+        testing_env!(context("eve.testnet", 1_000).build());
+        let mut contract = AccessControlContract::new(
+            owner,
+            account("market.testnet"),
+            account("registry.testnet"),
+        );
+
+        contract.issue_session_grant(
+            "session-evil".to_string(),
+            SessionScope::Play,
+            Some("cid-1".to_string()),
+            60_000,
+            Some("origin".to_string()),
+            Some("device".to_string()),
+        );
     }
 }

@@ -4,6 +4,9 @@ import type { WalletInstance } from './types';
 
 const ACCESS_GRANT_CACHE_PREFIX = 'youtick:access-grant:';
 const ACCESS_GRANT_SKEW_MS = 30_000;
+// AG-1 fix: In-memory cache for session grants with secret keys.
+// Keyed by cache key string. Cleared on page unload (sessionStorage lifecycle).
+const inMemoryGrants = new Map<string, BrowserSessionGrant>();
 const pendingGrantPromises = new Map<string, Promise<BrowserSessionGrant | null>>();
 
 export type SessionGrantScope = 'Play' | 'Publish' | 'ClaimGift' | 'ClaimTrial';
@@ -12,6 +15,18 @@ export interface BrowserSessionGrant {
     accountId: string;
     sessionPublicKey: string;
     secretKey: KeyPairString;
+    scope: SessionGrantScope;
+    resourceId: string | null;
+    expiresAt: number;
+    originHash: string | null;
+    deviceHash: string | null;
+}
+
+// AG-1 fix: Only public metadata is persisted to sessionStorage.
+// The secretKey is held in memory only and never written to browser storage.
+interface PersistedSessionGrant {
+    accountId: string;
+    sessionPublicKey: string;
     scope: SessionGrantScope;
     resourceId: string | null;
     expiresAt: number;
@@ -77,20 +92,37 @@ function readCachedGrant(accountId: string, scope: SessionGrantScope, resourceId
         return null;
     }
 
-    const raw = sessionStorage.getItem(cacheKey(accountId, scope, resourceId));
+    const key = cacheKey(accountId, scope, resourceId);
+
+    // AG-1 fix: Check in-memory cache first (has secretKey).
+    const inMemory = inMemoryGrants.get(key);
+    if (inMemory) {
+        if (Date.now() + ACCESS_GRANT_SKEW_MS >= inMemory.expiresAt) {
+            inMemoryGrants.delete(key);
+            sessionStorage.removeItem(key);
+            return null;
+        }
+        return inMemory;
+    }
+
+    // Check sessionStorage for public metadata only (no secretKey).
+    // This handles page navigations within the same tab where in-memory was lost
+    // but the grant is still valid — the caller will need to re-issue if signing is required.
+    const raw = sessionStorage.getItem(key);
     if (!raw) {
         return null;
     }
 
     try {
-        const grant = JSON.parse(raw) as BrowserSessionGrant;
-        if (Date.now() + ACCESS_GRANT_SKEW_MS >= grant.expiresAt) {
-            sessionStorage.removeItem(cacheKey(accountId, scope, resourceId));
+        const persisted = JSON.parse(raw) as PersistedSessionGrant;
+        if (Date.now() + ACCESS_GRANT_SKEW_MS >= persisted.expiresAt) {
+            sessionStorage.removeItem(key);
             return null;
         }
-        return grant;
+        // Secret key not available from persisted storage — caller must re-issue.
+        return null;
     } catch {
-        sessionStorage.removeItem(cacheKey(accountId, scope, resourceId));
+        sessionStorage.removeItem(key);
         return null;
     }
 }
@@ -100,10 +132,22 @@ function persistGrant(grant: BrowserSessionGrant): void {
         return;
     }
 
-    sessionStorage.setItem(
-        cacheKey(grant.accountId, grant.scope, grant.resourceId || undefined),
-        JSON.stringify(grant),
-    );
+    const key = cacheKey(grant.accountId, grant.scope, grant.resourceId || undefined);
+
+    // AG-1 fix: Store full grant (with secretKey) in memory only.
+    // Persist only public metadata to sessionStorage.
+    inMemoryGrants.set(key, grant);
+
+    const persisted: PersistedSessionGrant = {
+        accountId: grant.accountId,
+        sessionPublicKey: grant.sessionPublicKey,
+        scope: grant.scope,
+        resourceId: grant.resourceId,
+        expiresAt: grant.expiresAt,
+        originHash: grant.originHash,
+        deviceHash: grant.deviceHash,
+    };
+    sessionStorage.setItem(key, JSON.stringify(persisted));
 }
 
 export function clearSessionGrantCache(accountId?: string): void {
@@ -123,6 +167,7 @@ export function clearSessionGrantCache(accountId?: string): void {
 
     for (const key of keysToRemove) {
         sessionStorage.removeItem(key);
+        inMemoryGrants.delete(key);
         pendingGrantPromises.delete(key);
     }
 }

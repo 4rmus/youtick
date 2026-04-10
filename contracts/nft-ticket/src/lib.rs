@@ -55,6 +55,42 @@ const STORAGE_COST_ACCOUNT: NearToken = NearToken::from_millinear(100); // 0.1 N
 const UPLOAD_SESSION_MAX_TTL_MS: u64 = 15 * 60 * 1000;
 const UPLOAD_SESSION_TOTAL_CALLS: u8 = 2;
 
+// ─── Commission constants ───────────────────────────────────────
+// TODO: Replace inline usages in apply_commission() with these constants
+
+/// Platform commission rate: 2% of each paid sale goes to the platform
+const COMMISSION_RATE_PERCENT: u128 = 2;
+const COMMISSION_DENOMINATOR: u128 = 100;
+
+/// Basis-point representation of the commission rate (200 bps = 2%).
+/// Useful when composing with other BPS-based logic.
+const COMMISSION_RATE_BPS: u128 = 200;
+const BPS_DENOMINATOR: u128 = 10_000;
+
+/// Split ratio for commission proceeds: 50 % trial pool, 50 % commission pool.
+/// TODO: Replace the `commission / 2` in apply_commission() with this constant.
+const COMMISSION_SPLIT_DENOMINATOR: u128 = 2;
+
+// ─── Storage / deposit constants ────────────────────────────────
+// TODO: Replace inline from_millinear() usages with these constants
+
+/// Storage cost for an onboarding invite record (0.01 NEAR).
+/// TODO: Replace inline NearToken::from_millinear(10) in invite_create()
+const STORAGE_COST_INVITE: NearToken = NearToken::from_millinear(10);
+
+/// Deposit required per gift-claim link (0.15 NEAR).
+/// Covers account creation + NFT storage + buffer.
+/// TODO: Replace inline NearToken::from_millinear(150) in gift_drop_create()
+const GIFT_DEPOSIT_PER_LINK: NearToken = NearToken::from_millinear(150);
+
+/// Account creation + access-key storage cost (0.11 NEAR).
+/// TODO: Replace inline NearToken::from_millinear(110) in gift_claim()
+const ACCOUNT_CREATION_COST: NearToken = NearToken::from_millinear(110);
+
+/// Gas fee allowance for a single claim/relay transaction (0.05 NEAR).
+/// TODO: Replace inline NearToken::from_millinear(50) in claim/trial flows
+const GAS_FEE_ALLOWANCE: NearToken = NearToken::from_millinear(50);
+
 fn wrap_near_account_id() -> AccountId {
     let current = env::current_account_id();
     if current.as_str().ends_with(".testnet") {
@@ -772,6 +808,8 @@ impl Contract {
         );
 
         for cid in &encrypted_cids {
+            // AE-1 fix: Decrement active_event_count if the event is not already banned
+            let is_banned = self.lazy_banned_events().get(cid).is_some();
             self.events.remove(cid);
             self.lazy_banned_events().remove(cid);
             self.lazy_event_price_usd().remove(cid);
@@ -788,6 +826,11 @@ impl Contract {
 
             for token_id in &token_ids_to_remove {
                 self.video_metadata.remove(token_id);
+            }
+
+            // AE-1 fix: Only decrement if the event was active (not banned)
+            if !is_banned {
+                self.active_event_count = self.active_event_count.saturating_sub(1);
             }
 
             env::log_str(&format!(
@@ -1105,6 +1148,12 @@ impl Contract {
             "Event with this CID already exists"
         );
 
+        // SECURITY: Only owner can create ACCESS_PASS events (universal access)
+        require!(
+            encrypted_cid != "ACCESS_PASS" || env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can create ACCESS_PASS events"
+        );
+
         let normalized_access_mode = self.normalize_access_mode(access_mode, price.0);
 
         let event = Event {
@@ -1232,6 +1281,12 @@ impl Contract {
         require!(
             self.events.get(&encrypted_cid).is_none(),
             "Event with this CID already exists"
+        );
+
+        // SECURITY: Only owner can create ACCESS_PASS events (universal access)
+        require!(
+            encrypted_cid != "ACCESS_PASS" || env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can create ACCESS_PASS events"
         );
 
         let normalized_access_mode = self.normalize_access_mode(access_mode, price.0);
@@ -2560,6 +2615,12 @@ impl Contract {
             env::attached_deposit() >= total_required,
             &format!("Requires {} NEAR for {} keys", total_required, num_keys)
         );
+
+        // GD-1 fix: Refund excess deposit to the caller
+        let excess = env::attached_deposit().saturating_sub(total_required);
+        if excess.as_yoctonear() > 0 {
+            Promise::new(env::predecessor_account_id()).transfer(excess);
+        }
 
         let created_at = env::block_timestamp();
 
