@@ -336,7 +336,7 @@ class DailyGlobalLimiter {
             const data = await response.json();
             if (data.result?.result) {
                 const decoded = JSON.parse(
-                    Buffer.from(data.result.result).toString('utf-8'),
+                    String.fromCharCode(...data.result.result),
                 );
                 const contractCount = typeof decoded === 'number' ? decoded : 0;
 

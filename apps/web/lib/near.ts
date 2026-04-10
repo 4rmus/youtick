@@ -32,7 +32,7 @@ async function viewContract<T>(
         request_type: 'call_function',
         account_id: contractId,
         method_name: methodName,
-        args_base64: Buffer.from(JSON.stringify(args)).toString('base64'),
+        args_base64: btoa(JSON.stringify(args)),
         finality: 'final',
     }) as { result: number[] };
 

@@ -1,3 +1,5 @@
+import { base64Decode, base64Encode } from '../crypto/codec';
+
 const FIELD_POLY = 0x11b;
 
 export interface SecretShare {
@@ -43,15 +45,6 @@ function gfDiv(a: number, b: number): number {
     return gfMul(a, gfInv(b));
 }
 
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-    return btoa(String.fromCharCode(...new Uint8Array(buffer)));
-}
-
-function base64ToUint8Array(base64: string): Uint8Array {
-    const binary = atob(base64);
-    return Uint8Array.from(binary, (char) => char.charCodeAt(0));
-}
-
 function randomByte(): number {
     return crypto.getRandomValues(new Uint8Array(1))[0];
 }
@@ -85,7 +78,7 @@ export function splitSecretIntoShares(
         throw new Error('totalShares must be 255 or less');
     }
 
-    const secretBytes = base64ToUint8Array(secretB64);
+    const secretBytes = base64Decode(secretB64);
     const shareBuffers = Array.from({ length: totalShares }, () => new Uint8Array(secretBytes.length));
 
     for (let byteIndex = 0; byteIndex < secretBytes.length; byteIndex += 1) {
@@ -102,7 +95,7 @@ export function splitSecretIntoShares(
 
     return shareBuffers.map((shareBytes, index) => ({
         shareId: index + 1,
-        shareB64: arrayBufferToBase64(shareBytes.buffer),
+        shareB64: base64Encode(shareBytes.buffer),
     }));
 }
 
@@ -129,7 +122,7 @@ export function reconstructSecretFromShares(
 
     const selectedShares = uniqueShares.slice(0, requiredShares).map((share) => ({
         x: share.shareId,
-        bytes: base64ToUint8Array(share.shareB64),
+        bytes: base64Decode(share.shareB64),
     }));
 
     const secretLength = selectedShares[0]?.bytes.length ?? 0;
@@ -156,5 +149,5 @@ export function reconstructSecretFromShares(
         secret[byteIndex] = value;
     }
 
-    return arrayBufferToBase64(secret.buffer);
+    return base64Encode(secret.buffer);
 }

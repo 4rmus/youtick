@@ -87,7 +87,7 @@ export class TrialWallet {
         });
 
         return {
-            signature: Buffer.from(signedMessage.signature).toString('base64'),
+            signature: btoa(String.fromCharCode(...new Uint8Array(signedMessage.signature))),
             publicKey: signedMessage.publicKey.toString(),
             accountId: signedMessage.accountId,
             state: params.state,

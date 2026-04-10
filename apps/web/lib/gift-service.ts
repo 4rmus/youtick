@@ -73,7 +73,7 @@ async function isOnboardingKeyAuthorized(publicKey: string): Promise<boolean> {
                     finality: "final",
                     account_id: NFT_CONTRACT_ID,
                     method_name: "is_onboarding_key",
-                    args_base64: Buffer.from(JSON.stringify({ public_key: publicKey })).toString("base64"),
+                    args_base64: btoa(JSON.stringify({ public_key: publicKey })),
                 },
             }),
         });
@@ -81,7 +81,7 @@ async function isOnboardingKeyAuthorized(publicKey: string): Promise<boolean> {
         const data = await response.json();
         if (data.error || !data.result?.result) return false;
 
-        const result = JSON.parse(Buffer.from(data.result.result).toString());
+        const result = JSON.parse(String.fromCharCode(...data.result.result));
         return Boolean(result);
     } catch {
         return false;
@@ -136,7 +136,7 @@ export async function getTrialPoolBalance(): Promise<string> {
                     finality: "final",
                     account_id: NFT_CONTRACT_ID,
                     method_name: "get_trial_pool_balance",
-                    args_base64: Buffer.from("{}").toString("base64"),
+                    args_base64: btoa("{}"),
                 },
             }),
         });
@@ -144,7 +144,7 @@ export async function getTrialPoolBalance(): Promise<string> {
         const data = await response.json();
         if (data.error || !data.result?.result) return "0";
 
-        const result = JSON.parse(Buffer.from(data.result.result).toString());
+        const result = JSON.parse(String.fromCharCode(...data.result.result));
         return result || "0";
     } catch {
         return "0";
@@ -415,7 +415,7 @@ export async function getOnboardingConfig(): Promise<{
                         finality: "final",
                         account_id: NFT_CONTRACT_ID,
                         method_name: "get_onboarding_config",
-                        args_base64: Buffer.from("{}").toString("base64"),
+                        args_base64: btoa("{}"),
                     },
                 }),
             }),
@@ -431,7 +431,7 @@ export async function getOnboardingConfig(): Promise<{
                         finality: "final",
                         account_id: NFT_CONTRACT_ID,
                         method_name: "get_daily_trial_count",
-                        args_base64: Buffer.from("{}").toString("base64"),
+                        args_base64: btoa("{}"),
                     },
                 }),
             }),
@@ -442,9 +442,9 @@ export async function getOnboardingConfig(): Promise<{
 
         if (configData.error || !configData.result?.result) return null;
 
-        const config = JSON.parse(Buffer.from(configData.result.result).toString());
+        const config = JSON.parse(String.fromCharCode(...configData.result.result));
         const count = countData.result?.result
-            ? JSON.parse(Buffer.from(countData.result.result).toString())
+            ? JSON.parse(String.fromCharCode(...countData.result.result))
             : 0;
 
         return {
@@ -600,7 +600,7 @@ export async function validateGiftLink(publicKey: string): Promise<GiftInfo | nu
                     finality: "final",
                     account_id: NFT_CONTRACT_ID,
                     method_name: "get_gift_info_full",
-                    args_base64: Buffer.from(JSON.stringify({ public_key: publicKey })).toString("base64"),
+                    args_base64: btoa(JSON.stringify({ public_key: publicKey })),
                 },
             }),
         });
@@ -611,7 +611,7 @@ export async function validateGiftLink(publicKey: string): Promise<GiftInfo | nu
             return null;
         }
 
-        const result = JSON.parse(Buffer.from(data.result.result).toString());
+        const result = JSON.parse(String.fromCharCode(...data.result.result));
 
         if (!result) return null;
 
@@ -641,7 +641,7 @@ export async function validateTrialInviteLink(publicKey: string): Promise<TrialI
                     finality: "final",
                     account_id: NFT_CONTRACT_ID,
                     method_name: "get_trial_invite_info",
-                    args_base64: Buffer.from(JSON.stringify({ public_key: publicKey })).toString("base64"),
+                    args_base64: btoa(JSON.stringify({ public_key: publicKey })),
                 },
             }),
         });
@@ -651,7 +651,7 @@ export async function validateTrialInviteLink(publicKey: string): Promise<TrialI
             return null;
         }
 
-        const result = JSON.parse(Buffer.from(data.result.result).toString());
+        const result = JSON.parse(String.fromCharCode(...data.result.result));
         if (!result || result.remaining_claims <= 0) {
             return null;
         }
@@ -843,7 +843,7 @@ export async function getGiftEventInfo(publicKey: string): Promise<{
                     finality: "final",
                     account_id: NFT_CONTRACT_ID,
                     method_name: "get_event",
-                    args_base64: Buffer.from(JSON.stringify({ encrypted_cid: giftInfo.eventCid })).toString("base64"),
+                    args_base64: btoa(JSON.stringify({ encrypted_cid: giftInfo.eventCid })),
                 },
             }),
         });
@@ -854,7 +854,7 @@ export async function getGiftEventInfo(publicKey: string): Promise<{
             return null;
         }
 
-        const event = JSON.parse(Buffer.from(data.result.result).toString());
+        const event = JSON.parse(String.fromCharCode(...data.result.result));
 
         return {
             title: event.title,

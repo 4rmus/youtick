@@ -12,6 +12,8 @@
  *   - Web Crypto API — zero dependencies
  */
 
+import { base64Decode, base64Encode } from '../crypto/codec';
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -64,14 +66,14 @@ export async function generateAESKey(): Promise<string> {
         ['encrypt', 'decrypt'],
     );
     const rawKey = await crypto.subtle.exportKey('raw', key);
-    return arrayBufferToBase64(rawKey);
+    return base64Encode(rawKey);
 }
 
 /**
  * Import a Base64-encoded AES key for use with Web Crypto.
  */
 export async function importAESKey(keyB64: string): Promise<CryptoKey> {
-    const keyBytes = base64ToArrayBuffer(keyB64);
+    const keyBytes = base64Decode(keyB64);
     return await crypto.subtle.importKey(
         'raw',
         keyBytes,
@@ -92,14 +94,14 @@ export function generateCounter(): Uint8Array {
  * Encode a counter as base64 for manifest transport.
  */
 export function encodeCounter(counter: Uint8Array): string {
-    return arrayBufferToBase64(counter.buffer.slice(counter.byteOffset, counter.byteOffset + counter.byteLength) as ArrayBuffer);
+    return base64Encode(counter.buffer.slice(counter.byteOffset, counter.byteOffset + counter.byteLength) as ArrayBuffer);
 }
 
 /**
  * Decode a base64 counter value from a manifest.
  */
 export function decodeCounter(counterB64: string): Uint8Array {
-    return new Uint8Array(base64ToArrayBuffer(counterB64));
+    return base64Decode(counterB64);
 }
 
 /**
@@ -286,24 +288,3 @@ function offsetCounter(baseCounter: Uint8Array, blockOffset: number): Uint8Array
     return counter;
 }
 
-// ============================================================================
-// Base64 Utilities
-// ============================================================================
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (const byte of bytes) {
-        binary += String.fromCharCode(byte);
-    }
-    return btoa(binary);
-}
-
-function base64ToArrayBuffer(base64: string): ArrayBuffer {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes.buffer as ArrayBuffer;
-}

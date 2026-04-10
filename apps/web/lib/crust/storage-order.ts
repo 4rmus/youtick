@@ -328,6 +328,8 @@ async function placeWithRetry(
   retryBaseMs: number = 1_000,
 ): Promise<CrustPsaPinResult> {
   let lastResult: CrustPsaPinResult | null = null;
+  let rateLimitedCount = 0;
+  const maxRateLimitedRetries = 3;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0 && lastResult?.status !== 'rate_limited') {
@@ -335,10 +337,15 @@ async function placeWithRetry(
       await sleep(delayMs);
     }
 
+    // SO-1 fix: Cap rate-limited retries to prevent infinite loop
     if (lastResult?.status === 'rate_limited') {
+      rateLimitedCount++;
+      if (rateLimitedCount > maxRateLimitedRetries) {
+        console.warn(`[STORAGE] Rate-limited ${rateLimitedCount} times, giving up`);
+        break;
+      }
       const waitMs = lastResult.retryAfterMs ?? Math.pow(2, attempt) * retryBaseMs;
       await sleep(waitMs);
-      attempt = Math.max(0, attempt - 1);
     }
 
     lastResult = await placeStorageOrder(asset.cid, asset.size, accountId);
