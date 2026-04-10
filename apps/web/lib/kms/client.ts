@@ -1,5 +1,6 @@
 import type { KeyPair } from 'near-api-js';
 import { clearSessionGrantCache, ensureSessionGrant, signSessionGrantPayload, type SessionGrantScope } from '../access-grants';
+import { base64Decode, hexEncode } from '../crypto/codec';
 import { NEAR_CONFIG } from '../constants';
 import { BrowserKeyStore } from '../keystore-v7';
 import { getThresholdConfig, listActiveDecryptionOperatorEndpoints, listActiveDecryptionOperators, type RegistryOperatorRecord } from '../registry';
@@ -124,8 +125,8 @@ async function listKmsBaseUrls(): Promise<string[]> {
     try {
         const registryUrls = await listActiveDecryptionOperatorEndpoints();
         urls.push(...registryUrls);
-    } catch {
-        // Registry lookup is best-effort.
+    } catch (error) {
+        console.warn('[KMS] Error fetching operator endpoints from registry:', error);
     }
 
     return sortUrlsByKmsPreference(Array.from(new Set(urls.filter(Boolean))));
@@ -207,7 +208,8 @@ function readKmsEndpointStats(): KmsEndpointStatsStore {
     try {
         const raw = localStorage.getItem(KMS_OPERATOR_STATS_STORAGE_KEY);
         cachedKmsEndpointStats = raw ? JSON.parse(raw) as KmsEndpointStatsStore : {};
-    } catch {
+    } catch (error) {
+        console.warn('[KMS] Error reading endpoint stats from localStorage:', error);
         cachedKmsEndpointStats = {};
     }
 
@@ -357,19 +359,6 @@ function authCacheKey(
     return `${AUTH_CACHE_PREFIX}${baseUrl}:${accountId}:${action}:${videoId}`;
 }
 
-function decodeBase64(base64: string): Uint8Array {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-}
-
-function encodeHex(bytes: Uint8Array): string {
-    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
 function readCachedAuthToken(
     baseUrl: string,
     accountId: string,
@@ -392,7 +381,8 @@ function readCachedAuthToken(
             return null;
         }
         return token;
-    } catch {
+    } catch (error) {
+        console.warn('[KMS] Error parsing cached auth token:', error);
         sessionStorage.removeItem(authCacheKey(baseUrl, accountId, action, videoId));
         return null;
     }
@@ -504,7 +494,7 @@ async function tryLocalSignedKmsRequest<T>(
             ...extraBody,
             accountId,
             timestamp,
-            signature: encodeHex(signature.signature),
+            signature: hexEncode(signature.signature),
             publicKey: keyPair.getPublicKey().toString(),
         }),
     });
@@ -634,7 +624,7 @@ async function requestKmsAuthToken(
     const signedMessage = await wallet.signMessage({
         message: challengeResult.data.message,
         recipient: challengeResult.data.recipient,
-        nonce: decodeBase64(challengeResult.data.nonce),
+        nonce: base64Decode(challengeResult.data.nonce),
     });
 
     if (!signedMessage) {

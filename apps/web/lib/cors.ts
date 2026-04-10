@@ -6,15 +6,20 @@
  * - Development: localhost
  */
 
-// Allowed origins for CORS
-const ALLOWED_ORIGINS = [
+// Allowed origins for CORS - production
+const ALLOWED_ORIGINS: string[] = [
     'https://youtick.net',
     'https://www.youtick.net',
-    // Development origins
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://127.0.0.1:3000',
 ];
+
+// Development origins - only included in non-production environments
+if (process.env.NODE_ENV !== 'production') {
+    ALLOWED_ORIGINS.push(
+        'http://localhost:3000',
+        'http://localhost:3001',
+        'http://127.0.0.1:3000',
+    );
+}
 
 /**
  * Check if origin is allowed

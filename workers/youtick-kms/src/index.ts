@@ -202,6 +202,10 @@ function getWorkerReadiness(env: Env): WorkerReadiness {
         }
         if (!env.OPERATOR_SHARE_SECRET) {
             errors.push('OPERATOR_SHARE_SECRET is required on mainnet');
+        } else if (env.OPERATOR_SHARE_SECRET.length < 32) {
+            errors.push('OPERATOR_SHARE_SECRET must be at least 32 characters');
+        } else if (env.OPERATOR_SHARE_SECRET.startsWith('CHANGE-ME')) {
+            errors.push('OPERATOR_SHARE_SECRET must be changed from the default placeholder');
         }
     }
 
@@ -863,16 +867,34 @@ function shareMetaKey(videoId: string): string {
     return `sharemeta:${videoId}`;
 }
 
+// K-1 fix: Use HKDF instead of raw SHA-256 for proper key derivation.
+// HKDF provides extract-then-expand with a salt, preventing weak-key issues
+// from low-entropy input secrets.
 async function importShareCipherKeyFromSecret(secret: string): Promise<CryptoKey> {
-    const rawKey = await crypto.subtle.digest(
-        'SHA-256',
-        new TextEncoder().encode(secret),
+    const secretBytes = new TextEncoder().encode(secret);
+
+    // HKDF-Extract phase: use a fixed salt derived from the app context
+    const salt = new TextEncoder().encode('youtick-kms-share-cipher-v1');
+
+    // Import the secret as raw key material for HKDF
+    const keyMaterial = await crypto.subtle.importKey(
+        'raw',
+        secretBytes,
+        'HKDF',
+        false,
+        ['deriveKey'],
     );
 
-    return crypto.subtle.importKey(
-        'raw',
-        rawKey,
-        { name: 'AES-GCM' },
+    // HKDF-Expand: derive a 256-bit AES-GCM key
+    return crypto.subtle.deriveKey(
+        {
+            name: 'HKDF',
+            hash: 'SHA-256',
+            salt,
+            info: new TextEncoder().encode('aes-256-gcm-share-encryption'),
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
         false,
         ['encrypt', 'decrypt'],
     );
@@ -1203,6 +1225,23 @@ async function handleStore(
         )
     ) {
         return jsonResponse({ ok: false, error: 'Missing share metadata fields' }, 400, request, env);
+    }
+
+    // S-3 fix: Validate threshold parameters server-side
+    if (isShareStore) {
+        const { totalShares, requiredShares } = body;
+        if (!Number.isInteger(totalShares!) || !Number.isInteger(requiredShares!)) {
+            return jsonResponse({ ok: false, error: 'totalShares and requiredShares must be integers' }, 400, request, env);
+        }
+        if (requiredShares! < 2) {
+            return jsonResponse({ ok: false, error: 'requiredShares must be at least 2 (threshold security)' }, 400, request, env);
+        }
+        if (totalShares! < requiredShares!) {
+            return jsonResponse({ ok: false, error: 'totalShares must be >= requiredShares' }, 400, request, env);
+        }
+        if (totalShares! > 255) {
+            return jsonResponse({ ok: false, error: 'totalShares cannot exceed 255' }, 400, request, env);
+        }
     }
 
     let accountId: string;
@@ -1555,13 +1594,8 @@ async function handleHealth(
                 nearRpcTotalEndpoints: rpcPool.length,
                 kv: kvOk ? 'ok' : 'degraded',
                 network: env.NEAR_NETWORK,
-                contract: env.NEAR_CONTRACT_ID,
-                accessContract: env.NEAR_ACCESS_CONTRACT_ID || null,
-                registryContract: env.NEAR_REGISTRY_CONTRACT_ID || null,
-                registryOperatorAccount: env.REGISTRY_OPERATOR_ACCOUNT_ID || null,
-                registryOperatorActive: registryOperator.ok,
-                registryOperatorReason: registryOperator.reason || null,
-                shareMode: env.OPERATOR_SHARE_SECRET ? 'operator-encrypted-share' : 'unconfigured',
+                // HE-1 fix: Removed contract IDs, operator account, and share mode
+                // from unauthenticated health endpoint to prevent information leakage.
             },
         },
         ready ? 200 : 503,
@@ -1590,55 +1624,67 @@ export default {
             return handleHealth(request, env);
         }
 
-        const readiness = getWorkerReadiness(env);
-        if (!readiness.ready) {
+        // EH-1 fix: Global try-catch ensures unhandled exceptions return proper CORS headers
+        try {
+            const readiness = getWorkerReadiness(env);
+            if (!readiness.ready) {
+                return jsonResponse(
+                    { ok: false, error: readiness.errors.join('; ') },
+                    503,
+                    request,
+                    env,
+                );
+            }
+
+            // Only POST for auth/store/retrieve
+            if (request.method !== 'POST') {
+                return jsonResponse({ ok: false, error: 'Method not allowed' }, 405, request, env);
+            }
+
+            // Rate limiting
+            const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+            const action = path === '/store'
+                ? 'store'
+                : path === '/retrieve'
+                    ? 'retrieve'
+                    : 'auth';
+            const withinLimit = await checkRateLimit(env, ip, action);
+            if (!withinLimit) {
+                return jsonResponse({ ok: false, error: 'Rate limit exceeded' }, 429, request, env);
+            }
+
+            const registryOperator = await verifyRegistryOperatorAuthority(request, env);
+            if (!registryOperator.ok) {
+                return jsonResponse(
+                    { ok: false, error: registryOperator.reason || 'Registry operator verification failed' },
+                    503,
+                    request,
+                    env,
+                );
+            }
+
+            // Route
+            switch (path) {
+                case '/auth/challenge':
+                    return handleAuthChallenge(request, env);
+                case '/auth/verify':
+                    return handleAuthVerify(request, env);
+                case '/store':
+                    return handleStore(request, env);
+                case '/retrieve':
+                    return handleRetrieve(request, env);
+                default:
+                    return jsonResponse({ ok: false, error: 'Not found' }, 404, request, env);
+            }
+        } catch (error) {
+            // Global error handler — ensures CORS headers on all error responses
+            console.error('[KMS] Unhandled error:', error);
             return jsonResponse(
-                { ok: false, error: readiness.errors.join('; ') },
-                503,
+                { ok: false, error: 'Internal server error' },
+                500,
                 request,
                 env,
             );
-        }
-
-        // Only POST for auth/store/retrieve
-        if (request.method !== 'POST') {
-            return jsonResponse({ ok: false, error: 'Method not allowed' }, 405, request, env);
-        }
-
-        // Rate limiting
-        const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-        const action = path === '/store'
-            ? 'store'
-            : path === '/retrieve'
-                ? 'retrieve'
-                : 'auth';
-        const withinLimit = await checkRateLimit(env, ip, action);
-        if (!withinLimit) {
-            return jsonResponse({ ok: false, error: 'Rate limit exceeded' }, 429, request, env);
-        }
-
-        const registryOperator = await verifyRegistryOperatorAuthority(request, env);
-        if (!registryOperator.ok) {
-            return jsonResponse(
-                { ok: false, error: registryOperator.reason || 'Registry operator verification failed' },
-                503,
-                request,
-                env,
-            );
-        }
-
-        // Route
-        switch (path) {
-            case '/auth/challenge':
-                return handleAuthChallenge(request, env);
-            case '/auth/verify':
-                return handleAuthVerify(request, env);
-            case '/store':
-                return handleStore(request, env);
-            case '/retrieve':
-                return handleRetrieve(request, env);
-            default:
-                return jsonResponse({ ok: false, error: 'Not found' }, 404, request, env);
         }
     },
 };

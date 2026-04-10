@@ -46,7 +46,8 @@ export async function listActiveDecryptionOperators(): Promise<RegistryOperatorR
             cachedOperators = records.filter((record) => record.active);
             cachedAt = Date.now();
             return cachedOperators;
-        } catch {
+        } catch (error) {
+            console.warn('[REGISTRY] Failed to fetch operators, using cached data:', error);
             return cachedOperators;
         } finally {
             pendingOperatorsPromise = null;
@@ -88,7 +89,8 @@ export async function getThresholdConfig(): Promise<ThresholdConfig | null> {
             cachedThreshold = config;
             thresholdCachedAt = Date.now();
             return cachedThreshold;
-        } catch {
+        } catch (error) {
+            console.warn('[REGISTRY] Failed to fetch threshold config, using cached data:', error);
             return cachedThreshold;
         } finally {
             pendingThresholdPromise = null;
