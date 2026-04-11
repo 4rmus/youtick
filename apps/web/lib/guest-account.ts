@@ -7,6 +7,7 @@ import {
     readManagedNearAccount,
     writeManagedNearAccount,
 } from './managed-near-account';
+import { hasOnboardingKey } from './gift-service';
 
 export interface GuestIdentity {
     accountId: string;
@@ -135,6 +136,27 @@ export async function bootstrapGuestAccount(
     identity: GuestIdentity,
     turnstileToken?: string | null,
 ): Promise<GuestBootstrapResponse> {
+    // Direct path: use onboarding key if available (no server credentials needed)
+    if (hasOnboardingKey()) {
+        try {
+            const { sponsorImplicitGuestDirect } = await import('./gift-service');
+            const result = await sponsorImplicitGuestDirect(identity.publicKey);
+            if (result.success) {
+                await persistGuestIdentity(identity);
+                return {
+                    ok: true,
+                    accountId: result.accountId || identity.accountId,
+                    bootstrapped: true,
+                };
+            }
+            // Direct path failed — fall through to worker
+            console.warn("Direct guest bootstrap failed, trying worker fallback:", result.error);
+        } catch (err) {
+            console.warn("Direct guest bootstrap error, trying worker fallback:", err);
+        }
+    }
+
+    // Worker fallback (transitional)
     const installId = ensureGuestInstallId();
     const result = await postJson<GuestBootstrapResponse>('/guest/bootstrap', {
         publicKey: identity.publicKey,
@@ -152,6 +174,28 @@ export async function claimFreeTicketAsGuest(
     identity: GuestIdentity,
     turnstileToken?: string | null,
 ): Promise<GuestFreeClaimResponse> {
+    // Direct path: use onboarding key if available
+    if (hasOnboardingKey()) {
+        try {
+            const { claimFreeTicketDirect } = await import('./gift-service');
+            const result = await claimFreeTicketDirect(identity.accountId, encryptedCid);
+            if (result.success) {
+                await persistGuestIdentity(identity);
+                return {
+                    ok: true,
+                    accountId: identity.accountId,
+                    claimed: true,
+                    alreadyOwned: false,
+                };
+            }
+            // Direct path failed — fall through to worker
+            console.warn("Direct free claim failed, trying worker fallback:", result.error);
+        } catch (err) {
+            console.warn("Direct free claim error, trying worker fallback:", err);
+        }
+    }
+
+    // Worker fallback (transitional)
     const installId = ensureGuestInstallId();
     const result = await postJson<GuestFreeClaimResponse>('/free/claim', {
         publicKey: identity.publicKey,

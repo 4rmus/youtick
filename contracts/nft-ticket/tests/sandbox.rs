@@ -1552,3 +1552,46 @@ async fn test_upload_session_flow() -> anyhow::Result<()> {
     assert!(event.is_some(), "Event should be created by upload session");
     Ok(())
 }
+
+// ═══════════════════════════════════════════════════════════════
+// IMPLICIT GUEST DIRECT TESTS
+// ═══════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_sponsor_implicit_guest_direct_rejects_unauthorized() -> anyhow::Result<()> {
+    let worker = near_workspaces::sandbox().await?;
+    let wasm = load_contract_wasm().await?;
+    let contract = worker.dev_deploy(wasm).await?;
+
+    let owner = worker.dev_create_account().await?;
+    contract
+        .call("new")
+        .args_json(json!({"owner_id": owner.id()}))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let caller = worker.dev_create_account().await?;
+    let caller_public_key = caller.secret_key().public_key().to_string();
+
+    // Fund trial pool so the only failure reason is unauthorized access
+    owner
+        .call(contract.id(), "fund_trial_pool")
+        .args_json(json!({}))
+        .deposit(NearToken::from_near(1))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // An account without an onboarding key should be rejected
+    let result = caller
+        .call(contract.id(), "sponsor_implicit_guest_direct")
+        .args_json(json!({ "new_public_key": caller_public_key }))
+        .gas(near_workspaces::types::Gas::from_tgas(200))
+        .transact()
+        .await?;
+
+    assert!(result.is_failure(), "Should reject unauthorized caller");
+    println!("✅ sponsor_implicit_guest_direct unauthorized rejection test passed");
+    Ok(())
+}

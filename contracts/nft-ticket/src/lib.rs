@@ -56,7 +56,6 @@ const UPLOAD_SESSION_MAX_TTL_MS: u64 = 15 * 60 * 1000;
 const UPLOAD_SESSION_TOTAL_CALLS: u8 = 2;
 
 // ─── Commission constants ───────────────────────────────────────
-// TODO: Replace inline usages in apply_commission() with these constants
 
 /// Platform commission rate: 2% of each paid sale goes to the platform
 const COMMISSION_RATE_PERCENT: u128 = 2;
@@ -64,31 +63,27 @@ const COMMISSION_DENOMINATOR: u128 = 100;
 
 /// Basis-point representation of the commission rate (200 bps = 2%).
 /// Useful when composing with other BPS-based logic.
+#[allow(dead_code)]
 const COMMISSION_RATE_BPS: u128 = 200;
+#[allow(dead_code)]
 const BPS_DENOMINATOR: u128 = 10_000;
 
 /// Split ratio for commission proceeds: 50 % trial pool, 50 % commission pool.
-/// TODO: Replace the `commission / 2` in apply_commission() with this constant.
 const COMMISSION_SPLIT_DENOMINATOR: u128 = 2;
 
 // ─── Storage / deposit constants ────────────────────────────────
-// TODO: Replace inline from_millinear() usages with these constants
 
 /// Storage cost for an onboarding invite record (0.01 NEAR).
-/// TODO: Replace inline NearToken::from_millinear(10) in invite_create()
 const STORAGE_COST_INVITE: NearToken = NearToken::from_millinear(10);
 
 /// Deposit required per gift-claim link (0.15 NEAR).
 /// Covers account creation + NFT storage + buffer.
-/// TODO: Replace inline NearToken::from_millinear(150) in gift_drop_create()
 const GIFT_DEPOSIT_PER_LINK: NearToken = NearToken::from_millinear(150);
 
 /// Account creation + access-key storage cost (0.11 NEAR).
-/// TODO: Replace inline NearToken::from_millinear(110) in gift_claim()
 const ACCOUNT_CREATION_COST: NearToken = NearToken::from_millinear(110);
 
 /// Gas fee allowance for a single claim/relay transaction (0.05 NEAR).
-/// TODO: Replace inline NearToken::from_millinear(50) in claim/trial flows
 const GAS_FEE_ALLOWANCE: NearToken = NearToken::from_millinear(50);
 
 fn wrap_near_account_id() -> AccountId {
@@ -866,7 +861,7 @@ impl Contract {
                 NonZeroU128::new(NearToken::from_near(1).as_yoctonear()).unwrap(),
             ),
             env::current_account_id(),
-            "create_sponsored_trial_direct,claim_free_ticket_direct".to_string(),
+            "create_sponsored_trial_direct,claim_free_ticket_direct,sponsor_implicit_guest_direct".to_string(),
         )
     }
 
@@ -909,7 +904,7 @@ impl Contract {
             "Must create 1-50 trial invites"
         );
 
-        let invite_storage_cost = NearToken::from_millinear(10); // 0.01 NEAR
+        let invite_storage_cost = STORAGE_COST_INVITE;
         let total_required = invite_storage_cost.saturating_mul(num_keys as u128);
         require!(
             env::attached_deposit() >= total_required,
@@ -942,7 +937,7 @@ impl Contract {
                 .add_access_key_allowance(
                     public_key.clone(),
                     near_sdk::Allowance::Limited(
-                        NonZeroU128::new(NearToken::from_millinear(50).as_yoctonear()).unwrap(),
+                        NonZeroU128::new(GAS_FEE_ALLOWANCE.as_yoctonear()).unwrap(),
                     ),
                     env::current_account_id(),
                     "claim_trial_invite_with_implicit_account".to_string(),
@@ -1174,6 +1169,14 @@ impl Contract {
         if let Some(usd) = price_usd {
             self.lazy_event_price_usd().insert(&encrypted_cid, &usd);
         }
+
+        events::emit_event_created(
+            encrypted_cid.clone(),
+            event.title.clone(),
+            event.creator_id.clone(),
+            event.price.0.to_string(),
+            None,
+        );
     }
 
     pub fn get_events(
@@ -1510,13 +1513,12 @@ impl Contract {
     /// Calculate commission split: 2% total (50% trial pool, 50% commission pool)
     /// Returns (creator_amount, commission_total)
     fn apply_commission(&mut self, price: NearToken) -> (u128, u128) {
-        let commission_rate: u128 = 2;
         let price_yocto = price.as_yoctonear();
-        let commission = price_yocto * commission_rate / 100;
+        let commission = price_yocto * COMMISSION_RATE_PERCENT / COMMISSION_DENOMINATOR;
         let creator_amount = price_yocto - commission;
 
         // Split commission: 50% to trial pool, 50% to commission pool
-        let trial_share = commission / 2;
+        let trial_share = commission / COMMISSION_SPLIT_DENOMINATOR;
         let commission_share = commission - trial_share;
         self.trial_pool = self
             .trial_pool
@@ -2339,6 +2341,47 @@ impl Contract {
         false
     }
 
+    /// Relayer-less version of `sponsor_implicit_guest`.
+    /// Called via Function Call Access Key (onboarding key) instead of relayer.
+    /// Funds an implicit account derived from the caller's public key.
+    pub fn sponsor_implicit_guest_direct(&mut self, new_public_key: PublicKey) -> Promise {
+        require!(
+            self.onboarding_config.enabled,
+            "Onboarding is currently disabled"
+        );
+
+        let signer_pk = env::signer_account_pk();
+        require!(
+            self.onboarding_keys.contains(&signer_pk),
+            "Unauthorized: Signer's key is not an onboarding key"
+        );
+
+        let day_timestamp = self.increment_daily_limit_if_allowed().unwrap_or_else(|| {
+            env::panic_str("Daily trial limit reached. Please try again tomorrow.")
+        });
+
+        let account_cost = STORAGE_COST_ACCOUNT;
+        require!(
+            self.trial_pool >= account_cost,
+            "Trial pool empty. Please contact the platform owner."
+        );
+
+        let implicit_account_id = Self::implicit_account_id_from_public_key(&new_public_key);
+        self.trial_pool = self.trial_pool.saturating_sub(account_cost);
+
+        Promise::new(implicit_account_id.clone())
+            .transfer(account_cost)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(20))
+                    .on_sponsor_implicit_guest_funded(
+                        implicit_account_id,
+                        U128(account_cost.as_yoctonear()),
+                        Some(day_timestamp),
+                    ),
+            )
+    }
+
     /// View: Get trial pool balance
     pub fn get_trial_pool_balance(&self) -> U128 {
         U128(self.trial_pool.as_yoctonear())
@@ -2607,8 +2650,7 @@ impl Contract {
             "Only event creator can create gift drops"
         );
 
-        // Cost per claim: account creation + NFT storage + buffer
-        let deposit_per_claim = NearToken::from_millinear(150); // 0.15 NEAR
+        let deposit_per_claim = GIFT_DEPOSIT_PER_LINK;
         let total_required = deposit_per_claim.saturating_mul(num_keys as u128);
 
         require!(
@@ -2619,7 +2661,7 @@ impl Contract {
         // GD-1 fix: Refund excess deposit to the caller
         let excess = env::attached_deposit().saturating_sub(total_required);
         if excess.as_yoctonear() > 0 {
-            Promise::new(env::predecessor_account_id()).transfer(excess);
+            Promise::new(env::predecessor_account_id()).transfer(excess).detach();
         }
 
         let created_at = env::block_timestamp();
@@ -2640,7 +2682,7 @@ impl Contract {
                 .add_access_key_allowance(
                     pk.clone(),
                     near_sdk::Allowance::Limited(
-                        NonZeroU128::new(NearToken::from_millinear(50).as_yoctonear()).unwrap(),
+                        NonZeroU128::new(GAS_FEE_ALLOWANCE.as_yoctonear()).unwrap(),
                     ),
                     env::current_account_id(),
                     "claim_gift,claim_gift_and_create_account".to_string(),
@@ -2652,6 +2694,12 @@ impl Contract {
                 )
                 .detach();
         }
+
+        events::emit_gift_drop_created(
+            event_cid,
+            env::predecessor_account_id().to_string(),
+            num_keys as u64,
+        );
     }
 
     #[private]
@@ -2701,13 +2749,19 @@ impl Contract {
         );
 
         // Mint NFT using helper (is_gift = true for "Gift ticket:" prefix)
-        let token = self.internal_mint_ticket(receiver_id, &event, gift_drop.event_cid, true);
+        let token = self.internal_mint_ticket(receiver_id.clone(), &event, gift_drop.event_cid, true);
 
         gift_drop.remaining_claims = 0;
         self.gift_drops.remove(&signer_pk);
         Promise::new(env::current_account_id())
             .delete_key(env::signer_account_pk())
             .detach();
+
+        events::emit_gift_claimed(
+            token.token_id.clone(),
+            receiver_id,
+            signer_pk,
+        );
 
         token
     }
@@ -2766,9 +2820,7 @@ impl Contract {
         gift_drop.remaining_claims = 0;
         self.gift_drops.insert(&signer_pk, &gift_drop);
 
-        // Account creation costs ~0.1 NEAR + access key storage ~0.0075 NEAR
-        let account_creation_cost = NearToken::from_millinear(110); // 0.11 NEAR
-
+        let account_creation_cost = ACCOUNT_CREATION_COST;
         // Create new account and add full access key
         // Then callback to mint the NFT
         // Leave 0.01 NEAR for NFT storage in callback
@@ -2974,7 +3026,7 @@ mod tests {
             creator_id: owner_id,
             event_cid: "gift-event".to_string(),
             remaining_claims: 1,
-            deposit_per_claim: U128(NearToken::from_millinear(150).as_yoctonear()),
+            deposit_per_claim: U128(GIFT_DEPOSIT_PER_LINK.as_yoctonear()),
             created_at: 1,
         };
 
@@ -3006,7 +3058,7 @@ mod tests {
             creator_id: owner_id,
             event_cid: "gift-event".to_string(),
             remaining_claims: 1,
-            deposit_per_claim: U128(NearToken::from_millinear(150).as_yoctonear()),
+            deposit_per_claim: U128(GIFT_DEPOSIT_PER_LINK.as_yoctonear()),
             created_at: 1,
         };
 
@@ -3049,7 +3101,7 @@ mod tests {
         assert!(contract.on_trial_invite_access_key_added(
             public_key.clone(),
             trial_invite.clone(),
-            U128(NearToken::from_millinear(10).as_yoctonear()),
+            U128(STORAGE_COST_INVITE.as_yoctonear()),
         ));
 
         let stored = contract

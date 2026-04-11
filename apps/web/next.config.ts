@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import path from "path";
+import { withSentryConfig } from "@sentry/nextjs";
 
 const isWeb4 = process.env.NEXT_PUBLIC_DEPLOY_TARGET === 'web4';
 
@@ -50,4 +51,13 @@ const nextConfig: NextConfig = {
     : undefined,
 };
 
-export default nextConfig;
+const sentryConfig = {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  silent: true,
+  hideSourceMaps: true,
+};
+
+export default process.env.NEXT_PUBLIC_SENTRY_DSN
+  ? withSentryConfig(nextConfig, sentryConfig)
+  : nextConfig;

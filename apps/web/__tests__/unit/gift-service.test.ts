@@ -366,11 +366,16 @@ describe('Gift Service', () => {
       setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
 
       const originalFetch = global.fetch;
+      // Direct-first: onboarding key auth check is called first, then relayer check, then signAndSendTransaction
       global.fetch = vi
         .fn()
         .mockResolvedValueOnce({
-          ok: false,
-          json: async () => ({ error: 'relayer unavailable' })
+          ok: true,
+          json: async () => ({
+            result: {
+              result: Array.from(Buffer.from('true'))
+            }
+          })
         })
         .mockResolvedValueOnce({
           ok: true,
@@ -378,6 +383,12 @@ describe('Gift Service', () => {
             result: {
               result: Array.from(Buffer.from('true'))
             }
+          })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            result: {}
           })
         });
 
@@ -391,13 +402,22 @@ describe('Gift Service', () => {
       global.fetch = originalFetch;
     });
 
-    it('should prefer relayer even when onboarding key exists', async () => {
+    it('should fall back to relayer when direct path fails', async () => {
       const onboardingKey = generateKeyPairs(1)[0].secretKey;
       setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
 
       const originalFetch = global.fetch;
+      // Direct path will fail (onboarding key auth returns false), then relayer succeeds
       global.fetch = vi
         .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            result: {
+              result: Array.from(Buffer.from('false'))
+            }
+          })
+        })
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({

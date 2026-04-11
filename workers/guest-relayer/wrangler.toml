@@ -10,7 +10,7 @@ port = 8788
 ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net,http://localhost:3000"
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_NETWORK = "mainnet"
-RELAYER_ACCOUNT_ID = ""
+# RELAYER_ACCOUNT_ID — set via `wrangler secret put RELAYER_ACCOUNT_ID` if relayer fallback is needed
 
 [[durable_objects.bindings]]
 name = "GUEST_LIMITER"
@@ -27,7 +27,7 @@ name = "guest-relayer-testnet"
 ALLOWED_ORIGINS = "http://localhost:3000"
 NEAR_CONTRACT_ID = "dev-1773607954211-252231.v2-0.utick.testnet"
 NEAR_NETWORK = "testnet"
-RELAYER_ACCOUNT_ID = ""
+# RELAYER_ACCOUNT_ID — set via `wrangler secret put RELAYER_ACCOUNT_ID` if relayer fallback is needed
 
 [[env.testnet.durable_objects.bindings]]
 name = "GUEST_LIMITER"
