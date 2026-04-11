@@ -6,7 +6,7 @@
  * Uses contract methods: create_gift_drop, claim_gift, claim_gift_and_create_account
  */
 
-import { KeyPair, Account, KeyPairSigner, actions, type KeyPairString } from "near-api-js";
+import { KeyPair, PublicKey, Account, KeyPairSigner, actions, type KeyPairString } from "near-api-js";
 import type { WalletInstance } from "./types";
 
 import { APP_CONFIG, NEAR_CONFIG, GAS_CONSTANTS } from './constants';
@@ -229,6 +229,7 @@ export async function createSponsoredTrialDirect(
 /**
  * Relayer-based trial creation (fallback method)
  * Uses the backend API endpoint which calls the contract on behalf of the user
+ * @deprecated Use createSponsoredTrialDirect or sponsorImplicitGuestDirect instead.
  */
 export async function createSponsoredTrialRelayer(
     username: string
@@ -278,9 +279,72 @@ export async function createSponsoredTrialRelayer(
 }
 
 /**
+ * Sponsor an implicit guest account using the onboarding key.
+ * Creates a funded implicit account without needing a relayer.
+ */
+export async function sponsorImplicitGuestDirect(
+    newPublicKey: string
+): Promise<{ success: boolean; accountId?: string; error?: string }> {
+    try {
+        const onboardingKeyPair = await getValidatedOnboardingKeyPair();
+        if (!onboardingKeyPair) {
+            return {
+                success: false,
+                error: "Onboarding key unavailable or unauthorized. Guest account creation is temporarily disabled.",
+            };
+        }
+
+        const signer = new KeyPairSigner(onboardingKeyPair);
+        const account = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), signer);
+
+        await account.signAndSendTransaction({
+            receiverId: NFT_CONTRACT_ID,
+            actions: [
+                actions.functionCall(
+                    "sponsor_implicit_guest_direct",
+                    { new_public_key: newPublicKey },
+                    GAS_CONSTANTS.mediumGas,
+                    BigInt(0)
+                )
+            ]
+        });
+
+        // Derive implicit account ID from the public key (same logic as publicKeyToImplicitAccountId)
+        const normalized = newPublicKey.startsWith('ed25519:') ? newPublicKey : `ed25519:${newPublicKey}`;
+        const parsedPublicKey = PublicKey.fromString(normalized);
+        const implicitAccountId = Array.from(parsedPublicKey.data)
+            .map((byte) => byte.toString(16).padStart(2, '0'))
+            .join('');
+
+        return {
+            success: true,
+            accountId: implicitAccountId,
+        };
+    } catch (error: unknown) {
+        console.error("Sponsor implicit guest direct error:", error);
+        const errMsg = error instanceof Error ? error.message : '';
+
+        if (errMsg.includes("Unauthorized") || errMsg.includes("onboarding key")) {
+            if (typeof window !== "undefined") {
+                localStorage.removeItem(onboardingStorageKey());
+            }
+            return {
+                success: false,
+                error: "Unauthorized onboarding key. Please rotate onboarding key and try again.",
+            };
+        }
+
+        return {
+            success: false,
+            error: errMsg || "Failed to sponsor guest account",
+        };
+    }
+}
+
+/**
  * Create a sponsored trial account.
- * Prefer the server relayer so onboarding keys do not need to be exposed to the browser.
- * A locally provisioned onboarding key is kept only as a manual fallback.
+ * Tries the direct onboarding key path first (no server credentials needed).
+ * Falls back to the relayer only if no onboarding key is available.
  *
  * @param username - Just the username prefix (e.g. "alice")
  * @returns The full account ID and method used
@@ -288,26 +352,28 @@ export async function createSponsoredTrialRelayer(
 export async function createSponsoredTrial(
     username: string
 ): Promise<SponsoredTrialResult & { method?: 'direct' | 'relayer' }> {
-    const relayerResult = await createSponsoredTrialRelayer(username);
-    if (relayerResult.success) {
-        recordMetric('trial_relayer_fallback');
-        console.log(`[DECENTRALIZATION_METRIC] {"operation":"trial_create","method":"relayer","username":"${username}","timestamp":${Date.now()}}`);
-        return { ...relayerResult, method: 'relayer' };
-    }
-
+    // Direct path first — no server-side credentials needed
     if (hasOnboardingKey()) {
         const directResult = await createSponsoredTrialDirect(username);
         if (directResult.success) {
             recordMetric('trial_direct_success');
-            console.log(`[DECENTRALIZATION_METRIC] {"operation":"trial_create","method":"direct","username":"${username}","timestamp":${Date.now()}}`);
             return { ...directResult, method: 'direct' };
         }
 
-        return {
-            success: false,
-            method: 'direct',
-            error: directResult.error || relayerResult.error || "Failed to create trial account",
-        };
+        // If onboarding key fails, fall through to relayer
+    }
+
+    // Relayer fallback (transitional)
+    const relayerResult = await createSponsoredTrialRelayer(username);
+    if (relayerResult.success) {
+        recordMetric('trial_relayer_fallback');
+        return { ...relayerResult, method: 'relayer' };
+    }
+
+    // Both paths failed
+    if (hasOnboardingKey()) {
+        const directError = "Direct onboarding failed. Relayer also unavailable.";
+        return { success: false, method: 'direct', error: directError };
     }
 
     return {

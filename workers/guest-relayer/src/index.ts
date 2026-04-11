@@ -6,8 +6,8 @@ export interface Env {
     GUEST_LIMITER: DurableObjectNamespace;
     NEAR_CONTRACT_ID: string;
     NEAR_NETWORK: 'mainnet' | 'testnet';
-    RELAYER_ACCOUNT_ID: string;
-    RELAYER_PRIVATE_KEY: string;
+    RELAYER_ACCOUNT_ID?: string;
+    RELAYER_PRIVATE_KEY?: string;
     TURNSTILE_SECRET_KEY?: string;
 }
 
@@ -202,7 +202,7 @@ function publicKeyToImplicitAccountId(publicKey: string): string {
 
 function requireRelayerCredentials(env: Env): { accountId: string; privateKey: string } {
     if (!env.RELAYER_ACCOUNT_ID || !env.RELAYER_PRIVATE_KEY) {
-        throw new Error('Guest relayer credentials are not configured');
+        throw new Error('Guest relayer credentials are not configured. Clients should use direct onboarding key path instead.');
     }
 
     return {
