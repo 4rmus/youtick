@@ -110,13 +110,13 @@ interface UploadSessionView {
     status?: string | { [key: string]: unknown } | null;
 }
 
-interface ShareMetadataRecord {
+export interface ShareMetadataRecord {
     scheme: 'shamir-v1';
     totalShares: number;
     requiredShares: number;
 }
 
-interface StoredShareRecord extends ShareMetadataRecord {
+export interface StoredShareRecord extends ShareMetadataRecord {
     shareId: number;
     nonceB64: string;
     ciphertextB64: string;
@@ -136,7 +136,7 @@ interface KMSResponse {
     data?: Record<string, unknown>;
 }
 
-interface WorkerReadiness {
+export interface WorkerReadiness {
     ready: boolean;
     errors: string[];
 }
@@ -181,7 +181,7 @@ const preferredRpcUrlByNetwork = new Map<string, string>();
 // CORS
 // ============================================================================
 
-function getAllowedOrigins(env: Env): Set<string> {
+export function getAllowedOrigins(env: Env): Set<string> {
     return new Set(
         (env.ALLOWED_ORIGINS || '')
             .split(',')
@@ -190,7 +190,7 @@ function getAllowedOrigins(env: Env): Set<string> {
     );
 }
 
-function getWorkerReadiness(env: Env): WorkerReadiness {
+export function getWorkerReadiness(env: Env): WorkerReadiness {
     const errors: string[] = [];
 
     if (env.NEAR_NETWORK === 'mainnet') {
@@ -805,7 +805,7 @@ function hexToBytes(hex: string): Uint8Array {
     return bytes;
 }
 
-function base64ToBytes(base64: string): Uint8Array {
+export function base64ToBytes(base64: string): Uint8Array {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
@@ -814,7 +814,7 @@ function base64ToBytes(base64: string): Uint8Array {
     return bytes;
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
+export function bytesToBase64(bytes: Uint8Array): string {
     let binary = '';
     for (const byte of bytes) {
         binary += String.fromCharCode(byte);
@@ -829,14 +829,14 @@ function base64UrlEncode(bytes: Uint8Array): string {
         .replace(/=+$/g, '');
 }
 
-function encodeU32LE(value: number): Uint8Array {
+export function encodeU32LE(value: number): Uint8Array {
     const out = new Uint8Array(4);
     const view = new DataView(out.buffer);
     view.setUint32(0, value, true);
     return out;
 }
 
-function encodeStringBorsh(value: string): Uint8Array {
+export function encodeStringBorsh(value: string): Uint8Array {
     const bytes = new TextEncoder().encode(value);
     const out = new Uint8Array(4 + bytes.length);
     out.set(encodeU32LE(bytes.length), 0);
@@ -844,7 +844,7 @@ function encodeStringBorsh(value: string): Uint8Array {
     return out;
 }
 
-function encodeOptionStringBorsh(value?: string): Uint8Array {
+export function encodeOptionStringBorsh(value?: string): Uint8Array {
     if (!value) {
         return new Uint8Array([0]);
     }
@@ -856,7 +856,7 @@ function encodeOptionStringBorsh(value?: string): Uint8Array {
     return out;
 }
 
-function concatBytes(...parts: Uint8Array[]): Uint8Array {
+export function concatBytes(...parts: Uint8Array[]): Uint8Array {
     const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
     const out = new Uint8Array(totalLength);
     let offset = 0;
@@ -883,7 +883,7 @@ function shareMetaKey(videoId: string): string {
 // K-1 fix: Use HKDF instead of raw SHA-256 for proper key derivation.
 // HKDF provides extract-then-expand with a salt, preventing weak-key issues
 // from low-entropy input secrets.
-async function importShareCipherKeyFromSecret(secret: string): Promise<CryptoKey> {
+export async function importShareCipherKeyFromSecret(secret: string): Promise<CryptoKey> {
     const secretBytes = new TextEncoder().encode(secret);
 
     // HKDF-Extract phase: use a fixed salt derived from the app context
@@ -920,7 +920,7 @@ async function importShareCipherKey(env: Env): Promise<CryptoKey> {
     return importShareCipherKeyFromSecret(env.OPERATOR_SHARE_SECRET);
 }
 
-async function encryptShareRecord(
+export async function encryptShareRecord(
     env: Env,
     record: ShareMetadataRecord & { shareId: number; shareB64: string },
 ): Promise<StoredShareRecord> {
@@ -944,7 +944,7 @@ async function encryptShareRecord(
     };
 }
 
-async function decryptShareRecord(
+export async function decryptShareRecord(
     env: Env,
     record: StoredShareRecord,
 ): Promise<string> {
@@ -979,7 +979,7 @@ async function decryptShareRecord(
     }
 }
 
-async function serializeNep413Hash(payload: {
+export async function serializeNep413Hash(payload: {
     message: string;
     nonce: Uint8Array;
     recipient: string;
@@ -1000,7 +1000,7 @@ async function serializeNep413Hash(payload: {
     return hashBytes(serialized);
 }
 
-async function verifyNep413Signature(
+export async function verifyNep413Signature(
     payload: {
         message: string;
         nonce: Uint8Array;

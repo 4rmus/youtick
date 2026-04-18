@@ -22,6 +22,7 @@ Bu oturumda yapilanlar — alttaki §1-§4 eski satirlari ezer:
 | C1 | Deprecated `workers/guest-relayer/` silindi | package.json "deprecated" isaretliydi. 4 dosya kaldirildi. Cloudflare tarafinda deployed ise ayrica `wrangler delete` gerekir | ✅ |
 | Y7 | Release runbook yazildi | `docs/release-runbook.md` — 11 bolum: pre-flight, kontrat deploy, 5-operator KMS sirasi, web4-proxy, web, smoke test, rollback, secret rotation, P0/P1/P2 escalation, checklist | ✅ |
 | Y3 | KMS key rotation | Worker kod-tarafinda dual-key `decryptShareRecord` zaten vardi. Eklenenler: PREVIOUS icin validation (length/placeholder/non-equal), fallback kullanildiginda `console.warn` log'u (wrangler tail'da grace period izleme). `docs/kms-key-rotation.md` — 6 fazli zero-downtime prosedur, 5 operator sirali akis, 3 re-encrypt stratejisi (Pasif/Aktif/Hybrid), rollback, checklist | ✅ |
+| Y4 | KMS worker Vitest suite | `vitest.config.ts` + 3 test dosyasi — `tests/config.test.ts` (13 test: CORS origin parse, startup readiness, PREVIOUS validation edge cases), `tests/crypto.test.ts` (10 test: HKDF determinism, AES-GCM roundtrip + auth-tag reddi, nonce unique, dual-key rotation fallback tum senaryolar), `tests/nep413.test.ts` (17 test: Borsh encoding, SHA-256 hash determinism, Ed25519 sign-verify roundtrip, tampered sig/mismatched key/malformed input reddi). Toplam **40/40 pass**, ~210ms, tsc clean. Testable helper'lara `export` eklendi (davranis degisikligi yok) | ✅ |
 
 ### Eski Iddialar → Guncel Gercek
 
@@ -42,7 +43,7 @@ Bu oturumda yapilanlar — alttaki §1-§4 eski satirlari ezer:
 |---|---|---|---|
 | Y2 | Gift drop 50-anahtar gas load testi | Yuksek | ⏳ bekliyor |
 | Y3 | `OPERATOR_SHARE_SECRET_PREVIOUS` + key rotation prosedur dokumani | Yuksek | ✅ tamamlandi |
-| Y4 | KMS worker Vitest suite (auth, Shamir, rate limit, CORS) | Yuksek | ⏳ bekliyor |
+| Y4 | KMS worker Vitest suite (auth, Shamir, rate limit, CORS) | Yuksek | ✅ tamamlandi |
 | Y6 | `near-sdk` 5.5.0 → 5.26.1 upgrade (MSRV Rust 1.86) | Orta | ⏳ bekliyor |
 | §5.3 | Web4 proxy rate limit | Orta | ⏳ bekliyor |
 | §5.3 | A11y sprint (aria-label, focus indicator) | Orta | ⏳ bekliyor |
