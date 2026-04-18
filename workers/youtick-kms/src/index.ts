@@ -207,6 +207,16 @@ function getWorkerReadiness(env: Env): WorkerReadiness {
         } else if (env.OPERATOR_SHARE_SECRET.startsWith('CHANGE-ME')) {
             errors.push('OPERATOR_SHARE_SECRET must be changed from the default placeholder');
         }
+
+        if (env.OPERATOR_SHARE_SECRET_PREVIOUS) {
+            if (env.OPERATOR_SHARE_SECRET_PREVIOUS.length < 32) {
+                errors.push('OPERATOR_SHARE_SECRET_PREVIOUS must be at least 32 characters when set');
+            } else if (env.OPERATOR_SHARE_SECRET_PREVIOUS.startsWith('CHANGE-ME')) {
+                errors.push('OPERATOR_SHARE_SECRET_PREVIOUS must not be a placeholder value');
+            } else if (env.OPERATOR_SHARE_SECRET_PREVIOUS === env.OPERATOR_SHARE_SECRET) {
+                errors.push('OPERATOR_SHARE_SECRET_PREVIOUS must differ from OPERATOR_SHARE_SECRET');
+            }
+        }
     }
 
     return {
@@ -960,6 +970,11 @@ async function decryptShareRecord(
             previousKey,
             ciphertext,
         );
+        // Visible via `wrangler tail` — presence of this log means rotation window is still active.
+        // Once this stops appearing for the grace period, OPERATOR_SHARE_SECRET_PREVIOUS can be removed.
+        console.warn('[KMS] decryptShareRecord: fell back to OPERATOR_SHARE_SECRET_PREVIOUS', {
+            shareId: record.shareId,
+        });
         return new TextDecoder().decode(new Uint8Array(plaintext));
     }
 }
