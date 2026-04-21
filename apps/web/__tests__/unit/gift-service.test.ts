@@ -19,6 +19,7 @@ import {
   validateGiftLink,
   createSponsoredTrialDirect,
   claimFreeTicketDirect,
+  grantFreeAccessDirect,
   createSponsoredTrialRelayer,
   createSponsoredTrial
 } from '@/lib/gift-service';
@@ -291,6 +292,35 @@ describe('Gift Service', () => {
     });
   });
 
+  describe('grantFreeAccessDirect', () => {
+    it('should fail when onboarding key is missing', async () => {
+      clearMockLocalStorage();
+      const result = await grantFreeAccessDirect('alice.testnet', 'cid-123');
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Onboarding key unavailable');
+    });
+
+    it('should grant free access when onboarding key is valid', async () => {
+      const onboardingKey = generateKeyPairs(1)[0].secretKey;
+      setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
+
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          result: {
+            result: Array.from(Buffer.from('true'))
+          }
+        })
+      });
+
+      const result = await grantFreeAccessDirect('alice.testnet', 'cid-123');
+      expect(result.success).toBe(true);
+
+      global.fetch = originalFetch;
+    });
+  });
+
   describe('createSponsoredTrialRelayer', () => {
     it('should call relayer API successfully', async () => {
       const originalFetch = global.fetch;
@@ -341,24 +371,12 @@ describe('Gift Service', () => {
   });
 
   describe('createSponsoredTrial', () => {
-    it('should fall back to relayer when onboarding key is missing', async () => {
+    it('should return failure when onboarding key is missing', async () => {
       vi.mocked(localStorage.getItem).mockReturnValue(null);
-
-      const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          account_id: 'user123.test-contract.testnet'
-        })
-      });
 
       const result = await createSponsoredTrial('user123');
 
-      expect(result.success).toBe(true);
-      expect(result.method).toBe('relayer');
-      expect(result.accountId).toBe('user123.test-contract.testnet');
-
-      global.fetch = originalFetch;
+      expect(result.success).toBe(false);
     });
 
     it('should return secretKey on direct success', async () => {
@@ -366,18 +384,21 @@ describe('Gift Service', () => {
       setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
 
       const originalFetch = global.fetch;
+      // Onboarding key auth check, then signAndSendTransaction
       global.fetch = vi
         .fn()
-        .mockResolvedValueOnce({
-          ok: false,
-          json: async () => ({ error: 'relayer unavailable' })
-        })
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
             result: {
               result: Array.from(Buffer.from('true'))
             }
+          })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            result: {}
           })
         });
 
@@ -386,30 +407,30 @@ describe('Gift Service', () => {
       expect(result.success).toBe(true);
       expect(result.secretKey).toBeDefined();
       expect(result.accountId).toBe('newaccount.test-contract.testnet');
-      expect(result.method).toBe('direct');
 
       global.fetch = originalFetch;
     });
 
-    it('should prefer relayer even when onboarding key exists', async () => {
+    it('should return failure when direct path fails', async () => {
       const onboardingKey = generateKeyPairs(1)[0].secretKey;
       setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
 
       const originalFetch = global.fetch;
+      // Direct path will fail (onboarding key auth returns false)
       global.fetch = vi
         .fn()
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
-            account_id: 'failuser.test-contract.testnet'
+            result: {
+              result: Array.from(Buffer.from('false'))
+            }
           })
         });
 
       const result = await createSponsoredTrial('failuser');
 
-      expect(result.success).toBe(true);
-      expect(result.method).toBe('relayer');
-      expect(result.accountId).toBe('failuser.test-contract.testnet');
+      expect(result.success).toBe(false);
 
       global.fetch = originalFetch;
     });

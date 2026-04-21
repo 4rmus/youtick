@@ -18,13 +18,7 @@ Today, YouTick runs through five active layers:
 
 Crust/IPFS stores encrypted media assets and manifests. The browser is still the place where the final playback key is reconstructed and media is decrypted.
 
-This page describes the current live model. For the original target ADR, see:
-
-- [Youtick Zero Trust Architecture v1](./youtick-zero-trust-architecture-v1.md) `TARGET`
-
-For the implemented state and rollout report, see:
-
-- [Final Implementation Report](./final-implementation-report.md) `LIVE`
+This page describes the current live model.
 
 ---
 
@@ -132,6 +126,4 @@ The access contract standardizes short-lived `Play`, `Publish`, `ClaimGift`, and
 - [Storage & Delivery](./storage.md)
 - [Session Keys & Upload Sessions](./session-keys.md)
 - [Smart Contract](./smart-contract.md)
-- [Youtick Zero Trust Architecture v1](./youtick-zero-trust-architecture-v1.md)
-- [Final Implementation Report](./final-implementation-report.md)
 - [Security](../security.md)

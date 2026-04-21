@@ -110,13 +110,13 @@ interface UploadSessionView {
     status?: string | { [key: string]: unknown } | null;
 }
 
-interface ShareMetadataRecord {
+export interface ShareMetadataRecord {
     scheme: 'shamir-v1';
     totalShares: number;
     requiredShares: number;
 }
 
-interface StoredShareRecord extends ShareMetadataRecord {
+export interface StoredShareRecord extends ShareMetadataRecord {
     shareId: number;
     nonceB64: string;
     ciphertextB64: string;
@@ -136,7 +136,7 @@ interface KMSResponse {
     data?: Record<string, unknown>;
 }
 
-interface WorkerReadiness {
+export interface WorkerReadiness {
     ready: boolean;
     errors: string[];
 }
@@ -181,7 +181,7 @@ const preferredRpcUrlByNetwork = new Map<string, string>();
 // CORS
 // ============================================================================
 
-function getAllowedOrigins(env: Env): Set<string> {
+export function getAllowedOrigins(env: Env): Set<string> {
     return new Set(
         (env.ALLOWED_ORIGINS || '')
             .split(',')
@@ -190,7 +190,7 @@ function getAllowedOrigins(env: Env): Set<string> {
     );
 }
 
-function getWorkerReadiness(env: Env): WorkerReadiness {
+export function getWorkerReadiness(env: Env): WorkerReadiness {
     const errors: string[] = [];
 
     if (env.NEAR_NETWORK === 'mainnet') {
@@ -206,6 +206,16 @@ function getWorkerReadiness(env: Env): WorkerReadiness {
             errors.push('OPERATOR_SHARE_SECRET must be at least 32 characters');
         } else if (env.OPERATOR_SHARE_SECRET.startsWith('CHANGE-ME')) {
             errors.push('OPERATOR_SHARE_SECRET must be changed from the default placeholder');
+        }
+
+        if (env.OPERATOR_SHARE_SECRET_PREVIOUS) {
+            if (env.OPERATOR_SHARE_SECRET_PREVIOUS.length < 32) {
+                errors.push('OPERATOR_SHARE_SECRET_PREVIOUS must be at least 32 characters when set');
+            } else if (env.OPERATOR_SHARE_SECRET_PREVIOUS.startsWith('CHANGE-ME')) {
+                errors.push('OPERATOR_SHARE_SECRET_PREVIOUS must not be a placeholder value');
+            } else if (env.OPERATOR_SHARE_SECRET_PREVIOUS === env.OPERATOR_SHARE_SECRET) {
+                errors.push('OPERATOR_SHARE_SECRET_PREVIOUS must differ from OPERATOR_SHARE_SECRET');
+            }
         }
     }
 
@@ -515,9 +525,8 @@ async function verifyFullAccessKeyBinding(
 /**
  * Verify that an account has a valid ticket for a video.
  *
- * Uses the Youtick smart contract's `has_ticket(account_id, encrypted_cid)` method.
- * This checks if the user owns ANY token whose video metadata matches the given
- * encrypted_cid (the UUID used as the video's access control key).
+ * Uses `has_ticket(account_id, encrypted_cid)` for NFT-backed access, then
+ * `check_trial_access` for NFT-free grants from `grant_free_access_direct`.
  */
 async function verifyTicketAccess(
     env: Env,
@@ -532,8 +541,6 @@ async function verifyTicketAccess(
     }
 
     try {
-        // Use the contract's has_ticket view method
-        // This checks if the account holds any NFT ticket for this video
         const hasTicket = await nearViewCall<boolean>(
             env,
             env.NEAR_CONTRACT_ID,
@@ -542,6 +549,18 @@ async function verifyTicketAccess(
         );
 
         if (hasTicket) {
+            await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: TICKET_ACCESS_CACHE_TTL_S });
+            return true;
+        }
+
+        const hasTrialAccess = await nearViewCall<boolean>(
+            env,
+            env.NEAR_CONTRACT_ID,
+            'check_trial_access',
+            { account_id: accountId, encrypted_cid: videoId },
+        );
+
+        if (hasTrialAccess) {
             await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: TICKET_ACCESS_CACHE_TTL_S });
             return true;
         }
@@ -795,7 +814,7 @@ function hexToBytes(hex: string): Uint8Array {
     return bytes;
 }
 
-function base64ToBytes(base64: string): Uint8Array {
+export function base64ToBytes(base64: string): Uint8Array {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
@@ -804,7 +823,7 @@ function base64ToBytes(base64: string): Uint8Array {
     return bytes;
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
+export function bytesToBase64(bytes: Uint8Array): string {
     let binary = '';
     for (const byte of bytes) {
         binary += String.fromCharCode(byte);
@@ -819,14 +838,14 @@ function base64UrlEncode(bytes: Uint8Array): string {
         .replace(/=+$/g, '');
 }
 
-function encodeU32LE(value: number): Uint8Array {
+export function encodeU32LE(value: number): Uint8Array {
     const out = new Uint8Array(4);
     const view = new DataView(out.buffer);
     view.setUint32(0, value, true);
     return out;
 }
 
-function encodeStringBorsh(value: string): Uint8Array {
+export function encodeStringBorsh(value: string): Uint8Array {
     const bytes = new TextEncoder().encode(value);
     const out = new Uint8Array(4 + bytes.length);
     out.set(encodeU32LE(bytes.length), 0);
@@ -834,7 +853,7 @@ function encodeStringBorsh(value: string): Uint8Array {
     return out;
 }
 
-function encodeOptionStringBorsh(value?: string): Uint8Array {
+export function encodeOptionStringBorsh(value?: string): Uint8Array {
     if (!value) {
         return new Uint8Array([0]);
     }
@@ -846,7 +865,7 @@ function encodeOptionStringBorsh(value?: string): Uint8Array {
     return out;
 }
 
-function concatBytes(...parts: Uint8Array[]): Uint8Array {
+export function concatBytes(...parts: Uint8Array[]): Uint8Array {
     const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
     const out = new Uint8Array(totalLength);
     let offset = 0;
@@ -873,7 +892,7 @@ function shareMetaKey(videoId: string): string {
 // K-1 fix: Use HKDF instead of raw SHA-256 for proper key derivation.
 // HKDF provides extract-then-expand with a salt, preventing weak-key issues
 // from low-entropy input secrets.
-async function importShareCipherKeyFromSecret(secret: string): Promise<CryptoKey> {
+export async function importShareCipherKeyFromSecret(secret: string): Promise<CryptoKey> {
     const secretBytes = new TextEncoder().encode(secret);
 
     // HKDF-Extract phase: use a fixed salt derived from the app context
@@ -910,7 +929,7 @@ async function importShareCipherKey(env: Env): Promise<CryptoKey> {
     return importShareCipherKeyFromSecret(env.OPERATOR_SHARE_SECRET);
 }
 
-async function encryptShareRecord(
+export async function encryptShareRecord(
     env: Env,
     record: ShareMetadataRecord & { shareId: number; shareB64: string },
 ): Promise<StoredShareRecord> {
@@ -934,7 +953,7 @@ async function encryptShareRecord(
     };
 }
 
-async function decryptShareRecord(
+export async function decryptShareRecord(
     env: Env,
     record: StoredShareRecord,
 ): Promise<string> {
@@ -960,11 +979,16 @@ async function decryptShareRecord(
             previousKey,
             ciphertext,
         );
+        // Visible via `wrangler tail` — presence of this log means rotation window is still active.
+        // Once this stops appearing for the grace period, OPERATOR_SHARE_SECRET_PREVIOUS can be removed.
+        console.warn('[KMS] decryptShareRecord: fell back to OPERATOR_SHARE_SECRET_PREVIOUS', {
+            shareId: record.shareId,
+        });
         return new TextDecoder().decode(new Uint8Array(plaintext));
     }
 }
 
-async function serializeNep413Hash(payload: {
+export async function serializeNep413Hash(payload: {
     message: string;
     nonce: Uint8Array;
     recipient: string;
@@ -985,7 +1009,7 @@ async function serializeNep413Hash(payload: {
     return hashBytes(serialized);
 }
 
-async function verifyNep413Signature(
+export async function verifyNep413Signature(
     payload: {
         message: string;
         nonce: Uint8Array;

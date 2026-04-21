@@ -39,16 +39,11 @@ Bu alanlar olmadan uygulama dogru contract setine ve ağa baglanamaz.
 | `NEXT_PUBLIC_ONE_CLICK_API_TOKEN` | 1Click quote ve swap istekleri icin partner tokeni | Arbitrum/Base odemelerini kullanacaksan |
 | `NEXT_PUBLIC_DEPLOY_TARGET` | Web4 build davranisini degistirir | `npm run build:web4` kullaniyorsan |
 
-### Sunucu tarafinda kalanlar
+### ~~Relayer (kaldırıldı)~~
 
-Bu degiskenler browser bundle'ina gitmemeli:
-
-| Degisken | Aciklama |
-|----------|----------|
-| `RELAYER_ACCOUNT_ID` | Opsiyonel trial relayer hesabi |
-| `RELAYER_PRIVATE_KEY` | Relayer private key |
-
-Relayer fallback kullaniliyorsa bu hesap registry'de aktif olmali ve mevcut contract yuzeyinde trial olusturma yetkisine sahip olmali.
+> **Not**: Relayer-based trial akışı artık kullanılmıyor. Trial ve guest hesap
+> oluşturma artık `NEXT_PUBLIC_ONBOARDING_KEY` ile browser-side yapılıyor.
+> `RELAYER_ACCOUNT_ID` ve `RELAYER_PRIVATE_KEY` artık gerekli değil.
 
 ---
 
@@ -94,7 +89,7 @@ NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
 NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true
 ```
 
-Trial olusturma icin relayer kullaniliyorsa `RELAYER_ACCOUNT_ID` ve `RELAYER_PRIVATE_KEY` server-side kalmali. Browser bundle'ina onboarding key koyma.
+Trial ve guest hesap olusturma icin `NEXT_PUBLIC_ONBOARDING_KEY` kullanilir. Bu anahtar contract owner tarafindan `add_onboarding_key` ile kaydedilir.
 
 ---
 
