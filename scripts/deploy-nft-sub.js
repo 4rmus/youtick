@@ -5,7 +5,7 @@ const path = require("path");
 // Configuration
 const NETWORK_ID = "testnet";
 const MASTER_ACCOUNT_ID = "v2-0.utick.testnet";
-// From .env.local: NEAR_RELAYER_PRIVATE_KEY
+// Testnet deployment key
 const MASTER_KEY = "REDACTED";
 const CONTRACT_ACCOUNT_ID = `nft.${MASTER_ACCOUNT_ID}`;
 

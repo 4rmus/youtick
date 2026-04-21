@@ -31,10 +31,10 @@ features:
 - [Prerequisites](getting-started/prerequisites.md) -- System requirements
 - [Installation](getting-started/installation.md) -- Clone, install, configure
 - [Quick Start](quick-start.md) -- Run the app locally
-- [Final Implementation Report](architecture/final-implementation-report.md) -- LIVE implementation summary
-- [Youtick Zero Trust Architecture v1](architecture/youtick-zero-trust-architecture-v1.md) -- TARGET-state ADR
-- [Contract Methods](api/contract-methods.md) -- TARGET contract API reference
+- [System Architecture](architecture/README.md) -- Live architecture overview
 - [Storage & Delivery](architecture/storage.md) -- Encryption, IPFS uploads, share-based playback
+- [Smart Contract](architecture/smart-contract.md) -- Contract surfaces and invariants
+- [Contract Methods](api/contract-methods.md) -- Contract API reference
 - [Security](security.md) -- Threat model and security notes
 - [Roadmap](roadmap.md) -- Planned milestones
-- [Business](business/youtick-avrupa-sirketlesme-raporu-2026-04.md) -- Avrupa sirketlesme raporu
+- [Business](business/youtick-yol-haritasi-2026-04.md) -- Yol haritasi ve yayin stratejisi
