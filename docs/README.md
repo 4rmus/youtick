@@ -25,8 +25,6 @@ YouTick currently runs with client-side media encryption, a market/access/regist
 ## Architecture
 
 - [System Architecture](architecture/README.md) `LIVE`
-- [Youtick Zero Trust Architecture v1](architecture/youtick-zero-trust-architecture-v1.md) `TARGET`
-- [Final Implementation Report](architecture/final-implementation-report.md) `LIVE`
 - [Storage & Delivery](architecture/storage.md) `LIVE`
 - [Session Keys & Upload Sessions](architecture/session-keys.md) `LIVE + LEGACY`
 - [Smart Contract](architecture/smart-contract.md) `LIVE`
@@ -59,10 +57,9 @@ For a new engineer, the shortest path is:
 
 1. [Quick Start](quick-start.md)
 2. [System Architecture](architecture/README.md)
-3. [Final Implementation Report](architecture/final-implementation-report.md)
-4. [Youtick Zero Trust Architecture v1](architecture/youtick-zero-trust-architecture-v1.md)
-5. [Storage & Delivery](architecture/storage.md)
-6. [Contract Methods](api/contract-methods.md)
+3. [Storage & Delivery](architecture/storage.md)
+4. [Smart Contract](architecture/smart-contract.md)
+5. [Contract Methods](api/contract-methods.md)
 
 ---
 

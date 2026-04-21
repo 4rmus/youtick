@@ -47,11 +47,17 @@ impl StorageKey {
     pub const BANNED_EVENTS: Self = Self(b"be8");
     pub const UPLOAD_SESSIONS: Self = Self(b"us8");
     pub const TRIAL_INVITES: Self = Self(b"ti8");
+    pub const TRIAL_ACCESS: Self = Self(b"ta8");
 }
 
 /// Storage cost constants to avoid repeated allocations
 const STORAGE_COST_NFT: NearToken = NearToken::from_millinear(10); // 0.01 NEAR
 const STORAGE_COST_ACCOUNT: NearToken = NearToken::from_millinear(100); // 0.1 NEAR
+/// Storage cost for sponsored trial / guest account creation.
+/// NEAR protocol minimum for an account + one access key is ~0.00182 NEAR;
+/// this constant leaves a small buffer above that floor so funded accounts can
+/// sign their own follow-up transactions before any upgrade path.
+const TRIAL_ACCOUNT_STORAGE_COST: NearToken = NearToken::from_millinear(2); // 0.002 NEAR
 const UPLOAD_SESSION_MAX_TTL_MS: u64 = 15 * 60 * 1000;
 const UPLOAD_SESSION_TOTAL_CALLS: u8 = 2;
 
@@ -75,6 +81,9 @@ const COMMISSION_SPLIT_DENOMINATOR: u128 = 2;
 
 /// Storage cost for an onboarding invite record (0.01 NEAR).
 const STORAGE_COST_INVITE: NearToken = NearToken::from_millinear(10);
+
+/// Per-row storage stake for NFT-less free access (LookupMap entry); paid from `trial_pool`.
+const STORAGE_COST_TRIAL_ACCESS: NearToken = NearToken::from_millinear(1); // 0.001 NEAR
 
 /// Deposit required per gift-claim link (0.15 NEAR).
 /// Covers account creation + NFT storage + buffer.
@@ -388,6 +397,16 @@ impl Contract {
 
     fn lazy_trial_relayers(&self) -> LookupSet<AccountId> {
         LookupSet::new(StorageKey::TRIAL_RELAYERS)
+    }
+
+    /// NFT-free free playback entitlement: one key per (account_id, encrypted_cid).
+    fn lazy_trial_access(&self) -> LookupMap<String, bool> {
+        LookupMap::new(StorageKey::TRIAL_ACCESS)
+    }
+
+    fn trial_access_row_key(account_id: &AccountId, encrypted_cid: &str) -> String {
+        //\x1e is unlikely in NEAR account IDs and typical UUID CIDs
+        format!("{}\x1e{}", account_id.as_str(), encrypted_cid)
     }
 
     fn normalize_access_mode(&self, access_mode: Option<String>, price_yocto: u128) -> String {
@@ -853,15 +872,15 @@ impl Contract {
         self.onboarding_keys.insert(&public_key);
 
         // Add Function Call Access Key to contract
-        // Allowance: 1 NEAR for gas (enough for many trial creations)
-        // Restricted to: create_sponsored_trial_direct only
+        // Allowance: 10 NEAR for gas (~5000 trial creations at 0.002 NEAR each before rotation needed)
+        // Restricted to: direct onboarding functions only (no relayer dependency)
         Promise::new(env::current_account_id()).add_access_key_allowance(
             public_key,
             near_sdk::Allowance::Limited(
-                NonZeroU128::new(NearToken::from_near(1).as_yoctonear()).unwrap(),
+                NonZeroU128::new(NearToken::from_near(10).as_yoctonear()).unwrap(),
             ),
             env::current_account_id(),
-            "create_sponsored_trial_direct,claim_free_ticket_direct,sponsor_implicit_guest_direct".to_string(),
+            "create_sponsored_trial_direct,claim_free_ticket_direct,grant_free_access_direct,sponsor_implicit_guest_direct".to_string(),
         )
     }
 
@@ -981,6 +1000,8 @@ impl Contract {
         false
     }
 
+    /// **DEPRECATED**: Relayer system is being phased out. Onboarding keys replace relayer functionality.
+    ///
     /// Add an authorized relayer account for the sponsored trial fallback path.
     pub fn add_trial_relayer(&mut self, account_id: AccountId) {
         require!(
@@ -990,6 +1011,8 @@ impl Contract {
         self.lazy_trial_relayers().insert(&account_id);
     }
 
+    /// **DEPRECATED**: Relayer system is being phased out. Onboarding keys replace relayer functionality.
+    ///
     /// Remove an authorized relayer account from the sponsored trial allowlist.
     pub fn remove_trial_relayer(&mut self, account_id: AccountId) {
         require!(
@@ -999,6 +1022,8 @@ impl Contract {
         self.lazy_trial_relayers().remove(&account_id);
     }
 
+    /// **DEPRECATED**: Relayer system is being phased out. Onboarding keys replace relayer functionality.
+    ///
     /// View: Check whether an account is authorized to call create_sponsored_trial.
     pub fn is_trial_relayer(&self, account_id: AccountId) -> bool {
         self.lazy_trial_relayers().contains(&account_id)
@@ -1071,10 +1096,12 @@ impl Contract {
             .insert(&day_timestamp, &(current_count - 1));
     }
 
+    // DEPRECATED: Only used by relayer-based functions. Will be removed with relayer cleanup.
     fn can_manage_trial_relayer(&self, account_id: &AccountId) -> bool {
         self.tokens.owner_id == *account_id
     }
 
+    // DEPRECATED: Only used by relayer-based functions. Will be removed with relayer cleanup.
     fn can_create_sponsored_trial(&self, account_id: &AccountId) -> bool {
         self.tokens.owner_id == *account_id || self.lazy_trial_relayers().contains(account_id)
     }
@@ -1944,7 +1971,7 @@ impl Contract {
             env::panic_str("Daily trial limit reached. Please try again tomorrow.")
         });
 
-        let account_cost = STORAGE_COST_ACCOUNT;
+        let account_cost = TRIAL_ACCOUNT_STORAGE_COST;
         require!(
             self.trial_pool >= account_cost,
             "Trial pool empty. Please contact the platform owner."
@@ -2017,7 +2044,7 @@ impl Contract {
     /// 3. Onboarding must be enabled
     ///
     /// Creates: {username}.{contract_id} (e.g. "alice.youtick.near")
-    /// Cost: ~0.1 NEAR per account from trial pool
+    /// Cost: 0.002 NEAR per account from trial pool (NEP-448 zero-balance buffer)
     pub fn create_sponsored_trial_direct(
         &mut self,
         username: String,
@@ -2054,7 +2081,7 @@ impl Contract {
         );
 
         // Cost for account creation + initial balance
-        let account_cost = STORAGE_COST_ACCOUNT;
+        let account_cost = TRIAL_ACCOUNT_STORAGE_COST;
 
         require!(
             self.trial_pool >= account_cost,
@@ -2174,10 +2201,86 @@ impl Contract {
         false
     }
 
+    /// Record free playback entitlement without minting an NFT (onboarding FC key + `trial_pool`).
+    ///
+    /// Cheaper than [`Self::claim_free_ticket_direct`] (no NFT storage); KMS uses
+    /// [`Self::check_trial_access`] when [`Self::has_ticket`] is false.
+    pub fn grant_free_access_direct(&mut self, receiver_id: AccountId, encrypted_cid: String) {
+        require!(
+            self.onboarding_config.enabled,
+            "Onboarding is currently disabled"
+        );
+
+        let signer_pk = env::signer_account_pk();
+        require!(
+            self.onboarding_keys.contains(&signer_pk),
+            "Unauthorized: Signer's key is not an onboarding key"
+        );
+
+        let maybe_event = self.events.get(&encrypted_cid);
+        require!(maybe_event.is_some(), "Event not found");
+        let event = maybe_event.unwrap();
+        require!(
+            self.lazy_banned_events().get(&encrypted_cid).is_none(),
+            "This event has been banned and tickets cannot be claimed"
+        );
+        require!(
+            event.price.0 == 0,
+            "This ticket is not free. Use buy_ticket instead."
+        );
+
+        let row_key = Self::trial_access_row_key(&receiver_id, &encrypted_cid);
+        if self.lazy_trial_access().get(&row_key).is_some() {
+            env::log_str("grant_free_access_direct: already granted; noop");
+            return;
+        }
+
+        self.increment_daily_limit_if_allowed().unwrap_or_else(|| {
+            env::panic_str("Daily limit reached. Please try again tomorrow.")
+        });
+
+        let storage_cost = STORAGE_COST_TRIAL_ACCESS;
+        require!(self.trial_pool >= storage_cost, "Trial pool empty.");
+        self.trial_pool = self.trial_pool.saturating_sub(storage_cost);
+
+        self.lazy_trial_access().insert(&row_key, &true);
+        env::log_str(&format!(
+            "grant_free_access_direct: {} cid={}",
+            receiver_id.as_str(),
+            encrypted_cid
+        ));
+    }
+
+    /// KMS / playback: true if this account was granted NFT-free access for `encrypted_cid`.
+    pub fn check_trial_access(&self, account_id: AccountId, encrypted_cid: String) -> bool {
+        let row_key = Self::trial_access_row_key(&account_id, &encrypted_cid);
+        self.lazy_trial_access().get(&row_key).is_some()
+    }
+
+    /// Owner-only: remove NFT-free access row and refund `trial_pool` by the entry stake.
+    pub fn revoke_trial_access(&mut self, account_id: AccountId, encrypted_cid: String) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can revoke trial access"
+        );
+        let row_key = Self::trial_access_row_key(&account_id, &encrypted_cid);
+        if self.lazy_trial_access().remove(&row_key).is_some() {
+            self.trial_pool = self.trial_pool.saturating_add(STORAGE_COST_TRIAL_ACCESS);
+            env::log_str(&format!(
+                "revoke_trial_access: {} cid={}",
+                account_id.as_str(),
+                encrypted_cid
+            ));
+        }
+    }
+
     /// Create a sponsored trial account as a subaccount of this contract
     /// Contract pays the cost from trial pool!
     /// Creates: {username}.{contract_id} (e.g. "alice.youtick.near")
-    /// Cost: ~0.1 NEAR per account from trial pool
+    /// Cost: 0.002 NEAR per account from trial pool (NEP-448 zero-balance buffer)
+    ///
+    /// **DEPRECATED**: Use `create_sponsored_trial_direct` with onboarding keys instead.
+    /// This function requires a relayer account and will be removed in a future version.
     ///
     /// NOTE: This is the original relayer-based method. For relayer-less onboarding,
     /// use create_sponsored_trial_direct with an onboarding key.
@@ -2210,7 +2313,7 @@ impl Contract {
         );
 
         // Cost for account creation + initial balance
-        let account_cost = STORAGE_COST_ACCOUNT;
+        let account_cost = TRIAL_ACCOUNT_STORAGE_COST;
 
         require!(
             self.trial_pool >= account_cost,
@@ -2270,6 +2373,8 @@ impl Contract {
         false
     }
 
+    /// **DEPRECATED**: Use `sponsor_implicit_guest_direct` with onboarding keys instead.
+    /// This function requires a relayer account and will be removed in a future version.
     pub fn sponsor_implicit_guest(&mut self, new_public_key: PublicKey) -> Promise {
         require!(
             self.onboarding_config.enabled,
@@ -2286,7 +2391,7 @@ impl Contract {
             env::panic_str("Daily trial limit reached. Please try again tomorrow.")
         });
 
-        let account_cost = STORAGE_COST_ACCOUNT;
+        let account_cost = TRIAL_ACCOUNT_STORAGE_COST;
         require!(
             self.trial_pool >= account_cost,
             "Trial pool empty. Please contact the platform owner."
@@ -2360,7 +2465,7 @@ impl Contract {
             env::panic_str("Daily trial limit reached. Please try again tomorrow.")
         });
 
-        let account_cost = STORAGE_COST_ACCOUNT;
+        let account_cost = TRIAL_ACCOUNT_STORAGE_COST;
         require!(
             self.trial_pool >= account_cost,
             "Trial pool empty. Please contact the platform owner."
@@ -2410,6 +2515,9 @@ impl Contract {
         Promise::new(env::predecessor_account_id()).transfer(withdraw_amount)
     }
 
+    /// **DEPRECATED**: Use `claim_free_ticket_direct` with onboarding keys instead.
+    /// This function requires a relayer account and will be removed in a future version.
+    ///
     /// Claim a FREE ticket - Contract pays storage from trial_pool!
     /// This allows trial accounts and any user to claim free content
     /// without needing any NEAR balance.
@@ -3157,7 +3265,7 @@ mod tests {
         let relayer_id = account("relayer.testnet");
         let contract_id = account("contract.testnet");
         let mut contract = Contract::new(owner_id);
-        contract.trial_pool = STORAGE_COST_ACCOUNT;
+        contract.trial_pool = TRIAL_ACCOUNT_STORAGE_COST;
         contract.lazy_trial_relayers().insert(&relayer_id);
 
         testing_env!(context(relayer_id.as_str(), contract_id.as_str()).build());
@@ -3186,11 +3294,71 @@ mod tests {
 
         assert!(!contract.on_sponsor_implicit_guest_funded(
             account("implicit.testnet"),
-            U128(STORAGE_COST_ACCOUNT.as_yoctonear()),
+            U128(TRIAL_ACCOUNT_STORAGE_COST.as_yoctonear()),
             Some(day_timestamp),
         ));
-        assert_eq!(contract.trial_pool, STORAGE_COST_ACCOUNT);
+        assert_eq!(contract.trial_pool, TRIAL_ACCOUNT_STORAGE_COST);
         assert_eq!(contract.get_daily_trial_count(), 0);
+    }
+
+    #[test]
+    fn grant_free_access_direct_sets_check_trial_access_without_nft() {
+        let owner_id = account("owner.testnet");
+        let contract_id = account("contract.testnet");
+        let receiver_id = account("viewer.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+        let onboarding_pk = sample_public_key(20);
+        let encrypted_cid = "free-cid-1".to_string();
+
+        contract.onboarding_config = OnboardingConfig {
+            daily_limit: 100,
+            enabled: true,
+        };
+        contract.onboarding_keys.insert(&onboarding_pk);
+        contract.trial_pool = NearToken::from_millinear(100);
+        contract.events.insert(
+            &encrypted_cid,
+            &Event {
+                title: "T".to_string(),
+                description: "D".to_string(),
+                price: U128(0),
+                creator_id: owner_id.clone(),
+                created_at: 1,
+            },
+        );
+        contract.active_event_count = 1;
+
+        let pool_before = contract.trial_pool;
+
+        let mut ctx = context(contract_id.as_str(), contract_id.as_str());
+        ctx.signer_account_id(contract_id.clone());
+        ctx.signer_account_pk(onboarding_pk.clone());
+        testing_env!(ctx.build());
+
+        contract.grant_free_access_direct(receiver_id.clone(), encrypted_cid.clone());
+
+        assert!(contract.check_trial_access(receiver_id.clone(), encrypted_cid.clone()));
+        assert!(!contract.has_ticket(receiver_id.clone(), encrypted_cid.clone()));
+        assert_eq!(
+            contract.trial_pool,
+            pool_before.saturating_sub(STORAGE_COST_TRIAL_ACCESS)
+        );
+
+        let pool_after_first = contract.trial_pool;
+        contract.grant_free_access_direct(receiver_id.clone(), encrypted_cid.clone());
+        assert_eq!(contract.trial_pool, pool_after_first);
+
+        let mut ctx_owner = context(owner_id.as_str(), contract_id.as_str());
+        ctx_owner.signer_account_id(owner_id.clone());
+        ctx_owner.signer_account_pk(sample_public_key(99));
+        testing_env!(ctx_owner.build());
+
+        contract.revoke_trial_access(receiver_id.clone(), encrypted_cid.clone());
+        assert!(!contract.check_trial_access(receiver_id, encrypted_cid.clone()));
+        assert_eq!(
+            contract.trial_pool,
+            pool_after_first.saturating_add(STORAGE_COST_TRIAL_ACCESS)
+        );
     }
 }
 

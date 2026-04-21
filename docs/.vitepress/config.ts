@@ -37,8 +37,6 @@ export default withMermaid(
           text: 'Architecture',
           items: [
             { text: 'System Architecture', link: '/architecture/' },
-            { text: 'Zero Trust v1', link: '/architecture/youtick-zero-trust-architecture-v1' },
-            { text: 'Final Report', link: '/architecture/final-implementation-report' },
             { text: 'Smart Contract', link: '/architecture/smart-contract' },
             { text: 'Session Keys', link: '/architecture/session-keys' },
             { text: 'Storage', link: '/architecture/storage' },
