@@ -9,11 +9,7 @@
 
 ## How to Read This Page
 
-This page documents the target v1 method surface, not the exact live runtime contract that exists today. The current live contract still centers on `contracts/nft-ticket/src/lib.rs`. For the full target-state explanation, read:
-
-- [Youtick Zero Trust Architecture v1](../architecture/youtick-zero-trust-architecture-v1.md)
-
-This page keeps the method names identical to the ADR.
+This page documents the contract method surface. The authoritative runtime behavior is in `contracts/nft-ticket/src/lib.rs`, `contracts/access-control/src/lib.rs`, and `contracts/operator-registry/src/lib.rs`.
 
 ---
 

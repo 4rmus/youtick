@@ -229,7 +229,7 @@ export async function createSponsoredTrialDirect(
 /**
  * Relayer-based trial creation (fallback method)
  * Uses the backend API endpoint which calls the contract on behalf of the user
- * @deprecated Use createSponsoredTrialDirect or sponsorImplicitGuestDirect instead.
+ * @deprecated Relayer path removed. Use createSponsoredTrialDirect instead.
  */
 export async function createSponsoredTrialRelayer(
     username: string
@@ -343,44 +343,19 @@ export async function sponsorImplicitGuestDirect(
 
 /**
  * Create a sponsored trial account.
- * Tries the direct onboarding key path first (no server credentials needed).
- * Falls back to the relayer only if no onboarding key is available.
+ * Uses the direct onboarding key path exclusively (no server credentials needed).
  *
  * @param username - Just the username prefix (e.g. "alice")
- * @returns The full account ID and method used
+ * @returns The full account ID and result
  */
 export async function createSponsoredTrial(
     username: string
-): Promise<SponsoredTrialResult & { method?: 'direct' | 'relayer' }> {
-    // Direct path first — no server-side credentials needed
-    if (hasOnboardingKey()) {
-        const directResult = await createSponsoredTrialDirect(username);
-        if (directResult.success) {
-            recordMetric('trial_direct_success');
-            return { ...directResult, method: 'direct' };
-        }
-
-        // If onboarding key fails, fall through to relayer
+): Promise<SponsoredTrialResult> {
+    const result = await createSponsoredTrialDirect(username);
+    if (result.success) {
+        recordMetric('trial_direct_success');
     }
-
-    // Relayer fallback (transitional)
-    const relayerResult = await createSponsoredTrialRelayer(username);
-    if (relayerResult.success) {
-        recordMetric('trial_relayer_fallback');
-        return { ...relayerResult, method: 'relayer' };
-    }
-
-    // Both paths failed
-    if (hasOnboardingKey()) {
-        const directError = "Direct onboarding failed. Relayer also unavailable.";
-        return { success: false, method: 'direct', error: directError };
-    }
-
-    return {
-        success: false,
-        method: 'relayer',
-        error: relayerResult.error || "Failed to create trial account",
-    };
+    return result;
 }
 
 /**
@@ -418,6 +393,57 @@ export async function claimFreeTicketDirect(
     } catch (error: unknown) {
         console.error("Direct free ticket claim error:", error);
         const errMsg = error instanceof Error ? error.message : "Failed to claim free ticket";
+
+        if (errMsg.includes("Unauthorized") || errMsg.includes("onboarding key")) {
+            if (typeof window !== "undefined") {
+                localStorage.removeItem(onboardingStorageKey());
+            }
+            return {
+                success: false,
+                error: "Unauthorized onboarding key. Please rotate onboarding key and try again.",
+            };
+        }
+
+        return { success: false, error: errMsg };
+    }
+}
+
+/**
+ * Grant free playback access via onboarding key without minting an NFT (contract `grant_free_access_direct`).
+ * KMS authorizes playback with `check_trial_access` when the user has no ticket NFT.
+ */
+export async function grantFreeAccessDirect(
+    receiverId: string,
+    encryptedCid: string
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        const onboardingKeyPair = await getValidatedOnboardingKeyPair(0);
+        if (!onboardingKeyPair) {
+            return {
+                success: false,
+                error: "Onboarding key unavailable or unauthorized. Free access grant is temporarily disabled.",
+            };
+        }
+
+        const signer = new KeyPairSigner(onboardingKeyPair);
+        const account = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), signer);
+
+        await account.signAndSendTransaction({
+            receiverId: NFT_CONTRACT_ID,
+            actions: [
+                actions.functionCall(
+                    "grant_free_access_direct",
+                    { receiver_id: receiverId, encrypted_cid: encryptedCid },
+                    GAS_CONSTANTS.mediumGas,
+                    BigInt(0)
+                )
+            ]
+        });
+
+        return { success: true };
+    } catch (error: unknown) {
+        console.error("grantFreeAccessDirect error:", error);
+        const errMsg = error instanceof Error ? error.message : "Failed to grant free access";
 
         if (errMsg.includes("Unauthorized") || errMsg.includes("onboarding key")) {
             if (typeof window !== "undefined") {

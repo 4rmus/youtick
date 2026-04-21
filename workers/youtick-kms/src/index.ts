@@ -525,9 +525,8 @@ async function verifyFullAccessKeyBinding(
 /**
  * Verify that an account has a valid ticket for a video.
  *
- * Uses the Youtick smart contract's `has_ticket(account_id, encrypted_cid)` method.
- * This checks if the user owns ANY token whose video metadata matches the given
- * encrypted_cid (the UUID used as the video's access control key).
+ * Uses `has_ticket(account_id, encrypted_cid)` for NFT-backed access, then
+ * `check_trial_access` for NFT-free grants from `grant_free_access_direct`.
  */
 async function verifyTicketAccess(
     env: Env,
@@ -542,8 +541,6 @@ async function verifyTicketAccess(
     }
 
     try {
-        // Use the contract's has_ticket view method
-        // This checks if the account holds any NFT ticket for this video
         const hasTicket = await nearViewCall<boolean>(
             env,
             env.NEAR_CONTRACT_ID,
@@ -552,6 +549,18 @@ async function verifyTicketAccess(
         );
 
         if (hasTicket) {
+            await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: TICKET_ACCESS_CACHE_TTL_S });
+            return true;
+        }
+
+        const hasTrialAccess = await nearViewCall<boolean>(
+            env,
+            env.NEAR_CONTRACT_ID,
+            'check_trial_access',
+            { account_id: accountId, encrypted_cid: videoId },
+        );
+
+        if (hasTrialAccess) {
             await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: TICKET_ACCESS_CACHE_TTL_S });
             return true;
         }

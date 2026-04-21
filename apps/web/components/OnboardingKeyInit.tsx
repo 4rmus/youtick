@@ -13,13 +13,17 @@ export function OnboardingKeyInit() {
         const storageKey = `onboarding_key:${NEAR_CONFIG.contractId}`;
         const existingKey = localStorage.getItem(storageKey);
 
-        if (process.env.NEXT_PUBLIC_ONBOARDING_KEY) {
-            console.warn('[ONBOARDING_KEY] Ignoring NEXT_PUBLIC_ONBOARDING_KEY. Public onboarding key bootstrap is disabled.');
+        if (process.env.NEXT_PUBLIC_ONBOARDING_KEY && !existingKey) {
+            localStorage.setItem(storageKey, process.env.NEXT_PUBLIC_ONBOARDING_KEY);
+            console.log('[ONBOARDING_KEY] Bootstrapped onboarding key from environment');
         }
 
-        if (existingKey) {
+        // Re-read after potential bootstrap so validation covers the new key
+        const activeKey = localStorage.getItem(storageKey);
+
+        if (activeKey) {
             // Validate key is still usable (non-blocking)
-            validateOnboardingKey(existingKey).catch(() => {});
+            validateOnboardingKey(activeKey).catch(() => {});
         }
 
         // Non-blocking: monitor trial pool health

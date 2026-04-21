@@ -277,12 +277,12 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         setActionLoading(true);
         setError(null);
         try {
-            // Preferred path: sponsored claim via onboarding key (signless + no user deposit).
-            // This path enforces contract-level onboarding checks and daily limits.
+            // Preferred path: sponsored NFT mint via onboarding key (signless + no user deposit).
+            // Mints a real NFT into the user's collection for content access.
             if (hasOnboardingKey()) {
                 const result = await claimFreeTicketDirect(accountId, cid);
                 if (!result.success) {
-                    console.warn("[FreeClaim] Direct claim unavailable, falling back to wallet/session path:", result.error);
+                    console.warn("[FreeClaim] Direct NFT claim unavailable, falling back to wallet/session path:", result.error);
                 } else {
                     if (onPurchaseSuccess) onPurchaseSuccess();
                     return;

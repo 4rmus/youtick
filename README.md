@@ -20,7 +20,7 @@ YouTick is an open-source VOD platform where creators upload encrypted videos to
 | NFT-Gated Access | Ticket sahipligi zincirde tutulur |
 | 98% Creator Payout | Gelirin buyuk kismi creator'a gider |
 | Browser Encryption | Medya tarayicida sifrelenir |
-| KMS Key Custody | Anahtarlar KMS worker'da tutulur |
+| Threshold Key Custody | Anahtarlar parcalanarak (SSS) birden fazla KMS operatorunde tutulur |
 | Crust/IPFS Delivery | Sifreli medya birden fazla gateway ile okunur |
 | Gift Links | Paylasilabilir tek kullanimlik linkler |
 | Trial Accounts | Onboarding key ile dusuk surtunmeli baslangic |
@@ -34,7 +34,7 @@ YouTick is an open-source VOD platform where creators upload encrypted videos to
 Browser App
   -> encrypts media
   -> uploads to Crust/IPFS
-  -> stores/retrieves keys from KMS
+  -> splits/reconstructs keys via multiple KMS operators
   -> reads/writes ownership on NEAR
 ```
 
