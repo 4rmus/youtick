@@ -291,17 +291,18 @@ export const translations = {
                 support: "Support"
             },
             pain_points: {
-                title: "Where Does Your Money Go?",
-                subtitle: "Traditional platforms take almost half. We believe artists deserve better.",
-                revenue_title: "Your Hard Work, Their Profit",
-                revenue_web2: "Streaming platforms pay fractions of a cent. Ticket giants take 25-30%. Video platforms keep 45% of ad revenue.",
-                revenue_youtick: "Every $100 from your fans → $98 goes directly to you. No waiting, no approvals.",
+                header_eyebrow: "of every ticket sale",
+                title: "Goes to You, Not the Middleman",
+                subtitle: "Traditional platforms take almost half. Here is exactly how — and what it looks like when you keep 98%.",
+                revenue_title: "Your Work, Their Profit",
+                revenue_web2: "Streaming pays fractions of a cent. Ticket giants take 25-30%. Film studios eat 60% of your revenue.",
+                revenue_youtick: "Concert recording at $10 × 500 tickets = $4,900 in your wallet, instantly. Film at $15 × 300 viewers = $4,410 — earning for years, not days.",
                 censorship_title: "Your Art at Their Mercy",
-                censorship_web2: "One algorithm change and your income vanishes. Region blocks. Sudden demonetization. No explanation.",
-                censorship_youtick: "Your content stored permanently in a global network. No one can remove it. Ever.",
-                fan_title: "They Own Your Audience",
-                fan_web2: "Platforms control who sees your work. They own your follower list. You're just renting access to your own fans.",
-                fan_youtick: "Your ticket buyers are YOUR customers. Direct connection. You own the relationship."
+                censorship_web2: "A copyright bot flags your concert recording. An algorithm buries your short film. Region-locked by a licensing deal you never signed.",
+                censorship_youtick: "Your films and concert recordings live on a decentralized network. No takedown, no region block, no algorithm can pull them down.",
+                fan_title: "Their Audience, Not Yours",
+                fan_web2: "The streaming platform knows who loves your music — you don't. Your film got 50K views, but they keep the email list.",
+                fan_youtick: "Every fan who buys your concert or film is YOUR customer. Direct relationship. Gift, message, sell your next release to them directly."
             },
             discover: {
                 scanning_blockchain: "Scanning Blockchain...",
@@ -313,18 +314,6 @@ export const translations = {
                 no_description: "No description.",
                 owner: "Owner",
                 access_pass: "Digital Ticket"
-            },
-            value_proposition: {
-                title: "%98",
-                percentage: "of Every Ticket Sale",
-                subtitle: "Goes to You",
-                description: "No monthly fees. No revenue sharing schemes. Upload once, earn forever. Your concert recordings and films generate income for years—and you keep almost all of it.",
-                instant: "Paid Instantly",
-                instant_desc: "Money hits your wallet the moment someone buys",
-                no_middlemen: "No Gatekeepers",
-                no_middlemen_desc: "No labels, no studios, no approval needed",
-                full_control: "Your Prices",
-                full_control_desc: "You decide what your art is worth"
             },
             digital_salon: {
                 title: "The Digital Stage",
@@ -848,17 +837,18 @@ export const translations = {
                 support: "Destek"
             },
             pain_points: {
-                title: "Paran Nereye Gidiyor?",
-                subtitle: "Geleneksel platformlar neredeyse yarısını alıyor. Sanatçılar daha iyisini hak ediyor.",
+                header_eyebrow: "her bilet satışının",
+                title: "Sana Kalır, Aracıya Değil",
+                subtitle: "Geleneksel platformlar neredeyse yarısını alıyor. İşte tam olarak nasıl — ve sen %98'ini tuttuğunda nasıl görünüyor.",
                 revenue_title: "Senin Emeğin, Onların Kârı",
-                revenue_web2: "Streaming platformları kuruşun kesirleri ödüyor. Bilet devleri %25-30 alıyor. Video platformları reklam gelirinin %45'ini tutuyor.",
-                revenue_youtick: "Hayranlarından gelen her 100₺'nin 98₺'si doğrudan sana. Bekleme yok, onay yok.",
+                revenue_web2: "Streaming platformları kuruşun kesirleri ödüyor. Bilet devleri %25-30 alıyor. Film stüdyoları gelirinin %60'ını yiyor.",
+                revenue_youtick: "10$'dan 500 konser bileti = 4.900$ anında cebinde. 15$'dan 300 film izleyicisi = 4.410$ — yıllarca kazanıyor, günlerce değil.",
                 censorship_title: "Sanatın Onların İnsafında",
-                censorship_web2: "Bir algoritma değişikliği ve gelirin yok olur. Bölge engellemeleri. Ani para kesintisi. Açıklama yok.",
-                censorship_youtick: "İçeriğin küresel ağda kalıcı olarak saklanır. Kimse silemez. Asla.",
+                censorship_web2: "Bir telif hakkı botu konser kaydını işaretler. Bir algoritma kısa filmini gömer. Hiç imzalamadığın bir lisans anlaşmasıyla bölgen kilitlenir.",
+                censorship_youtick: "Filmlerin ve konser kayıtların merkeziyetsiz bir ağda yaşar. Takedown yok, bölge engeli yok, hiçbir algoritma indiremez.",
                 fan_title: "Kitlen Onlara Ait",
-                fan_web2: "Platformlar eserini kimin göreceğine karar veriyor. Takipçi listen onlara ait. Sen kendi hayranlarına erişimi kiralıyorsun.",
-                fan_youtick: "Bilet alanlar SENİN müşterilerin. Doğrudan bağlantı. İlişkinin sahibi sensin."
+                fan_web2: "Streaming platformu müziğini kimin sevdiğini biliyor — sen bilmiyorsun. Filmin 50 bin izlenme aldı, mail listesi onlarda kaldı.",
+                fan_youtick: "Konserini veya filmini alan her hayran SENİN müşterin. Doğrudan ilişki. Hediye ver, mesaj at, bir sonraki eserini onlara doğrudan sat."
             },
             discover: {
                 scanning_blockchain: "Blokzinciri Taranıyor...",
@@ -870,18 +860,6 @@ export const translations = {
                 no_description: "Açıklama yok.",
                 owner: "Sahip",
                 access_pass: "Dijital Bilet"
-            },
-            value_proposition: {
-                title: "%98",
-                percentage: "Her Bilet Satışın",
-                subtitle: "Sana Kalır",
-                description: "Aylık ücret yok. Gelir paylaşım planları yok. Bir kez yükle, sonsuza dek kazan. Konser kayıtların ve filmlerin yıllarca gelir üretir—ve neredeyse tamamı senin.",
-                instant: "Anında Ödeme",
-                instant_desc: "Biri satın aldığı an paran cüzdanında",
-                no_middlemen: "Kapı Bekçisi Yok",
-                no_middlemen_desc: "Plak şirketi yok, stüdyo yok, onay gerekmiyor",
-                full_control: "Senin Fiyatın",
-                full_control_desc: "Sanatının değerini sen belirle"
             },
             digital_salon: {
                 title: "Dijital Sahne",

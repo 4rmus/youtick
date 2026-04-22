@@ -54,13 +54,21 @@ export const PainPointsSection = memo(() => {
             </div>
 
             <div className="container mx-auto px-4 relative z-10">
-                {/* Header - Left aligned per NEAR guidelines */}
-                <div className="max-w-4xl mb-16">
-                    <h2 className="text-4xl md:text-5xl font-black text-white mb-4 text-left">
-                        {t.landing.pain_points?.title || 'Artist Pain Points'}
+                <div className="text-center mb-20">
+                    <div className="text-zinc-300 text-xl md:text-2xl font-semibold mb-2">
+                        {t.landing.pain_points?.header_eyebrow || 'of every ticket sale'}
+                    </div>
+                    <div
+                        className="text-7xl md:text-9xl font-black text-gradient-concert animate-gradient-flow mb-4"
+                        style={{ backgroundSize: '200% 200%' }}
+                    >
+                        %98
+                    </div>
+                    <h2 className="text-4xl md:text-6xl font-black text-white mb-6">
+                        {t.landing.pain_points?.title || 'Goes to You, Not the Middleman'}
                     </h2>
-                    <p className="text-lg text-zinc-400 text-left leading-relaxed">
-                        {t.landing.pain_points?.subtitle || 'Traditional platforms extract value. We return it.'}
+                    <p className="text-lg text-zinc-400 max-w-3xl mx-auto leading-relaxed">
+                        {t.landing.pain_points?.subtitle || 'Traditional platforms take almost half. Here is exactly how.'}
                     </p>
                 </div>
 
@@ -109,16 +117,6 @@ export const PainPointsSection = memo(() => {
                     ))}
                 </div>
 
-                {/* Bottom CTA */}
-                <div className="mt-16 text-center">
-                    <p className="text-zinc-400 text-lg">
-                        <span className="text-near-green font-bold">98%</span> {t.landing.hero.badge_instant_revenue || 'Revenue Share'}
-                        <span className="mx-3 text-zinc-600">•</span>
-                        <span className="text-near-green font-bold">0</span> {t.landing.value_proposition?.subtitle || 'Server Costs'}
-                        <span className="mx-3 text-zinc-600">•</span>
-                        <span className="text-near-green font-bold">∞</span> {t.landing.competitive_advantages?.decentralization || 'Decentralization'}
-                    </p>
-                </div>
             </div>
         </section>
     );

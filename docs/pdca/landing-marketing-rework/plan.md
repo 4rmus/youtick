@@ -1,7 +1,7 @@
 # Plan: Landing Page Marketing Rework
 
 > Oluşturma tarihi: 2026-04-22
-> Durum: Plan onay bekliyor
+> Durum: P0 uygulanıyor — Round 1 (286cc55) + Round 2 (commit bekliyor)
 > Kapsam: `apps/web/app/page.tsx` ve `apps/web/components/landing/*`, `apps/web/lib/translations.ts`
 
 ## Hipotez
@@ -41,16 +41,23 @@ Landing'de tespit edilen ana sorunlar:
 
 ### P0 — Bu hafta (metin + section sırası, düşük kod riski)
 
-- [ ] Terminoloji birliği: her yerde "Dijital Bilet" / "Digital Ticket". "NFT" sadece
-      teknik bölümde. `apps/web/lib/translations.ts` içinde sweep.
-- [ ] Roadmap landing'den çıkar, ayrı `/roadmap` sayfasına taşı. `page.tsx` sadeleşir.
-- [ ] `PainPointsSection` + `ValuePropositionSection` + `FinancialComparisonChart`
-      üçlü tekrarını çöz: iki bölüme indir, birinde film/konser senaryoları somut olsun.
-- [ ] `FinancialComparisonChart` bağlamlaştır: her platform rakamı yanına iş modeli
-      etiketi ("label dahil", "reklam geliri"); Vimeo OTT (%10), Gumroad (%10),
-      Ticketmaster (%25-30) eklensin.
-- [ ] Ölü kod temizliği: `translations.ts` `stats` bloku ya silinsin ya komponent'i
-      eklenip bilinçli kullanılsın.
+- [x] **Terminoloji birliği** — Round 1 (286cc55): "NFT Ticket" / "Access Pass" /
+      "Erişim Kartı" / "NFT Bilet" → "Digital Ticket" / "Dijital Bilet" sweep yapıldı.
+      "NFT" sadece mint status akışında kaldı (teknik bağlam).
+- [x] **Roadmap taşındı** — Round 1 (286cc55): `/roadmap` route'u oluşturuldu,
+      landing'den çıkarıldı. Nav'da kırık link yok (zaten referans yoktu).
+- [x] **Üçlü tekrar çözüldü** — Round 2: `ValuePropositionSection` silindi (dosya + çeviri
+      blokları); "%98" emotional anchor `PainPointsSection` header'ına taşındı;
+      pain/solution kartlarındaki `revenue_youtick` / `censorship_youtick` /
+      `fan_youtick` metinleri **somut film/konser senaryosu** ile zenginleştirildi
+      (10$'dan 500 konser bileti = 4.900$ vs. streaming örnekleri, copyright bot,
+      region lock vb.); alt "98% • 0 • ∞" CTA kaldırıldı. Sonuç: 3 section → 2 section.
+- [x] **`FinancialComparisonChart` bağlamlaştırıldı** — Round 1 (286cc55): Netflix
+      çıkarıldı; Vimeo OTT (%10) + Gumroad (%10) eklendi (aynı model); YouTube/Spotify
+      "farklı model" olarak etiketlendi; başlık "50x" → dürüst "5-35x daha az".
+- [x] **Ölü kod temizliği** — Round 1 (286cc55): `translations.ts` içindeki dört
+      adet `stats` bloku silindi (EN+TR, top-level `hero.stats` ve `landing.stats`).
+      Hiçbir component'te render edilmiyordu.
 - [ ] Analitik kurulumu: plausible veya umami. CTA click event tracking. **Bu madde
       P1 aksiyonlarının ön koşulu.**
 

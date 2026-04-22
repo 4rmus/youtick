@@ -3,7 +3,6 @@
 import { useState, useCallback } from 'react';
 import { Navigation } from '@/components/landing/Navigation';
 import { HeroSection } from '@/components/landing/HeroSection';
-import { ValuePropositionSection } from '@/components/landing/ValuePropositionSection';
 import { CompetitiveAdvantagesSection } from '@/components/landing/CompetitiveAdvantagesSection';
 import { StartSlider } from '@/components/landing/StartSlider';
 import { HowItWorksSection } from '@/components/landing/HowItWorksSection';
@@ -38,7 +37,6 @@ export default function Home() {
 
       {/* Problem-Solution Flow */}
       <PainPointsSection />
-      <ValuePropositionSection />
       <FinancialComparisonChart />
       {/* Features & Advantages */}
       <CompetitiveAdvantagesSection />
