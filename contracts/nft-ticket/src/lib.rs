@@ -29,25 +29,25 @@ impl near_sdk::IntoStorageKey for StorageKey {
 }
 
 impl StorageKey {
-    pub const NFT: Self = Self(b"n8");
-    pub const TOKEN_METADATA: Self = Self(b"m8");
-    pub const ENUMERATION: Self = Self(b"e8");
-    pub const APPROVAL: Self = Self(b"a8");
-    pub const CONTRACT_METADATA: Self = Self(b"c8");
-    pub const VIDEO_METADATA: Self = Self(b"v8");
-    pub const USER_DEPOSITS: Self = Self(b"d8");
-    pub const EVENTS: Self = Self(b"x8");
-    pub const GIFT_DROPS: Self = Self(b"g8");
-    pub const ONBOARDING_KEYS: Self = Self(b"o8");
-    pub const DAILY_TRIAL_COUNTS: Self = Self(b"t8");
-    pub const TRIAL_RELAYERS: Self = Self(b"tr8");
-    pub const PURCHASE_LOGS: Self = Self(b"p8");
-    pub const EVENT_PRICE_USD: Self = Self(b"pu8");
-    pub const EVENT_ACCESS_MODES: Self = Self(b"am8");
-    pub const BANNED_EVENTS: Self = Self(b"be8");
-    pub const UPLOAD_SESSIONS: Self = Self(b"us8");
-    pub const TRIAL_INVITES: Self = Self(b"ti8");
-    pub const TRIAL_ACCESS: Self = Self(b"ta8");
+    pub const NFT: Self = Self(b"n9");
+    pub const TOKEN_METADATA: Self = Self(b"m9");
+    pub const ENUMERATION: Self = Self(b"e9");
+    pub const APPROVAL: Self = Self(b"a9");
+    pub const CONTRACT_METADATA: Self = Self(b"c9");
+    pub const VIDEO_METADATA: Self = Self(b"v9");
+    pub const USER_DEPOSITS: Self = Self(b"d9");
+    pub const EVENTS: Self = Self(b"x9");
+    pub const GIFT_DROPS: Self = Self(b"g9");
+    pub const ONBOARDING_KEYS: Self = Self(b"o9");
+    pub const DAILY_TRIAL_COUNTS: Self = Self(b"t9");
+    pub const TRIAL_RELAYERS: Self = Self(b"tr9");
+    pub const PURCHASE_LOGS: Self = Self(b"p9");
+    pub const EVENT_PRICE_USD: Self = Self(b"pu9");
+    pub const EVENT_ACCESS_MODES: Self = Self(b"am9");
+    pub const BANNED_EVENTS: Self = Self(b"be9");
+    pub const UPLOAD_SESSIONS: Self = Self(b"us9");
+    pub const TRIAL_INVITES: Self = Self(b"ti9");
+    pub const TRIAL_ACCESS: Self = Self(b"ta9");
 }
 
 /// Storage cost constants to avoid repeated allocations
@@ -331,6 +331,47 @@ impl Contract {
     pub fn new(owner_id: AccountId) -> Self {
         require!(!env::state_exists(), "Already initialized");
 
+        let metadata = NFTContractMetadata {
+            spec: NFT_METADATA_SPEC.to_string(),
+            name: "YouTick Video Tickets".to_string(),
+            symbol: "YTICK".to_string(),
+            icon: None,
+            base_uri: None,
+            reference: None,
+            reference_hash: None,
+        };
+
+        Self {
+            tokens: NonFungibleToken::new(
+                StorageKey::NFT,
+                owner_id,
+                Some(StorageKey::TOKEN_METADATA),
+                Some(StorageKey::ENUMERATION),
+                Some(StorageKey::APPROVAL),
+            ),
+            metadata: LazyOption::new(StorageKey::CONTRACT_METADATA, Some(&metadata)),
+            video_metadata: UnorderedMap::new(StorageKey::VIDEO_METADATA),
+            user_deposits: LookupMap::new(StorageKey::USER_DEPOSITS),
+            events: UnorderedMap::new(StorageKey::EVENTS),
+            next_token_id: 0,
+            active_event_count: 0,
+            gift_drops: LookupMap::new(StorageKey::GIFT_DROPS),
+            trial_pool: NearToken::from_yoctonear(0),
+            onboarding_keys: LookupSet::new(StorageKey::ONBOARDING_KEYS),
+            daily_trial_counts: LookupMap::new(StorageKey::DAILY_TRIAL_COUNTS),
+            onboarding_config: OnboardingConfig::default(),
+            commission_pool: NearToken::from_yoctonear(0),
+            purchase_logs: UnorderedMap::new(StorageKey::PURCHASE_LOGS),
+            next_purchase_id: 0,
+            web4_static_url: None,
+        }
+    }
+
+    /// Complete state reset for mainnet v11. Re-initializes all state with new StorageKey prefixes.
+    /// This abandons old data in storage but resolves all invariant discrepancies.
+    #[private]
+    #[init(ignore_state)]
+    pub fn reset_v11(owner_id: AccountId) -> Self {
         let metadata = NFTContractMetadata {
             spec: NFT_METADATA_SPEC.to_string(),
             name: "YouTick Video Tickets".to_string(),
