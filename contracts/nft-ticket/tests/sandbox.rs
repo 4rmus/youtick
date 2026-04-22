@@ -1595,3 +1595,71 @@ async fn test_sponsor_implicit_guest_direct_rejects_unauthorized() -> anyhow::Re
     println!("✅ sponsor_implicit_guest_direct unauthorized rejection test passed");
     Ok(())
 }
+
+// ═══════════════════════════════════════════════════════════════
+// RESET V11 TESTS
+// ═══════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_reset_v11() -> anyhow::Result<()> {
+    let (contract, owner, buyer) = init().await?;
+
+    // Call reset_v11 (simulate mainnet transition)
+    contract
+        .call("reset_v11")
+        .args_json(json!({ "owner_id": owner.id() }))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Verify state is clean immediately after reset
+    let initial_supply: String = contract.view("nft_total_supply").args_json(json!({})).await?.json()?;
+    assert_eq!(initial_supply, "0");
+
+    let initial_events_count: u64 = contract.view("get_events_count").args_json(json!({})).await?.json()?;
+    assert_eq!(initial_events_count, 0);
+
+    let initial_upload_session: Option<serde_json::Value> = contract.view("get_upload_session").args_json(json!({"public_key": "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp"})).await?.json()?;
+    assert!(initial_upload_session.is_none());
+
+    // Create event after reset
+    owner
+        .call(contract.id(), "create_event")
+        .args_json(json!({
+            "encrypted_cid": "QmResetTest",
+            "title": "Reset Test Event",
+            "description": "Event after reset",
+            "price": "1000000000000000000000000"
+        }))
+        .deposit(NearToken::from_millinear(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Buy ticket after reset
+    buyer
+        .call(contract.id(), "buy_ticket")
+        .args_json(json!({
+            "receiver_id": buyer.id(),
+            "encrypted_cid": "QmResetTest"
+        }))
+        .deposit(NearToken::from_millinear(1010)) // 1.01 NEAR
+        .gas(near_workspaces::types::Gas::from_tgas(300))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // Verify token exists
+    let post_reset_supply: String = contract.view("nft_total_supply").args_json(json!({})).await?.json()?;
+    assert_eq!(post_reset_supply, "1");
+
+    let post_events_count: u64 = contract.view("get_events_count").args_json(json!({})).await?.json()?;
+    assert_eq!(post_events_count, 1);
+
+    let supply_for_owner: String = contract.view("nft_supply_for_owner").args_json(json!({ "account_id": buyer.id() })).await?.json()?;
+    assert_eq!(supply_for_owner, "1");
+
+    println!("✅ Reset v11 test passed");
+    Ok(())
+}
+
