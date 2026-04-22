@@ -5,7 +5,6 @@ import { Navigation } from '@/components/landing/Navigation';
 import { HeroSection } from '@/components/landing/HeroSection';
 import { ValuePropositionSection } from '@/components/landing/ValuePropositionSection';
 import { CompetitiveAdvantagesSection } from '@/components/landing/CompetitiveAdvantagesSection';
-import { Roadmap } from '@/components/landing/Roadmap';
 import { StartSlider } from '@/components/landing/StartSlider';
 import { HowItWorksSection } from '@/components/landing/HowItWorksSection';
 import { CTASection } from '@/components/landing/CTASection';
@@ -47,9 +46,8 @@ export default function Home() {
       {/* Interactive Section */}
       <ROICalculator />
 
-      {/* How To & Roadmap */}
+      {/* How To */}
       <HowItWorksSection />
-      <Roadmap />
 
       {/* CTA & Footer */}
       <CTASection onDiscoverClick={handleDiscoverClick} />

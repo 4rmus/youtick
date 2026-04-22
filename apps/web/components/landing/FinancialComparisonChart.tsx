@@ -16,33 +16,38 @@ export const FinancialComparisonChart = memo(() => {
             name: 'YouTick',
             commission: 2,
             color: 'bg-near-green',
-            description: `${fc?.to_artist || '98% to artist'}`,
-            descriptionFormatted: true,
+            description: fc?.desc_youtick || 'Direct-to-fan · 98% to artist',
             highlight: true,
         },
         {
-            name: 'YouTube',
-            commission: 55,
-            color: 'bg-near-red',
-            description: fc?.platform_cut || 'Platform cut',
+            name: 'Vimeo OTT',
+            commission: 10,
+            color: 'bg-emerald-600',
+            description: fc?.desc_vimeo || 'Same model · subscription platform',
         },
         {
-            name: 'Spotify',
-            commission: 70,
-            color: 'bg-orange-500',
-            description: fc?.platform_label || 'Platform + Label',
+            name: 'Gumroad',
+            commission: 10,
+            color: 'bg-teal-600',
+            description: fc?.desc_gumroad || 'Same model · creator storefront',
         },
         {
             name: 'Ticketmaster',
             commission: 28,
             color: 'bg-yellow-500',
-            description: fc?.ticket_commission || 'Ticket commission',
+            description: fc?.desc_ticketmaster || 'Ticket commission + service fees',
         },
         {
-            name: 'Netflix',
-            commission: 77,
-            color: 'bg-red-600',
-            description: fc?.license_model || 'License model',
+            name: 'YouTube',
+            commission: 55,
+            color: 'bg-near-red',
+            description: fc?.desc_youtube || 'Different model · ad revenue share',
+        },
+        {
+            name: 'Spotify',
+            commission: 70,
+            color: 'bg-orange-500',
+            description: fc?.desc_spotify || 'Different model · platform + label cut',
         },
     ];
 
@@ -116,14 +121,14 @@ export const FinancialComparisonChart = memo(() => {
                 {/* Summary Card */}
                 <div className="mt-16 max-w-2xl mx-auto p-8 rounded-2xl bg-near-green/5 border border-near-green/20">
                     <div className="text-center">
-                        <div className="text-6xl font-black text-near-green mb-4">
-                            50x
+                        <div className="text-5xl md:text-6xl font-black text-near-green mb-4">
+                            {fc?.summary_headline || '5-35x less'}
                         </div>
                         <p className="text-lg text-zinc-300 mb-2">
-                            {fc?.summary_title || 'YouTick commission is ~50x lower than other platforms'}
+                            {fc?.summary_title || 'Lowest commission across every comparable platform'}
                         </p>
                         <p className="text-sm text-zinc-500">
-                            {fc?.summary_subtitle || '2% vs 55-70% platform cut'}
+                            {fc?.summary_subtitle || '2% vs 10-70% · business model varies'}
                         </p>
                     </div>
                 </div>

@@ -16,17 +16,12 @@ export const translations = {
             tagline: "NFT-GATED DECENTRALIZED VIDEO STREAMING PLATFORM",
             cta_watch: "Start Watching",
             cta_upload: "Upload Video",
-            stats: {
-                market: "Global Market",
-                cost: "Cost Reduction",
-                revenue: "Creator Revenue",
-            }
         },
         features: {
             title: "The youtick Solution",
             subtitle: "Transforming premium video distribution through Web3-native architecture.",
             items: [
-                { title: "NFT Tickets", desc: "Verifiable ownership, transferable access, and secondary market enabled. Fans own their access." },
+                { title: "Digital Tickets", desc: "Verifiable ownership, transferable access, and secondary market enabled. Fans own their access." },
                 { title: "Encrypted Storage", desc: "Content is encrypted using secure hardware. Only ticket holders can decrypt and watch." },
                 { title: "Global Delivery", desc: "Videos are delivered worldwide through a decentralized network. No single point of failure, high performance everywhere." },
                 { title: "Creator Control", desc: "Set prices, royalties, and access rules directly on-chain. You own the platform." },
@@ -38,7 +33,7 @@ export const translations = {
             title: "Use Cases",
             subtitle: "Empowering creators across every industry.",
             items: [
-                { title: "Concert Recordings", desc: "Artists release exclusive concert recordings as limited-edition NFT tickets." },
+                { title: "Concert Recordings", desc: "Artists release exclusive concert recordings as limited-edition digital tickets." },
                 { title: "Independent Cinema", desc: "Filmmakers distribute movies directly to audiences without studio intermediaries." },
                 { title: "Live Events", desc: "Virtual premieres, live-streamed events, and exclusive Q&A sessions." },
                 { title: "Education", desc: "Course creators monetize premium video courses with verifiable certificates." },
@@ -147,7 +142,7 @@ export const translations = {
             upload_now: "Upload Now",
             debug_info: "Debug Info:",
             own: "OWN:",
-            access_pass: "Access Pass",
+            access_pass: "Digital Ticket",
             no_desc: "No description provided."
         },
         profile_page: {
@@ -178,8 +173,8 @@ export const translations = {
             no_events: "No Events Created",
             no_events_desc: "Upload your first video to get started",
             upload_video: "Upload Video",
-            access_pass: "Access Pass",
-            nft_ticket: "NFT Ticket",
+            access_pass: "Digital Ticket",
+            nft_ticket: "Digital Ticket",
             free: "Free",
             creator: "Creator",
             free_event: "Free Event"
@@ -188,7 +183,7 @@ export const translations = {
             title: "Roadmap",
             subtitle: "Building the future of premium video, one milestone at a time.",
             phases: [
-                { year: "2026 Q1", title: "Mainnet Live", desc: "NEAR Mainnet is live. Encrypted video, NFT tickets, gift links, and trial onboarding are all running in production." },
+                { year: "2026 Q1", title: "Mainnet Live", desc: "NEAR Mainnet is live. Encrypted video, digital tickets, gift links, and trial onboarding are all running in production." },
                 { year: "2026 Q2", title: "Fast Auth", desc: "Seamless email/social login integration. Auto-wallet creation for zero-friction onboarding." },
                 { year: "2026 Q3", title: "Live Broadcast", desc: "Distributed live streaming with real-time token gating and chat." },
                 { year: "2026 Q4", title: "DAO Governance", desc: "Community-driven platform decisions, treasury management, and protocol upgrades." },
@@ -222,16 +217,6 @@ export const translations = {
                 use_cases: "Use Cases",
                 how_it_works: "How It Works",
                 roadmap: "Roadmap"
-            },
-            stats: {
-                users: "Users (2026 Target)",
-                users_value: "200,000+",
-                creators: "Active Creators",
-                creators_value: "5,000+",
-                revenue: "Creator Revenue",
-                revenue_value: "98%",
-                volume: "Transaction Volume",
-                volume_value: "$10M+"
             },
             features: {
                 title: "Built for Artists",
@@ -288,7 +273,7 @@ export const translations = {
                 step2_title: "Choose Event",
                 step2_desc: "Discover the event you want or create your own event.",
                 step3_title: "Buy/Create Ticket",
-                step3_desc: "Get your NFT ticket and prove your ownership on blockchain."
+                step3_desc: "Get your digital ticket and prove your ownership on blockchain."
             },
             cta: {
                 title_line1: "Your Independent",
@@ -327,7 +312,7 @@ export const translations = {
                 recently_uploaded: "Recently Uploaded",
                 no_description: "No description.",
                 owner: "Owner",
-                access_pass: "Access Pass"
+                access_pass: "Digital Ticket"
             },
             value_proposition: {
                 title: "%98",
@@ -348,7 +333,7 @@ export const translations = {
                 digital: "youtick",
                 ticket: "Ticket Purchase",
                 ticket_physical: "Paper/PDF Ticket",
-                ticket_digital: "NFT Ticket",
+                ticket_digital: "Digital Ticket",
                 experience: "Event Experience",
                 experience_physical: "Attend in Person",
                 experience_digital: "Premium Video Stream",
@@ -558,16 +543,19 @@ export const translations = {
         },
         financial_chart: {
             title: "Commission Comparison",
-            subtitle: "Traditional platforms take most of artist revenue. We're different.",
+            subtitle: "Compared across same-model competitors and adjacent-model platforms — so you can see the honest gap.",
             to_artist: "to artist",
-            platform_cut: "Platform cut",
-            platform_label: "Platform + Label",
-            ticket_commission: "Ticket commission",
-            license_model: "License model",
             commission: "commission",
             artist_label: "Artist",
-            summary_title: "YouTick commission is ~50x lower than other platforms",
-            summary_subtitle: "2% vs 55-70% platform cut"
+            desc_youtick: "Direct-to-fan · 98% to artist, instant payout",
+            desc_vimeo: "Same model · creator-hosted subscription (Vimeo OTT)",
+            desc_gumroad: "Same model · creator storefront, direct sales",
+            desc_ticketmaster: "Ticket commission + service fees (event-based)",
+            desc_youtube: "Different model · ad revenue share (not direct sale)",
+            desc_spotify: "Different model · platform + label cut on streams",
+            summary_headline: "5-35x less",
+            summary_title: "Lowest commission across every comparable platform",
+            summary_subtitle: "2% vs 10-70% · 5x less than the closest same-model platform, 35x less than streaming"
         }
     },
     tr: {
@@ -585,17 +573,12 @@ export const translations = {
             tagline: "GERÇEK DİJİTAL SAHİPLİĞİN ALTYAPISI",
             cta_watch: "İzlemeye Başla",
             cta_upload: "Video Yükle",
-            stats: {
-                market: "Küresel Pazar",
-                cost: "Maliyet Tasarrufu",
-                revenue: "Üretici Geliri",
-            }
         },
         features: {
             title: "youtick Çözümü",
             subtitle: "Web3 tabanlı mimari ile premium video dağıtımını dönüştürüyoruz.",
             items: [
-                { title: "NFT Biletler", desc: "Doğrulanabilir sahiplik, devredilebilir erişim ve ikincil pazar. Hayranlar erişim hakkına sahip olur." },
+                { title: "Dijital Biletler", desc: "Doğrulanabilir sahiplik, devredilebilir erişim ve ikincil pazar. Hayranlar erişim hakkına sahip olur." },
                 { title: "Şifreli Depolama", desc: "İçerik güvenli donanım ile şifrelenir. Yalnızca bilet sahipleri şifreyi çözüp izleyebilir." },
                 { title: "Küresel Dağıtım", desc: "Videolar merkeziyetsiz bir ağ üzerinden dünya çapında dağıtılır. Tek hata noktası yok, her yerde yüksek performans." },
                 { title: "Üretici Kontrolü", desc: "Fiyatları, telif haklarını ve erişim kurallarını doğrudan zincir üzerinde belirleyin. Platformun sahibi sizsiniz." },
@@ -607,12 +590,12 @@ export const translations = {
             title: "Kullanım Alanları",
             subtitle: "Her sektördeki içerik üreticilerini güçlendiriyoruz.",
             items: [
-                { title: "Konser Kayıtları", desc: "Sanatçılar özel konser kayıtlarını sınırlı sayıda NFT bileti olarak yayınlar." },
+                { title: "Konser Kayıtları", desc: "Sanatçılar özel konser kayıtlarını sınırlı sayıda dijital bilet olarak yayınlar." },
                 { title: "Bağımsız Sinema", desc: "Film yapımcıları filmlerini stüdyo aracıları olmadan doğrudan izleyicilere dağıtır." },
                 { title: "Canlı Etkinlikler", desc: "Sanal galalar, canlı yayınlanan etkinlikler ve özel soru-cevap oturumları." },
                 { title: "Eğitim", desc: "Kurs oluşturucuları, doğrulanabilir sertifikalarla premium video kurslarını gelire dönüştürür." },
                 { title: "Spor", desc: "Takımlar özel kamera arkası içerikleri ve maç tekrarları sunar." },
-                { title: "Podcastler", desc: "Premium podcast bölümleri ve sınırlı sayıda erişim NFT'leri ile özel röportajlar." },
+                { title: "Podcastler", desc: "Premium podcast bölümleri ve sınırlı sayıda dijital bilet ile özel röportajlar." },
             ]
         },
         techStack: {
@@ -716,7 +699,7 @@ export const translations = {
             upload_now: "Şimdi Yükle",
             debug_info: "Hata Ayıklama Bilgisi:",
             own: "SAHİP:",
-            access_pass: "Erişim Bileti",
+            access_pass: "Dijital Bilet",
             no_desc: "Açıklama girilmedi."
         },
         profile_page: {
@@ -747,8 +730,8 @@ export const translations = {
             no_events: "Henüz Etkinlik Yok",
             no_events_desc: "Başlamak için ilk videonuzu yükleyin",
             upload_video: "Video Yükle",
-            access_pass: "Erişim Bileti",
-            nft_ticket: "NFT Bilet",
+            access_pass: "Dijital Bilet",
+            nft_ticket: "Dijital Bilet",
             free: "Ücretsiz",
             creator: "İçerik Sahibi",
             free_event: "Ücretsiz Etkinlik"
@@ -757,7 +740,7 @@ export const translations = {
             title: "Yol Haritası",
             subtitle: "Premium videonun geleceğini, adım adım inşa ediyoruz.",
             phases: [
-                { year: "2026 Q1", title: "Mainnet Yayında", desc: "NEAR Mainnet aktif. Şifreli video, NFT bilet, hediye linkleri ve trial hesap açma — hepsi canlıda çalışıyor." },
+                { year: "2026 Q1", title: "Mainnet Yayında", desc: "NEAR Mainnet aktif. Şifreli video, dijital bilet, hediye linkleri ve trial hesap açma — hepsi canlıda çalışıyor." },
                 { year: "2026 Q2", title: "Fast Auth (Hızlı Giriş)", desc: "Sorunsuz email/sosyal giriş entegrasyonu. Sıfır sürtünme için otomatik cüzdan oluşturma." },
                 { year: "2026 Q3", title: "Canlı Yayın", desc: "Gerçek zamanlı token kontrolü ve sohbet ile dağıtık canlı yayın." },
                 { year: "2026 Q4", title: "DAO Yönetişimi", desc: "Topluluk odaklı platform kararları, hazine yönetimi ve protokol güncellemeleri." },
@@ -791,16 +774,6 @@ export const translations = {
                 use_cases: "Kullanım Alanları",
                 how_it_works: "Nasıl Çalışır",
                 roadmap: "Yol Haritası"
-            },
-            stats: {
-                users: "Kullanıcı (2026 Hedef)",
-                users_value: "200,000+",
-                creators: "Aktif Üretici",
-                creators_value: "5,000+",
-                revenue: "Üretici Geliri",
-                revenue_value: "%98",
-                volume: "İşlem Hacmi",
-                volume_value: "$10M+"
             },
             features: {
                 title: "Sanatçılar İçin Tasarlandı",
@@ -896,7 +869,7 @@ export const translations = {
                 recently_uploaded: "Son Yüklenenler",
                 no_description: "Açıklama yok.",
                 owner: "Sahip",
-                access_pass: "Erişim Kartı"
+                access_pass: "Dijital Bilet"
             },
             value_proposition: {
                 title: "%98",
@@ -917,7 +890,7 @@ export const translations = {
                 digital: "youtick",
                 ticket: "Bilet Satın Alma",
                 ticket_physical: "Kağıt/PDF Bilet",
-                ticket_digital: "NFT Bilet",
+                ticket_digital: "Dijital Bilet",
                 experience: "Etkinlik Deneyimi",
                 experience_physical: "Fiziksel Katılım",
                 experience_digital: "Premium Video Yayını",
@@ -1127,16 +1100,19 @@ export const translations = {
         },
         financial_chart: {
             title: "Komisyon Karşılaştırması",
-            subtitle: "Geleneksel platformlar sanatçı gelirinin çoğunu alır. Biz farklıyız.",
+            subtitle: "Aynı modeldeki rakipler ve komşu iş modelleriyle dürüst karşılaştırma — fark gerçekten göründüğü yerde.",
             to_artist: "Sanatçıya",
-            platform_cut: "Platform kesintisi",
-            platform_label: "Platform + Label",
-            ticket_commission: "Bilet komisyonu",
-            license_model: "Lisans modeli",
             commission: "komisyon",
             artist_label: "Sanatçı",
-            summary_title: "YouTick komisyonu diğer platformlara göre ~50 kat daha düşük",
-            summary_subtitle: "2% vs 55-70% platform kesintisi"
+            desc_youtick: "Doğrudan hayrana satış · %98 sanatçıya, anında ödeme",
+            desc_vimeo: "Aynı model · creator-hosted abonelik (Vimeo OTT)",
+            desc_gumroad: "Aynı model · creator storefront, doğrudan satış",
+            desc_ticketmaster: "Bilet komisyonu + servis ücretleri (etkinlik bazlı)",
+            desc_youtube: "Farklı model · reklam geliri paylaşımı (doğrudan satış değil)",
+            desc_spotify: "Farklı model · platform + label kesintisi (stream bazlı)",
+            summary_headline: "5-35x daha az",
+            summary_title: "Karşılaştırılabilir her platformun altında komisyon",
+            summary_subtitle: "%2 vs %10-70 · aynı modeldeki en yakın platformdan 5 kat, streaming'den 35 kat daha az"
         }
     }
 };
