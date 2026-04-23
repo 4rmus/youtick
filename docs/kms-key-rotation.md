@@ -97,9 +97,13 @@ Yeni secret'ın tüm KV entry'lerini kapsaması zaman alır. İki strateji:
 ⚠️ Strateji A'nın problemi: Eski video'lar hiçbir zaman re-encrypt edilmediği için PREVIOUS silmek mümkün değil.
 
 **Strateji B (aktif re-encrypt, doğru yol):** Explicit re-encrypt job çalıştır.
-1. Bir kere çalıştırılacak bir script yaz (bkz. `scripts/reencrypt-operator-shares.mjs` — henüz yok, gerektiğinde yazılmalı)
+1. Bir kere çalıştırılacak bir script yaz (`scripts/reencrypt-operator-shares.mjs`)
 2. Script tüm KV entry'lerini listeler, her birini okur (fallback ile), yeni secret ile yeniden yazar
 3. Çalışma bittikten sonra `wrangler tail`'da fallback log'u 0 olmalı
+
+> ⚠️ **Not:** `scripts/reencrypt-operator-shares.mjs` henüz mevcut değil.
+> Strateji B'ye geçmeden önce bu scriptin yazılması ve test edilmesi gerekir.
+> Şu an için Strateji A (pasif) veya Strateji C (TTL + hybrid) önerilir.
 
 **Strateji C (hybrid, en pratik):** TTL + aktif re-encrypt.
 - Share'lerin KV TTL'i kontrol et: `workers/youtick-kms/src/index.ts` içinde KV put çağrılarına `expirationTtl` verilmişse, doğal çürüme var

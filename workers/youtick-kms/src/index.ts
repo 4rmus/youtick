@@ -165,10 +165,11 @@ const RATE_LIMIT_MAX_STORE = 20;
 const RATE_LIMIT_MAX_RETRIEVE = 120;
 
 /** Access cache TTLs: keep auth caches short so revokes and transfers take effect quickly */
-const KEY_BINDING_CACHE_TTL_S = 300;
-const TICKET_ACCESS_CACHE_TTL_S = 60;
-const EVENT_CREATOR_CACHE_TTL_S = 3600;
-const REGISTRY_CACHE_TTL_S = 300;
+const KEY_BINDING_CACHE_TTL_S = 120;
+const TICKET_ACCESS_CACHE_TTL_S = 30;
+const TICKET_ACCESS_NEGATIVE_CACHE_TTL_S = 15;
+const EVENT_CREATOR_CACHE_TTL_S = 1800;
+const REGISTRY_CACHE_TTL_S = 120;
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const AUTH_TOKEN_TTL_MS = 10 * 60 * 1000;
 const NEP413_TAG = 2147484061;
@@ -539,6 +540,9 @@ async function verifyTicketAccess(
     if (cached === 'true') {
         return true;
     }
+    if (cached === 'false') {
+        return false;
+    }
 
     try {
         const hasTicket = await nearViewCall<boolean>(
@@ -565,6 +569,8 @@ async function verifyTicketAccess(
             return true;
         }
 
+        // Negative caching: short TTL to reduce RPC load while keeping revocation responsive
+        await env.ACCESS_CACHE.put(cacheKey, 'false', { expirationTtl: TICKET_ACCESS_NEGATIVE_CACHE_TTL_S });
         return false;
     } catch (error) {
         console.error('[KMS] verifyTicketAccess failed:', error);
@@ -1350,7 +1356,7 @@ async function handleStore(
 
             if (!grantVerification.valid || !grantVerification.owner_id) {
                 return jsonResponse(
-                    { ok: false, error: grantVerification.reason || 'Invalid session grant' },
+                    { ok: false, error: 'Invalid session grant' },
                     401,
                     request,
                     env,
@@ -1445,11 +1451,8 @@ async function handleRetrieve(
     let accountId: string;
 
     if (auth.claims) {
-        if (auth.claims.action !== 'retrieve') {
-            return jsonResponse({ ok: false, error: 'Auth token does not allow retrieve access' }, 403, request, env);
-        }
-        if (auth.claims.videoId !== body.videoId) {
-            return jsonResponse({ ok: false, error: 'Auth token video scope mismatch' }, 403, request, env);
+        if (auth.claims.action !== 'retrieve' || auth.claims.videoId !== body.videoId) {
+            return jsonResponse({ ok: false, error: 'Invalid or unauthorized auth token' }, 401, request, env);
         }
         accountId = auth.claims.accountId;
     } else {
@@ -1525,19 +1528,23 @@ async function handleRetrieve(
     }
 
     if (!hasAccess) {
-        return jsonResponse({ ok: false, error: 'Access denied: no valid ticket or ownership' }, 403, request, env);
+        return jsonResponse({ ok: false, error: 'Not found or unauthorized' }, 404, request, env);
     }
 
     const shareMetaRaw = await env.VIDEO_KEYS.get(shareMetaKey(body.videoId));
-    if (shareMetaRaw && env.REGISTRY_OPERATOR_ACCOUNT_ID) {
-        const shareRaw = await env.VIDEO_KEYS.get(
-            shareRecordKey(body.videoId, env.REGISTRY_OPERATOR_ACCOUNT_ID),
-        );
+    if (!shareMetaRaw || !env.REGISTRY_OPERATOR_ACCOUNT_ID) {
+        return jsonResponse({ ok: false, error: 'Not found or unauthorized' }, 404, request, env);
+    }
 
-        if (!shareRaw) {
-            return jsonResponse({ ok: false, error: 'Share not found for this operator' }, 404, request, env);
-        }
+    const shareRaw = await env.VIDEO_KEYS.get(
+        shareRecordKey(body.videoId, env.REGISTRY_OPERATOR_ACCOUNT_ID),
+    );
 
+    if (!shareRaw) {
+        return jsonResponse({ ok: false, error: 'Not found or unauthorized' }, 404, request, env);
+    }
+
+    try {
         const shareRecord = JSON.parse(shareRaw) as StoredShareRecord;
         const shareB64 = await decryptShareRecord(env, shareRecord);
 
@@ -1557,9 +1564,9 @@ async function handleRetrieve(
             request,
             env,
         );
+    } catch {
+        return jsonResponse({ ok: false, error: 'Not found or unauthorized' }, 404, request, env);
     }
-
-    return jsonResponse({ ok: false, error: 'Key shares not found for this video' }, 404, request, env);
 }
 
 async function handleHealth(

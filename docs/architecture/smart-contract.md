@@ -164,14 +164,9 @@ Upload icin:
 
 ## Legacy uyumluluk notlari
 
-Kontratta hala bazi Nova baglantili alan ve methodlar bulunur:
-
-- `set_nova_group`
-- `get_nova_group`
-- `backfill_nova_groups`
-- `StorageType::Nova`
-
-Bunlar yeni KMS akisinin parcasi degil. Eski kayitlari bozmamak icin tutulur.
+Kontratta `StorageType::Nova` placeholder'i Borsh uyumlulugu icin tutulur, ancak
+`set_nova_group`, `get_nova_group` ve `backfill_nova_groups` methodlari v10
+cikartilmistir (kaldirilmistir). Yeni KMS akisinin parcasi degildir.
 
 Ayrica bazi Nova funding methodlari runtime yuzeyinden kaldirilmistir ve panic eder:
 

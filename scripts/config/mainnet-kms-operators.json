@@ -6,27 +6,27 @@
   "decryptionOperators": [
     {
       "accountId": "kms-a.youtick.near",
-      "endpoint": "https://youtick-kms-a.araafatsum.workers.dev",
+      "endpoint": "https://youtick-kms-a.example.workers.dev",
       "transportPublicKey": "cf-worker:mainnet:youtick-kms-a"
     },
     {
       "accountId": "kms-b.youtick.near",
-      "endpoint": "https://youtick-kms-b.araafatsum.workers.dev",
+      "endpoint": "https://youtick-kms-b.example.workers.dev",
       "transportPublicKey": "cf-worker:mainnet:youtick-kms-b"
     },
     {
       "accountId": "kms-c.youtick.near",
-      "endpoint": "https://youtick-kms-c.araafatsum.workers.dev",
+      "endpoint": "https://youtick-kms-c.example.workers.dev",
       "transportPublicKey": "cf-worker:mainnet:youtick-kms-c"
     },
     {
       "accountId": "kms-d.youtick.near",
-      "endpoint": "https://youtick-kms-d.araafatsum.workers.dev",
+      "endpoint": "https://youtick-kms-d.example.workers.dev",
       "transportPublicKey": "cf-worker:mainnet:youtick-kms-d"
     },
     {
       "accountId": "kms-e.youtick.near",
-      "endpoint": "https://youtick-kms-e.araafatsum.workers.dev",
+      "endpoint": "https://youtick-kms-e.example.workers.dev",
       "transportPublicKey": "cf-worker:mainnet:youtick-kms-e"
     }
   ],
