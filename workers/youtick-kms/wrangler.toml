@@ -200,3 +200,12 @@ id = "<replace-with-testnet-rate-limit-namespace-id>"
 binding = "ACCESS_CACHE"
 # Use a dedicated testnet namespace ID here. Do not reuse the production one.
 id = "<replace-with-testnet-access-cache-namespace-id>"
+
+# Durable Objects for atomic rate limiting (replaces KV-based RATE_LIMIT)
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["RateLimiterDO"]

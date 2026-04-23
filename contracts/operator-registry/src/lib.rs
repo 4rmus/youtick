@@ -1,3 +1,5 @@
+mod migrate;
+
 use near_sdk::borsh::BorshSerialize;
 use near_sdk::collections::{LookupMap, UnorderedSet};
 use near_sdk::{env, near, require, AccountId, BorshStorageKey, PanicOnDefault};

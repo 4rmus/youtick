@@ -20,6 +20,29 @@ use std::num::NonZeroU128;
 mod events;
 mod migrate;
 
+// ═══════════════════════════════════════════════════════════════
+// TIMELOCK TYPES
+// ═══════════════════════════════════════════════════════════════
+
+pub const TIMELOCK_DELAY_NS: u64 = 86_400_000_000_000; // 24 hours
+
+#[near(serializers = [borsh, json])]
+pub enum TimelockAction {
+    WithdrawTrialPool { amount: U128 },
+    WithdrawCommission { amount: U128 },
+    AdminRemoveEvents { encrypted_cids: Vec<String> },
+    BanEvent { encrypted_cid: String },
+    UnbanEvent { encrypted_cid: String },
+    SetNextTokenId { new_id: u64 },
+}
+
+#[near(serializers = [borsh, json])]
+pub struct TimelockProposal {
+    pub action: TimelockAction,
+    pub proposer: AccountId,
+    pub proposed_at: u64,
+}
+
 pub struct StorageKey(pub &'static [u8]);
 
 impl near_sdk::IntoStorageKey for StorageKey {
@@ -49,6 +72,9 @@ impl StorageKey {
     pub const TRIAL_INVITES: Self = Self(b"ti9");
     pub const TRIAL_ACCESS: Self = Self(b"ta9");
     pub const CID_TO_TOKENS: Self = Self(b"ct9");
+    pub const PAUSED_STATE: Self = Self(b"ps9");
+    pub const TIMELOCKS: Self = Self(b"tl9");
+    pub const TIMELOCK_COUNTER: Self = Self(b"tc9");
 }
 
 /// Storage cost constants to avoid repeated allocations
@@ -453,6 +479,32 @@ impl Contract {
         LookupMap::new(StorageKey::CID_TO_TOKENS)
     }
 
+    fn lazy_paused_state(&self) -> LazyOption<bool> {
+        LazyOption::new(StorageKey::PAUSED_STATE, Some(&false))
+    }
+
+    fn is_paused(&self) -> bool {
+        self.lazy_paused_state().get().unwrap_or(false)
+    }
+
+    fn assert_not_paused(&self) {
+        require!(!self.is_paused(), "Contract is paused");
+    }
+
+    fn lazy_timelocks(&self) -> LookupMap<u64, TimelockProposal> {
+        LookupMap::new(StorageKey::TIMELOCKS)
+    }
+
+    fn lazy_timelock_counter(&self) -> LazyOption<u64> {
+        LazyOption::new(StorageKey::TIMELOCK_COUNTER, Some(&0))
+    }
+
+    fn next_timelock_id(&mut self) -> u64 {
+        let id = self.lazy_timelock_counter().get().unwrap_or(0);
+        self.lazy_timelock_counter().set(&(id + 1));
+        id
+    }
+
     fn add_token_to_cid_index(&mut self, cid: &String, token_id: &TokenId) {
         let mut ids = self.lazy_cid_to_tokens().get(cid).unwrap_or_default();
         ids.push(token_id.clone());
@@ -825,6 +877,7 @@ impl Contract {
     /// Ban an event (owner only). Banned events are hidden from listings
     /// and blocked from purchases, but remain in storage for audit trails.
     pub fn ban_event(&mut self, encrypted_cid: String, reason: BanReason) {
+        self.assert_not_paused();
         require!(
             env::predecessor_account_id() == self.tokens.owner_id,
             "Only owner can ban events"
@@ -848,6 +901,7 @@ impl Contract {
 
     /// Unban an event (owner only). Restores event to normal listings.
     pub fn unban_event(&mut self, encrypted_cid: String) {
+        self.assert_not_paused();
         require!(
             env::predecessor_account_id() == self.tokens.owner_id,
             "Only owner can unban events"
@@ -878,7 +932,99 @@ impl Contract {
     }
 
     /// Admin: Remove events and all associated data by encrypted_cid list.
+    /// Pause all state-changing operations (owner only). Emergency stop.
+    pub fn pause(&mut self) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can pause"
+        );
+        self.lazy_paused_state().set(&true);
+        env::log_str("Contract paused");
+    }
+
+    /// Unpause the contract (owner only).
+    pub fn unpause(&mut self) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can unpause"
+        );
+        self.lazy_paused_state().set(&false);
+        env::log_str("Contract unpaused");
+    }
+
+    /// Propose a timelocked action (owner only).
+    /// Returns the proposal ID.
+    pub fn propose_action(&mut self, action: TimelockAction) -> u64 {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can propose actions"
+        );
+        let id = self.next_timelock_id();
+        let proposal = TimelockProposal {
+            action,
+            proposer: env::predecessor_account_id(),
+            proposed_at: env::block_timestamp(),
+        };
+        self.lazy_timelocks().insert(&id, &proposal);
+        env::log_str(&format!("Timelock proposal {} created", id));
+        id
+    }
+
+    /// Execute a timelocked action after delay has passed (owner only).
+    pub fn execute_action(&mut self, id: u64) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can execute actions"
+        );
+        let proposal = self.lazy_timelocks().get(&id).expect("Proposal not found");
+        let elapsed = env::block_timestamp().saturating_sub(proposal.proposed_at);
+        require!(
+            elapsed >= TIMELOCK_DELAY_NS,
+            "Timelock delay not yet passed"
+        );
+        self.lazy_timelocks().remove(&id);
+        match proposal.action {
+            TimelockAction::WithdrawTrialPool { amount } => {
+                let _ = self.withdraw_trial_pool(amount);
+            }
+            TimelockAction::WithdrawCommission { amount } => {
+                let _ = self.withdraw_commission(amount);
+            }
+            TimelockAction::AdminRemoveEvents { encrypted_cids } => {
+                self.admin_remove_events(encrypted_cids);
+            }
+            TimelockAction::BanEvent { encrypted_cid } => {
+                self.ban_event(encrypted_cid, BanReason::Other);
+            }
+            TimelockAction::UnbanEvent { encrypted_cid } => {
+                self.unban_event(encrypted_cid);
+            }
+            TimelockAction::SetNextTokenId { new_id } => {
+                self.set_next_token_id(new_id);
+            }
+        }
+        env::log_str(&format!("Timelock proposal {} executed", id));
+    }
+
+    /// Cancel a pending timelock proposal (owner or original proposer).
+    pub fn cancel_action(&mut self, id: u64) {
+        let proposal = self.lazy_timelocks().get(&id).expect("Proposal not found");
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == self.tokens.owner_id || caller == proposal.proposer,
+            "Only owner or proposer can cancel"
+        );
+        self.lazy_timelocks().remove(&id);
+        env::log_str(&format!("Timelock proposal {} cancelled", id));
+    }
+
+    /// View a timelock proposal.
+    pub fn get_timelock(&self, id: u64) -> Option<TimelockProposal> {
+        self.lazy_timelocks().get(&id)
+    }
+
     pub fn admin_remove_events(&mut self, encrypted_cids: Vec<String>) {
+        self.assert_not_paused();
         require!(
             env::predecessor_account_id() == self.tokens.owner_id,
             "Only owner can remove events"
@@ -1236,6 +1382,7 @@ impl Contract {
         price_usd: Option<u128>,
         access_mode: Option<String>,
     ) {
+        self.assert_not_paused();
         let deposit = env::attached_deposit();
         require!(
             deposit >= STORAGE_COST_ACCOUNT,
@@ -1494,6 +1641,7 @@ impl Contract {
     /// explicitly transfers to creator. No automatic refund to buyer.
     #[payable]
     pub fn buy_ticket(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Token {
+        self.assert_not_paused();
         let maybe_event = self.events.get(&encrypted_cid);
         require!(maybe_event.is_some(), "Event not found");
         let event = maybe_event.unwrap();
@@ -1696,6 +1844,7 @@ impl Contract {
         token_metadata: TokenMetadata,
         video_metadata: VideoMetadata,
     ) -> Token {
+        self.assert_not_paused();
         // SECURITY: Only owner can directly mint
         require!(
             env::predecessor_account_id() == self.tokens.owner_id,
@@ -1997,6 +2146,7 @@ impl Contract {
     /// These funds are used to sponsor trial account creation
     #[payable]
     pub fn fund_trial_pool(&mut self) {
+        self.assert_not_paused();
         let deposit = env::attached_deposit();
         require!(deposit.as_yoctonear() > 0, "Must attach some NEAR");
 
@@ -2005,6 +2155,7 @@ impl Contract {
 
     /// Withdraw funds from trial pool (owner only)
     pub fn withdraw_trial_pool(&mut self, amount: U128) -> Promise {
+        self.assert_not_paused();
         require!(
             env::predecessor_account_id() == self.tokens.owner_id,
             "Only owner can withdraw from trial pool"
@@ -2579,6 +2730,7 @@ impl Contract {
 
     /// Withdraw from commission pool (owner only)
     pub fn withdraw_commission(&mut self, amount: U128) -> Promise {
+        self.assert_not_paused();
         require!(
             env::predecessor_account_id() == self.tokens.owner_id,
             "Only owner can withdraw commission"
@@ -2760,6 +2912,7 @@ impl Contract {
     /// SECURITY: Requires deposit for storage (0.01 NEAR)
     #[payable]
     pub fn gift_ticket(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Token {
+        self.assert_not_paused();
         let maybe_event = self.events.get(&encrypted_cid);
         require!(maybe_event.is_some(), "Event not found");
 
@@ -2827,6 +2980,7 @@ impl Contract {
     /// DEPOSIT: 0.15 NEAR per key (account creation + NFT storage)
     #[payable]
     pub fn create_gift_drop(&mut self, event_cid: String, public_keys: Vec<near_sdk::PublicKey>) {
+        self.assert_not_paused();
         let num_keys = public_keys.len() as u32;
         require!(num_keys > 0 && num_keys <= 50, "Must create 1-50 keys");
 
@@ -2922,6 +3076,7 @@ impl Contract {
     /// Called by the recipient using the Linkdrop Access Key
     #[payable]
     pub fn claim_gift(&mut self, receiver_id: AccountId) -> Token {
+        self.assert_not_paused();
         // Identify the drop via the Signer's Public Key
         let signer_pk: String = String::from(&env::signer_account_pk());
 

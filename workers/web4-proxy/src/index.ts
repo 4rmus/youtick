@@ -109,7 +109,7 @@ export default {
                     redirect: 'follow',
                 });
 
-                if (!originResponse.ok && origin !== origins[origins.length - 1]) {
+                if (originResponse.status >= 500 && origin !== origins[origins.length - 1]) {
                     lastError = new Error(`Origin ${origin} returned ${originResponse.status}`);
                     continue;
                 }

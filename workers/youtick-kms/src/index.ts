@@ -28,6 +28,7 @@ export interface Env {
     VIDEO_KEYS: KVNamespace;
     RATE_LIMIT: KVNamespace;
     ACCESS_CACHE: KVNamespace;
+    RATE_LIMITER: DurableObjectNamespace;
     ALLOWED_ORIGINS: string;
     NEAR_CONTRACT_ID: string;
     NEAR_ACCESS_CONTRACT_ID?: string;
@@ -744,18 +745,11 @@ async function checkRateLimit(
     ip: string,
     action: string,
 ): Promise<boolean> {
-    const key = `rl:${action}:${ip}`;
     const max = action === 'store' ? RATE_LIMIT_MAX_STORE : RATE_LIMIT_MAX_RETRIEVE;
-
-    const current = parseInt((await env.RATE_LIMIT.get(key)) || '0', 10);
-    if (current >= max) {
-        return false;
-    }
-
-    await env.RATE_LIMIT.put(key, String(current + 1), {
-        expirationTtl: RATE_LIMIT_WINDOW_S,
-    });
-    return true;
+    const id = env.RATE_LIMITER.idFromName(`rl:${action}:${ip}`);
+    const stub = env.RATE_LIMITER.get(id);
+    const response = await stub.fetch(`http://dummy/check?max=${max}&window=${RATE_LIMIT_WINDOW_S}`);
+    return (await response.text()) === 'true';
 }
 
 // ============================================================================
@@ -1715,3 +1709,34 @@ export default {
         }
     },
 };
+
+// ============================================================================
+// Durable Object for Atomic Rate Limiting
+// ============================================================================
+
+export class RateLimiterDO implements DurableObject {
+    constructor(private state: DurableObjectState) {}
+
+    async fetch(request: Request): Promise<Response> {
+        const url = new URL(request.url);
+        const max = parseInt(url.searchParams.get('max') || '0', 10);
+        const window = parseInt(url.searchParams.get('window') || '60', 10);
+
+        const now = Date.now();
+        const stored = await this.state.storage.get<{ count: number; resetAt: number }>('data') || { count: 0, resetAt: 0 };
+
+        if (now > stored.resetAt) {
+            stored.count = 0;
+            stored.resetAt = now + window * 1000;
+        }
+
+        if (stored.count >= max) {
+            return new Response('false');
+        }
+
+        stored.count += 1;
+        await this.state.storage.put('data', stored);
+
+        return new Response('true');
+    }
+}
