@@ -41,12 +41,12 @@ function cacheKey(accountId: string, scope: SessionGrantScope, resourceId?: stri
 function getScopeTtlMs(scope: SessionGrantScope): number {
     switch (scope) {
         case 'Play':
-            return 10 * 60 * 1000;
+            return 5 * 60 * 1000;
         case 'Publish':
-            return 20 * 60 * 1000;
+            return 10 * 60 * 1000;
         case 'ClaimGift':
         case 'ClaimTrial':
-            return 15 * 60 * 1000;
+            return 5 * 60 * 1000;
     }
 }
 
@@ -177,6 +177,7 @@ export async function ensureSessionGrant(params: {
     scope: SessionGrantScope;
     resourceId?: string;
     wallet: WalletInstance;
+    skipCache?: boolean;
 }): Promise<BrowserSessionGrant | null> {
     if (typeof window === 'undefined') {
         return null;
@@ -187,9 +188,14 @@ export async function ensureSessionGrant(params: {
     }
 
     const cacheStorageKey = cacheKey(params.accountId, params.scope, params.resourceId);
-    const cached = readCachedGrant(params.accountId, params.scope, params.resourceId);
-    if (cached) {
-        return cached;
+    if (!params.skipCache) {
+        const cached = readCachedGrant(params.accountId, params.scope, params.resourceId);
+        if (cached) {
+            return cached;
+        }
+    } else {
+        // Explicit invalidation: purge any stale entry before issuing a new grant
+        clearSessionGrantCache(params.accountId);
     }
 
     const pendingGrant = pendingGrantPromises.get(cacheStorageKey);
@@ -242,6 +248,24 @@ export async function ensureSessionGrant(params: {
 
     pendingGrantPromises.set(cacheStorageKey, grantPromise);
     return grantPromise;
+}
+
+/**
+ * Manually invalidate a specific session grant from all caches.
+ * Call this after on-chain revocation (e.g., ticket resale, access revocation)
+ * to ensure the browser does not reuse a stale grant.
+ */
+export function invalidateSessionGrant(
+    accountId: string,
+    scope: SessionGrantScope,
+    resourceId?: string,
+): void {
+    const key = cacheKey(accountId, scope, resourceId);
+    inMemoryGrants.delete(key);
+    pendingGrantPromises.delete(key);
+    if (typeof window !== 'undefined') {
+        sessionStorage.removeItem(key);
+    }
 }
 
 export async function signSessionGrantPayload(
