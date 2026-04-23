@@ -3,10 +3,7 @@ const path = require('path');
 
 const RPC_URL = 'https://rpc.testnet.near.org';
 const OWNER_ACCOUNT_ID = process.env.ZERO_TRUST_OWNER_ID || 'v2-0.utick.testnet';
-const OWNER_SECRET_KEY =
-    process.env.MASTER_SECRET_KEY ||
-    process.env.ZERO_TRUST_OWNER_KEY ||
-    'REDACTED';
+const OWNER_SECRET_KEY = process.env.MASTER_SECRET_KEY || process.env.ZERO_TRUST_OWNER_KEY;
 const REGISTRY_CONTRACT_ID =
     process.env.NEXT_PUBLIC_REGISTRY_CONTRACT_ID ||
     process.env.REGISTRY_CONTRACT_ID ||

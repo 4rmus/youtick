@@ -369,9 +369,12 @@ impl Contract {
 
     /// Complete state reset for mainnet v11. Re-initializes all state with new StorageKey prefixes.
     /// This abandons old data in storage but resolves all invariant discrepancies.
-    #[private]
     #[init(ignore_state)]
     pub fn reset_v11(owner_id: AccountId) -> Self {
+        require!(
+            env::predecessor_account_id() == owner_id,
+            "Only proposed owner can reset state"
+        );
         let metadata = NFTContractMetadata {
             spec: NFT_METADATA_SPEC.to_string(),
             name: "YouTick Video Tickets".to_string(),
@@ -819,6 +822,10 @@ impl Contract {
             banned_by: env::predecessor_account_id(),
         };
 
+        require!(
+            self.lazy_banned_events().get(&encrypted_cid).is_none(),
+            "Event is already banned"
+        );
         self.lazy_banned_events().insert(&encrypted_cid, &ban_info);
         // Event banned — decrement active counter for O(1) get_events_count
         self.active_event_count = self.active_event_count.saturating_sub(1);
@@ -1511,7 +1518,7 @@ impl Contract {
         } else {
             // Free ticket - just require minimal storage (or contract pays)
             require!(
-                deposit >= storage_cost || env::account_balance() > storage_cost,
+                deposit >= storage_cost,
                 "Insufficient deposit for storage"
             );
         }
@@ -2723,6 +2730,12 @@ impl Contract {
     pub fn gift_ticket(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Token {
         let maybe_event = self.events.get(&encrypted_cid);
         require!(maybe_event.is_some(), "Event not found");
+
+        require!(
+            self.lazy_banned_events().get(&encrypted_cid).is_none(),
+            "Event is banned"
+        );
+
         let event = maybe_event.unwrap();
 
         // Verify caller is the event creator

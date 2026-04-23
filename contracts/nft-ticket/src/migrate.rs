@@ -37,10 +37,13 @@ impl Contract {
     ///   json-args '{}' prepaid-gas '300 Tgas' attached-deposit '0 NEAR' \
     ///   sign-as youtick.near network-config mainnet sign-with-keychain send
     /// ```
-    #[private]
     #[init(ignore_state)]
     pub fn migrate() -> Self {
         let old: OldContract = env::state_read().expect("Cannot deserialize old state");
+        require!(
+            env::predecessor_account_id() == old.tokens.owner_id,
+            "Only owner can migrate"
+        );
 
         env::log_str("V10 migration: removed nova_platform_account, nova_service_fee, event_nova_groups");
 

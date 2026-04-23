@@ -6,7 +6,7 @@ const path = require("path");
 const NETWORK_ID = "testnet";
 const MASTER_ACCOUNT_ID = "v2-0.utick.testnet";
 // Testnet deployment key
-const MASTER_KEY = "REDACTED";
+const MASTER_KEY = process.env.MASTER_SECRET_KEY;
 const CONTRACT_ACCOUNT_ID = `nft.${MASTER_ACCOUNT_ID}`;
 
 // Path to compiled WASM
