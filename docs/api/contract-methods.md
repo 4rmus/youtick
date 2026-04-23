@@ -51,6 +51,11 @@ This contract is the market, content, and entitlement source of truth.
 | `ban_event` | Bans an event by encrypted CID |
 | `unban_event` | Unbans an event |
 | `admin_remove_events` | Removes multiple events and their metadata |
+| `pause` | Pauses the contract (owner-only emergency stop) |
+| `unpause` | Resumes the contract (owner-only) |
+| `propose_action` | Timelock: proposes a sensitive action |
+| `execute_action` | Timelock: executes a proposed action after delay |
+| `cancel_action` | Timelock: cancels a proposed action |
 | `add_onboarding_key` | Adds a trial onboarding public key |
 | `remove_onboarding_key` | Removes an onboarding public key |
 | `set_onboarding_config` | Sets daily trial limit and enabled flag |
@@ -73,11 +78,11 @@ This contract is the market, content, and entitlement source of truth.
 | `claim_free_ticket_direct` | Claims a free ticket with optional account creation |
 | `grant_free_access_direct` | Grants free trial access to an existing account |
 | `revoke_trial_access` | Revokes trial access for an account |
-| `create_sponsored_trial` | Sponsored trial with gas sponsorship |
-| `sponsor_implicit_guest` | Sponsors gas for implicit guest account |
+| `create_sponsored_trial` | Sponsored trial with gas sponsorship (deprecated) |
+| `sponsor_implicit_guest` | Sponsors gas for implicit guest account (deprecated) |
 | `sponsor_implicit_guest_direct` | Direct gas sponsorship without relayer callback |
 | `withdraw_commission` | Withdraws commission pool balance (owner) |
-| `claim_free_ticket_sponsored` | Sponsored free-ticket claim with account creation |
+| `claim_free_ticket_sponsored` | Sponsored free-ticket claim with account creation (deprecated) |
 | `gift_ticket` | Creator gifts a ticket to a receiver |
 | `create_gift_drop` | Creates access-key based gift drops |
 | `claim_gift` | Claims a gift drop to an existing account |
@@ -111,6 +116,7 @@ This contract is the market, content, and entitlement source of truth.
 | `get_purchase_logs` | Paginated purchase log query |
 | `get_purchase_count` | Returns total number of purchases |
 | `get_next_token_id` | Returns the next token ID to be minted |
+| `get_timelock` | Returns the timelock status for a proposed action |
 | `is_gift_valid` | Checks if a gift access key is still valid |
 | `get_gift_info` | Returns minimal gift info by public key |
 | `get_gift_info_full` | Returns full gift drop details |
@@ -210,22 +216,13 @@ This contract stores decryption operators and relayers.
 
 ## 5. Deprecated / Legacy
 
-The following methods are still present in the contract but are not recommended for new integrations:
+The following methods are deprecated or removed and should not be used for new integrations:
 
 | Method | Status |
 |--------|--------|
-| `create_upload_session` | Legacy publish helper |
-| `revoke_upload_session` | Legacy publish helper |
-| `get_upload_session` | Legacy publish helper |
-| `nft_mint_prepaid` | Legacy publish helper |
-| `create_event_prepaid` | Legacy publish helper |
-| `add_onboarding_key` | Removed with browser onboarding secrets |
-| `remove_onboarding_key` | Removed with browser onboarding secrets |
-| `create_sponsored_trial_direct` | Replaced by invite-based trial flow |
-| `claim_free_ticket_direct` | Replaced by gift or invite flow |
-| `create_sponsored_trial` | Replaced by invite-based trial flow |
-| `claim_free_ticket_sponsored` | Replaced by invite-based trial flow |
-| `reset_v11` | One-time mainnet state reset |
+| `create_sponsored_trial` | Deprecated relayer-based trial flow |
+| `claim_free_ticket_sponsored` | Deprecated relayer-based free ticket flow |
+| `sponsor_implicit_guest` | Deprecated relayer-based gas sponsorship |
 
 ---
 
@@ -233,10 +230,10 @@ The following methods are still present in the contract but are not recommended 
 
 | Scope | Default TTL | Binding |
 |------|-------------|---------|
-| `Play` | 10 minutes | content + origin + device |
-| `Publish` | 20 minutes | creator + origin + device |
-| `ClaimGift` | 15 minutes | drop |
-| `ClaimTrial` | 15 minutes | invite |
+| `Play` | 5 minutes | content + origin + device |
+| `Publish` | 10 minutes | creator + origin + device |
+| `ClaimGift` | 5 minutes | drop |
+| `ClaimTrial` | 5 minutes | invite |
 
 Relayer and operator rules:
 

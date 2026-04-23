@@ -58,7 +58,8 @@ Temel fikir cok basit:
 
 - creator paylasilabilir hediye linki uretir
 - alici mevcut hesaba ya da yeni hesaba claim eder
-- trial hesap olusturma icin ana yol relayer'dir; local onboarding key yalnizca kontrollu fallback olarak dusunulmelidir
+- trial hesap olusturma icin ana yol onboarding key'dir (Function Call Access Key);
+  relayer akisi deprecate edilmistir
 
 ---
 

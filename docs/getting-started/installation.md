@@ -30,11 +30,13 @@ npm install
 cp .env.example .env.local
 ```
 
-`.env.local` icinde minimum su ikisi yeterli:
+`.env.local` icinde minimum su degiskenler gereklidir:
 
 ```txt
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
+NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.youtick.near
+NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
 ```
 
 Local KMS worker ile calisacaksan su satiri da ekle:
