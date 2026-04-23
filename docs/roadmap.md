@@ -4,6 +4,19 @@
 
 ---
 
+> ⚠️ **Operational Transparency Notice (2026-04-23)**
+>
+> Mainnet is live and functional, but the deployed contract has a confirmed
+> state inconsistency (`nft_total_supply = 0` with 33 orphaned trie entries).
+> A critical authorization bypass in `reset_v11` has been patched in source
+> but not yet redeployed. Secret keys and operator endpoints have been
+> sanitized from the repo as part of Faz 1 hardening.
+>
+> See [`docs/operations/known-issues.md`](./operations/known-issues.md) for
+> the full transparency report, active risks, and required actions.
+
+---
+
 ## Tamamlanan temel taslar
 
 - **Mainnet launch** — `youtick.near`, `access.youtick.near`, `registry.youtick.near` uretimde
