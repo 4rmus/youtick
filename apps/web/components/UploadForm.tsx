@@ -12,6 +12,17 @@ import {
 } from '@/lib/kms/encryption';
 import { storeEncryptionKey } from '@/lib/kms/client';
 import { UploadSessionManager } from '@/lib/upload-session-manager';
+import { extractIpfsCid } from '@/lib/ipfs-media';
+import { uploadSegmentedDeliveryAsset } from '@/lib/upload-delivery';
+import {
+    uploadReducer,
+    initialUploadState,
+    INITIAL_STEPS,
+    MAX_FILE_SIZE,
+    MAX_FREE_FILE_SIZE,
+    STRICT_SEGMENTED_DELIVERY,
+    type StepStatus,
+} from '@/hooks/useUploadReducer';
 import {
     batchUploadActionsSignless,
     type SignlessUploadManager,
@@ -34,101 +45,9 @@ import { useLanguage } from '@/components/providers/LanguageContext';
 import { NEAR_CONFIG } from '@/lib/constants';
 import { nearAmountToYocto } from '@/lib/near-amount';
 import { getNearPrice, usdToNear } from '@/lib/price';
-import type { DeliverySegmentPayload } from '@/lib/types';
 import type { PackagedDeliveryAsset } from '@/lib/video-delivery';
 
-// ── Upload state reducer ──
 
-import type { UploadStep } from '@/lib/types';
-
-type StepStatus = UploadStep['status'];
-
-const INITIAL_STEPS: UploadStep[] = [
-    { id: 'session', label: 'Wallet & Balance', status: 'pending' },
-    { id: 'thumbnail', label: 'Cover Image', status: 'pending' },
-    { id: 'encrypt', label: 'Encrypting Video', status: 'pending' },
-    { id: 'upload', label: 'Uploading to IPFS', status: 'pending' },
-    { id: 'kms', label: 'Storing Encryption Key', status: 'pending' },
-    { id: 'mint', label: 'Minting NFT Ticket', status: 'pending' },
-    { id: 'storage', label: 'Persistent Storage Order', status: 'pending' },
-    { id: 'verify', label: 'Verifying Storage', status: 'pending' },
-];
-
-// File size limits (KMS-based flow)
-const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB for paid
-const MAX_FREE_FILE_SIZE = 100 * 1024 * 1024; // 100MB for free
-const STRICT_SEGMENTED_DELIVERY = true;
-
-interface UploadState {
-    uploading: boolean;
-    status: string;
-    progress: number;
-    steps: UploadStep[];
-    retryStep: 'none' | 'sign_auth';
-    verifiedStorageFee: string;
-    estimatedStorageFee: string;
-    payAmount: string;
-    storageOrderStatus: 'pending' | 'success' | 'partial' | 'failed' | null;
-}
-
-const initialUploadState: UploadState = {
-    uploading: false,
-    status: '',
-    progress: 0,
-    steps: INITIAL_STEPS,
-    retryStep: 'none',
-    verifiedStorageFee: '0',
-    estimatedStorageFee: '0',
-    payAmount: '0',
-    storageOrderStatus: null,
-};
-
-type UploadAction =
-    | { type: 'SET_UPLOADING'; payload: boolean }
-    | { type: 'SET_STATUS'; payload: string }
-    | { type: 'SET_PROGRESS'; payload: number }
-    | { type: 'UPDATE_STEP'; payload: { id: string; status: StepStatus } }
-    | { type: 'RESET_STEPS' }
-    | { type: 'SET_RETRY_STEP'; payload: 'none' | 'sign_auth' }
-    | { type: 'SET_VERIFIED_STORAGE_FEE'; payload: string }
-    | { type: 'SET_ESTIMATED_STORAGE_FEE'; payload: string }
-    | { type: 'SET_PAY_AMOUNT'; payload: string }
-    | { type: 'SET_STORAGE_ORDER_STATUS'; payload: UploadState['storageOrderStatus'] }
-    | { type: 'RESET' };
-
-function uploadReducer(state: UploadState, action: UploadAction): UploadState {
-    switch (action.type) {
-        case 'SET_UPLOADING':
-            return { ...state, uploading: action.payload };
-        case 'SET_STATUS':
-            return { ...state, status: action.payload };
-        case 'SET_PROGRESS':
-            return { ...state, progress: action.payload };
-        case 'UPDATE_STEP':
-            return {
-                ...state,
-                steps: state.steps.map(step =>
-                    step.id === action.payload.id ? { ...step, status: action.payload.status } : step
-                ),
-            };
-        case 'RESET_STEPS':
-            return { ...state, steps: INITIAL_STEPS.map(s => ({ ...s })) };
-        case 'SET_RETRY_STEP':
-            return { ...state, retryStep: action.payload };
-        case 'SET_VERIFIED_STORAGE_FEE':
-            return { ...state, verifiedStorageFee: action.payload };
-        case 'SET_ESTIMATED_STORAGE_FEE':
-            return { ...state, estimatedStorageFee: action.payload };
-        case 'SET_PAY_AMOUNT':
-            return { ...state, payAmount: action.payload };
-        case 'SET_STORAGE_ORDER_STATUS':
-            return { ...state, storageOrderStatus: action.payload };
-        case 'RESET':
-            return initialUploadState;
-        default:
-            return state;
-    }
-}
 
 export function UploadForm() {
     const { t } = useLanguage();
@@ -215,169 +134,7 @@ export function UploadForm() {
         }
     };
 
-    const extractIpfsCid = (ref: string | null | undefined): string | null => {
-        if (!ref) {
-            return null;
-        }
 
-        if (ref.startsWith('ipfs://')) {
-            return ref.slice('ipfs://'.length);
-        }
-
-        const match = ref.match(/\/ipfs\/([^/?#]+)/);
-        return match?.[1] ?? null;
-    };
-
-    const toBlobPart = (bytes: Uint8Array): ArrayBuffer => {
-        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-    };
-
-    const runWithConcurrency = async <T, R>(
-        values: T[],
-        limit: number,
-        handler: (value: T, index: number) => Promise<R>,
-    ): Promise<R[]> => {
-        const results: R[] = new Array(values.length);
-        let nextIndex = 0;
-
-        const workers = Array.from({ length: Math.max(1, Math.min(limit, values.length || 1)) }, async () => {
-            while (nextIndex < values.length) {
-                const current = nextIndex;
-                nextIndex += 1;
-                results[current] = await handler(values[current], current);
-            }
-        });
-
-        await Promise.all(workers);
-        return results;
-    };
-
-    const uploadSegmentedDeliveryAsset = async (params: {
-        packagedAsset: PackagedDeliveryAsset;
-        accountId: string;
-        encrypted: boolean;
-        aesKeyB64?: string;
-        thumbnailRef?: string | null;
-        posterBlob?: Blob | null;
-        collector: CidCollector;
-    }): Promise<{ manifestCid: string }> => {
-        const {
-            packagedAsset,
-            accountId: uploaderAccountId,
-            encrypted,
-            aesKeyB64,
-            thumbnailRef,
-            posterBlob,
-            collector,
-        } = params;
-        const {
-            combinePackagedSegmentPayloads,
-            createDeliverySegment,
-            toDeliveryManifestV2,
-            warmupGatewayCids,
-            DELIVERY_UPLOAD_CONCURRENCY,
-        } = await import('@/lib/video-delivery');
-
-        if (encrypted && !aesKeyB64) {
-            throw new Error('Segmented encrypted delivery requires an AES key');
-        }
-        const encryptionKey = aesKeyB64;
-
-        let posterCid: string | undefined;
-        if (posterBlob) {
-            try {
-                setStatus('Uploading poster image...');
-                const posterResult = await uploadToCrust(posterBlob, uploaderAccountId);
-                posterCid = posterResult.cid;
-                collector.add(posterResult.cid, posterResult.size, 'poster');
-            } catch (posterError) {
-                console.warn('[UploadForm] Poster upload failed, continuing without poster:', posterError);
-            }
-        }
-
-        setStatus('Uploading initialization segment...');
-        const initBytes = new Uint8Array(packagedAsset.initSegment);
-        let initCounterB64: string | undefined;
-        let initUploadBlob: Blob;
-
-        if (encrypted) {
-            const encryptedInit = await encryptBufferWithCounter(initBytes, encryptionKey as string);
-            initCounterB64 = encryptedInit.counterB64;
-            initUploadBlob = new Blob([toBlobPart(encryptedInit.ciphertext)], { type: 'application/octet-stream' });
-        } else {
-            initUploadBlob = new Blob([initBytes], { type: 'video/mp4' });
-        }
-
-        const initUpload = await uploadToCrust(initUploadBlob, uploaderAccountId);
-        collector.add(initUpload.cid, initUpload.size, 'init-segment');
-
-        let uploadedSegmentCount = 0;
-        const uploadedSegments = await runWithConcurrency(
-            packagedAsset.segments,
-            DELIVERY_UPLOAD_CONCURRENCY,
-            async (segment) => {
-                const payload = combinePackagedSegmentPayloads(segment.payloads);
-                const payloadBytes = new Uint8Array(payload.buffer);
-                let payloadCounterB64: string | undefined;
-                let payloadBlob: Blob;
-
-                if (encrypted) {
-                    const encryptedPayload = await encryptBufferWithCounter(payloadBytes, encryptionKey as string);
-                    payloadCounterB64 = encryptedPayload.counterB64;
-                    payloadBlob = new Blob([toBlobPart(encryptedPayload.ciphertext)], { type: 'application/octet-stream' });
-                } else {
-                    payloadBlob = new Blob([payloadBytes], { type: 'video/mp4' });
-                }
-
-                const uploadResult = await uploadToCrust(payloadBlob, uploaderAccountId);
-                collector.add(uploadResult.cid, uploadResult.size, 'media-segment');
-                const uploadedPayloads: DeliverySegmentPayload[] = [{
-                    cid: uploadResult.cid,
-                    trackId: payload.trackId,
-                    kind: payload.kind,
-                    byteLength: payload.byteLength,
-                    startMs: payload.startMs,
-                    endMs: payload.endMs,
-                    counterB64: payloadCounterB64,
-                }];
-
-                uploadedSegmentCount += 1;
-                const progress = Math.round((uploadedSegmentCount / packagedAsset.segments.length) * 100);
-                dispatch({ type: 'SET_PROGRESS', payload: progress });
-                setStatus(`Uploading delivery segments... ${progress}%`);
-
-                return createDeliverySegment(segment.seq, uploadedPayloads);
-            },
-        );
-
-        setStatus('Uploading delivery manifest...');
-        const manifest = toDeliveryManifestV2(
-            packagedAsset,
-            initUpload.cid,
-            packagedAsset.tracks,
-            uploadedSegments,
-            {
-                encrypted,
-                posterCid,
-                initSegmentCounterB64: initCounterB64,
-            },
-        );
-
-        const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
-        const manifestResult = await uploadToCrust(manifestBlob, uploaderAccountId);
-        collector.add(manifestResult.cid, manifestResult.size, 'manifest');
-
-        const warmupItems = [
-            extractIpfsCid(thumbnailRef) ? { cid: extractIpfsCid(thumbnailRef)!, kind: 'image' as const } : null,
-            posterCid ? { cid: posterCid, kind: 'image' as const } : null,
-            { cid: initUpload.cid, kind: 'segment' as const },
-            ...(uploadedSegments[0]?.payloads.map((payload) => ({ cid: payload.cid, kind: 'segment' as const })) ?? []),
-        ].filter(Boolean) as Array<{ cid: string; kind: 'image' | 'segment' }>;
-
-        void warmupGatewayCids(warmupItems);
-
-        return { manifestCid: manifestResult.cid };
-    };
 
     // Track thumbnail preview for cleanup
     const thumbnailPreviewRef = React.useRef<string | null>(null);
@@ -583,6 +340,10 @@ export function UploadForm() {
                     thumbnailRef: thumbnailUrl,
                     posterBlob: posterThumbnail,
                     collector,
+                    callbacks: {
+                        onStatus: setStatus,
+                        onProgress: (progress) => dispatch({ type: 'SET_PROGRESS', payload: progress }),
+                    },
                 });
                 manifestCid = deliveryUpload.manifestCid;
 
@@ -604,6 +365,10 @@ export function UploadForm() {
                     thumbnailRef: thumbnailUrl,
                     posterBlob: posterThumbnail,
                     collector,
+                    callbacks: {
+                        onStatus: setStatus,
+                        onProgress: (progress) => dispatch({ type: 'SET_PROGRESS', payload: progress }),
+                    },
                 });
                 manifestCid = deliveryUpload.manifestCid;
 
@@ -998,7 +763,7 @@ export function UploadForm() {
                                 <div className="space-y-1">
                                     <p className="text-sm font-medium text-white">Herkes izleyebilsin</p>
                                     <p className="text-xs text-zinc-400">
-                                        Açıkken video anonim olarak oynar. Kapalıysa video ücretsiz olur ama izlemek için önce hesaba eklenir.
+                                        {t.upload_page.anonymous_play_toggle_desc}
                                     </p>
                                 </div>
                             </label>

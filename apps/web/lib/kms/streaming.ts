@@ -281,12 +281,22 @@ function getInitialChunkCount(manifest: VideoManifest, initialBufferBytes?: numb
  * @param options - Player options
  * @returns Blob URL that can be set as video.src
  */
+const MAX_BLOB_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
+
 export async function createDecryptedBlobUrl(
     cid: string,
     aesKeyB64: string,
     manifest: VideoManifest,
     options: StreamingPlayerOptions = {},
 ): Promise<string> {
+    if (manifest.originalSize > MAX_BLOB_SIZE_BYTES) {
+        throw new Error(
+            `Video size (${(manifest.originalSize / 1024 / 1024).toFixed(1)}MB) exceeds ` +
+            `the maximum allowed for Blob playback (${MAX_BLOB_SIZE_BYTES / 1024 / 1024}MB). ` +
+            `Use MSE-based streaming instead.`
+        );
+    }
+
     const gateways = getGatewayCandidates(options.gatewayUrl);
     let activeGateway = options.gatewayUrl ? normalizeGatewayBase(options.gatewayUrl) : undefined;
 

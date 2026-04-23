@@ -98,6 +98,7 @@ export const translations = {
             progress_title: "Upload Progress",
             file_too_large_free: "File exceeds the 20 MB limit for free videos. Set a price to upload up to 500 MB.",
             file_too_large_paid: "File exceeds the 500 MB upload limit.",
+            anonymous_play_toggle_desc: "When enabled, the video plays anonymously. When disabled, the video is free but must be added to the account before watching.",
             steps: {
                 session: "Wallet & Balance",
                 thumbnail: "Cover Image",
@@ -644,6 +645,7 @@ export const translations = {
             progress_title: "Yükleme Durumu",
             file_too_large_free: "Dosya ücretsiz videolar için 20 MB sınırını aşıyor. 500 MB'ye kadar yüklemek için bir fiyat belirleyin.",
             file_too_large_paid: "Dosya 500 MB yükleme sınırını aşıyor.",
+            anonymous_play_toggle_desc: "Açıkken video anonim olarak oynar. Kapalıysa video ücretsiz olur ama izlemek için önce hesaba eklenir.",
             steps: {
                 session: "Cüzdan & Bakiye",
                 thumbnail: "Kapak Fotoğrafı",

@@ -94,9 +94,9 @@ near call youtick.near migrate '{}' --accountId youtick.near --gas 3000000000000
 **Doğrulama:**
 ```bash
 # Kontrat storage okuma — panic yoksa deploy temiz
-near view youtick.near get_platform_account
-near view access.youtick.near get_config
-near view registry.youtick.near get_active_operators
+near view youtick.near get_events_count
+near view access.youtick.near list_session_grants '{"owner_id":"youtick.near"}'
+near view registry.youtick.near list_decryption_operators
 ```
 
 ## 2. Operatör Registry Güncellemesi (varsa)
@@ -183,7 +183,7 @@ Bir adım düşerse bkz. §8 Rollback.
 - Sentry release tag'i otomatik düşer (`SENTRY_AUTH_TOKEN` set ise)
 - Cloudflare Analytics'te 5xx spike izle (ilk 30 dk)
 - KMS worker log: `npx wrangler tail --env operator_a`
-- Bir sonraki deploy'a kadar `docs/release-log.md` (yoksa oluştur) içine tarih + commit SHA + değişenler notu ekle
+- Bir sonraki deploy'a kadar `docs/CHANGELOG.md` (yoksa oluştur) içine tarih + commit SHA + değişenler notu ekle
 
 ## 8. Rollback Prosedürü
 
@@ -208,10 +208,11 @@ Kontrat deploy'u otomatik geri alınamaz. Seçenekler:
 
 Üçüncü seçenek için:
 ```bash
-near call youtick.near pause '{}' --accountId youtick.near
-near call access.youtick.near pause '{}' --accountId access.youtick.near
+near call access.youtick.near pause_scope '{"scope":"Play"}' --accountId access.youtick.near
+near call access.youtick.near pause_scope '{"scope":"Publish"}' --accountId access.youtick.near
 # Düzeltme deploy'u sonrası
-near call youtick.near unpause '{}' --accountId youtick.near
+near call access.youtick.near unpause_scope '{"scope":"Play"}' --accountId access.youtick.near
+near call access.youtick.near unpause_scope '{"scope":"Publish"}' --accountId access.youtick.near
 ```
 
 ⚠️ Pause sırasında kullanıcı iletişimi: status page / Twitter duyurusu hazır olsun.

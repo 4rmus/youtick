@@ -47,6 +47,14 @@ impl Contract {
 
         env::log_str("V10 migration: removed nova_platform_account, nova_service_fee, event_nova_groups");
 
+        // Rebuild active_event_count by counting non-banned events
+        let banned = LookupMap::<String, BanInfo>::new(StorageKey::BANNED_EVENTS);
+        let active_event_count = old
+            .events
+            .iter()
+            .filter(|(cid, _)| banned.get(cid).is_none())
+            .count() as u64;
+
         Self {
             tokens: old.tokens,
             metadata: old.metadata,
@@ -54,7 +62,7 @@ impl Contract {
             user_deposits: old.user_deposits,
             events: old.events,
             next_token_id: old.next_token_id,
-            active_event_count: 0, // rebuilt via rebuild_event_counter after migration
+            active_event_count,
             gift_drops: old.gift_drops,
             trial_pool: old.trial_pool,
             onboarding_keys: old.onboarding_keys,

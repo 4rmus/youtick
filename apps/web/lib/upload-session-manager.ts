@@ -17,8 +17,27 @@ const DEFAULT_UPLOAD_ALLOWANCE_NEAR = '0.15';
 const DEFAULT_UPLOAD_TTL_MS = 15 * 60 * 1000;
 
 const uploadSessionKeys = new Map<string, KeyPair>();
+const uploadSessionTimestamps = new Map<string, number>();
+const UPLOAD_SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+function evictExpiredSessions(): void {
+    const now = Date.now();
+    for (const [id, ts] of uploadSessionTimestamps.entries()) {
+        if (now - ts > UPLOAD_SESSION_TTL_MS) {
+            uploadSessionKeys.delete(id);
+            uploadSessionTimestamps.delete(id);
+        }
+    }
+}
 
 export function getActiveUploadSessionKey(accountId: string): KeyPair | null {
+    evictExpiredSessions();
+    const ts = uploadSessionTimestamps.get(accountId);
+    if (!ts || Date.now() - ts > UPLOAD_SESSION_TTL_MS) {
+        uploadSessionKeys.delete(accountId);
+        uploadSessionTimestamps.delete(accountId);
+        return null;
+    }
     return uploadSessionKeys.get(accountId) ?? null;
 }
 
@@ -43,6 +62,7 @@ export class UploadSessionManager {
         const allowanceYocto = nearAmountToYocto(allowanceNear);
 
         uploadSessionKeys.set(this.accountId, keyPair);
+        uploadSessionTimestamps.set(this.accountId, Date.now());
 
         try {
             await wallet.signAndSendTransactions({

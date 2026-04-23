@@ -1,5 +1,6 @@
 import { fetchFromGateways } from './crust';
 import { decodeCounter, importAESKey } from './kms';
+import { concatenateArrayBuffers, runWithConcurrency } from './utils';
 import {
     DELIVERY_BUFFER_AHEAD_MS,
     DELIVERY_BUFFER_BEHIND_MS,
@@ -687,38 +688,4 @@ function getSegmentPriority(
     return 2;
 }
 
-async function runWithConcurrency<T>(
-    values: T[],
-    concurrency: number,
-    handler: (value: T) => Promise<void>,
-): Promise<void> {
-    const queue = [...values];
-    const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
-        while (queue.length > 0) {
-            const next = queue.shift();
-            if (!next) {
-                return;
-            }
-            await handler(next);
-        }
-    });
 
-    await Promise.all(workers);
-}
-
-function concatenateArrayBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
-    if (buffers.length === 1) {
-        return buffers[0];
-    }
-
-    const totalLength = buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0);
-    const combined = new Uint8Array(totalLength);
-    let offset = 0;
-
-    for (const buffer of buffers) {
-        combined.set(new Uint8Array(buffer), offset);
-        offset += buffer.byteLength;
-    }
-
-    return combined.buffer;
-}

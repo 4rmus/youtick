@@ -12,6 +12,7 @@ import {
     groupPayloadsByVideoAnchor,
     estimateSharedSegmentSampleCount,
 } from './video-delivery-segmentation';
+import { concatenateArrayBuffers } from './utils';
 
 export const DELIVERY_MANIFEST_VERSION = 2 as const;
 export const DELIVERY_SEGMENT_DURATION_MS = 4_000;
@@ -473,22 +474,7 @@ function normalizeInitSegmentResult(
     return Array.isArray(value) ? value : [value];
 }
 
-function concatenateArrayBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
-    if (buffers.length === 1) {
-        return buffers[0];
-    }
 
-    const totalLength = buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0);
-    const combined = new Uint8Array(totalLength);
-    let offset = 0;
-
-    for (const buffer of buffers) {
-        combined.set(new Uint8Array(buffer), offset);
-        offset += buffer.byteLength;
-    }
-
-    return combined.buffer;
-}
 
 type PackagingWorkerRequest = {
     type: 'package';

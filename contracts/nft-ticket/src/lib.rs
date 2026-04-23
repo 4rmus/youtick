@@ -48,6 +48,7 @@ impl StorageKey {
     pub const UPLOAD_SESSIONS: Self = Self(b"us9");
     pub const TRIAL_INVITES: Self = Self(b"ti9");
     pub const TRIAL_ACCESS: Self = Self(b"ta9");
+    pub const CID_TO_TOKENS: Self = Self(b"ct9");
 }
 
 /// Storage cost constants to avoid repeated allocations
@@ -446,6 +447,20 @@ impl Contract {
     /// NFT-free free playback entitlement: one key per (account_id, encrypted_cid).
     fn lazy_trial_access(&self) -> LookupMap<String, bool> {
         LookupMap::new(StorageKey::TRIAL_ACCESS)
+    }
+
+    fn lazy_cid_to_tokens(&self) -> LookupMap<String, Vec<TokenId>> {
+        LookupMap::new(StorageKey::CID_TO_TOKENS)
+    }
+
+    fn add_token_to_cid_index(&mut self, cid: &String, token_id: &TokenId) {
+        let mut ids = self.lazy_cid_to_tokens().get(cid).unwrap_or_default();
+        ids.push(token_id.clone());
+        self.lazy_cid_to_tokens().insert(cid, &ids);
+    }
+
+    fn remove_cid_index(&mut self, cid: &String) {
+        self.lazy_cid_to_tokens().remove(cid);
     }
 
     fn trial_access_row_key(account_id: &AccountId, encrypted_cid: &str) -> String {
@@ -877,18 +892,14 @@ impl Contract {
             self.lazy_event_price_usd().remove(cid);
             self.lazy_event_access_modes().remove(&cid.to_string());
 
-            // Find and remove associated video_metadata entries
-            // video_metadata is keyed by token_id, so we need to scan
-            let token_ids_to_remove: Vec<TokenId> = self
-                .video_metadata
-                .iter()
-                .filter(|(_, meta)| meta.encrypted_cid == *cid)
-                .map(|(id, _)| id)
-                .collect();
+            // Find and remove associated video_metadata entries via reverse index
+            let token_ids_to_remove: Vec<TokenId> =
+                self.lazy_cid_to_tokens().get(cid).unwrap_or_default();
 
             for token_id in &token_ids_to_remove {
                 self.video_metadata.remove(token_id);
             }
+            self.remove_cid_index(cid);
 
             // AE-1 fix: Only decrement if the event was active (not banned)
             if !is_banned {
@@ -901,6 +912,25 @@ impl Contract {
                 token_ids_to_remove.len()
             ));
         }
+    }
+
+    /// Admin: Rebuild the CID → token_ids reverse index from video_metadata.
+    /// Call once after deploying the reverse-index change to backfill existing tokens.
+    pub fn rebuild_cid_to_tokens(&mut self) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can rebuild index"
+        );
+        let mut count = 0u64;
+        for (token_id, meta) in self.video_metadata.iter() {
+            let mut ids = self.lazy_cid_to_tokens().get(&meta.encrypted_cid).unwrap_or_default();
+            if !ids.contains(&token_id) {
+                ids.push(token_id.clone());
+                count += 1;
+            }
+            self.lazy_cid_to_tokens().insert(&meta.encrypted_cid, &ids);
+        }
+        env::log_str(&format!("Rebuilt cid_to_tokens index for {} token entries", count));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1630,6 +1660,7 @@ impl Contract {
             storage_type: StorageType::Kms,
         };
         self.video_metadata.insert(&token_id, &video_metadata);
+        self.add_token_to_cid_index(&event_cid, &token_id);
 
         let description = if is_gift {
             format!("Gift ticket: {}", event.description)
@@ -1914,6 +1945,7 @@ impl Contract {
         self.next_token_id += 1;
 
         self.video_metadata.insert(&token_id, &video_metadata);
+        self.add_token_to_cid_index(&video_metadata.encrypted_cid, &token_id);
 
         self.tokens
             .internal_mint(token_id, receiver_id, Some(token_metadata))
@@ -2765,6 +2797,7 @@ impl Contract {
         };
 
         self.video_metadata.insert(&token_id, &video_metadata);
+        self.add_token_to_cid_index(&encrypted_cid, &token_id);
 
         let token_metadata = TokenMetadata {
             title: Some(event.title.clone()),

@@ -12,6 +12,7 @@ import { CRUST_CONSTANTS } from './config';
 import { generateW3AuthToken, ensureFreshW3AuthToken } from './w3auth';
 import type { UploadedAsset } from './cid-collector';
 import { recordMetric } from '../decentralization-metrics';
+import { sleep } from '../utils';
 
 /** Result of a batch storage order operation */
 export interface StorageOrderBatchResult {
@@ -366,10 +367,6 @@ async function placeWithRetry(
     cid: asset.cid,
     createdAt: Date.now(),
   };
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
