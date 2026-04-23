@@ -13,9 +13,22 @@ export function OnboardingKeyInit() {
         const storageKey = `onboarding_key:${NEAR_CONFIG.contractId}`;
         const existingKey = localStorage.getItem(storageKey);
 
-        if (process.env.NEXT_PUBLIC_ONBOARDING_KEY && !existingKey) {
-            localStorage.setItem(storageKey, process.env.NEXT_PUBLIC_ONBOARDING_KEY);
-            console.log('[ONBOARDING_KEY] Bootstrapped onboarding key from environment');
+        // Fetch onboarding key from server-side endpoint instead of baking it into
+        // the client bundle via NEXT_PUBLIC_. This prevents the key from leaking
+        // in static JS or View Source.
+        if (!existingKey) {
+            fetch('/api/onboarding-key')
+                .then((r) => (r.ok ? r.json() : null))
+                .then((data) => {
+                    if (data?.key) {
+                        localStorage.setItem(storageKey, data.key);
+                        console.log('[ONBOARDING_KEY] Bootstrapped onboarding key from secure endpoint');
+                    }
+                })
+                .catch(() => {
+                    // Non-blocking: if the endpoint is unavailable the app still works
+                    // for users who already have a key or use wallet-based flows.
+                });
         }
 
         // Re-read after potential bootstrap so validation covers the new key

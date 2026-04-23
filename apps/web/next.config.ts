@@ -4,10 +4,36 @@ import { withSentryConfig } from "@sentry/nextjs";
 
 const isWeb4 = process.env.NEXT_PUBLIC_DEPLOY_TARGET === 'web4';
 
+const cspValue = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self'",
+  "connect-src 'self' https:",
+  "media-src 'self' blob: https:",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ');
+
 const nextConfig: NextConfig = {
   // Static export for Web4 deployment (youtick.near.page)
   // Enabled when NEXT_PUBLIC_DEPLOY_TARGET=web4 (via `npm run build:web4`)
   // Disabled in dev mode so API routes still work locally
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value: cspValue,
+          },
+        ],
+      },
+    ];
+  },
   ...(isWeb4 && {
     output: 'export' as const,
     trailingSlash: true,
