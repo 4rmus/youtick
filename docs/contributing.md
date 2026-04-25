@@ -42,10 +42,11 @@ NEXT_PUBLIC_NFT_CONTRACT_ID=dev-1773607954211-252231.v2-0.utick.testnet
 Sik kullanilan opsiyoneller:
 
 ```txt
-NEXT_PUBLIC_KMS_URL=http://localhost:8787
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
 ```
+
+KMS endpointleri `.env.local` ile verilmez; web app aktif operatorleri registry kontratindan okur.
 
 Tam degisken listesi ve aciklamalar: [Configuration Reference](getting-started/configuration.md).
 

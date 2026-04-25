@@ -3,17 +3,17 @@
 import { useState, useCallback } from 'react';
 import { Navigation } from '@/components/landing/Navigation';
 import { HeroSection } from '@/components/landing/HeroSection';
+import { AudienceSection } from '@/components/landing/AudienceSection';
 import { ValuePropositionSection } from '@/components/landing/ValuePropositionSection';
 import { CompetitiveAdvantagesSection } from '@/components/landing/CompetitiveAdvantagesSection';
-import { Roadmap } from '@/components/landing/Roadmap';
-import { StartSlider } from '@/components/landing/StartSlider';
 import { HowItWorksSection } from '@/components/landing/HowItWorksSection';
+import { UseCasesSection } from '@/components/landing/UseCasesSection';
 import { CTASection } from '@/components/landing/CTASection';
 import { LandingFooter } from '@/components/landing/LandingFooter';
 import { DiscoverView } from '@/components/discover/DiscoverView';
 import { PainPointsSection } from '@/components/landing/PainPointsSection';
-import { FinancialComparisonChart } from '@/components/landing/FinancialComparisonChart';
 import { ROICalculator } from '@/components/landing/ROICalculator';
+import { FinancialComparisonChart } from '@/components/landing/FinancialComparisonChart';
 
 export default function Home() {
   const [view, setView] = useState<'landing' | 'discover'>('landing');
@@ -34,27 +34,16 @@ export default function Home() {
     <div className="flex flex-col min-h-screen bg-black text-white selection:bg-white selection:text-black">
       <Navigation onDiscoverClick={handleDiscoverClick} variant="landing" />
       <HeroSection onDiscoverClick={handleDiscoverClick} />
-
-      <StartSlider />
-
-      {/* Problem-Solution Flow */}
+      <AudienceSection />
       <PainPointsSection />
       <ValuePropositionSection />
-      <FinancialComparisonChart />
-      {/* Features & Advantages */}
-      <CompetitiveAdvantagesSection />
-
-      {/* Interactive Section */}
       <ROICalculator />
-
-      {/* How To & Roadmap */}
+      <FinancialComparisonChart />
+      <UseCasesSection />
       <HowItWorksSection />
-      <Roadmap />
-
-      {/* CTA & Footer */}
+      <CompetitiveAdvantagesSection />
       <CTASection onDiscoverClick={handleDiscoverClick} />
       <LandingFooter />
     </div>
   );
 }
-

@@ -409,6 +409,18 @@ export function getMockLocalStorage(key: string): string | null {
   return mockLocalStorage.get(key) || null;
 }
 
+export function clearMockSessionStorage(): void {
+  mockSessionStorage.clear();
+}
+
+export function setMockSessionStorage(key: string, value: string): void {
+  mockSessionStorage.set(key, value);
+}
+
+export function getMockSessionStorage(key: string): string | null {
+  return mockSessionStorage.get(key) || null;
+}
+
 // ============================================================================
 // Test lifecycle hooks
 // ============================================================================

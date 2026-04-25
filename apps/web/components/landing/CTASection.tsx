@@ -1,8 +1,8 @@
 import { memo } from 'react';
+import Link from '@/components/Web4Link';
 import { Button } from '@/components/ui/button';
 import { ArrowRight } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { ANIMATION } from '@/lib/constants';
 
 interface CTASectionProps {
   onDiscoverClick: () => void;
@@ -10,32 +10,39 @@ interface CTASectionProps {
 
 export const CTASection = memo(({ onDiscoverClick }: CTASectionProps) => {
   const { t } = useLanguage();
+  const s = t.landing.cta_section;
 
   return (
-    <section className="py-40 bg-black relative overflow-hidden">
-      {/* Background Glow - NEAR Colors */}
-      <div className="absolute inset-0">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-near-green/10 rounded-full blur-3xl" />
-        <div className="absolute top-1/3 right-1/4 w-[400px] h-[400px] bg-near-purple/10 rounded-full blur-3xl" />
-      </div>
-
-      <div className="relative z-10 container mx-auto px-4 text-center">
-        <h2 className="text-5xl md:text-7xl font-black mb-8 leading-tight">
-          {t.landing.cta.title_line1}
-          <br />
-          <span className="text-gradient-near">{t.landing.cta.title_line2}</span>
-        </h2>
-        <p className="text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-          {t.landing.cta.subtitle}
-        </p>
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Button
-            size="lg"
-            className={`bg-near-green hover:bg-near-green/80 text-near-black text-lg px-12 py-8 rounded-full font-bold shadow-2xl shadow-near-green/30 ${ANIMATION.transition.default} ${ANIMATION.hover.scale}`}
-            onClick={onDiscoverClick}
-          >
-            {t.landing.cta.start_exploring} <ArrowRight className="ml-2 w-6 h-6" />
-          </Button>
+    <section className="bg-black py-28">
+      <div className="container mx-auto px-4 text-center">
+        <div className="mx-auto max-w-3xl">
+          <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-near-green">
+            {s.eyebrow}
+          </p>
+          <h2 className="mb-6 text-4xl font-black leading-tight text-white md:text-6xl">
+            {s.title}
+          </h2>
+          <p className="mx-auto mb-10 max-w-2xl text-lg leading-relaxed text-zinc-400">
+            {s.description}
+          </p>
+          <div className="flex flex-col justify-center gap-3 sm:flex-row">
+            <Link href="/upload">
+              <Button
+                size="lg"
+                className="w-full rounded-full bg-near-green px-9 py-7 text-base font-bold text-near-black hover:bg-near-green/85 sm:w-auto"
+              >
+                {s.cta_primary} <ArrowRight className="ml-2 h-5 w-5" />
+              </Button>
+            </Link>
+            <Button
+              size="lg"
+              variant="outline"
+              className="rounded-full border-white/20 bg-white/5 px-9 py-7 text-base font-bold text-white hover:border-white/40 hover:bg-white/10"
+              onClick={onDiscoverClick}
+            >
+              {s.cta_secondary}
+            </Button>
+          </div>
         </div>
       </div>
     </section>

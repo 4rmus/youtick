@@ -12,7 +12,7 @@ import { NEAR_CONFIG } from './constants';
 export const MAINNET_RPC_ENDPOINTS = [
     'https://free.rpc.fastnear.com',
     'https://rpc.mainnet.near.org',
-    'https://rpc.mainnet.pagoda.co',
+    // 'https://rpc.mainnet.pagoda.co' — excluded: no CORS support for browser requests
     // 'https://near-mainnet.lava.build' — excluded: no CORS support for browser requests
 ];
 
@@ -107,15 +107,14 @@ export async function withRpcFailover<T>(
             const error = e instanceof Error ? e : new Error(String(e));
             lastError = error;
 
-            console.warn(`[RPC Failover] Attempt ${attempt + 1} failed:`, error.message);
-
             // Only switch RPC if it looks like a network/RPC error
             if (isRpcError(error)) {
+                console.warn(`[RPC Failover] Attempt ${attempt + 1} failed:`, error.message);
                 switchToNextRpc();
                 // Exponential backoff
                 await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
             } else {
-                // Not an RPC error, don't retry
+                // Not an RPC error, don't retry and don't log noise
                 throw error;
             }
         }

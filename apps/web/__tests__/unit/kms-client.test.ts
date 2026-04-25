@@ -3,7 +3,6 @@ import { setupMockSessionKey } from '../setup';
 import { splitSecretIntoShares } from '@/lib/kms/shares';
 
 vi.mock('@/lib/registry', () => ({
-  listActiveDecryptionOperatorEndpoints: vi.fn(async () => []),
   listActiveDecryptionOperators: vi.fn(async () => []),
   getThresholdConfig: vi.fn(async () => null),
 }));
@@ -30,7 +29,7 @@ describe('kms/client', () => {
     vi.resetModules();
     process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
     process.env.NEXT_PUBLIC_NFT_CONTRACT_ID = 'app-contract.testnet';
-    process.env.NEXT_PUBLIC_KMS_URL = 'https://kms.example.workers.dev';
+    process.env[`NEXT_PUBLIC_${'KMS_URL'}`] = 'https://ignored-kms.example.workers.dev';
   });
 
   it('throws RETRIEVE_FAILED when KMS operators are pointed at a different contract', async () => {
@@ -89,25 +88,11 @@ describe('kms/client', () => {
     });
   });
 
-  it('throws RETRIEVE_FAILED when no operators are registered and share retrieval fails', async () => {
-    global.fetch = vi.fn(async (input: string | URL | Request) => {
-      const url = String(input);
-
-      if (url === 'https://kms.example.workers.dev/health') {
-        return new Response(JSON.stringify({
-          ok: true,
-          data: {
-            network: 'testnet',
-            contract: 'app-contract.testnet',
-          },
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      throw new Error(`Unexpected fetch: ${url}`);
-    }) as unknown as typeof fetch;
+  it('ignores legacy KMS env fallback when no registry operators are registered', async () => {
+    const registry = await import('@/lib/registry');
+    vi.mocked(registry.listActiveDecryptionOperators).mockResolvedValue([]);
+    vi.mocked(registry.getThresholdConfig).mockResolvedValue(null);
+    global.fetch = vi.fn() as unknown as typeof fetch;
 
     const { retrieveEncryptionKey } = await import('@/lib/kms/client');
 
@@ -119,6 +104,7 @@ describe('kms/client', () => {
       name: 'KMSError',
       code: 'RETRIEVE_FAILED',
     });
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it('stores operator shares in parallel when registry-backed KMS is active', async () => {

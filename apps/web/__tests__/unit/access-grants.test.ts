@@ -1,6 +1,22 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 describe('access-grants', () => {
+    beforeEach(() => {
+        Object.assign(window, {
+            crypto: globalThis.crypto,
+            location: { origin: 'https://app.test' },
+        });
+        Object.defineProperty(globalThis, 'navigator', {
+            value: {
+                userAgent: 'vitest',
+                language: 'en',
+                platform: 'test',
+                hardwareConcurrency: 4,
+            },
+            configurable: true,
+        });
+    });
+
     afterEach(() => {
         vi.resetModules();
         sessionStorage.clear();
@@ -36,6 +52,17 @@ describe('access-grants', () => {
         expect((wallet.signAndSendTransaction as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
             receiverId: 'access-1773606802388.v2-0.utick.testnet',
         });
+        const action = (wallet.signAndSendTransaction as ReturnType<typeof vi.fn>).mock.calls[0][0].actions[0];
+        expect(action).toMatchObject({
+            methodName: 'issue_session_grant',
+            args: {
+                target_owner_id: 'alice.testnet',
+                scope: 'Play',
+                resource_id: 'video-1',
+            },
+        });
+        expect(action.args.session_pk).toContain('ed25519:');
+        expect(action.args.session_pok).toMatch(/^[0-9a-f]{128}$/);
 
         const secondGrant = await ensureSessionGrant({
             accountId: 'alice.testnet',
@@ -89,12 +116,61 @@ describe('access-grants', () => {
             wallet: wallet as never,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        for (let attempts = 0; attempts < 10 && wallet.signAndSendTransaction.mock.calls.length === 0; attempts += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+        }
         expect(wallet.signAndSendTransaction).toHaveBeenCalledTimes(1);
 
         resolveTx();
 
         const [firstGrant, secondGrant] = await Promise.all([firstPromise, secondPromise]);
         expect(firstGrant?.sessionPublicKey).toBe(secondGrant?.sessionPublicKey);
+    });
+
+    it('rejects play grants when secure browser hashing is unavailable', async () => {
+        Object.assign(window, { crypto: undefined });
+        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';
+
+        const wallet = {
+            signAndSendTransaction: vi.fn(async () => ({})),
+        };
+
+        const { ensureSessionGrant } = await import('@/lib/access-grants');
+
+        await expect(ensureSessionGrant({
+            accountId: 'alice.testnet',
+            scope: 'Play',
+            resourceId: 'video-1',
+            wallet: wallet as never,
+        })).rejects.toThrow('Secure browser hashing is required');
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+    });
+
+    it('builds the same canonical session proof message shape used by the contract', async () => {
+        const { buildSessionGrantPokMessage } = await import('@/lib/access-grants');
+
+        expect(buildSessionGrantPokMessage({
+            contractId: 'access.testnet',
+            caller: 'alice.testnet',
+            targetOwnerId: 'alice.testnet',
+            sessionPublicKey: 'ed25519:test',
+            scope: 'Play',
+            resourceId: 'video-1',
+            ttlMs: 300_000,
+            originHash: 'origin',
+            deviceHash: null,
+        })).toBe([
+            'youtick-session-grant-v1',
+            'contract=6163636573732e746573746e6574',
+            'caller=616c6963652e746573746e6574',
+            'target_owner=616c6963652e746573746e6574',
+            'session_pk=656432353531393a74657374',
+            'scope=play',
+            'resource_id=766964656f2d31',
+            'ttl_ms=300000',
+            'origin_hash=6f726967696e',
+            'device_hash=-',
+        ].join('\n'));
     });
 });

@@ -32,11 +32,11 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
 
   // Landing page navigation links
   const navLinks = [
-    { href: '#pain-points', label: t.landing.nav_extra?.problems || 'Problems' },
-    { href: '#commission-comparison', label: t.landing.nav.comparison },
-    { href: '#features', label: t.landing.nav.features },
+    { href: '#audience', label: t.landing.nav_extra?.problems || 'For creators' },
+    { href: '#model', label: t.landing.nav?.features || 'Model' },
     { href: '#roi-calculator', label: t.landing.nav_extra?.calculator || 'Calculator' },
-    { href: '#how-it-works', label: t.landing.nav.how_it_works },
+    { href: '#use-cases', label: t.landing.nav?.use_cases || 'Use cases' },
+    { href: '#trust', label: t.landing.nav?.comparison || 'Trust' },
   ];
 
   // Guest / Marketing View
@@ -122,7 +122,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
             onClick={handleGetStarted}
             className="bg-near-green hover:bg-near-green/80 text-black font-semibold px-6"
           >
-            {t.landing.nav.start}
+            {t.landing.hero_section?.cta_primary || 'Publish your work'}
           </Button>
         </div>
 
@@ -172,7 +172,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
               }}
               className="w-full bg-near-green hover:bg-near-green/80 text-black font-semibold"
             >
-              {t.landing.nav.start}
+              {t.landing.hero_section?.cta_primary || 'Publish your work'}
             </Button>
           </div>
         </div>

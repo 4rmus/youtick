@@ -3,6 +3,10 @@ name = "youtick-nft"
 version = "1.0.0"
 edition = "2021"
 
+[features]
+default = []
+migration = []
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

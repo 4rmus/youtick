@@ -25,15 +25,57 @@ mod migrate;
 // ═══════════════════════════════════════════════════════════════
 
 pub const TIMELOCK_DELAY_NS: u64 = 86_400_000_000_000; // 24 hours
+const PENDING_OWNER_STORAGE_KEY: &[u8] = b"po9";
 
 #[near(serializers = [borsh, json])]
 pub enum TimelockAction {
-    WithdrawTrialPool { amount: U128 },
-    WithdrawCommission { amount: U128 },
-    AdminRemoveEvents { encrypted_cids: Vec<String> },
-    BanEvent { encrypted_cid: String },
-    UnbanEvent { encrypted_cid: String },
-    SetNextTokenId { new_id: u64 },
+    WithdrawTrialPool {
+        amount: U128,
+    },
+    WithdrawCommission {
+        amount: U128,
+    },
+    AdminRemoveEvents {
+        encrypted_cids: Vec<String>,
+    },
+    BanEvent {
+        encrypted_cid: String,
+        reason: BanReason,
+    },
+    UnbanEvent {
+        encrypted_cid: String,
+    },
+    SetNextTokenId {
+        new_id: u64,
+    },
+    AddOnboardingKey {
+        public_key: String,
+    },
+    RemoveOnboardingKey {
+        public_key: String,
+    },
+    SetOnboardingConfig {
+        daily_limit: u32,
+        enabled: bool,
+    },
+    SetWeb4StaticUrl {
+        url: String,
+    },
+    ProposeOwner {
+        proposed_owner_id: AccountId,
+    },
+    RebuildCidToTokens,
+    CreateTrialInviteDrop {
+        public_keys: Vec<String>,
+        ttl_ms: Option<u64>,
+    },
+    NftMint {
+        receiver_id: AccountId,
+        token_metadata: TokenMetadata,
+        video_metadata: VideoMetadata,
+    },
+    Pause,
+    Unpause,
 }
 
 #[near(serializers = [borsh, json])]
@@ -63,18 +105,17 @@ impl StorageKey {
     pub const GIFT_DROPS: Self = Self(b"g9");
     pub const ONBOARDING_KEYS: Self = Self(b"o9");
     pub const DAILY_TRIAL_COUNTS: Self = Self(b"t9");
-    pub const TRIAL_RELAYERS: Self = Self(b"tr9");
     pub const PURCHASE_LOGS: Self = Self(b"p9");
     pub const EVENT_PRICE_USD: Self = Self(b"pu9");
     pub const EVENT_ACCESS_MODES: Self = Self(b"am9");
     pub const BANNED_EVENTS: Self = Self(b"be9");
     pub const UPLOAD_SESSIONS: Self = Self(b"us9");
     pub const TRIAL_INVITES: Self = Self(b"ti9");
-    pub const TRIAL_ACCESS: Self = Self(b"ta9");
     pub const CID_TO_TOKENS: Self = Self(b"ct9");
     pub const PAUSED_STATE: Self = Self(b"ps9");
     pub const TIMELOCKS: Self = Self(b"tl9");
     pub const TIMELOCK_COUNTER: Self = Self(b"tc9");
+    pub const CREATOR_PROFILES: Self = Self(b"cp9");
 }
 
 /// Storage cost constants to avoid repeated allocations
@@ -109,9 +150,6 @@ const COMMISSION_SPLIT_DENOMINATOR: u128 = 2;
 /// Storage cost for an onboarding invite record (0.01 NEAR).
 const STORAGE_COST_INVITE: NearToken = NearToken::from_millinear(10);
 
-/// Per-row storage stake for NFT-less free access (LookupMap entry); paid from `trial_pool`.
-const STORAGE_COST_TRIAL_ACCESS: NearToken = NearToken::from_millinear(1); // 0.001 NEAR
-
 /// Deposit required per gift-claim link (0.15 NEAR).
 /// Covers account creation + NFT storage + buffer.
 const GIFT_DEPOSIT_PER_LINK: NearToken = NearToken::from_millinear(150);
@@ -139,6 +177,7 @@ pub struct Event {
     pub price: U128,
     pub creator_id: AccountId,
     pub created_at: u64,
+    pub content_type: ContentType,
 }
 
 /// JSON-only response struct for get_events/get_event.
@@ -153,6 +192,7 @@ pub struct EventResponse {
     pub created_at: u64,
     pub price_usd: Option<u128>,
     pub access_mode: String,
+    pub content_type: String,
     pub banned: Option<bool>,
     pub ban_reason: Option<String>,
 }
@@ -179,12 +219,42 @@ pub struct VideoMetadata {
 }
 
 #[near(serializers = [borsh, json])]
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContentType {
     Concert,
     Cinema,
     Exclusive,
     LiveEvent,
+    Documentary,
+    ShortFilm,
+    FestivalSelection,
+}
+
+impl std::fmt::Display for ContentType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ContentType::Concert => write!(f, "concert"),
+            ContentType::Cinema => write!(f, "cinema"),
+            ContentType::Exclusive => write!(f, "exclusive"),
+            ContentType::LiveEvent => write!(f, "live_event"),
+            ContentType::Documentary => write!(f, "documentary"),
+            ContentType::ShortFilm => write!(f, "short_film"),
+            ContentType::FestivalSelection => write!(f, "festival_selection"),
+        }
+    }
+}
+
+fn parse_content_type(ct: &str) -> Option<ContentType> {
+    match ct.to_lowercase().as_str() {
+        "concert" => Some(ContentType::Concert),
+        "cinema" => Some(ContentType::Cinema),
+        "exclusive" => Some(ContentType::Exclusive),
+        "live_event" => Some(ContentType::LiveEvent),
+        "documentary" => Some(ContentType::Documentary),
+        "short_film" => Some(ContentType::ShortFilm),
+        "festival_selection" => Some(ContentType::FestivalSelection),
+        _ => None,
+    }
 }
 
 #[near(serializers = [borsh, json])]
@@ -270,6 +340,25 @@ pub struct PurchaseLog {
     pub timestamp_ns: u64,
 }
 
+// V11: Creator profile for studio page
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
+pub struct CreatorProfile {
+    pub display_name: Option<String>,
+    pub bio: Option<String>,
+    pub website: Option<String>,
+    pub twitter: Option<String>,
+    pub instagram: Option<String>,
+    pub avatar_url: Option<String>,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone)]
+pub struct CreatorStats {
+    pub total_sales: u64,
+    pub total_revenue_yocto: U128,
+}
+
 #[near(serializers = [borsh, json])]
 #[derive(Clone, PartialEq, Eq)]
 pub enum UploadSessionStatus {
@@ -352,6 +441,8 @@ pub struct Contract {
     next_purchase_id: u64,
     // V10: Nova fields removed via state migration (see migrate.rs)
     pub web4_static_url: Option<String>,
+    // V11: Creator profiles for studio page
+    creator_profiles: LookupMap<AccountId, CreatorProfile>,
 }
 
 // SECURITY: Use #[init] to prevent re-initialization attacks
@@ -394,11 +485,13 @@ impl Contract {
             purchase_logs: UnorderedMap::new(StorageKey::PURCHASE_LOGS),
             next_purchase_id: 0,
             web4_static_url: None,
+            creator_profiles: LookupMap::new(StorageKey::CREATOR_PROFILES),
         }
     }
 
     /// Complete state reset for mainnet v11. Re-initializes all state with new StorageKey prefixes.
     /// This abandons old data in storage but resolves all invariant discrepancies.
+    #[cfg(any(test, feature = "migration"))]
     #[init(ignore_state)]
     pub fn reset_v11(owner_id: AccountId) -> Self {
         let old_owner: AccountId = env::state_read::<Contract>()
@@ -444,6 +537,7 @@ impl Contract {
             purchase_logs: UnorderedMap::new(StorageKey::PURCHASE_LOGS),
             next_purchase_id: 0,
             web4_static_url: None,
+            creator_profiles: LookupMap::new(StorageKey::CREATOR_PROFILES),
         }
     }
 
@@ -475,15 +569,6 @@ impl Contract {
         LookupMap::new(StorageKey::TRIAL_INVITES)
     }
 
-    fn lazy_trial_relayers(&self) -> LookupSet<AccountId> {
-        LookupSet::new(StorageKey::TRIAL_RELAYERS)
-    }
-
-    /// NFT-free free playback entitlement: one key per (account_id, encrypted_cid).
-    fn lazy_trial_access(&self) -> LookupMap<String, bool> {
-        LookupMap::new(StorageKey::TRIAL_ACCESS)
-    }
-
     fn lazy_cid_to_tokens(&self) -> LookupMap<String, Vec<TokenId>> {
         LookupMap::new(StorageKey::CID_TO_TOKENS)
     }
@@ -498,6 +583,25 @@ impl Contract {
 
     fn assert_not_paused(&self) {
         require!(!self.is_paused(), "Contract is paused");
+    }
+
+    fn panic_timelock_required() -> ! {
+        env::panic_str("Use propose_action and execute_action for this admin action")
+    }
+
+    fn pending_owner_id_internal() -> Option<AccountId> {
+        env::storage_read(PENDING_OWNER_STORAGE_KEY).map(|bytes| {
+            let value = String::from_utf8(bytes).expect("Invalid pending owner encoding");
+            value.parse().expect("Invalid pending owner account")
+        })
+    }
+
+    fn set_pending_owner_id(owner_id: Option<&AccountId>) {
+        if let Some(owner_id) = owner_id {
+            env::storage_write(PENDING_OWNER_STORAGE_KEY, owner_id.as_str().as_bytes());
+        } else {
+            env::storage_remove(PENDING_OWNER_STORAGE_KEY);
+        }
     }
 
     fn lazy_timelocks(&self) -> LookupMap<u64, TimelockProposal> {
@@ -524,11 +628,6 @@ impl Contract {
         self.lazy_cid_to_tokens().remove(cid);
     }
 
-    fn trial_access_row_key(account_id: &AccountId, encrypted_cid: &str) -> String {
-        //\x1e is unlikely in NEAR account IDs and typical UUID CIDs
-        format!("{}\x1e{}", account_id.as_str(), encrypted_cid)
-    }
-
     fn normalize_access_mode(&self, access_mode: Option<String>, price_yocto: u128) -> String {
         let raw = access_mode.unwrap_or_else(|| {
             if price_yocto == 0 {
@@ -541,7 +640,10 @@ impl Contract {
         let normalized = raw.trim().to_ascii_lowercase();
         match normalized.as_str() {
             "paid" => {
-                require!(price_yocto > 0, "Paid events must have a price greater than zero");
+                require!(
+                    price_yocto > 0,
+                    "Paid events must have a price greater than zero"
+                );
                 normalized
             }
             "free_collectible" | "public_free" => {
@@ -553,13 +655,15 @@ impl Contract {
     }
 
     fn resolve_event_access_mode(&self, cid: &str, price_yocto: u128) -> String {
-        self.lazy_event_access_modes().get(&cid.to_string()).unwrap_or_else(|| {
-            if price_yocto == 0 {
-                "public_free".to_string()
-            } else {
-                "paid".to_string()
-            }
-        })
+        self.lazy_event_access_modes()
+            .get(&cid.to_string())
+            .unwrap_or_else(|| {
+                if price_yocto == 0 {
+                    "public_free".to_string()
+                } else {
+                    "paid".to_string()
+                }
+            })
     }
 
     fn store_event_access_mode(&mut self, cid: &str, access_mode: String) {
@@ -734,6 +838,7 @@ impl Contract {
             created_at: event.created_at,
             price_usd,
             access_mode: self.resolve_event_access_mode(&cid_string, event.price.0),
+            content_type: event.content_type.to_string(),
             banned: if ban_info.is_some() { Some(true) } else { None },
             ban_reason: ban_info.map(|i| match i.reason {
                 BanReason::SexualContent => "sexual_content".to_string(),
@@ -802,11 +907,11 @@ impl Contract {
 
     /// Owner-only: Set the NEARFS static URL (e.g., "/ipfs/CID")
     pub fn web4_set_static_url(&mut self, url: String) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            self.tokens.owner_id,
-            "Only owner can set static URL"
-        );
+        let _ = url;
+        Self::panic_timelock_required()
+    }
+
+    fn web4_set_static_url_timelocked(&mut self, url: String) {
         self.web4_static_url = Some(url);
     }
 
@@ -868,10 +973,11 @@ impl Contract {
 
     /// Set the next token ID (owner only) - for recovery after state issues
     pub fn set_next_token_id(&mut self, new_id: u64) {
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can set next token ID"
-        );
+        let _ = new_id;
+        Self::panic_timelock_required()
+    }
+
+    fn set_next_token_id_timelocked(&mut self, new_id: u64) {
         require!(
             new_id >= self.next_token_id,
             "New token ID must be greater than or equal to current next token ID"
@@ -886,11 +992,12 @@ impl Contract {
     /// Ban an event (owner only). Banned events are hidden from listings
     /// and blocked from purchases, but remain in storage for audit trails.
     pub fn ban_event(&mut self, encrypted_cid: String, reason: BanReason) {
+        let _ = (encrypted_cid, reason);
+        Self::panic_timelock_required()
+    }
+
+    fn ban_event_timelocked(&mut self, encrypted_cid: String, reason: BanReason) {
         self.assert_not_paused();
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can ban events"
-        );
         require!(self.events.get(&encrypted_cid).is_some(), "Event not found");
 
         let ban_info = BanInfo {
@@ -910,11 +1017,12 @@ impl Contract {
 
     /// Unban an event (owner only). Restores event to normal listings.
     pub fn unban_event(&mut self, encrypted_cid: String) {
+        let _ = encrypted_cid;
+        Self::panic_timelock_required()
+    }
+
+    fn unban_event_timelocked(&mut self, encrypted_cid: String) {
         self.assert_not_paused();
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can unban events"
-        );
 
         let removed = self.lazy_banned_events().remove(&encrypted_cid);
         require!(removed.is_some(), "Event is not banned");
@@ -943,22 +1051,64 @@ impl Contract {
     /// Admin: Remove events and all associated data by encrypted_cid list.
     /// Pause all state-changing operations (owner only). Emergency stop.
     pub fn pause(&mut self) {
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can pause"
-        );
+        Self::panic_timelock_required()
+    }
+
+    fn pause_timelocked(&mut self) {
         self.lazy_paused_state().set(&true);
         env::log_str("Contract paused");
     }
 
     /// Unpause the contract (owner only).
     pub fn unpause(&mut self) {
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can unpause"
-        );
+        Self::panic_timelock_required()
+    }
+
+    fn unpause_timelocked(&mut self) {
         self.lazy_paused_state().set(&false);
         env::log_str("Contract unpaused");
+    }
+
+    /// Start two-step ownership transfer. The proposed owner must accept it.
+    pub fn propose_owner(&mut self, proposed_owner_id: AccountId) {
+        let _ = proposed_owner_id;
+        Self::panic_timelock_required()
+    }
+
+    fn propose_owner_timelocked(&mut self, proposed_owner_id: AccountId) {
+        require!(
+            proposed_owner_id != self.tokens.owner_id,
+            "Proposed owner must be different"
+        );
+        Self::set_pending_owner_id(Some(&proposed_owner_id));
+        env::log_str(&format!(
+            "Ownership transfer proposed to {}",
+            proposed_owner_id.as_str()
+        ));
+    }
+
+    /// Accept a pending ownership transfer.
+    pub fn accept_ownership(&mut self) {
+        let pending_owner =
+            Self::pending_owner_id_internal().expect("No pending ownership transfer");
+        require!(
+            env::predecessor_account_id() == pending_owner,
+            "Only proposed owner can accept ownership"
+        );
+        self.tokens.owner_id = pending_owner.clone();
+        Self::set_pending_owner_id(None);
+        env::log_str(&format!(
+            "Ownership transferred to {}",
+            pending_owner.as_str()
+        ));
+    }
+
+    pub fn get_owner(&self) -> AccountId {
+        self.tokens.owner_id.clone()
+    }
+
+    pub fn get_pending_owner(&self) -> Option<AccountId> {
+        Self::pending_owner_id_internal()
     }
 
     /// Propose a timelocked action (owner only).
@@ -994,22 +1144,68 @@ impl Contract {
         self.lazy_timelocks().remove(&id);
         match proposal.action {
             TimelockAction::WithdrawTrialPool { amount } => {
-                let _ = self.withdraw_trial_pool(amount);
+                let _ = self.withdraw_trial_pool_timelocked(amount);
             }
             TimelockAction::WithdrawCommission { amount } => {
-                let _ = self.withdraw_commission(amount);
+                let _ = self.withdraw_commission_timelocked(amount);
             }
             TimelockAction::AdminRemoveEvents { encrypted_cids } => {
-                self.admin_remove_events(encrypted_cids);
+                self.admin_remove_events_timelocked(encrypted_cids);
             }
-            TimelockAction::BanEvent { encrypted_cid } => {
-                self.ban_event(encrypted_cid, BanReason::Other);
+            TimelockAction::BanEvent {
+                encrypted_cid,
+                reason,
+            } => {
+                self.ban_event_timelocked(encrypted_cid, reason);
             }
             TimelockAction::UnbanEvent { encrypted_cid } => {
-                self.unban_event(encrypted_cid);
+                self.unban_event_timelocked(encrypted_cid);
             }
             TimelockAction::SetNextTokenId { new_id } => {
-                self.set_next_token_id(new_id);
+                self.set_next_token_id_timelocked(new_id);
+            }
+            TimelockAction::AddOnboardingKey { public_key } => {
+                let pk: PublicKey = public_key.parse().expect("Invalid public key");
+                let _ = self.add_onboarding_key_timelocked(pk);
+            }
+            TimelockAction::RemoveOnboardingKey { public_key } => {
+                let pk: PublicKey = public_key.parse().expect("Invalid public key");
+                let _ = self.remove_onboarding_key_timelocked(pk);
+            }
+            TimelockAction::SetOnboardingConfig {
+                daily_limit,
+                enabled,
+            } => {
+                self.set_onboarding_config_timelocked(daily_limit, enabled);
+            }
+            TimelockAction::SetWeb4StaticUrl { url } => {
+                self.web4_set_static_url_timelocked(url);
+            }
+            TimelockAction::Pause => {
+                self.pause_timelocked();
+            }
+            TimelockAction::Unpause => {
+                self.unpause_timelocked();
+            }
+            TimelockAction::ProposeOwner { proposed_owner_id } => {
+                self.propose_owner_timelocked(proposed_owner_id);
+            }
+            TimelockAction::RebuildCidToTokens => {
+                self.rebuild_cid_to_tokens_timelocked();
+            }
+            TimelockAction::CreateTrialInviteDrop { public_keys, ttl_ms } => {
+                let pks: Vec<PublicKey> = public_keys
+                    .into_iter()
+                    .map(|pk| pk.parse().expect("Invalid public key"))
+                    .collect();
+                self.create_trial_invite_drop_timelocked(pks, ttl_ms);
+            }
+            TimelockAction::NftMint {
+                receiver_id,
+                token_metadata,
+                video_metadata,
+            } => {
+                self.nft_mint_timelocked(receiver_id, token_metadata, video_metadata);
             }
         }
         env::log_str(&format!("Timelock proposal {} executed", id));
@@ -1033,11 +1229,12 @@ impl Contract {
     }
 
     pub fn admin_remove_events(&mut self, encrypted_cids: Vec<String>) {
+        let _ = encrypted_cids;
+        Self::panic_timelock_required()
+    }
+
+    fn admin_remove_events_timelocked(&mut self, encrypted_cids: Vec<String>) {
         self.assert_not_paused();
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can remove events"
-        );
 
         for cid in &encrypted_cids {
             // AE-1 fix: Decrement active_event_count if the event is not already banned
@@ -1072,20 +1269,26 @@ impl Contract {
     /// Admin: Rebuild the CID → token_ids reverse index from video_metadata.
     /// Call once after deploying the reverse-index change to backfill existing tokens.
     pub fn rebuild_cid_to_tokens(&mut self) {
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can rebuild index"
-        );
+        Self::panic_timelock_required()
+    }
+
+    fn rebuild_cid_to_tokens_timelocked(&mut self) {
         let mut count = 0u64;
         for (token_id, meta) in self.video_metadata.iter() {
-            let mut ids = self.lazy_cid_to_tokens().get(&meta.encrypted_cid).unwrap_or_default();
+            let mut ids = self
+                .lazy_cid_to_tokens()
+                .get(&meta.encrypted_cid)
+                .unwrap_or_default();
             if !ids.contains(&token_id) {
                 ids.push(token_id.clone());
                 count += 1;
             }
             self.lazy_cid_to_tokens().insert(&meta.encrypted_cid, &ids);
         }
-        env::log_str(&format!("Rebuilt cid_to_tokens index for {} token entries", count));
+        env::log_str(&format!(
+            "Rebuilt cid_to_tokens index for {} token entries",
+            count
+        ));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1096,11 +1299,11 @@ impl Contract {
     /// This key will be added as a Function Call Access Key to the contract
     /// Authorized to call: create_sponsored_trial_direct
     pub fn add_onboarding_key(&mut self, public_key: PublicKey) -> Promise {
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can add onboarding keys"
-        );
+        let _ = public_key;
+        Self::panic_timelock_required()
+    }
 
+    fn add_onboarding_key_timelocked(&mut self, public_key: PublicKey) -> Promise {
         // Store in set
         self.onboarding_keys.insert(&public_key);
 
@@ -1113,17 +1316,18 @@ impl Contract {
                 NonZeroU128::new(NearToken::from_near(10).as_yoctonear()).unwrap(),
             ),
             env::current_account_id(),
-            "create_sponsored_trial_direct,claim_free_ticket_direct,grant_free_access_direct,sponsor_implicit_guest_direct".to_string(),
+            "create_sponsored_trial_direct,claim_free_ticket_direct,sponsor_implicit_guest_direct"
+                .to_string(),
         )
     }
 
     /// Remove an onboarding key (owner only)
     pub fn remove_onboarding_key(&mut self, public_key: PublicKey) -> Promise {
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can remove onboarding keys"
-        );
+        let _ = public_key;
+        Self::panic_timelock_required()
+    }
 
+    fn remove_onboarding_key_timelocked(&mut self, public_key: PublicKey) -> Promise {
         self.onboarding_keys.remove(&public_key);
 
         // Delete the access key
@@ -1132,11 +1336,11 @@ impl Contract {
 
     /// Update onboarding configuration (owner only)
     pub fn set_onboarding_config(&mut self, daily_limit: u32, enabled: bool) {
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can update onboarding config"
-        );
+        let _ = (daily_limit, enabled);
+        Self::panic_timelock_required()
+    }
 
+    fn set_onboarding_config_timelocked(&mut self, daily_limit: u32, enabled: bool) {
         self.onboarding_config = OnboardingConfig {
             daily_limit,
             enabled,
@@ -1145,11 +1349,15 @@ impl Contract {
 
     #[payable]
     pub fn create_trial_invite_drop(&mut self, public_keys: Vec<PublicKey>, ttl_ms: Option<u64>) {
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can create trial invites"
-        );
+        let _ = (public_keys, ttl_ms);
+        Self::panic_timelock_required()
+    }
 
+    fn create_trial_invite_drop_timelocked(
+        &mut self,
+        public_keys: Vec<PublicKey>,
+        ttl_ms: Option<u64>,
+    ) {
         let num_keys = public_keys.len() as u32;
         require!(
             num_keys > 0 && num_keys <= 50,
@@ -1233,35 +1441,6 @@ impl Contract {
         false
     }
 
-    /// **DEPRECATED**: Relayer system is being phased out. Onboarding keys replace relayer functionality.
-    ///
-    /// Add an authorized relayer account for the sponsored trial fallback path.
-    pub fn add_trial_relayer(&mut self, account_id: AccountId) {
-        require!(
-            self.can_manage_trial_relayer(&env::predecessor_account_id()),
-            "Only owner can manage trial relayers"
-        );
-        self.lazy_trial_relayers().insert(&account_id);
-    }
-
-    /// **DEPRECATED**: Relayer system is being phased out. Onboarding keys replace relayer functionality.
-    ///
-    /// Remove an authorized relayer account from the sponsored trial allowlist.
-    pub fn remove_trial_relayer(&mut self, account_id: AccountId) {
-        require!(
-            self.can_manage_trial_relayer(&env::predecessor_account_id()),
-            "Only owner can manage trial relayers"
-        );
-        self.lazy_trial_relayers().remove(&account_id);
-    }
-
-    /// **DEPRECATED**: Relayer system is being phased out. Onboarding keys replace relayer functionality.
-    ///
-    /// View: Check whether an account is authorized to call create_sponsored_trial.
-    pub fn is_trial_relayer(&self, account_id: AccountId) -> bool {
-        self.lazy_trial_relayers().contains(&account_id)
-    }
-
     /// View: Check if a key is authorized for onboarding
     pub fn is_onboarding_key(&self, public_key: PublicKey) -> bool {
         self.onboarding_keys.contains(&public_key)
@@ -1329,16 +1508,6 @@ impl Contract {
             .insert(&day_timestamp, &(current_count - 1));
     }
 
-    // DEPRECATED: Only used by relayer-based functions. Will be removed with relayer cleanup.
-    fn can_manage_trial_relayer(&self, account_id: &AccountId) -> bool {
-        self.tokens.owner_id == *account_id
-    }
-
-    // DEPRECATED: Only used by relayer-based functions. Will be removed with relayer cleanup.
-    fn can_create_sponsored_trial(&self, account_id: &AccountId) -> bool {
-        self.tokens.owner_id == *account_id || self.lazy_trial_relayers().contains(account_id)
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // PURCHASE LOG HELPERS
     // ═══════════════════════════════════════════════════════════════
@@ -1390,6 +1559,7 @@ impl Contract {
         price: U128,
         price_usd: Option<u128>,
         access_mode: Option<String>,
+        content_type: Option<String>,
     ) {
         self.assert_not_paused();
 
@@ -1421,12 +1591,24 @@ impl Contract {
 
         let normalized_access_mode = self.normalize_access_mode(access_mode, price.0);
 
+        let parsed_content_type = match content_type.as_deref() {
+            Some("Concert") => ContentType::Concert,
+            Some("Cinema") => ContentType::Cinema,
+            Some("Exclusive") => ContentType::Exclusive,
+            Some("LiveEvent") => ContentType::LiveEvent,
+            Some("Documentary") => ContentType::Documentary,
+            Some("ShortFilm") => ContentType::ShortFilm,
+            Some("FestivalSelection") => ContentType::FestivalSelection,
+            _ => ContentType::Exclusive,
+        };
+
         let event = Event {
             title,
             description,
             price,
             creator_id: env::predecessor_account_id(),
             created_at: env::block_timestamp(),
+            content_type: parsed_content_type,
         };
 
         self.events.insert(&encrypted_cid, &event);
@@ -1453,16 +1635,28 @@ impl Contract {
         &self,
         from_index: Option<U128>,
         limit: Option<u64>,
+        content_type: Option<String>,
     ) -> Vec<(String, EventResponse)> {
         let banned = self.lazy_banned_events();
+        let type_filter = content_type.as_ref().and_then(|ct| parse_content_type(ct));
         self.events
             .iter()
+            .filter(|(cid, event)| {
+                if banned.get(cid).is_some() {
+                    return false;
+                }
+                if let Some(filter) = type_filter {
+                    if event.content_type != filter {
+                        return false;
+                    }
+                }
+                true
+            })
             .skip(from_index.map(|v| v.0 as usize).unwrap_or(0))
-            .filter(|(cid, _)| banned.get(cid).is_none())
             .take(limit.unwrap_or(50) as usize)
             .map(|(cid, event)| {
                 let resp = self.build_event_response(&cid, &event);
-                (cid, resp)
+                (cid.clone(), resp)
             })
             .collect()
     }
@@ -1470,10 +1664,26 @@ impl Contract {
     /// Cursor-based paginated event listing.
     /// - `cursor`: CID to start after (None = start from beginning)
     /// - `limit`: max items to return (default 50, capped at 100)
-    pub fn get_events_paginated(&self, cursor: Option<String>, limit: Option<u64>) -> PaginatedEventsResponse {
+    pub fn get_events_paginated(
+        &self,
+        cursor: Option<String>,
+        limit: Option<u64>,
+        content_type: Option<String>,
+    ) -> PaginatedEventsResponse {
         let limit = limit.unwrap_or(50).min(100) as usize;
         let banned = self.lazy_banned_events();
-        let total_count = self.active_event_count;
+        let type_filter = content_type.as_ref().and_then(|ct| parse_content_type(ct));
+        let total_count = match type_filter {
+            Some(filter) => {
+                self.events
+                    .iter()
+                    .filter(|(cid, event)| {
+                        banned.get(cid).is_none() && event.content_type == filter
+                    })
+                    .count() as u64
+            }
+            None => self.active_event_count,
+        };
 
         // Build an iterator that skips past the cursor if provided
         let mut iter = self.events.iter();
@@ -1498,7 +1708,15 @@ impl Contract {
 
         // Collect limit + 1 non-banned items so we can determine if there's a next page
         let items: Vec<(String, Event)> = iter
-            .filter(|(cid, _)| banned.get(cid).is_none())
+            .filter(|(cid, event)| {
+                if banned.get(cid).is_some() {
+                    return false;
+                }
+                match type_filter {
+                    Some(filter) => event.content_type == filter,
+                    None => true,
+                }
+            })
             .take(limit + 1)
             .collect();
         let has_more = items.len() > limit;
@@ -1549,6 +1767,7 @@ impl Contract {
         price: U128,
         price_usd: Option<u128>,
         access_mode: Option<String>,
+        content_type: Option<String>,
     ) {
         self.assert_not_paused();
 
@@ -1581,6 +1800,17 @@ impl Contract {
             STORAGE_COST_ACCOUNT,
         );
 
+        let parsed_content_type = match content_type.as_deref() {
+            Some("Concert") => ContentType::Concert,
+            Some("Cinema") => ContentType::Cinema,
+            Some("Exclusive") => ContentType::Exclusive,
+            Some("LiveEvent") => ContentType::LiveEvent,
+            Some("Documentary") => ContentType::Documentary,
+            Some("ShortFilm") => ContentType::ShortFilm,
+            Some("FestivalSelection") => ContentType::FestivalSelection,
+            _ => ContentType::Exclusive,
+        };
+
         // Execute creation
         let event = Event {
             title,
@@ -1588,6 +1818,7 @@ impl Contract {
             price,
             creator_id: account_id,
             created_at: env::block_timestamp(),
+            content_type: parsed_content_type,
         };
 
         self.events.insert(&encrypted_cid, &event);
@@ -1725,10 +1956,7 @@ impl Contract {
             }
         } else {
             // Free ticket - just require minimal storage (or contract pays)
-            require!(
-                deposit >= storage_cost,
-                "Insufficient deposit for storage"
-            );
+            require!(deposit >= storage_cost, "Insufficient deposit for storage");
         }
 
         // Mint the NFT using helper
@@ -1756,7 +1984,11 @@ impl Contract {
             token.token_id.clone(),
             receiver_id.clone(),
             Some(encrypted_cid.clone()),
-            if is_free { None } else { Some(required_price.as_yoctonear().to_string()) },
+            if is_free {
+                None
+            } else {
+                Some(required_price.as_yoctonear().to_string())
+            },
         );
 
         token
@@ -1777,7 +2009,8 @@ impl Contract {
         let price_yoctonear = event.price.0;
 
         // Mint the NFT using helper (storage paid by attached deposit from contract)
-        let token = self.internal_mint_ticket(receiver_id.clone(), &event, encrypted_cid.clone(), false);
+        let token =
+            self.internal_mint_ticket(receiver_id.clone(), &event, encrypted_cid.clone(), false);
 
         events::emit_nft_purchased(
             token.token_id.clone(),
@@ -1866,7 +2099,7 @@ impl Contract {
     }
 
     /// Mint a new video NFT ticket
-    /// SECURITY: Only contract owner can directly mint NFTs
+    /// SECURITY: Only contract owner can directly mint NFTs via timelock
     #[payable]
     pub fn nft_mint(
         &mut self,
@@ -1874,12 +2107,17 @@ impl Contract {
         token_metadata: TokenMetadata,
         video_metadata: VideoMetadata,
     ) -> Token {
+        let _ = (receiver_id, token_metadata, video_metadata);
+        Self::panic_timelock_required()
+    }
+
+    fn nft_mint_timelocked(
+        &mut self,
+        receiver_id: AccountId,
+        token_metadata: TokenMetadata,
+        video_metadata: VideoMetadata,
+    ) -> Token {
         self.assert_not_paused();
-        // SECURITY: Only owner can directly mint
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only contract owner can directly mint NFTs"
-        );
 
         // SECURITY: Require minimum deposit
         require!(
@@ -1919,10 +2157,7 @@ impl Contract {
         self.assert_not_paused();
         let wrap_account = wrap_near_account_id();
         let predecessor = env::predecessor_account_id();
-        require!(
-            predecessor == wrap_account,
-            "Only wNEAR is accepted"
-        );
+        require!(predecessor == wrap_account, "Only wNEAR is accepted");
 
         // Parse the message
         let parsed: near_sdk::serde_json::Value = near_sdk::serde_json::from_str(&msg).unwrap_or_else(|_| {
@@ -2187,11 +2422,12 @@ impl Contract {
 
     /// Withdraw funds from trial pool (owner only)
     pub fn withdraw_trial_pool(&mut self, amount: U128) -> Promise {
+        let _ = amount;
+        Self::panic_timelock_required()
+    }
+
+    fn withdraw_trial_pool_timelocked(&mut self, amount: U128) -> Promise {
         self.assert_not_paused();
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can withdraw from trial pool"
-        );
 
         let withdraw_amount = NearToken::from_yoctonear(amount.0);
         require!(
@@ -2404,9 +2640,9 @@ impl Contract {
         );
 
         // Daily rate limiting (capture day_timestamp for rollback)
-        let day_timestamp = self.increment_daily_limit_if_allowed().unwrap_or_else(|| {
-            env::panic_str("Daily limit reached. Please try again tomorrow.")
-        });
+        let day_timestamp = self
+            .increment_daily_limit_if_allowed()
+            .unwrap_or_else(|| env::panic_str("Daily limit reached. Please try again tomorrow."));
 
         // Verify event exists, is not banned, and is free
         let maybe_event = self.events.get(&encrypted_cid);
@@ -2458,157 +2694,13 @@ impl Contract {
             return true;
         }
 
-        self.trial_pool = self.trial_pool.saturating_add(
-            NearToken::from_yoctonear(storage_cost.0),
-        );
+        self.trial_pool = self
+            .trial_pool
+            .saturating_add(NearToken::from_yoctonear(storage_cost.0));
         self.rollback_daily_limit(rollback_day_timestamp);
 
         env::log_str("Free ticket claim failed; refunded trial pool and rolled back daily limit.");
         false
-    }
-
-    /// Record free playback entitlement without minting an NFT (onboarding FC key + `trial_pool`).
-    ///
-    /// Cheaper than [`Self::claim_free_ticket_direct`] (no NFT storage); KMS uses
-    /// [`Self::check_trial_access`] when [`Self::has_ticket`] is false.
-    pub fn grant_free_access_direct(&mut self, receiver_id: AccountId, encrypted_cid: String) {
-        self.assert_not_paused();
-        require!(
-            self.onboarding_config.enabled,
-            "Onboarding is currently disabled"
-        );
-
-        let signer_pk = env::signer_account_pk();
-        require!(
-            self.onboarding_keys.contains(&signer_pk),
-            "Unauthorized: Signer's key is not an onboarding key"
-        );
-
-        let maybe_event = self.events.get(&encrypted_cid);
-        require!(maybe_event.is_some(), "Event not found");
-        let event = maybe_event.unwrap();
-        require!(
-            self.lazy_banned_events().get(&encrypted_cid).is_none(),
-            "This event has been banned and tickets cannot be claimed"
-        );
-        require!(
-            event.price.0 == 0,
-            "This ticket is not free. Use buy_ticket instead."
-        );
-
-        let row_key = Self::trial_access_row_key(&receiver_id, &encrypted_cid);
-        if self.lazy_trial_access().get(&row_key).is_some() {
-            env::log_str("grant_free_access_direct: already granted; noop");
-            return;
-        }
-
-        self.increment_daily_limit_if_allowed().unwrap_or_else(|| {
-            env::panic_str("Daily limit reached. Please try again tomorrow.")
-        });
-
-        let storage_cost = STORAGE_COST_TRIAL_ACCESS;
-        require!(self.trial_pool >= storage_cost, "Trial pool empty.");
-        self.trial_pool = self.trial_pool.saturating_sub(storage_cost);
-
-        self.lazy_trial_access().insert(&row_key, &true);
-        env::log_str(&format!(
-            "grant_free_access_direct: {} cid={}",
-            receiver_id.as_str(),
-            encrypted_cid
-        ));
-    }
-
-    /// KMS / playback: true if this account was granted NFT-free access for `encrypted_cid`.
-    pub fn check_trial_access(&self, account_id: AccountId, encrypted_cid: String) -> bool {
-        let row_key = Self::trial_access_row_key(&account_id, &encrypted_cid);
-        self.lazy_trial_access().get(&row_key).is_some()
-    }
-
-    /// Owner-only: remove NFT-free access row and refund `trial_pool` by the entry stake.
-    pub fn revoke_trial_access(&mut self, account_id: AccountId, encrypted_cid: String) {
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can revoke trial access"
-        );
-        let row_key = Self::trial_access_row_key(&account_id, &encrypted_cid);
-        if self.lazy_trial_access().remove(&row_key).is_some() {
-            self.trial_pool = self.trial_pool.saturating_add(STORAGE_COST_TRIAL_ACCESS);
-            env::log_str(&format!(
-                "revoke_trial_access: {} cid={}",
-                account_id.as_str(),
-                encrypted_cid
-            ));
-        }
-    }
-
-    /// Create a sponsored trial account as a subaccount of this contract
-    /// Contract pays the cost from trial pool!
-    /// Creates: {username}.{contract_id} (e.g. "alice.youtick.near")
-    /// Cost: 0.002 NEAR per account from trial pool (NEP-448 zero-balance buffer)
-    ///
-    /// **DEPRECATED**: Use `create_sponsored_trial_direct` with onboarding keys instead.
-    /// This function requires a relayer account and will be removed in a future version.
-    ///
-    /// NOTE: This is the original relayer-based method. For relayer-less onboarding,
-    /// use create_sponsored_trial_direct with an onboarding key.
-    pub fn create_sponsored_trial(
-        &mut self,
-        username: String,
-        new_public_key: PublicKey,
-    ) -> Promise {
-        // SECURITY: Only contract owner or an explicitly authorized relayer can call this path.
-        let caller = env::predecessor_account_id();
-        require!(
-            self.can_create_sponsored_trial(&caller),
-            "Only owner or authorized relayer can create sponsored trials"
-        );
-
-        let day_timestamp = self.increment_daily_limit_if_allowed().unwrap_or_else(|| {
-            env::panic_str("Daily trial limit reached. Please try again tomorrow.")
-        });
-
-        // Validate username
-        require!(
-            username.len() >= 2 && username.len() <= 32,
-            "Username must be 2-32 characters"
-        );
-        require!(
-            username
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'),
-            "Username can only contain lowercase letters, numbers, - and _"
-        );
-
-        // Cost for account creation + initial balance
-        let account_cost = TRIAL_ACCOUNT_STORAGE_COST;
-
-        require!(
-            self.trial_pool >= account_cost,
-            "Trial pool empty. Please contact the platform owner."
-        );
-
-        // Deduct from pool
-        self.trial_pool = self.trial_pool.saturating_sub(account_cost);
-
-        // Create subaccount ID: {username}.{this_contract}
-        let contract_id = env::current_account_id();
-        let new_account_id: AccountId = format!("{}.{}", username, contract_id)
-            .parse()
-            .expect("Invalid account ID format");
-
-        // Create the subaccount with Full Access Key
-        Promise::new(new_account_id)
-            .create_account()
-            .add_full_access_key(new_public_key)
-            .transfer(account_cost)
-            .then(
-                Self::ext(env::current_account_id())
-                    .with_static_gas(near_sdk::Gas::from_tgas(10))
-                    .on_sponsored_trial_account_created(
-                        U128(account_cost.as_yoctonear()),
-                        Some(day_timestamp),
-                    ),
-            )
     }
 
     /// Callback for sponsored trial account creation.
@@ -2638,46 +2730,6 @@ impl Contract {
 
         env::log_str("Sponsored trial account creation failed; refunded trial pool.");
         false
-    }
-
-    /// **DEPRECATED**: Use `sponsor_implicit_guest_direct` with onboarding keys instead.
-    /// This function requires a relayer account and will be removed in a future version.
-    pub fn sponsor_implicit_guest(&mut self, new_public_key: PublicKey) -> Promise {
-        require!(
-            self.onboarding_config.enabled,
-            "Onboarding is currently disabled"
-        );
-
-        let caller = env::predecessor_account_id();
-        require!(
-            self.can_create_sponsored_trial(&caller),
-            "Only owner or authorized relayer can sponsor guest accounts"
-        );
-
-        let day_timestamp = self.increment_daily_limit_if_allowed().unwrap_or_else(|| {
-            env::panic_str("Daily trial limit reached. Please try again tomorrow.")
-        });
-
-        let account_cost = TRIAL_ACCOUNT_STORAGE_COST;
-        require!(
-            self.trial_pool >= account_cost,
-            "Trial pool empty. Please contact the platform owner."
-        );
-
-        let implicit_account_id = Self::implicit_account_id_from_public_key(&new_public_key);
-        self.trial_pool = self.trial_pool.saturating_sub(account_cost);
-
-        Promise::new(implicit_account_id.clone())
-            .transfer(account_cost)
-            .then(
-                Self::ext(env::current_account_id())
-                    .with_static_gas(near_sdk::Gas::from_tgas(20))
-                    .on_sponsor_implicit_guest_funded(
-                        implicit_account_id,
-                        U128(account_cost.as_yoctonear()),
-                        Some(day_timestamp),
-                    ),
-            )
     }
 
     #[private]
@@ -2713,8 +2765,7 @@ impl Contract {
         false
     }
 
-    /// Relayer-less version of `sponsor_implicit_guest`.
-    /// Called via Function Call Access Key (onboarding key) instead of relayer.
+    /// Called via Function Call Access Key (onboarding key).
     /// Funds an implicit account derived from the caller's public key.
     pub fn sponsor_implicit_guest_direct(&mut self, new_public_key: PublicKey) -> Promise {
         self.assert_not_paused();
@@ -2767,11 +2818,12 @@ impl Contract {
 
     /// Withdraw from commission pool (owner only)
     pub fn withdraw_commission(&mut self, amount: U128) -> Promise {
+        let _ = amount;
+        Self::panic_timelock_required()
+    }
+
+    fn withdraw_commission_timelocked(&mut self, amount: U128) -> Promise {
         self.assert_not_paused();
-        require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only owner can withdraw commission"
-        );
 
         let withdraw_amount = NearToken::from_yoctonear(amount.0);
         require!(
@@ -2784,73 +2836,8 @@ impl Contract {
         Promise::new(env::predecessor_account_id()).transfer(withdraw_amount)
     }
 
-    /// **DEPRECATED**: Use `claim_free_ticket_direct` with onboarding keys instead.
-    /// This function requires a relayer account and will be removed in a future version.
-    ///
-    /// Claim a FREE ticket - Contract pays storage from trial_pool!
-    /// This allows trial accounts and any user to claim free content
-    /// without needing any NEAR balance.
-    ///
-    /// SECURITY: Only contract owner (or relayer) can call this
-    pub fn claim_free_ticket_sponsored(
-        &mut self,
-        receiver_id: AccountId,
-        encrypted_cid: String,
-    ) -> Promise {
-        self.assert_not_paused();
-        let caller = env::predecessor_account_id();
-        require!(
-            self.can_create_sponsored_trial(&caller),
-            "Only owner or authorized relayer can call sponsored free ticket claims"
-        );
-
-        let maybe_event = self.events.get(&encrypted_cid);
-        require!(maybe_event.is_some(), "Event not found");
-        let event = maybe_event.unwrap();
-        require!(
-            self.lazy_banned_events().get(&encrypted_cid).is_none(),
-            "This event has been banned and tickets cannot be claimed"
-        );
-
-        // Verify this is actually a free ticket
-        require!(
-            event.price.0 == 0,
-            "This ticket is not free. Use buy_ticket for paid tickets."
-        );
-        require!(
-            self.resolve_event_access_mode(&encrypted_cid, event.price.0) != "paid",
-            "This event is not claimable as free content."
-        );
-
-        // Storage cost for minting
-        let storage_cost = STORAGE_COST_NFT;
-
-        require!(
-            self.trial_pool >= storage_cost,
-            "Trial pool empty. Cannot sponsor free ticket claim."
-        );
-
-        // Deduct from trial pool
-        self.trial_pool = self.trial_pool.saturating_sub(storage_cost);
-
-        // Call internal minting with rollback callback on failure
-        Self::ext(env::current_account_id())
-            .with_attached_deposit(storage_cost)
-            .buy_ticket_internal(receiver_id, encrypted_cid)
-            .then(
-                Self::ext(env::current_account_id())
-                    .with_static_gas(near_sdk::Gas::from_tgas(5))
-                    .on_sponsored_free_ticket_complete(
-                        U128::from(storage_cost.as_yoctonear()),
-                    ),
-            )
-    }
-
     #[private]
-    pub fn on_sponsored_free_ticket_complete(
-        &mut self,
-        storage_cost: U128,
-    ) -> bool {
+    pub fn on_sponsored_free_ticket_complete(&mut self, storage_cost: U128) -> bool {
         #[allow(deprecated)]
         let succeeded = matches!(
             env::promise_result(0),
@@ -2861,9 +2848,9 @@ impl Contract {
             return true;
         }
 
-        self.trial_pool = self.trial_pool.saturating_add(
-            NearToken::from_yoctonear(storage_cost.0),
-        );
+        self.trial_pool = self
+            .trial_pool
+            .saturating_add(NearToken::from_yoctonear(storage_cost.0));
 
         env::log_str("Sponsored free ticket claim failed; refunded trial pool.");
         false
@@ -2938,6 +2925,68 @@ impl Contract {
     /// View: Get total number of purchase log entries
     pub fn get_purchase_count(&self) -> u64 {
         self.next_purchase_id
+    }
+
+    /// View: Get purchase logs filtered by creator
+    pub fn get_purchase_logs_by_creator(
+        &self,
+        creator_id: AccountId,
+        from_index: Option<u64>,
+        limit: Option<u64>,
+    ) -> Vec<(u64, PurchaseLog)> {
+        let start = from_index.unwrap_or(0);
+        let lim = limit.unwrap_or(50).min(100) as usize;
+
+        self.purchase_logs
+            .iter()
+            .filter(|(id, log)| *id >= start && log.creator_id == creator_id)
+            .take(lim)
+            .collect()
+    }
+
+    /// View: Get creator stats (total sales, total revenue)
+    pub fn get_creator_stats(&self, creator_id: AccountId) -> CreatorStats {
+        let mut total_sales = 0u64;
+        let mut total_revenue_yocto = 0u128;
+
+        for (_, log) in self.purchase_logs.iter() {
+            if log.creator_id == creator_id {
+                total_sales += 1;
+                total_revenue_yocto += log.creator_amount.0;
+            }
+        }
+
+        CreatorStats {
+            total_sales,
+            total_revenue_yocto: U128(total_revenue_yocto),
+        }
+    }
+
+    /// Set creator profile (only callable by the profile owner)
+    pub fn set_creator_profile(
+        &mut self,
+        display_name: Option<String>,
+        bio: Option<String>,
+        website: Option<String>,
+        twitter: Option<String>,
+        instagram: Option<String>,
+        avatar_url: Option<String>,
+    ) {
+        let caller = env::predecessor_account_id();
+        let profile = CreatorProfile {
+            display_name,
+            bio,
+            website,
+            twitter,
+            instagram,
+            avatar_url,
+        };
+        self.creator_profiles.insert(&caller, &profile);
+    }
+
+    /// View: Get creator profile
+    pub fn get_creator_profile(&self, creator_id: AccountId) -> Option<CreatorProfile> {
+        self.creator_profiles.get(&creator_id)
     }
 
     /// Get the next token ID (useful for predicting IDs for batch operations)
@@ -3048,7 +3097,9 @@ impl Contract {
         // GD-1 fix: Refund excess deposit to the caller
         let excess = env::attached_deposit().saturating_sub(total_required);
         if excess.as_yoctonear() > 0 {
-            Promise::new(env::predecessor_account_id()).transfer(excess).as_return();
+            Promise::new(env::predecessor_account_id())
+                .transfer(excess)
+                .as_return();
         }
 
         let created_at = env::block_timestamp();
@@ -3137,7 +3188,8 @@ impl Contract {
         );
 
         // Mint NFT using helper (is_gift = true for "Gift ticket:" prefix)
-        let token = self.internal_mint_ticket(receiver_id.clone(), &event, gift_drop.event_cid, true);
+        let token =
+            self.internal_mint_ticket(receiver_id.clone(), &event, gift_drop.event_cid, true);
 
         gift_drop.remaining_claims = 0;
         self.gift_drops.remove(&signer_pk);
@@ -3145,11 +3197,7 @@ impl Contract {
             .delete_key(env::signer_account_pk())
             .as_return();
 
-        events::emit_gift_claimed(
-            token.token_id.clone(),
-            receiver_id,
-            signer_pk,
-        );
+        events::emit_gift_claimed(token.token_id.clone(), receiver_id, signer_pk);
 
         token
     }
@@ -3521,6 +3569,7 @@ mod tests {
             price: U128(0),
             creator_id: owner_id.clone(),
             created_at: 1,
+            content_type: ContentType::Exclusive,
         };
         let paid_event = Event {
             title: "Paid".to_string(),
@@ -3528,14 +3577,19 @@ mod tests {
             price: U128(NearToken::from_near(1).as_yoctonear()),
             creator_id: owner_id,
             created_at: 1,
+            content_type: ContentType::Exclusive,
         };
 
         assert_eq!(
-            contract.build_event_response("free-cid", &free_event).access_mode,
+            contract
+                .build_event_response("free-cid", &free_event)
+                .access_mode,
             "public_free"
         );
         assert_eq!(
-            contract.build_event_response("paid-cid", &paid_event).access_mode,
+            contract
+                .build_event_response("paid-cid", &paid_event)
+                .access_mode,
             "paid"
         );
     }
@@ -3543,15 +3597,17 @@ mod tests {
     #[test]
     fn sponsor_implicit_guest_deducts_trial_pool() {
         let owner_id = account("owner.testnet");
-        let relayer_id = account("relayer.testnet");
         let contract_id = account("contract.testnet");
         let mut contract = Contract::new(owner_id);
+        let onboarding_pk = sample_public_key(10);
         contract.trial_pool = TRIAL_ACCOUNT_STORAGE_COST;
-        contract.lazy_trial_relayers().insert(&relayer_id);
+        contract.onboarding_keys.insert(&onboarding_pk);
 
-        testing_env!(context(relayer_id.as_str(), contract_id.as_str()).build());
+        let mut builder = context(contract_id.as_str(), contract_id.as_str());
+        builder.signer_account_pk(onboarding_pk);
+        testing_env!(builder.build());
 
-        let _ = contract.sponsor_implicit_guest(sample_public_key(11));
+        let _ = contract.sponsor_implicit_guest_direct(sample_public_key(11));
 
         assert_eq!(contract.trial_pool, NearToken::from_yoctonear(0));
         assert_eq!(contract.get_daily_trial_count(), 1);
@@ -3583,66 +3639,6 @@ mod tests {
     }
 
     #[test]
-    fn grant_free_access_direct_sets_check_trial_access_without_nft() {
-        let owner_id = account("owner.testnet");
-        let contract_id = account("contract.testnet");
-        let receiver_id = account("viewer.testnet");
-        let mut contract = Contract::new(owner_id.clone());
-        let onboarding_pk = sample_public_key(20);
-        let encrypted_cid = "free-cid-1".to_string();
-
-        contract.onboarding_config = OnboardingConfig {
-            daily_limit: 100,
-            enabled: true,
-        };
-        contract.onboarding_keys.insert(&onboarding_pk);
-        contract.trial_pool = NearToken::from_millinear(100);
-        contract.events.insert(
-            &encrypted_cid,
-            &Event {
-                title: "T".to_string(),
-                description: "D".to_string(),
-                price: U128(0),
-                creator_id: owner_id.clone(),
-                created_at: 1,
-            },
-        );
-        contract.active_event_count = 1;
-
-        let pool_before = contract.trial_pool;
-
-        let mut ctx = context(contract_id.as_str(), contract_id.as_str());
-        ctx.signer_account_id(contract_id.clone());
-        ctx.signer_account_pk(onboarding_pk.clone());
-        testing_env!(ctx.build());
-
-        contract.grant_free_access_direct(receiver_id.clone(), encrypted_cid.clone());
-
-        assert!(contract.check_trial_access(receiver_id.clone(), encrypted_cid.clone()));
-        assert!(!contract.has_ticket(receiver_id.clone(), encrypted_cid.clone()));
-        assert_eq!(
-            contract.trial_pool,
-            pool_before.saturating_sub(STORAGE_COST_TRIAL_ACCESS)
-        );
-
-        let pool_after_first = contract.trial_pool;
-        contract.grant_free_access_direct(receiver_id.clone(), encrypted_cid.clone());
-        assert_eq!(contract.trial_pool, pool_after_first);
-
-        let mut ctx_owner = context(owner_id.as_str(), contract_id.as_str());
-        ctx_owner.signer_account_id(owner_id.clone());
-        ctx_owner.signer_account_pk(sample_public_key(99));
-        testing_env!(ctx_owner.build());
-
-        contract.revoke_trial_access(receiver_id.clone(), encrypted_cid.clone());
-        assert!(!contract.check_trial_access(receiver_id, encrypted_cid.clone()));
-        assert_eq!(
-            contract.trial_pool,
-            pool_after_first.saturating_add(STORAGE_COST_TRIAL_ACCESS)
-        );
-    }
-
-    #[test]
     fn contract_initialization_and_pause_cycle() {
         let owner_id = account("owner.testnet");
         let contract = Contract::new(owner_id.clone());
@@ -3651,14 +3647,170 @@ mod tests {
     }
 
     #[test]
-    fn pause_does_not_panic_for_owner() {
+    #[should_panic(expected = "Use propose_action and execute_action for this admin action")]
+    fn direct_pause_requires_timelock() {
         let owner_id = account("owner.testnet");
         let mut contract = Contract::new(owner_id.clone());
 
         testing_env!(context(owner_id.as_str(), "contract.testnet").build());
         contract.pause();
-        // is_paused() skipped due to LazyOption recreation quirk in tests
-        contract.unpause();
+    }
+
+    #[test]
+    #[should_panic(expected = "Timelock delay not yet passed")]
+    fn timelock_rejects_execution_before_delay() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000);
+        testing_env!(builder.build());
+        let id = contract.propose_action(TimelockAction::SetNextTokenId { new_id: 7 });
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000 + TIMELOCK_DELAY_NS - 1);
+        testing_env!(builder.build());
+        contract.execute_action(id);
+    }
+
+    #[test]
+    fn timelock_executes_admin_action_after_delay() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000);
+        testing_env!(builder.build());
+        let id = contract.propose_action(TimelockAction::SetNextTokenId { new_id: 7 });
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000 + TIMELOCK_DELAY_NS);
+        testing_env!(builder.build());
+        contract.execute_action(id);
+
+        assert_eq!(contract.next_token_id, 7);
+    }
+
+    #[test]
+    fn ownership_transfer_updates_owner_two_step_via_timelock() {
+        let owner_id = account("owner.testnet");
+        let new_owner_id = account("new-owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000);
+        testing_env!(builder.build());
+        let id = contract.propose_action(TimelockAction::ProposeOwner {
+            proposed_owner_id: new_owner_id.clone(),
+        });
+
+        assert_eq!(contract.get_owner(), owner_id);
+        assert_eq!(contract.get_pending_owner(), None);
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000 + TIMELOCK_DELAY_NS);
+        testing_env!(builder.build());
+        contract.execute_action(id);
+
+        assert_eq!(contract.get_owner(), owner_id);
+        assert_eq!(contract.get_pending_owner(), Some(new_owner_id.clone()));
+
+        testing_env!(context(new_owner_id.as_str(), "contract.testnet").build());
+        contract.accept_ownership();
+
+        assert_eq!(contract.get_owner(), new_owner_id);
+        assert_eq!(contract.get_pending_owner(), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Only owner can propose actions")]
+    fn ownership_transfer_rejects_non_owner_proposal() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id);
+
+        testing_env!(context("eve.testnet", "contract.testnet").build());
+        contract.propose_action(TimelockAction::ProposeOwner {
+            proposed_owner_id: account("new-owner.testnet"),
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "Only proposed owner can accept ownership")]
+    fn ownership_transfer_rejects_non_pending_acceptor() {
+        let owner_id = account("owner.testnet");
+        let new_owner_id = account("new-owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000);
+        testing_env!(builder.build());
+        let id = contract.propose_action(TimelockAction::ProposeOwner {
+            proposed_owner_id: new_owner_id,
+        });
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000 + TIMELOCK_DELAY_NS);
+        testing_env!(builder.build());
+        contract.execute_action(id);
+
+        testing_env!(context("eve.testnet", "contract.testnet").build());
+        contract.accept_ownership();
+    }
+
+    #[test]
+    fn timelock_ban_event_preserves_reason() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+        contract.events.insert(
+            &"event-1".to_string(),
+            &Event {
+                title: "T".to_string(),
+                description: "D".to_string(),
+                price: U128(0),
+                creator_id: owner_id.clone(),
+                created_at: 1,
+                content_type: ContentType::Exclusive,
+            },
+        );
+        contract.active_event_count = 1;
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000);
+        testing_env!(builder.build());
+        let id = contract.propose_action(TimelockAction::BanEvent {
+            encrypted_cid: "event-1".to_string(),
+            reason: BanReason::CopyrightViolation,
+        });
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000 + TIMELOCK_DELAY_NS);
+        testing_env!(builder.build());
+        contract.execute_action(id);
+
+        let banned = contract.get_banned_events();
+        assert_eq!(banned.len(), 1);
+        assert!(matches!(banned[0].1.reason, BanReason::CopyrightViolation));
+    }
+
+    #[test]
+    fn timelock_executes_trial_pool_withdraw_after_delay() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+        contract.trial_pool = NearToken::from_near(1);
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000);
+        testing_env!(builder.build());
+        let id = contract.propose_action(TimelockAction::WithdrawTrialPool {
+            amount: U128(NearToken::from_near(1).as_yoctonear()),
+        });
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000 + TIMELOCK_DELAY_NS);
+        testing_env!(builder.build());
+        contract.execute_action(id);
+
+        assert_eq!(contract.trial_pool, NearToken::from_yoctonear(0));
     }
 
     #[test]
@@ -3667,12 +3819,10 @@ mod tests {
         let buyer_id = account("buyer.testnet");
         let mut contract = Contract::new(owner_id.clone());
 
-        testing_env!(
-            VMContextBuilder::new()
-                .predecessor_account_id(owner_id.clone())
-                .attached_deposit(STORAGE_COST_ACCOUNT)
-                .build()
-        );
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(owner_id.clone())
+            .attached_deposit(STORAGE_COST_ACCOUNT)
+            .build());
         contract.create_event(
             "event-123".to_string(),
             "Test Event".to_string(),
@@ -3680,17 +3830,16 @@ mod tests {
             U128(NearToken::from_near(1).as_yoctonear()),
             None,
             None,
+            None,
         );
 
         let event = contract.get_event("event-123".to_string());
         assert!(event.is_some());
 
-        testing_env!(
-            VMContextBuilder::new()
-                .predecessor_account_id(buyer_id.clone())
-                .attached_deposit(NearToken::from_near(2))
-                .build()
-        );
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(buyer_id.clone())
+            .attached_deposit(NearToken::from_near(2))
+            .build());
         let token = contract.buy_ticket(buyer_id.clone(), "event-123".to_string());
         assert_eq!(token.owner_id, buyer_id);
     }
@@ -3709,6 +3858,7 @@ mod tests {
             U128(1),
             None,
             None,
+            None,
         );
     }
 
@@ -3717,12 +3867,10 @@ mod tests {
         let owner_id = account("owner.testnet");
         let mut contract = Contract::new(owner_id.clone());
 
-        testing_env!(
-            VMContextBuilder::new()
-                .predecessor_account_id(owner_id.clone())
-                .attached_deposit(STORAGE_COST_ACCOUNT)
-                .build()
-        );
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(owner_id.clone())
+            .attached_deposit(STORAGE_COST_ACCOUNT)
+            .build());
         contract.create_event(
             "free".to_string(),
             "Free".to_string(),
@@ -3730,9 +3878,302 @@ mod tests {
             U128(0),
             None,
             None,
+            None,
         );
 
         assert!(contract.get_event("free".to_string()).is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "Use propose_action and execute_action for this admin action")]
+    fn direct_nft_mint_requires_timelock() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+
+        testing_env!(context(owner_id.as_str(), "contract.testnet").build());
+        contract.nft_mint(
+            owner_id.clone(),
+            TokenMetadata {
+                title: Some("Test".to_string()),
+                description: None,
+                media: None,
+                media_hash: None,
+                copies: None,
+                issued_at: None,
+                expires_at: None,
+                starts_at: None,
+                updated_at: None,
+                extra: None,
+                reference: None,
+                reference_hash: None,
+            },
+            VideoMetadata {
+                encrypted_cid: "test".to_string(),
+                duration_seconds: 0,
+                event_date: None,
+                content_type: ContentType::Exclusive,
+                nova_group_id: None,
+                storage_type: StorageType::Kms,
+            },
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Use propose_action and execute_action for this admin action")]
+    fn direct_create_trial_invite_drop_requires_timelock() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+
+        testing_env!(context(owner_id.as_str(), "contract.testnet").build());
+        contract.create_trial_invite_drop(vec![], None);
+    }
+
+    #[test]
+    fn timelock_executes_nft_mint_after_delay() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000);
+        builder.attached_deposit(NearToken::from_near(1));
+        testing_env!(builder.build());
+        let id = contract.propose_action(TimelockAction::NftMint {
+            receiver_id: owner_id.clone(),
+            token_metadata: TokenMetadata {
+                title: Some("Test".to_string()),
+                description: None,
+                media: None,
+                media_hash: None,
+                copies: None,
+                issued_at: None,
+                expires_at: None,
+                starts_at: None,
+                updated_at: None,
+                extra: None,
+                reference: None,
+                reference_hash: None,
+            },
+            video_metadata: VideoMetadata {
+                encrypted_cid: "test".to_string(),
+                duration_seconds: 0,
+                event_date: None,
+                content_type: ContentType::Exclusive,
+                nova_group_id: None,
+                storage_type: StorageType::Kms,
+            },
+        });
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(1_000 + TIMELOCK_DELAY_NS);
+        builder.attached_deposit(NearToken::from_near(1));
+        testing_env!(builder.build());
+        contract.execute_action(id);
+
+        let token = contract.nft_token("0".to_string());
+        assert!(token.is_some());
+        assert_eq!(token.unwrap().owner_id, owner_id);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // V11: CONTENT TYPE FILTER TESTS
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn get_events_filters_by_content_type() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(owner_id.clone())
+            .attached_deposit(STORAGE_COST_ACCOUNT)
+            .build());
+
+        contract.create_event(
+            "concert-1".to_string(),
+            "Concert".to_string(),
+            "Live concert".to_string(),
+            U128(NearToken::from_near(1).as_yoctonear()),
+            None,
+            None,
+            Some("Concert".to_string()),
+        );
+
+        contract.create_event(
+            "film-1".to_string(),
+            "Film".to_string(),
+            "A film".to_string(),
+            U128(NearToken::from_near(1).as_yoctonear()),
+            None,
+            None,
+            Some("Cinema".to_string()),
+        );
+
+        // No filter returns both
+        let all = contract.get_events(None, None, None);
+        assert_eq!(all.len(), 2);
+
+        // Concert filter returns only concert
+        let concerts = contract.get_events(None, None, Some("Concert".to_string()));
+        assert_eq!(concerts.len(), 1);
+        assert_eq!(concerts[0].0, "concert-1");
+
+        // Cinema filter returns only film
+        let films = contract.get_events(None, None, Some("Cinema".to_string()));
+        assert_eq!(films.len(), 1);
+        assert_eq!(films[0].0, "film-1");
+
+        // Nonexistent filter returns empty
+        let empty = contract.get_events(None, None, Some("Documentary".to_string()));
+        assert!(empty.is_empty());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // V11: CREATOR STATS & PURCHASE LOG TESTS
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn get_creator_stats_sums_purchases() {
+        let owner_id = account("owner.testnet");
+        let buyer1 = account("buyer1.testnet");
+        let buyer2 = account("buyer2.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+
+        // Create a paid event
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(owner_id.clone())
+            .attached_deposit(STORAGE_COST_ACCOUNT)
+            .build());
+        contract.create_event(
+            "event-paid".to_string(),
+            "Paid Event".to_string(),
+            "Desc".to_string(),
+            U128(NearToken::from_near(1).as_yoctonear()),
+            None,
+            None,
+            None,
+        );
+
+        // Buyer 1 purchases
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(buyer1.clone())
+            .attached_deposit(NearToken::from_near(2))
+            .build());
+        contract.buy_ticket(buyer1.clone(), "event-paid".to_string());
+
+        // Buyer 2 purchases
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(buyer2.clone())
+            .attached_deposit(NearToken::from_near(2))
+            .build());
+        contract.buy_ticket(buyer2.clone(), "event-paid".to_string());
+
+        let stats = contract.get_creator_stats(owner_id.clone());
+        assert_eq!(stats.total_sales, 2);
+        // 1 NEAR ticket price, ~2% commission, creator gets ~0.98 NEAR each = ~1.96 NEAR total
+        assert!(stats.total_revenue_yocto.0 > 0);
+    }
+
+    #[test]
+    fn get_purchase_logs_by_creator_filters_correctly() {
+        let owner1 = account("owner1.testnet");
+        let owner2 = account("owner2.testnet");
+        let buyer = account("buyer.testnet");
+
+        let mut contract = Contract::new(owner1.clone());
+
+        // Owner1 creates event
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(owner1.clone())
+            .attached_deposit(STORAGE_COST_ACCOUNT)
+            .build());
+        contract.create_event(
+            "event-1".to_string(),
+            "E1".to_string(),
+            "D1".to_string(),
+            U128(NearToken::from_near(1).as_yoctonear()),
+            None,
+            None,
+            None,
+        );
+
+        // Buyer purchases from owner1
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(buyer.clone())
+            .attached_deposit(NearToken::from_near(2))
+            .build());
+        contract.buy_ticket(buyer.clone(), "event-1".to_string());
+
+        let owner1_logs = contract.get_purchase_logs_by_creator(owner1.clone(), None, None);
+        assert_eq!(owner1_logs.len(), 1);
+
+        let owner2_logs = contract.get_purchase_logs_by_creator(owner2.clone(), None, None);
+        assert!(owner2_logs.is_empty());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // V11: CREATOR PROFILE TESTS
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn set_and_get_creator_profile() {
+        let creator_id = account("creator.testnet");
+        let mut contract = Contract::new(account("owner.testnet"));
+
+        testing_env!(context(creator_id.as_str(), "contract.testnet").build());
+        contract.set_creator_profile(
+            Some("Creative Studio".to_string()),
+            Some("Independent film and concert recording collective.".to_string()),
+            Some("https://studio.test".to_string()),
+            Some("@creativestudio".to_string()),
+            Some("@creative.studio".to_string()),
+            Some("https://avatar.test/img.png".to_string()),
+        );
+
+        let profile = contract.get_creator_profile(creator_id.clone());
+        assert!(profile.is_some());
+        let p = profile.unwrap();
+        assert_eq!(p.display_name, Some("Creative Studio".to_string()));
+        assert_eq!(p.bio, Some("Independent film and concert recording collective.".to_string()));
+        assert_eq!(p.website, Some("https://studio.test".to_string()));
+        assert_eq!(p.twitter, Some("@creativestudio".to_string()));
+        assert_eq!(p.instagram, Some("@creative.studio".to_string()));
+        assert_eq!(p.avatar_url, Some("https://avatar.test/img.png".to_string()));
+    }
+
+    #[test]
+    fn update_creator_profile_overwrites_previous() {
+        let creator_id = account("creator.testnet");
+        let mut contract = Contract::new(account("owner.testnet"));
+
+        testing_env!(context(creator_id.as_str(), "contract.testnet").build());
+        contract.set_creator_profile(
+            Some("Old Name".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        contract.set_creator_profile(
+            Some("New Name".to_string()),
+            Some("Updated bio".to_string()),
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let profile = contract.get_creator_profile(creator_id.clone()).unwrap();
+        assert_eq!(profile.display_name, Some("New Name".to_string()));
+        assert_eq!(profile.bio, Some("Updated bio".to_string()));
+    }
+
+    #[test]
+    fn get_creator_profile_returns_none_for_unknown() {
+        let contract = Contract::new(account("owner.testnet"));
+        let profile = contract.get_creator_profile(account("unknown.testnet"));
+        assert!(profile.is_none());
     }
 }
 
@@ -3848,4 +4289,3 @@ impl NonFungibleTokenApproval for Contract {
             .nft_is_approved(token_id, approved_account_id, approval_id)
     }
 }
-

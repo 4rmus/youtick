@@ -436,174 +436,6 @@ async fn test_trial_pool() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_authorized_trial_relayer_can_create_sponsored_trial() -> anyhow::Result<()> {
-    let worker = near_workspaces::sandbox().await?;
-    let wasm = load_contract_wasm().await?;
-    let contract = worker.dev_deploy(wasm).await?;
-
-    let owner = worker.dev_create_account().await?;
-    contract
-        .call("new")
-        .args_json(json!({"owner_id": owner.id()}))
-        .transact()
-        .await?
-        .into_result()?;
-
-    let relayer = worker.dev_create_account().await?;
-    let relayer_public_key = relayer.secret_key().public_key().to_string();
-
-    owner
-        .call(contract.id(), "fund_trial_pool")
-        .args_json(json!({}))
-        .deposit(NearToken::from_near(1))
-        .transact()
-        .await?
-        .into_result()?;
-
-    owner
-        .call(contract.id(), "add_trial_relayer")
-        .args_json(json!({ "account_id": relayer.id() }))
-        .transact()
-        .await?
-        .into_result()?;
-
-    let relayer_status: bool = contract
-        .view("is_trial_relayer")
-        .args_json(json!({ "account_id": relayer.id() }))
-        .await?
-        .json()?;
-    assert!(relayer_status);
-
-    relayer
-        .call(contract.id(), "create_sponsored_trial")
-        .args_json(json!({
-            "username": "relayuser",
-            "new_public_key": relayer_public_key
-        }))
-        .gas(near_workspaces::types::Gas::from_tgas(200))
-        .transact()
-        .await?
-        .into_result()?;
-
-    let count: u32 = contract
-        .view("get_daily_trial_count")
-        .args_json(json!({}))
-        .await?
-        .json()?;
-    assert_eq!(count, 1);
-
-    println!("✅ Authorized trial relayer test passed");
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_unauthorized_trial_relayer_is_rejected() -> anyhow::Result<()> {
-    let worker = near_workspaces::sandbox().await?;
-    let wasm = load_contract_wasm().await?;
-    let contract = worker.dev_deploy(wasm).await?;
-
-    let owner = worker.dev_create_account().await?;
-    contract
-        .call("new")
-        .args_json(json!({"owner_id": owner.id()}))
-        .transact()
-        .await?
-        .into_result()?;
-
-    let relayer = worker.dev_create_account().await?;
-    let relayer_public_key = relayer.secret_key().public_key().to_string();
-
-    owner
-        .call(contract.id(), "fund_trial_pool")
-        .args_json(json!({}))
-        .deposit(NearToken::from_near(1))
-        .transact()
-        .await?
-        .into_result()?;
-
-    let result = relayer
-        .call(contract.id(), "create_sponsored_trial")
-        .args_json(json!({
-            "username": "relayuser",
-            "new_public_key": relayer_public_key
-        }))
-        .gas(near_workspaces::types::Gas::from_tgas(200))
-        .transact()
-        .await?;
-
-    assert!(result.is_failure());
-    println!("✅ Unauthorized trial relayer rejection test passed");
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_authorized_trial_relayer_can_claim_free_ticket() -> anyhow::Result<()> {
-    let worker = near_workspaces::sandbox().await?;
-    let wasm = load_contract_wasm().await?;
-    let contract = worker.dev_deploy(wasm).await?;
-
-    let owner = worker.dev_create_account().await?;
-    contract
-        .call("new")
-        .args_json(json!({"owner_id": owner.id()}))
-        .transact()
-        .await?
-        .into_result()?;
-
-    let relayer = worker.dev_create_account().await?;
-    let buyer = worker.dev_create_account().await?;
-
-    owner
-        .call(contract.id(), "create_event")
-        .args_json(json!({
-            "encrypted_cid": "QmFreeRelayerEvent",
-            "title": "Free Event",
-            "description": "Relayer-sponsored free claim",
-            "price": "0"
-        }))
-        .deposit(NearToken::from_millinear(100))
-        .transact()
-        .await?
-        .into_result()?;
-
-    owner
-        .call(contract.id(), "fund_trial_pool")
-        .args_json(json!({}))
-        .deposit(NearToken::from_near(1))
-        .transact()
-        .await?
-        .into_result()?;
-
-    owner
-        .call(contract.id(), "add_trial_relayer")
-        .args_json(json!({ "account_id": relayer.id() }))
-        .transact()
-        .await?
-        .into_result()?;
-
-    relayer
-        .call(contract.id(), "claim_free_ticket_sponsored")
-        .args_json(json!({
-            "receiver_id": buyer.id(),
-            "encrypted_cid": "QmFreeRelayerEvent"
-        }))
-        .gas(near_workspaces::types::Gas::from_tgas(200))
-        .transact()
-        .await?
-        .into_result()?;
-
-    let tokens: Vec<serde_json::Value> = contract
-        .view("nft_tokens_for_owner")
-        .args_json(json!({ "account_id": buyer.id() }))
-        .await?
-        .json()?;
-
-    assert_eq!(tokens.len(), 1);
-    println!("✅ Authorized relayer free ticket claim test passed");
-    Ok(())
-}
-
 // ═══════════════════════════════════════════════════════════════
 // GIFT TICKET TESTS
 // ═══════════════════════════════════════════════════════════════
@@ -1061,36 +893,30 @@ async fn test_withdraw_commission() -> anyhow::Result<()> {
         .await?
         .into_result()?;
 
-    // Owner withdraws commission
-    let owner_before = owner.view_account().await?.balance;
-
-    owner
+    // Direct owner withdrawals are now blocked; sensitive admin actions must
+    // go through the timelock path.
+    let direct_withdraw = owner
         .call(contract.id(), "withdraw_commission")
         .args_json(json!({
             "amount": "100000000000000000000000"  // 0.1 NEAR
         }))
         .gas(near_workspaces::types::Gas::from_tgas(50))
         .transact()
-        .await?
-        .into_result()?;
+        .await?;
+    assert!(
+        direct_withdraw.is_failure(),
+        "Direct owner withdrawal should require timelock"
+    );
 
-    // Verify commission pool is now 0
+    // Verify commission pool is unchanged.
     let pool: String = contract
         .view("get_commission_pool")
         .args_json(json!({}))
         .await?
         .json()?;
-    assert_eq!(pool, "0");
+    assert_eq!(pool, "100000000000000000000000");
 
-    // Verify owner received the funds (approximately, minus gas)
-    let owner_after = owner.view_account().await?.balance;
-    let gained = owner_after.as_yoctonear() as i128 - owner_before.as_yoctonear() as i128;
-    assert!(
-        gained > 90_000_000_000_000_000_000_000,
-        "Owner should receive ~0.1 NEAR"
-    );
-
-    println!("✅ Withdraw commission test passed");
+    println!("✅ Direct withdraw commission rejection test passed");
     Ok(())
 }
 
@@ -1601,65 +1427,19 @@ async fn test_sponsor_implicit_guest_direct_rejects_unauthorized() -> anyhow::Re
 // ═══════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_reset_v11() -> anyhow::Result<()> {
-    let (contract, owner, buyer) = init().await?;
+async fn test_reset_v11_not_available_in_default_build() -> anyhow::Result<()> {
+    let (contract, owner, _) = init().await?;
 
-    // Call reset_v11 (simulate mainnet transition)
-    contract
-        .call("reset_v11")
+    let result = owner
+        .call(contract.id(), "reset_v11")
         .args_json(json!({ "owner_id": owner.id() }))
         .transact()
-        .await?
-        .into_result()?;
+        .await?;
 
-    // Verify state is clean immediately after reset
-    let initial_supply: String = contract.view("nft_total_supply").args_json(json!({})).await?.json()?;
-    assert_eq!(initial_supply, "0");
-
-    let initial_events_count: u64 = contract.view("get_events_count").args_json(json!({})).await?.json()?;
-    assert_eq!(initial_events_count, 0);
-
-    let initial_upload_session: Option<serde_json::Value> = contract.view("get_upload_session").args_json(json!({"public_key": "ed25519:6E8sCci9badyRkXb3JoRpBj5p8C6Tw41ELDZoiihKEtp"})).await?.json()?;
-    assert!(initial_upload_session.is_none());
-
-    // Create event after reset
-    owner
-        .call(contract.id(), "create_event")
-        .args_json(json!({
-            "encrypted_cid": "QmResetTest",
-            "title": "Reset Test Event",
-            "description": "Event after reset",
-            "price": "1000000000000000000000000"
-        }))
-        .deposit(NearToken::from_millinear(100))
-        .transact()
-        .await?
-        .into_result()?;
-
-    // Buy ticket after reset
-    buyer
-        .call(contract.id(), "buy_ticket")
-        .args_json(json!({
-            "receiver_id": buyer.id(),
-            "encrypted_cid": "QmResetTest"
-        }))
-        .deposit(NearToken::from_millinear(1010)) // 1.01 NEAR
-        .gas(near_workspaces::types::Gas::from_tgas(300))
-        .transact()
-        .await?
-        .into_result()?;
-
-    // Verify token exists
-    let post_reset_supply: String = contract.view("nft_total_supply").args_json(json!({})).await?.json()?;
-    assert_eq!(post_reset_supply, "1");
-
-    let post_events_count: u64 = contract.view("get_events_count").args_json(json!({})).await?.json()?;
-    assert_eq!(post_events_count, 1);
-
-    let supply_for_owner: String = contract.view("nft_supply_for_owner").args_json(json!({ "account_id": buyer.id() })).await?.json()?;
-    assert_eq!(supply_for_owner, "1");
-
-    println!("✅ Reset v11 test passed");
+    assert!(
+        result.is_failure(),
+        "reset_v11 should not be callable in the default production build"
+    );
+    println!("✅ reset_v11 default-build rejection test passed");
     Ok(())
 }
-

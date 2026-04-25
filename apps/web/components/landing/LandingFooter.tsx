@@ -67,9 +67,9 @@ export const LandingFooter = memo(() => {
             <a href="https://crust.network" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-400 transition-colors">Crust Network</a>
           </p>
           <div className="flex items-center gap-6 text-xs text-zinc-600">
-            <a href="/privacy" className="hover:text-zinc-400 transition-colors">Privacy</a>
-            <a href="/terms" className="hover:text-zinc-400 transition-colors">Terms</a>
-            <a href="mailto:contact@youtick.net" className="hover:text-zinc-400 transition-colors">Contact</a>
+            <a href="/privacy" className="hover:text-zinc-400 transition-colors">{t.landing.footer.privacy}</a>
+            <a href="/terms" className="hover:text-zinc-400 transition-colors">{t.landing.footer.terms}</a>
+            <a href="mailto:contact@youtick.net" className="hover:text-zinc-400 transition-colors">{t.landing.footer.support}</a>
           </div>
         </div>
       </div>

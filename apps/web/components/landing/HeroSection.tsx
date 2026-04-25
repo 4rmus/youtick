@@ -2,9 +2,8 @@ import { memo } from 'react';
 import Image from 'next/image';
 import Link from '@/components/Web4Link';
 import { Button } from '@/components/ui/button';
-import { ArrowRight, Shield, Lock, Sparkles, DollarSign } from 'lucide-react';
+import { ArrowRight, Play, ShieldCheck, Ticket } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { ANIMATION } from '@/lib/constants';
 
 interface HeroSectionProps {
   onDiscoverClick: () => void;
@@ -12,120 +11,102 @@ interface HeroSectionProps {
 
 export const HeroSection = memo(({ onDiscoverClick }: HeroSectionProps) => {
   const { t } = useLanguage();
+  const h = t.landing.hero_section;
 
   return (
-    <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20">
-      {/* Background Image */}
-      <div className="absolute inset-0 z-0">
+    <section className="relative min-h-screen overflow-hidden bg-black pt-20">
+      <div className="absolute inset-0">
         <Image
           src="/hero_concert.png"
-          alt="Concert"
+          alt="Concert stage with audience lights"
           fill
-          className="object-cover opacity-25"
+          className="object-cover opacity-35"
           priority
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-black via-black/70 to-black" />
+        <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(0,0,0,0.96)_0%,rgba(0,0,0,0.78)_46%,rgba(0,0,0,0.38)_100%)]" />
+        <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black to-transparent" />
       </div>
 
-      {/* Animated Gradient Orbs - NEAR Colors */}
-      <div className="absolute inset-0 z-[1] overflow-hidden pointer-events-none">
-        {/* Green Orb - Top Right */}
-        <div
-          className="absolute -top-40 -right-40 w-[600px] h-[600px] rounded-full animate-glow-pulse"
-          style={{
-            background: 'radial-gradient(circle, rgba(0, 236, 151, 0.4) 0%, transparent 70%)',
-          }}
-        />
-        {/* Purple Orb - Bottom Left */}
-        <div
-          className="absolute -bottom-60 -left-40 w-[700px] h-[700px] rounded-full animate-glow-pulse"
-          style={{
-            background: 'radial-gradient(circle, rgba(151, 151, 255, 0.35) 0%, transparent 70%)',
-            animationDelay: '1s',
-          }}
-        />
-        {/* Blue Orb - Center */}
-        <div
-          className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[500px] h-[500px] rounded-full animate-glow-pulse"
-          style={{
-            background: 'radial-gradient(circle, rgba(23, 217, 212, 0.2) 0%, transparent 70%)',
-            animationDelay: '2s',
-          }}
-        />
-      </div>
-
-      <div className="relative z-10 container mx-auto px-4 text-center space-y-8">
-        {/* Badge */}
-        <div className="inline-flex items-center gap-2 px-6 py-3 border border-near-green/30 rounded-full bg-near-green/10 backdrop-blur-md mb-6 hover:bg-near-green/20 hover:border-near-green/50 transition-all duration-500 group">
-          <DollarSign className="w-5 h-5 text-near-green group-hover:animate-pulse" />
-          <span className="text-near-green font-semibold text-sm tracking-wide">{t.landing.hero.badge}</span>
-        </div>
-
-        {/* Title with NEAR Gradient */}
-        <h1 className="text-5xl md:text-7xl lg:text-8xl font-black tracking-tight leading-none">
-          <span className="block text-white mb-2">{t.landing.hero.title_line1}</span>
-          <span className="block text-gradient-near animate-gradient-flow" style={{ backgroundSize: '200% 200%' }}>
-            {t.landing.hero.title_line2}
-          </span>
-        </h1>
-
-        {/* Subtitle */}
-        <p className="text-xl md:text-2xl text-zinc-300 max-w-3xl mx-auto leading-relaxed font-medium">
-          {t.landing.hero.subtitle}
-        </p>
-
-        {/* Description */}
-        <p className="text-base md:text-lg text-zinc-400 max-w-2xl mx-auto leading-relaxed">
-          {t.landing.hero.description}
-        </p>
-
-        {/* Value Badges - NEAR Colors - Revenue First */}
-        <div className="flex flex-wrap justify-center gap-4 pt-6">
-          <div className="flex items-center gap-2 px-5 py-3 bg-near-green/10 border border-near-green/30 rounded-full hover:bg-near-green/20 hover:scale-105 transition-all duration-300 cursor-default">
-            <DollarSign className="w-5 h-5 text-near-green" />
-            <span className="text-sm font-semibold text-emerald-300">{t.landing.hero.badge_instant_revenue}</span>
+      <div className="container relative z-10 mx-auto grid min-h-[calc(100vh-5rem)] items-center gap-12 px-4 py-16 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="max-w-3xl">
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-near-green/30 bg-black/50 px-4 py-2 text-sm font-semibold text-near-green backdrop-blur">
+            <Play className="h-4 w-4" />
+            {h.badge}
           </div>
-          <div className="flex items-center gap-2 px-5 py-3 bg-near-purple/10 border border-near-purple/30 rounded-full hover:bg-near-purple/20 hover:scale-105 transition-all duration-300 cursor-default">
-            <Shield className="w-5 h-5 text-near-purple" />
-            <span className="text-sm font-semibold text-violet-300">{t.landing.hero.badge_ownership}</span>
-          </div>
-          <div className="flex items-center gap-2 px-5 py-3 bg-near-blue/10 border border-near-blue/30 rounded-full hover:bg-near-blue/20 hover:scale-105 transition-all duration-300 cursor-default">
-            <Lock className="w-5 h-5 text-near-blue" />
-            <span className="text-sm font-semibold text-cyan-300">{t.landing.hero.badge_no_censorship}</span>
-          </div>
-        </div>
 
-        {/* CTAs - Artist Focus + Free Trial */}
-        <div className="flex flex-col sm:flex-row gap-4 justify-center pt-8">
-          <Link href="/upload">
+          <h1 className="max-w-4xl text-5xl font-black leading-[0.95] tracking-tight text-white md:text-7xl lg:text-8xl">
+            {h.title}
+          </h1>
+
+          <p className="mt-6 max-w-2xl text-xl font-semibold leading-relaxed text-zinc-200 md:text-2xl">
+            {h.subtitle}
+          </p>
+
+          <p className="mt-5 max-w-2xl text-base leading-relaxed text-zinc-400 md:text-lg">
+            {h.description}
+          </p>
+
+          <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+            <Link href="/upload">
+              <Button
+                size="lg"
+                className="w-full rounded-full bg-near-green px-8 py-7 text-base font-bold text-near-black hover:bg-near-green/85 sm:w-auto"
+              >
+                {h.cta_primary} <ArrowRight className="ml-2 h-5 w-5" />
+              </Button>
+            </Link>
             <Button
               size="lg"
-              className={`bg-near-green text-near-black hover:bg-near-green/80 hover:scale-105 text-lg px-10 py-7 rounded-full font-bold shadow-2xl shadow-near-green/30 ${ANIMATION.transition.default}`}
+              variant="outline"
+              className="rounded-full border-white/25 bg-white/5 px-8 py-7 text-base font-bold text-white hover:border-white/50 hover:bg-white/10"
+              onClick={onDiscoverClick}
             >
-              {t.landing.hero.cta_create_event} <ArrowRight className="ml-2 w-6 h-6" />
+              {h.cta_secondary}
             </Button>
-          </Link>
-          <Button
-            size="lg"
-            variant="outline"
-            className={`border-white/30 bg-white/5 backdrop-blur-sm text-white hover:bg-white/10 hover:border-near-green/50 hover:scale-105 text-lg px-10 py-7 rounded-full font-bold ${ANIMATION.transition.default}`}
-            onClick={onDiscoverClick}
-          >
-            {t.landing.hero.cta_discover}
-          </Button>
+          </div>
+
+          <p className="mt-5 text-sm text-zinc-500">
+            {h.trial_hint}
+          </p>
         </div>
 
-        {/* Free Trial CTA - More Prominent */}
-        <div className="mt-8 text-center">
-          <Link href="/trial">
-            <div className="inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-near-purple/20 to-near-blue/20 border border-near-purple/40 rounded-full hover:border-near-purple hover:scale-105 transition-all duration-300 cursor-pointer group">
-              <Sparkles className="w-5 h-5 text-near-purple group-hover:animate-pulse" />
-              <span className="text-white font-semibold">{t.landing.hero.cta_try_free}</span>
-              <span className="text-zinc-400">—</span>
-              <span className="text-zinc-300 text-sm">{t.landing.hero.trial_highlight}</span>
-              <ArrowRight className="w-4 h-4 text-near-purple group-hover:translate-x-1 transition-transform" />
+        <div className="hidden lg:block">
+          <div className="relative ml-auto max-w-lg">
+            <div className="overflow-hidden rounded-lg border border-white/10 bg-zinc-950 shadow-2xl shadow-black/60">
+              <div className="relative aspect-[4/3]">
+                <Image
+                  src="/cinema_scene.png"
+                  alt="Cinema screening atmosphere"
+                  fill
+                  className="object-cover"
+                  loading="eager"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
+                <div className="absolute bottom-0 left-0 right-0 p-6">
+                  <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-black/70 px-3 py-1 text-xs font-semibold text-near-green">
+                    <Ticket className="h-3.5 w-3.5" />
+                    {h.card_badge}
+                  </div>
+                  <h2 className="text-2xl font-black text-white">{h.card_title}</h2>
+                  <p className="mt-2 text-sm leading-relaxed text-zinc-300">
+                    {h.card_desc}
+                  </p>
+                </div>
+              </div>
             </div>
-          </Link>
+
+            <div className="absolute -bottom-8 -left-8 w-64 rounded-lg border border-white/10 bg-black/90 p-5 shadow-xl backdrop-blur">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-near-green/10">
+                  <ShieldCheck className="h-5 w-5 text-near-green" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-white">{h.stat_revenue}</p>
+                  <p className="text-xs text-zinc-500">{h.stat_access}</p>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>

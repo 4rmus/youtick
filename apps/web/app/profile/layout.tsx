@@ -2,14 +2,14 @@ import { Metadata } from 'next';
 
 export const metadata: Metadata = {
     title: 'My Profile',
-    description: 'Manage your NFT video tickets, view your collection, and access your purchased content on YouTick.',
+    description: 'Manage your digital tickets, watch library and creator studio on YouTick.',
     openGraph: {
         title: 'My Profile | YouTick',
-        description: 'Manage your NFT video tickets and access your purchased content.',
+        description: 'Manage your digital tickets, watch library and creator studio.',
     },
     twitter: {
         title: 'My Profile | YouTick',
-        description: 'Manage your NFT video tickets and access your purchased content.',
+        description: 'Manage your digital tickets, watch library and creator studio.',
     },
 };
 

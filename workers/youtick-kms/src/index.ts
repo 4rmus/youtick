@@ -20,6 +20,8 @@
  *   - Access cache for repeated ticket checks (1-hour TTL)
  */
 
+import { z } from 'zod';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -53,6 +55,7 @@ interface StoreRequest {
     totalShares?: number;
     requiredShares?: number;
     scheme?: 'shamir-v1';
+    nonce?: string;
 }
 
 interface RetrieveRequest {
@@ -64,6 +67,7 @@ interface RetrieveRequest {
     publicKey: string;
     originHash?: string | null;
     deviceHash?: string | null;
+    nonce?: string;
 }
 
 interface AuthChallengeRequest {
@@ -90,6 +94,17 @@ interface AuthChallengeRecord {
     expiresAt: number;
 }
 
+const AuthChallengeRecordSchema = z.object({
+    challengeId: z.string().min(1),
+    accountId: z.string().min(1),
+    action: z.enum(['store', 'retrieve']),
+    videoId: z.string().min(1),
+    message: z.string().min(1),
+    recipient: z.string().min(1),
+    nonce: z.string().min(1),
+    expiresAt: z.number().int(),
+});
+
 interface AuthTokenClaims {
     accountId: string;
     action: 'store' | 'retrieve';
@@ -97,6 +112,14 @@ interface AuthTokenClaims {
     publicKey: string;
     expiresAt: number;
 }
+
+const AuthTokenClaimsSchema = z.object({
+    accountId: z.string().min(1),
+    action: z.enum(['store', 'retrieve']),
+    videoId: z.string().min(1),
+    publicKey: z.string().min(1),
+    expiresAt: z.number().int(),
+});
 
 interface SessionGrantVerification {
     valid: boolean;
@@ -116,11 +139,23 @@ export interface ShareMetadataRecord {
     requiredShares: number;
 }
 
+const ShareMetadataRecordSchema = z.object({
+    scheme: z.literal('shamir-v1'),
+    totalShares: z.number().int().min(2).max(255),
+    requiredShares: z.number().int().min(2).max(255),
+});
+
 export interface StoredShareRecord extends ShareMetadataRecord {
     shareId: number;
     nonceB64: string;
     ciphertextB64: string;
 }
+
+const StoredShareRecordSchema = ShareMetadataRecordSchema.extend({
+    shareId: z.number().int().min(0).max(255),
+    nonceB64: z.string().min(1),
+    ciphertextB64: z.string().min(1),
+});
 
 interface RegistryOperatorRecord {
     account_id: string;
@@ -526,8 +561,8 @@ async function verifyFullAccessKeyBinding(
 /**
  * Verify that an account has a valid ticket for a video.
  *
- * Uses `has_ticket(account_id, encrypted_cid)` for NFT-backed access, then
- * `check_trial_access` for NFT-free grants from `grant_free_access_direct`.
+ * Uses `has_ticket(account_id, encrypted_cid)` for NFT-backed access.
+ * Free videos also require a real NFT mint via `claim_free_ticket_direct`.
  */
 async function verifyTicketAccess(
     env: Env,
@@ -553,18 +588,6 @@ async function verifyTicketAccess(
         );
 
         if (hasTicket) {
-            await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: TICKET_ACCESS_CACHE_TTL_S });
-            return true;
-        }
-
-        const hasTrialAccess = await nearViewCall<boolean>(
-            env,
-            env.NEAR_CONTRACT_ID,
-            'check_trial_access',
-            { account_id: accountId, encrypted_cid: videoId },
-        );
-
-        if (hasTrialAccess) {
             await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: TICKET_ACCESS_CACHE_TTL_S });
             return true;
         }
@@ -1080,18 +1103,23 @@ async function readBearerTokenClaims(
 
     const [scheme, token] = authHeader.split(' ');
     if (scheme !== 'Bearer' || !token) {
-        return { claims: null, error: 'Invalid Authorization header', status: 401 };
+        return { claims: null, error: 'Unauthorized', status: 401 };
     }
 
     const rawClaims = await env.ACCESS_CACHE.get(`auth:token:${token}`);
     if (!rawClaims) {
-        return { claims: null, error: 'Auth token expired or invalid', status: 401 };
+        return { claims: null, error: 'Unauthorized', status: 401 };
     }
 
-    const claims = JSON.parse(rawClaims) as AuthTokenClaims;
+    const parseResult = AuthTokenClaimsSchema.safeParse(JSON.parse(rawClaims));
+    if (!parseResult.success) {
+        await env.ACCESS_CACHE.delete(`auth:token:${token}`);
+        return { claims: null, error: 'Unauthorized', status: 401 };
+    }
+    const claims = parseResult.data;
     if (Date.now() > claims.expiresAt) {
         await env.ACCESS_CACHE.delete(`auth:token:${token}`);
-        return { claims: null, error: 'Auth token expired or invalid', status: 401 };
+        return { claims: null, error: 'Unauthorized', status: 401 };
     }
 
     return { claims };
@@ -1163,22 +1191,26 @@ async function handleAuthVerify(
 
     const rawChallenge = await env.ACCESS_CACHE.get(`auth:challenge:${body.challengeId}`);
     if (!rawChallenge) {
-        return jsonResponse({ ok: false, error: 'Challenge expired or invalid' }, 401, request, env);
+        return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
     }
 
-    const challenge = JSON.parse(rawChallenge) as AuthChallengeRecord;
+    const challengeParse = AuthChallengeRecordSchema.safeParse(JSON.parse(rawChallenge));
+    if (!challengeParse.success) {
+        return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
+    }
+    const challenge = challengeParse.data;
     if (challenge.accountId !== body.accountId) {
-        return jsonResponse({ ok: false, error: 'Challenge/account mismatch' }, 401, request, env);
+        return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
     }
 
     if (Date.now() > challenge.expiresAt) {
         await env.ACCESS_CACHE.delete(`auth:challenge:${body.challengeId}`);
-        return jsonResponse({ ok: false, error: 'Challenge expired or invalid' }, 401, request, env);
+        return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
     }
 
     const isFullAccess = await verifyFullAccessKeyBinding(env, body.accountId, body.publicKey);
     if (!isFullAccess) {
-        return jsonResponse({ ok: false, error: 'Public key must be a FullAccess key on this account' }, 401, request, env);
+        return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
     }
 
     const verified = await verifyNep413Signature(
@@ -1281,31 +1313,41 @@ async function handleStore(
 
     if (auth.claims) {
         if (auth.claims.action !== 'store') {
-            return jsonResponse({ ok: false, error: 'Auth token does not allow store access' }, 403, request, env);
+            return jsonResponse({ ok: false, error: 'Unauthorized' }, 403, request, env);
         }
         if (auth.claims.videoId !== body.videoId) {
-            return jsonResponse({ ok: false, error: 'Auth token video scope mismatch' }, 403, request, env);
+            return jsonResponse({ ok: false, error: 'Unauthorized' }, 403, request, env);
         }
         accountId = auth.claims.accountId;
     } else {
         if (!body.timestamp || !body.signature || !body.publicKey) {
-            return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
+            return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
         }
 
         // Validate timestamp (replay attack protection)
         const now = Date.now();
         if (Math.abs(now - body.timestamp) > TIMESTAMP_WINDOW_MS) {
-            return jsonResponse({ ok: false, error: 'Request timestamp expired' }, 401, request, env);
+            return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
         }
 
-        // Legacy key-bound requests sign { action, videoId, accountId, timestamp }.
-        // Session-grant requests sign { action, videoId, timestamp, originHash, deviceHash }.
+        // Nonce-based replay protection
+        if (body.nonce) {
+            const nonceKey = `used_nonce:${body.nonce}`;
+            const nonceUsed = await env.ACCESS_CACHE.get(nonceKey);
+            if (nonceUsed) {
+                return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
+            }
+        }
+
+        // Legacy key-bound requests sign { action, videoId, accountId, timestamp, nonce }.
+        // Session-grant requests sign { action, videoId, timestamp, originHash, deviceHash, nonce }.
         const payload = body.accountId
             ? JSON.stringify({
                 action: 'store',
                 videoId: body.videoId,
                 accountId: body.accountId,
                 timestamp: body.timestamp,
+                nonce: body.nonce ?? null,
             })
             : JSON.stringify({
                 action: 'store',
@@ -1313,17 +1355,24 @@ async function handleStore(
                 timestamp: body.timestamp,
                 originHash: body.originHash ?? null,
                 deviceHash: body.deviceHash ?? null,
+                nonce: body.nonce ?? null,
             });
 
         const isValidSig = await verifyEd25519Signature(payload, body.signature, body.publicKey);
         if (!isValidSig) {
-            return jsonResponse({ ok: false, error: 'Invalid signature' }, 401, request, env);
+            return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
+        }
+
+        // Store nonce after successful signature verification
+        if (body.nonce) {
+            const nonceKey = `used_nonce:${body.nonce}`;
+            await env.ACCESS_CACHE.put(nonceKey, 'true', { expirationTtl: TIMESTAMP_WINDOW_MS * 2 / 1000 });
         }
 
         if (body.accountId) {
             const isKeyBound = await verifyPublicKeyBinding(env, body.accountId, body.publicKey);
             if (!isKeyBound) {
-                return jsonResponse({ ok: false, error: 'Public key not registered on account' }, 401, request, env);
+                return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
             }
 
             const isUploadSessionKey = await verifyUploadSessionAuthority(
@@ -1335,7 +1384,7 @@ async function handleStore(
                 const isFullAccess = await verifyFullAccessKeyBinding(env, body.accountId, body.publicKey);
                 if (!isFullAccess) {
                     return jsonResponse(
-                        { ok: false, error: 'Public key is not authorized for publish' },
+                        { ok: false, error: 'Unauthorized' },
                         403,
                         request,
                         env,
@@ -1356,7 +1405,7 @@ async function handleStore(
 
             if (!grantVerification.valid || !grantVerification.owner_id) {
                 return jsonResponse(
-                    { ok: false, error: 'Invalid session grant' },
+                    { ok: false, error: 'Unauthorized' },
                     401,
                     request,
                     env,
@@ -1379,16 +1428,16 @@ async function handleStore(
     ]);
 
     if (eventCreatorId && eventCreatorId !== accountId) {
-        return jsonResponse({ ok: false, error: 'Only the content creator can store keys' }, 403, request, env);
+        return jsonResponse({ ok: false, error: 'Unauthorized' }, 403, request, env);
     }
 
     if (existingShare && recordedOwner && recordedOwner !== accountId) {
-        return jsonResponse({ ok: false, error: 'Only the original uploader can overwrite keys' }, 403, request, env);
+        return jsonResponse({ ok: false, error: 'Unauthorized' }, 403, request, env);
     }
 
     if (existingShare && !recordedOwner && !eventCreatorId) {
         return jsonResponse(
-            { ok: false, error: 'Cannot verify ownership for existing key; overwrite denied' },
+            { ok: false, error: 'Unauthorized' },
             403,
             request,
             env,
@@ -1397,7 +1446,7 @@ async function handleStore(
 
     if (isShareStore) {
         if (!env.REGISTRY_OPERATOR_ACCOUNT_ID) {
-            return jsonResponse({ ok: false, error: 'Registry operator account is not configured' }, 500, request, env);
+            return jsonResponse({ ok: false, error: 'Internal error' }, 500, request, env);
         }
 
         const encryptedRecord = await encryptShareRecord(env, {
@@ -1445,35 +1494,45 @@ async function handleRetrieve(
 
     const body = (await request.json()) as Partial<RetrieveRequest> & { videoId?: string };
     if (!body.videoId) {
-        return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
+        return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
     }
 
     let accountId: string;
 
     if (auth.claims) {
         if (auth.claims.action !== 'retrieve' || auth.claims.videoId !== body.videoId) {
-            return jsonResponse({ ok: false, error: 'Invalid or unauthorized auth token' }, 401, request, env);
+            return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
         }
         accountId = auth.claims.accountId;
     } else {
         if (!body.timestamp || !body.signature || !body.publicKey) {
-            return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
+            return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
         }
 
         // Validate timestamp (replay attack protection)
         const now = Date.now();
         if (Math.abs(now - body.timestamp) > TIMESTAMP_WINDOW_MS) {
-            return jsonResponse({ ok: false, error: 'Request timestamp expired' }, 401, request, env);
+            return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
         }
 
-        // Legacy key-bound requests sign { action, videoId, accountId, timestamp }.
-        // Session-grant requests sign { action, videoId, timestamp, originHash, deviceHash }.
+        // Nonce-based replay protection
+        if (body.nonce) {
+            const nonceKey = `used_nonce:${body.nonce}`;
+            const nonceUsed = await env.ACCESS_CACHE.get(nonceKey);
+            if (nonceUsed) {
+                return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
+            }
+        }
+
+        // Legacy key-bound requests sign { action, videoId, accountId, timestamp, nonce }.
+        // Session-grant requests sign { action, videoId, timestamp, originHash, deviceHash, nonce }.
         const payload = body.accountId
             ? JSON.stringify({
                 action: 'retrieve',
                 videoId: body.videoId,
                 accountId: body.accountId,
                 timestamp: body.timestamp,
+                nonce: body.nonce ?? null,
             })
             : JSON.stringify({
                 action: 'retrieve',
@@ -1481,17 +1540,24 @@ async function handleRetrieve(
                 timestamp: body.timestamp,
                 originHash: body.originHash ?? null,
                 deviceHash: body.deviceHash ?? null,
+                nonce: body.nonce ?? null,
             });
 
         const isValidSig = await verifyEd25519Signature(payload, body.signature, body.publicKey);
         if (!isValidSig) {
-            return jsonResponse({ ok: false, error: 'Invalid signature' }, 401, request, env);
+            return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
+        }
+
+        // Store nonce after successful signature verification
+        if (body.nonce) {
+            const nonceKey = `used_nonce:${body.nonce}`;
+            await env.ACCESS_CACHE.put(nonceKey, 'true', { expirationTtl: TIMESTAMP_WINDOW_MS * 2 / 1000 });
         }
 
         if (body.accountId) {
             const isKeyBound = await verifyPublicKeyBinding(env, body.accountId, body.publicKey);
             if (!isKeyBound) {
-                return jsonResponse({ ok: false, error: 'Public key not registered on account' }, 401, request, env);
+                return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
             }
 
             accountId = body.accountId;
@@ -1507,7 +1573,7 @@ async function handleRetrieve(
 
             if (!grantVerification.valid || !grantVerification.owner_id) {
                 return jsonResponse(
-                    { ok: false, error: grantVerification.reason || 'Invalid session grant' },
+                    { ok: false, error: 'Unauthorized' },
                     401,
                     request,
                     env,
@@ -1545,7 +1611,11 @@ async function handleRetrieve(
     }
 
     try {
-        const shareRecord = JSON.parse(shareRaw) as StoredShareRecord;
+        const shareParse = StoredShareRecordSchema.safeParse(JSON.parse(shareRaw));
+        if (!shareParse.success) {
+            return jsonResponse({ ok: false, error: 'Not found or unauthorized' }, 404, request, env);
+        }
+        const shareRecord = shareParse.data;
         const shareB64 = await decryptShareRecord(env, shareRecord);
 
         return jsonResponse(

@@ -67,6 +67,13 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
         no_gift_link: trialPageCopy?.no_gift_link || "No gift link found. Please use a valid gift link or connect your wallet.",
         invite_required: trialPageCopy?.invite_required || "Trial account creation now requires an invite link.",
         gift_for: trialPageCopy?.gift_for || "Gift ticket for:",
+        invalid_gift_link: trialPageCopy?.invalid_gift_link || "Invalid or expired gift link",
+        invalid_gift_format: trialPageCopy?.invalid_gift_format || "Invalid gift link format",
+        trial_account_failed: trialPageCopy?.trial_account_failed || "Failed to create implicit trial account",
+        account_creation_failed: trialPageCopy?.account_creation_failed || "Account creation failed",
+        error_occurred: trialPageCopy?.error_occurred || "An error occurred",
+        guest_creation_failed: trialPageCopy?.guest_creation_failed || "Guest account creation failed",
+        unknown_error: trialPageCopy?.unknown_error || "Unknown error",
     };
 
     // Parse URL params on mount
@@ -115,7 +122,7 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                 const isValid = await validateGiftLink(publicKey);
 
                 if (!isValid) {
-                    setError("Invalid or expired gift link");
+                    setError(tr.invalid_gift_link);
                     setStep("error");
                     setIsValidating(false);
                     return;
@@ -132,7 +139,7 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                 setIsValidating(false);
             } catch (e: unknown) {
                 console.error("Error parsing gift link:", e);
-                setError("Invalid gift link format");
+                setError(tr.invalid_gift_format);
                 setStep("error");
                 setIsValidating(false);
             }
@@ -154,7 +161,7 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                 return;
             }
 
-            setError(result.error || "Failed to create implicit trial account");
+            setError(result.error || tr.trial_account_failed);
             setStep("error");
             return;
         }
@@ -194,7 +201,7 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                     await persistManagedKeyPair(accountId, userKeyPair.toString());
                 }
             } else {
-                setError("Trial account creation now requires an invite link.");
+                setError(tr.invite_required);
                 setStep("error");
                 return;
             }
@@ -204,12 +211,12 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                 setStep("success");
                 onAccountCreated?.(finalAccountId, 'trial');
             } else {
-                setError(result.error || "Account creation failed");
+                setError(result.error || tr.account_creation_failed);
                 setStep("username");
             }
         } catch (err: unknown) {
             console.error("Account creation error:", err);
-            setError(err instanceof Error ? err.message : "An error occurred");
+            setError(err instanceof Error ? err.message : tr.error_occurred);
             setStep("username");
         }
     };
@@ -226,7 +233,7 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
             onAccountCreated?.(result.accountId, 'guest');
         } catch (err: unknown) {
             console.error("Guest account creation error:", err);
-            setError(err instanceof Error ? err.message : "Guest account creation failed");
+            setError(err instanceof Error ? err.message : tr.guest_creation_failed);
             setStep("error");
         }
     };
@@ -433,7 +440,7 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                         <AlertCircle className="w-8 h-8 text-red-500" />
                     </div>
                     <h3 className="text-xl text-white font-semibold">{tr.error_title}</h3>
-                    <p className="text-gray-400">{error || "Unknown error"}</p>
+                    <p className="text-gray-400">{error || tr.unknown_error}</p>
                     <div className="space-y-2">
                         <Button
                             onClick={() => {

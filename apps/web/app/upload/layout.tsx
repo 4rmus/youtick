@@ -1,15 +1,15 @@
 import { Metadata } from 'next';
 
 export const metadata: Metadata = {
-    title: 'Upload Content',
-    description: 'Upload your video content and sell NFT tickets directly to your audience. Earn 98% revenue with instant payments on NEAR Protocol.',
+    title: 'Eserini Yayına Al',
+    description: 'Eserini YouTick üzerinde yayına al ve dijital biletle doğrudan izleyicine sun.',
     openGraph: {
-        title: 'Upload Content | YouTick',
-        description: 'Upload your video content and sell NFT tickets directly to your audience. Earn 98% revenue.',
+        title: 'Eserini Yayına Al | YouTick',
+        description: 'Eserini YouTick üzerinde yayına al ve dijital biletle doğrudan izleyicine sun.',
     },
     twitter: {
-        title: 'Upload Content | YouTick',
-        description: 'Upload your video content and sell NFT tickets directly to your audience.',
+        title: 'Eserini Yayına Al | YouTick',
+        description: 'Eserini YouTick üzerinde yayına al ve dijital biletle doğrudan izleyicine sun.',
     },
 };
 

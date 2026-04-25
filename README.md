@@ -67,10 +67,11 @@ NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 NEXT_PUBLIC_MARKET_CONTRACT_ID=youtick.near
 NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.youtick.near
 NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
-NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
 NEXT_PUBLIC_APP_URL=https://youtick.net
 NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
 ```
+
+KMS endpointleri env ile verilmez. Web app aktif operatorleri registry kontratindan okur.
 
 ---
 
@@ -83,10 +84,12 @@ NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
 - [Configuration](./docs/getting-started/configuration.md)
 - [Contract methods](./docs/api/contract-methods.md)
 - [Security](./docs/security.md)
+- [Known issues](./docs/operations/known-issues.md)
+- [Open source readiness report](./docs/open-source-readiness.md)
 - [Business (TR)](./docs/business/youtick-avrupa-sirketlesme-raporu-2026-04.md)
 
 ---
 
 ## Status
 
-Dokumanlar ve README'ler aktif KMS + Crust + NEAR mimarisine gore guncellenmistir. Eski mimari anlatimlari temizlenmistir.
+Uygulama aktif KMS + Crust + NEAR mimarisine gore calisir. Acik kaynak yayin oncesi kalan isler icin `docs/open-source-readiness.md` raporu kaynak kabul edilmelidir.

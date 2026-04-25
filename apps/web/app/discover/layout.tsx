@@ -1,15 +1,15 @@
 import { Metadata } from 'next';
 
 export const metadata: Metadata = {
-    title: 'Discover Videos',
-    description: 'Explore exclusive NFT-gated video content from independent artists. Buy tickets with NEAR and get lifetime access to premium content.',
+    title: 'Discover Works',
+    description: 'Explore films, concert recordings and special screenings from independent creators. Get access with a digital ticket.',
     openGraph: {
-        title: 'Discover Videos | YouTick',
-        description: 'Explore exclusive NFT-gated video content from independent artists on the decentralized video platform.',
+        title: 'Discover Works | YouTick',
+        description: 'Explore independent films, concert recordings and special screenings on YouTick.',
     },
     twitter: {
-        title: 'Discover Videos | YouTick',
-        description: 'Explore exclusive NFT-gated video content from independent artists.',
+        title: 'Discover Works | YouTick',
+        description: 'Explore digital-ticketed works from independent creators.',
     },
 };
 

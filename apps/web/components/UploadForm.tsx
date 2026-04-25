@@ -1,11 +1,10 @@
 'use client';
 
-import React, { useState, useReducer } from 'react';
+import React, { useState } from 'react';
 import Image from 'next/image';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { uploadToCrust } from '@/lib/crust';
 import { CidCollector } from '@/lib/crust/cid-collector';
-import type { UploadedAssetType } from '@/lib/crust/cid-collector';
 import {
     encryptBufferWithCounter,
     generateAESKey,
@@ -28,14 +27,14 @@ import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react"
+import { Loader2, Upload, AlertCircle, CheckCircle2, Film, LockKeyhole, Play, ShieldCheck, Ticket } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { NEAR_CONFIG } from '@/lib/constants';
 import { nearAmountToYocto } from '@/lib/near-amount';
 import { getNearPrice, usdToNear } from '@/lib/price';
 import type { DeliverySegmentPayload } from '@/lib/types';
 import type { PackagedDeliveryAsset } from '@/lib/video-delivery';
+import { useUpload } from '@/hooks/useUpload';
 
 // ── Upload state reducer ──
 
@@ -43,96 +42,55 @@ import type { UploadStep } from '@/lib/types';
 
 type StepStatus = UploadStep['status'];
 
-const INITIAL_STEPS: UploadStep[] = [
-    { id: 'session', label: 'Wallet & Balance', status: 'pending' },
-    { id: 'thumbnail', label: 'Cover Image', status: 'pending' },
-    { id: 'encrypt', label: 'Encrypting Video', status: 'pending' },
-    { id: 'upload', label: 'Uploading to IPFS', status: 'pending' },
-    { id: 'kms', label: 'Storing Encryption Key', status: 'pending' },
-    { id: 'mint', label: 'Minting NFT Ticket', status: 'pending' },
-    { id: 'storage', label: 'Persistent Storage Order', status: 'pending' },
-    { id: 'verify', label: 'Verifying Storage', status: 'pending' },
-];
-
 // File size limits (KMS-based flow)
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB for paid
 const MAX_FREE_FILE_SIZE = 100 * 1024 * 1024; // 100MB for free
 const STRICT_SEGMENTED_DELIVERY = true;
 
-interface UploadState {
-    uploading: boolean;
-    status: string;
-    progress: number;
-    steps: UploadStep[];
-    retryStep: 'none' | 'sign_auth';
-    verifiedStorageFee: string;
-    estimatedStorageFee: string;
-    payAmount: string;
-    storageOrderStatus: 'pending' | 'success' | 'partial' | 'failed' | null;
-}
-
-const initialUploadState: UploadState = {
-    uploading: false,
-    status: '',
-    progress: 0,
-    steps: INITIAL_STEPS,
-    retryStep: 'none',
-    verifiedStorageFee: '0',
-    estimatedStorageFee: '0',
-    payAmount: '0',
-    storageOrderStatus: null,
+const creatorStepLabels: Record<string, string> = {
+    session: 'Yayın izni hazırlanıyor',
+    thumbnail: 'Kapak hazırlanıyor',
+    encrypt: 'Güvenli erişim kuruluyor',
+    upload: 'Video hazırlanıyor',
+    kms: 'Güvenli erişim kaydediliyor',
+    mint: 'Dijital bilet oluşturuluyor',
+    storage: 'Yayın kaydediliyor',
+    verify: 'Yayın kontrol ediliyor',
 };
 
-type UploadAction =
-    | { type: 'SET_UPLOADING'; payload: boolean }
-    | { type: 'SET_STATUS'; payload: string }
-    | { type: 'SET_PROGRESS'; payload: number }
-    | { type: 'UPDATE_STEP'; payload: { id: string; status: StepStatus } }
-    | { type: 'RESET_STEPS' }
-    | { type: 'SET_RETRY_STEP'; payload: 'none' | 'sign_auth' }
-    | { type: 'SET_VERIFIED_STORAGE_FEE'; payload: string }
-    | { type: 'SET_ESTIMATED_STORAGE_FEE'; payload: string }
-    | { type: 'SET_PAY_AMOUNT'; payload: string }
-    | { type: 'SET_STORAGE_ORDER_STATUS'; payload: UploadState['storageOrderStatus'] }
-    | { type: 'RESET' };
+const getFriendlyStatus = (rawStatus: string): string => {
+    if (!rawStatus) return '';
 
-function uploadReducer(state: UploadState, action: UploadAction): UploadState {
-    switch (action.type) {
-        case 'SET_UPLOADING':
-            return { ...state, uploading: action.payload };
-        case 'SET_STATUS':
-            return { ...state, status: action.payload };
-        case 'SET_PROGRESS':
-            return { ...state, progress: action.payload };
-        case 'UPDATE_STEP':
-            return {
-                ...state,
-                steps: state.steps.map(step =>
-                    step.id === action.payload.id ? { ...step, status: action.payload.status } : step
-                ),
-            };
-        case 'RESET_STEPS':
-            return { ...state, steps: INITIAL_STEPS.map(s => ({ ...s })) };
-        case 'SET_RETRY_STEP':
-            return { ...state, retryStep: action.payload };
-        case 'SET_VERIFIED_STORAGE_FEE':
-            return { ...state, verifiedStorageFee: action.payload };
-        case 'SET_ESTIMATED_STORAGE_FEE':
-            return { ...state, estimatedStorageFee: action.payload };
-        case 'SET_PAY_AMOUNT':
-            return { ...state, payAmount: action.payload };
-        case 'SET_STORAGE_ORDER_STATUS':
-            return { ...state, storageOrderStatus: action.payload };
-        case 'RESET':
-            return initialUploadState;
-        default:
-            return state;
-    }
-}
+    const status = rawStatus.toLowerCase();
+
+    if (status.includes('please enter')) return 'Eser adı ve açıklaması gerekli.';
+    if (status.includes('title must')) return 'Eser adı en fazla 200 karakter olabilir.';
+    if (status.includes('description must')) return 'Eser açıklaması en fazla 2000 karakter olabilir.';
+    if (status.includes('price cannot be negative')) return 'Fiyat negatif olamaz.';
+    if (status.includes('price cannot exceed')) return 'Fiyat 50.000 USD değerini aşamaz.';
+    if (status.includes('could not generate thumbnail')) return 'Kapak görseli hazırlanamadı. Yine de devam edebilirsin.';
+    if (status.includes('uploading cover') || status.includes('uploading poster') || status.includes('generating thumbnail') || status.includes('cover image') || status.includes('poster image')) return 'Kapak hazırlanıyor.';
+    if (status.includes('authorizing') || status.includes('upload session') || status.includes('wallet ready') || status.includes('checking wallet')) return 'Tek kullanımlık güvenli yayın izni hazırlanıyor.';
+    if (status.includes('packaging') || status.includes('segment') || status.includes('manifest') || status.includes('delivery') || status.includes('uploading initialization') || status.includes('uploading delivery') || status.includes('uploading encrypted')) return 'Video yayına hazırlanıyor.';
+    if (status.includes('encryption') || status.includes('encrypt') || status.includes('kms') || status.includes('key') || status.includes('storing encryption')) return 'Güvenli erişim kuruluyor.';
+    if (status.includes('mint') || status.includes('blockchain') || status.includes('ticket') || status.includes('nft')) return 'Dijital bilet oluşturuluyor.';
+    if (status.includes('storage orders') || status.includes('persistent storage') || status.includes('verifying storage') || status.includes('verifying status')) return 'Yayın kaydı korunuyor.';
+    if (status.includes('storage order failed')) return 'Eser yayında; uzun süreli saklama onayı tamamlanamadı.';
+    if (status.includes('success') || status.includes('complete') || status.includes('uploaded')) return 'Eser yayına alındı. Dijital bilet hazır.';
+    if (status.includes('failed') || status.includes('error') || status.includes('cancel') || status.includes('upload failed')) return 'Yayına alma tamamlanamadı. Lütfen bağlantını ve cüzdanını kontrol edip tekrar dene.';
+
+    return rawStatus;
+};
+
+const isStatusError = (rawStatus: string): boolean => {
+    const status = rawStatus.toLowerCase();
+    return status.includes('failed') || status.includes('error') || status.includes('cancel') || status.includes('cannot');
+};
 
 export function UploadForm() {
     const { t } = useLanguage();
     const { accountId, getWallet } = useWallet();
+    const uploadLogic = useUpload();
 
     // Form fields
     const [file, setFile] = useState<File | null>(null);
@@ -144,16 +102,14 @@ export function UploadForm() {
     const [priceUsd, setPriceUsd] = useState(''); // USD amount (e.g. "5.00"), empty = free
     const [nearPrice, setNearPrice] = useState<number>(0); // NEAR/USD rate
     const [fileSizeError, setFileSizeError] = useState<string | null>(null);
-    const [publicFreeEnabled, setPublicFreeEnabled] = useState(true);
+    const [contentType, setContentType] = useState('Exclusive');
 
     // Derived NEAR price from USD input
     const priceUsdNum = parseFloat(priceUsd) || 0;
     const priceNearDerived = nearPrice > 0 ? usdToNear(priceUsdNum, nearPrice) : 0;
     // Keep 'price' as NEAR string for backward compat with CostReceipt etc.
     const price = priceUsdNum > 0 ? priceNearDerived.toFixed(6) : '0';
-    const accessMode: 'paid' | 'free_collectible' | 'public_free' = priceUsdNum > 0
-        ? 'paid'
-        : (publicFreeEnabled ? 'public_free' : 'free_collectible');
+    const accessMode: 'paid' | 'free_collectible' = priceUsdNum > 0 ? 'paid' : 'free_collectible';
 
     // Fetch NEAR/USD price on mount
     React.useEffect(() => {
@@ -175,29 +131,27 @@ export function UploadForm() {
         }
     }, [file, priceUsdNum, t]);
 
-    // Upload state (consolidated)
-    const [us, dispatch] = useReducer(uploadReducer, initialUploadState);
-
-    // Convenience aliases for template readability
-    const uploading = us.uploading;
-    const status = us.status;
-    const uploadSteps = us.steps;
-    const retryStep = us.retryStep;
-    const estimatedStorageFee = us.estimatedStorageFee;
-    const payAmount = us.payAmount;
-    const verifiedStorageFee = us.verifiedStorageFee;
+    // Upload state from hook
+    const uploading = uploadLogic.state.uploading;
+    const status = uploadLogic.state.status;
+    const uploadSteps = uploadLogic.state.steps;
+    const retryStep = uploadLogic.state.retryStep;
+    const estimatedStorageFee = uploadLogic.state.estimatedStorageFee;
+    const payAmount = uploadLogic.state.payAmount;
+    const verifiedStorageFee = uploadLogic.state.verifiedStorageFee;
+    const storageOrderStatus = uploadLogic.state.storageOrderStatus;
     const uploadStepsRef = React.useRef(uploadSteps);
 
     React.useEffect(() => {
         uploadStepsRef.current = uploadSteps;
     }, [uploadSteps]);
 
-    // Helper functions that dispatch to reducer
+    const dispatch = uploadLogic.dispatch;
+    const setStatus = (msg: string) => dispatch({ type: 'SET_STATUS', payload: msg });
+    const setUploading = (val: boolean) => dispatch({ type: 'SET_UPLOADING', payload: val });
     const updateStep = (stepId: string, stepStatus: StepStatus) => {
         dispatch({ type: 'UPDATE_STEP', payload: { id: stepId, status: stepStatus } });
     };
-    const setStatus = (msg: string) => dispatch({ type: 'SET_STATUS', payload: msg });
-    const setUploading = (val: boolean) => dispatch({ type: 'SET_UPLOADING', payload: val });
 
     const getErrorText = (error: unknown): string => {
         if (error instanceof Error) {
@@ -532,7 +486,6 @@ export function UploadForm() {
                 updateStep('thumbnail', 'complete');
             }
 
-            const isPublicFreeVideo = accessMode === 'public_free';
             const {
                 buildSegmentedEventTitle,
                 packageVideoForDelivery,
@@ -568,63 +521,45 @@ export function UploadForm() {
                 );
             }
 
-            let manifestCid: string;
             const videoUuid = crypto.randomUUID();
             const detectedDurationSeconds = Math.max(1, Math.round(packagedDeliveryAsset.durationMs / 1000));
 
-            if (isPublicFreeVideo) {
-                updateStep('encrypt', 'complete');
-                updateStep('upload', 'loading');
-                updateStep('kms', 'complete');
-                const deliveryUpload = await uploadSegmentedDeliveryAsset({
-                    packagedAsset: packagedDeliveryAsset,
-                    accountId,
-                    encrypted: false,
-                    thumbnailRef: thumbnailUrl,
-                    posterBlob: posterThumbnail,
-                    collector,
-                });
-                manifestCid = deliveryUpload.manifestCid;
+            updateStep('encrypt', 'loading');
+            setStatus('Generating encryption key...');
 
-                updateStep('upload', 'complete');
-            } else {
-                updateStep('encrypt', 'loading');
-                setStatus('Generating encryption key...');
+            const aesKeyB64 = await generateAESKey();
+            updateStep('encrypt', 'complete');
 
-                const aesKeyB64 = await generateAESKey();
-                updateStep('encrypt', 'complete');
+            updateStep('upload', 'loading');
+            setStatus('Uploading encrypted delivery segments...');
+            const deliveryUpload = await uploadSegmentedDeliveryAsset({
+                packagedAsset: packagedDeliveryAsset,
+                accountId,
+                encrypted: true,
+                aesKeyB64,
+                thumbnailRef: thumbnailUrl,
+                posterBlob: posterThumbnail,
+                collector,
+            });
+            const manifestCid = deliveryUpload.manifestCid;
 
-                updateStep('upload', 'loading');
-                setStatus('Uploading encrypted delivery segments...');
-                const deliveryUpload = await uploadSegmentedDeliveryAsset({
-                    packagedAsset: packagedDeliveryAsset,
-                    accountId,
-                    encrypted: true,
-                    aesKeyB64,
-                    thumbnailRef: thumbnailUrl,
-                    posterBlob: posterThumbnail,
-                    collector,
-                });
-                manifestCid = deliveryUpload.manifestCid;
+            updateStep('upload', 'complete');
 
-                updateStep('upload', 'complete');
+            updateStep('kms', 'loading');
+            setStatus('Storing encryption key on KMS...');
 
-                updateStep('kms', 'loading');
-                setStatus('Storing encryption key on KMS...');
-
-                await storeEncryptionKey(
-                    videoUuid,
-                    aesKeyB64,
-                    accountId,
-                    wallet
-                );
-                updateStep('kms', 'complete');
-            }
+            await storeEncryptionKey(
+                videoUuid,
+                aesKeyB64,
+                accountId,
+                wallet
+            );
+            updateStep('kms', 'complete');
 
             // 6. Mint Ticket + Create Event (BATCH - Signless!)
             let blockchainPublishSucceeded = false;
             updateStep('mint', 'loading');
-            setStatus('Minting NFT ticket on NEAR...');
+            setStatus('Dijital bilet oluşturuluyor...');
             try {
                 const eventTitle = buildSegmentedEventTitle(
                     thumbnailUrl || undefined,
@@ -663,7 +598,7 @@ export function UploadForm() {
                     access_mode: accessMode,
                 };
 
-                setStatus('Minting NFT ticket & publishing event...');
+                setStatus('Dijital bilet oluşturuluyor ve yayın kaydediliyor...');
 
                 await batchUploadActionsSignless(
                     sessionManager,
@@ -675,7 +610,7 @@ export function UploadForm() {
                 updateStep('mint', 'complete');
 
             } catch (mintError: unknown) {
-                console.error('Minting/Event failed:', mintError);
+                console.error('Digital ticket publish failed:', mintError);
                 updateStep('mint', 'error');
                 setStatus(`Video uploaded but blockchain actions failed: ${mintError instanceof Error ? mintError.message : String(mintError)}`);
             }
@@ -747,7 +682,6 @@ export function UploadForm() {
             setTitle('');
             setDescription('');
             setPriceUsd('');
-            setPublicFreeEnabled(true);
             setThumbnail(null);
             setPosterThumbnail(null);
             setThumbnailPreview(null);
@@ -778,29 +712,28 @@ export function UploadForm() {
 
     // Retry handler
     const handleRetrySign = async () => {
-        let cleanup: () => void = () => {};
-
-        try {
-            dispatch({ type: 'SET_RETRY_STEP', payload: 'none' });
-            setStatus('Retrying upload...');
-
-            const wallet = await getWallet();
-            const authorization = await authorizeUpload(wallet);
-            cleanup = authorization.cleanup;
-            await processSignatureAndUpload(
-                verifiedStorageFee,
-                wallet,
-                authorization.sessionManager,
-            );
-        } catch (error: unknown) {
-            console.error('Retry failed:', error);
-            setStatus(`Retry failed: ${getErrorText(error)}`);
-        } finally {
-            cleanup();
+        const success = await uploadLogic.handleRetrySign({
+            file: file!,
+            thumbnail,
+            posterThumbnail,
+            title,
+            description,
+            price,
+            priceUsdNum,
+            accessMode,
+            contentType,
+            estimatedStorageFee: verifiedStorageFee,
+        });
+        if (success) {
+            setFile(null);
+            setTitle('');
+            setDescription('');
+            setPriceUsd('');
+            setThumbnail(null);
+            setPosterThumbnail(null);
+            setThumbnailPreview(null);
         }
     };
-
-
 
     const handleUpload = async () => {
         if (!file || !accountId) return;
@@ -809,8 +742,6 @@ export function UploadForm() {
             setStatus('Please enter a title and description');
             return;
         }
-
-        // Input validation
         if (title.length > 200) {
             setStatus('Title must be 200 characters or less');
             return;
@@ -828,61 +759,59 @@ export function UploadForm() {
             return;
         }
 
-        setUploading(true);
-        setStatus('Checking wallet & balance...');
-        // Reset all steps to pending
-        dispatch({ type: 'RESET_STEPS' });
-        let cleanup: () => void = () => {};
+        const success = await uploadLogic.handleUpload({
+            file,
+            thumbnail,
+            posterThumbnail,
+            title,
+            description,
+            price,
+            priceUsdNum,
+            accessMode,
+            contentType,
+            estimatedStorageFee,
+        });
 
-        try {
-            const wallet = await getWallet();
-            const storageFee = estimatedStorageFee;
-            dispatch({ type: 'SET_VERIFIED_STORAGE_FEE', payload: storageFee });
-
-            updateStep('session', 'loading');
-            const authorization = await authorizeUpload(wallet);
-            cleanup = authorization.cleanup;
-
-            setStatus('Wallet ready');
-            updateStep('session', 'complete');
-
-            // --- KMS Upload (AES-CTR encryption) ---
-            await processSignatureAndUpload(
-                storageFee,
-                wallet,
-                authorization.sessionManager,
-            );
-
-        } catch (error: unknown) {
-            console.error('Upload failed:', error);
-            const msg = error
-                ? getErrorText(error)
-                : 'Transaction cancelled or wallet returned no result.';
-            setStatus(`Upload failed: ${msg}`);
-            setUploading(false);
-        } finally {
-            cleanup();
+        if (success) {
+            setFile(null);
+            setTitle('');
+            setDescription('');
+            setPriceUsd('');
+            setThumbnail(null);
+            setPosterThumbnail(null);
+            setThumbnailPreview(null);
         }
     };
 
+    const visibleStatus = getFriendlyStatus(status);
+    const statusHasError = isStatusError(status);
+    const priceLabel = priceUsdNum === 0 ? 'Ücretsiz' : `$${priceUsdNum.toFixed(2)}`;
+    const accessLabel = priceUsdNum > 0
+        ? 'Ücretli dijital bilet'
+        : 'Ücretsiz dijital bilet';
+    const ctaLabel = parseFloat(payAmount) > 0 ? 'Öde ve yayına al' : 'Yayına al';
+
     return (
-        <div className="w-full max-w-7xl mx-auto p-4 space-y-4">
+        <div className="w-full max-w-7xl mx-auto p-4 space-y-5">
             {/* Header Row: Same grid as content for alignment */}
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                 {/* Title - Same width as form (3/5) */}
-                <div className="lg:col-span-3">
-                    <h1 className="text-2xl font-bold tracking-tight">{t.upload_page.title}</h1>
-                    <p className="text-muted-foreground text-sm">{t.upload_page.description}</p>
+                <div className="lg:col-span-3 space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-400">Yaratıcı paneli</p>
+                    <h1 className="text-3xl font-bold tracking-tight text-white">Eserini Yayına Al</h1>
+                    <p className="text-muted-foreground text-sm">
+                        Videonu ekle, erişimi seç ve izleyicilerin için dijital bileti hazırla.
+                    </p>
                 </div>
                 {/* Verified Badge - Same width as preview (2/5) */}
-                <div className="lg:col-span-2 px-4 py-2 rounded-xl border flex items-center gap-3 bg-blue-500/10 border-blue-500/30">
-                    <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 bg-blue-500/20 border border-blue-500/50">
-                        <CheckCircle2 className="w-4 h-4 text-blue-400" />
+                <div className="lg:col-span-2 px-4 py-3 rounded-lg border flex items-start gap-3 bg-emerald-500/10 border-emerald-500/25">
+                    <div className="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 bg-emerald-500/15 border border-emerald-500/30">
+                        <ShieldCheck className="w-4 h-4 text-emerald-300" />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <p className="text-xs font-bold text-blue-300">Ephemeral Upload Session</p>
-                        <p className="text-[10px] text-zinc-500 truncate">
-                            Upload authorization is created per upload and stays only in memory.
+                        <p className="text-sm font-semibold text-emerald-200">Tek kullanımlık güvenli yayın izni</p>
+                        <p className="text-xs text-zinc-400">
+                            Her yayına alma için ayrı izin hazırlanır ve işlem bitince kapanır.
                         </p>
                     </div>
                 </div>
@@ -892,63 +821,143 @@ export function UploadForm() {
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-stretch">
 
                 {/* LEFT COLUMN: FORM INPUTS */}
-                <Card className="lg:col-span-3 order-2 lg:order-1">
+                <Card className="lg:col-span-3 order-2 lg:order-1 rounded-lg">
                     <CardHeader>
-                        <CardTitle>{t.upload_page.form_title}</CardTitle>
-                        <CardDescription>{t.upload_page.form_desc}</CardDescription>
+                        <CardTitle>Yayın bilgileri</CardTitle>
+                        <CardDescription>İzleyicinin keşif ekranında göreceği bilgileri gir.</CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-3">
+                    <CardContent className="space-y-5">
                         {!accountId && (
                             <Alert variant="destructive">
                                 <AlertCircle className="h-4 w-4" />
-                                <AlertTitle>Wallet Not Connected</AlertTitle>
+                                <AlertTitle>Cüzdan bağlı değil</AlertTitle>
                                 <AlertDescription>
-                                    Please connect your NEAR wallet to upload videos.
+                                    Eserini yayına almak için NEAR cüzdanını bağla.
                                 </AlertDescription>
                             </Alert>
                         )}
 
 
 
-                        <div className="space-y-2">
-                            <label htmlFor="video-title" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                {t.upload_page.video_title}
-                            </label>
-                            <Input
-                                id="video-title"
-                                type="text"
-                                placeholder={t.upload_page.video_title}
-                                value={title}
-                                onChange={(e) => setTitle(e.target.value)}
-                                disabled={uploading || !accountId}
-                                maxLength={200}
-                                aria-required="true"
-                            />
-                        </div>
+                        <section className="space-y-4 rounded-lg border border-white/10 bg-white/[0.03] p-4">
+                            <div className="flex items-center gap-2">
+                                <Film className="h-4 w-4 text-emerald-300" />
+                                <h2 className="text-sm font-semibold text-white">Eser bilgileri</h2>
+                            </div>
 
-                        <div className="space-y-2">
-                            <label htmlFor="video-description" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                {t.upload_page.video_desc}
-                            </label>
-                            <Textarea
-                                id="video-description"
-                                placeholder={t.upload_page.video_desc}
-                                value={description}
-                                onChange={(e) => setDescription(e.target.value)}
-                                disabled={uploading || !accountId}
-                                className="min-h-[60px] resize-none"
-                                maxLength={2000}
-                                aria-required="true"
-                            />
-                        </div>
+                            <div className="space-y-2">
+                                <label htmlFor="video-title" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                    Eser adı
+                                </label>
+                                <Input
+                                    id="video-title"
+                                    type="text"
+                                    placeholder="Eser adını yaz"
+                                    value={title}
+                                    onChange={(e) => setTitle(e.target.value)}
+                                    disabled={uploading || !accountId}
+                                    maxLength={200}
+                                    aria-required="true"
+                                />
+                            </div>
 
-                        {/* Price and File in same row */}
-                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <label htmlFor="video-description" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                    Eser açıklaması
+                                </label>
+                                <Textarea
+                                    id="video-description"
+                                    placeholder="İzleyiciye eserin ne anlattığını kısaca söyle"
+                                    value={description}
+                                    onChange={(e) => setDescription(e.target.value)}
+                                    disabled={uploading || !accountId}
+                                    className="min-h-[96px] resize-none"
+                                    maxLength={2000}
+                                    aria-required="true"
+                                />
+                                <div className="flex flex-wrap gap-2">
+                                    {[t.upload_page?.desc_hint1, t.upload_page?.desc_hint2, t.upload_page?.desc_hint3, t.upload_page?.desc_hint4].filter(Boolean).map((hint) => (
+                                        <button
+                                            key={hint}
+                                            type="button"
+                                            onClick={() => setDescription((prev) => prev ? prev + ' ' + hint : hint)}
+                                            className="text-[11px] text-zinc-500 bg-zinc-950/50 border border-white/10 px-2 py-1 rounded-full hover:text-zinc-300 hover:border-zinc-600 transition-colors"
+                                        >
+                                            {hint}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                <label htmlFor="content-type" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                    {t.upload_page?.content_type || 'Eser türü'}
+                                </label>
+                                <select
+                                    id="content-type"
+                                    value={contentType}
+                                    onChange={(e) => setContentType(e.target.value)}
+                                    disabled={uploading || !accountId}
+                                    className="w-full rounded-md border border-white/10 bg-zinc-950/50 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-near-green"
+                                >
+                                    <option value="Cinema">{t.upload_page?.content_type_film || 'Film'}</option>
+                                    <option value="Concert">{t.upload_page?.content_type_concert || 'Konser Kaydı'}</option>
+                                    <option value="Documentary">{t.upload_page?.content_type_documentary || 'Belgesel'}</option>
+                                    <option value="ShortFilm">{t.upload_page?.content_type_shortfilm || 'Kısa Film'}</option>
+                                    <option value="FestivalSelection">{t.upload_page?.content_type_festival || 'Festival Seçkisi'}</option>
+                                    <option value="Exclusive">{t.upload_page?.content_type_exclusive || 'Özel İçerik'}</option>
+                                </select>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <label htmlFor="video-file" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                        Dosya
+                                    </label>
+                                    <Input
+                                        id="video-file"
+                                        type="file"
+                                        accept="video/mp4,video/quicktime,.mp4,.mov"
+                                        onChange={handleFileChange}
+                                        disabled={uploading || !accountId}
+                                        className="cursor-pointer"
+                                    />
+                                    <p className="text-[11px] text-zinc-500">MP4 veya MOV dosyası seç.</p>
+                                </div>
+
+                                <div className="space-y-2 rounded-md border border-white/10 bg-zinc-950/30 p-3">
+                                    <p className="text-sm font-medium text-white">Kapak görseli</p>
+                                    <p className="text-xs text-zinc-400">
+                                        Video seçildiğinde kapak otomatik hazırlanır.
+                                    </p>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section className="space-y-4 rounded-lg border border-white/10 bg-white/[0.03] p-4">
+                            <div className="flex items-center gap-2">
+                                <Ticket className="h-4 w-4 text-sky-300" />
+                                <h2 className="text-sm font-semibold text-white">Bilet ve erişim</h2>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div className={`rounded-md border p-3 ${accessMode === 'free_collectible' ? 'border-sky-400/60 bg-sky-500/10' : 'border-white/10 bg-zinc-950/30'}`}>
+                                    <Ticket className="h-4 w-4 text-sky-300 mb-2" />
+                                    <span className="block text-sm font-medium text-white">Ücretsiz dijital bilet</span>
+                                    <span className="mt-1 block text-xs text-zinc-400">İzlemek için hesaba eklenir.</span>
+                                </div>
+                                <div className={`rounded-md border p-3 ${accessMode === 'paid' ? 'border-violet-400/60 bg-violet-500/10' : 'border-white/10 bg-zinc-950/30'}`}>
+                                    <LockKeyhole className="h-4 w-4 text-violet-300 mb-2" />
+                                    <span className="block text-sm font-medium text-white">Ücretli dijital bilet</span>
+                                    <span className="mt-1 block text-xs text-zinc-400">Fiyat girince açılır.</span>
+                                </div>
+                            </div>
+
                             <div className="space-y-2">
                                 <label htmlFor="ticket-price" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                    Price (USD)
+                                    Dijital bilet fiyatı
                                 </label>
-                                <div className="relative">
+                                <div className="relative max-w-xs">
                                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
                                     <Input
                                         id="ticket-price"
@@ -960,49 +969,16 @@ export function UploadForm() {
                                         value={priceUsd}
                                         onChange={(e) => setPriceUsd(e.target.value)}
                                         disabled={uploading || !accountId}
-                                        aria-label="Ticket price in USD"
+                                        aria-label="Dijital bilet fiyatı, USD"
                                         className="pl-7"
                                     />
                                 </div>
-                                {priceUsdNum > 0 && nearPrice > 0 && (
-                                    <p className="text-[11px] text-zinc-500">
-                                        ≈ {priceNearDerived.toFixed(2)} NEAR
-                                    </p>
-                                )}
+                                <p className="text-xs text-zinc-500">
+                                    Boş bırakırsan eser ücretsiz olur.
+                                    {priceUsdNum > 0 && nearPrice > 0 && ` Yaklaşık ${priceNearDerived.toFixed(2)} NEAR.`}
+                                </p>
                             </div>
-
-                            <div className="space-y-2">
-                                <label htmlFor="video-file" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                    {t.upload_page.file}
-                                </label>
-                                <Input
-                                    id="video-file"
-                                    type="file"
-                                    accept="video/mp4,video/quicktime,.mp4,.mov"
-                                    onChange={handleFileChange}
-                                    disabled={uploading || !accountId}
-                                    className="cursor-pointer"
-                                />
-                            </div>
-                        </div>
-
-                        {priceUsdNum === 0 && (
-                            <label className="flex items-start gap-3 rounded-xl border border-white/10 bg-zinc-900/50 px-4 py-3 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={publicFreeEnabled}
-                                    onChange={(event) => setPublicFreeEnabled(event.target.checked)}
-                                    disabled={uploading || !accountId}
-                                    className="mt-1 h-4 w-4 rounded border-zinc-600 bg-zinc-950 text-near-green"
-                                />
-                                <div className="space-y-1">
-                                    <p className="text-sm font-medium text-white">Herkes izleyebilsin</p>
-                                    <p className="text-xs text-zinc-400">
-                                        Açıkken video anonim olarak oynar. Kapalıysa video ücretsiz olur ama izlemek için önce hesaba eklenir.
-                                    </p>
-                                </div>
-                            </label>
-                        )}
+                        </section>
 
                         {file && (
                             <p className="text-xs text-muted-foreground">
@@ -1020,11 +996,11 @@ export function UploadForm() {
                         {/* Progress bar removed - step indicators provide upload feedback */}
 
                         {status && (
-                            <Alert variant={status.includes('failed') ? "destructive" : "default"}>
-                                {status.includes('failed') ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-                                <AlertTitle>{status.includes('failed') ? "Error" : "Status"}</AlertTitle>
+                            <Alert variant={statusHasError ? "destructive" : "default"}>
+                                {statusHasError ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+                                <AlertTitle>{statusHasError ? "Dikkat" : "Yayına alma durumu"}</AlertTitle>
                                 <AlertDescription>
-                                    {status}
+                                    {visibleStatus}
                                 </AlertDescription>
                             </Alert>
                         )}
@@ -1032,15 +1008,15 @@ export function UploadForm() {
                         {retryStep === 'sign_auth' && (
                             <Alert className="border-yellow-500/50 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">
                                 <AlertCircle className="h-4 w-4" />
-                                <AlertTitle>Action Required</AlertTitle>
+                                <AlertTitle>İşleme devam et</AlertTitle>
                                 <AlertDescription className="flex flex-col gap-2">
-                                    <p>The browser blocked the second signature popup.</p>
+                                    <p>Cüzdan onayı tamamlanamadı. Devam etmek için tekrar onay ver.</p>
                                     <Button
                                         onClick={handleRetrySign}
                                         variant="outline"
                                         className="w-full border-yellow-500/50 hover:bg-yellow-500/20"
                                     >
-                                        Continue Signing & Upload
+                                        Onayla ve yayına al
                                     </Button>
                                 </AlertDescription>
                             </Alert>
@@ -1053,7 +1029,7 @@ export function UploadForm() {
                         <div className="px-6 pb-2">
                             <CostReceipt
                                 storageFee={estimatedStorageFee}
-                                storageOrderStatus={us.storageOrderStatus}
+                                storageOrderStatus={storageOrderStatus}
                             />
                         </div>
                     )}
@@ -1068,12 +1044,12 @@ export function UploadForm() {
                             {uploading ? (
                                 <>
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    {t.upload_page.processing}
+                                    Yayına alınıyor
                                 </>
                             ) : (
                                 <>
                                     <Upload className="mr-2 h-4 w-4" />
-                                    {parseFloat(payAmount) > 0 ? t.upload_page.pay_and_upload : t.upload_page.upload_btn}
+                                    {ctaLabel}
                                 </>
                             )}
                         </Button>
@@ -1087,30 +1063,24 @@ export function UploadForm() {
                 <div className="lg:col-span-2 space-y-4 order-1 lg:order-2">
                     {/* Modern Ticket Preview Card */}
                     <div className="sticky top-20">
-                        <div className="relative group overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 border border-white/10 shadow-2xl shadow-black/50">
-                            {/* Decorative Corner Glow */}
-                            <div className="absolute -top-20 -right-20 w-40 h-40 bg-purple-500/20 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
-                            <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-blue-500/20 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
-
+                        <div className="relative group overflow-hidden rounded-lg bg-zinc-950 border border-white/10 shadow-xl shadow-black/40 transition-all duration-300 hover:border-white/20">
                             {/* Image Container */}
                             <div className="aspect-video relative overflow-hidden">
                                 {thumbnailPreview ? (
                                     <Image
                                         src={thumbnailPreview}
-                                        alt="Ticket Preview"
+                                        alt="Yayın önizlemesi"
                                         fill
-                                        sizes="(max-width: 1024px) 100vw, 66vw"
+                                        sizes="(max-width: 1024px) 100vw, 40vw"
                                         unoptimized
-                                        className="w-full h-full object-cover scale-105 group-hover:scale-110 transition-transform duration-700 ease-out"
+                                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                                     />
                                 ) : (
-                                    <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-zinc-800/50 to-zinc-900/50 backdrop-blur-sm">
-                                        <div className="w-16 h-16 rounded-2xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center mb-3">
-                                            <svg className="w-8 h-8 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                            </svg>
+                                    <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-900">
+                                        <div className="w-14 h-14 rounded-lg bg-zinc-800/70 border border-zinc-700/60 flex items-center justify-center mb-3">
+                                            <Film className="w-7 h-7 text-zinc-500" />
                                         </div>
-                                        <span className="text-zinc-600 text-xs font-medium">{t.upload_page.no_media}</span>
+                                        <span className="text-zinc-500 text-xs font-medium">Kapak bekleniyor</span>
                                     </div>
                                 )}
 
@@ -1120,8 +1090,8 @@ export function UploadForm() {
                                 {/* Play Button */}
                                 <div className="absolute inset-0 flex items-center justify-center">
                                     <div className="opacity-0 group-hover:opacity-100 transform scale-90 group-hover:scale-100 transition-all duration-300">
-                                        <div className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-xl border border-white/20 flex items-center justify-center shadow-2xl">
-                                            <div className="w-0 h-0 border-l-[14px] border-l-white border-y-[9px] border-y-transparent ml-1.5" />
+                                        <div className="w-12 h-12 rounded-full bg-black/45 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-2xl">
+                                            <Play className="w-5 h-5 text-white fill-current ml-0.5" />
                                         </div>
                                     </div>
                                 </div>
@@ -1133,11 +1103,7 @@ export function UploadForm() {
                                         ? 'bg-emerald-500/90 border-emerald-400/30'
                                         : 'bg-black/60 border-white/10'
                                         }`}>
-                                        {priceUsdNum === 0 ? (
-                                            <span className="text-[10px] font-bold text-white tracking-wider uppercase">✨ Free Ticket</span>
-                                        ) : (
-                                            <span className="text-[10px] font-bold text-white tracking-wider">${parseFloat(priceUsd).toFixed(2)}</span>
-                                        )}
+                                        <span className="text-[10px] font-bold text-white tracking-wider uppercase">{priceLabel}</span>
                                     </div>
                                 </div>
                             </div>
@@ -1146,12 +1112,12 @@ export function UploadForm() {
                             <div className="p-5 relative">
                                 {/* Title */}
                                 <h4 className="font-bold text-white text-lg leading-tight line-clamp-1 mb-1.5 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-white group-hover:to-purple-200 transition-all duration-300">
-                                    {title || t.upload_page.untitled}
+                                    {title || 'Başlıksız eser'}
                                 </h4>
 
                                 {/* Description */}
                                 <p className="text-sm text-zinc-400 line-clamp-2 mb-4 leading-relaxed">
-                                    {description || t.upload_page.no_desc}
+                                    {description || 'Eser açıklaması burada görünür.'}
                                 </p>
 
                                 {/* Divider with Gradient */}
@@ -1174,17 +1140,17 @@ export function UploadForm() {
                                         </div>
 
                                         <div className="flex flex-col">
-                                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Creator</span>
+                                            <span className="text-[10px] text-zinc-500 font-medium">Yaratıcı</span>
                                             <span className="text-xs text-zinc-300 font-medium truncate max-w-[120px]">
-                                                {accountId || t.upload_page.connect_wallet}
+                                                {accountId || 'Cüzdan bağla'}
                                             </span>
                                         </div>
                                     </div>
 
                                     {/* Ticket Type Indicator */}
                                     <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-                                        <div className="w-2 h-2 rounded-full bg-gradient-to-r from-purple-500 to-blue-500 animate-pulse" />
-                                        <span className="text-[10px] text-zinc-400 font-medium">NFT Ticket</span>
+                                        <div className="w-2 h-2 rounded-full bg-sky-400" />
+                                        <span className="text-[10px] text-zinc-400 font-medium">{accessLabel}</span>
                                     </div>
                                 </div>
                             </div>
@@ -1194,11 +1160,11 @@ export function UploadForm() {
                         </div>
 
                         {/* Upload Progress Steps - Vertical Layout Below Preview */}
-                        <div className="mt-4 p-5 bg-gradient-to-br from-zinc-900/90 to-zinc-950/90 rounded-2xl border border-white/[0.08] backdrop-blur-sm shadow-xl">
+                        <div className="mt-4 p-5 bg-zinc-950 rounded-lg border border-white/[0.08] shadow-lg">
                             {/* Header with step counter */}
                             <div className="flex items-center justify-between mb-5">
-                                <h3 className="text-xs font-bold tracking-wide uppercase text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
-                                    {t.upload_page.progress_title}
+                                <h3 className="text-xs font-bold tracking-wide uppercase text-zinc-300">
+                                    Yayına alma durumu
                                 </h3>
                                 {uploading && (
                                     <span className="text-[10px] font-mono text-zinc-500 tabular-nums">
@@ -1216,7 +1182,7 @@ export function UploadForm() {
                                     <div className="mb-5">
                                         <div className="h-1 w-full rounded-full bg-zinc-800 overflow-hidden">
                                             <div
-                                                className="h-full rounded-full bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-500 transition-all duration-700 ease-out"
+                                                className="h-full rounded-full bg-emerald-400 transition-all duration-700 ease-out"
                                                 style={{ width: `${pct}%` }}
                                             />
                                         </div>
@@ -1240,12 +1206,12 @@ export function UploadForm() {
                                                 {/* Filled track segment */}
                                                 {index > 0 && (
                                                     <div
-                                                        className={`absolute left-[13px] -top-1 w-[2px] h-[calc(50%+4px)] rounded-full transition-all duration-500 ${isDone || isActive || isError ? 'bg-gradient-to-b from-emerald-500 to-emerald-500/80' : 'bg-transparent'
+                                                        className={`absolute left-[13px] -top-1 w-[2px] h-[calc(50%+4px)] rounded-full transition-all duration-500 ${isDone || isActive || isError ? 'bg-emerald-500/80' : 'bg-transparent'
                                                             }`}
                                                     />
                                                 )}
 
-                                                <div className={`flex items-center gap-3 px-2 py-2.5 rounded-xl transition-all duration-300 ${isActive ? 'bg-blue-500/[0.08] border border-blue-500/20' :
+                                                <div className={`flex items-center gap-3 px-2 py-2.5 rounded-md transition-all duration-300 ${isActive ? 'bg-emerald-500/[0.08] border border-emerald-500/20' :
                                                     isError ? 'bg-red-500/[0.06] border border-red-500/15' :
                                                         'border border-transparent'
                                                     }`}>
@@ -1257,8 +1223,8 @@ export function UploadForm() {
                                                             </div>
                                                         )}
                                                         {step.status === 'loading' && (
-                                                            <div className="w-7 h-7 rounded-full bg-blue-500/20 border-2 border-blue-400 flex items-center justify-center shadow-lg shadow-blue-500/25">
-                                                                <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+                                                            <div className="w-7 h-7 rounded-full bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center">
+                                                                <Loader2 className="w-3.5 h-3.5 text-emerald-300 animate-spin" />
                                                             </div>
                                                         )}
                                                         {step.status === 'complete' && (
@@ -1276,15 +1242,15 @@ export function UploadForm() {
                                                     {/* Step content */}
                                                     <div className="flex-1 min-w-0">
                                                         <span className={`text-xs font-medium block transition-colors duration-300 ${isDone ? 'text-emerald-400' :
-                                                            isActive ? 'text-blue-300' :
+                                                            isActive ? 'text-emerald-200' :
                                                                 isError ? 'text-red-400' :
                                                                     'text-zinc-500'
                                                             }`}>
-                                                            {(t.upload_page.steps as Record<string, string>)[step.id] || step.label}
+                                                            {creatorStepLabels[step.id] || step.label}
                                                         </span>
                                                         {isActive && (
-                                                            <span className="text-[10px] text-blue-400/60 mt-0.5 block animate-pulse">
-                                                                {t.upload_page.processing}...
+                                                            <span className="text-[10px] text-emerald-300/70 mt-0.5 block">
+                                                                Hazırlanıyor
                                                             </span>
                                                         )}
                                                     </div>
@@ -1292,7 +1258,7 @@ export function UploadForm() {
                                                     {/* Status indicator */}
                                                     {isDone && (
                                                         <span className="text-[9px] font-medium text-emerald-500/60 uppercase tracking-wider flex-shrink-0">
-                                                            OK
+                                                            Hazır
                                                         </span>
                                                     )}
                                                 </div>
@@ -1308,7 +1274,7 @@ export function UploadForm() {
                                     <div className="flex items-center gap-2 text-emerald-400">
                                         <CheckCircle2 className="w-4 h-4" />
                                         <span className="text-xs font-semibold">
-                                            {status.includes('Success') ? status : 'Upload Complete!'}
+                                            Eser yayına alındı.
                                         </span>
                                     </div>
                                 </div>

@@ -23,21 +23,26 @@ const failoverProvider = new FailoverRpcProvider(
 
 // v7: viewContract helper since Account.viewFunction doesn't exist
 async function viewContract<T>(
-    provider: JsonRpcProvider | FailoverRpcProvider,
+    _provider: JsonRpcProvider | FailoverRpcProvider,
     contractId: string,
     methodName: string,
     args: Record<string, unknown> = {}
 ): Promise<T> {
-    const result = await provider.query({
-        request_type: 'call_function',
-        account_id: contractId,
-        method_name: methodName,
-        args_base64: btoa(JSON.stringify(args)),
-        finality: 'final',
-    }) as { result: number[] };
+    // Use withRpcFailover directly with JsonRpcProvider to bypass
+    // FailoverRpcProvider.withBackoff which logs console.error on every failure.
+    return withRpcFailover(async (rpcUrl) => {
+        const jp = new JsonRpcProvider({ url: rpcUrl });
+        const result = await jp.query({
+            request_type: 'call_function',
+            account_id: contractId,
+            method_name: methodName,
+            args_base64: btoa(JSON.stringify(args)),
+            finality: 'final',
+        }) as { result: number[] };
 
-    const resultStr = String.fromCharCode(...result.result);
-    return JSON.parse(resultStr) as T;
+        const resultStr = String.fromCharCode(...result.result);
+        return JSON.parse(resultStr) as T;
+    });
 }
 
 /**

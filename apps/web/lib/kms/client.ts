@@ -2,17 +2,10 @@ import type { KeyPair } from 'near-api-js';
 import { base64Decode, hexEncode } from '../crypto/codec';
 import { NEAR_CONFIG } from '../constants';
 import { BrowserKeyStore } from '../keystore-v7';
-import { getThresholdConfig, listActiveDecryptionOperatorEndpoints, listActiveDecryptionOperators, type RegistryOperatorRecord } from '../registry';
+import { getThresholdConfig, listActiveDecryptionOperators, type RegistryOperatorRecord } from '../registry';
 import { getActiveUploadSessionKey } from '../upload-session-manager';
 import type { WalletInstance } from '../types';
 import { reconstructSecretFromShares, splitSecretIntoShares, type SecretShare } from './shares';
-
-const DEFAULT_KMS_BASE_URL =
-    process.env.NEXT_PUBLIC_KMS_URL ||
-    (typeof window !== 'undefined' &&
-        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-        ? 'http://localhost:8787'
-        : '');
 
 const AUTH_CACHE_PREFIX = 'youtick:kms-auth:';
 const AUTH_CACHE_SKEW_MS = 30_000;
@@ -118,19 +111,6 @@ export class KMSError extends Error {
     }
 }
 
-async function listKmsBaseUrls(): Promise<string[]> {
-    const urls = DEFAULT_KMS_BASE_URL ? [DEFAULT_KMS_BASE_URL] : [];
-
-    try {
-        const registryUrls = await listActiveDecryptionOperatorEndpoints();
-        urls.push(...registryUrls);
-    } catch (error) {
-        console.warn('[KMS] Error fetching operator endpoints from registry:', error);
-    }
-
-    return sortUrlsByKmsPreference(Array.from(new Set(urls.filter(Boolean))));
-}
-
 async function ensureKmsConfigMatchesApp(baseUrl: string): Promise<void> {
     if (typeof window === 'undefined') {
         return;
@@ -181,7 +161,7 @@ async function ensureKmsConfigMatchesApp(baseUrl: string): Promise<void> {
         if (networkMismatch || contractMismatch) {
             throw new KMSError(
                 'CONFIG_MISMATCH',
-                `KMS is using ${healthContract} on ${healthNetwork}, but the app is using ${NEAR_CONFIG.contractId} on ${NEAR_CONFIG.networkId}. Update NEXT_PUBLIC_KMS_URL or redeploy the worker with the matching NEAR_CONTRACT_ID.`,
+                `KMS is using ${healthContract} on ${healthNetwork}, but the app is using ${NEAR_CONFIG.contractId} on ${NEAR_CONFIG.networkId}. Update the operator registry or redeploy the worker with the matching NEAR_CONTRACT_ID.`,
             );
         }
 
@@ -475,11 +455,15 @@ async function tryLocalSignedKmsRequest<T>(
     }
 
     const timestamp = Date.now();
+    const nonce = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     const payload = JSON.stringify({
         action: endpoint,
         videoId,
         accountId,
         timestamp,
+        nonce,
     });
 
     const signature = await keyPair.sign(new TextEncoder().encode(payload));
@@ -495,6 +479,7 @@ async function tryLocalSignedKmsRequest<T>(
             timestamp,
             signature: hexEncode(signature.signature),
             publicKey: keyPair.getPublicKey().toString(),
+            nonce,
         }),
     });
 

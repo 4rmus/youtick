@@ -798,6 +798,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                                 onPurchaseSuccess={() => {
                                     setPurchased(true);
                                     refetchOwnership();
+                                    handlePlay();
                                 }}
                                 className="w-full max-w-sm"
                             />

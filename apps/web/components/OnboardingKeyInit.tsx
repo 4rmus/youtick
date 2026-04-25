@@ -1,59 +1,149 @@
 'use client';
 
 import { useEffect } from 'react';
-import { NEAR_CONFIG } from '@/lib/constants';
+import { NEAR_CONFIG, APP_CONFIG } from '@/lib/constants';
 import { isYoctoAmountBelowNear } from '@/lib/near-amount';
 import { getCurrentRpcUrl } from '@/lib/rpc-failover';
 
 /**
  * Validates any manually provisioned onboarding key and monitors trial pool health.
+ * Uses sessionStorage instead of localStorage to reduce persistence risk.
  */
+const isDev = process.env.NODE_ENV === 'development';
+
 export function OnboardingKeyInit() {
     useEffect(() => {
         const storageKey = `onboarding_key:${NEAR_CONFIG.contractId}`;
-        const existingKey = localStorage.getItem(storageKey);
+        const existingKey = sessionStorage.getItem(storageKey);
 
-        // Fetch onboarding key from server-side endpoint instead of baking it into
-        // the client bundle via NEXT_PUBLIC_. This prevents the key from leaking
-        // in static JS or View Source.
-        if (!existingKey) {
-            fetch('/api/onboarding-key')
-                .then((r) => (r.ok ? r.json() : null))
-                .then((data) => {
-                    if (data?.key) {
-                        localStorage.setItem(storageKey, data.key);
-                        console.log('[ONBOARDING_KEY] Bootstrapped onboarding key from secure endpoint');
+        async function bootstrap() {
+            let turnstileToken: string | null = null;
+
+            if (APP_CONFIG.turnstileSiteKey) {
+                turnstileToken = await getTurnstileToken(APP_CONFIG.turnstileSiteKey);
+            }
+
+            const url = turnstileToken
+                ? `/api/onboarding-key?turnstileToken=${encodeURIComponent(turnstileToken)}`
+                : '/api/onboarding-key';
+
+            try {
+                const res = await fetch(url);
+                if (!res.ok) {
+                    if (process.env.NODE_ENV !== 'development') {
+                        console.warn('[ONBOARDING_KEY] Endpoint returned', res.status);
                     }
-                })
-                .catch(() => {
-                    // Non-blocking: if the endpoint is unavailable the app still works
-                    // for users who already have a key or use wallet-based flows.
-                });
+                    return;
+                }
+                const data = await res.json();
+                if (data?.key) {
+                    sessionStorage.setItem(storageKey, data.key);
+                    console.log(
+                        '[ONBOARDING_KEY] Bootstrapped onboarding key from secure endpoint'
+                    );
+                }
+            } catch {
+                // Non-blocking: if the endpoint is unavailable the app still works
+                // for users who already have a key or use wallet-based flows.
+            }
+        }
+
+        if (!existingKey && !isDev) {
+            bootstrap();
         }
 
         // Re-read after potential bootstrap so validation covers the new key
-        const activeKey = localStorage.getItem(storageKey);
+        const activeKey = sessionStorage.getItem(storageKey);
 
-        if (activeKey) {
+        if (activeKey && !isDev) {
             // Validate key is still usable (non-blocking)
             validateOnboardingKey(activeKey).catch(() => {});
         }
 
-        // Non-blocking: monitor trial pool health
-        monitorTrialPool().catch(() => {});
+        // Non-blocking: monitor trial pool health (skip in dev to reduce noise)
+        if (!isDev) {
+            monitorTrialPool().catch(() => {});
+        }
     }, []);
 
     return null;
 }
 
+/** Dynamically load Turnstile script and render an invisible challenge */
+function getTurnstileToken(siteKey: string): Promise<string | null> {
+    return new Promise((resolve) => {
+        if (typeof window === 'undefined') {
+            resolve(null);
+            return;
+        }
+
+        const w = window as unknown as {
+            turnstile?: {
+                render: (selector: string, opts: Record<string, unknown>) => string;
+                remove: (widgetId: string) => void;
+            };
+        };
+
+        function render() {
+            if (!w.turnstile) {
+                resolve(null);
+                return;
+            }
+
+            const containerId = 'turnstile-onboarding-' + Math.random().toString(36).slice(2);
+            const container = document.createElement('div');
+            container.id = containerId;
+            container.style.position = 'absolute';
+            container.style.visibility = 'hidden';
+            container.style.width = '0';
+            container.style.height = '0';
+            document.body.appendChild(container);
+
+            const widgetId = w.turnstile.render(`#${containerId}`, {
+                sitekey: siteKey,
+                size: 'invisible',
+                callback: (token: string) => {
+                    w.turnstile?.remove(widgetId);
+                    container.remove();
+                    resolve(token);
+                },
+                'error-callback': () => {
+                    w.turnstile?.remove(widgetId);
+                    container.remove();
+                    resolve(null);
+                },
+                'expired-callback': () => {
+                    w.turnstile?.remove(widgetId);
+                    container.remove();
+                    resolve(null);
+                },
+            });
+        }
+
+        if (!w.turnstile) {
+            const script = document.createElement('script');
+            script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+            script.async = true;
+            script.defer = true;
+            script.onload = render;
+            script.onerror = () => resolve(null);
+            document.head.appendChild(script);
+        } else {
+            render();
+        }
+    });
+}
+
 /**
  * Validate that the onboarding key is still a valid access key on the contract.
- * If invalid, remove from localStorage so gift-service doesn't use a stale key.
+ * If invalid, remove from sessionStorage so gift-service doesn't use a stale key.
  */
 async function validateOnboardingKey(secretKey: string): Promise<void> {
     try {
         const { KeyPair } = await import('near-api-js');
-        const keyPair = KeyPair.fromString(secretKey as import('near-api-js').KeyPairString);
+        const keyPair = KeyPair.fromString(
+            secretKey as import('near-api-js').KeyPairString
+        );
         const publicKey = keyPair.getPublicKey().toString();
 
         const rpcUrl = getCurrentRpcUrl();
@@ -78,8 +168,10 @@ async function validateOnboardingKey(secretKey: string): Promise<void> {
         const data = await response.json();
 
         if (data.error) {
-            console.warn('[ONBOARDING_KEY] Key no longer valid on contract, removing from localStorage');
-            localStorage.removeItem(`onboarding_key:${contractId}`);
+            console.warn(
+                '[ONBOARDING_KEY] Key no longer valid on contract, removing from sessionStorage'
+            );
+            sessionStorage.removeItem(`onboarding_key:${contractId}`);
             console.log('[DECENTRALIZATION_METRIC] onboarding_key_invalid');
         } else {
             console.log('[DECENTRALIZATION_METRIC] onboarding_key_valid');
@@ -116,9 +208,7 @@ async function monitorTrialPool(): Promise<void> {
         });
         const data = await response.json();
         if (data.error || !data.result?.result) return null;
-        return JSON.parse(
-            new TextDecoder().decode(new Uint8Array(data.result.result))
-        );
+        return JSON.parse(new TextDecoder().decode(new Uint8Array(data.result.result)));
     };
 
     const [poolBalanceRaw, dailyCount] = await Promise.all([
@@ -130,9 +220,13 @@ async function monitorTrialPool(): Promise<void> {
     const count = typeof dailyCount === 'number' ? dailyCount : 0;
 
     if (isYoctoAmountBelowNear(poolYocto, '1')) {
-        console.warn('[ONBOARDING_MONITOR] WARNING: Trial pool balance < 1 NEAR — new trials may fail');
+        console.warn(
+            '[ONBOARDING_MONITOR] WARNING: Trial pool balance < 1 NEAR — new trials may fail'
+        );
     }
     if (count > 80) {
-        console.warn(`[ONBOARDING_MONITOR] WARNING: Daily trial count ${count}/100 — approaching limit`);
+        console.warn(
+            `[ONBOARDING_MONITOR] WARNING: Daily trial count ${count}/100 — approaching limit`
+        );
     }
 }

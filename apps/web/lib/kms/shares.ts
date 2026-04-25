@@ -84,7 +84,11 @@ export function splitSecretIntoShares(
     for (let byteIndex = 0; byteIndex < secretBytes.length; byteIndex += 1) {
         const coefficients = [secretBytes[byteIndex]];
         for (let i = 1; i < requiredShares; i += 1) {
-            coefficients.push(randomByte());
+            let coeff;
+            do {
+                coeff = randomByte();
+            } while (coeff === 0);
+            coefficients.push(coeff);
         }
 
         for (let shareIndex = 0; shareIndex < totalShares; shareIndex += 1) {

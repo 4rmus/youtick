@@ -99,7 +99,7 @@ Legacy trial flows still exist in the product surface, but the relayer route is 
 
 ## Operational Checklist
 
-- Is `NEXT_PUBLIC_KMS_URL` correct for the current environment?
+- Are KMS endpoints coming only from the operator registry?
 - Does the KMS worker point to the right market, access, and registry contracts?
 - Does the worker fail health if `REGISTRY_OPERATOR_ACCOUNT_ID` or `OPERATOR_SHARE_SECRET` is missing?
 - Are the required operators active in the registry?

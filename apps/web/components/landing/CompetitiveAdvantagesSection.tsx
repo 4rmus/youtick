@@ -1,61 +1,71 @@
 import { memo } from 'react';
-import { Package, Shield, HardDrive, Coins, Globe, Server, Gift, UserPlus, Fingerprint } from 'lucide-react';
+import { Database, KeyRound, Lock, Server, ShieldCheck } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { COLORS, ANIMATION } from '@/lib/constants';
-
-const advantages = [
-    { icon: Package, titleKey: 'end_to_end', descKey: 'end_to_end_desc', color: 'text-purple-400' },
-    { icon: Shield, titleKey: 'global_access', descKey: 'global_access_desc', color: 'text-pink-400' },
-    { icon: HardDrive, titleKey: 'hybrid', descKey: 'hybrid_desc', color: 'text-blue-400' },
-    { icon: Coins, titleKey: 'creator_first', descKey: 'creator_first_desc', color: 'text-emerald-400' },
-    { icon: Globe, titleKey: 'near_ecosystem', descKey: 'near_ecosystem_desc', color: 'text-orange-400' },
-    { icon: Server, titleKey: 'decentralization', descKey: 'decentralization_desc', color: 'text-red-400' },
-    { icon: Gift, titleKey: 'gift_tickets', descKey: 'gift_tickets_desc', color: 'text-cyan-400' },
-    { icon: UserPlus, titleKey: 'trial_accounts', descKey: 'trial_accounts_desc', color: 'text-violet-400' },
-    { icon: Fingerprint, titleKey: 'session_keys', descKey: 'session_keys_desc', color: 'text-yellow-400' },
-] as const;
 
 export const CompetitiveAdvantagesSection = memo(() => {
-    const { t } = useLanguage();
+  const { t } = useLanguage();
+  const s = t.landing.competitive_advantages_section;
 
-    return (
-        <section id="features" className="py-32 bg-black relative">
+  const trustItems = [
+    { icon: Lock, title: s.ticket_title, text: s.ticket_desc },
+    { icon: KeyRound, title: s.keys_title, text: s.keys_desc },
+    { icon: Database, title: s.storage_title, text: s.storage_desc },
+    { icon: Server, title: s.records_title, text: s.records_desc },
+  ];
 
+  const techLabels = [
+    { key: 'near', label: s.near_label },
+    { key: 'ipfs', label: s.ipfs_label },
+    { key: 'crust', label: s.crust_label },
+    { key: 'kms', label: s.kms_label },
+  ];
 
-            <div className="container mx-auto px-4">
-                {/* Header */}
-                <div className="max-w-3xl mx-auto text-center mb-20">
-                    <h2 className="text-4xl md:text-5xl font-black mb-6">
-                        <span className="text-white">{t.landing.competitive_advantages.title}</span>
-                    </h2>
-                    <p className="text-zinc-400 text-lg">
-                        {t.landing.competitive_advantages.subtitle}
-                    </p>
-                </div>
+  return (
+    <section id="trust" className="border-y border-white/5 bg-zinc-950 py-24">
+      <div className="container mx-auto px-4">
+        <div className="mb-12 grid gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-end">
+          <div>
+            <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-near-green">
+              {s.eyebrow}
+            </p>
+            <h2 className="text-3xl font-black text-white md:text-5xl">
+              {s.title}
+            </h2>
+          </div>
+          <p className="text-lg leading-relaxed text-zinc-400">
+            {s.description}
+          </p>
+        </div>
 
-                {/* Advantages Grid */}
-                <div className="max-w-6xl mx-auto grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {advantages.map(({ icon: Icon, titleKey, descKey, color }) => (
-                        <div
-                            key={titleKey}
-                            className={`p-8 rounded-2xl ${COLORS.background.card} border ${COLORS.border.default} hover:border-white/20 ${ANIMATION.transition.default} group`}
-                        >
-                            <div className={`w-14 h-14 mb-6 bg-white/5 rounded-xl flex items-center justify-center group-hover:bg-white/10 ${ANIMATION.transition.colors}`}>
-                                <Icon className={`w-7 h-7 ${color}`} />
-                            </div>
-                            <h3 className="text-xl font-bold text-white mb-3">
-                                {t.landing.competitive_advantages[titleKey as keyof typeof t.landing.competitive_advantages]}
-                            </h3>
-                            <p className="text-zinc-500 leading-relaxed">
-                                {t.landing.competitive_advantages[descKey as keyof typeof t.landing.competitive_advantages]}
-                            </p>
-                        </div>
-                    ))}
-                </div>
-            </div>
+        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+          {trustItems.map(({ icon: Icon, title, text }) => (
+            <article
+              key={title}
+              className="rounded-lg border border-white/10 bg-black p-6 transition-colors hover:border-near-green/40"
+            >
+              <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg bg-near-green/10">
+                <Icon className="h-5 w-5 text-near-green" />
+              </div>
+              <h3 className="mb-3 text-lg font-bold text-white">{title}</h3>
+              <p className="text-sm leading-relaxed text-zinc-400">{text}</p>
+            </article>
+          ))}
+        </div>
 
-        </section>
-    );
+        <div className="mt-8 flex flex-wrap gap-3 text-sm text-zinc-400">
+          {techLabels.map(({ key, label }) => (
+            <span
+              key={key}
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black px-4 py-2"
+            >
+              <ShieldCheck className="h-4 w-4 text-near-green" />
+              {label}
+            </span>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
 });
 
 CompetitiveAdvantagesSection.displayName = 'CompetitiveAdvantagesSection';

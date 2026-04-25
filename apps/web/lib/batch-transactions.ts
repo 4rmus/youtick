@@ -41,6 +41,7 @@ export async function batchUploadActionsSignless(
         price: string;
         price_usd?: number | null;
         access_mode?: 'paid' | 'free_collectible' | 'public_free';
+        content_type?: string;
     }
 ) {
     const mintResult = await sessionManager.callMethod('nft_mint_prepaid', videoMetadata);
@@ -61,6 +62,7 @@ export async function batchUploadActionsSignless(
             price: eventMetadata.price,
             price_usd: eventMetadata.price_usd ?? null,
             access_mode: eventMetadata.access_mode ?? null,
+            content_type: eventMetadata.content_type ?? null,
         });
     } catch (error) {
         throw new BatchPublishError(

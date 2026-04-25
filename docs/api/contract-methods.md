@@ -40,49 +40,44 @@ This contract is the market, content, and entitlement source of truth.
 |--------|---------|
 | `new` | Initializes the contract with an owner |
 | `migrate` | V10 state migration (removes deprecated Nova fields) |
-| `reset_v11` | Complete state reset with new StorageKey prefixes |
+| `reset_v11` | Migration-only state reset; excluded from normal production builds |
 
 ### Change Methods
 
 | Method | Purpose |
 |--------|---------|
-| `web4_set_static_url` | Sets the Web4 static asset URL |
-| `set_next_token_id` | Admin override for token ID counter |
-| `ban_event` | Bans an event by encrypted CID |
-| `unban_event` | Unbans an event |
-| `admin_remove_events` | Removes multiple events and their metadata |
-| `pause` | Pauses the contract (owner-only emergency stop) |
-| `unpause` | Resumes the contract (owner-only) |
+| `web4_set_static_url` | Timelock-only Web4 static asset URL update |
+| `set_next_token_id` | Timelock-only admin override for token ID counter |
+| `ban_event` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `unban_event` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `admin_remove_events` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `pause` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `unpause` | Direct calls rejected; use `propose_action` + `execute_action` |
 | `propose_action` | Timelock: proposes a sensitive action |
 | `execute_action` | Timelock: executes a proposed action after delay |
 | `cancel_action` | Timelock: cancels a proposed action |
-| `add_onboarding_key` | Adds a trial onboarding public key |
-| `remove_onboarding_key` | Removes an onboarding public key |
-| `set_onboarding_config` | Sets daily trial limit and enabled flag |
+| `propose_owner` | Starts two-step ownership transfer |
+| `accept_ownership` | Proposed owner accepts ownership transfer |
+| `add_onboarding_key` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `remove_onboarding_key` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `set_onboarding_config` | Direct calls rejected; use `propose_action` + `execute_action` |
 | `create_trial_invite_drop` | Creates trial-invite access keys |
-| `add_trial_relayer` | Whitelists a trial relayer account |
-| `remove_trial_relayer` | Removes a trial relayer |
 | `create_event` | Publishes a new ticketed video event |
-| `create_event_prepaid` | Creates an event using a prepaid deposit |
+| `create_event_prepaid` | Creates an event through the upload-session publish path |
 | `create_upload_session` | Creates an upload session with access key |
 | `revoke_upload_session` | Revokes an upload session |
 | `buy_ticket` | Purchases a ticket (free or paid) |
 | `buy_ticket_internal` | Internal purchase flow used by callbacks |
 | `nft_mint` | Direct NFT mint with attached deposit |
 | `ft_on_transfer` | Fungible-token callback for wNEAR purchases |
-| `nft_mint_prepaid` | Mints using a prepaid creator deposit |
+| `nft_mint_prepaid` | Mints through the upload-session publish path |
 | `fund_trial_pool` | Adds NEAR to the trial sponsorship pool |
-| `withdraw_trial_pool` | Withdraws from the trial pool (owner) |
+| `withdraw_trial_pool` | Direct calls rejected; use `propose_action` + `execute_action` |
 | `claim_trial_invite_with_implicit_account` | Claims trial and creates implicit account |
 | `create_sponsored_trial_direct` | Direct trial creation with account creation |
 | `claim_free_ticket_direct` | Claims a free ticket with optional account creation |
-| `grant_free_access_direct` | Grants free trial access to an existing account |
-| `revoke_trial_access` | Revokes trial access for an account |
-| `create_sponsored_trial` | Sponsored trial with gas sponsorship (deprecated) |
-| `sponsor_implicit_guest` | Sponsors gas for implicit guest account (deprecated) |
 | `sponsor_implicit_guest_direct` | Direct gas sponsorship without relayer callback |
-| `withdraw_commission` | Withdraws commission pool balance (owner) |
-| `claim_free_ticket_sponsored` | Sponsored free-ticket claim with account creation (deprecated) |
+| `withdraw_commission` | Direct calls rejected; use `propose_action` + `execute_action` |
 | `gift_ticket` | Creator gifts a ticket to a receiver |
 | `create_gift_drop` | Creates access-key based gift drops |
 | `claim_gift` | Claims a gift drop to an existing account |
@@ -97,7 +92,6 @@ This contract is the market, content, and entitlement source of truth.
 | `web4_get_static_url` | Returns the configured Web4 static URL |
 | `is_event_banned` | Checks if an event is banned |
 | `get_banned_events` | Lists all banned events |
-| `is_trial_relayer` | Checks if an account is a trial relayer |
 | `is_onboarding_key` | Checks if a public key is an onboarding key |
 | `get_onboarding_config` | Returns trial onboarding configuration |
 | `is_trial_invite_valid` | Checks if a trial invite key is still valid |
@@ -117,13 +111,14 @@ This contract is the market, content, and entitlement source of truth.
 | `get_purchase_count` | Returns total number of purchases |
 | `get_next_token_id` | Returns the next token ID to be minted |
 | `get_timelock` | Returns the timelock status for a proposed action |
+| `get_owner` | Returns the current contract owner |
+| `get_pending_owner` | Returns the pending owner, if any |
 | `is_gift_valid` | Checks if a gift access key is still valid |
 | `get_gift_info` | Returns minimal gift info by public key |
 | `get_gift_info_full` | Returns full gift drop details |
 | `get_storage_type` | Returns the storage type for a token |
 | `get_videos` | Returns all videos owned by an account |
 | `has_ticket` | Checks if an account has a ticket for an event |
-| `check_trial_access` | Checks if an account has trial access for an event |
 | `get_trial_pool_balance` | Returns the trial pool balance |
 | `get_commission_pool` | Returns the commission pool balance |
 
@@ -220,9 +215,12 @@ The following methods are deprecated or removed and should not be used for new i
 
 | Method | Status |
 |--------|--------|
-| `create_sponsored_trial` | Deprecated relayer-based trial flow |
-| `claim_free_ticket_sponsored` | Deprecated relayer-based free ticket flow |
-| `sponsor_implicit_guest` | Deprecated relayer-based gas sponsorship |
+| `create_sponsored_trial` | Removed relayer-based trial flow |
+| `claim_free_ticket_sponsored` | Removed relayer-based free ticket flow |
+| `sponsor_implicit_guest` | Removed relayer-based gas sponsorship |
+| `add_trial_relayer` | Removed relayer allowlist mutation |
+| `remove_trial_relayer` | Removed relayer allowlist mutation |
+| `is_trial_relayer` | Removed relayer allowlist view |
 
 ---
 
@@ -235,7 +233,6 @@ The following methods are deprecated or removed and should not be used for new i
 | `ClaimGift` | 5 minutes | drop |
 | `ClaimTrial` | 5 minutes | invite |
 
-Relayer and operator rules:
+Operator rules:
 
-- Relayers only sponsor gas and do not become the authority source
 - Operators must not return shares without both `verify_session_grant` and `has_ticket`

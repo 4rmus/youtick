@@ -39,11 +39,8 @@ NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.youtick.near
 NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
 ```
 
-Local KMS worker ile calisacaksan su satiri da ekle:
-
-```txt
-NEXT_PUBLIC_KMS_URL=http://localhost:8787
-```
+KMS endpointleri env dosyasina eklenmez. Web app aktif KMS operatorlerini
+`NEXT_PUBLIC_REGISTRY_CONTRACT_ID` ile baglandigi registry kontratindan okur.
 
 ## 3. Uygulamayi baslat
 
@@ -76,7 +73,7 @@ npm install
 npx wrangler dev
 ```
 
-Sonra web uygulamasinda `NEXT_PUBLIC_KMS_URL=http://localhost:8787` kullan.
+Sonra local worker endpointini test registry kontratina operator olarak kaydet.
 
 ---
 
@@ -96,7 +93,7 @@ Uygulama acildiginda sunlari kontrol et:
 | Sorun | Kontrol et |
 |-------|------------|
 | Uygulama contract'a baglanmiyor | `NEXT_PUBLIC_NEAR_NETWORK` ve `NEXT_PUBLIC_NFT_CONTRACT_ID` |
-| Video acilmiyor | `NEXT_PUBLIC_KMS_URL` ve worker loglari |
+| Video acilmiyor | Registry operator kaydi ve worker loglari |
 | Hediye linki yanlis domaine gidiyor | `NEXT_PUBLIC_APP_URL` |
 | Cross-chain odeme secenekleri bos | `NEXT_PUBLIC_ONE_CLICK_API_TOKEN` |
 

@@ -45,7 +45,6 @@ NEXT_PUBLIC_NFT_CONTRACT_ID=dev-1773607954211-252231.v2-0.utick.testnet
 NEXT_PUBLIC_MARKET_CONTRACT_ID=dev-1773607954211-252231.v2-0.utick.testnet
 NEXT_PUBLIC_ACCESS_CONTRACT_ID=access-1773606802388.v2-0.utick.testnet
 NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry-1773606802388.v2-0.utick.testnet
-NEXT_PUBLIC_KMS_URL=http://localhost:8787
 ```
 
 See full variable list in [Configuration Reference](./getting-started/configuration.md).
@@ -91,12 +90,12 @@ cargo test
 ### Wallet/session key issues
 
 - Reconnect wallet and re-create session key.
-- Ensure prepaid balance is sufficient for signless operations.
+- Upload session yetkisini yeniden olustur.
 
 ### KMS connection issues
 
-- Confirm `NEXT_PUBLIC_KMS_URL` is reachable.
-- If using local worker, ensure Wrangler dev server is running.
+- Confirm active KMS operators are registered in `NEXT_PUBLIC_REGISTRY_CONTRACT_ID`.
+- If using local worker, register that worker endpoint in the test registry and ensure Wrangler dev server is running.
 
 ### IPFS playback issues
 

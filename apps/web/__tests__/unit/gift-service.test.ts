@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { setMockLocalStorage, clearMockLocalStorage } from '../setup';
+import { setMockSessionStorage, clearMockSessionStorage } from '../setup';
 
 // Import the functions to test
 import {
@@ -19,14 +19,12 @@ import {
   validateGiftLink,
   createSponsoredTrialDirect,
   claimFreeTicketDirect,
-  grantFreeAccessDirect,
-  createSponsoredTrialRelayer,
   createSponsoredTrial
 } from '@/lib/gift-service';
 
 describe('Gift Service', () => {
   beforeEach(() => {
-    clearMockLocalStorage();
+    clearMockSessionStorage();
     vi.clearAllMocks();
   });
 
@@ -115,14 +113,14 @@ describe('Gift Service', () => {
     describe('hasOnboardingKey', () => {
       it('should return false when no key stored', () => {
         // Clear any existing data
-        vi.mocked(localStorage.getItem).mockReturnValue(null);
+        vi.mocked(sessionStorage.getItem).mockReturnValue(null);
         const result = hasOnboardingKey();
         expect(result).toBe(false);
       });
 
       it('should return true when key is stored', () => {
-        // Mock localStorage.getItem to return a key
-        vi.mocked(localStorage.getItem).mockImplementation((key: string) => {
+        // Mock sessionStorage.getItem to return a key
+        vi.mocked(sessionStorage.getItem).mockImplementation((key: string) => {
           if (key === 'onboarding_key:test-contract.testnet') {
             return 'ed25519:secretkey';
           }
@@ -135,14 +133,14 @@ describe('Gift Service', () => {
 
     describe('getOnboardingKey', () => {
       it('should return null when no key stored', () => {
-        vi.mocked(localStorage.getItem).mockReturnValue(null);
+        vi.mocked(sessionStorage.getItem).mockReturnValue(null);
         const result = getOnboardingKey();
         expect(result).toBeNull();
       });
 
       it('should return stored key', () => {
         const secretKey = 'ed25519:testsecretkey123';
-        vi.mocked(localStorage.getItem).mockImplementation((key: string) => {
+        vi.mocked(sessionStorage.getItem).mockImplementation((key: string) => {
           if (key === 'onboarding_key:test-contract.testnet') {
             return secretKey;
           }
@@ -155,11 +153,11 @@ describe('Gift Service', () => {
     });
 
     describe('setOnboardingKey', () => {
-      it('should call localStorage.setItem with correct key', () => {
+      it('should call sessionStorage.setItem with correct key', () => {
         const secretKey = 'ed25519:newsecretkey456';
         setOnboardingKey(secretKey);
 
-        expect(localStorage.setItem).toHaveBeenCalledWith(
+        expect(sessionStorage.setItem).toHaveBeenCalledWith(
           'onboarding_key:test-contract.testnet',
           secretKey
         );
@@ -232,7 +230,7 @@ describe('Gift Service', () => {
 
   describe('createSponsoredTrialDirect', () => {
     it('should fail when onboarding key is missing', async () => {
-      clearMockLocalStorage();
+      clearMockSessionStorage();
 
       const result = await createSponsoredTrialDirect('testuser');
 
@@ -242,7 +240,7 @@ describe('Gift Service', () => {
 
     it('should create trial account when onboarding key is valid', async () => {
       const onboardingKey = generateKeyPairs(1)[0].secretKey;
-      setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
+      setMockSessionStorage('onboarding_key:test-contract.testnet', onboardingKey);
 
       const originalFetch = global.fetch;
       global.fetch = vi.fn().mockResolvedValue({
@@ -265,7 +263,7 @@ describe('Gift Service', () => {
 
   describe('claimFreeTicketDirect', () => {
     it('should fail when onboarding key is missing', async () => {
-      clearMockLocalStorage();
+      clearMockSessionStorage();
       const result = await claimFreeTicketDirect('alice.testnet', 'cid-123');
       expect(result.success).toBe(false);
       expect(result.error).toContain('Onboarding key unavailable');
@@ -273,7 +271,7 @@ describe('Gift Service', () => {
 
     it('should claim free ticket when onboarding key is valid', async () => {
       const onboardingKey = generateKeyPairs(1)[0].secretKey;
-      setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
+      setMockSessionStorage('onboarding_key:test-contract.testnet', onboardingKey);
 
       const originalFetch = global.fetch;
       global.fetch = vi.fn().mockResolvedValue({
@@ -292,87 +290,9 @@ describe('Gift Service', () => {
     });
   });
 
-  describe('grantFreeAccessDirect', () => {
-    it('should fail when onboarding key is missing', async () => {
-      clearMockLocalStorage();
-      const result = await grantFreeAccessDirect('alice.testnet', 'cid-123');
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Onboarding key unavailable');
-    });
-
-    it('should grant free access when onboarding key is valid', async () => {
-      const onboardingKey = generateKeyPairs(1)[0].secretKey;
-      setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
-
-      const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          result: {
-            result: Array.from(Buffer.from('true'))
-          }
-        })
-      });
-
-      const result = await grantFreeAccessDirect('alice.testnet', 'cid-123');
-      expect(result.success).toBe(true);
-
-      global.fetch = originalFetch;
-    });
-  });
-
-  describe('createSponsoredTrialRelayer', () => {
-    it('should call relayer API successfully', async () => {
-      const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          account_id: 'alice.test-contract.testnet'
-        })
-      });
-
-      const result = await createSponsoredTrialRelayer('alice');
-
-      expect(result.success).toBe(true);
-      expect(result.accountId).toBe('alice.test-contract.testnet');
-      expect(result.secretKey).toBeDefined();
-
-      global.fetch = originalFetch;
-    });
-
-    it('should handle relayer API error', async () => {
-      const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: false,
-        json: async () => ({
-          error: 'Rate limit exceeded'
-        })
-      });
-
-      const result = await createSponsoredTrialRelayer('bob');
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('Rate limit exceeded');
-
-      global.fetch = originalFetch;
-    });
-
-    it('should handle network error', async () => {
-      const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
-
-      const result = await createSponsoredTrialRelayer('charlie');
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Network error');
-
-      global.fetch = originalFetch;
-    });
-  });
-
   describe('createSponsoredTrial', () => {
     it('should return failure when onboarding key is missing', async () => {
-      vi.mocked(localStorage.getItem).mockReturnValue(null);
+      vi.mocked(sessionStorage.getItem).mockReturnValue(null);
 
       const result = await createSponsoredTrial('user123');
 
@@ -381,7 +301,7 @@ describe('Gift Service', () => {
 
     it('should return secretKey on direct success', async () => {
       const onboardingKey = generateKeyPairs(1)[0].secretKey;
-      setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
+      setMockSessionStorage('onboarding_key:test-contract.testnet', onboardingKey);
 
       const originalFetch = global.fetch;
       // Onboarding key auth check, then signAndSendTransaction
@@ -413,7 +333,7 @@ describe('Gift Service', () => {
 
     it('should return failure when direct path fails', async () => {
       const onboardingKey = generateKeyPairs(1)[0].secretKey;
-      setMockLocalStorage('onboarding_key:test-contract.testnet', onboardingKey);
+      setMockSessionStorage('onboarding_key:test-contract.testnet', onboardingKey);
 
       const originalFetch = global.fetch;
       // Direct path will fail (onboarding key auth returns false)

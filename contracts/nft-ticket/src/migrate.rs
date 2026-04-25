@@ -1,6 +1,6 @@
 use crate::*;
 
-/// Snapshot of the on-chain Contract layout **before** the V10 migration.
+/// Snapshot of the on-chain Contract layout **before** the V11 migration.
 /// Must match the borsh encoding of the currently deployed WASM byte-for-byte.
 #[near(serializers = [borsh])]
 pub struct OldContract {
@@ -10,6 +10,7 @@ pub struct OldContract {
     user_deposits: LookupMap<AccountId, NearToken>,
     events: UnorderedMap<String, Event>,
     next_token_id: u64,
+    active_event_count: u64,
     gift_drops: LookupMap<String, GiftDrop>,
     trial_pool: NearToken,
     onboarding_keys: LookupSet<PublicKey>,
@@ -18,17 +19,12 @@ pub struct OldContract {
     commission_pool: NearToken,
     purchase_logs: UnorderedMap<u64, PurchaseLog>,
     next_purchase_id: u64,
-    // --- fields removed in V10 ---
-    _event_nova_groups: LookupMap<String, String>,
-    _nova_platform_account: Option<AccountId>,
-    _nova_service_fee: NearToken,
-    // --- end removed ---
     web4_static_url: Option<String>,
 }
 
 #[near]
 impl Contract {
-    /// V10 state migration: removes deprecated Nova platform fields.
+    /// V11 state migration: adds creator_profiles for studio page.
     ///
     /// Call exactly once immediately after deploying the new WASM:
     ///
@@ -42,7 +38,7 @@ impl Contract {
     pub fn migrate() -> Self {
         let old: OldContract = env::state_read().expect("Cannot deserialize old state");
 
-        env::log_str("V10 migration: removed nova_platform_account, nova_service_fee, event_nova_groups");
+        env::log_str("V11 migration: added creator_profiles");
 
         Self {
             tokens: old.tokens,
@@ -51,7 +47,7 @@ impl Contract {
             user_deposits: old.user_deposits,
             events: old.events,
             next_token_id: old.next_token_id,
-            active_event_count: 0, // rebuilt via rebuild_event_counter after migration
+            active_event_count: old.active_event_count,
             gift_drops: old.gift_drops,
             trial_pool: old.trial_pool,
             onboarding_keys: old.onboarding_keys,
@@ -61,6 +57,7 @@ impl Contract {
             purchase_logs: old.purchase_logs,
             next_purchase_id: old.next_purchase_id,
             web4_static_url: old.web4_static_url,
+            creator_profiles: LookupMap::new(StorageKey::CREATOR_PROFILES),
         }
     }
 }

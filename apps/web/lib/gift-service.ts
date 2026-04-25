@@ -56,7 +56,7 @@ function onboardingStorageKey(): string {
 
 function readOnboardingKey(): string | null {
     if (typeof window === "undefined") return null;
-    return localStorage.getItem(onboardingStorageKey());
+    return sessionStorage.getItem(onboardingStorageKey());
 }
 
 async function isOnboardingKeyAuthorized(publicKey: string): Promise<boolean> {
@@ -105,7 +105,7 @@ async function getValidatedOnboardingKeyPair(retryDelayMs: number = 1500): Promi
 
         if (!isAuthorized) {
             if (typeof window !== "undefined") {
-                localStorage.removeItem(onboardingStorageKey());
+                sessionStorage.removeItem(onboardingStorageKey());
             }
             return null;
         }
@@ -113,7 +113,7 @@ async function getValidatedOnboardingKeyPair(retryDelayMs: number = 1500): Promi
         return keyPair;
     } catch {
         if (typeof window !== "undefined") {
-            localStorage.removeItem(onboardingStorageKey());
+            sessionStorage.removeItem(onboardingStorageKey());
         }
         return null;
     }
@@ -153,7 +153,7 @@ export async function getTrialPoolBalance(): Promise<string> {
 
 /**
  * RELAYER-LESS: Create a sponsored trial account directly from client
- * Uses the onboarding Function Call Access Key stored in localStorage
+ * Uses the onboarding Function Call Access Key stored in sessionStorage
  *
  * @param username - Just the username prefix (e.g. "alice")
  * @returns The full account ID will be returned in the result (e.g. "alice.youtick.near")
@@ -211,7 +211,7 @@ export async function createSponsoredTrialDirect(
         // Remove invalid key from cache so next flow can load a fresh one
         if (errMsg.includes("Unauthorized") || errMsg.includes("onboarding key")) {
             if (typeof window !== "undefined") {
-                localStorage.removeItem(onboardingStorageKey());
+                sessionStorage.removeItem(onboardingStorageKey());
             }
             return {
                 success: false,
@@ -222,58 +222,6 @@ export async function createSponsoredTrialDirect(
         return {
             success: false,
             error: errMsg || "Failed to create trial account",
-        };
-    }
-}
-
-/**
- * Relayer-based trial creation (fallback method)
- * Uses the backend API endpoint which calls the contract on behalf of the user
- * @deprecated Relayer path removed. Use createSponsoredTrialDirect instead.
- */
-export async function createSponsoredTrialRelayer(
-    username: string
-): Promise<SponsoredTrialResult> {
-    try {
-        // Generate keypair for the new account
-        const keyPair = KeyPair.fromRandom("ed25519");
-        const publicKey = keyPair.getPublicKey().toString();
-        const secretKey = keyPair.toString();
-
-        // Call the relayer API
-        const relayerResponse = await fetch("/api/trial/sponsored", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                username,
-                new_public_key: publicKey,
-            }),
-        });
-
-        const data = await relayerResponse.json();
-
-        if (!relayerResponse.ok) {
-            return {
-                success: false,
-                error: data.error || "Failed to create trial account",
-            };
-        }
-
-        const accountId = data.account_id;
-
-        await persistManagedKeyPair(accountId, secretKey);
-        writeManagedNearAccount(accountId, 'trial');
-
-        return {
-            success: true,
-            accountId,
-            secretKey,
-        };
-    } catch (error: unknown) {
-        console.error("Relayer sponsored trial error:", error);
-        return {
-            success: false,
-            error: error instanceof Error ? error.message : "Failed to create trial account",
         };
     }
 }
@@ -326,7 +274,7 @@ export async function sponsorImplicitGuestDirect(
 
         if (errMsg.includes("Unauthorized") || errMsg.includes("onboarding key")) {
             if (typeof window !== "undefined") {
-                localStorage.removeItem(onboardingStorageKey());
+                sessionStorage.removeItem(onboardingStorageKey());
             }
             return {
                 success: false,
@@ -396,7 +344,7 @@ export async function claimFreeTicketDirect(
 
         if (errMsg.includes("Unauthorized") || errMsg.includes("onboarding key")) {
             if (typeof window !== "undefined") {
-                localStorage.removeItem(onboardingStorageKey());
+                sessionStorage.removeItem(onboardingStorageKey());
             }
             return {
                 success: false,
@@ -408,63 +356,13 @@ export async function claimFreeTicketDirect(
     }
 }
 
-/**
- * Grant free playback access via onboarding key without minting an NFT (contract `grant_free_access_direct`).
- * KMS authorizes playback with `check_trial_access` when the user has no ticket NFT.
- */
-export async function grantFreeAccessDirect(
-    receiverId: string,
-    encryptedCid: string
-): Promise<{ success: boolean; error?: string }> {
-    try {
-        const onboardingKeyPair = await getValidatedOnboardingKeyPair(0);
-        if (!onboardingKeyPair) {
-            return {
-                success: false,
-                error: "Onboarding key unavailable or unauthorized. Free access grant is temporarily disabled.",
-            };
-        }
-
-        const signer = new KeyPairSigner(onboardingKeyPair);
-        const account = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), signer);
-
-        await account.signAndSendTransaction({
-            receiverId: NFT_CONTRACT_ID,
-            actions: [
-                actions.functionCall(
-                    "grant_free_access_direct",
-                    { receiver_id: receiverId, encrypted_cid: encryptedCid },
-                    GAS_CONSTANTS.mediumGas,
-                    BigInt(0)
-                )
-            ]
-        });
-
-        return { success: true };
-    } catch (error: unknown) {
-        console.error("grantFreeAccessDirect error:", error);
-        const errMsg = error instanceof Error ? error.message : "Failed to grant free access";
-
-        if (errMsg.includes("Unauthorized") || errMsg.includes("onboarding key")) {
-            if (typeof window !== "undefined") {
-                localStorage.removeItem(onboardingStorageKey());
-            }
-            return {
-                success: false,
-                error: "Unauthorized onboarding key. Please rotate onboarding key and try again.",
-            };
-        }
-
-        return { success: false, error: errMsg };
-    }
-}
 
 /**
  * Store an onboarding key for manual recovery or controlled local testing.
  */
 export function setOnboardingKey(secretKey: string): void {
     if (typeof window !== "undefined") {
-        localStorage.setItem(onboardingStorageKey(), secretKey);
+        sessionStorage.setItem(onboardingStorageKey(), secretKey);
     }
 }
 
@@ -473,15 +371,15 @@ export function setOnboardingKey(secretKey: string): void {
  */
 export function hasOnboardingKey(): boolean {
     if (typeof window === "undefined") return false;
-    return !!localStorage.getItem(onboardingStorageKey());
+    return !!sessionStorage.getItem(onboardingStorageKey());
 }
 
 /**
- * Get the onboarding key from localStorage
+ * Get the onboarding key from sessionStorage
  */
 export function getOnboardingKey(): string | null {
     if (typeof window === "undefined") return null;
-    return localStorage.getItem(onboardingStorageKey());
+    return sessionStorage.getItem(onboardingStorageKey());
 }
 
 /**

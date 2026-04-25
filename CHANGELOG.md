@@ -10,6 +10,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Security — Faz 1 Hardening (2026-04-23)
 
+### Mainnet Deploy — 24 Nisan 2026
+
+#### Deployed
+- **registry.youtick.near** — Operator registry with timelock + pause
+- **access.youtick.near** — Session grant contract with timelock + pause  
+- **youtick.near** — NFT ticket market with timelock + state reset (`reset_v11`)
+
+#### Operator Registry Setup (Pending — 24h timelock)
+- Proposed 5 decryption operators (kms-a..e.youtick.near) via timelock
+- Proposed 1 relayer (youtick.near) via timelock
+- Execute script: `node scripts/execute-timelocks-mainnet.mjs`
+
+#### Technical Notes
+- Built with Rust 1.86 (wasm-opt compatibility)
+- Deployed via near-api-js v7 + fastnear RPC (near-cli-rs rate limited)
+- operator-registry & access-control accounts recreated due to state schema change
+
+
 #### Fixed
 - **CRITICAL:** `reset_v11` authorization bypass patched. Now reads previous owner
   from `env::state_read()` instead of trusting caller-supplied `owner_id`.

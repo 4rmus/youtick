@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getProvider, viewContract } from '@/lib/near';
 import { NEAR_CONFIG } from '@/lib/constants';
-import { User, Wallet, Ticket, Loader2, ArrowLeft, Gift, Video, Sparkles } from 'lucide-react';
+import { User, Wallet, Ticket, Loader2, ArrowLeft, Gift, Video, Sparkles, BarChart3, DollarSign, Edit, Globe, AtSign, Camera } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from '@/components/Web4Link';
 import { useLanguage } from '@/components/providers/LanguageContext';
@@ -17,7 +17,9 @@ import { TrialUpgradeDialog } from "@/components/TrialUpgradeDialog";
 import { IPFSThumbnail } from "@/components/IPFSThumbnail";
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
-import type { NFTEvent } from '@/lib/types';
+import type { NFTEvent, PurchaseLog } from '@/lib/types';
+import { useCreatorStats, useCreatorPurchaseLogs, useCreatorProfile } from '@/hooks/useCreatorStats';
+import { CreatorProfileForm } from '@/components/CreatorProfileForm';
 
 interface CreatedEvent extends NFTEvent {
     cid: string;
@@ -28,13 +30,17 @@ interface CreatedEvent extends NFTEvent {
 export default function ProfilePage() {
     const { t } = useLanguage();
     const { accountId, isTrial } = useWallet();
-    const { yoctoToUsd } = useNearPrice();
+    const { yoctoToUsd, nearToUsdStr } = useNearPrice();
     const { tokens, loading: tokensLoading } = useOwnedTokens();
+    const { data: creatorStats } = useCreatorStats(accountId ?? undefined);
+    const { data: purchaseLogs = [] } = useCreatorPurchaseLogs(accountId ?? undefined);
+    const { data: creatorProfile } = useCreatorProfile(accountId ?? undefined);
 
     // Gift Modal State
     const [showGiftModal, setShowGiftModal] = useState(false);
     const [selectedEventForGift, setSelectedEventForGift] = useState<CreatedEvent | null>(null);
     const [showTrialInviteModal, setShowTrialInviteModal] = useState(false);
+    const [showProfileDialog, setShowProfileDialog] = useState(false);
 
     // Wallet balance via React Query + FailoverRpcProvider
     const { data: walletBalance, isLoading: loadingBalances } = useQuery({
@@ -87,6 +93,12 @@ export default function ProfilePage() {
         gcTime: 5 * 60 * 1000,
     });
 
+    const publishedWorkCount = createdEvents.length;
+    const ticketCount = tokens.filter(t => {
+        const tokenCid = t.video_metadata?.encrypted_cid;
+        return !createdEvents.some(e => e.cid === tokenCid);
+    }).length;
+
     if (!accountId) {
         return (
             <div className="container mx-auto px-4 py-24 min-h-screen">
@@ -129,7 +141,7 @@ export default function ProfilePage() {
                                 className="border-zinc-700 text-zinc-200 hover:bg-zinc-800 gap-2"
                             >
                                 <Sparkles className="w-4 h-4" />
-                                Trial Invites
+                                {t.trial_page?.trial_invite_title || 'Trial Invites'}
                             </Button>
                         )}
 
@@ -146,7 +158,7 @@ export default function ProfilePage() {
                 </div>
 
                 {/* Account Info Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                         <div className="flex items-center gap-3 mb-4">
                             <div className="p-2 bg-zinc-800 rounded-lg">
@@ -180,6 +192,57 @@ export default function ProfilePage() {
                             )}
                         </div>
                     </div>
+
+                    {/* Creator Profile Card */}
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-zinc-800 rounded-lg">
+                                    {creatorProfile?.avatar_url ? (
+                                        <img src={creatorProfile.avatar_url} alt="" className="w-5 h-5 rounded-full object-cover" />
+                                    ) : (
+                                        <User className="w-5 h-5 text-zinc-400" />
+                                    )}
+                                </div>
+                                <h3 className="font-semibold text-zinc-200">{t.profile_page.my_profile || 'Profile'}</h3>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setShowProfileDialog(true)}
+                                className="text-zinc-400 hover:text-white"
+                            >
+                                <Edit className="w-4 h-4" />
+                            </Button>
+                        </div>
+                        <div className="space-y-2">
+                            {creatorProfile?.display_name ? (
+                                <p className="text-lg font-bold text-white">{creatorProfile.display_name}</p>
+                            ) : (
+                                <p className="text-sm text-zinc-500 italic">{t.profile_page.no_profile || 'No profile yet'}</p>
+                            )}
+                            {creatorProfile?.bio && (
+                                <p className="text-xs text-zinc-400 line-clamp-2">{creatorProfile.bio}</p>
+                            )}
+                            <div className="flex flex-wrap gap-2 pt-1">
+                                {creatorProfile?.website && (
+                                    <a href={creatorProfile.website} target="_blank" rel="noopener noreferrer" className="text-[10px] text-zinc-400 hover:text-white flex items-center gap-1">
+                                        <Globe className="w-3 h-3" /> Web
+                                    </a>
+                                )}
+                                {creatorProfile?.twitter && (
+                                    <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+                                        <AtSign className="w-3 h-3" /> {creatorProfile.twitter}
+                                    </span>
+                                )}
+                                {creatorProfile?.instagram && (
+                                    <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+                                        <Camera className="w-3 h-3" /> {creatorProfile.instagram}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 {/* Trial Account Upgrade Banner */}
@@ -203,6 +266,41 @@ export default function ProfilePage() {
                     </div>
                 )}
 
+                {/* Role Summary */}
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+                        <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">{t.profile_page.my_tickets}</p>
+                        <p className="mt-2 text-3xl font-bold text-white">{ticketCount}</p>
+                        <p className="mt-1 text-xs text-zinc-500">{t.watch_page.library}</p>
+                    </div>
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+                        <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">{t.profile_page.my_events}</p>
+                        <p className="mt-2 text-3xl font-bold text-white">{publishedWorkCount}</p>
+                        <p className="mt-1 text-xs text-zinc-500">{t.profile_page.works_published || 'Works'}</p>
+                    </div>
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+                        <p className="text-xs uppercase tracking-[0.18em] text-zinc-500 flex items-center gap-1">
+                            <BarChart3 className="w-3 h-3" /> {t.profile_page.total_sales || 'Sales'}
+                        </p>
+                        <p className="mt-2 text-3xl font-bold text-white">{creatorStats?.total_sales ?? 0}</p>
+                        <p className="mt-1 text-xs text-zinc-500">{t.profile_page.tickets_sold || 'Tickets sold'}</p>
+                    </div>
+                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5">
+                        <p className="text-xs uppercase tracking-[0.18em] text-emerald-400 flex items-center gap-1">
+                            <DollarSign className="w-3 h-3" /> {t.profile_page.total_revenue || 'Revenue'}
+                        </p>
+                        <p className="mt-2 text-3xl font-bold text-white">
+                            {creatorStats ? nearToUsdStr(Number(creatorStats.total_revenue_yocto) / 1e24) : '$0.00'}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500">{t.profile_page.earned || 'Earned'}</p>
+                    </div>
+                    <div className="rounded-xl border border-near-green/20 bg-near-green/10 p-5">
+                        <p className="text-xs uppercase tracking-[0.18em] text-near-green">{t.profile_page.gift_button}</p>
+                        <p className="mt-2 text-3xl font-bold text-white">{publishedWorkCount > 0 ? (t.profile_page.gift_ready || 'Ready') : '-'}</p>
+                        <p className="mt-1 text-xs text-zinc-400">{t.profile_page.gift_create_link}</p>
+                    </div>
+                </div>
+
                 {/* Dual Column Layout - Tickets & Events */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-0">
                     {/* Tickets Column */}
@@ -216,10 +314,7 @@ export default function ProfilePage() {
                             </div>
                             <span className="text-xs text-zinc-500 bg-zinc-800/50 px-2 py-1 rounded">
                                 {/* Filter out own uploads - only show purchased tickets */}
-                                {tokens.filter(t => {
-                                    const tokenCid = t.video_metadata?.encrypted_cid;
-                                    return !createdEvents.some(e => e.cid === tokenCid);
-                                }).length}
+                                {ticketCount}
                             </span>
                         </div>
 
@@ -321,52 +416,60 @@ export default function ProfilePage() {
                             </div>
                         ) : (
                             <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
-                                {createdEvents.map((event) => (
-                                    <div key={event.cid} className="group relative">
-                                        <Link href={`/watch?cid=${event.cid}`} className="block">
-                                            <div className="flex gap-3 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900 transition-all">
-                                                <div className="w-20 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-800">
-                                                    {event.media && !event.media.includes('token.png') ? (
-                                                        <IPFSThumbnail
-                                                            url={event.media}
-                                                            alt={event.title}
-                                                            className="w-full h-full object-cover"
-                                                        />
-                                                    ) : (
-                                                        <div className="w-full h-full flex items-center justify-center">
-                                                            <Video className="w-5 h-5 text-zinc-600" />
-                                                        </div>
-                                                    )}
+                                {createdEvents.map((event) => {
+                                    const eventSales = purchaseLogs.filter(([, log]) => log.event_cid === event.cid).length;
+                                    return (
+                                        <div key={event.cid} className="group relative">
+                                            <Link href={`/watch?cid=${event.cid}`} className="block">
+                                                <div className="flex gap-3 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-900 transition-all">
+                                                    <div className="w-20 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-800">
+                                                        {event.media && !event.media.includes('token.png') ? (
+                                                            <IPFSThumbnail
+                                                                url={event.media}
+                                                                alt={event.title}
+                                                                className="w-full h-full object-cover"
+                                                            />
+                                                        ) : (
+                                                            <div className="w-full h-full flex items-center justify-center">
+                                                                <Video className="w-5 h-5 text-zinc-600" />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <h4 className="text-sm font-medium text-white truncate">{event.title}</h4>
+                                                        <p className="text-xs text-zinc-500 mt-0.5">
+                                                            {event.price === "0"
+                                                                ? t.profile_page.free
+                                                                : event.price_usd
+                                                                    ? `$${(event.price_usd / 100).toFixed(2)}`
+                                                                    : yoctoToUsd(event.price)}
+                                                            {eventSales > 0 && (
+                                                                <span className="ml-2 text-emerald-400">
+                                                                    {eventSales} {t.profile_page.sales_count || 'sold'}
+                                                                </span>
+                                                            )}
+                                                        </p>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-[9px] font-bold text-black bg-white px-1.5 py-0.5 rounded uppercase">
+                                                            {t.profile_page.creator}
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <h4 className="text-sm font-medium text-white truncate">{event.title}</h4>
-                                                    <p className="text-xs text-zinc-500 mt-0.5">
-                                                        {event.price === "0"
-                                                            ? t.profile_page.free
-                                                            : event.price_usd
-                                                                ? `$${(event.price_usd / 100).toFixed(2)}`
-                                                                : yoctoToUsd(event.price)}
-                                                    </p>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[9px] font-bold text-black bg-white px-1.5 py-0.5 rounded uppercase">
-                                                        {t.profile_page.creator}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </Link>
-                                        {/* Quick Gift Button */}
-                                        <button
-                                            onClick={(e) => {
-                                                e.preventDefault();
-                                                setSelectedEventForGift(event);
-                                            }}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-2 rounded-lg bg-white hover:bg-zinc-200 text-black"
-                                        >
-                                            <Gift className="w-3.5 h-3.5" />
-                                        </button>
-                                    </div>
-                                ))}
+                                            </Link>
+                                            {/* Quick Gift Button */}
+                                            <button
+                                                onClick={(e) => {
+                                                    e.preventDefault();
+                                                    setSelectedEventForGift(event);
+                                                }}
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-2 rounded-lg bg-white hover:bg-zinc-200 text-black"
+                                            >
+                                                <Gift className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
@@ -480,12 +583,32 @@ export default function ProfilePage() {
                 </DialogContent>
             </Dialog>
 
+            {/* Profile Edit Dialog */}
+            <Dialog open={showProfileDialog} onOpenChange={setShowProfileDialog}>
+                <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-[550px] max-h-[85vh] overflow-y-auto flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <User className="w-5 h-5 text-zinc-400" />
+                            {t.profile_page?.edit_profile || 'Edit Profile'}
+                        </DialogTitle>
+                        <DialogDescription>
+                            {t.profile_page?.edit_profile_desc || 'Update how viewers see you on your works and profile.'}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="mt-4 w-full">
+                        <CreatorProfileForm
+                            onSuccess={() => setShowProfileDialog(false)}
+                        />
+                    </div>
+                </DialogContent>
+            </Dialog>
+
             <Dialog open={showTrialInviteModal} onOpenChange={setShowTrialInviteModal}>
                 <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-[550px] max-h-[85vh] overflow-y-auto flex flex-col">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Sparkles className="w-5 h-5 text-zinc-400" />
-                            Trial Invites
+                            {t.trial_page?.trial_invite_title || 'Trial Invites'}
                         </DialogTitle>
                         <DialogDescription>
                             Create invite-only trial links that open implicit NEAR accounts directly.
