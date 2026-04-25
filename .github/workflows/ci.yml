@@ -73,8 +73,12 @@ jobs:
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
 
-      - name: Test nft-ticket
-        run: cargo test
+      - name: Test nft-ticket unit tests
+        run: cargo test --lib
+        working-directory: contracts/nft-ticket
+
+      - name: Build nft-ticket wasm
+        run: cargo build --target wasm32-unknown-unknown --release
         working-directory: contracts/nft-ticket
 
       - name: Test access-control
