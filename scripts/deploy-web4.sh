@@ -5,7 +5,7 @@
 #
 # Usage:
 #   ./scripts/deploy-web4.sh                  # Build + show CID (manual update)
-#   ./scripts/deploy-web4.sh --set-url        # Build + auto-update contract URL
+#   ./scripts/deploy-web4.sh --set-url        # Build + propose timelocked contract URL update
 #   ./scripts/deploy-web4.sh --cid-only       # Build + print CID only
 #
 # Prerequisites:
@@ -16,7 +16,7 @@
 # The script:
 #   1. Builds the Next.js static export (out/ directory)
 #   2. Uploads the out/ directory to IPFS
-#   3. Optionally updates the contract's web4_static_url
+#   3. Optionally proposes a timelocked web4_static_url update
 # =============================================================================
 
 set -euo pipefail
@@ -88,7 +88,8 @@ else
   if command -v npx &>/dev/null; then
     echo "  Computing local CID for reference (not uploading)..."
     echo "  You can upload $OUT_DIR to Pinata, Crust, or web3.storage"
-    echo "  Then run: near call $CONTRACT_ID web4_set_static_url '{\"url\":\"ipfs://YOUR_CID\"}' --accountId OWNER"
+    echo "  Then propose a timelocked URL update:"
+    echo "    near call $CONTRACT_ID propose_action '{\"action\":{\"SetWeb4StaticUrl\":{\"url\":\"ipfs://YOUR_CID\"}}}' --accountId OWNER --gas 30000000000000"
   fi
   exit 0
 fi
@@ -106,8 +107,8 @@ if [ "$CID_ONLY" = true ]; then
   exit 0
 fi
 
-# Step 3: Update contract
-echo "[3/3] Updating contract web4_static_url..."
+# Step 3: Propose contract update
+echo "[3/3] Contract web4_static_url timelock proposal..."
 echo ""
 echo "  Contract: $CONTRACT_ID"
 echo "  New URL:  ipfs://$CID"
@@ -119,20 +120,26 @@ echo "  Current:  $CURRENT_URL"
 echo ""
 
 if [ "$SET_URL" = true ]; then
-  echo "  Updating contract..."
-  near call "$CONTRACT_ID" web4_set_static_url "{\"url\":\"ipfs://$CID\"}" --accountId "$CONTRACT_ID" --gas 30000000000000
+  echo "  Creating timelock proposal..."
+  near call "$CONTRACT_ID" propose_action "{\"action\":{\"SetWeb4StaticUrl\":{\"url\":\"ipfs://$CID\"}}}" --accountId "$CONTRACT_ID" --gas 30000000000000
   echo ""
-  echo "  Done! Site will be live at: https://$CONTRACT_ID.page/"
+  echo "  Proposal created. After 24 hours, execute it with:"
+  echo "    near call $CONTRACT_ID execute_action '{\"id\":PROPOSAL_ID}' --accountId $CONTRACT_ID --gas 30000000000000"
 else
-  echo "  To update the contract URL, run:"
+  echo "  To propose the contract URL update, run:"
   echo ""
-  echo "    near call $CONTRACT_ID web4_set_static_url '{\"url\":\"ipfs://$CID\"}' --accountId $CONTRACT_ID --gas 30000000000000"
+  echo "    near call $CONTRACT_ID propose_action '{\"action\":{\"SetWeb4StaticUrl\":{\"url\":\"ipfs://$CID\"}}}' --accountId $CONTRACT_ID --gas 30000000000000"
+  echo ""
+  echo "  After 24 hours, execute the proposal:"
+  echo ""
+  echo "    near call $CONTRACT_ID execute_action '{\"id\":PROPOSAL_ID}' --accountId $CONTRACT_ID --gas 30000000000000"
   echo ""
   echo "  Or re-run this script with --set-url flag"
 fi
 
 echo ""
 echo "============================================"
-echo "  Deployment complete"
-echo "  Live URL: https://${CONTRACT_ID}.page/"
+echo "  Upload complete"
+echo "  Web4 URL changes after timelock execution"
+echo "  Current live URL: https://${CONTRACT_ID}.page/"
 echo "============================================"

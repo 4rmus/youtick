@@ -5,7 +5,7 @@ const { pathToFileURL } = require("url");
 const NETWORK_ID = "testnet";
 const RPC_URL = "https://rpc.testnet.near.org";
 const MASTER_ACCOUNT_ID = process.env.MASTER_ACCOUNT_ID || "v2-0.utick.testnet";
-const MASTER_KEY = process.env.MASTER_SECRET_KEY || "ed25519:49LaWnj78mkVGxy7QQqiSFyZ5k9bkiBfqyDQmKD6UhkfgGRNr22BqFD2V9oYQk3JidaKQd5T7CPit1bVhdkCuAaG";
+const MASTER_KEY = process.env.MASTER_SECRET_KEY;
 const INITIAL_BALANCE_NEAR = process.env.INITIAL_BALANCE_NEAR || "5";
 const WASM_PATH = path.join(
     __dirname,
@@ -39,6 +39,10 @@ function saveCredentials(accountId, keyPair) {
 }
 
 async function main() {
+    if (!MASTER_KEY) {
+        throw new Error("MASTER_SECRET_KEY is required. Do not hardcode deployment keys in archived scripts.");
+    }
+
     const { Account, KeyPair, KeyPairSigner, nearToYocto } = await loadNearApiJs();
 
     const contractPrefix = `dev-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;

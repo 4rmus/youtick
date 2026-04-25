@@ -1,204 +1,163 @@
 'use client';
 
-import { memo, useState, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { Calculator, TrendingDown } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
-/**
- * ROICalculator - Interactive calculator showing artist earnings comparison.
- * All calculations in USD.
- */
 export const ROICalculator = memo(() => {
-    const { t } = useLanguage();
+  const { t } = useLanguage();
+  const s = t.landing.roi_calculator_section;
 
-    const [ticketPrice, setTicketPrice] = useState(5); // USD
-    const [ticketCount, setTicketCount] = useState(500);
+  const presets = [
+    { label: s.preset_short_film, price: 6, sales: 250 },
+    { label: s.preset_concert, price: 12, sales: 800 },
+    { label: s.preset_festival, price: 18, sales: 1200 },
+    { label: s.preset_documentary, price: 10, sales: 600 },
+  ];
 
-    const calculations = useMemo(() => {
-        const grossSales = ticketPrice * ticketCount;
+  const [ticketPrice, setTicketPrice] = useState(12);
+  const [ticketCount, setTicketCount] = useState(800);
 
-        // YouTick: 98% to artist
-        const youtickRevenue = grossSales * 0.98;
-        const youtickFee = grossSales * 0.02;
+  const calculations = useMemo(() => {
+    const totalSales = ticketPrice * ticketCount;
+    const youtickRevenue = totalSales * 0.98;
+    const traditionalRevenue = totalSales * 0.55;
+    const traditionalLoss = youtickRevenue - traditionalRevenue;
 
-        // YouTube (ad model): ~$1-2 per 1000 views
-        const youtubeRevenue = (ticketCount / 1000) * 1.5;
+    return {
+      totalSales,
+      youtickRevenue,
+      traditionalRevenue,
+      traditionalLoss,
+    };
+  }, [ticketPrice, ticketCount]);
 
-        // Vimeo OTT: 90% to artist
-        const vimeoRevenue = grossSales * 0.90;
+  const formatUsd = (value: number) =>
+    value.toLocaleString('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      maximumFractionDigits: 0,
+    });
 
-        // Spotify equivalent: $0.004 per stream
-        const spotifyRevenue = ticketCount * 0.004;
+  return (
+    <section id="roi-calculator" className="bg-black py-24">
+      <div className="container mx-auto px-4">
+        <div className="mb-12 max-w-3xl">
+          <div className="mb-4 flex items-center gap-3">
+            <Calculator className="h-7 w-7 text-near-green" />
+            <p className="text-sm font-semibold uppercase tracking-wide text-near-green">
+              {s.eyebrow}
+            </p>
+          </div>
+          <h2 className="mb-4 text-3xl font-black text-white md:text-5xl">
+            {s.title}
+          </h2>
+          <p className="text-lg leading-relaxed text-zinc-400">
+            {s.description}
+          </p>
+        </div>
 
-        return {
-            grossSales,
-            youtickRevenue,
-            youtickFee,
-            youtubeRevenue,
-            vimeoRevenue,
-            spotifyRevenue,
-        };
-    }, [ticketPrice, ticketCount]);
+        <div className="mb-8 flex flex-wrap gap-3">
+          {presets.map((preset) => (
+            <button
+              key={preset.label}
+              type="button"
+              onClick={() => {
+                setTicketPrice(preset.price);
+                setTicketCount(preset.sales);
+              }}
+              className="rounded-full border border-white/10 bg-zinc-950 px-4 py-2 text-sm font-semibold text-zinc-300 transition-colors hover:border-near-green/50 hover:text-white"
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
 
-    const formatUsd = (value: number) => value.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-
-    return (
-        <section id="roi-calculator" className="py-32 bg-black relative overflow-hidden">
-            {/* Background gradient */}
-            <div className="absolute inset-0 pointer-events-none">
-                <div
-                    className="absolute bottom-0 right-1/4 w-[700px] h-[700px] rounded-full animate-glow-pulse"
-                    style={{
-                        background: 'radial-gradient(circle, rgba(0, 236, 151, 0.1) 0%, transparent 70%)',
-                    }}
-                />
+        <div className="grid gap-8 lg:grid-cols-[0.9fr_1.1fr]">
+          <div className="rounded-lg border border-white/10 bg-zinc-950 p-6 md:p-8">
+            <div className="mb-8">
+              <div className="mb-3 flex items-center justify-between gap-4">
+                <label className="text-sm font-medium text-zinc-400">{s.ticket_price}</label>
+                <span className="text-2xl font-black text-near-green">${ticketPrice}</span>
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={100}
+                value={ticketPrice}
+                onChange={(event) => setTicketPrice(Number(event.target.value))}
+                className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-near-green"
+              />
+              <div className="mt-1 flex justify-between text-xs text-zinc-600">
+                <span>$1</span>
+                <span>$100</span>
+              </div>
             </div>
 
-            <div className="container mx-auto px-4 relative z-10">
-                {/* Header - Left aligned */}
-                <div className="max-w-3xl mb-16">
-                    <div className="flex items-center gap-3 mb-4">
-                        <Calculator className="w-8 h-8 text-near-green" />
-                        <h2 className="text-3xl md:text-4xl font-black text-white text-left">
-                            {t.landing.roi_calculator?.title || 'Calculate Your Earnings'}
-                        </h2>
-                    </div>
-                    <p className="text-lg text-zinc-400 text-left">
-                        {t.landing.roi_calculator?.subtitle || "See how much you'll earn on YouTick."}
-                    </p>
-                </div>
-
-                <div className="grid lg:grid-cols-2 gap-12 max-w-6xl mx-auto">
-                    {/* Input Panel */}
-                    <div className="p-8 rounded-2xl bg-zinc-900/50 border border-white/10">
-                        <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-2">
-                            📊 {t.landing.roi_calculator?.event_details || 'Event Details'}
-                        </h3>
-
-                        {/* Ticket Price Slider */}
-                        <div className="mb-8">
-                            <div className="flex justify-between items-center mb-3">
-                                <label className="text-sm font-medium text-zinc-400">
-                                    {t.landing.roi_calculator?.ticket_price || 'Ticket Price'}
-                                </label>
-                                <span className="text-2xl font-bold text-near-green">
-                                    ${ticketPrice}
-                                </span>
-                            </div>
-                            <input
-                                type="range"
-                                min={1}
-                                max={100}
-                                value={ticketPrice}
-                                onChange={(e) => setTicketPrice(Number(e.target.value))}
-                                className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-near-green"
-                            />
-                            <div className="flex justify-between text-xs text-zinc-600 mt-1">
-                                <span>$1</span>
-                                <span>$100</span>
-                            </div>
-                        </div>
-
-                        {/* Ticket Count Slider */}
-                        <div className="mb-8">
-                            <div className="flex justify-between items-center mb-3">
-                                <label className="text-sm font-medium text-zinc-400">
-                                    {t.landing.roi_calculator?.sales_count || 'Sales Count'}
-                                </label>
-                                <span className="text-2xl font-bold text-near-purple">
-                                    {ticketCount.toLocaleString()}
-                                </span>
-                            </div>
-                            <input
-                                type="range"
-                                min={10}
-                                max={5000}
-                                step={10}
-                                value={ticketCount}
-                                onChange={(e) => setTicketCount(Number(e.target.value))}
-                                className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-near-purple"
-                            />
-                            <div className="flex justify-between text-xs text-zinc-600 mt-1">
-                                <span>10</span>
-                                <span>5,000</span>
-                            </div>
-                        </div>
-
-                        {/* Gross Sales */}
-                        <div className="p-4 rounded-xl bg-zinc-800/50 border border-white/5">
-                            <div className="flex justify-between items-center">
-                                <span className="text-sm text-zinc-400">
-                                    {t.landing.roi_calculator?.gross_sales || 'Gross Sales'}
-                                </span>
-                                <span className="text-xl font-bold text-white">
-                                    {formatUsd(calculations.grossSales)}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Results Panel */}
-                    <div className="p-8 rounded-2xl bg-near-green/5 border border-near-green/20">
-                        <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-2">
-                            💰 {t.landing.roi_calculator?.estimated_earnings || 'Your Estimated Earnings'}
-                        </h3>
-
-                        {/* YouTick Result - Highlighted */}
-                        <div className="p-6 rounded-xl bg-near-green/10 border border-near-green/30 mb-6">
-                            <div className="flex items-center justify-between mb-4">
-                                <span className="text-lg font-bold text-near-green">YouTick</span>
-                                <span className="px-2 py-1 text-xs font-bold bg-near-green/20 text-near-green rounded-full">
-                                    ⭐ {t.landing.roi_calculator?.best || 'BEST'}
-                                </span>
-                            </div>
-                            <div className="text-4xl font-black text-near-green mb-2">
-                                {formatUsd(calculations.youtickRevenue)}
-                            </div>
-                            <div className="mt-4 pt-4 border-t border-near-green/20 text-xs text-zinc-500">
-                                {t.landing.roi_calculator?.platform_fee || 'Platform Fee:'} {formatUsd(calculations.youtickFee)} (2%)
-                            </div>
-                        </div>
-
-                        {/* Comparison with other platforms */}
-                        <div className="space-y-4">
-                            <div className="flex items-center justify-between p-4 rounded-lg bg-zinc-800/30">
-                                <span className="text-sm text-zinc-400">Vimeo OTT</span>
-                                <div className="text-right">
-                                    <span className="text-lg font-bold text-zinc-300">{formatUsd(calculations.vimeoRevenue)}</span>
-                                    <div className="text-xs text-red-400 flex items-center gap-1 justify-end">
-                                        <TrendingDown className="w-3 h-3" />
-                                        -{formatUsd(calculations.youtickRevenue - calculations.vimeoRevenue)} {t.landing.roi_calculator?.less || 'less'}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="flex items-center justify-between p-4 rounded-lg bg-zinc-800/30">
-                                <span className="text-sm text-zinc-400">YouTube</span>
-                                <div className="text-right">
-                                    <span className="text-lg font-bold text-zinc-300">{formatUsd(calculations.youtubeRevenue)}</span>
-                                    <div className="text-xs text-red-400 flex items-center gap-1 justify-end">
-                                        <TrendingDown className="w-3 h-3" />
-                                        -{formatUsd(calculations.youtickRevenue - calculations.youtubeRevenue)} {t.landing.roi_calculator?.less || 'less'}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="flex items-center justify-between p-4 rounded-lg bg-zinc-800/30">
-                                <span className="text-sm text-zinc-400">Spotify</span>
-                                <div className="text-right">
-                                    <span className="text-lg font-bold text-zinc-300">{formatUsd(calculations.spotifyRevenue)}</span>
-                                    <div className="text-xs text-red-400 flex items-center gap-1 justify-end">
-                                        <TrendingDown className="w-3 h-3" />
-                                        -{formatUsd(calculations.youtickRevenue - calculations.spotifyRevenue)} {t.landing.roi_calculator?.less || 'less'}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            <div className="mb-8">
+              <div className="mb-3 flex items-center justify-between gap-4">
+                <label className="text-sm font-medium text-zinc-400">{s.estimated_sales}</label>
+                <span className="text-2xl font-black text-white">{ticketCount.toLocaleString()}</span>
+              </div>
+              <input
+                type="range"
+                min={10}
+                max={5000}
+                step={10}
+                value={ticketCount}
+                onChange={(event) => setTicketCount(Number(event.target.value))}
+                className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-white"
+              />
+              <div className="mt-1 flex justify-between text-xs text-zinc-600">
+                <span>10</span>
+                <span>5,000</span>
+              </div>
             </div>
-        </section>
-    );
+
+            <div className="rounded-lg border border-white/10 bg-black p-4">
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-sm text-zinc-400">{s.total_sales}</span>
+                <span className="text-xl font-bold text-white">{formatUsd(calculations.totalSales)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-near-green/25 bg-near-green/5 p-6 md:p-8">
+            <div className="mb-6">
+              <p className="text-sm font-semibold uppercase tracking-wide text-near-green">
+                {s.youtick_revenue_label}
+              </p>
+              <div className="mt-3 text-5xl font-black text-near-green">
+                {formatUsd(calculations.youtickRevenue)}
+              </div>
+              <p className="mt-2 text-sm text-zinc-400">{s.youtick_revenue_desc}</p>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-lg border border-white/10 bg-black/60 p-5">
+                <p className="mb-2 text-sm text-zinc-500">{s.traditional_model}</p>
+                <p className="text-2xl font-bold text-zinc-200">{formatUsd(calculations.traditionalRevenue)}</p>
+                <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                  {s.traditional_desc}
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-red-400/20 bg-red-500/5 p-5">
+                <div className="mb-2 flex items-center gap-2 text-sm text-red-300">
+                  <TrendingDown className="h-4 w-4" />
+                  {s.loss_avoided}
+                </div>
+                <p className="text-2xl font-bold text-red-200">{formatUsd(calculations.traditionalLoss)}</p>
+                <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                  {s.loss_desc}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 });
 
 ROICalculator.displayName = 'ROICalculator';

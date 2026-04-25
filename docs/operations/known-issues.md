@@ -1,6 +1,6 @@
 # Known Issues & Operational Risks
 
-> Last updated: 2026-04-23 (Faz 1 Security Hardening + Faz 2 Completion)
+> Last updated: 2026-04-24 (P0 Timelock + KMS Nonce + Shamir Fix + Error Normalization)
 >
 > This document is a **living transparency report**. It lists confirmed mainnet
 > anomalies, active security mitigations, and risks that operators should be
@@ -149,6 +149,76 @@ Revoked or transferred tickets could remain valid in cache for up to a minute.
 
 **Next step:** Faz 3 — contract-event driven cache invalidation for instant
 revoke/transfer propagation.
+
+### 8. Timelock Bypass on Admin Functions
+
+**Status:** Resolved in source — 2026-04-24  
+**Location:** All three contracts (`nft-ticket`, `access-control`, `operator-registry`)
+
+Direct calls to sensitive admin functions (ownership transfer, policy changes,
+operator management) could bypass the 24-hour timelock by calling the public
+wrapper directly.
+
+**Resolution:**
+- All admin functions now call `panic_timelock_required()` in their public
+  wrappers, forcing `propose_action` → `execute_action` flow.
+- `access-control` and `operator-registry` received full timelock + pause
+  protection for all admin functions.
+- 34 new unit tests verify both direct-call panic and timelock success paths.
+
+**Action required:** Redeploy all three contracts to mainnet.
+
+### 9. KMS Legacy Signature Replay Attack
+
+**Status:** Resolved in source — 2026-04-24  
+**Location:** `workers/youtick-kms/src/index.ts`, `apps/web/lib/kms/client.ts`
+
+The legacy Ed25519 signature path used a 5-minute timestamp window without
+nonce-based replay protection. An attacker could replay a captured request
+within the window.
+
+**Resolution:**
+- Added `nonce` field to legacy signed payload (`{ action, videoId, accountId,
+  timestamp, nonce }`).
+- Client generates a UUID nonce per request (`crypto.randomUUID` fallback).
+- Worker stores used nonces in `ACCESS_CACHE` with 10-minute TTL (2× timestamp
+  window).
+- Duplicate nonces are rejected with `401 Unauthorized`.
+
+**Action required:** Redeploy KMS workers and web app simultaneously.
+
+### 10. Shamir SSS Zero Coefficient Weakness
+
+**Status:** Resolved in source — 2026-04-24  
+**Location:** `apps/web/lib/kms/shares.ts`
+
+`randomByte()` could return `0` for a polynomial coefficient, effectively
+reducing the scheme from `(t, n)` to `(t-1, n)` and weakening threshold
+security (Cure53 PVY-01-002 class issue).
+
+**Resolution:**
+- Replaced `coefficients.push(randomByte())` with a rejection loop that
+  discards `0` values.
+- Polynomial degree is now guaranteed to be `requiredShares - 1`.
+
+**Action required:** Redeploy web app.
+
+### 11. KMS Error Message Information Leakage
+
+**Status:** Resolved in source — 2026-04-24  
+**Location:** `workers/youtick-kms/src/index.ts`
+
+Distinguishable error messages (`Invalid signature`, `Timestamp expired`,
+`Public key not registered`) allowed attackers to enumerate valid keys and
+probe system state.
+
+**Resolution:**
+- All authentication and authorization errors in `/store` and `/retrieve`
+  now return a single `"Unauthorized"` string.
+- HTTP status codes are preserved (`401`, `403`, `404`) but bodies are
+  normalized.
+
+**Action required:** Redeploy KMS workers.
 
 ---
 

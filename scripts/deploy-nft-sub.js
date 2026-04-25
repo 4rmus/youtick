@@ -4,15 +4,18 @@ const path = require("path");
 
 // Configuration
 const NETWORK_ID = "testnet";
-const MASTER_ACCOUNT_ID = "v2-0.utick.testnet";
-// Testnet deployment key
-const MASTER_KEY = "ed25519:49LaWnj78mkVGxy7QQqiSFyZ5k9bkiBfqyDQmKD6UhkfgGRNr22BqFD2V9oYQk3JidaKQd5T7CPit1bVhdkCuAaG";
+const MASTER_ACCOUNT_ID = process.env.MASTER_ACCOUNT_ID || "v2-0.utick.testnet";
+const MASTER_KEY = process.env.MASTER_SECRET_KEY;
 const CONTRACT_ACCOUNT_ID = `nft.${MASTER_ACCOUNT_ID}`;
 
 // Path to compiled WASM
 const WASM_PATH = path.join(__dirname, "../contracts/nft-ticket/target/wasm32-unknown-unknown/release/youtick_nft.wasm");
 
 async function main() {
+    if (!MASTER_KEY) {
+        throw new Error("MASTER_SECRET_KEY is required. Do not hardcode deployment keys in this script.");
+    }
+
     console.log(`Deploying to ${CONTRACT_ACCOUNT_ID}...`);
 
     // 1. Setup Connection

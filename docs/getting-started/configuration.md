@@ -32,18 +32,26 @@ Bu alanlar olmadan uygulama dogru contract setine ve ağa baglanamaz.
 
 | Degisken | Aciklama | Ne zaman gerekir |
 |----------|----------|------------------|
-| `NEXT_PUBLIC_KMS_URL` | Varsayilan KMS worker adresini ezer | Kendi KMS worker'in varsa |
 | `NEXT_PUBLIC_APP_URL` | Hediye linklerinde kullanilan ana URL | Farkli domain veya local tunnel kullaniyorsan |
 | `NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT` | 1Click + MetaMask yolunu acar | Ayrica readiness review gectiyse |
-| `NEXT_PUBLIC_ENABLE_LEGACY_UPLOAD_FALLBACK` | Eski upload fallback yolunu acar | Sadece bilincli gecis surecinde |
 | `NEXT_PUBLIC_ONE_CLICK_API_TOKEN` | 1Click quote ve swap istekleri icin partner tokeni | Arbitrum/Base odemelerini kullanacaksan |
 | `NEXT_PUBLIC_DEPLOY_TARGET` | Web4 build davranisini degistirir | `npm run build:web4` kullaniyorsan |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Trial/onboarding ekraninda Turnstile challenge acar | Onboarding key endpoint'ini botlara karsi korumak istiyorsan |
+| `NEXT_PUBLIC_SENTRY_DSN` | Sentry hata toplama adresi | Uretimde hata izleme acacaksan |
 
-### ~~Relayer (kaldırıldı)~~
+### Server-side onboarding
 
-> **Not**: Relayer-based trial akışı artık kullanılmıyor. Trial ve guest hesap
-> oluşturma artık `NEXT_PUBLIC_ONBOARDING_KEY` ile browser-side yapılıyor.
-> `RELAYER_ACCOUNT_ID` ve `RELAYER_PRIVATE_KEY` artık gerekli değil.
+Trial ve guest hesap olusturma icin onboarding key artik client bundle'a konmaz.
+Anahtar server tarafinda tutulur ve `/api/onboarding-key` endpoint'i uzerinden,
+rate limit ve opsiyonel Turnstile kontrolunden sonra verilir.
+
+| Degisken | Aciklama |
+|----------|----------|
+| `ONBOARDING_KEY` | Tek Function Call Access Key |
+| `ONBOARDING_KEYS` | Virgul ile ayrilmis key havuzu; varsa `ONBOARDING_KEY` yerine kullanilir |
+| `TURNSTILE_SECRET_KEY` | Turnstile dogrulama sirri |
+
+`RELAYER_ACCOUNT_ID` ve `RELAYER_PRIVATE_KEY` artik gerekli degil.
 
 ---
 
@@ -57,10 +65,8 @@ NEXT_PUBLIC_MARKET_CONTRACT_ID=youtick.near
 NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.youtick.near
 NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
-NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
 NEXT_PUBLIC_APP_URL=https://youtick.net
 NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
-NEXT_PUBLIC_ENABLE_LEGACY_UPLOAD_FALLBACK=false
 ```
 
 ### Local gelistirme
@@ -71,7 +77,6 @@ NEXT_PUBLIC_MARKET_CONTRACT_ID=dev-1773607954211-252231.v2-0.utick.testnet
 NEXT_PUBLIC_ACCESS_CONTRACT_ID=access-1773606802388.v2-0.utick.testnet
 NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry-1773606802388.v2-0.utick.testnet
 NEXT_PUBLIC_NFT_CONTRACT_ID=dev-1773607954211-252231.v2-0.utick.testnet
-NEXT_PUBLIC_KMS_URL=http://localhost:8787
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
@@ -83,13 +88,14 @@ NEXT_PUBLIC_MARKET_CONTRACT_ID=youtick.near
 NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.youtick.near
 NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
-NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
 NEXT_PUBLIC_APP_URL=https://youtick.net
 NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
 NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true
 ```
 
-Trial ve guest hesap olusturma icin `NEXT_PUBLIC_ONBOARDING_KEY` kullanilir. Bu anahtar contract owner tarafindan `add_onboarding_key` ile kaydedilir.
+Trial ve guest hesap olusturma icin `ONBOARDING_KEY` veya `ONBOARDING_KEYS`
+kullanilir. Bu anahtarlar contract owner tarafindan `add_onboarding_key` ile
+kaydedilir; `NEXT_PUBLIC_` prefix'i kullanilmaz.
 
 ---
 

@@ -68,13 +68,6 @@ export const FEATURE_FLAGS = {
 
 export const APP_CONFIG = {
     publicAppUrl: configuredAppUrl,
-    guestRelayerUrl:
-        process.env.NEXT_PUBLIC_GUEST_RELAYER_URL
-        || (typeof window !== 'undefined' &&
-            window.location &&
-            (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-            ? 'http://localhost:8788'
-            : ''),
     turnstileSiteKey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '',
 } as const;
 
@@ -215,4 +208,3 @@ export const ANIMATION = {
     scaleImage: 'group-hover:scale-110',
   },
 } as const;
-

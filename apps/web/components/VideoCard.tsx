@@ -3,6 +3,7 @@
 import Link from '@/components/Web4Link';
 import { Play, Ticket } from 'lucide-react';
 import { IPFSThumbnail } from '@/components/IPFSThumbnail';
+import { useLanguage } from '@/components/providers/LanguageContext';
 
 export interface VideoCardToken {
     token_id: string;
@@ -16,6 +17,7 @@ export interface VideoCardToken {
         encrypted_cid?: string;
         price?: string;
         price_usd?: number | null;
+        content_type?: string;
     };
 }
 
@@ -50,6 +52,7 @@ export function VideoCard({
     nearToUsdStr,
     accountId,
 }: VideoCardProps) {
+    const { t } = useLanguage();
     const isVideo = !!token.video_metadata?.encrypted_cid;
     const priceYocto = token.video_metadata?.price;
     const priceNear = priceYocto ? parseFloat(priceYocto) / 1e24 : 0;
@@ -119,7 +122,7 @@ export function VideoCard({
                                 <span className="truncate max-w-[100px]">{token.owner_id}</span>
                             </div>
                             <span className="bg-white/5 px-2 py-1 rounded-full border border-white/10 text-[10px]">
-                                NFT Ticket
+                                {t.profile_page.nft_ticket}
                             </span>
                         </div>
                     </div>
@@ -172,16 +175,24 @@ export function VideoCard({
                     </div>
 
                     {/* Top Badges Row */}
-                    <div className="absolute top-3 left-3 right-3 flex items-center justify-end">
+                    <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
+                        {/* Content Type Badge */}
+                        {token.video_metadata?.content_type && token.video_metadata.content_type !== 'exclusive' && (
+                            <div className="px-2 py-1 rounded-lg backdrop-blur-sm bg-black/60 border border-white/10">
+                                <span className="text-[9px] font-bold text-white tracking-wider uppercase">
+                                    {(t.discover_page?.content_type as Record<string, string> | undefined)?.[token.video_metadata.content_type] || token.video_metadata.content_type}
+                                </span>
+                            </div>
+                        )}
                         {/* Price Badge */}
-                        <div className={`px-2.5 py-1 rounded-lg backdrop-blur-sm border shadow-lg ${isFree
+                        <div className={`px-2.5 py-1 rounded-lg backdrop-blur-sm border shadow-lg ml-auto ${isFree
                             ? 'bg-emerald-500/90 border-emerald-400/30'
                             : 'bg-black/60 border-white/10'
                             }`}>
                             {isCreator ? (
-                                <span className="text-[9px] font-bold text-white tracking-wider uppercase">&#10024; Owner</span>
+                                <span className="text-[9px] font-bold text-white tracking-wider uppercase">{t.discover_page.own}</span>
                             ) : isFree ? (
-                                <span className="text-[9px] font-bold text-white tracking-wider uppercase">&#10024; Free</span>
+                                <span className="text-[9px] font-bold text-white tracking-wider uppercase">{t.profile_page.free}</span>
                             ) : priceUsdCents ? (
                                 <span className="text-[9px] font-bold text-white tracking-wider">${(priceUsdCents / 100).toFixed(2)}</span>
                             ) : (
@@ -200,7 +211,7 @@ export function VideoCard({
 
                     {/* Description */}
                     <p className="text-xs text-zinc-400 line-clamp-2 mb-3 leading-relaxed min-h-[2rem]">
-                        {token.metadata?.description || 'NFT ticket for exclusive video access'}
+                        {token.metadata?.description || t.profile_page.nft_ticket + ' ' + t.watch_page.work}
                     </p>
 
                     {/* Divider with Gradient */}
@@ -225,10 +236,26 @@ export function VideoCard({
                             </span>
                         </div>
 
-                        {/* NFT Ticket Indicator */}
-                        <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/50 border border-zinc-700/50">
-                            <div className="w-1.5 h-1.5 rounded-full bg-gradient-to-r from-purple-500 to-blue-500 animate-pulse" />
-                            <span className="text-[9px] text-zinc-400 font-medium">NFT</span>
+                        {/* CTA / ticket indicator */}
+                        <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md border ${isFree
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                            : isCreator
+                                ? 'bg-purple-500/10 border-purple-500/30 text-purple-400'
+                                : 'bg-zinc-800/50 border-zinc-700/50 text-zinc-400'
+                            }`}>
+                            <div className={`w-1.5 h-1.5 rounded-full ${isFree
+                                ? 'bg-emerald-400'
+                                : isCreator
+                                    ? 'bg-purple-400'
+                                    : 'bg-gradient-to-r from-purple-500 to-blue-500 animate-pulse'
+                            }`} />
+                            <span className="text-[9px] font-medium">
+                                {isCreator
+                                    ? t.video_card?.yours || 'Yours'
+                                    : isFree
+                                        ? t.discover_page?.watch_free || 'Free Watch'
+                                        : t.discover_page?.buy_ticket || 'Buy Ticket'}
+                            </span>
                         </div>
                     </div>
                 </div>

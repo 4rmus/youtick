@@ -116,15 +116,13 @@ pub fn emit_gift_drop_created(event_cid: String, signer_pk: String, num_tickets:
             num_tickets,
         }],
     };
-    env::log_str(&serde_json::to_string(&event).expect("Failed to serialize gift_drop_created event"));
+    env::log_str(
+        &serde_json::to_string(&event).expect("Failed to serialize gift_drop_created event"),
+    );
 }
 
 /// Emit gift_claimed event
-pub fn emit_gift_claimed(
-    token_id: String,
-    receiver_id: AccountId,
-    signer_pk: String,
-) {
+pub fn emit_gift_claimed(token_id: String, receiver_id: AccountId, signer_pk: String) {
     let event = Nep297Event {
         standard: NEP297_STANDARD,
         version: NEP297_VERSION,

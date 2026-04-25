@@ -46,6 +46,7 @@ YouTick currently runs with client-side media encryption, a market/access/regist
 - [Testing](testing.md)
 - [Contributing](contributing.md)
 - [Roadmap](roadmap.md)
+- [Open Source Readiness](open-source-readiness.md)
 - [Overview](overview.md)
 - [Business](business/youtick-avrupa-sirketlesme-raporu-2026-04.md)
 
@@ -63,4 +64,4 @@ For a new engineer, the shortest path is:
 
 ---
 
-*Last Updated: April 5, 2026*
+*Last Updated: April 25, 2026*

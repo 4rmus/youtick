@@ -17,6 +17,7 @@ export type EventRow = [string, {
     price_usd?: number | null;
     access_mode?: 'paid' | 'free_collectible' | 'public_free';
     created_at?: number | string | null;
+    content_type?: string;
     banned?: boolean;
 }];
 
@@ -66,7 +67,7 @@ export function mapEventRowsToTokens(events: EventRow[]): TokenWithVideo[] {
                 video_metadata: {
                     encrypted_cid: cid,
                     duration_seconds: 0,
-                    content_type: 'Exclusive',
+                    content_type: event.content_type ?? 'Exclusive',
                     price: event.price,
                     price_usd: event.price_usd ?? null,
                     access_mode: event.access_mode ?? (event.price === '0' ? 'public_free' : 'paid'),
@@ -101,7 +102,7 @@ function getPageWindow(
     };
 }
 
-async function fetchEventsPage(cursor: string | null): Promise<DiscoverEventsPage> {
+async function fetchEventsPage(cursor: string | null, contentType: string | null): Promise<DiscoverEventsPage> {
     const provider = getProvider();
     const totalCount = cursor == null
         ? Number(
@@ -129,6 +130,7 @@ async function fetchEventsPage(cursor: string | null): Promise<DiscoverEventsPag
         {
             from_index: window.fromIndex,
             limit: window.limit,
+            content_type: contentType,
         },
     );
 
@@ -138,11 +140,11 @@ async function fetchEventsPage(cursor: string | null): Promise<DiscoverEventsPag
     };
 }
 
-export function useAllVideos() {
+export function useAllVideos(contentType?: string | null) {
     const query = useInfiniteQuery({
-        queryKey: ['allVideos', NFT_CONTRACT_ID],
+        queryKey: ['allVideos', NFT_CONTRACT_ID, contentType ?? 'all'],
         initialPageParam: null as string | null,
-        queryFn: ({ pageParam }) => fetchEventsPage(pageParam),
+        queryFn: ({ pageParam }) => fetchEventsPage(pageParam, contentType ?? null),
         getNextPageParam: (lastPage) => lastPage.nextCursor,
         staleTime: 30 * 1000,
         gcTime: 5 * 60 * 1000,

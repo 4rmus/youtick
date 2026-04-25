@@ -38,6 +38,7 @@ export default function DiscoverPage() {
             <div className="space-y-8">
                 <div className="flex justify-between items-end">
                     <div>
+                        <p className="text-sm uppercase tracking-[0.24em] text-near-green mb-3">Published Works</p>
                         <h1 className="text-4xl font-bold tracking-tight mb-2">{t.discover_page.title}</h1>
                         <p className="text-muted-foreground">{t.discover_page.subtitle}</p>
                     </div>
@@ -79,7 +80,7 @@ export default function DiscoverPage() {
                                 {isFetchingNextPage ? (
                                     <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading...</>
                                 ) : (
-                                    'Load More'
+                                    'Show More Works'
                                 )}
                             </Button>
                         </div>

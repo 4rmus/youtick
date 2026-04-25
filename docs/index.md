@@ -37,4 +37,5 @@ features:
 - [Contract Methods](api/contract-methods.md) -- Contract API reference
 - [Security](security.md) -- Threat model and security notes
 - [Roadmap](roadmap.md) -- Planned milestones
+- [Open Source Readiness](open-source-readiness.md) -- Yayin oncesi rapor ve oneriler
 - [Business](business/youtick-yol-haritasi-2026-04.md) -- Yol haritasi ve yayin stratejisi

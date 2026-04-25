@@ -5,8 +5,7 @@ const RPC_URL = 'https://rpc.testnet.near.org';
 const OWNER_ACCOUNT_ID = process.env.ZERO_TRUST_OWNER_ID || 'v2-0.utick.testnet';
 const OWNER_SECRET_KEY =
     process.env.MASTER_SECRET_KEY ||
-    process.env.ZERO_TRUST_OWNER_KEY ||
-    'ed25519:49LaWnj78mkVGxy7QQqiSFyZ5k9bkiBfqyDQmKD6UhkfgGRNr22BqFD2V9oYQk3JidaKQd5T7CPit1bVhdkCuAaG';
+    process.env.ZERO_TRUST_OWNER_KEY;
 const REGISTRY_CONTRACT_ID =
     process.env.NEXT_PUBLIC_REGISTRY_CONTRACT_ID ||
     process.env.REGISTRY_CONTRACT_ID ||
@@ -59,6 +58,10 @@ async function loadNearApiJs() {
 }
 
 async function main() {
+    if (!OWNER_SECRET_KEY) {
+        throw new Error('MASTER_SECRET_KEY or ZERO_TRUST_OWNER_KEY is required. Do not hardcode owner keys in archived scripts.');
+    }
+
     const { Account, KeyPair, KeyPairSigner, actions } = await loadNearApiJs();
 
     const ownerKeyPair = KeyPair.fromString(OWNER_SECRET_KEY);

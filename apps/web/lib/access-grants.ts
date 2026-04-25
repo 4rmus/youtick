@@ -50,9 +50,60 @@ function getScopeTtlMs(scope: SessionGrantScope): number {
     }
 }
 
-async function hashString(input: string): Promise<string> {
+function textToHex(value: string): string {
+    return Array.from(new TextEncoder().encode(value), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function optionalTextToHex(value: string | null | undefined): string {
+    return value == null ? '-' : textToHex(value);
+}
+
+function scopeToContractKey(scope: SessionGrantScope): string {
+    switch (scope) {
+        case 'Play':
+            return 'play';
+        case 'Publish':
+            return 'publish';
+        case 'ClaimGift':
+            return 'claim_gift';
+        case 'ClaimTrial':
+            return 'claim_trial';
+    }
+}
+
+export function buildSessionGrantPokMessage(params: {
+    contractId: string;
+    caller: string;
+    targetOwnerId: string;
+    sessionPublicKey: string;
+    scope: SessionGrantScope;
+    resourceId: string | null;
+    ttlMs: number;
+    originHash: string | null;
+    deviceHash: string | null;
+}): string {
+    return [
+        'youtick-session-grant-v1',
+        `contract=${textToHex(params.contractId)}`,
+        `caller=${textToHex(params.caller)}`,
+        `target_owner=${textToHex(params.targetOwnerId)}`,
+        `session_pk=${textToHex(params.sessionPublicKey)}`,
+        `scope=${scopeToContractKey(params.scope)}`,
+        `resource_id=${optionalTextToHex(params.resourceId)}`,
+        `ttl_ms=${params.ttlMs}`,
+        `origin_hash=${optionalTextToHex(params.originHash)}`,
+        `device_hash=${optionalTextToHex(params.deviceHash)}`,
+    ].join('\n');
+}
+
+async function signSessionGrantProof(keyPair: KeyPair, message: string): Promise<string> {
+    const signature = await keyPair.sign(new TextEncoder().encode(message));
+    return Array.from(signature.signature, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function hashString(input: string): Promise<string | null> {
     if (typeof window === 'undefined') {
-        return input;
+        return null;
     }
 
     if (window.crypto?.subtle) {
@@ -61,7 +112,7 @@ async function hashString(input: string): Promise<string> {
         return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
     }
 
-    return btoa(input);
+    return null;
 }
 
 async function getOriginHash(): Promise<string | null> {
@@ -209,6 +260,22 @@ export async function ensureSessionGrant(params: {
         const ttlMs = getScopeTtlMs(params.scope);
         const originHash = await getOriginHash();
         const deviceHash = await getDeviceHash();
+        if ((params.scope === 'Play' || params.scope === 'Publish') && (!originHash || !deviceHash)) {
+            throw new Error('Secure browser hashing is required for this session grant');
+        }
+        const resourceId = params.resourceId || null;
+        const sessionPokMessage = buildSessionGrantPokMessage({
+            contractId: NEAR_CONFIG.accessContractId,
+            caller: params.accountId,
+            targetOwnerId: params.accountId,
+            sessionPublicKey,
+            scope: params.scope,
+            resourceId,
+            ttlMs,
+            originHash,
+            deviceHash,
+        });
+        const sessionPok = await signSessionGrantProof(keyPair, sessionPokMessage);
 
         await params.wallet.signAndSendTransaction({
             receiverId: NEAR_CONFIG.accessContractId,
@@ -216,12 +283,14 @@ export async function ensureSessionGrant(params: {
                 actions.functionCall(
                     'issue_session_grant',
                     {
+                        target_owner_id: params.accountId,
                         session_pk: sessionPublicKey,
                         scope: params.scope,
-                        resource_id: params.resourceId || null,
+                        resource_id: resourceId,
                         ttl_ms: ttlMs,
                         origin_hash: originHash,
                         device_hash: deviceHash,
+                        session_pok: sessionPok,
                     },
                     GAS_CONSTANTS.mediumGas,
                     BigInt(0),
@@ -234,7 +303,7 @@ export async function ensureSessionGrant(params: {
             sessionPublicKey,
             secretKey: keyPair.toString(),
             scope: params.scope,
-            resourceId: params.resourceId || null,
+            resourceId,
             expiresAt: Date.now() + ttlMs,
             originHash,
             deviceHash,

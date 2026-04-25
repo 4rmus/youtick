@@ -33,20 +33,23 @@ NEXT_PUBLIC_MARKET_CONTRACT_ID=youtick.near
 NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.youtick.near
 NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
-NEXT_PUBLIC_KMS_URL=https://youtick-kms.example.workers.dev
 NEXT_PUBLIC_APP_URL=https://youtick.net
 NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
 ```
+
+KMS endpointleri env ile verilmez. Web app aktif KMS operatorlerini `NEXT_PUBLIC_REGISTRY_CONTRACT_ID`
+üzerindeki operator registry kontratından okur.
 
 Sik kullanilan opsiyoneller:
 
 ```env
 NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
 NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true
-NEXT_PUBLIC_ENABLE_LEGACY_UPLOAD_FALLBACK=true
+ONBOARDING_KEY=...
+ONBOARDING_KEYS=...
 ```
 
-Trial olusturma icin birinci yol artik server-side relayer akisi. Browser onboarding key sadece kontrollu local fallback olarak dusunulmeli.
+Trial olusturma icin birinci yol artik browser-side onboarding key akisidir. Server-side relayer akisi kaldırılmıştır (410 Gone). Onboarding key, `/api/onboarding-key` endpoint'inden alınır ve `sessionStorage`'da geçici olarak tutulur.
 
 ## Project Shape
 

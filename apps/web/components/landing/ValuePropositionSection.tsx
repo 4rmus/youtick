@@ -1,75 +1,62 @@
 import { memo } from 'react';
-import { TrendingUp, Zap, Shield } from 'lucide-react';
+import { KeyRound, ShieldCheck, Ticket, WalletCards } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
 export const ValuePropositionSection = memo(() => {
-    const { t } = useLanguage();
+  const { t } = useLanguage();
+  const s = t.landing.value_proposition_section;
 
-    return (
-        <section id="value-proposition" className="py-32 bg-black relative overflow-hidden">
-            {/* Background gradient orb */}
-            <div className="absolute inset-0 pointer-events-none">
-                <div
-                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] rounded-full animate-glow-pulse"
-                    style={{
-                        background: 'radial-gradient(circle, rgba(255, 0, 110, 0.15) 0%, rgba(131, 56, 236, 0.1) 40%, transparent 70%)',
-                    }}
-                />
+  const promises = [
+    { icon: WalletCards, title: s.revenue_title, text: s.revenue_text, note: s.revenue_note },
+    { icon: Ticket, title: s.control_title, text: s.control_text, note: s.control_note },
+    { icon: ShieldCheck, title: s.trust_title, text: s.trust_text, note: s.trust_note },
+  ];
+
+  return (
+    <section id="model" className="border-y border-white/5 bg-zinc-950 py-24">
+      <div className="container mx-auto px-4">
+        <div className="grid gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+          <div>
+            <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-near-green">
+              {s.eyebrow}
+            </p>
+            <h2 className="mb-5 text-3xl font-black text-white md:text-5xl">
+              {s.title}
+            </h2>
+            <p className="text-lg leading-relaxed text-zinc-400">
+              {s.description}
+            </p>
+            <div className="mt-8 rounded-lg border border-white/10 bg-black p-5">
+              <div className="flex items-start gap-3">
+                <KeyRound className="mt-1 h-5 w-5 text-near-green" />
+                <p className="text-sm leading-relaxed text-zinc-400">
+                  {s.tech_note}
+                </p>
+              </div>
             </div>
+          </div>
 
-            <div className="container mx-auto px-4 relative z-10">
-                <div className="max-w-5xl mx-auto">
-                    {/* Main Value Prop */}
-                    <div className="text-center mb-16">
-                        <div className="inline-block mb-6">
-                            <div className="text-zinc-300 text-4xl md:text-5xl font-bold tracking-tight mb-2">
-                                {t.landing.value_proposition.percentage}
-                            </div>
-                            <div className="text-8xl md:text-9xl font-black text-gradient-concert animate-gradient-flow" style={{ backgroundSize: '200% 200%' }}>
-                                {t.landing.value_proposition.title}
-                            </div>
-                        </div>
-
-                        <h2 className="text-6xl md:text-7xl font-black text-white mb-6">
-                            {t.landing.value_proposition.subtitle}
-                        </h2>
-
-                        <p className="text-lg md:text-xl text-zinc-400 max-w-3xl mx-auto leading-relaxed">
-                            {t.landing.value_proposition.description}
-                        </p>
-                    </div>
-
-                    {/* Benefits Grid - Concert Colors */}
-                    <div className="grid md:grid-cols-3 gap-6">
-                        <div className="p-8 rounded-2xl glass-card hover:scale-[1.02] transition-all duration-300 group">
-                            <div className="w-14 h-14 mb-6 bg-[var(--near-green)]/10 rounded-xl flex items-center justify-center group-hover:bg-[var(--near-green)]/20 transition-colors">
-                                <Zap className="w-7 h-7 text-[var(--near-green)]" />
-                            </div>
-                            <h3 className="text-xl font-bold text-white mb-3">{t.landing.value_proposition.instant}</h3>
-                            <p className="text-zinc-500">{t.landing.value_proposition.instant_desc}</p>
-                        </div>
-
-                        <div className="p-8 rounded-2xl glass-card hover:scale-[1.02] transition-all duration-300 group">
-                            <div className="w-14 h-14 mb-6 bg-[var(--near-purple)]/10 rounded-xl flex items-center justify-center group-hover:bg-[var(--near-purple)]/20 transition-colors">
-                                <Shield className="w-7 h-7 text-[var(--near-purple)]" />
-                            </div>
-                            <h3 className="text-xl font-bold text-white mb-3">{t.landing.value_proposition.no_middlemen}</h3>
-                            <p className="text-zinc-500">{t.landing.value_proposition.no_middlemen_desc}</p>
-                        </div>
-
-                        <div className="p-8 rounded-2xl glass-card hover:scale-[1.02] transition-all duration-300 group">
-                            <div className="w-14 h-14 mb-6 bg-[var(--near-blue)]/10 rounded-xl flex items-center justify-center group-hover:bg-[var(--near-blue)]/20 transition-colors">
-                                <TrendingUp className="w-7 h-7 text-[var(--near-blue)]" />
-                            </div>
-                            <h3 className="text-xl font-bold text-white mb-3">{t.landing.value_proposition.full_control}</h3>
-                            <p className="text-zinc-500">{t.landing.value_proposition.full_control_desc}</p>
-                        </div>
-                    </div>
+          <div className="grid gap-5 md:grid-cols-3 lg:grid-cols-1">
+            {promises.map(({ icon: Icon, title, text, note }) => (
+              <article
+                key={title}
+                className="rounded-lg border border-white/10 bg-black p-6"
+              >
+                <div className="mb-4 flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-near-green/10">
+                    <Icon className="h-5 w-5 text-near-green" />
+                  </div>
+                  <h3 className="text-xl font-bold text-white">{title}</h3>
                 </div>
-            </div>
-        </section>
-    );
+                <p className="text-lg font-semibold text-zinc-100">{text}</p>
+                <p className="mt-2 text-sm text-zinc-500">{note}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 });
 
 ValuePropositionSection.displayName = 'ValuePropositionSection';
-

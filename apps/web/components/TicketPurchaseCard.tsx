@@ -49,6 +49,7 @@ const GAS_BUFFER_NEAR = 0.01;
 export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: TicketPurchaseCardProps) {
     const { accountId, isTrial, managedAccountKind, getWallet, connect, setEvmLinkedAccount, setManagedAccount } = useWallet();
     const { t } = useLanguage();
+    const tp = t.ticket_purchase;
 
     const { data: isCreatorData } = useIsCreator(accountId, cid);
     const { nearPrice, nearToUsdStr } = useNearPrice();
@@ -140,7 +141,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             if (onPurchaseSuccess) onPurchaseSuccess();
         } catch (e) {
             console.error('[MetaMask Flow] Implicit account purchase failed:', e);
-            setError(e instanceof Error ? e.message : 'Failed to complete purchase');
+            setError(e instanceof Error ? e.message : tp.error_complete_purchase);
             setActionLoading(false);
         }
     };
@@ -196,7 +197,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 }>(provider, contractId, 'get_event', { encrypted_cid: cid });
 
                 if (event?.banned) {
-                    setError('This event has been banned and tickets cannot be purchased.');
+                    setError(tp.error_banned);
                     setLoading(false);
                     return;
                 }
@@ -217,7 +218,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             } catch (e) {
                 console.error("Error loading ticket info:", e);
-                setError("Failed to load ticket info");
+                setError(tp.error_load_ticket);
             } finally {
                 setLoading(false);
             }
@@ -312,7 +313,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
         } catch (e: unknown) {
             console.error("Free ticket claim failed:", e);
-            setError(e instanceof Error ? e.message : "Failed to claim free ticket");
+            setError(e instanceof Error ? e.message : tp.error_claim_free);
         } finally {
             setActionLoading(false);
         }
@@ -354,7 +355,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
         } catch (e) {
             console.error("Purchase failed:", e);
-            setError("Transaction failed or was rejected");
+            setError(tp.error_tx_rejected);
         } finally {
             setActionLoading(false);
         }
@@ -393,7 +394,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             recipientOverride = implicitId;
             console.log('[MetaMask Flow] Generated implicit account:', implicitId);
         } else {
-            setError('Please connect a NEAR wallet or use MetaMask with Arbitrum/Base.');
+            setError(tp.error_connect_wallet);
             setActionLoading(false);
             return;
         }
@@ -534,7 +535,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             }
         } catch (e) {
             console.error("Stablecoin payment failed:", e);
-            setError(e instanceof Error ? e.message : "Failed to process payment");
+            setError(e instanceof Error ? e.message : tp.error_complete_purchase);
             setActionLoading(false);
         }
     };
@@ -577,7 +578,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             <div className="aspect-video relative overflow-hidden bg-zinc-800">
                 <IPFSThumbnail
                     url={eventDetails.media}
-                    alt="Ticket Preview"
+                    alt={tp.ticket_preview}
                     className="w-full h-full object-cover scale-105 blur-sm opacity-60 group-hover:opacity-80 transition-all duration-700"
                     fallbackUrl="/placeholder-video.svg"
                 />
@@ -628,7 +629,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
                     {isCreator && (
                         <span className="px-3 py-1 text-xs font-medium bg-near-green/20 text-near-green rounded-full border border-near-green/30">
-                            Your Content
+                            {tp.your_content}
                         </span>
                     )}
                 </div>
@@ -649,15 +650,15 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         <div className="flex items-center gap-2">
                             <Loader2 className="h-4 w-4 animate-spin text-near-green" />
                             <span className="text-sm font-medium text-near-green">
-                                {swapStatus === 'awaiting_deposit' ? 'Deposit sent — waiting for 1Click to detect...' :
-                                    swapStatus === 'processing' ? 'Swap processing — converting to NEAR...' :
-                                        'Preparing swap...'}
+                                {swapStatus === 'awaiting_deposit' ? tp.swap_awaiting_deposit :
+                                    swapStatus === 'processing' ? tp.swap_processing :
+                                        tp.swap_preparing}
                             </span>
                         </div>
                         <p className="text-[11px] text-zinc-500">
                             {swapStatus === 'awaiting_deposit'
-                                ? `Your ${paymentSelection.method} was sent. Detection usually takes 10-30 seconds.`
-                                : `Your ${paymentSelection.method} has been detected. Converting to NEAR — this may take 1-2 minutes.`}
+                                ? tp.swap_detecting_near.replace('{method}', paymentSelection.method)
+                                : tp.swap_converting_near.replace('{method}', paymentSelection.method)}
                         </p>
                         <button
                             type="button"
@@ -669,7 +670,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                             }}
                             className="text-[11px] text-zinc-600 hover:text-zinc-400 underline"
                         >
-                            Cancel
+                            {tp.cancel}
                         </button>
                     </div>
                 )}
@@ -680,21 +681,21 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         <div className="flex items-center gap-2">
                             <Loader2 className="h-4 w-4 animate-spin text-near-purple" />
                             <span className="text-sm font-medium text-near-purple">
-                                {isEvmSending ? 'Confirming MetaMask transaction...' :
-                                    actionLoading && evmSwapKeypair && !isSwapInProgress ? 'Completing ticket purchase...' :
-                                        swapStatus === 'awaiting_deposit' ? 'Deposit sent — waiting for detection...' :
-                                            swapStatus === 'processing' ? 'Swap processing — converting to NEAR...' :
-                                                'Preparing swap...'}
+                                {isEvmSending ? tp.swap_confirm_metamask :
+                                    actionLoading && evmSwapKeypair && !isSwapInProgress ? tp.swap_purchasing_auto :
+                                        swapStatus === 'awaiting_deposit' ? tp.swap_awaiting_deposit :
+                                            swapStatus === 'processing' ? tp.swap_processing :
+                                                tp.swap_preparing}
                             </span>
                         </div>
                         <p className="text-[11px] text-zinc-500">
                             {isEvmSending
-                                ? 'Please confirm the transaction in MetaMask.'
+                                ? tp.swap_confirm_metamask
                                 : actionLoading && evmSwapKeypair && !isSwapInProgress
-                                    ? 'NEAR received! Purchasing your ticket automatically...'
+                                    ? tp.swap_purchasing_auto
                                     : swapStatus === 'awaiting_deposit'
-                                        ? `Your ${paymentSelection.method} was sent via MetaMask. Detection usually takes 30-60 seconds.`
-                                        : `Converting ${paymentSelection.method} to NEAR — this may take 1-3 minutes.`}
+                                        ? tp.swap_detecting_metamask.replace('{method}', paymentSelection.method)
+                                        : tp.swap_converting_method.replace('{method}', paymentSelection.method)}
                         </p>
                         {evmSwapKeypair && (
                             <p className="text-[10px] text-zinc-600">
@@ -711,7 +712,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                             }}
                             className="text-[11px] text-zinc-600 hover:text-zinc-400 underline"
                         >
-                            Cancel
+                            {tp.cancel}
                         </button>
                     </div>
                 )}
@@ -719,9 +720,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 {/* Cost Breakdown (NEAR payments, paid tickets only) */}
                 {!isFree && !isCreator && !isStablecoinFlow && !isSwapInProgress && (() => {
                     const costItems = [
-                        { label: 'Ticket price', amount: priceNear },
-                        { label: 'NFT storage deposit', amount: STORAGE_DEPOSIT_NEAR },
-                        { label: 'Gas buffer', amount: GAS_BUFFER_NEAR },
+                        { label: tp.cost_ticket_price, amount: priceNear },
+                        { label: tp.cost_nft_storage, amount: STORAGE_DEPOSIT_NEAR },
+                        { label: tp.cost_gas_buffer, amount: GAS_BUFFER_NEAR },
                     ];
                     const total = costItems.reduce((sum, item) => sum + item.amount, 0);
 
@@ -732,7 +733,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                 onClick={() => setShowCostBreakdown(!showCostBreakdown)}
                                 className="w-full flex items-center justify-between px-3 py-2 text-xs text-zinc-400 hover:text-zinc-300 transition-colors"
                             >
-                                <span>Total wallet cost: ~{total.toFixed(2)} Ⓝ</span>
+                                <span>{tp.total_wallet_cost}: ~{total.toFixed(2)} Ⓝ</span>
                                 {showCostBreakdown ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                             </button>
                             {showCostBreakdown && (
@@ -744,11 +745,11 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                         </div>
                                     ))}
                                     <div className="flex justify-between font-medium text-zinc-300 border-t border-white/5 pt-1 mt-1">
-                                        <span>Total</span>
+                                        <span>{tp.cost_total}</span>
                                         <span className="font-mono">{total.toFixed(2)} Ⓝ</span>
                                     </div>
                                     <p className="text-[10px] text-zinc-600 pt-1">
-                                        Excess deposit is refunded by the contract.
+                                        {tp.cost_refund_note}
                                     </p>
                                 </div>
                             )}
@@ -762,11 +763,11 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         <div className="flex items-center gap-2">
                             <Check className="h-4 w-4 text-near-green" />
                             <span className="text-sm font-medium text-near-green">
-                                Swap complete! NEAR received.
+                                {tp.swap_complete}
                             </span>
                         </div>
                         <p className="text-[11px] text-zinc-400">
-                            Click below to complete your ticket purchase with the NEAR received from the swap.
+                            {tp.swap_complete_desc}
                         </p>
                         <Button
                             onClick={evmSwapKeypair
@@ -779,12 +780,12 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                             {actionLoading ? (
                                 <>
                                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                    Completing purchase...
+                                    {tp.completing_purchase}
                                 </>
                             ) : (
                                 <>
                                     <Ticket className="h-4 w-4 mr-2" />
-                                    Complete Purchase
+                                    {tp.complete_purchase}
                                 </>
                             )}
                         </Button>
@@ -832,7 +833,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                 className="w-full h-12 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-500/90 hover:to-amber-500/90 text-white font-bold text-base rounded-xl shadow-lg shadow-orange-500/20 transition-all duration-300"
                             >
                                 <Wallet className="h-5 w-5 mr-2" />
-                                Connect MetaMask
+                                {tp.connect_metamask}
                             </Button>
                         ) : (
                             <Button
@@ -843,7 +844,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                 {actionLoading ? (
                                     <>
                                         <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                                        Processing...
+                                        {tp.processing}
                                     </>
                                 ) : (
                                     <>
@@ -851,12 +852,12 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                         {isFree
                                             ? t.watch_page.claim_free_ticket
                                             : crossChainEnabled && isStablecoinFlow && isEvmChain
-                                                ? `Pay with MetaMask • ${paymentSelection.method}`
+                                                ? `${tp.pay_with_metamask} • ${paymentSelection.method}`
                                                 : crossChainEnabled && isStablecoinFlow
-                                                    ? `Pay with ${paymentSelection.method}`
+                                                    ? `${tp.pay_with} ${paymentSelection.method}`
                                                     : eventDetails.priceUsdCents
-                                                        ? `Buy Ticket • $${(eventDetails.priceUsdCents / 100).toFixed(2)}`
-                                                        : `Buy Ticket • ${nearToUsdStr(priceNear)}`
+                                                        ? `${tp.buy_ticket} • $${(eventDetails.priceUsdCents / 100).toFixed(2)}`
+                                                        : `${tp.buy_ticket} • ${nearToUsdStr(priceNear)}`
                                         }
                                     </>
                                 )}
@@ -872,7 +873,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         className="w-full h-12 bg-gradient-to-r from-zinc-700 to-zinc-600 hover:from-zinc-600 hover:to-zinc-500 text-white font-bold text-base rounded-xl"
                     >
                         <Play className="h-5 w-5 mr-2" />
-                        Watch Your Video
+                        {tp.watch_your_video}
                     </Button>
                 )}
             </div>

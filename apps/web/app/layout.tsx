@@ -13,15 +13,15 @@ import { OnboardingKeyInit } from "@/components/OnboardingKeyInit";
 
 export const metadata: Metadata = {
     title: {
-        default: 'YouTick - Decentralized Video Streaming',
+        default: 'YouTick - Digital Ticketed Video for Creators',
         template: '%s | YouTick',
     },
-    description: 'YouTick is a decentralized video-on-demand platform on NEAR Protocol. Artists earn 98% revenue with instant payments. NFT-based tickets, encrypted streaming, and censorship-resistant content.',
+    description: 'YouTick helps filmmakers and musicians sell films, concert recordings and special screenings directly with digital tickets. Creators keep 98% of every sale.',
     keywords: [
-        'decentralized video',
-        'video streaming',
+        'digital ticket video',
+        'creator video platform',
         'NEAR Protocol',
-        'NFT tickets',
+        'digital tickets',
         'Web3 video',
         'creator economy',
         'video on demand',
@@ -52,21 +52,21 @@ export const metadata: Metadata = {
         alternateLocale: 'tr_TR',
         url: 'https://youtick.net',
         siteName: 'YouTick',
-        title: 'YouTick - Decentralized Video Streaming',
-        description: 'Artists earn 98% revenue with instant payments. NFT-based tickets, encrypted streaming on NEAR Protocol.',
+        title: 'YouTick - Digital Ticketed Video for Creators',
+        description: 'Filmmakers and musicians sell directly with digital tickets and keep 98% of every sale.',
         images: [
             {
                 url: 'https://youtick.net/og-image.png',
                 width: 1200,
                 height: 630,
-                alt: 'YouTick - Decentralized Video Streaming Platform',
+                alt: 'YouTick - Digital Ticketed Video for Creators',
             },
         ],
     },
     twitter: {
         card: 'summary_large_image',
-        title: 'YouTick - Decentralized Video Streaming',
-        description: 'Artists earn 98% revenue with instant payments. NFT-based tickets on NEAR Protocol.',
+        title: 'YouTick - Digital Ticketed Video for Creators',
+        description: 'Creators sell films and concert recordings directly with digital tickets.',
         images: ['https://youtick.net/og-image.png'],
         creator: '@youtick_net',
     },

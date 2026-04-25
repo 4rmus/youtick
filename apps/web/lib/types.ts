@@ -142,17 +142,46 @@ export interface TokenWithVideo extends NFTToken {
 /**
  * Event data from contract
  */
+export type ContentType = 'Concert' | 'Cinema' | 'Exclusive' | 'LiveEvent' | 'Documentary' | 'ShortFilm' | 'FestivalSelection';
+
 export interface NFTEvent {
-    encrypted_cid: string;
+    encrypted_cid?: string;
     title: string;
     description: string;
     creator_id: string;
     price: string;
     price_usd?: number | null;
     created_at?: number;
-    access_mode?: 'paid' | 'free_collectible' | 'public_free';
+    access_mode?: 'paid' | 'free_collectible' | 'public_free' | string;
+    content_type?: ContentType | string;
     banned?: boolean;
     ban_reason?: string;
+}
+
+export interface CreatorProfile {
+    display_name?: string | null;
+    bio?: string | null;
+    website?: string | null;
+    twitter?: string | null;
+    instagram?: string | null;
+    avatar_url?: string | null;
+}
+
+export interface CreatorStats {
+    total_sales: number;
+    total_revenue_yocto: string;
+}
+
+export interface PurchaseLog {
+    buyer_id: string;
+    creator_id: string;
+    event_cid: string;
+    token_id: string;
+    price: string;
+    creator_amount: string;
+    commission_amount: string;
+    purchase_type: 'Direct' | 'Prepaid' | 'Free';
+    timestamp_ns: number;
 }
 
 // ============================================================================

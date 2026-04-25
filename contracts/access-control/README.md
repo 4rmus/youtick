@@ -5,6 +5,7 @@ Owner-managed session grant and scope policy contract for the zero-trust target 
 ## Core responsibilities
 
 - issue and revoke short-lived session grants
+- verify `session_pok` so a grant can only be created by someone holding the session private key
 - store scope policy
 - expose grant verification helpers for relayers and decryption operators
 - keep market and registry contract references

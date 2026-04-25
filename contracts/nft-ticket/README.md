@@ -34,7 +34,7 @@ cargo test
 ### Event
 
 - `create_event`
-- `create_event_prepaid`
+- `create_event_prepaid` (upload-session publish path)
 - `get_event`
 - `get_events_paginated`
 
@@ -43,7 +43,7 @@ cargo test
 - `create_upload_session`
 - `revoke_upload_session`
 - `get_upload_session`
-- `nft_mint_prepaid`
+- `nft_mint_prepaid` (upload-session publish path)
 
 ### Ticket
 

@@ -43,7 +43,7 @@ apps/web/
 ### Upload (`components/UploadForm.tsx`)
 
 1. Validate metadata and file constraints.
-2. Ensure upload session + prepaid balance.
+2. Ensure upload session authority and budget.
 3. Upload thumbnail to Crust.
 4. Paid video path: AES-CTR encrypt -> upload ciphertext + manifest -> split key into Shamir shares -> distribute shares to KMS operators.
 5. Submit batched on-chain actions (mint ticket + create event).

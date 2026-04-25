@@ -39,7 +39,7 @@ export default function MintPage() {
                     {/* Placeholder for the NFT Ticket Image we generated */}
                     <Image
                         src="/feature_nft_ticket_1764836213583.png"
-                        alt="NFT Ticket"
+                        alt="Dijital Bilet"
                         fill
                         className="object-cover hover:scale-105 transition-transform duration-500"
                     />

@@ -1,127 +1,52 @@
 'use client';
 
 import { memo } from 'react';
-import { DollarSign, ShieldOff, Users, ArrowRight } from 'lucide-react';
+import { Archive, Clock, DollarSign, Users } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
-/**
- * PainPointsSection - Highlights artist pain points in Web2 vs YouTick solutions.
- * Based on PRODUCT_ANALYSIS_REPORT.md "Acı Noktaları" section.
- */
 export const PainPointsSection = memo(() => {
-    const { t } = useLanguage();
+  const { t } = useLanguage();
+  const s = t.landing.pain_points_section;
 
-    const painPoints = [
-        {
-            icon: DollarSign,
-            titleKey: 'revenue_title',
-            web2Key: 'revenue_web2',
-            youtickKey: 'revenue_youtick',
-            iconColor: 'text-near-red',
-            bgColor: 'bg-near-red/10',
-            borderColor: 'border-near-red/20',
-        },
-        {
-            icon: ShieldOff,
-            titleKey: 'censorship_title',
-            web2Key: 'censorship_web2',
-            youtickKey: 'censorship_youtick',
-            iconColor: 'text-near-purple',
-            bgColor: 'bg-near-purple/10',
-            borderColor: 'border-near-purple/20',
-        },
-        {
-            icon: Users,
-            titleKey: 'fan_title',
-            web2Key: 'fan_web2',
-            youtickKey: 'fan_youtick',
-            iconColor: 'text-near-blue',
-            bgColor: 'bg-near-blue/10',
-            borderColor: 'border-near-blue/20',
-        },
-    ];
+  const painPoints = [
+    { icon: DollarSign, title: s.money_title, text: s.money_desc },
+    { icon: Clock, title: s.slow_title, text: s.slow_desc },
+    { icon: Users, title: s.audience_title, text: s.audience_desc },
+    { icon: Archive, title: s.archive_title, text: s.archive_desc },
+  ];
 
-    return (
-        <section id="pain-points" className="py-32 bg-black relative overflow-hidden">
-            {/* Background subtle gradient */}
-            <div className="absolute inset-0 pointer-events-none">
-                <div
-                    className="absolute top-0 left-1/4 w-[600px] h-[600px] rounded-full animate-glow-pulse"
-                    style={{
-                        background: 'radial-gradient(circle, rgba(255, 121, 102, 0.1) 0%, transparent 70%)',
-                    }}
-                />
-            </div>
+  return (
+    <section id="pain-points" className="bg-black py-24">
+      <div className="container mx-auto px-4">
+        <div className="mb-12 max-w-3xl">
+          <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+            {s.eyebrow}
+          </p>
+          <h2 className="mb-4 text-3xl font-black text-white md:text-5xl">
+            {s.title}
+          </h2>
+          <p className="text-lg leading-relaxed text-zinc-400">
+            {s.description}
+          </p>
+        </div>
 
-            <div className="container mx-auto px-4 relative z-10">
-                {/* Header - Left aligned per NEAR guidelines */}
-                <div className="max-w-4xl mb-16">
-                    <h2 className="text-4xl md:text-5xl font-black text-white mb-4 text-left">
-                        {t.landing.pain_points?.title || 'Artist Pain Points'}
-                    </h2>
-                    <p className="text-lg text-zinc-400 text-left leading-relaxed">
-                        {t.landing.pain_points?.subtitle || 'Traditional platforms extract value. We return it.'}
-                    </p>
-                </div>
-
-                {/* Pain Points Grid */}
-                <div className="grid md:grid-cols-3 gap-8">
-                    {painPoints.map(({ icon: Icon, titleKey, web2Key, youtickKey, iconColor, bgColor, borderColor }) => (
-                        <div
-                            key={titleKey}
-                            className={`p-8 rounded-xl bg-zinc-900/50 border ${borderColor} hover:border-white/20 transition-all duration-300 group`}
-                        >
-                            {/* Icon */}
-                            <div className={`w-16 h-16 mb-6 ${bgColor} rounded-xl flex items-center justify-center`}>
-                                <Icon className={`w-8 h-8 ${iconColor}`} />
-                            </div>
-
-                            {/* Title */}
-                            <h3 className="text-2xl font-bold text-white mb-6 text-left">
-                                {t.landing.pain_points?.[titleKey as keyof typeof t.landing.pain_points] || titleKey}
-                            </h3>
-
-                            {/* Web2 Problem */}
-                            <div className="mb-6">
-                                <div className="flex items-center gap-2 mb-3">
-                                    <span className="text-sm font-semibold text-near-red uppercase tracking-wider">Web2</span>
-                                </div>
-                                <p className="text-base text-zinc-400 leading-relaxed text-left">
-                                    {t.landing.pain_points?.[web2Key as keyof typeof t.landing.pain_points] || web2Key}
-                                </p>
-                            </div>
-
-                            {/* Arrow */}
-                            <div className="flex justify-center my-4">
-                                <ArrowRight className="w-5 h-5 text-near-green rotate-90" />
-                            </div>
-
-                            {/* YouTick Solution */}
-                            <div>
-                                <div className="flex items-center gap-2 mb-3">
-                                    <span className="text-sm font-semibold text-near-green uppercase tracking-wider">YouTick</span>
-                                </div>
-                                <p className="text-base text-zinc-200 leading-relaxed text-left font-medium">
-                                    {t.landing.pain_points?.[youtickKey as keyof typeof t.landing.pain_points] || youtickKey}
-                                </p>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-
-                {/* Bottom CTA */}
-                <div className="mt-16 text-center">
-                    <p className="text-zinc-400 text-lg">
-                        <span className="text-near-green font-bold">98%</span> {t.landing.hero.badge_instant_revenue || 'Revenue Share'}
-                        <span className="mx-3 text-zinc-600">•</span>
-                        <span className="text-near-green font-bold">0</span> {t.landing.value_proposition?.subtitle || 'Server Costs'}
-                        <span className="mx-3 text-zinc-600">•</span>
-                        <span className="text-near-green font-bold">∞</span> {t.landing.competitive_advantages?.decentralization || 'Decentralization'}
-                    </p>
-                </div>
-            </div>
-        </section>
-    );
+        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+          {painPoints.map(({ icon: Icon, title, text }) => (
+            <article
+              key={title}
+              className="rounded-lg border border-white/10 bg-zinc-950 p-6"
+            >
+              <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg bg-red-500/10">
+                <Icon className="h-5 w-5 text-red-300" />
+              </div>
+              <h3 className="mb-3 text-lg font-bold text-white">{title}</h3>
+              <p className="text-sm leading-relaxed text-zinc-400">{text}</p>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
 });
 
 PainPointsSection.displayName = 'PainPointsSection';

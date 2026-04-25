@@ -4,7 +4,7 @@
  *
  * Usage:
  *   node scripts/deploy-crust.mjs                  # Build + upload + show CID
- *   node scripts/deploy-crust.mjs --set-url        # Build + upload + auto-update contract
+ *   node scripts/deploy-crust.mjs --set-url        # Build + upload + propose timelocked contract update
  *   node scripts/deploy-crust.mjs --skip-build     # Upload existing out/ without rebuilding
  *
  * Prerequisites:
@@ -175,7 +175,7 @@ async function loadNearApiJs() {
   return import(moduleUrl);
 }
 
-async function updateWeb4StaticUrl(cid) {
+async function proposeWeb4StaticUrl(cid) {
   const { Account, KeyPair, KeyPairSigner, actions } = await loadNearApiJs();
   const creds = JSON.parse(readFileSync(CREDS_PATH, 'utf-8'));
   const privateKey = creds.private_key || creds.secret_key;
@@ -191,8 +191,8 @@ async function updateWeb4StaticUrl(cid) {
     receiverId: CONTRACT_ID,
     actions: [
       actions.functionCall(
-        'web4_set_static_url',
-        { url: `ipfs://${cid}` },
+        'propose_action',
+        { action: { SetWeb4StaticUrl: { url: `ipfs://${cid}` } } },
         '30000000000000',
         '0',
       ),
@@ -316,43 +316,31 @@ async function main() {
   console.log(`  Gateway:  https://ipfs.io/ipfs/${cid}`);
   console.log('');
 
-  // Step 3: Update contract
-  console.log('[3/3] Contract URL update...');
+  // Step 3: Propose contract update
+  console.log('[3/3] Contract URL timelock proposal...');
   console.log(`  Contract: ${CONTRACT_ID}`);
   console.log(`  New URL:  ipfs://${cid}\n`);
 
   if (SET_URL) {
-    console.log('  Updating contract...');
+    console.log('  Creating timelock proposal...');
     try {
-      await updateWeb4StaticUrl(cid);
-      console.log('\n  ✓ Contract updated!');
-
-      console.log('');
-      console.log('[4/4] Running live smoke + warm-up...');
-      const expectedAssets = files
-        .map((file) => `/${file.relative}`)
-        .filter((file) => file.startsWith('/_next/static/'))
-        .slice(0, 12);
-
-      const nearPageResult = await warmAndVerifyDeployment(`https://${CONTRACT_ID}.near.page`, expectedAssets);
-      console.log(`  ✓ near.page ok (html=${nearPageResult.htmlStatus}, watch=${nearPageResult.watchStatus}, assets=${nearPageResult.warmedAssets})`);
-
-      try {
-        const customDomainResult = await warmAndVerifyDeployment('https://youtick.net', expectedAssets);
-        console.log(`  ✓ youtick.net ok (html=${customDomainResult.htmlStatus}, watch=${customDomainResult.watchStatus}, assets=${customDomainResult.warmedAssets})`);
-      } catch (customDomainError) {
-        console.warn(`  ! youtick.net warm-up skipped: ${customDomainError instanceof Error ? customDomainError.message : String(customDomainError)}`);
-      }
+      await proposeWeb4StaticUrl(cid);
+      console.log('\n  ✓ Proposal created!');
+      console.log('  After 24 hours, execute it with:');
+      console.log(`    near call ${CONTRACT_ID} execute_action '{"id":PROPOSAL_ID}' --accountId ${CONTRACT_ID} --gas 30000000000000`);
     } catch (err) {
-      console.error('  ERROR: Contract update failed.');
+      console.error('  ERROR: Contract proposal failed.');
       console.error(`  ${err instanceof Error ? err.message : String(err)}`);
     }
   } else {
-    console.log('  Re-run with --set-url flag to update the contract URL automatically.');
+    console.log('  Re-run with --set-url flag to propose the contract URL update.');
+    console.log(`  Manual proposal: near call ${CONTRACT_ID} propose_action '{"action":{"SetWeb4StaticUrl":{"url":"ipfs://${cid}"}}}' --accountId ${CONTRACT_ID} --gas 30000000000000`);
   }
 
   console.log('\n============================================');
-  console.log(`  Live URL: https://${CONTRACT_ID}.page/`);
+  console.log('  Upload complete');
+  console.log('  Web4 URL changes after timelock execution');
+  console.log(`  Current live URL: https://${CONTRACT_ID}.page/`);
   console.log('============================================');
 }
 

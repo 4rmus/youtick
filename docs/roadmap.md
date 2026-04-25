@@ -1,6 +1,6 @@
 # Development Roadmap
 
-> YouTick icin daha gercekci ve guncel yol haritasi
+> YouTick icin acik kaynak yayin ve mainnet sertlestirme odakli yol haritasi
 
 ---
 
@@ -32,41 +32,45 @@
 
 ---
 
-## Simdi odakta olanlar
+## Yakin donem plan
 
-### 1. Dayaniklilik
+### Faz 0: Acik kaynak yayin hazirligi
+
+- lisans secimi ve root `LICENSE`
+- root `SECURITY.md` ve `CONTRIBUTING.md` kontrolu
+- GitHub issue / PR template'leri kontrolu
+- GitHub Actions ilk calisma sonucu
+- secret scan ve eski deploy script temizligi dogrulamasi
+- README'de public alpha durumu ve bilinen sorun linki
+
+### Faz 1: Mainnet sertlestirme
+
+- patched kontratlarin mainnet deploy'u
+- KMS worker + web app esit release penceresi
+- onboarding key ve operator secret rotation
+- known issues dokumaninin deploy sonrasi guncellenmesi
+
+### Faz 2: Test ve CI
+
+- GitHub Actions: web lint, web test, web build
+- Rust kontrat testleri
+- upload -> purchase -> watch E2E senaryosu
+- gift ve trial icin E2E veya yakin entegrasyon testi
+
+### Faz 3: Urun dayanıklılığı
 
 - upload hata geri kazanimi
-- KMS hata mesajlarini daha netlestirme
-- gateway fallback gozlemi
-- playback fallback'lerinin daha guvenli olmasi
+- KMS ve gateway hata metinlerini sadeleştirme
+- playback fallback gozlemi
+- gift/trial operasyon gorunurlugu
 
-### 2. Test kapsami
+### Faz 4: Creator ve buyume
 
-- upload, watch, gift, trial ve checkout icin daha guclu senaryolar
-- contract hata yollarina daha cok test
-
-### 3. Creator tooling
-
-- daha iyi profil/dashboard
+- creator dashboard
 - satis ve gelir gorunurlugu
-- toplu isler
-
-### 4. Cross-chain checkout
-
-- 1Click akisini daha pürüzsüz hale getirme
-- implicit account akisini sadeleştirme
-- kullaniciya daha net durum metinleri verme
-
----
-
-## Bir sonraki buyuk adimlar
-
-- PWA / mobil deneyim
 - arama ve filtreleme
-- bildirimler
-- creator analytics
-- daha iyi operasyon panosu
+- PWA / mobil deneyim
+- cross-chain checkout readiness review
 
 ---
 
@@ -76,6 +80,7 @@
 |---------|--------|
 | Yuksek | Akis bazli E2E test eksigi |
 | Yuksek | KMS ve player hatalarinda daha net recovery |
+| Yuksek | Root lisans eksigi ve CI ilk calisma dogrulamasi |
 | Orta | Gift / trial operasyon gorunurlugu |
 | Orta | Cross-chain checkout metin ve durumlari |
 | Dusuk | Frontend modullerinin daha temiz ayrismasi |
