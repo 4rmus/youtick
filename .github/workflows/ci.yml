@@ -70,6 +70,9 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Test nft-ticket
         run: cargo test
         working-directory: contracts/nft-ticket
