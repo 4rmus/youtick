@@ -96,7 +96,23 @@ Upload icin:
 
 ---
 
-## Aktif method aileleri
+## Admin modeli ve timelock
+
+Tum hassas admin islemleri `propose_action` ve `execute_action` uzerinden
+24 saatlik timelock ile calisir:
+
+- Admin fonksiyonlarinin dogrudan cagrilmasi `panic_timelock_required()` ile engellenir.
+- Owner `propose_action` ile teklif eder, 24 saat sonra `execute_action` ile yurutur.
+- `cancel_action` ile beklemedeki teklif iptal edilebilir.
+- `takedown_event` (acil icerik icin) timelock'a tabi degildir, NEP-297 event log yayar.
+- `accept_ownership` iki asamali sahiplik devrinin ikinci adimidir.
+
+Timelock'a tabi islemler: `ban_event`, `unban_event`, `admin_remove_events`,
+`add_onboarding_key`, `remove_onboarding_key`, `set_onboarding_config`,
+`withdraw_trial_pool`, `withdraw_commission`, `set_web4_static_url`,
+`set_next_token_id`, `nft_mint`, `pause`, `unpause`, `propose_owner`.
+
+---
 
 ### Event
 

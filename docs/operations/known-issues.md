@@ -1,6 +1,6 @@
 # Known Issues & Operational Risks
 
-> Last updated: 2026-04-24 (P0 Timelock + KMS Nonce + Shamir Fix + Error Normalization)
+> Last updated: 2026-04-26 (KMS operator activation + worker redeploy)
 >
 > This document is a **living transparency report**. It lists confirmed mainnet
 > anomalies, active security mitigations, and risks that operators should be
@@ -119,7 +119,11 @@ facilitates targeted operator attacks and reconnaissance.
 
 ---
 
-## ✅ Resolved
+## ✅ Resolved in Source / Pending Mainnet Verification
+
+The items in this section have source-level fixes. They should only be called
+fully resolved after the patched contracts, workers or web app are deployed and
+verified on mainnet.
 
 ### 6. Pause Bypass in Prepaid Functions
 
@@ -134,7 +138,7 @@ other Faz 1/Faz 2 hardened changes.
 
 ### 7. Access Cache TTL and Revocation Responsiveness
 
-**Status:** Mitigated in source — 2026-04-23  
+**Status:** Mitigated in source; KMS workers redeployed on 2026-04-26
 **Location:** `workers/youtick-kms/src/index.ts`
 
 Previously, ticket access was cached for 60 seconds with no negative caching.
@@ -147,8 +151,9 @@ Revoked or transferred tickets could remain valid in cache for up to a minute.
 - Reduced `REGISTRY_CACHE_TTL_S` from 300s → **120s**
 - `EVENT_CREATOR_CACHE_TTL_S` reduced from 3600s → **1800s**
 
-**Next step:** Faz 3 — contract-event driven cache invalidation for instant
-revoke/transfer propagation.
+**Next step:** Run a live encrypted upload / purchase / watch smoke test, then
+Faz 3 — contract-event driven cache invalidation for instant revoke/transfer
+propagation.
 
 ### 8. Timelock Bypass on Admin Functions
 
@@ -185,7 +190,10 @@ within the window.
   window).
 - Duplicate nonces are rejected with `401 Unauthorized`.
 
-**Action required:** Redeploy KMS workers and web app simultaneously.
+**Action required:** KMS workers were redeployed on 2026-04-26. A matching Web4
+build was uploaded to `ipfs://bafybeiepp3qv635pidmh7yvckwa22ogv6oc22f6nziaj55mu2n7rejpzee`
+and URL update proposal `0` was created on `youtick.near`. Execute that proposal
+after the 24-hour delay before relying on the new nonce path end to end.
 
 ### 10. Shamir SSS Zero Coefficient Weakness
 
@@ -201,7 +209,8 @@ security (Cure53 PVY-01-002 class issue).
   discards `0` values.
 - Polynomial degree is now guaranteed to be `requiredShares - 1`.
 
-**Action required:** Redeploy web app.
+**Action required:** A matching Web4 build was uploaded on 2026-04-26 and URL
+update proposal `0` is pending timelock execution.
 
 ### 11. KMS Error Message Information Leakage
 
@@ -218,7 +227,8 @@ probe system state.
 - HTTP status codes are preserved (`401`, `403`, `404`) but bodies are
   normalized.
 
-**Action required:** Redeploy KMS workers.
+**Action required:** KMS workers were redeployed on 2026-04-26. Verify the
+normalized errors during the live smoke test.
 
 ---
 

@@ -2,7 +2,7 @@
 
 > Decentralized video platform on NEAR with browser-side encryption, KMS-backed key custody and IPFS delivery
 
-YouTick is an open-source VOD platform where creators upload encrypted videos to IPFS and sell access through NFT tickets. The active architecture uses browser-side AES encryption, a Cloudflare KMS worker for key custody, and Crust-backed IPFS delivery.
+YouTick is an open-source VOD platform where creators upload encrypted videos to IPFS and sell access through NFT tickets. The active architecture uses browser-side AES encryption, multi-operator KMS workers with Shamir threshold shares for key custody, and Crust-backed IPFS delivery.
 
 ![NEAR Protocol](https://img.shields.io/badge/Blockchain-NEAR%20Protocol-00C1DE?style=flat&logo=near&logoColor=white)
 ![Rust](https://img.shields.io/badge/Contract-Rust-DEA584?style=flat&logo=rust&logoColor=white)

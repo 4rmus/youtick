@@ -4,6 +4,11 @@
 > Kapsam: web app, NEAR kontratları, KMS worker, IPFS/Crust delivery, operasyon dokümanları  
 > Amaç: Tek geliştiriciyle mainnet MVP çıkarırken merkeziyetsizliği gerçekçi biçimde artırmak
 
+> 2026-04-26 notu: Bu rapordaki runbook/script uyumsuzluklarının bir bölümü
+> dokümanlarda düzeltilmiştir. Güncel yayın kararı ve canlı mainnet kontrolü
+> için [`mainnet-open-source-readiness-2026-04-26.md`](mainnet-open-source-readiness-2026-04-26.md)
+> raporunu kaynak kabul et.
+
 ---
 
 ## 1. Kısa Sonuç
@@ -65,10 +70,10 @@ canlı mainnet durumuyla karşılaştırmak.
 | KMS operator kayıtları aktif değil | `list_decryption_operators` boş dönüyor; `get_timelock(1)` operator teklifi gösteriyor | Şifreli upload/playback merkeziyetsiz KMS yolunda çalışmaz | Timelock ID `1-6` zamanı gelince yürütülmeli |
 | Worker health source ile canlı deploy farklı | Canlı `/health` contract/operator detayları döndürüyor; repo source bu bilgileri health'ten kaldırmış | Canlı worker güncel hardening'i taşımıyor olabilir | Timelock sonrası 5 worker güncel source ile yeniden deploy edilmeli |
 | Access referansları belirsiz | Canlı `get_market_contract` ve `get_registry_contract` boş string dönüyor; repo source içinde bu getter'lar görünmüyor | Access contract konfigürasyonu dışarıdan net doğrulanamıyor | Getter veya `get_config` eklenmeli; runbook buna göre güncellenmeli |
-| nft-ticket runbook metotları kaynakla uyumsuz | Runbook `set_access_contract` / `set_registry_contract` diyor; `contracts/nft-ticket/src/lib.rs` içinde bu metotlar bulunmuyor | Operasyon adımı uygulanamaz veya yanlış güven verir | Runbook'tan bu adımlar kaldırılmalı ya da kontrata gerçekten eklenmeli |
+| nft-ticket runbook metotları kaynakla uyumsuzdu | 2026-04-25 kontrolünde runbook kaynakta olmayan nft-ticket config metotları öneriyordu | Operasyon adımı uygulanamaz veya yanlış güven verir | 2026-04-26 runbook güncellemesinde bu adımlar kaldırıldı |
 | Registry bootstrap/deploy scriptleri eski | `scripts/bootstrap-registry-mainnet.js` direct `set_threshold_config` ve `upsert_decryption_operator`; `scripts/deploy-zero-trust-mainnet.js` direct `set_threshold_config` çağırıyor | Yeni kontrat bu çağrıları reddeder | Scriptler `propose_action` üretecek şekilde yenilenmeli |
 | Access-control runbook direct çağrı öneriyor | Runbook `set_market_contract` ve `set_registry_contract` direct çağrılarını gösteriyor; source bu çağrıları timelock olmadan reddediyor | Mainnet kurulum adımı başarısız olur veya eksik kalır | Access ayarları da `propose_action` -> `execute_action` akışıyla yazılmalı |
-| Release runbook eski metot adları içeriyor | `docs/release-runbook.md` `upsert_operator`, `get_active_operators`, direct `pause` gibi eski isimler kullanıyor | Tekrarlanabilir deploy zayıflar | Tek aktif runbook seçilmeli ve eski metotlar temizlenmeli |
+| Release runbook eski metot adları içeriyordu | 2026-04-25 kontrolünde release runbook eski registry ve direct admin örnekleri içeriyordu | Tekrarlanabilir deploy zayıflar | 2026-04-26 güncellemesinde kısa release checklist olarak yeniden yazıldı |
 | KV namespace ayrımı iyi | `workers/youtick-kms/wrangler.toml` içinde 5 operator için ayrı KV ID'leri var | Threshold modelini güçlendirir | Bu ayrım korunmalı; dış operatör planında da şart olmalı |
 | VSS/share integrity eksikliği doğru belgelenmiş | `docs/adr/adr-005-vss-share-integrity.md` deferred diyor; `shares.ts` HMAC/VSS yapmıyor | Kötü share veren operator ayıklanamıyor | MVP sonrası doğru P2; raporda risk olarak kalmalı |
 

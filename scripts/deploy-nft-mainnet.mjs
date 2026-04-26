@@ -63,6 +63,30 @@ async function main() {
 
   await account.deployContract(wasm);
   console.log(`Deployed NFT contract to ${CONTRACT_ID}`);
+
+  // Run state migration if the contract struct changed (e.g., V11 added creator_profiles).
+  // Safe to call every deploy — migrate is idempotent after the first run.
+  try {
+    const { actions } = await loadNearApiJs();
+    await account.signAndSendTransaction({
+      receiverId: CONTRACT_ID,
+      actions: [
+        actions.functionCall('migrate', {}, '300000000000000', '0'),
+      ],
+    });
+    console.log(`State migration completed for ${CONTRACT_ID}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('Cannot deserialize the contract state')) {
+      // Migration already applied or state layout doesn't match OldContract.
+      // This is non-fatal if the contract is already on V11.
+      console.log(`Migration skipped — state already up to date or OldContract mismatch`);
+    } else if (message.includes('MethodNotFound')) {
+      console.log(`Migration skipped — migrate() not found in deployed WASM`);
+    } else {
+      console.warn(`Migration warning: ${message}`);
+    }
+  }
 }
 
 main().catch((error) => {

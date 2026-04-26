@@ -265,27 +265,9 @@ async function main() {
         'access-control',
     );
 
-    if (OWNER_ACCOUNT_ID === MASTER_ACCOUNT_ID) {
-        await masterAccount.signAndSendTransaction({
-            receiverId: REGISTRY_CONTRACT_ID,
-            actions: [
-                actions.functionCall(
-                    'set_threshold_config',
-                    {
-                        total_operators: 5,
-                        required_shares: 3,
-                    },
-                    '30000000000000',
-                    '0',
-                ),
-            ],
-        });
-        console.log('Registry threshold set to 3-of-5.');
-    } else {
-        console.log(
-            `Threshold setup skipped because owner is ${OWNER_ACCOUNT_ID}. Run set_threshold_config from the owner account.`,
-        );
-    }
+    console.log(
+        'Registry starts with the contract default 3-of-5 threshold. Operator and threshold changes must use propose_action and execute_action.',
+    );
 
     console.log('\nDeployment summary:');
     console.log(JSON.stringify({

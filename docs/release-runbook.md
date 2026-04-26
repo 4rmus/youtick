@@ -1,121 +1,131 @@
 # YouTick Release Runbook
 
-> Manuel deploy prosedürü. `.github/` yok — CI/CD bilinçli kaldırıldı.
-> Her deploy için baştan sona bu dosyayı takip et.
+> Short release checklist.
+> For mainnet contract/KMS activation, use
+> [`docs/operations/mainnet-deploy-runbook.md`](operations/mainnet-deploy-runbook.md).
+> Current release posture is tracked in
+> [`docs/mainnet-open-source-readiness-2026-04-26.md`](mainnet-open-source-readiness-2026-04-26.md).
 
-## Rol ve Kapsam
+---
 
-| Rol | Kim | Sorumluluk |
-|---|---|---|
-| Release owner | 1 kişi | Tüm adımları yürütür, smoke test'i onaylar |
-| On-call | 1 kişi | Deploy sırasında erişilebilir, rollback'i tetikler |
+## Status
 
-Paralel deploy yapılmaz. Release owner tek oturum içinde sıralı çalıştırır.
+YouTick may be released as **public alpha** after the open-source checklist is
+complete. It should not be described as production-ready until live KMS
+operator health and encrypted playback are verified on mainnet.
 
-## Ön Koşullar (bir kez kur)
+This file intentionally avoids direct admin calls. Sensitive contract changes
+must go through each contract's `propose_action` and `execute_action` flow.
 
-- `cargo`, `node>=20`, `npm`, `wrangler` kurulu
-- NEAR CLI oturumu: `near login` → `youtick.near` ownerkey local'de
-- Cloudflare: `wrangler whoami` → org doğru
-- Ortam dosyaları dolu:
-  - `apps/web/.env.local` (`NEXT_PUBLIC_*`, `NEXT_PUBLIC_SENTRY_DSN`)
-  - `workers/youtick-kms/wrangler.toml` içindeki KV ID'ler production değerinde
-  - Wrangler secrets 5 operatör için yüklü (`OPERATOR_SHARE_SECRET`, `REGISTRY_OPERATOR_ACCOUNT_ID` her env için)
+---
 
-## 0. Pre-Flight (K1) — Her Deploy Öncesi
+## Pre-Flight
 
-```bash
-# Repo temiz mi
-git status                    # clean çalışma ağacı
-git branch                    # doğru branch
-
-# Kontrat testleri
-(cd contracts/nft-ticket && cargo test --release)
-(cd contracts/access-control && cargo test --release)
-(cd contracts/operator-registry && cargo test --release)
-
-# Frontend
-(cd apps/web && npm ci && npm test -- --run && npm run build)
-
-# Worker tip check
-(cd workers/youtick-kms && npm ci && npx tsc --noEmit)
-(cd workers/web4-proxy && npm ci && npx tsc --noEmit)
-```
-
-**Beklenen:** 41/41 kontrat testi, 179/179 frontend testi, 17 sayfa Next build, 0 TS hatası.
-Başarısızsa deploy etme.
-
-## Deploy Sırası (Asla Bozma)
-
-```
-1. Kontratlar (değiştiyse)
-   ↓
-2. Operator-registry güncellemesi (operatör/relayer ekle-çıkar varsa)
-   ↓
-3. KMS workers (5 operatör sırayla)
-   ↓
-4. web4-proxy
-   ↓
-5. Web app (Next.js)
-   ↓
-6. Smoke test
-```
-
-Gerekçe: web uygulaması worker endpoint'lerini ve kontrat ID'lerini çağırır. Worker'lar kontrat state'ini okur. Önce alt katman deploy edilir.
-
-## 1. Kontrat Deploy (sadece kontrat değiştiyse)
-
-⚠️ Kontrat deploy'u **yarı-yarıya geri alınamazdır.** State'e dokunan değişikliklerde migration kodu gerekir. Sadece kod değişikliği varsa `near deploy` yeterli.
+Run from the repository root:
 
 ```bash
-# nft-ticket (market)
-cd contracts/nft-ticket
-cargo build --release --target wasm32-unknown-unknown
-near deploy youtick.near target/wasm32-unknown-unknown/release/youtick_nft.wasm
-
-# access-control (genelde stabil, nadiren güncellenir)
-cd ../access-control
-cargo build --release --target wasm32-unknown-unknown
-near deploy access.youtick.near target/wasm32-unknown-unknown/release/youtick_access_control.wasm
-
-# operator-registry
-cd ../operator-registry
-cargo build --release --target wasm32-unknown-unknown
-near deploy registry.youtick.near target/wasm32-unknown-unknown/release/youtick_operator_registry.wasm
+(cd apps/web && npm ci && npm run lint && npm test -- --run && npm run build)
+(cd workers/youtick-kms && npm ci && npm test -- --run && npm run check)
+(cd contracts/nft-ticket && cargo test --lib)
+(cd contracts/access-control && cargo test)
+(cd contracts/operator-registry && cargo test)
 ```
 
-**Migration gerekli mi?** Eğer storage layout değiştiyse (yeni field, enum varyantı, Map<Key> değişikliği) mutlaka migration metodu çağır — aksi halde deserialization panic ile tüm kontrat kilitlenir.
+Expected:
+
+- web lint has no errors,
+- all web tests pass,
+- web build succeeds,
+- KMS worker tests and type check pass,
+- contract tests pass.
+
+Also check:
 
 ```bash
-# örnek migration çağrısı (kontrattan kontrat-spesifik)
-near call youtick.near migrate '{}' --accountId youtick.near --gas 300000000000000
+git status --short
+rg -n "PRIVATE_KEY|SECRET_KEY|MASTER_SECRET|ed25519:|sk-|AKIA|BEGIN .*PRIVATE" .
 ```
 
-**Doğrulama:**
+The secret scan has false positives in tests and docs. It must not reveal real
+reusable deploy keys, production `.env` values or real operator configs.
+
+---
+
+## Mainnet Health Gate
+
+Before real paid encrypted creator content:
+
 ```bash
-# Kontrat storage okuma — panic yoksa deploy temiz
-near view youtick.near get_platform_account
-near view access.youtick.near get_config
-near view registry.youtick.near get_active_operators
+near view registry.youtick.near list_decryption_operators
+near view registry.youtick.near get_threshold_config
+near view youtick.near get_trial_pool_balance
 ```
 
-## 2. Operatör Registry Güncellemesi (varsa)
+Required result:
 
-Operatör/relayer ekleme-çıkarma:
+- five active decryption operators,
+- threshold `5 / 3`,
+- trial/free flows either funded or clearly disabled in the UI.
+
+Then verify each KMS operator:
+
 ```bash
-near call registry.youtick.near upsert_operator '{"account_id":"kms-f.youtick.near","active":true,"threshold":3}' --accountId youtick.near --deposit 0.01
+curl -s https://<operator-endpoint>/health
 ```
 
-Değişiklik sonrası tüm client'lar yeni operatör listesini cache'den bir sonraki okuma turunda alır (frontend TTL ~5dk, KMS worker cache'i 60sn).
+Required result:
 
-## 3. KMS Worker Deploy (5 operatör, sırayla)
+- HTTP `200`,
+- body has `ok: true`.
 
-⚠️ Her operatör **kendi izole KV namespace'ine** deploy olur. Namespace karıştırma Shamir güvenlik modelini bozar.
+If any KMS operator returns `503` or `ok: false`, the KMS layer is not ready.
+
+---
+
+## Deploy Order
+
+1. Contracts, only if source changed and migration risk is understood.
+2. Registry timelock proposals/executions, only if operator config changes.
+3. KMS workers, one operator at a time.
+4. Web app / Web4 assets.
+5. Smoke tests.
+6. Update known issues and release notes.
+
+Do not deploy web or workers against a registry state that cannot satisfy the
+configured threshold.
+
+---
+
+## Contract Admin Rule
+
+Do not call direct admin methods such as:
+
+- `set_threshold_config`,
+- `upsert_decryption_operator`,
+- `deactivate_decryption_operator`,
+- `set_market_contract`,
+- `set_registry_contract`,
+- `pause`,
+- `unpause`,
+- `withdraw_commission`,
+- `withdraw_trial_pool`.
+
+Current contracts intentionally reject those direct paths. Use:
+
+```bash
+near call <contract> propose_action '<ACTION_JSON>' --accountId <owner>
+# wait at least 24 hours
+near call <contract> execute_action '{"id": <id>}' --accountId <owner>
+```
+
+---
+
+## KMS Worker Deploy
+
+Each operator must use isolated KV namespaces and its own secret.
 
 ```bash
 cd workers/youtick-kms
-
-# Sırayla, her birinin deploy'u tamamlanmadan diğerine geçme
 npx wrangler deploy --env operator_a
 npx wrangler deploy --env operator_b
 npx wrangler deploy --env operator_c
@@ -123,150 +133,44 @@ npx wrangler deploy --env operator_d
 npx wrangler deploy --env operator_e
 ```
 
-**Deploy sonrası her operatör için smoke:**
-```bash
-curl -s https://youtick-kms-a.<your-subdomain>.workers.dev/health
-# Beklenen: {"status":"ok","operator":"kms-a.youtick.near",...}
-```
+After each deploy, verify `/health`. Stop if a worker is not healthy.
 
-Bir operatör başarısızsa dur, o operatörü rollback et, diğerlerini deploy etme (Shamir threshold altına düşersek playback kilitlenir).
+---
 
-## 4. web4-proxy Deploy
+## Smoke Tests
 
-```bash
-cd workers/web4-proxy
-npx wrangler deploy
-```
+Run at least one full path after deploy:
 
-**Doğrulama:**
-```bash
-curl -I https://youtick.net/
-# Beklenen: 200, Cloudflare headers, X-Youtick-Origin: pages veya near
-```
+- landing/discover loads,
+- wallet connects,
+- short test video uploads,
+- KMS stores enough shares,
+- ticket purchase succeeds,
+- playback reconstructs key and starts video,
+- gift/trial behavior matches current funding state,
+- Sentry or equivalent monitoring sees no release spike.
 
-## 5. Web App Deploy
+---
 
-### 5a. Cloudflare Pages (standart)
-```bash
-cd apps/web
-npm run build                 # Next.js standalone
-# Pages CI'siz ise manuel upload veya wrangler pages deploy
-npx wrangler pages deploy .next --project-name youtick-static
-```
+## Rollback
 
-### 5b. Web4 (on-chain static, opsiyonel)
-```bash
-cd apps/web
-npm run build:web4            # output: export → dist/
-# scripts/deploy-web4.sh → NEAR sub-account üzerine yükler
-../../scripts/deploy-web4.sh
-```
+Web and worker rollback can use the hosting provider or Wrangler deployment
+history.
 
-Her iki hedef de eş zamanlı güncelleyin ya da sadece aktif olanı.
+Contract rollback is not a normal path. If a contract deploy breaks state,
+pause through timelock when possible, publish an incident note and fix forward
+with a reviewed migration.
 
-## 6. Smoke Test (deploy sonrası zorunlu)
+---
 
-Kullanıcı bazlı manuel akış. Release owner browser'da koşturur:
+## Release Note
 
-- [ ] Ana sayfa açılıyor, Sentry init hatası yok (DevTools Console)
-- [ ] Cüzdan bağlantısı (Meteor veya MyNearWallet)
-- [ ] Upload: 30 sn'lik test videosu yükleniyor, Crust CID dönüyor
-- [ ] Purchase: trial veya ödemeli ticket alınıyor
-- [ ] Watch: video decrypt olup oynatılıyor (Shamir reconstruction OK)
-- [ ] Gift: 2-anahtarlı gift drop oluşturuluyor, başka account claim edebiliyor
-- [ ] Sentry: bilinçli bir hata (console'dan `throw new Error("smoke")`) Sentry'ye düşüyor
+Every release should record:
 
-Bir adım düşerse bkz. §8 Rollback.
-
-## 7. Post-Deploy
-
-- Sentry release tag'i otomatik düşer (`SENTRY_AUTH_TOKEN` set ise)
-- Cloudflare Analytics'te 5xx spike izle (ilk 30 dk)
-- KMS worker log: `npx wrangler tail --env operator_a`
-- Bir sonraki deploy'a kadar `docs/release-log.md` (yoksa oluştur) içine tarih + commit SHA + değişenler notu ekle
-
-## 8. Rollback Prosedürü
-
-### 8a. Web App (kolay — 1 dk)
-Cloudflare Pages veya Vercel üzerinde `previous deployment → Promote`. Bir önceki build'e dönüş otomatik.
-
-### 8b. Worker (orta — 2 dk)
-```bash
-# Wrangler versiyon geçmişi
-npx wrangler deployments list --env operator_a
-
-# Önceki versiyona dön
-npx wrangler rollback --env operator_a <deployment-id>
-```
-5 operatör için tekrarla.
-
-### 8c. Kontrat (zor — dikkat)
-Kontrat deploy'u otomatik geri alınamaz. Seçenekler:
-1. **Önceki WASM'i yeniden deploy et** (eğer storage layout uyumluysa)
-2. **Hotfix kontratı deploy et** (storage bozulduysa yeni method ile onar)
-3. **Kontrat pause** — `access.youtick.near` ve `youtick.near` pause metodları var; kullanıcı akışlarını durdur, kod düzelt, tekrar deploy
-
-Üçüncü seçenek için:
-```bash
-near call youtick.near pause '{}' --accountId youtick.near
-near call access.youtick.near pause '{}' --accountId access.youtick.near
-# Düzeltme deploy'u sonrası
-near call youtick.near unpause '{}' --accountId youtick.near
-```
-
-⚠️ Pause sırasında kullanıcı iletişimi: status page / Twitter duyurusu hazır olsun.
-
-## 9. Secret ve Key Rotation
-
-### Wrangler Secrets
-```bash
-# Listele (değer görünmez)
-npx wrangler secret list --env operator_a
-
-# Güncelle (stdin'den değer)
-npx wrangler secret put OPERATOR_SHARE_SECRET --env operator_a
-```
-
-### Operatör Share Rotation
-Detaylı prosedür için bkz. `docs/kms-key-rotation.md` — 6 fazlı zero-downtime rotation (hazırlık → PREVIOUS set → yeni secret deploy → doğrulama → grace period → PREVIOUS sil).
-Özet: `OPERATOR_SHARE_SECRET_PREVIOUS` set → yeni `OPERATOR_SHARE_SECRET` yükle → worker fallback log'unu izle → grace period bitince PREVIOUS sil. 5 operatör sıralı, paralel değil.
-
-### NEAR Account Keys
-Owner key (`youtick.near`) sızarsa:
-```bash
-near keys youtick.near                                      # mevcut keyler
-near add-key youtick.near <new-public-key> --accountId youtick.near
-near delete-key youtick.near <old-public-key> --accountId youtick.near
-```
-
-## 10. Acil Durum Escalation
-
-| Sınıf | Örnek | Aksiyon |
-|---|---|---|
-| 🔴 P0 | Owner key sızıntısı, kontrat panic, tüm worker'lar 5xx | Immediate: pause contracts → rotate keys → incident doc |
-| 🟡 P1 | 1-2 operatör down, Sentry error spike | 15 dk içinde rollback veya fix-forward |
-| 🟢 P2 | Smoke test'te tek akış bozuk (örn. gift drop) | Saatler içinde hotfix |
-
-## 11. Checklist Kopyala-Yapıştır
-
-Her deploy için kopyala:
-
-```
-- [ ] §0 pre-flight: tüm testler yeşil
-- [ ] Git clean, branch doğru
-- [ ] §1 contracts (varsa) → view method doğrulama
-- [ ] §2 registry güncelleme (varsa)
-- [ ] §3 KMS workers: a → b → c → d → e, her biri /health OK
-- [ ] §4 web4-proxy deploy
-- [ ] §5 web app deploy
-- [ ] §6 smoke: upload ✓ purchase ✓ watch ✓ gift ✓ sentry ✓
-- [ ] §7 release log güncellendi
-- [ ] On-call'a bilgi: deploy complete
-```
-
-## Referanslar
-
-- `CLAUDE.md` — proje mimarisi özeti
-- `workers/youtick-kms/wrangler.toml` — KV ve env mapping
-- `scripts/create-operator-kv-namespaces.sh` — ilk kurulum
-- `docs/security.md` — güvenlik modeli
+- date,
+- commit SHA,
+- contracts changed,
+- workers changed,
+- web build changed,
+- smoke test result,
+- known issue updates.

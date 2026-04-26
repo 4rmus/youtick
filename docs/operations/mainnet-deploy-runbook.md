@@ -1,304 +1,249 @@
 # YouTick Mainnet Deploy Runbook
 
-> **Status:** Ready for execution  
-> **Last updated:** 2026-04-24  
-> **Contracts:** `operator-registry`, `access-control`, `nft-ticket`  
-> **Workers:** 5× `youtick-kms` operators, `web4-proxy`  
+> **Status:** Conditional. Use only after pre-flight checks pass.
+> **Last updated:** 2026-04-26
+> **Release posture:** public alpha candidate, not production-ready
+> **Current readiness report:** [`../mainnet-open-source-readiness-2026-04-26.md`](../mainnet-open-source-readiness-2026-04-26.md)
 
 ---
 
-## ⚠️ Pre-Flight Checklist
+## Important Rule
 
-- [ ] All 5 KMS operator keys rotated (new `ed25519:` secrets generated)
-- [ ] `.env.local` updated: `ONBOARDING_KEY` (server-only, no `NEXT_PUBLIC_` prefix)
-- [ ] `scripts/config/mainnet-kms-operators.json` stored in 1Password/Vault (not in repo)
-- [ ] Test upload flow on testnet with new WASM
-- [ ] Community notification sent (Discord/Twitter) — minimum 7-day lead time recommended
-- [ ] `nft-ticket` owner account (`youtick.near`) has full-access key ready for signing
+Current contracts intentionally reject direct sensitive admin calls. Do not call
+admin methods directly just because the method exists in the ABI.
+
+Use this flow for sensitive actions:
+
+```bash
+near call <contract> propose_action '<ACTION_JSON>' --accountId <owner>
+# wait at least 24 hours
+near call <contract> execute_action '{"id": <id>}' --accountId <owner>
+```
+
+This applies to operator changes, threshold changes, access contract config,
+pauses, unpauses, owner changes and withdrawals.
 
 ---
 
-## Phase 0 — Build All Artifacts
+## Pre-Flight Checklist
 
-### 0.1 Operator Registry
+- [ ] Root `LICENSE` exists before public open-source announcement.
+- [ ] `docs/operations/known-issues.md` reflects the current deploy state.
+- [ ] Real KMS operator config is stored outside git.
+- [ ] `.env.local` and production env do not contain stale `NEXT_PUBLIC_KMS_URL`.
+- [ ] `ONBOARDING_KEY` or `ONBOARDING_KEYS` is server-only.
+- [ ] Trial/free sponsor flow is funded or disabled if `trial_pool` is zero.
+- [ ] A short test video is ready for upload / purchase / watch smoke test.
+- [ ] Owner key is available through the intended secure signing path.
 
-```bash
-cd contracts/operator-registry
-cargo build --target wasm32-unknown-unknown --release
-cp target/wasm32-unknown-unknown/release/youtick_operator_registry.wasm \
-   target/near/youtick_operator_registry.wasm
-```
-
-**Expected:** `target/near/youtick_operator_registry.wasm` ~260KB
-
-### 0.2 Access Control
+Run:
 
 ```bash
-cd contracts/access-control
-cargo build --target wasm32-unknown-unknown --release
-cp target/wasm32-unknown-unknown/release/youtick_access_control.wasm \
-   target/near/youtick_access_control.wasm
+(cd apps/web && npm ci && npm run lint && npm test -- --run && npm run build)
+(cd workers/youtick-kms && npm ci && npm test -- --run && npm run check)
+(cd contracts/nft-ticket && cargo test --lib)
+(cd contracts/access-control && cargo test)
+(cd contracts/operator-registry && cargo test)
 ```
 
-**Expected:** `target/near/youtick_access_control.wasm` ~277KB
-
-### 0.3 NFT Ticket (with `reset_v11`)
-
-`reset_v11` is gated behind the `migration` feature. We need it for the state reset.
-
-```bash
-cd contracts/nft-ticket
-cargo build --target wasm32-unknown-unknown --release --features migration
-cp target/wasm32-unknown-unknown/release/youtick_nft.wasm \
-   target/near/youtick_nft.wasm
-```
-
-**Expected:** `target/near/youtick_nft.wasm` ~590KB
-
-**Verify `reset_v11` is in the WASM:**
-```bash
-wasm2wat target/near/youtick_nft.wasm | grep -c reset_v11
-# Should return > 0
-```
-
-### 0.4 Web App Build
-
-```bash
-cd apps/web
-npm ci
-npm run build:web4
-```
-
-**Expected:** `apps/web/dist/` folder with static export.
+Do not deploy if these checks fail.
 
 ---
 
-## Phase 1 — Deploy Registry & Access Control
-
-### 1.1 Operator Registry
+## Phase 1: Build Artifacts
 
 ```bash
-export NEAR_NETWORK=mainnet
-export NEAR_CONTRACT_ID=registry.youtick.near  # confirm actual ID
-# Deploy via near-cli or cargo-near
-near deploy registry.youtick.near \
-  --wasmFile contracts/operator-registry/target/near/youtick_operator_registry.wasm
+(cd contracts/operator-registry && cargo build --target wasm32-unknown-unknown --release)
+(cd contracts/access-control && cargo build --target wasm32-unknown-unknown --release)
+(cd contracts/nft-ticket && cargo build --target wasm32-unknown-unknown --release)
+(cd apps/web && npm run build)
 ```
 
-**Post-deploy initialization:**
-```bash
-near call registry.youtick.near new '{"owner_id": "youtick.near"}' \
-  --accountId registry.youtick.near
-```
-
-### 1.2 Access Control
-
-```bash
-near deploy access.youtick.near \
-  --wasmFile contracts/access-control/target/near/youtick_access_control.wasm
-```
-
-**Post-deploy initialization:**
-```bash
-near call access.youtick.near new '{"owner_id": "youtick.near"}' \
-  --accountId access.youtick.near
-```
-
-### 1.3 Configure Cross-Contract References
-
-**On operator-registry:**
-```bash
-# Set threshold (3-of-5)
-near call registry.youtick.near set_threshold_config \
-  '{"total_operators": 5, "required_shares": 3}' \
-  --accountId youtick.near
-
-# Add each operator (timelock required — use propose_action + execute_action)
-near call registry.youtick.near propose_action \
-  '{"action": {"UpsertDecryptionOperator": {"account_id": "op1.youtick.near", ...}}}' \
-  --accountId youtick.near
-# ... wait 24h ...
-near call registry.youtick.near execute_action '{"id": 1}' --accountId youtick.near
-```
-
-**On access-control:**
-```bash
-# Set market contract
-near call access.youtick.near set_market_contract \
-  '{"market_contract_id": "youtick.near"}' \
-  --accountId youtick.near
-
-# Set registry contract
-near call access.youtick.near set_registry_contract \
-  '{"registry_contract_id": "registry.youtick.near"}' \
-  --accountId youtick.near
-```
+Only build `nft-ticket` with `--features migration` when you intentionally need
+the migration-only `reset_v11` path. That path can wipe state and must not be
+part of normal production deploys.
 
 ---
 
-## Phase 2 — NFT Ticket (State Reset)
-
-### 2.1 Deploy Migration-Enabled WASM
+## Phase 2: Read Live State
 
 ```bash
-export NFT_CONTRACT_ID=youtick.near
-export NFT_WASM_PATH=contracts/nft-ticket/target/near/youtick_nft.wasm
-
-node scripts/deploy-nft-mainnet.mjs
-```
-
-### 2.2 Execute `reset_v11`
-
-This **permanently deletes** all existing events, NFTs, purchase logs, and pool balances.
-
-```bash
-near call youtick.near reset_v11 '{"owner_id": "youtick.near"}' \
-  --accountId youtick.near \
-  --gas 300000000000000
-```
-
-**Expected result:**
-- `nft_total_supply()` returns `0`
-- No orphaned trie entries
-- Contract re-initialized with `owner_id: youtick.near`
-
-### 2.3 Re-Deploy Normal WASM (Optional but Recommended)
-
-After reset, re-deploy the normal (non-migration) build so `reset_v11` is no longer callable:
-
-```bash
-cd contracts/nft-ticket
-cargo build --target wasm32-unknown-unknown --release
-cp target/wasm32-unknown-unknown/release/youtick_nft.wasm \
-   target/near/youtick_nft.wasm
-
-node scripts/deploy-nft-mainnet.mjs
-```
-
-### 2.4 Configure nft-ticket Cross-Contract References
-
-```bash
-# Set access-control contract
-near call youtick.near set_access_contract \
-  '{"access_contract_id": "access.youtick.near"}' \
-  --accountId youtick.near
-
-# Set registry contract
-near call youtick.near set_registry_contract \
-  '{"registry_contract_id": "registry.youtick.near"}' \
-  --accountId youtick.near
-```
-
----
-
-## Phase 3 — KMS Worker Deploy
-
-### 3.1 Update Operator Endpoints (if changed)
-
-If operator keys/URLs changed, update the registry via `propose_action` / `execute_action`.
-
-### 3.2 Deploy All 5 Operators
-
-```bash
-cd workers/youtick-kms
-
-# For each operator:
-wrangler deploy --name youtick-kms-op1 --config wrangler-op1.toml
-wrangler deploy --name youtick-kms-op2 --config wrangler-op2.toml
-# ... etc
-```
-
-**Verify health:**
-```bash
-curl https://op1.youtick.workers.dev/health
-curl https://op2.youtick.workers.dev/health
-# ... etc
-```
-
----
-
-## Phase 4 — Web App Deploy
-
-### 4.1 Web4 (youtick.near.page)
-
-```bash
-bash scripts/deploy-web4.sh
-```
-
-**Verify:**
-- `https://youtick.near.page/` loads
-- `https://youtick.near.page/__health` returns 200
-
-### 4.2 DNS/Custom Domain (Optional)
-
-If `youtick.net` is used, ensure `web4-proxy` is deployed and DNS points correctly.
-
----
-
-## Phase 5 — Post-Deploy Validation
-
-### 5.1 Contract State Checks
-
-```bash
-# Registry
+near view registry.youtick.near list_decryption_operators
 near view registry.youtick.near get_threshold_config
-near view registry.youtick.near list_active_decryption_operators
-
-# Access Control
-near view access.youtick.near get_market_contract
-near view access.youtick.near get_registry_contract
-
-# NFT Ticket
 near view youtick.near nft_total_supply
+near view youtick.near get_events_count
 near view youtick.near get_trial_pool_balance
 ```
 
-### 5.2 End-to-End Smoke Tests
+Expected before encrypted paid creator launch:
 
-| Test | Steps | Expected |
-|------|-------|----------|
-| Trial creation | Visit `/trial`, claim free ticket | Success, no errors |
-| Upload flow | Connect wallet, upload 10MB MP4 | All 8 steps complete |
-| Ticket purchase | Buy ticket with 0.1 NEAR | NFT minted, purchase log written |
-| Playback | Watch purchased video | Decryption succeeds, video plays |
+- five active decryption operators,
+- threshold `5 / 3`,
+- KMS worker health green,
+- trial/free flows either funded or disabled.
 
-### 5.3 KMS Operator Verification
+If `list_decryption_operators` is empty, KMS is not active even if workers are
+reachable.
+
+---
+
+## Phase 3: Registry Activation
+
+If operator timelock proposals already exist and have waited at least 24 hours,
+review each proposal before execution:
 
 ```bash
-# Each operator should return healthy
-curl -s https://<op>.youtick.workers.dev/health | jq '.ok'
-# Should be: true
+near view registry.youtick.near get_timelock '{"id": 1}'
+near call registry.youtick.near execute_action '{"id": 1}' --accountId youtick.near
 ```
 
+Repeat only for reviewed proposal IDs.
+
+If a new operator proposal is needed, propose it through timelock:
+
+```bash
+near call registry.youtick.near propose_action '{
+  "action": {
+    "UpsertDecryptionOperator": {
+      "account_id": "kms-a.youtick.near",
+      "endpoint": "https://youtick-kms-a.<subdomain>.workers.dev",
+      "transport_public_key": "cf-worker:mainnet:youtick-kms-a"
+    }
+  }
+}' --accountId youtick.near
+```
+
+After all five operators are active, confirm:
+
+```bash
+near view registry.youtick.near list_decryption_operators
+near view registry.youtick.near get_threshold_config
+```
+
+If the threshold ever needs to change, propose it after the operator count is
+correct. The registry validates that `total_operators` matches the registered
+operator count.
+
 ---
 
-## Rollback Plan
+## Phase 4: Access Contract Config
 
-If critical failure occurs during deploy:
+Access-control config changes are also timelocked. Do not call
+`set_market_contract` or `set_registry_contract` directly.
 
-1. **Do NOT call `reset_v11` again** — it wipes all state.
-2. Keep the old WASM hashes recorded in this runbook.
-3. If needed, re-deploy the previous known-good WASM from git history.
-4. For KMS: previous worker versions can be rolled back via Wrangler dashboard.
+```bash
+near call access.youtick.near propose_action '{
+  "action": {
+    "SetMarketContract": {
+      "market_contract_id": "youtick.near"
+    }
+  }
+}' --accountId youtick.near
+```
+
+```bash
+near call access.youtick.near propose_action '{
+  "action": {
+    "SetRegistryContract": {
+      "registry_contract_id": "registry.youtick.near"
+    }
+  }
+}' --accountId youtick.near
+```
+
+Wait at least 24 hours, then execute reviewed proposal IDs.
+
+Note: if the deployed access contract does not expose config getter methods,
+document how the config was verified. Do not keep runbook checks that call
+missing getters.
 
 ---
 
-## Known Risks
+## Phase 5: KMS Worker Deploy
 
-| Risk | Likelihood | Mitigation |
-|------|-----------|------------|
-| `reset_v11` caller is not owner | Low | `env::state_read()` enforces old owner |
-| Orphaned state after reset | Low | Verify `nft_total_supply == 0` |
-| KMS nonce mismatch (old client) | Medium | Deploy web app + workers simultaneously |
-| Operator key not rotated | Medium | Checklist enforced, 5 keys verified |
-| Registry/Access references wrong | Medium | Phase 1.3 cross-check script |
+Each operator must have isolated KV namespaces and its own
+`OPERATOR_SHARE_SECRET`.
+
+```bash
+cd workers/youtick-kms
+npx wrangler deploy --env operator_a
+npx wrangler deploy --env operator_b
+npx wrangler deploy --env operator_c
+npx wrangler deploy --env operator_d
+npx wrangler deploy --env operator_e
+```
+
+After each deploy:
+
+```bash
+curl -s https://<operator-endpoint>/health
+```
+
+Required:
+
+- HTTP `200`,
+- body has `ok: true`.
+
+If an operator returns `503` or `ok: false`, stop and fix the registry, secret or
+KV issue before continuing.
 
 ---
 
-## Sign-Off
+## Phase 6: Web App Deploy
 
-| Role | Name | Date | Signature |
-|------|------|------|-----------|
-| Deploy Lead | | | |
-| Contract Review | | | |
-| KMS Operator Review | | | |
+Deploy web only after the lower layers are healthy.
+
+```bash
+cd apps/web
+npm run build
+```
+
+For Web4/static deployment:
+
+```bash
+npm run build:web4
+../../scripts/deploy-web4.sh --set-url
+```
+
+`web4_set_static_url` is timelocked by the contract. The deploy script must
+propose the update when timelock is required; it must not assume direct admin
+write access.
+
+---
+
+## Phase 7: Smoke Test
+
+Run one live path before announcing anything beyond public alpha:
+
+- [ ] landing/discover loads,
+- [ ] wallet connects,
+- [ ] short encrypted video uploads,
+- [ ] KMS stores enough shares,
+- [ ] ticket purchase succeeds,
+- [ ] playback reconstructs the key and plays,
+- [ ] gift/trial behavior matches current funding state,
+- [ ] no Sentry or worker 5xx spike appears.
+
+---
+
+## Phase 8: Update Documents
+
+After deploy:
+
+- update [`known-issues.md`](known-issues.md),
+- update the current readiness report or add a new dated report,
+- record commit SHA, deployed worker versions and smoke result.
+
+---
+
+## Rollback
+
+Web and KMS workers can usually roll back through hosting or Wrangler deployment
+history.
+
+Contracts do not have a simple rollback path. If contract state is affected,
+pause through the timelock path where possible, publish an incident note and fix
+forward with a reviewed migration.
+
+Do not call `reset_v11` as a rollback tool. It is a destructive migration-only
+operation.

@@ -19,6 +19,20 @@ async function loadNearApiJs() {
     return import(moduleUrl);
 }
 
+function decodeSuccessValue(result) {
+    const value = result && result.status && result.status.SuccessValue;
+    if (!value) {
+        return null;
+    }
+
+    const decoded = Buffer.from(value, 'base64').toString('utf-8');
+    try {
+        return JSON.parse(decoded);
+    } catch {
+        return decoded;
+    }
+}
+
 function ensureFileExists(filePath, label) {
     if (!fs.existsSync(filePath)) {
         throw new Error(`${label} not found at ${filePath}`);
@@ -45,9 +59,27 @@ async function main() {
     }
 
     const config = loadConfig();
-    const { Account, KeyPair, KeyPairSigner, actions } = await loadNearApiJs();
+    const { Account, KeyPair, KeyPairSigner, actions: nearActions } = await loadNearApiJs();
     const ownerKeyPair = KeyPair.fromString(OWNER_SECRET_KEY);
     const owner = new Account(OWNER_ACCOUNT_ID, RPC_URL, new KeyPairSigner(ownerKeyPair));
+    const proposedActions = [];
+
+    async function proposeRegistryAction(action) {
+        const result = await owner.signAndSendTransaction({
+            receiverId: REGISTRY_CONTRACT_ID,
+            actions: [
+                nearActions.functionCall(
+                    'propose_action',
+                    { action },
+                    '30000000000000',
+                    '0',
+                ),
+            ],
+        });
+        const id = decodeSuccessValue(result);
+        proposedActions.push({ id, action });
+        return id;
+    }
 
     const deactivateOperators = Array.isArray(config.deactivateOperators)
         ? config.deactivateOperators
@@ -60,72 +92,56 @@ async function main() {
 
     for (const operatorAccountId of deactivateOperators) {
         try {
-            await owner.signAndSendTransaction({
-                receiverId: REGISTRY_CONTRACT_ID,
-                actions: [
-                    actions.functionCall(
-                        'deactivate_decryption_operator',
-                        { account_id: operatorAccountId },
-                        '30000000000000',
-                        '0',
-                    ),
-                ],
+            await proposeRegistryAction({
+                DeactivateDecryptionOperator: {
+                    account_id: operatorAccountId,
+                },
             });
         } catch {
-            // Best effort cleanup.
+            // Best effort cleanup proposal.
         }
     }
 
-    await owner.signAndSendTransaction({
-        receiverId: REGISTRY_CONTRACT_ID,
-        actions: [
-            actions.functionCall(
-                'set_threshold_config',
-                {
-                    total_operators: threshold.totalOperators,
-                    required_shares: threshold.requiredShares,
-                },
-                '30000000000000',
-                '0',
-            ),
-        ],
-    });
-
     for (const operator of config.decryptionOperators) {
-        await owner.signAndSendTransaction({
-            receiverId: REGISTRY_CONTRACT_ID,
-            actions: [
-                actions.functionCall(
-                    'upsert_decryption_operator',
-                    {
-                        account_id: operator.accountId,
-                        endpoint: operator.endpoint,
-                        transport_public_key: operator.transportPublicKey,
-                    },
-                    '30000000000000',
-                    '0',
-                ),
-            ],
+        await proposeRegistryAction({
+            UpsertDecryptionOperator: {
+                account_id: operator.accountId,
+                endpoint: operator.endpoint,
+                transport_public_key: operator.transportPublicKey,
+            },
         });
     }
 
     for (const relayer of relayers) {
-        await owner.signAndSendTransaction({
-            receiverId: REGISTRY_CONTRACT_ID,
-            actions: [
-                actions.functionCall(
-                    'upsert_relayer',
-                    {
-                        account_id: relayer.accountId,
-                        endpoint: relayer.endpoint,
-                        transport_public_key: relayer.transportPublicKey,
-                    },
-                    '30000000000000',
-                    '0',
-                ),
-            ],
+        await proposeRegistryAction({
+            UpsertRelayer: {
+                account_id: relayer.accountId,
+                endpoint: relayer.endpoint,
+                transport_public_key: relayer.transportPublicKey,
+            },
         });
     }
+
+    await proposeRegistryAction({
+        SetThresholdConfig: {
+            total_operators: threshold.totalOperators,
+            required_shares: threshold.requiredShares,
+        },
+    });
+
+    console.log('\nTimelock proposals were submitted. Review each proposal, wait at least 24 hours, then execute reviewed IDs:');
+    for (const proposal of proposedActions) {
+        if (proposal.id === null || proposal.id === undefined) {
+            console.log(`- near view ${REGISTRY_CONTRACT_ID} get_timelock '{"id": <id>}'`);
+            continue;
+        }
+        console.log(`- near view ${REGISTRY_CONTRACT_ID} get_timelock '{"id": ${proposal.id}}'`);
+        console.log(`  near call ${REGISTRY_CONTRACT_ID} execute_action '{"id": ${proposal.id}}' --accountId ${OWNER_ACCOUNT_ID}`);
+    }
+
+    console.log('\nAfter execution, verify:');
+    console.log(`- near view ${REGISTRY_CONTRACT_ID} list_decryption_operators`);
+    console.log(`- near view ${REGISTRY_CONTRACT_ID} get_threshold_config`);
 
     console.log(JSON.stringify({
         registryContractId: REGISTRY_CONTRACT_ID,
@@ -133,6 +149,7 @@ async function main() {
         threshold,
         operators: config.decryptionOperators,
         relayers,
+        proposedActions,
     }, null, 2));
 }
 

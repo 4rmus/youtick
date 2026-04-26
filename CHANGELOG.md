@@ -8,6 +8,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Mainnet Activation — 25-26 Nisan 2026
+
+#### Registry & KMS Operators
+- **Executed** all 6 pending registry timelock proposals (operators, relayer, threshold config).
+- `registry.youtick.near` now returns 5 active decryption operators and 3-of-5 threshold.
+- 5 KMS workers (`kms-a..e.youtick.near`) redeployed from current source; all return `ok: true`.
+
+#### Web4 Frontend
+- Built static export and uploaded to Crust/IPFS (`bafybeiepp3qv635pidmh7yvckwa22ogv6oc22f6nziaj55mu2n7rejpzee`).
+- Proposed `SetWeb4StaticUrl` timelock proposal `0` on `youtick.near` (pending execution).
+
+#### KMS Worker Fixes
+- **Nonce-based replay protection** added to `/store` and `/retrieve` endpoints.
+- **Error message normalization** across all endpoints (no contract IDs leaked).
+- **Shamir threshold validation** server-side (`requiredShares >= 2`, integer checks, `totalShares <= 255`).
+- **HKDF key derivation** for share-at-rest encryption (K-1 fix).
+
+#### Live State
+- `trial_pool` funded with 1 NEAR for initial user onboarding.
+- `youtick.near` V11 migration executed (`creator_profiles`, `get_creator_stats`).
+- `get_events_count` = 0, `nft_total_supply` = 0 (no content uploaded yet).
+
 ### Security — Faz 1 Hardening (2026-04-23)
 
 ### Mainnet Deploy — 24 Nisan 2026

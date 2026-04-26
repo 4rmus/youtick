@@ -2,7 +2,8 @@
 
 > Live runtime contract surface for YouTick Zero Trust Architecture
 
-**Status:** Live runtime  
+**Status:** Source reference. Sensitive admin methods are timelock-only even when
+their public wrapper exists.
 **Contracts:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`
 
 ---
@@ -39,7 +40,7 @@ This contract is the market, content, and entitlement source of truth.
 | Method | Purpose |
 |--------|---------|
 | `new` | Initializes the contract with an owner |
-| `migrate` | V10 state migration (removes deprecated Nova fields) |
+| `migrate` | V11 state migration (adds `creator_profiles`); must be called after WASM deploy when struct layout changes |
 | `reset_v11` | Migration-only state reset; excluded from normal production builds |
 
 ### Change Methods
@@ -152,11 +153,16 @@ This contract is the session-grant and scope-policy source of truth.
 | `issue_session_grant` | Creates a short-lived session grant |
 | `revoke_session_grant` | Revokes one grant by session public key |
 | `revoke_subject_sessions` | Revokes every grant for one subject |
-| `set_scope_policy` | Updates scope policy (TTL, binding) |
-| `set_market_contract` | Updates the market-contract reference |
-| `set_registry_contract` | Updates the registry-contract reference |
-| `pause_scope` | Pauses one scope |
-| `unpause_scope` | Unpauses one scope |
+| `set_scope_policy` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `set_market_contract` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `set_registry_contract` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `pause_scope` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `unpause_scope` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `pause_contract` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `unpause_contract` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `propose_action` | Timelock: proposes a sensitive action |
+| `execute_action` | Timelock: executes a proposed action after delay |
+| `cancel_action` | Timelock: cancels a proposed action |
 | `propose_owner` | Two-step ownership transfer: propose |
 | `accept_ownership` | Two-step ownership transfer: accept |
 | `set_owner` | Direct owner override (use with caution) |
@@ -186,11 +192,16 @@ This contract stores decryption operators and relayers.
 | Method | Purpose |
 |--------|---------|
 | `new` | Initializes the contract |
-| `upsert_decryption_operator` | Creates or updates an operator |
-| `deactivate_decryption_operator` | Deactivates an operator |
-| `upsert_relayer` | Creates or updates a relayer |
-| `deactivate_relayer` | Deactivates a relayer |
-| `set_threshold_config` | Updates threshold config such as `3-of-5` |
+| `upsert_decryption_operator` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `deactivate_decryption_operator` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `upsert_relayer` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `deactivate_relayer` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `set_threshold_config` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `pause_contract` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `unpause_contract` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `propose_action` | Timelock: proposes a sensitive action |
+| `execute_action` | Timelock: executes a proposed action after delay |
+| `cancel_action` | Timelock: cancels a proposed action |
 | `propose_owner` | Two-step ownership transfer: propose |
 | `accept_ownership` | Two-step ownership transfer: accept |
 | `set_owner` | Direct owner override (use with caution) |

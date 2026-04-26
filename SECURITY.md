@@ -5,8 +5,7 @@ configuration. Please do not open public issues for security reports.
 
 ## Reporting
 
-Until a dedicated security mailbox is published, use GitHub Security Advisories
-for private reports. Include:
+Use GitHub Security Advisories for private reports. Include:
 
 - affected component
 - steps to reproduce
