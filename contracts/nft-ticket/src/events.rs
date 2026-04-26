@@ -65,6 +65,18 @@ pub struct EventCreatedEvent {
     pub max_tickets: Option<u64>,
 }
 
+/// Event emitted when an event is taken down by the contract owner (emergency,
+/// no timelock). Used for illegal content where the 24h timelock is unacceptable.
+/// Provides a public audit trail; abuse is detectable on-chain.
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(crate = "near_sdk::serde")]
+pub struct EventTakedownEvent {
+    pub encrypted_cid: String,
+    pub reason: String,
+    pub by: AccountId,
+    pub at: u64,
+}
+
 // ============================================================================
 // NEP-297 Event Envelope
 // ============================================================================
@@ -157,4 +169,22 @@ pub fn emit_event_created(
         }],
     };
     env::log_str(&serde_json::to_string(&event).expect("Failed to serialize event_created event"));
+}
+
+/// Emit event_takedown event (emergency, no-timelock takedown audit trail).
+pub fn emit_event_takedown(encrypted_cid: String, reason: String, by: AccountId, at: u64) {
+    let event = Nep297Event {
+        standard: NEP297_STANDARD,
+        version: NEP297_VERSION,
+        event: "event_takedown",
+        data: vec![EventTakedownEvent {
+            encrypted_cid,
+            reason,
+            by,
+            at,
+        }],
+    };
+    env::log_str(
+        &serde_json::to_string(&event).expect("Failed to serialize event_takedown event"),
+    );
 }

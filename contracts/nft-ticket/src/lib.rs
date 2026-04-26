@@ -1035,6 +1035,48 @@ impl Contract {
         self.lazy_banned_events().get(&encrypted_cid).is_some()
     }
 
+    /// Emergency takedown (owner only, NO timelock).
+    ///
+    /// Intended for illegal content (CSAM, non-consensual sexual content,
+    /// imminent-harm material) where the 24h timelock used by `ban_event`
+    /// is unacceptable. Writes to the same banned-events storage as
+    /// `ban_event`; the difference is the audit trail: every takedown
+    /// emits a NEP-297 `event_takedown` log so abuse is detectable on-chain.
+    ///
+    /// Works while the contract is paused — emergency response must not
+    /// depend on contract liveness.
+    ///
+    /// Per ADR-009, this owner authority is transitional and is scheduled
+    /// to be transferred to a multisig/DAO by end of Q4 2026.
+    pub fn takedown_event(&mut self, encrypted_cid: String, reason: BanReason) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only owner can takedown events"
+        );
+        require!(self.events.get(&encrypted_cid).is_some(), "Event not found");
+        require!(
+            self.lazy_banned_events().get(&encrypted_cid).is_none(),
+            "Event is already banned or taken down"
+        );
+
+        let now = env::block_timestamp();
+        let by = env::predecessor_account_id();
+        let ban_info = BanInfo {
+            reason: reason.clone(),
+            banned_at: now,
+            banned_by: by.clone(),
+        };
+        self.lazy_banned_events().insert(&encrypted_cid, &ban_info);
+        self.active_event_count = self.active_event_count.saturating_sub(1);
+
+        let reason_str = match reason {
+            BanReason::SexualContent => "sexual_content",
+            BanReason::CopyrightViolation => "copyright_violation",
+            BanReason::Other => "other",
+        };
+        crate::events::emit_event_takedown(encrypted_cid, reason_str.to_string(), by, now);
+    }
+
     /// View: Get all banned events (owner only, iterates events checking ban map)
     pub fn get_banned_events(&self) -> Vec<(String, BanInfo)> {
         require!(
@@ -3790,6 +3832,106 @@ mod tests {
         let banned = contract.get_banned_events();
         assert_eq!(banned.len(), 1);
         assert!(matches!(banned[0].1.reason, BanReason::CopyrightViolation));
+    }
+
+    fn seed_event(contract: &mut Contract, cid: &str, creator: &AccountId) {
+        contract.events.insert(
+            &cid.to_string(),
+            &Event {
+                title: "T".to_string(),
+                description: "D".to_string(),
+                price: U128(0),
+                creator_id: creator.clone(),
+                created_at: 1,
+                content_type: ContentType::Exclusive,
+            },
+        );
+        contract.active_event_count = contract.active_event_count.saturating_add(1);
+    }
+
+    #[test]
+    fn takedown_event_marks_banned_and_emits_log() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+        seed_event(&mut contract, "event-takedown-1", &owner_id);
+
+        let mut builder = context(owner_id.as_str(), "contract.testnet");
+        builder.block_timestamp(2_000);
+        testing_env!(builder.build());
+
+        contract.takedown_event(
+            "event-takedown-1".to_string(),
+            BanReason::SexualContent,
+        );
+
+        assert!(contract.is_event_banned("event-takedown-1".to_string()));
+        assert_eq!(contract.active_event_count, 0);
+
+        let logs = near_sdk::test_utils::get_logs();
+        assert!(
+            logs.iter().any(|l| l.contains("event_takedown")
+                && l.contains("sexual_content")
+                && l.contains("event-takedown-1")),
+            "expected event_takedown NEP-297 log, got: {:?}",
+            logs
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Only owner can takedown events")]
+    fn takedown_event_rejects_non_owner() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+        seed_event(&mut contract, "event-takedown-2", &owner_id);
+
+        testing_env!(context("attacker.testnet", "contract.testnet").build());
+        contract.takedown_event("event-takedown-2".to_string(), BanReason::Other);
+    }
+
+    #[test]
+    #[should_panic(expected = "Event not found")]
+    fn takedown_event_rejects_missing_event() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+
+        testing_env!(context(owner_id.as_str(), "contract.testnet").build());
+        contract.takedown_event("does-not-exist".to_string(), BanReason::Other);
+    }
+
+    #[test]
+    #[should_panic(expected = "already banned or taken down")]
+    fn takedown_event_rejects_double_takedown() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+        seed_event(&mut contract, "event-takedown-3", &owner_id);
+
+        testing_env!(context(owner_id.as_str(), "contract.testnet").build());
+        contract.takedown_event(
+            "event-takedown-3".to_string(),
+            BanReason::SexualContent,
+        );
+        contract.takedown_event(
+            "event-takedown-3".to_string(),
+            BanReason::SexualContent,
+        );
+    }
+
+    #[test]
+    fn takedown_event_works_while_paused() {
+        // Emergency takedown must function even when contract is paused;
+        // illegal-content response must not depend on contract liveness.
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+        seed_event(&mut contract, "event-takedown-4", &owner_id);
+        contract.lazy_paused_state().set(&true);
+
+        testing_env!(context(owner_id.as_str(), "contract.testnet").build());
+        contract.takedown_event(
+            "event-takedown-4".to_string(),
+            BanReason::SexualContent,
+        );
+
+        assert!(contract.is_event_banned("event-takedown-4".to_string()));
     }
 
     #[test]
