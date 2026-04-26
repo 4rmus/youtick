@@ -85,11 +85,20 @@ KMS endpointleri env ile verilmez. Web app aktif operatorleri registry kontratin
 - [Contract methods](./docs/api/contract-methods.md)
 - [Security](./docs/security.md)
 - [Known issues](./docs/operations/known-issues.md)
-- [Open source readiness report](./docs/open-source-readiness.md)
+- [Launch plan (2026-04)](./docs/launch-plan-2026-04.md)
+- [Mainnet readiness report](./docs/mainnet-open-source-readiness-2026-04-26.md)
 - [Business (TR)](./docs/business/youtick-avrupa-sirketlesme-raporu-2026-04.md)
 
 ---
 
 ## Status
 
-Uygulama aktif KMS + Crust + NEAR mimarisine gore calisir. Acik kaynak yayin oncesi kalan isler icin `docs/open-source-readiness.md` raporu kaynak kabul edilmelidir.
+Uygulama kaynak kod seviyesinde aktif KMS + Crust + NEAR mimarisine gore
+hazirlanmistir. Canli mainnet durumu ise public alpha seviyesindedir; production
+ready olarak sunulmadan once KMS operator aktivasyonu ve smoke testler
+tamamlanmalidir.
+
+Guncel karar kaynagi:
+
+- [Mainnet and Open Source Readiness](./docs/mainnet-open-source-readiness-2026-04-26.md)
+- [Known Issues](./docs/operations/known-issues.md)

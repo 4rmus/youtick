@@ -36,6 +36,5 @@ features:
 - [Smart Contract](architecture/smart-contract.md) -- Contract surfaces and invariants
 - [Contract Methods](api/contract-methods.md) -- Contract API reference
 - [Security](security.md) -- Threat model and security notes
-- [Roadmap](roadmap.md) -- Planned milestones
-- [Open Source Readiness](open-source-readiness.md) -- Yayin oncesi rapor ve oneriler
-- [Business](business/youtick-yol-haritasi-2026-04.md) -- Yol haritasi ve yayin stratejisi
+- [Launch Plan (2026-04)](launch-plan-2026-04.md) -- Tek geçerli plan kaynağı (30 günlük launch + Q4 2026 DAO geçişi)
+- [Mainnet & Open Source Readiness](mainnet-open-source-readiness-2026-04-26.md) -- Güncel durum raporu

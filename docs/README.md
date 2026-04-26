@@ -1,17 +1,29 @@
 # YouTick Documentation
 
-> Current runtime: browser encryption, NEAR entitlements, registry-enforced operators, and share-based playback
+> Current source architecture: browser encryption, NEAR entitlements,
+> registry-enforced operators, and share-based playback
 
-YouTick currently runs with client-side media encryption, a market/access/registry contract split, and a multi-operator playback path. When docs and code disagree, the codebase is the source of truth.
+YouTick's source code supports client-side media encryption, a market/access/registry
+contract split, and a multi-operator playback path. Live mainnet can lag behind
+source code, so release decisions should use the current readiness report first.
 
-**Mainnet target:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`  
-**Current playback path:** Browser AES-CTR + registry-enforced operator share reconstruction
+**Mainnet target:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`
+**Target playback path:** Browser AES-CTR + registry-enforced operator share reconstruction
+**Current release posture:** public alpha candidate, not production-ready
 
 ## Reading Labels
 
 - `LIVE`: bugun kodda aktif olan veya operasyonu dogrudan etkileyen yuzey
 - `TARGET`: hedef mimari veya gelecekte tamamlanacak tasarim
 - `LEGACY`: uyumluluk icin duran eski yol
+
+---
+
+## Current Source of Truth
+
+- [Mainnet and Open Source Readiness, 2026-04-26](mainnet-open-source-readiness-2026-04-26.md)
+- [Known Issues & Operational Risks](operations/known-issues.md)
+- [Mainnet Deploy Runbook](operations/mainnet-deploy-runbook.md)
 
 ---
 
@@ -32,7 +44,9 @@ YouTick currently runs with client-side media encryption, a market/access/regist
 
 ## Practical topics
 
-> Eski `docs/guides/` ve `docs/operations/` sayfalari kaldirildi; ayni konular mimari, quick-start ve asagidaki sayfalarda toplandi. Davranis icin `apps/web/lib/*` kaynak gecerlidir.
+> Eski `docs/guides/` sayfalari kaldirildi; operasyonel konular artık
+> `docs/operations/` altında tutulur. Davranis icin `apps/web/lib/*` ve
+> kontrat kaynaklari gecerlidir.
 
 - [Storage & Delivery](architecture/storage.md) `LIVE`
 - [Contract Methods](api/contract-methods.md) `TARGET`
@@ -45,8 +59,8 @@ YouTick currently runs with client-side media encryption, a market/access/regist
 - [Security](security.md)
 - [Testing](testing.md)
 - [Contributing](contributing.md)
-- [Roadmap](roadmap.md)
-- [Open Source Readiness](open-source-readiness.md)
+- [Launch Plan (2026-04)](launch-plan-2026-04.md) -- Tek geçerli plan kaynağı
+- [Mainnet and Open Source Readiness](mainnet-open-source-readiness-2026-04-26.md)
 - [Overview](overview.md)
 - [Business](business/youtick-avrupa-sirketlesme-raporu-2026-04.md)
 
@@ -64,4 +78,4 @@ For a new engineer, the shortest path is:
 
 ---
 
-*Last Updated: April 25, 2026*
+*Last Updated: April 26, 2026*
