@@ -59,11 +59,17 @@ kabul edilmez.
 - ADR-009 yaz: "Owner-only content takedown — alpha; Q4 2026 DAO devri"
 - ToS / Acceptable Use Policy taslak (yasal zemin)
 
-**Gün 3 — Trial maliyet düşürme**
+**Gün 3 — Trial maliyet kontrolü (NO-OP)**
 
-- `STORAGE_COST_ACCOUNT`: 0.1 → 0.002 NEAR (1 satır)
-- 9× tasarruf: 1 NEAR pool ≈ 80 trial user
-- Test güncelle
+Kod incelemesi: `TRIAL_ACCOUNT_STORAGE_COST` zaten **0.002 NEAR**. Trial flow
+(`lib.rs:2516, 2627`) bu sabiti kullanıyor — eski rapordaki "0.1 NEAR'da takılı"
+varsayımı geçersiz. Mevcut trial maliyeti `0.002 + 0.01 = 0.012 NEAR/user`,
+yani 1 NEAR ≈ 83 trial. Hedef zaten karşılanıyor.
+
+`STORAGE_COST_ACCOUNT` (0.1 NEAR) ise **creator upload session deposit**'i
+(trial değil). Düşürmek storage refund yetersizliğine yol açabilir. Dokunma.
+
+Kazanılan zaman Gün 4-5'e (state reset) transfer edilir.
 
 **Gün 4-5 — State reset koordinasyonu**
 
