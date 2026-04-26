@@ -4,7 +4,7 @@
 Deferred until Phase 2 (post-traction)
 
 ## Solo Dev Note
-This ADR is intentionally deferred. As a solo developer shipping an MVP, the operational overhead of a 3-of-5 multi-sig (key ceremony, signer coordination, gas costs) outweighs the security benefit. The 24h timelock (ADR-002) provides sufficient key-compromise protection for the MVP phase. Revisit this when traction justifies the overhead (see `docs/decentralization-audit-2026-solo-mvp.md`).
+This ADR is intentionally deferred. As a solo developer shipping an MVP, the operational overhead of a 3-of-5 multi-sig (key ceremony, signer coordination, gas costs) outweighs the security benefit. The 24h timelock (ADR-002) provides sufficient key-compromise protection for the MVP phase. Target: Q4 2026.
 
 ## Context
 All three YouTick contracts (`nft-ticket`, `access-control`, `operator-registry`) currently use a single `owner_id` account. Compromise of this one private key grants total protocol control: fund withdrawal, content moderation, operator set manipulation, and contract pausing. The `nft-ticket` contract does not even have an ownership transfer mechanism.

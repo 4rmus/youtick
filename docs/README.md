@@ -59,10 +59,8 @@ source code, so release decisions should use the current readiness report first.
 - [Security](security.md)
 - [Testing](testing.md)
 - [Contributing](contributing.md)
-- [Launch Plan (2026-04)](launch-plan-2026-04.md) -- Tek geçerli plan kaynağı
 - [Mainnet and Open Source Readiness](mainnet-open-source-readiness-2026-04-26.md)
 - [Overview](overview.md)
-- [Business](business/youtick-avrupa-sirketlesme-raporu-2026-04.md)
 
 ---
 

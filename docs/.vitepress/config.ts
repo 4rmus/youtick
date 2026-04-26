@@ -53,15 +53,10 @@ export default withMermaid(
           text: 'Project',
           items: [
             { text: 'Overview', link: '/overview' },
-            { text: 'Roadmap', link: '/roadmap' },
             { text: 'Security', link: '/security' },
             { text: 'Testing', link: '/testing' },
             { text: 'Contributing', link: '/contributing' },
             { text: 'Frontend', link: '/frontend' },
-            {
-              text: 'Business (TR)',
-              link: '/business/youtick-avrupa-sirketlesme-raporu-2026-04',
-            },
           ],
         },
       ],
