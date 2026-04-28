@@ -4,7 +4,7 @@ use crate::*;
 /// Must match the borsh encoding of the currently deployed WASM byte-for-byte.
 #[near(serializers = [borsh])]
 pub struct OldContract {
-    tokens: NonFungibleToken,
+    tokens: YtNft,
     metadata: LazyOption<NFTContractMetadata>,
     video_metadata: UnorderedMap<TokenId, VideoMetadata>,
     user_deposits: LookupMap<AccountId, NearToken>,

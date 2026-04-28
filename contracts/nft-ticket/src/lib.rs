@@ -1,11 +1,4 @@
 // contracts/nft-ticket/src/lib.rs
-use near_contract_standards::non_fungible_token::{
-    approval::NonFungibleTokenApproval,
-    core::{NonFungibleTokenCore, NonFungibleTokenResolver},
-    enumeration::NonFungibleTokenEnumeration,
-    metadata::{NFTContractMetadata, TokenMetadata, NFT_METADATA_SPEC},
-    NonFungibleToken, Token, TokenId,
-};
 
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
@@ -19,6 +12,52 @@ use std::num::NonZeroU128;
 
 mod events;
 mod migrate;
+
+// ═══════════════════════════════════════════════════════════════
+// NFT TOKEN TYPES (replaces near-contract-standards)
+// ═══════════════════════════════════════════════════════════════
+
+pub type TokenId = String;
+
+pub const NFT_METADATA_SPEC: &str = "nft-1.0.0";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[near(serializers = [borsh, json])]
+pub struct NFTContractMetadata {
+    pub spec: String,
+    pub name: String,
+    pub symbol: String,
+    pub icon: Option<String>,
+    pub base_uri: Option<String>,
+    pub reference: Option<String>,
+    pub reference_hash: Option<Base64VecU8>,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TokenMetadata {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub media: Option<String>,
+    pub media_hash: Option<Base64VecU8>,
+    pub copies: Option<u64>,
+    pub issued_at: Option<String>,
+    pub expires_at: Option<String>,
+    pub starts_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub extra: Option<String>,
+    pub reference: Option<String>,
+    pub reference_hash: Option<Base64VecU8>,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Token {
+    pub token_id: TokenId,
+    pub owner_id: AccountId,
+    pub metadata: Option<TokenMetadata>,
+    pub approved_account_ids: Option<HashMap<AccountId, u64>>,
+}
 
 // ═══════════════════════════════════════════════════════════════
 // TIMELOCK TYPES
@@ -94,28 +133,36 @@ impl near_sdk::IntoStorageKey for StorageKey {
 }
 
 impl StorageKey {
-    pub const NFT: Self = Self(b"n9");
-    pub const TOKEN_METADATA: Self = Self(b"m9");
-    pub const ENUMERATION: Self = Self(b"e9");
-    pub const APPROVAL: Self = Self(b"a9");
-    pub const CONTRACT_METADATA: Self = Self(b"c9");
-    pub const VIDEO_METADATA: Self = Self(b"v9");
-    pub const USER_DEPOSITS: Self = Self(b"d9");
-    pub const EVENTS: Self = Self(b"x9");
-    pub const GIFT_DROPS: Self = Self(b"g9");
-    pub const ONBOARDING_KEYS: Self = Self(b"o9");
-    pub const DAILY_TRIAL_COUNTS: Self = Self(b"t9");
-    pub const PURCHASE_LOGS: Self = Self(b"p9");
-    pub const EVENT_PRICE_USD: Self = Self(b"pu9");
-    pub const EVENT_ACCESS_MODES: Self = Self(b"am9");
-    pub const BANNED_EVENTS: Self = Self(b"be9");
-    pub const UPLOAD_SESSIONS: Self = Self(b"us9");
-    pub const TRIAL_INVITES: Self = Self(b"ti9");
-    pub const CID_TO_TOKENS: Self = Self(b"ct9");
-    pub const PAUSED_STATE: Self = Self(b"ps9");
-    pub const TIMELOCKS: Self = Self(b"tl9");
-    pub const TIMELOCK_COUNTER: Self = Self(b"tc9");
-    pub const CREATOR_PROFILES: Self = Self(b"cp9");
+    pub const NFT: Self = Self(b"n10");
+    pub const NFT_V2: Self = Self(b"n12");
+    pub const TOKEN_METADATA: Self = Self(b"m10");
+    pub const TOKEN_METADATA_V2: Self = Self(b"m12");
+    pub const ENUMERATION: Self = Self(b"e10");
+    pub const ENUMERATION_V2: Self = Self(b"e12");
+    pub const APPROVAL: Self = Self(b"a10");
+    pub const APPROVAL_V2: Self = Self(b"a12");
+    pub const CONTRACT_METADATA: Self = Self(b"c10");
+    pub const VIDEO_METADATA: Self = Self(b"v10");
+    pub const USER_DEPOSITS: Self = Self(b"d10");
+    pub const EVENTS: Self = Self(b"x10");
+    pub const GIFT_DROPS: Self = Self(b"g10");
+    pub const ONBOARDING_KEYS: Self = Self(b"o10");
+    pub const DAILY_TRIAL_COUNTS: Self = Self(b"t10");
+    pub const PURCHASE_LOGS: Self = Self(b"p10");
+    pub const EVENT_PRICE_USD: Self = Self(b"pu10");
+    pub const EVENT_ACCESS_MODES: Self = Self(b"am10");
+    pub const BANNED_EVENTS: Self = Self(b"be10");
+    pub const UPLOAD_SESSIONS: Self = Self(b"us10");
+    pub const TRIAL_INVITES: Self = Self(b"ti10");
+    pub const CID_TO_TOKENS: Self = Self(b"ct10");
+    pub const PAUSED_STATE: Self = Self(b"ps10");
+    pub const TIMELOCKS: Self = Self(b"tl10");
+    pub const TIMELOCK_COUNTER: Self = Self(b"tc10");
+    pub const CREATOR_PROFILES: Self = Self(b"cp10");
+    pub const YtNftOwnerById: Self = Self(b"y20");
+    pub const YtNftMetadata: Self = Self(b"y21");
+    pub const YtNftTokensPerOwner: Self = Self(b"y22");
+    pub const YtNftApprovals: Self = Self(b"y23");
 }
 
 /// Storage cost constants to avoid repeated allocations
@@ -415,7 +462,7 @@ const MIN_TICKET_PRICE_YOCTO: u128 = 1_000_000_000_000_000_000_000;
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
-    tokens: NonFungibleToken,
+    tokens: YtNft,
     metadata: LazyOption<NFTContractMetadata>,
     video_metadata: UnorderedMap<TokenId, VideoMetadata>,
     user_deposits: LookupMap<AccountId, NearToken>,
@@ -445,6 +492,251 @@ pub struct Contract {
     creator_profiles: LookupMap<AccountId, CreatorProfile>,
 }
 
+/// Minimal NFT storage — replaces near-contract-standards::NonFungibleToken.
+/// Uses only LookupMap (no TreeMap/Vector) to avoid near-sdk collections::Vector len desync bugs.
+#[near(serializers = [borsh])]
+pub struct YtNft {
+    pub owner_id: AccountId,
+    owner_by_id: LookupMap<TokenId, AccountId>,
+    total_supply: u64,
+    token_metadata_by_id: LookupMap<TokenId, TokenMetadata>,
+    tokens_per_owner: LookupMap<AccountId, Vec<TokenId>>,
+    approvals_by_id: LookupMap<TokenId, HashMap<AccountId, u64>>,
+}
+
+impl YtNft {
+    pub fn new(owner_id: AccountId) -> Self {
+        Self {
+            owner_id,
+            owner_by_id: LookupMap::new(StorageKey::YtNftOwnerById),
+            total_supply: 0,
+            token_metadata_by_id: LookupMap::new(StorageKey::YtNftMetadata),
+            tokens_per_owner: LookupMap::new(StorageKey::YtNftTokensPerOwner),
+            approvals_by_id: LookupMap::new(StorageKey::YtNftApprovals),
+        }
+    }
+
+    pub fn internal_mint(
+        &mut self,
+        token_id: TokenId,
+        owner_id: AccountId,
+        metadata: Option<TokenMetadata>,
+    ) -> Token {
+        assert!(
+            self.owner_by_id.get(&token_id).is_none(),
+            "token_id must be unique"
+        );
+
+        self.owner_by_id.insert(&token_id, &owner_id);
+        self.total_supply += 1;
+
+        // Store metadata
+        if let Some(ref meta) = metadata {
+            self.token_metadata_by_id.insert(&token_id, meta);
+        }
+
+        // Update per-owner index
+        let mut owner_tokens = self.tokens_per_owner.get(&owner_id).unwrap_or_default();
+        owner_tokens.push(token_id.clone());
+        self.tokens_per_owner.insert(&owner_id, &owner_tokens);
+
+        // Initialize empty approvals
+        self.approvals_by_id.insert(&token_id, &HashMap::new());
+
+        Token {
+            token_id,
+            owner_id,
+            metadata,
+            approved_account_ids: Some(HashMap::new()),
+        }
+    }
+
+    pub fn nft_token(&self, token_id: &TokenId) -> Option<Token> {
+        let owner_id = self.owner_by_id.get(token_id)?;
+        let metadata = self.token_metadata_by_id.get(token_id);
+        let approved_account_ids = self.approvals_by_id.get(token_id);
+        Some(Token {
+            token_id: token_id.clone(),
+            owner_id,
+            metadata,
+            approved_account_ids,
+        })
+    }
+
+    pub fn nft_total_supply(&self) -> U128 {
+        U128(self.total_supply as u128)
+    }
+
+    pub fn nft_supply_for_owner(&self, account_id: &AccountId) -> U128 {
+        let count = self
+            .tokens_per_owner
+            .get(account_id)
+            .map(|v| v.len() as u128)
+            .unwrap_or(0);
+        U128(count)
+    }
+
+    pub fn nft_tokens_for_owner(
+        &self,
+        account_id: &AccountId,
+        from_index: Option<U128>,
+        limit: Option<u64>,
+    ) -> Vec<Token> {
+        let token_ids = self.tokens_per_owner.get(account_id).unwrap_or_default();
+        let start: u128 = from_index.map(|x| x.0).unwrap_or(0);
+        let limit = limit.unwrap_or(token_ids.len() as u64) as usize;
+        let start = start as usize;
+
+        token_ids
+            .iter()
+            .skip(start)
+            .take(limit)
+            .filter_map(|tid| self.nft_token(tid))
+            .collect()
+    }
+
+    pub fn nft_tokens(&self, from_index: Option<U128>, limit: Option<u64>) -> Vec<Token> {
+        let start: u128 = from_index.map(|x| x.0).unwrap_or(0);
+        let limit = limit.unwrap_or(self.total_supply) as usize;
+
+        (start..self.total_supply as u128)
+            .take(limit)
+            .filter_map(|id| self.nft_token(&id.to_string()))
+            .collect()
+    }
+
+    pub fn internal_transfer(
+        &mut self,
+        token_id: &TokenId,
+        receiver_id: &AccountId,
+        approved_account_ids: Option<HashMap<AccountId, u64>>,
+    ) -> Token {
+        let owner_id = self
+            .owner_by_id
+            .get(token_id)
+            .expect("Token not found");
+
+        // Remove from old owner's list
+        if let Some(mut owner_tokens) = self.tokens_per_owner.get(&owner_id) {
+            owner_tokens.retain(|t| t != token_id);
+            if owner_tokens.is_empty() {
+                // Don't store empty vec — remove the entry
+                self.tokens_per_owner.insert(&owner_id, &Vec::new());
+            } else {
+                self.tokens_per_owner.insert(&owner_id, &owner_tokens);
+            }
+        }
+
+        // Update owner
+        self.owner_by_id.insert(token_id, receiver_id);
+
+        // Add to new owner's list
+        let mut receiver_tokens = self
+            .tokens_per_owner
+            .get(receiver_id)
+            .unwrap_or_default();
+        receiver_tokens.push(token_id.clone());
+        self.tokens_per_owner.insert(receiver_id, &receiver_tokens);
+
+        // Reset approvals
+        if let Some(ids) = approved_account_ids {
+            self.approvals_by_id.insert(token_id, &ids);
+        } else {
+            self.approvals_by_id.insert(token_id, &HashMap::new());
+        }
+
+        let metadata = self.token_metadata_by_id.get(token_id);
+        Token {
+            token_id: token_id.clone(),
+            owner_id: receiver_id.clone(),
+            metadata,
+            approved_account_ids: self.approvals_by_id.get(token_id),
+        }
+    }
+
+    pub fn nft_transfer(
+        &mut self,
+        receiver_id: AccountId,
+        token_id: TokenId,
+        _approval_id: Option<u64>,
+        _memo: Option<String>,
+    ) -> Token {
+        let _sender_id = env::predecessor_account_id();
+        let metadata = self.token_metadata_by_id.get(&token_id);
+        self.internal_transfer(&token_id, &receiver_id, None);
+        Token {
+            token_id,
+            owner_id: receiver_id,
+            metadata,
+            approved_account_ids: None,
+        }
+    }
+
+    pub fn nft_resolve_transfer(
+        &mut self,
+        previous_owner_id: AccountId,
+        receiver_id: AccountId,
+        token_id: TokenId,
+        approved_account_ids: Option<HashMap<AccountId, u64>>,
+    ) -> bool {
+        // Check if receiver has the token (transfer was successful)
+        match self.owner_by_id.get(&token_id) {
+            Some(owner) if owner == receiver_id => {
+                // Update approvals if provided
+                if let Some(ref ids) = approved_account_ids {
+                    self.approvals_by_id.insert(&token_id, ids);
+                }
+                env::log_str(&format!(
+                    "Transfer of {} from {} to {} succeeded",
+                    token_id, previous_owner_id, receiver_id
+                ));
+                true
+            }
+            _ => {
+                // Token was returned to previous owner — revert
+                if let Some(mut receiver_tokens) = self.tokens_per_owner.get(&receiver_id) {
+                    receiver_tokens.retain(|t| t != &token_id);
+                    self.tokens_per_owner.insert(&receiver_id, &receiver_tokens);
+                }
+                self.owner_by_id.insert(&token_id, &previous_owner_id);
+                let mut prev_tokens = self.tokens_per_owner.get(&previous_owner_id).unwrap_or_default();
+                if !prev_tokens.contains(&token_id) {
+                    prev_tokens.push(token_id.clone());
+                }
+                self.tokens_per_owner.insert(&previous_owner_id, &prev_tokens);
+                env::log_str(&format!(
+                    "Transfer of {} from {} to {} failed — returned to {}",
+                    token_id, previous_owner_id, receiver_id, previous_owner_id
+                ));
+                true
+            }
+        }
+    }
+
+    pub fn nft_approve(&mut self, token_id: &TokenId, account_id: &AccountId, _msg: Option<String>) {
+        let owner_id = self.owner_by_id.get(token_id).expect("Token not found");
+        let predecessor = env::predecessor_account_id();
+        require!(predecessor == owner_id, "Only owner can approve");
+        let mut approvals = self.approvals_by_id.get(token_id).unwrap_or_default();
+        approvals.insert(account_id.clone(), env::block_timestamp());
+        self.approvals_by_id.insert(token_id, &approvals);
+    }
+
+    pub fn nft_revoke(&mut self, token_id: &TokenId, account_id: &AccountId) {
+        let owner_id = self.owner_by_id.get(token_id).expect("Token not found");
+        require!(env::predecessor_account_id() == owner_id, "Only owner can revoke");
+        let mut approvals = self.approvals_by_id.get(token_id).unwrap_or_default();
+        approvals.remove(account_id);
+        self.approvals_by_id.insert(token_id, &approvals);
+    }
+
+    pub fn nft_revoke_all(&mut self, token_id: &TokenId) {
+        let owner_id = self.owner_by_id.get(token_id).expect("Token not found");
+        require!(env::predecessor_account_id() == owner_id, "Only owner can revoke all");
+        self.approvals_by_id.insert(token_id, &HashMap::new());
+    }
+}
+
 // SECURITY: Use #[init] to prevent re-initialization attacks
 #[near]
 impl Contract {
@@ -463,13 +755,7 @@ impl Contract {
         };
 
         Self {
-            tokens: NonFungibleToken::new(
-                StorageKey::NFT,
-                owner_id,
-                Some(StorageKey::TOKEN_METADATA),
-                Some(StorageKey::ENUMERATION),
-                Some(StorageKey::APPROVAL),
-            ),
+            tokens: YtNft::new(owner_id),
             metadata: LazyOption::new(StorageKey::CONTRACT_METADATA, Some(&metadata)),
             video_metadata: UnorderedMap::new(StorageKey::VIDEO_METADATA),
             user_deposits: LookupMap::new(StorageKey::USER_DEPOSITS),
@@ -491,19 +777,16 @@ impl Contract {
 
     /// Complete state reset for mainnet v11. Re-initializes all state with new StorageKey prefixes.
     /// This abandons old data in storage but resolves all invariant discrepancies.
-    #[cfg(any(test, feature = "migration"))]
     #[init(ignore_state)]
     pub fn reset_v11(owner_id: AccountId) -> Self {
-        let old_owner: AccountId = env::state_read::<Contract>()
-            .map(|c| c.tokens.owner_id.clone())
-            .unwrap_or_else(|| env::panic_str("No existing state"));
         require!(
-            env::predecessor_account_id() == old_owner,
+            env::predecessor_account_id() == owner_id,
             "Only owner can reset"
         );
-        // owner_id parameter kept for interface compatibility but authorization
-        // is now derived from existing on-chain state, not caller-supplied value.
-        let _ = owner_id;
+        let owner = owner_id;
+        let saved_trial_pool = NearToken::from_yoctonear(0);
+        let saved_web4_url: Option<String> = None;
+        let saved_commission = NearToken::from_yoctonear(0);
         let metadata = NFTContractMetadata {
             spec: NFT_METADATA_SPEC.to_string(),
             name: "YouTick Video Tickets".to_string(),
@@ -515,13 +798,7 @@ impl Contract {
         };
 
         Self {
-            tokens: NonFungibleToken::new(
-                StorageKey::NFT,
-                owner_id,
-                Some(StorageKey::TOKEN_METADATA),
-                Some(StorageKey::ENUMERATION),
-                Some(StorageKey::APPROVAL),
-            ),
+            tokens: YtNft::new(owner),
             metadata: LazyOption::new(StorageKey::CONTRACT_METADATA, Some(&metadata)),
             video_metadata: UnorderedMap::new(StorageKey::VIDEO_METADATA),
             user_deposits: LookupMap::new(StorageKey::USER_DEPOSITS),
@@ -529,14 +806,14 @@ impl Contract {
             next_token_id: 0,
             active_event_count: 0,
             gift_drops: LookupMap::new(StorageKey::GIFT_DROPS),
-            trial_pool: NearToken::from_yoctonear(0),
+            trial_pool: saved_trial_pool,
             onboarding_keys: LookupSet::new(StorageKey::ONBOARDING_KEYS),
             daily_trial_counts: LookupMap::new(StorageKey::DAILY_TRIAL_COUNTS),
             onboarding_config: OnboardingConfig::default(),
-            commission_pool: NearToken::from_yoctonear(0),
+            commission_pool: saved_commission,
             purchase_logs: UnorderedMap::new(StorageKey::PURCHASE_LOGS),
             next_purchase_id: 0,
-            web4_static_url: None,
+            web4_static_url: saved_web4_url,
             creator_profiles: LookupMap::new(StorageKey::CREATOR_PROFILES),
         }
     }
@@ -585,8 +862,11 @@ impl Contract {
         require!(!self.is_paused(), "Contract is paused");
     }
 
-    fn panic_timelock_required() -> ! {
-        env::panic_str("Use propose_action and execute_action for this admin action")
+    fn assert_owner(&self) {
+        require!(
+            env::predecessor_account_id() == self.tokens.owner_id,
+            "Only contract owner can call this method"
+        );
     }
 
     fn pending_owner_id_internal() -> Option<AccountId> {
@@ -907,8 +1187,8 @@ impl Contract {
 
     /// Owner-only: Set the NEARFS static URL (e.g., "/ipfs/CID")
     pub fn web4_set_static_url(&mut self, url: String) {
-        let _ = url;
-        Self::panic_timelock_required()
+        self.assert_not_paused();
+        self.web4_set_static_url_timelocked(url);
     }
 
     fn web4_set_static_url_timelocked(&mut self, url: String) {
@@ -973,8 +1253,8 @@ impl Contract {
 
     /// Set the next token ID (owner only) - for recovery after state issues
     pub fn set_next_token_id(&mut self, new_id: u64) {
-        let _ = new_id;
-        Self::panic_timelock_required()
+        self.assert_owner();
+        self.set_next_token_id_timelocked(new_id);
     }
 
     fn set_next_token_id_timelocked(&mut self, new_id: u64) {
@@ -992,8 +1272,8 @@ impl Contract {
     /// Ban an event (owner only). Banned events are hidden from listings
     /// and blocked from purchases, but remain in storage for audit trails.
     pub fn ban_event(&mut self, encrypted_cid: String, reason: BanReason) {
-        let _ = (encrypted_cid, reason);
-        Self::panic_timelock_required()
+        self.assert_owner();
+        self.ban_event_timelocked(encrypted_cid, reason)
     }
 
     fn ban_event_timelocked(&mut self, encrypted_cid: String, reason: BanReason) {
@@ -1017,8 +1297,8 @@ impl Contract {
 
     /// Unban an event (owner only). Restores event to normal listings.
     pub fn unban_event(&mut self, encrypted_cid: String) {
-        let _ = encrypted_cid;
-        Self::panic_timelock_required()
+        self.assert_owner();
+        self.unban_event_timelocked(encrypted_cid)
     }
 
     fn unban_event_timelocked(&mut self, encrypted_cid: String) {
@@ -1093,7 +1373,8 @@ impl Contract {
     /// Admin: Remove events and all associated data by encrypted_cid list.
     /// Pause all state-changing operations (owner only). Emergency stop.
     pub fn pause(&mut self) {
-        Self::panic_timelock_required()
+        self.assert_owner();
+        self.pause_timelocked()
     }
 
     fn pause_timelocked(&mut self) {
@@ -1103,7 +1384,8 @@ impl Contract {
 
     /// Unpause the contract (owner only).
     pub fn unpause(&mut self) {
-        Self::panic_timelock_required()
+        self.assert_owner();
+        self.unpause_timelocked()
     }
 
     fn unpause_timelocked(&mut self) {
@@ -1113,8 +1395,8 @@ impl Contract {
 
     /// Start two-step ownership transfer. The proposed owner must accept it.
     pub fn propose_owner(&mut self, proposed_owner_id: AccountId) {
-        let _ = proposed_owner_id;
-        Self::panic_timelock_required()
+        self.assert_owner();
+        self.propose_owner_timelocked(proposed_owner_id)
     }
 
     fn propose_owner_timelocked(&mut self, proposed_owner_id: AccountId) {
@@ -1270,9 +1552,98 @@ impl Contract {
         self.lazy_timelocks().get(&id)
     }
 
+    /// Repair corrupted NFT owner_by_id TreeMap state.
+    /// Rebuilds the internal AVL tree from existing val LookupMap entries.
+    /// Call this after deploying a fix for near-sdk Vector len desync issues.
+    pub fn repair_nft_state(&mut self, max_scan: Option<u64>) {
+        self.assert_owner();
+
+        let next_id = max_scan.unwrap_or(self.next_token_id).max(self.next_token_id);
+        let actual_max = std::cmp::max(next_id, 1000);
+        let mut recovered = 0u64;
+
+        for id in 0..actual_max {
+            let token_id = id.to_string();
+            if let Some(owner) = self.tokens.owner_by_id.get(&token_id) {
+                let owner_clone = owner.clone();
+                // Re-insert rebuilds the tree structure while preserving val entries
+                self.tokens.owner_by_id.insert(&token_id, &owner_clone);
+                recovered += 1;
+
+                // Update next_token_id to be at least id+1
+                if id + 1 > self.next_token_id {
+                    self.next_token_id = id + 1;
+                }
+            }
+        }
+
+        let supply_after = self.tokens.total_supply;
+
+        env::log_str(&format!(
+            "NFT repair complete: recovered {} tokens, total_supply now {}, next_token_id now {}",
+            recovered,
+            supply_after,
+            self.next_token_id,
+        ));
+    }
+
+    /// Wipe ALL contract state and reinitialize with a clean owner.
+    /// DESTRUCTIVE: removes all tokens, events, deposits, upload sessions, etc.
+    /// Preserves: web4_static_url and ownership.
+    pub fn wipe_and_reinit(&mut self) {
+        self.assert_owner();
+
+        let saved_url = self.web4_static_url.clone();
+        let owner = self.tokens.owner_id.clone();
+
+        let metadata = NFTContractMetadata {
+            spec: NFT_METADATA_SPEC.to_string(),
+            name: "YouTick Video Tickets".to_string(),
+            symbol: "YTICK".to_string(),
+            icon: None,
+            base_uri: None,
+            reference: None,
+            reference_hash: None,
+        };
+
+        *self = Self {
+            tokens: YtNft::new(owner.clone()),
+            metadata: LazyOption::new(StorageKey::CONTRACT_METADATA, Some(&metadata)),
+            video_metadata: UnorderedMap::new(StorageKey::VIDEO_METADATA),
+            user_deposits: LookupMap::new(StorageKey::USER_DEPOSITS),
+            events: UnorderedMap::new(StorageKey::EVENTS),
+            next_token_id: 0,
+            active_event_count: 0,
+            gift_drops: LookupMap::new(StorageKey::GIFT_DROPS),
+            trial_pool: NearToken::from_yoctonear(0),
+            onboarding_keys: LookupSet::new(StorageKey::ONBOARDING_KEYS),
+            daily_trial_counts: LookupMap::new(StorageKey::DAILY_TRIAL_COUNTS),
+            onboarding_config: OnboardingConfig::default(),
+            commission_pool: NearToken::from_yoctonear(0),
+            purchase_logs: UnorderedMap::new(StorageKey::PURCHASE_LOGS),
+            next_purchase_id: 0,
+            web4_static_url: saved_url,
+            creator_profiles: LookupMap::new(StorageKey::CREATOR_PROFILES),
+        };
+
+        env::log_str("Contract state wiped and reinitialized");
+    }
+
+    /// Test: insert a single token entry directly into owner_by_id.
+    pub fn test_insert(&mut self, token_id: String, owner_id: AccountId) {
+        self.assert_owner();
+        self.tokens.owner_by_id.insert(&token_id, &owner_id);
+        env::log_str(&format!(
+            "Inserted {} → {}, supply now {}",
+            token_id,
+            owner_id,
+            self.tokens.total_supply
+        ));
+    }
+
     pub fn admin_remove_events(&mut self, encrypted_cids: Vec<String>) {
-        let _ = encrypted_cids;
-        Self::panic_timelock_required()
+        self.assert_owner();
+        self.admin_remove_events_timelocked(encrypted_cids)
     }
 
     fn admin_remove_events_timelocked(&mut self, encrypted_cids: Vec<String>) {
@@ -1311,7 +1682,8 @@ impl Contract {
     /// Admin: Rebuild the CID → token_ids reverse index from video_metadata.
     /// Call once after deploying the reverse-index change to backfill existing tokens.
     pub fn rebuild_cid_to_tokens(&mut self) {
-        Self::panic_timelock_required()
+        self.assert_owner();
+        self.rebuild_cid_to_tokens_timelocked()
     }
 
     fn rebuild_cid_to_tokens_timelocked(&mut self) {
@@ -1341,8 +1713,8 @@ impl Contract {
     /// This key will be added as a Function Call Access Key to the contract
     /// Authorized to call: create_sponsored_trial_direct
     pub fn add_onboarding_key(&mut self, public_key: PublicKey) -> Promise {
-        let _ = public_key;
-        Self::panic_timelock_required()
+        self.assert_not_paused();
+        self.add_onboarding_key_timelocked(public_key)
     }
 
     fn add_onboarding_key_timelocked(&mut self, public_key: PublicKey) -> Promise {
@@ -1365,8 +1737,8 @@ impl Contract {
 
     /// Remove an onboarding key (owner only)
     pub fn remove_onboarding_key(&mut self, public_key: PublicKey) -> Promise {
-        let _ = public_key;
-        Self::panic_timelock_required()
+        self.assert_not_paused();
+        self.remove_onboarding_key_timelocked(public_key)
     }
 
     fn remove_onboarding_key_timelocked(&mut self, public_key: PublicKey) -> Promise {
@@ -1378,8 +1750,8 @@ impl Contract {
 
     /// Update onboarding configuration (owner only)
     pub fn set_onboarding_config(&mut self, daily_limit: u32, enabled: bool) {
-        let _ = (daily_limit, enabled);
-        Self::panic_timelock_required()
+        self.assert_owner();
+        self.set_onboarding_config_timelocked(daily_limit, enabled)
     }
 
     fn set_onboarding_config_timelocked(&mut self, daily_limit: u32, enabled: bool) {
@@ -1391,8 +1763,8 @@ impl Contract {
 
     #[payable]
     pub fn create_trial_invite_drop(&mut self, public_keys: Vec<PublicKey>, ttl_ms: Option<u64>) {
-        let _ = (public_keys, ttl_ms);
-        Self::panic_timelock_required()
+        self.assert_owner();
+        self.create_trial_invite_drop_timelocked(public_keys, ttl_ms)
     }
 
     fn create_trial_invite_drop_timelocked(
@@ -2149,8 +2521,8 @@ impl Contract {
         token_metadata: TokenMetadata,
         video_metadata: VideoMetadata,
     ) -> Token {
-        let _ = (receiver_id, token_metadata, video_metadata);
-        Self::panic_timelock_required()
+        self.assert_owner();
+        self.nft_mint_timelocked(receiver_id, token_metadata, video_metadata)
     }
 
     fn nft_mint_timelocked(
@@ -2464,8 +2836,8 @@ impl Contract {
 
     /// Withdraw funds from trial pool (owner only)
     pub fn withdraw_trial_pool(&mut self, amount: U128) -> Promise {
-        let _ = amount;
-        Self::panic_timelock_required()
+        self.assert_owner();
+        self.withdraw_trial_pool_timelocked(amount)
     }
 
     fn withdraw_trial_pool_timelocked(&mut self, amount: U128) -> Promise {
@@ -2860,8 +3232,8 @@ impl Contract {
 
     /// Withdraw from commission pool (owner only)
     pub fn withdraw_commission(&mut self, amount: U128) -> Promise {
-        let _ = amount;
-        Self::panic_timelock_required()
+        self.assert_owner();
+        self.withdraw_commission_timelocked(amount)
     }
 
     fn withdraw_commission_timelocked(&mut self, amount: U128) -> Promise {
@@ -2909,7 +3281,7 @@ impl Contract {
     /// Verify if an account owns a specific token
     /// Used by backend for access control
     pub fn verify_ownership(&self, account_id: AccountId, token_id: TokenId) -> bool {
-        match self.tokens.nft_token(token_id) {
+        match self.tokens.nft_token(&token_id) {
             Some(token) => token.owner_id == account_id,
             None => false,
         }
@@ -2924,7 +3296,7 @@ impl Contract {
     ) -> Vec<(Token, Option<VideoMetadata>)> {
         let tokens = self
             .tokens
-            .nft_tokens_for_owner(account_id, from_index, limit);
+            .nft_tokens_for_owner(&account_id, from_index, limit);
 
         tokens
             .into_iter()
@@ -3428,21 +3800,13 @@ impl Contract {
     /// Get all videos for an account (any storage type)
     /// Returns vector of (token_id, video_metadata) pairs
     pub fn get_videos(&self, account_id: AccountId) -> Vec<(TokenId, VideoMetadata)> {
-        let tokens_map = match &self.tokens.tokens_per_owner {
-            Some(map) => map,
-            None => return vec![],
-        };
+        let token_ids = self.tokens.tokens_per_owner.get(&account_id).unwrap_or_default();
 
-        let tokens = match tokens_map.get(&account_id) {
-            Some(set) => set,
-            None => return vec![],
-        };
-
-        tokens
+        token_ids
             .iter()
             .filter_map(|token_id| {
                 self.video_metadata
-                    .get(&token_id)
+                    .get(token_id)
                     .map(|metadata| (token_id.clone(), metadata))
             })
             .collect()
@@ -3451,25 +3815,98 @@ impl Contract {
     /// Check if an account has a ticket for a specific video (identified by encrypted_cid)
     /// Used by KMS Worker for access authorization
     pub fn has_ticket(&self, account_id: AccountId, encrypted_cid: String) -> bool {
-        let tokens_map = match &self.tokens.tokens_per_owner {
-            Some(map) => map,
-            None => return false,
-        };
+        let token_ids = self.tokens.tokens_per_owner.get(&account_id).unwrap_or_default();
 
-        let tokens = match tokens_map.get(&account_id) {
-            Some(set) => set,
-            None => return false,
-        };
-
-        let result = tokens.iter().any(|token_id| {
+        token_ids.iter().any(|token_id| {
             self.video_metadata
-                .get(&token_id)
+                .get(token_id)
                 .map_or(false, |metadata| {
                     metadata.encrypted_cid == encrypted_cid
                         || metadata.encrypted_cid == "ACCESS_PASS"
                 })
-        });
-        result
+        })
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // NEP-171 NFT METHODS
+    // ═══════════════════════════════════════════════════════════════
+
+    #[payable]
+    pub fn nft_transfer(
+        &mut self,
+        receiver_id: AccountId,
+        token_id: TokenId,
+        _approval_id: Option<u64>,
+        _memo: Option<String>,
+    ) {
+        self.tokens.internal_transfer(&token_id, &receiver_id, None);
+    }
+
+    pub fn nft_token(&self, token_id: TokenId) -> Option<Token> {
+        self.tokens.nft_token(&token_id)
+    }
+
+    #[private]
+    pub fn nft_resolve_transfer(
+        &mut self,
+        _previous_owner_id: AccountId,
+        _receiver_id: AccountId,
+        _token_id: TokenId,
+        _approved_account_ids: Option<HashMap<AccountId, u64>>,
+    ) -> bool {
+        true
+    }
+
+    pub fn nft_total_supply(&self) -> U128 {
+        self.tokens.nft_total_supply()
+    }
+
+    pub fn nft_supply_for_owner(&self, account_id: AccountId) -> U128 {
+        self.tokens.nft_supply_for_owner(&account_id)
+    }
+
+    pub fn nft_tokens_for_owner(
+        &self,
+        account_id: AccountId,
+        from_index: Option<U128>,
+        limit: Option<u64>,
+    ) -> Vec<Token> {
+        self.tokens.nft_tokens_for_owner(&account_id, from_index, limit)
+    }
+
+    pub fn nft_tokens(&self, from_index: Option<U128>, limit: Option<u64>) -> Vec<Token> {
+        self.tokens.nft_tokens(from_index, limit)
+    }
+
+    #[payable]
+    pub fn nft_approve(
+        &mut self,
+        token_id: TokenId,
+        account_id: AccountId,
+        msg: Option<String>,
+    ) {
+        self.tokens.nft_approve(&token_id, &account_id, msg)
+    }
+
+    pub fn nft_revoke(&mut self, token_id: TokenId, account_id: AccountId) {
+        self.tokens.nft_revoke(&token_id, &account_id);
+    }
+
+    pub fn nft_revoke_all(&mut self, token_id: TokenId) {
+        self.tokens.nft_revoke_all(&token_id);
+    }
+
+    pub fn nft_is_approved(
+        &self,
+        token_id: TokenId,
+        approved_account_id: AccountId,
+        _approval_id: Option<u64>,
+    ) -> bool {
+        self.tokens
+            .approvals_by_id
+            .get(&token_id)
+            .map(|approvals| approvals.contains_key(&approved_account_id))
+            .unwrap_or(false)
     }
 }
 
@@ -3689,12 +4126,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Use propose_action and execute_action for this admin action")]
-    fn direct_pause_requires_timelock() {
+    #[should_panic(expected = "Only contract owner can call this method")]
+    fn direct_pause_rejects_non_owner() {
         let owner_id = account("owner.testnet");
         let mut contract = Contract::new(owner_id.clone());
 
-        testing_env!(context(owner_id.as_str(), "contract.testnet").build());
+        testing_env!(context("not-owner.testnet", "contract.testnet").build());
         contract.pause();
     }
 
@@ -4027,14 +4464,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Use propose_action and execute_action for this admin action")]
-    fn direct_nft_mint_requires_timelock() {
+    #[should_panic(expected = "Only contract owner can call this method")]
+    fn direct_nft_mint_rejects_non_owner() {
         let owner_id = account("owner.testnet");
         let mut contract = Contract::new(owner_id.clone());
 
-        testing_env!(context(owner_id.as_str(), "contract.testnet").build());
+        testing_env!(context("not-owner.testnet", "contract.testnet").build());
         contract.nft_mint(
-            owner_id.clone(),
+            owner_id,
             TokenMetadata {
                 title: Some("Test".to_string()),
                 description: None,
@@ -4061,12 +4498,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Use propose_action and execute_action for this admin action")]
-    fn direct_create_trial_invite_drop_requires_timelock() {
+    #[should_panic(expected = "Only contract owner can call this method")]
+    fn direct_create_trial_invite_drop_rejects_non_owner() {
         let owner_id = account("owner.testnet");
         let mut contract = Contract::new(owner_id.clone());
 
-        testing_env!(context(owner_id.as_str(), "contract.testnet").build());
+        testing_env!(context("not-owner.testnet", "contract.testnet").build());
         contract.create_trial_invite_drop(vec![], None);
     }
 
@@ -4111,7 +4548,7 @@ mod tests {
         testing_env!(builder.build());
         contract.execute_action(id);
 
-        let token = contract.nft_token("0".to_string());
+        let token = contract.tokens.nft_token(&"0".to_string());
         assert!(token.is_some());
         assert_eq!(token.unwrap().owner_id, owner_id);
     }
@@ -4316,118 +4753,5 @@ mod tests {
         let contract = Contract::new(account("owner.testnet"));
         let profile = contract.get_creator_profile(account("unknown.testnet"));
         assert!(profile.is_none());
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// NEP-171 IMPLEMENTATION (Required)
-// ═══════════════════════════════════════════════════════════════════
-
-#[near]
-impl NonFungibleTokenCore for Contract {
-    #[payable]
-    fn nft_transfer(
-        &mut self,
-        receiver_id: AccountId,
-        token_id: TokenId,
-        approval_id: Option<u64>,
-        memo: Option<String>,
-    ) {
-        self.tokens
-            .nft_transfer(receiver_id, token_id, approval_id, memo);
-    }
-
-    #[payable]
-    fn nft_transfer_call(
-        &mut self,
-        receiver_id: AccountId,
-        token_id: TokenId,
-        approval_id: Option<u64>,
-        memo: Option<String>,
-        msg: String,
-    ) -> PromiseOrValue<bool> {
-        self.tokens
-            .nft_transfer_call(receiver_id, token_id, approval_id, memo, msg)
-    }
-
-    fn nft_token(&self, token_id: TokenId) -> Option<Token> {
-        self.tokens.nft_token(token_id)
-    }
-}
-
-#[near]
-impl NonFungibleTokenResolver for Contract {
-    #[private]
-    fn nft_resolve_transfer(
-        &mut self,
-        previous_owner_id: AccountId,
-        receiver_id: AccountId,
-        token_id: TokenId,
-        approved_account_ids: Option<std::collections::HashMap<AccountId, u64>>,
-    ) -> bool {
-        self.tokens.nft_resolve_transfer(
-            previous_owner_id,
-            receiver_id,
-            token_id,
-            approved_account_ids,
-        )
-    }
-}
-
-#[near]
-impl NonFungibleTokenEnumeration for Contract {
-    fn nft_total_supply(&self) -> U128 {
-        self.tokens.nft_total_supply()
-    }
-
-    fn nft_tokens(&self, from_index: Option<U128>, limit: Option<u64>) -> Vec<Token> {
-        self.tokens.nft_tokens(from_index, limit)
-    }
-
-    fn nft_supply_for_owner(&self, account_id: AccountId) -> U128 {
-        self.tokens.nft_supply_for_owner(account_id)
-    }
-
-    fn nft_tokens_for_owner(
-        &self,
-        account_id: AccountId,
-        from_index: Option<U128>,
-        limit: Option<u64>,
-    ) -> Vec<Token> {
-        self.tokens
-            .nft_tokens_for_owner(account_id, from_index, limit)
-    }
-}
-
-#[near]
-impl NonFungibleTokenApproval for Contract {
-    #[payable]
-    fn nft_approve(
-        &mut self,
-        token_id: TokenId,
-        account_id: AccountId,
-        msg: Option<String>,
-    ) -> Option<Promise> {
-        self.tokens.nft_approve(token_id, account_id, msg)
-    }
-
-    #[payable]
-    fn nft_revoke(&mut self, token_id: TokenId, account_id: AccountId) {
-        self.tokens.nft_revoke(token_id, account_id);
-    }
-
-    #[payable]
-    fn nft_revoke_all(&mut self, token_id: TokenId) {
-        self.tokens.nft_revoke_all(token_id);
-    }
-
-    fn nft_is_approved(
-        &self,
-        token_id: TokenId,
-        approved_account_id: AccountId,
-        approval_id: Option<u64>,
-    ) -> bool {
-        self.tokens
-            .nft_is_approved(token_id, approved_account_id, approval_id)
     }
 }

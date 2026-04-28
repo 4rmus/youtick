@@ -4,9 +4,9 @@ compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-# Primary origin — Cloudflare Pages (fast, reliable)
-WEB4_ORIGIN = "https://youtick-static.pages.dev"
-# Fallback origin — NEAR Web4 gateway (used if primary is unreachable or returns error)
+# Primary origin — Cloudflare Pages (CDN-fast)
+WEB4_ORIGIN = "https://02f95259.youtick-static.pages.dev"
+# Fallback origin — NEAR Web4 gateway (slower IPFS path)
 WEB4_FALLBACK_ORIGIN = "https://youtick.near.page"
 
 # Domains that this proxy will serve (for Host header validation)
@@ -14,6 +14,12 @@ ALLOWED_DOMAINS = "youtick.net,www.youtick.net"
 
 # Optional: Custom cache TTL in seconds (default: 300 = 5 min)
 CACHE_TTL = "300"
+# Bump to purge all cached responses
+CACHE_VERSION = "v7"
+
+# Onboarding key(s) for trial account creation (comma-separated, ed25519: prefix)
+# IMPORTANT: Set via wrangler secret for production: wrangler secret put ONBOARDING_KEYS
+# ONBOARDING_KEYS = "ed25519:..."
 
 # Custom Domains
 [[routes]]

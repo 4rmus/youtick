@@ -14,6 +14,7 @@ NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
 NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"
 NEAR_NETWORK = "mainnet"
+CACHE_KEY_PREFIX = "v2:"
 
 # Default environment — local development ONLY.
 # These placeholder IDs will NOT work with `wrangler dev` until you create
@@ -60,6 +61,7 @@ id = "<replace-with-your-local-dev-access-cache-namespace-id>"
 name = "youtick-kms-a"
 
 [env.operator_a.vars]
+CACHE_KEY_PREFIX = "v2:"
 ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net"
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
@@ -83,6 +85,7 @@ id = "0646e10da6cb4e3c9d9bdc1c40d1ef07"
 name = "youtick-kms-b"
 
 [env.operator_b.vars]
+CACHE_KEY_PREFIX = "v2:"
 ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net"
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
@@ -106,6 +109,7 @@ id = "16acc6f75a56489f89c02cdd4c4d658a"
 name = "youtick-kms-c"
 
 [env.operator_c.vars]
+CACHE_KEY_PREFIX = "v2:"
 ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net"
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
@@ -129,6 +133,7 @@ id = "e0dcc7009ce64eb480a3697974c72fca"
 name = "youtick-kms-d"
 
 [env.operator_d.vars]
+CACHE_KEY_PREFIX = "v2:"
 ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net"
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
@@ -152,6 +157,7 @@ id = "64dc579a07f044dda4a1b875fa1c68f3"
 name = "youtick-kms-e"
 
 [env.operator_e.vars]
+CACHE_KEY_PREFIX = "v2:"
 ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net"
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"

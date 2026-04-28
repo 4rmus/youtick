@@ -46,7 +46,7 @@ export async function placeStorageOrder(
   accountId: string
 ): Promise<CrustPsaPinResult> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CRUST_CONSTANTS.UPLOAD_TIMEOUT);
+  const timer = setTimeout(() => controller.abort(), CRUST_CONSTANTS.FETCH_TIMEOUT);
 
   try {
     // Generate W3Auth token (reuses cached token if valid)
@@ -55,7 +55,7 @@ export async function placeStorageOrder(
     const response = await fetch(CRUST_CONSTANTS.PSA_ENDPOINT, {
       method: 'POST',
       headers: {
-        'Authorization': authToken.header,
+        'Authorization': authToken.header.replace('Basic ', 'Bearer '),
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -68,7 +68,6 @@ export async function placeStorageOrder(
       }),
       signal: controller.signal,
     });
-    clearTimeout(timer);
 
     if (response.status === 429) {
       const retryAfter = response.headers.get('Retry-After');
@@ -117,7 +116,6 @@ export async function placeStorageOrder(
       createdAt: Date.now(),
     };
   } catch (error: unknown) {
-    clearTimeout(timer);
     const msg = error instanceof Error ? error.message : String(error);
     console.warn('[CRUST Storage Order] Failed (non-blocking):', msg);
     recordMetric('crust_storage_order_failed');
@@ -128,6 +126,8 @@ export async function placeStorageOrder(
       cid,
       createdAt: Date.now(),
     };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -151,7 +151,7 @@ export async function checkStorageOrderStatus(
     const response = await fetch(`${CRUST_CONSTANTS.PSA_ENDPOINT}/${requestId}`, {
       method: 'GET',
       headers: {
-        'Authorization': authToken.header,
+        'Authorization': authToken.header.replace('Basic ', 'Bearer '),
       },
       signal: controller.signal,
     });

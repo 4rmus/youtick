@@ -31,13 +31,13 @@ export interface Env {
     RATE_LIMIT: KVNamespace;
     ACCESS_CACHE: KVNamespace;
     ALLOWED_ORIGINS: string;
-    NEAR_CONTRACT_ID: string;
-    NEAR_ACCESS_CONTRACT_ID?: string;
-    NEAR_REGISTRY_CONTRACT_ID?: string;
-    REGISTRY_OPERATOR_ACCOUNT_ID?: string;
     OPERATOR_SHARE_SECRET?: string;
-    OPERATOR_SHARE_SECRET_PREVIOUS?: string;
-    NEAR_NETWORK: string;
+    REGISTRY_OPERATOR_ACCOUNT_ID?: string;
+    CACHE_KEY_PREFIX?: string;
+}
+
+function cp(env: Env): string {
+    return env.CACHE_KEY_PREFIX || '';
 }
 
 interface StoreRequest {
@@ -496,7 +496,7 @@ async function verifyPublicKeyBinding(
     publicKeyBase58: string,
 ): Promise<boolean> {
     // Cache the binding check (public keys don't change often)
-    const cacheKey = `pkbind:${accountId}:${publicKeyBase58}`;
+    const cacheKey = `${env.CACHE_KEY_PREFIX || ''}pkbind:${accountId}:${publicKeyBase58}`;
     const cached = await env.ACCESS_CACHE.get(cacheKey);
     if (cached === 'true') {
         return true;
@@ -529,7 +529,7 @@ async function verifyFullAccessKeyBinding(
     accountId: string,
     publicKeyBase58: string,
 ): Promise<boolean> {
-    const cacheKey = `pkfull:${accountId}:${publicKeyBase58}`;
+    const cacheKey = `${env.CACHE_KEY_PREFIX || ''}pkfull:${accountId}:${publicKeyBase58}`;
     const cached = await env.ACCESS_CACHE.get(cacheKey);
     if (cached === 'true') {
         return true;
@@ -570,7 +570,7 @@ async function verifyTicketAccess(
     videoId: string,
 ): Promise<boolean> {
     // Check access cache first
-    const cacheKey = `access:${accountId}:${videoId}`;
+    const cacheKey = `${env.CACHE_KEY_PREFIX || ''}access:${accountId}:${videoId}`;
     const cached = await env.ACCESS_CACHE.get(cacheKey);
     if (cached === 'true') {
         return true;
@@ -610,7 +610,7 @@ async function getEventCreatorId(
     env: Env,
     encryptedCid: string,
 ): Promise<string | null> {
-    const cacheKey = `eventcreator:${encryptedCid}`;
+    const cacheKey = `${env.CACHE_KEY_PREFIX || ''}eventcreator:${encryptedCid}`;
     const cached = await env.ACCESS_CACHE.get(cacheKey);
     if (cached) {
         return cached === '__null__' ? null : cached;
@@ -724,7 +724,7 @@ async function verifyRegistryOperatorAuthority(
     }
 
     const requestOrigin = new URL(request.url).origin;
-    const cacheKey = `registry:operator:${env.REGISTRY_OPERATOR_ACCOUNT_ID}:${requestOrigin}`;
+    const cacheKey = `${env.CACHE_KEY_PREFIX || ''}registry:operator:${env.REGISTRY_OPERATOR_ACCOUNT_ID}:${requestOrigin}`;
     const cached = await env.ACCESS_CACHE.get(cacheKey);
     if (cached === 'true') {
         return { ok: true };
@@ -773,7 +773,7 @@ async function checkRateLimit(
     ip: string,
     action: string,
 ): Promise<boolean> {
-    const key = `rl:${action}:${ip}`;
+    const key = `${env.CACHE_KEY_PREFIX || ''}rl:${action}:${ip}`;
     const max = action === 'store' ? RATE_LIMIT_MAX_STORE : RATE_LIMIT_MAX_RETRIEVE;
 
     const current = parseInt((await env.RATE_LIMIT.get(key)) || '0', 10);
@@ -1106,19 +1106,19 @@ async function readBearerTokenClaims(
         return { claims: null, error: 'Unauthorized', status: 401 };
     }
 
-    const rawClaims = await env.ACCESS_CACHE.get(`auth:token:${token}`);
+    const rawClaims = await env.ACCESS_CACHE.get(`${cp(env)}auth:token:${token}`);
     if (!rawClaims) {
         return { claims: null, error: 'Unauthorized', status: 401 };
     }
 
     const parseResult = AuthTokenClaimsSchema.safeParse(JSON.parse(rawClaims));
     if (!parseResult.success) {
-        await env.ACCESS_CACHE.delete(`auth:token:${token}`);
+        await env.ACCESS_CACHE.delete(`${cp(env)}auth:token:${token}`);
         return { claims: null, error: 'Unauthorized', status: 401 };
     }
     const claims = parseResult.data;
     if (Date.now() > claims.expiresAt) {
-        await env.ACCESS_CACHE.delete(`auth:token:${token}`);
+        await env.ACCESS_CACHE.delete(`${cp(env)}auth:token:${token}`);
         return { claims: null, error: 'Unauthorized', status: 401 };
     }
 
@@ -1157,7 +1157,7 @@ async function handleAuthChallenge(
     };
 
     await env.ACCESS_CACHE.put(
-        `auth:challenge:${challengeId}`,
+        `${cp(env)}auth:challenge:${challengeId}`,
         JSON.stringify(challenge),
         { expirationTtl: Math.ceil(AUTH_CHALLENGE_TTL_MS / 1000) },
     );
@@ -1189,7 +1189,7 @@ async function handleAuthVerify(
         return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
     }
 
-    const rawChallenge = await env.ACCESS_CACHE.get(`auth:challenge:${body.challengeId}`);
+    const rawChallenge = await env.ACCESS_CACHE.get(`${cp(env)}auth:challenge:${body.challengeId}`);
     if (!rawChallenge) {
         return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
     }
@@ -1204,7 +1204,7 @@ async function handleAuthVerify(
     }
 
     if (Date.now() > challenge.expiresAt) {
-        await env.ACCESS_CACHE.delete(`auth:challenge:${body.challengeId}`);
+        await env.ACCESS_CACHE.delete(`${cp(env)}auth:challenge:${body.challengeId}`);
         return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
     }
 
@@ -1227,7 +1227,7 @@ async function handleAuthVerify(
         return jsonResponse({ ok: false, error: 'Invalid NEP-413 signature' }, 401, request, env);
     }
 
-    await env.ACCESS_CACHE.delete(`auth:challenge:${body.challengeId}`);
+    await env.ACCESS_CACHE.delete(`${cp(env)}auth:challenge:${body.challengeId}`);
 
     const token = randomToken(32);
     const expiresAt = Date.now() + AUTH_TOKEN_TTL_MS;
@@ -1240,7 +1240,7 @@ async function handleAuthVerify(
     };
 
     await env.ACCESS_CACHE.put(
-        `auth:token:${token}`,
+        `${cp(env)}auth:token:${token}`,
         JSON.stringify(claims),
         { expirationTtl: Math.ceil(AUTH_TOKEN_TTL_MS / 1000) },
     );
@@ -1332,7 +1332,7 @@ async function handleStore(
 
         // Nonce-based replay protection
         if (body.nonce) {
-            const nonceKey = `used_nonce:${body.nonce}`;
+            const nonceKey = `${cp(env)}used_nonce:${body.nonce}`;
             const nonceUsed = await env.ACCESS_CACHE.get(nonceKey);
             if (nonceUsed) {
                 return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
@@ -1365,7 +1365,7 @@ async function handleStore(
 
         // Store nonce after successful signature verification
         if (body.nonce) {
-            const nonceKey = `used_nonce:${body.nonce}`;
+            const nonceKey = `${cp(env)}used_nonce:${body.nonce}`;
             await env.ACCESS_CACHE.put(nonceKey, 'true', { expirationTtl: TIMESTAMP_WINDOW_MS * 2 / 1000 });
         }
 
@@ -1517,7 +1517,7 @@ async function handleRetrieve(
 
         // Nonce-based replay protection
         if (body.nonce) {
-            const nonceKey = `used_nonce:${body.nonce}`;
+            const nonceKey = `${cp(env)}used_nonce:${body.nonce}`;
             const nonceUsed = await env.ACCESS_CACHE.get(nonceKey);
             if (nonceUsed) {
                 return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
@@ -1550,7 +1550,7 @@ async function handleRetrieve(
 
         // Store nonce after successful signature verification
         if (body.nonce) {
-            const nonceKey = `used_nonce:${body.nonce}`;
+            const nonceKey = `${cp(env)}used_nonce:${body.nonce}`;
             await env.ACCESS_CACHE.put(nonceKey, 'true', { expirationTtl: TIMESTAMP_WINDOW_MS * 2 / 1000 });
         }
 

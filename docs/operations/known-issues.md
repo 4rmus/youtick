@@ -1,6 +1,6 @@
 # Known Issues & Operational Risks
 
-> Last updated: 2026-04-26 (KMS operator activation + worker redeploy)
+> Last updated: 2026-04-28 (Faz 0 frontend critical fixes + contract build verification)
 >
 > This document is a **living transparency report**. It lists confirmed mainnet
 > anomalies, active security mitigations, and risks that operators should be
@@ -59,6 +59,11 @@ require!(
 
 **Action required:** Redeploy patched WASM to mainnet.
 
+> **Deploy Runbook (Faz 0):**
+> 1. Build verified: `contracts/nft-ticket/target/near/youtick_nft.wasm`
+> 2. Run: `node scripts/deploy-nft-mainnet.mjs`
+> 3. Verify: `near view youtick.near reset_v11` should return method metadata confirming owner check.
+
 ### 3. Secret Key Exposure in Working Directory (Cleaned)
 
 **Status:** Cleaned — 2026-04-23  
@@ -98,6 +103,18 @@ trial pool or DoS the daily limit.
 - Update production `.env.local` to use `ONBOARDING_KEY` (remove the
   `NEXT_PUBLIC_` prefix).
 - Redeploy the web app.
+
+> **Deploy Runbook (Faz 0):**
+> 1. Generate a new Ed25519 keypair for onboarding.
+> 2. Run rotation script:
+>    ```bash
+>    node scripts/rotate-onboarding-key.mjs \
+>      ed25519:OLD_ONBOARDING_KEY \
+>      ed25519:NEW_ONBOARDING_KEY
+>    ```
+> 3. Update `ONBOARDING_KEYS` env var (Web4 proxy + web app).
+> 4. Rebuild web app: `cd apps/web && npm run build:web4`
+> 5. Upload to IPFS and execute Web4 URL proposal (see #9).
 
 ### 5. Production KMS Operator Endpoints Exposed in Repo (Sanitized)
 
@@ -173,6 +190,22 @@ wrapper directly.
 
 **Action required:** Redeploy all three contracts to mainnet.
 
+> **Deploy Runbook (Faz 0):**
+> 1. Build verified:
+>    - `contracts/access-control/target/near/youtick_access_control.wasm`
+>    - `contracts/operator-registry/target/near/youtick_operator_registry.wasm`
+> 2. Deploy access-control:
+>    ```bash
+>    near deploy --accountId access.youtick.near \
+>      --wasmFile contracts/access-control/target/near/youtick_access_control.wasm
+>    ```
+> 3. Deploy operator-registry:
+>    ```bash
+>    near deploy --accountId registry.youtick.near \
+>      --wasmFile contracts/operator-registry/target/near/youtick_operator_registry.wasm
+>    ```
+> 4. Verify: Direct admin calls should panic with `panic_timelock_required`.
+
 ### 9. KMS Legacy Signature Replay Attack
 
 **Status:** Resolved in source — 2026-04-24  
@@ -194,6 +227,12 @@ within the window.
 build was uploaded to `ipfs://bafybeiepp3qv635pidmh7yvckwa22ogv6oc22f6nziaj55mu2n7rejpzee`
 and URL update proposal `0` was created on `youtick.near`. Execute that proposal
 after the 24-hour delay before relying on the new nonce path end to end.
+
+> **Deploy Runbook (Faz 0):**
+> ```bash
+> near call youtick.near execute_action '{"id":0}' \
+>   --accountId youtick.near --gas 30000000000000
+> ```
 
 ### 10. Shamir SSS Zero Coefficient Weakness
 

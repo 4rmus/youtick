@@ -218,13 +218,25 @@ export function createDeliveryPlaybackSession(
 
         activeOperation = operation;
 
-        if (operation.type === 'append') {
-            sourceBuffer.appendBuffer(operation.buffer);
-            return;
-        }
+        try {
+            if (operation.type === 'append') {
+                sourceBuffer.appendBuffer(operation.buffer);
+                return;
+            }
 
-        const end = Math.max(operation.start, operation.end);
-        sourceBuffer.remove(operation.start, end);
+            const end = Math.max(operation.start, operation.end);
+            sourceBuffer.remove(operation.start, end);
+        } catch (error) {
+            activeOperation = null;
+            if (error instanceof Error && error.name === 'QuotaExceededError') {
+                const currentMs = getCurrentTimeMs();
+                pruneBufferedSegments(currentMs, true);
+                operationQueue.unshift(operation);
+                flushQueue();
+            } else {
+                options.onError?.(error instanceof Error ? error : new Error(String(error)));
+            }
+        }
     };
 
     const finalizeIfComplete = () => {
@@ -489,7 +501,12 @@ export function createDeliveryPlaybackSession(
 
         sourceOpened = true;
         ensureFixedDuration();
-        sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${manifest.codec}"`);
+        try {
+            sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${manifest.codec}"`);
+        } catch (error) {
+            options.onError?.(error instanceof Error ? error : new Error(String(error)));
+            return;
+        }
         sourceBuffer.mode = 'segments';
         sourceBuffer.addEventListener('updateend', () => {
             if (activeOperation?.type === 'append' && typeof activeOperation.segmentSeq === 'number') {

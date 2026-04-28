@@ -14,6 +14,8 @@ interface Env {
     ALLOWED_DOMAINS: string;
     CACHE_TTL: string;
     CACHE_VERSION?: string;
+    ONBOARDING_KEYS?: string;
+    TURNSTILE_SECRET_KEY?: string;
 }
 
 /** Content types that should be cached aggressively */
@@ -64,6 +66,52 @@ export default {
                 timestamp: new Date().toISOString(),
             }), {
                 headers: { 'Content-Type': 'application/json' },
+            });
+        }
+
+        // --- Onboarding key endpoint (replaces Next.js API route in static export) ---
+        if (url.pathname === '/api/onboarding-key' && request.method === 'GET') {
+            return handleOnboardingKey(request, env, ctx);
+        }
+
+        // --- Crust IPFS proxy (CORS workaround for PSA/API calls) ---
+        if (url.pathname.startsWith('/api/crust/')) {
+            const targetPath = url.pathname.replace('/api/crust', '');
+            const isPsa = targetPath.startsWith('/psa/');
+            const upstreamOrigin = isPsa
+                ? 'https://pin.crustcode.com'
+                : 'https://crustipfs.xyz';
+            const targetUrl = `${upstreamOrigin}${targetPath}${url.search}`;
+
+            // Forward relevant headers
+            const fwdHeaders = new Headers();
+            const forwardNames = ['authorization', 'content-type', 'accept', 'content-length'];
+            for (const name of forwardNames) {
+                const value = request.headers.get(name);
+                if (value) fwdHeaders.set(name, value);
+            }
+
+            // Read body as text (Works because this handler runs before body is consumed)
+            const textBody = request.body
+                ? await request.text()
+                : undefined;
+
+            const resp = await fetch(targetUrl, {
+                method: request.method,
+                headers: fwdHeaders,
+                body: textBody,
+            });
+
+            // Return with CORS headers so browser can read the response
+            const respHeaders = new Headers(resp.headers);
+            respHeaders.set('Access-Control-Allow-Origin', '*');
+            respHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            respHeaders.set('Access-Control-Allow-Headers', '*');
+
+            return new Response(resp.body, {
+                status: resp.status,
+                statusText: resp.statusText,
+                headers: respHeaders,
             });
         }
 
@@ -220,4 +268,124 @@ function applyProxyHeaders(
     }
 
     return responseHeaders;
+}
+
+// ============================================================================
+// Onboarding Key Endpoint
+// ============================================================================
+
+/**
+ * Rate limiter using the Cache API (per-IP, 5 requests per hour).
+ */
+async function checkOnboardingRateLimit(ip: string, ctx: ExecutionContext): Promise<boolean> {
+    const cache = caches.default;
+    const key = `https://ratelimit/onboarding-key/${ip}`;
+    const cacheReq = new Request(key);
+    const cached = await cache.match(cacheReq);
+    const now = Date.now();
+
+    if (!cached) {
+        const res = new Response(JSON.stringify({ count: 1, window: now }), {
+            headers: { 'Cache-Control': 'max-age=3600' },
+        });
+        ctx.waitUntil(cache.put(cacheReq, res));
+        return true; // allowed
+    }
+
+    const data = await cached.json<{ count: number; window: number }>();
+    if (now - data.window > 3_600_000) {
+        // New window
+        const res = new Response(JSON.stringify({ count: 1, window: now }), {
+            headers: { 'Cache-Control': 'max-age=3600' },
+        });
+        ctx.waitUntil(cache.put(cacheReq, res));
+        return true;
+    }
+
+    if (data.count >= 5) return false; // rate limited
+
+    const res = new Response(JSON.stringify({ count: data.count + 1, window: data.window }), {
+        headers: { 'Cache-Control': 'max-age=3600' },
+    });
+    ctx.waitUntil(cache.put(cacheReq, res));
+    return true;
+}
+
+async function verifyTurnstile(token: string, secret: string): Promise<boolean> {
+    try {
+        const resp = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ secret, response: token }),
+        });
+        const data = await resp.json<{ success: boolean }>();
+        return data.success === true;
+    } catch {
+        return false;
+    }
+}
+
+function getClientIp(request: Request): string {
+    return request.headers.get('CF-Connecting-IP') || 'unknown';
+}
+
+async function handleOnboardingKey(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const keysEnv = env.ONBOARDING_KEYS;
+    if (!keysEnv || keysEnv.trim().length === 0) {
+        return new Response(JSON.stringify({ error: 'Onboarding key not configured' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
+    }
+
+    const ip = getClientIp(request);
+
+    // Rate limit: 5 req/hour per IP
+    if (!(await checkOnboardingRateLimit(ip, ctx))) {
+        return new Response(JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
+    }
+
+    // Turnstile verification (when configured)
+    const url = new URL(request.url);
+    const turnstileToken = url.searchParams.get('turnstileToken');
+    if (env.TURNSTILE_SECRET_KEY) {
+        if (!turnstileToken) {
+            return new Response(JSON.stringify({ error: 'Challenge token required.' }), {
+                status: 403,
+                headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+            });
+        }
+        if (!(await verifyTurnstile(turnstileToken, env.TURNSTILE_SECRET_KEY))) {
+            return new Response(JSON.stringify({ error: 'Challenge verification failed.' }), {
+                status: 403,
+                headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+            });
+        }
+    }
+
+    const keys = keysEnv
+        .split(',')
+        .map((k) => k.trim())
+        .filter((k) => k.length > 0 && k.startsWith('ed25519:'));
+
+    if (keys.length === 0) {
+        return new Response(JSON.stringify({ error: 'Invalid onboarding key format' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
+    }
+
+    const key = keys[Math.floor(Math.random() * keys.length)];
+
+    return new Response(JSON.stringify({ key }), {
+        headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+        },
+    });
 }

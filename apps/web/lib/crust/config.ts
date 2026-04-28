@@ -39,8 +39,10 @@ export const CRUST_CONSTANTS = {
   /** Duration to mark a gateway as unhealthy (5 minutes) */
   GATEWAY_UNHEALTHY_DURATION: 5 * 60 * 1000,
 
-  /** Crust PSA (IPFS Pinning Service API) endpoint (Updated to working active node) */
-  PSA_ENDPOINT: 'https://crustipfs.xyz/psa/pins',
+  /** Crust PSA (IPFS Pinning Service API) endpoint */
+  PSA_ENDPOINT: process.env.NEXT_PUBLIC_DEPLOY_TARGET === 'web4'
+    ? '/api/crust/psa/pins'
+    : 'https://pin.crustcode.com/psa/pins',
 } as const;
 
 /**

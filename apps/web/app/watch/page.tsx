@@ -141,7 +141,8 @@ function WatchContent() {
         );
     }
 
-    const displayTitle = event.title || t.watch_page.untitled;
+    const parsedTitle = parseTitleMetadata(event.title);
+    const displayTitle = parsedTitle.title || t.watch_page.untitled;
     const displayCreator = creatorProfile?.display_name || event.creator_id;
     const ctLabel = contentTypeLabel(event.content_type);
 
