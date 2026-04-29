@@ -21,41 +21,32 @@ import { useLanguage } from '@/components/providers/LanguageContext';
 import { getNearPrice, usdToNear } from '@/lib/price';
 import { useUpload } from '@/hooks/useUpload';
 
+type UploadPageCopy = ReturnType<typeof useLanguage>['t']['upload_page'];
+
 // File size limits (KMS-based flow)
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB for paid
 const MAX_FREE_FILE_SIZE = 100 * 1024 * 1024; // 100MB for free
 
-const creatorStepLabels: Record<string, string> = {
-    session: 'Yayın izni hazırlanıyor',
-    thumbnail: 'Kapak hazırlanıyor',
-    encrypt: 'Güvenli erişim kuruluyor',
-    upload: 'Video hazırlanıyor',
-    kms: 'Güvenli erişim kaydediliyor',
-    mint: 'Dijital bilet oluşturuluyor',
-    storage: 'Yayın kaydediliyor',
-    verify: 'Yayın kontrol ediliyor',
-};
-
-const getFriendlyStatus = (rawStatus: string): string => {
+const getFriendlyStatus = (rawStatus: string, copy: UploadPageCopy): string => {
     if (!rawStatus) return '';
 
     const status = rawStatus.toLowerCase();
 
-    if (status.includes('please enter')) return 'Eser adı ve açıklaması gerekli.';
-    if (status.includes('title must')) return 'Eser adı en fazla 200 karakter olabilir.';
-    if (status.includes('description must')) return 'Eser açıklaması en fazla 2000 karakter olabilir.';
-    if (status.includes('price cannot be negative')) return 'Fiyat negatif olamaz.';
-    if (status.includes('price cannot exceed')) return 'Fiyat 50.000 USD değerini aşamaz.';
-    if (status.includes('could not generate thumbnail')) return 'Kapak görseli hazırlanamadı. Yine de devam edebilirsin.';
-    if (status.includes('uploading cover') || status.includes('uploading poster') || status.includes('generating thumbnail') || status.includes('cover image') || status.includes('poster image')) return 'Kapak hazırlanıyor.';
-    if (status.includes('authorizing') || status.includes('upload session') || status.includes('wallet ready') || status.includes('checking wallet')) return 'Tek kullanımlık güvenli yayın izni hazırlanıyor.';
-    if (status.includes('packaging') || status.includes('segment') || status.includes('manifest') || status.includes('delivery') || status.includes('uploading initialization') || status.includes('uploading delivery') || status.includes('uploading encrypted')) return 'Video yayına hazırlanıyor.';
-    if (status.includes('encryption') || status.includes('encrypt') || status.includes('kms') || status.includes('key') || status.includes('storing encryption')) return 'Güvenli erişim kuruluyor.';
-    if (status.includes('mint') || status.includes('blockchain') || status.includes('ticket') || status.includes('nft')) return 'Dijital bilet oluşturuluyor.';
-    if (status.includes('storage orders') || status.includes('persistent storage') || status.includes('verifying storage') || status.includes('verifying status')) return 'Yayın kaydı korunuyor.';
-    if (status.includes('storage order failed')) return 'Eser yayında; uzun süreli saklama onayı tamamlanamadı.';
-    if (status.includes('success') || status.includes('complete') || status.includes('uploaded')) return 'Eser yayına alındı. Dijital bilet hazır.';
-    if (status.includes('failed') || status.includes('error') || status.includes('cancel') || status.includes('upload failed')) return 'Yayına alma tamamlanamadı. Lütfen bağlantını ve cüzdanını kontrol edip tekrar dene.';
+    if (status.includes('please enter')) return copy.status_missing_fields;
+    if (status.includes('title must')) return copy.status_title_limit;
+    if (status.includes('description must')) return copy.status_desc_limit;
+    if (status.includes('price cannot be negative')) return copy.status_price_negative;
+    if (status.includes('price cannot exceed')) return copy.status_price_limit;
+    if (status.includes('could not generate thumbnail')) return copy.status_thumbnail_failed;
+    if (status.includes('uploading cover') || status.includes('uploading poster') || status.includes('generating thumbnail') || status.includes('cover image') || status.includes('poster image')) return copy.status_cover;
+    if (status.includes('authorizing') || status.includes('upload session') || status.includes('wallet ready') || status.includes('checking wallet')) return copy.status_session;
+    if (status.includes('packaging') || status.includes('segment') || status.includes('manifest') || status.includes('delivery') || status.includes('uploading initialization') || status.includes('uploading delivery') || status.includes('uploading encrypted')) return copy.status_delivery;
+    if (status.includes('encryption') || status.includes('encrypt') || status.includes('kms') || status.includes('key') || status.includes('storing encryption')) return copy.status_secure_access;
+    if (status.includes('mint') || status.includes('blockchain') || status.includes('ticket') || status.includes('nft')) return copy.status_ticket;
+    if (status.includes('storage orders') || status.includes('persistent storage') || status.includes('verifying storage') || status.includes('verifying status')) return copy.status_storage;
+    if (status.includes('storage order failed')) return copy.status_storage_partial;
+    if (status.includes('success') || status.includes('complete') || status.includes('uploaded')) return copy.status_success;
+    if (status.includes('failed') || status.includes('error') || status.includes('cancel') || status.includes('upload failed')) return copy.status_failed;
 
     return rawStatus;
 };
@@ -67,6 +58,7 @@ const isStatusError = (rawStatus: string): boolean => {
 
 export function UploadForm() {
     const { t } = useLanguage();
+    const u = t.upload_page;
     const { accountId } = useWallet();
     const uploadLogic = useUpload();
 
@@ -307,13 +299,23 @@ export function UploadForm() {
         }
     };
 
-    const visibleStatus = getFriendlyStatus(status);
+    const visibleStatus = getFriendlyStatus(status, u);
     const statusHasError = isStatusError(status);
-    const priceLabel = priceUsdNum === 0 ? 'Ücretsiz' : `$${priceUsdNum.toFixed(2)}`;
+    const priceLabel = priceUsdNum === 0 ? t.profile_page.free : `$${priceUsdNum.toFixed(2)}`;
     const accessLabel = priceUsdNum > 0
-        ? 'Ücretli dijital bilet'
-        : 'Ücretsiz dijital bilet';
-    const ctaLabel = parseFloat(payAmount) > 0 ? 'Öde ve yayına al' : 'Yayına al';
+        ? u.paid_ticket_title
+        : u.free_ticket_title;
+    const ctaLabel = parseFloat(payAmount) > 0 ? u.pay_and_upload : u.upload_btn;
+    const creatorStepLabels: Record<string, string> = {
+        session: u.steps.session,
+        thumbnail: u.steps.thumbnail,
+        encrypt: u.steps.encrypt,
+        upload: u.steps.upload,
+        kms: u.steps.kms,
+        mint: u.steps.mint,
+        storage: u.steps.storage,
+        verify: u.steps.verify,
+    };
 
     return (
         <div className="w-full max-w-7xl mx-auto p-4 space-y-5">
@@ -321,10 +323,10 @@ export function UploadForm() {
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                 {/* Title - Same width as form (3/5) */}
                 <div className="lg:col-span-3 space-y-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-400">Yaratıcı paneli</p>
-                    <h1 className="text-3xl font-bold tracking-tight text-white">Eserini Yayına Al</h1>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-400">{u.creator_panel}</p>
+                    <h1 className="text-3xl font-bold tracking-tight text-white">{u.title}</h1>
                     <p className="text-muted-foreground text-sm">
-                        Videonu ekle, erişimi seç ve izleyicilerin için dijital bileti hazırla.
+                        {u.panel_desc}
                     </p>
                 </div>
                 {/* Verified Badge - Same width as preview (2/5) */}
@@ -333,9 +335,9 @@ export function UploadForm() {
                         <ShieldCheck className="w-4 h-4 text-emerald-300" />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-emerald-200">Tek kullanımlık güvenli yayın izni</p>
+                        <p className="text-sm font-semibold text-emerald-200">{u.secure_permission_title}</p>
                         <p className="text-xs text-zinc-400">
-                            Her yayına alma için ayrı izin hazırlanır ve işlem bitince kapanır.
+                            {u.secure_permission_desc}
                         </p>
                     </div>
                 </div>
@@ -347,16 +349,16 @@ export function UploadForm() {
                 {/* LEFT COLUMN: FORM INPUTS */}
                 <Card className="lg:col-span-3 order-2 lg:order-1 rounded-lg">
                     <CardHeader>
-                        <CardTitle>Yayın bilgileri</CardTitle>
-                        <CardDescription>İzleyicinin keşif ekranında göreceği bilgileri gir.</CardDescription>
+                        <CardTitle>{u.publication_info_title}</CardTitle>
+                        <CardDescription>{u.publication_info_desc}</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-5">
                         {!accountId && (
                             <Alert variant="destructive">
                                 <AlertCircle className="h-4 w-4" />
-                                <AlertTitle>Cüzdan bağlı değil</AlertTitle>
+                                <AlertTitle>{u.wallet_missing_title}</AlertTitle>
                                 <AlertDescription>
-                                    Eserini yayına almak için NEAR cüzdanını bağla.
+                                    {u.connect_wallet}
                                 </AlertDescription>
                             </Alert>
                         )}
@@ -366,17 +368,17 @@ export function UploadForm() {
                         <section className="space-y-4 rounded-lg border border-white/10 bg-white/[0.03] p-4">
                             <div className="flex items-center gap-2">
                                 <Film className="h-4 w-4 text-emerald-300" />
-                                <h2 className="text-sm font-semibold text-white">Eser bilgileri</h2>
+                                <h2 className="text-sm font-semibold text-white">{u.work_info_section}</h2>
                             </div>
 
                             <div className="space-y-2">
                                 <label htmlFor="video-title" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                    Eser adı
+                                    {u.video_title}
                                 </label>
                                 <Input
                                     id="video-title"
                                     type="text"
-                                    placeholder="Eser adını yaz"
+                                    placeholder={u.title_placeholder}
                                     value={title}
                                     onChange={(e) => setTitle(e.target.value)}
                                     disabled={uploading || !accountId}
@@ -387,11 +389,11 @@ export function UploadForm() {
 
                             <div className="space-y-2">
                                 <label htmlFor="video-description" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                    Eser açıklaması
+                                    {u.video_desc}
                                 </label>
                                 <Textarea
                                     id="video-description"
-                                    placeholder="İzleyiciye eserin ne anlattığını kısaca söyle"
+                                    placeholder={u.desc_placeholder}
                                     value={description}
                                     onChange={(e) => setDescription(e.target.value)}
                                     disabled={uploading || !accountId}
@@ -415,7 +417,7 @@ export function UploadForm() {
 
                             <div className="space-y-2">
                                 <label htmlFor="content-type" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                    {t.upload_page?.content_type || 'Eser türü'}
+                                    {u.content_type}
                                 </label>
                                 <select
                                     id="content-type"
@@ -424,19 +426,19 @@ export function UploadForm() {
                                     disabled={uploading || !accountId}
                                     className="w-full rounded-md border border-white/10 bg-zinc-950/50 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-near-green"
                                 >
-                                    <option value="Cinema">{t.upload_page?.content_type_film || 'Film'}</option>
-                                    <option value="Concert">{t.upload_page?.content_type_concert || 'Konser Kaydı'}</option>
-                                    <option value="Documentary">{t.upload_page?.content_type_documentary || 'Belgesel'}</option>
-                                    <option value="ShortFilm">{t.upload_page?.content_type_shortfilm || 'Kısa Film'}</option>
-                                    <option value="FestivalSelection">{t.upload_page?.content_type_festival || 'Festival Seçkisi'}</option>
-                                    <option value="Exclusive">{t.upload_page?.content_type_exclusive || 'Özel İçerik'}</option>
+                                    <option value="Cinema">{u.content_type_film}</option>
+                                    <option value="Concert">{u.content_type_concert}</option>
+                                    <option value="Documentary">{u.content_type_documentary}</option>
+                                    <option value="ShortFilm">{u.content_type_shortfilm}</option>
+                                    <option value="FestivalSelection">{u.content_type_festival}</option>
+                                    <option value="Exclusive">{u.content_type_exclusive}</option>
                                 </select>
                             </div>
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                     <label htmlFor="video-file" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                        Dosya
+                                        {u.file}
                                     </label>
                                     <Input
                                         id="video-file"
@@ -446,13 +448,13 @@ export function UploadForm() {
                                         disabled={uploading || !accountId}
                                         className="cursor-pointer"
                                     />
-                                    <p className="text-[11px] text-zinc-500">MP4 veya MOV dosyası seç.</p>
+                                    <p className="text-[11px] text-zinc-500">{u.file_help}</p>
                                 </div>
 
                                 <div className="space-y-2 rounded-md border border-white/10 bg-zinc-950/30 p-3">
-                                    <p className="text-sm font-medium text-white">Kapak görseli</p>
+                                    <p className="text-sm font-medium text-white">{u.cover_title}</p>
                                     <p className="text-xs text-zinc-400">
-                                        Video seçildiğinde kapak otomatik hazırlanır.
+                                        {u.cover_desc}
                                     </p>
                                 </div>
                             </div>
@@ -461,25 +463,25 @@ export function UploadForm() {
                         <section className="space-y-4 rounded-lg border border-white/10 bg-white/[0.03] p-4">
                             <div className="flex items-center gap-2">
                                 <Ticket className="h-4 w-4 text-sky-300" />
-                                <h2 className="text-sm font-semibold text-white">Bilet ve erişim</h2>
+                                <h2 className="text-sm font-semibold text-white">{u.ticket_access_title}</h2>
                             </div>
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div className={`rounded-md border p-3 ${accessMode === 'free_collectible' ? 'border-sky-400/60 bg-sky-500/10' : 'border-white/10 bg-zinc-950/30'}`}>
                                     <Ticket className="h-4 w-4 text-sky-300 mb-2" />
-                                    <span className="block text-sm font-medium text-white">Ücretsiz dijital bilet</span>
-                                    <span className="mt-1 block text-xs text-zinc-400">İzlemek için hesaba eklenir.</span>
+                                    <span className="block text-sm font-medium text-white">{u.free_ticket_title}</span>
+                                    <span className="mt-1 block text-xs text-zinc-400">{u.free_ticket_desc}</span>
                                 </div>
                                 <div className={`rounded-md border p-3 ${accessMode === 'paid' ? 'border-violet-400/60 bg-violet-500/10' : 'border-white/10 bg-zinc-950/30'}`}>
                                     <LockKeyhole className="h-4 w-4 text-violet-300 mb-2" />
-                                    <span className="block text-sm font-medium text-white">Ücretli dijital bilet</span>
-                                    <span className="mt-1 block text-xs text-zinc-400">Fiyat girince açılır.</span>
+                                    <span className="block text-sm font-medium text-white">{u.paid_ticket_title}</span>
+                                    <span className="mt-1 block text-xs text-zinc-400">{u.paid_ticket_desc}</span>
                                 </div>
                             </div>
 
                             <div className="space-y-2">
                                 <label htmlFor="ticket-price" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                    Dijital bilet fiyatı
+                                    {u.price}
                                 </label>
                                 <div className="relative max-w-xs">
                                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
@@ -493,13 +495,13 @@ export function UploadForm() {
                                         value={priceUsd}
                                         onChange={(e) => setPriceUsd(e.target.value)}
                                         disabled={uploading || !accountId}
-                                        aria-label="Dijital bilet fiyatı, USD"
+                                        aria-label={`${u.price}, USD`}
                                         className="pl-7"
                                     />
                                 </div>
                                 <p className="text-xs text-zinc-500">
-                                    Boş bırakırsan eser ücretsiz olur.
-                                    {priceUsdNum > 0 && nearPrice > 0 && ` Yaklaşık ${priceNearDerived.toFixed(2)} NEAR.`}
+                                    {u.price_help_free}
+                                    {priceUsdNum > 0 && nearPrice > 0 && ` ${u.approx_near} ${priceNearDerived.toFixed(2)} NEAR.`}
                                 </p>
                             </div>
                         </section>
@@ -522,7 +524,7 @@ export function UploadForm() {
                         {status && (
                             <Alert variant={statusHasError ? "destructive" : "default"}>
                                 {statusHasError ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-                                <AlertTitle>{statusHasError ? "Dikkat" : "Yayına alma durumu"}</AlertTitle>
+                                <AlertTitle>{statusHasError ? u.attention_title : u.publish_status}</AlertTitle>
                                 <AlertDescription>
                                     {visibleStatus}
                                 </AlertDescription>
@@ -532,15 +534,15 @@ export function UploadForm() {
                         {retryStep === 'sign_auth' && (
                             <Alert className="border-yellow-500/50 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">
                                 <AlertCircle className="h-4 w-4" />
-                                <AlertTitle>İşleme devam et</AlertTitle>
+                                <AlertTitle>{u.continue_title}</AlertTitle>
                                 <AlertDescription className="flex flex-col gap-2">
-                                    <p>Cüzdan onayı tamamlanamadı. Devam etmek için tekrar onay ver.</p>
+                                    <p>{u.retry_desc}</p>
                                     <Button
                                         onClick={handleRetrySign}
                                         variant="outline"
                                         className="w-full border-yellow-500/50 hover:bg-yellow-500/20"
                                     >
-                                        Onayla ve yayına al
+                                        {u.retry_button}
                                     </Button>
                                 </AlertDescription>
                             </Alert>
@@ -568,7 +570,7 @@ export function UploadForm() {
                             {uploading ? (
                                 <>
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    Yayına alınıyor
+                                    {u.uploading_button}
                                 </>
                             ) : (
                                 <>
@@ -593,7 +595,7 @@ export function UploadForm() {
                                 {thumbnailPreview ? (
                                     <Image
                                         src={thumbnailPreview}
-                                        alt="Yayın önizlemesi"
+                                        alt={u.preview_alt}
                                         fill
                                         sizes="(max-width: 1024px) 100vw, 40vw"
                                         unoptimized
@@ -604,7 +606,7 @@ export function UploadForm() {
                                         <div className="w-14 h-14 rounded-lg bg-zinc-800/70 border border-zinc-700/60 flex items-center justify-center mb-3">
                                             <Film className="w-7 h-7 text-zinc-500" />
                                         </div>
-                                        <span className="text-zinc-500 text-xs font-medium">Kapak bekleniyor</span>
+                                        <span className="text-zinc-500 text-xs font-medium">{u.cover_waiting}</span>
                                     </div>
                                 )}
 
@@ -636,12 +638,12 @@ export function UploadForm() {
                             <div className="p-5 relative">
                                 {/* Title */}
                                 <h4 className="font-bold text-white text-lg leading-tight line-clamp-1 mb-1.5 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-white group-hover:to-purple-200 transition-all duration-300">
-                                    {title || 'Başlıksız eser'}
+                                    {title || u.preview_title_fallback}
                                 </h4>
 
                                 {/* Description */}
                                 <p className="text-sm text-zinc-400 line-clamp-2 mb-4 leading-relaxed">
-                                    {description || 'Eser açıklaması burada görünür.'}
+                                    {description || u.preview_desc_fallback}
                                 </p>
 
                                 {/* Divider with Gradient */}
@@ -664,9 +666,9 @@ export function UploadForm() {
                                         </div>
 
                                         <div className="flex flex-col">
-                                            <span className="text-[10px] text-zinc-500 font-medium">Yaratıcı</span>
+                                            <span className="text-[10px] text-zinc-500 font-medium">{u.creator_label}</span>
                                             <span className="text-xs text-zinc-300 font-medium truncate max-w-[120px]">
-                                                {accountId || 'Cüzdan bağla'}
+                                                {accountId || u.connect_wallet}
                                             </span>
                                         </div>
                                     </div>
@@ -688,7 +690,7 @@ export function UploadForm() {
                             {/* Header with step counter */}
                             <div className="flex items-center justify-between mb-5">
                                 <h3 className="text-xs font-bold tracking-wide uppercase text-zinc-300">
-                                    Yayına alma durumu
+                                    {u.publish_status}
                                 </h3>
                                 {uploading && (
                                     <span className="text-[10px] font-mono text-zinc-500 tabular-nums">
@@ -774,7 +776,7 @@ export function UploadForm() {
                                                         </span>
                                                         {isActive && (
                                                             <span className="text-[10px] text-emerald-300/70 mt-0.5 block">
-                                                                Hazırlanıyor
+                                                                {u.preparing}
                                                             </span>
                                                         )}
                                                     </div>
@@ -782,7 +784,7 @@ export function UploadForm() {
                                                     {/* Status indicator */}
                                                     {isDone && (
                                                         <span className="text-[9px] font-medium text-emerald-500/60 uppercase tracking-wider flex-shrink-0">
-                                                            Hazır
+                                                            {u.ready}
                                                         </span>
                                                     )}
                                                 </div>
@@ -798,7 +800,7 @@ export function UploadForm() {
                                     <div className="flex items-center gap-2 text-emerald-400">
                                         <CheckCircle2 className="w-4 h-4" />
                                         <span className="text-xs font-semibold">
-                                            Eser yayına alındı.
+                                            {u.all_done}
                                         </span>
                                     </div>
                                 </div>

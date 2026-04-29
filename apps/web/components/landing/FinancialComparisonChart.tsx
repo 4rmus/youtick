@@ -117,10 +117,10 @@ export const FinancialComparisonChart = memo(() => {
                 <div className="mt-16 max-w-2xl mx-auto p-8 rounded-2xl bg-near-green/5 border border-near-green/20">
                     <div className="text-center">
                         <div className="text-6xl font-black text-near-green mb-4">
-                            50x
+                            2%
                         </div>
                         <p className="text-lg text-zinc-300 mb-2">
-                            {fc?.summary_title || 'YouTick commission is ~50x lower than other platforms'}
+                            {fc?.summary_title || 'A simple platform fee for direct releases'}
                         </p>
                         <p className="text-sm text-zinc-500">
                             {fc?.summary_subtitle || '2% vs 55-70% platform cut'}

@@ -4,11 +4,7 @@ import { Button } from '@/components/ui/button';
 import { ArrowRight } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
-interface CTASectionProps {
-  onDiscoverClick: () => void;
-}
-
-export const CTASection = memo(({ onDiscoverClick }: CTASectionProps) => {
+export const CTASection = memo(() => {
   const { t } = useLanguage();
   const s = t.landing.cta_section;
 
@@ -34,14 +30,15 @@ export const CTASection = memo(({ onDiscoverClick }: CTASectionProps) => {
                 {s.cta_primary} <ArrowRight className="ml-2 h-5 w-5" />
               </Button>
             </Link>
-            <Button
-              size="lg"
-              variant="outline"
-              className="rounded-full border-white/20 bg-white/5 px-9 py-7 text-base font-bold text-white hover:border-white/40 hover:bg-white/10"
-              onClick={onDiscoverClick}
-            >
-              {s.cta_secondary}
-            </Button>
+            <Link href="/discover">
+              <Button
+                size="lg"
+                variant="outline"
+                className="rounded-full border-white/20 bg-white/5 px-9 py-7 text-base font-bold text-white hover:border-white/40 hover:bg-white/10"
+              >
+                {s.cta_secondary}
+              </Button>
+            </Link>
           </div>
         </div>
       </div>

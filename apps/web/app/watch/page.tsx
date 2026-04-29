@@ -18,12 +18,12 @@ import Link from '@/components/Web4Link';
 import { IPFSThumbnail } from '@/components/IPFSThumbnail';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { useNearPrice } from '@/hooks/useNearPrice';
+import { getContentTypeLabel } from '@/lib/content-types';
 
 import {
     Play,
     Lock,
     CheckCircle2,
-    Ticket,
     Loader2,
     ArrowLeft,
     Video,
@@ -62,7 +62,7 @@ function WatchContent() {
     const canWatch = isFree || hasTicket || isCreator || purchaseCompleted;
 
     // Fetch other works by the same creator
-    const { data: creatorEvents = [], isLoading: creatorEventsLoading } = useQuery({
+    const { data: creatorEvents = [] } = useQuery({
         queryKey: ['creatorEvents', event?.creator_id, cid],
         queryFn: async () => {
             if (!event?.creator_id) return [] as Array<{ cid: string; event: NFTEvent; title: string; media?: string }>;
@@ -91,9 +91,9 @@ function WatchContent() {
 
     // Content type badge helper
     const contentTypeLabel = (type?: string | null) => {
-        if (!type || type === 'exclusive') return null;
-        const map = t.discover_page?.content_type as Record<string, string> | undefined;
-        return map?.[type] || type;
+        const label = getContentTypeLabel(t.discover_page?.content_type as Record<string, string> | undefined, type);
+        if (!label || label === t.discover_page?.content_type?.exclusive) return null;
+        return label;
     };
 
     if (!cid) {
@@ -179,12 +179,12 @@ function WatchContent() {
                             {canWatch ? (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-medium text-emerald-400">
                                     <CheckCircle2 className="w-3 h-3" />
-                                    {isFree ? t.watch_page.watch_free : t.watch_page.ticket_owned}
+                                    {isFree ? t.watch_page.free_access_ready : t.watch_page.ticket_verified}
                                 </span>
                             ) : (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[11px] font-medium text-amber-400">
                                     <Lock className="w-3 h-3" />
-                                    {t.watch_page.need_ticket}
+                                    {t.watch_page.ticket_required_secure}
                                 </span>
                             )}
                         </div>
@@ -218,8 +218,9 @@ function WatchContent() {
                             <Video className="w-16 h-16 text-zinc-700" />
                             <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6">
                                 <Lock className="w-10 h-10 text-zinc-400 mb-3" />
-                                <p className="text-lg font-semibold text-white mb-1">{t.watch_page.no_access}</p>
-                                <p className="text-sm text-zinc-400">{event.price_usd ? `$${(event.price_usd / 100).toFixed(2)}` : nearToUsdStr(Number(event.price) / 1e24)}</p>
+                                <p className="text-lg font-semibold text-white mb-1">{t.watch_page.locked_preview_title}</p>
+                                <p className="text-sm text-zinc-400">{t.watch_page.locked_preview_desc}</p>
+                                <p className="mt-2 text-sm text-zinc-300">{event.price_usd ? `$${(event.price_usd / 100).toFixed(2)}` : nearToUsdStr(Number(event.price) / 1e24)}</p>
                             </div>
                         </div>
                         {/* Purchase Card */}

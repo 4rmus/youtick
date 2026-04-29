@@ -4,6 +4,7 @@ import Link from '@/components/Web4Link';
 import { Play, Ticket } from 'lucide-react';
 import { IPFSThumbnail } from '@/components/IPFSThumbnail';
 import { useLanguage } from '@/components/providers/LanguageContext';
+import { getContentTypeLabel } from '@/lib/content-types';
 
 export interface VideoCardToken {
     token_id: string;
@@ -59,6 +60,10 @@ export function VideoCard({
     const priceUsdCents = token.video_metadata?.price_usd;
     const isFree = priceNear === 0;
     const isCreator = accountId && token.owner_id === accountId;
+    const contentTypeLabel = getContentTypeLabel(
+        t.discover_page?.content_type as Record<string, string> | undefined,
+        token.video_metadata?.content_type,
+    );
 
     const defaultLink = isVideo
         ? `/watch?cid=${token.video_metadata?.encrypted_cid || ''}`
@@ -177,10 +182,10 @@ export function VideoCard({
                     {/* Top Badges Row */}
                     <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
                         {/* Content Type Badge */}
-                        {token.video_metadata?.content_type && token.video_metadata.content_type !== 'exclusive' && (
+                        {contentTypeLabel && contentTypeLabel !== t.discover_page?.content_type?.exclusive && (
                             <div className="px-2 py-1 rounded-lg backdrop-blur-sm bg-black/60 border border-white/10">
                                 <span className="text-[9px] font-bold text-white tracking-wider uppercase">
-                                    {(t.discover_page?.content_type as Record<string, string> | undefined)?.[token.video_metadata.content_type] || token.video_metadata.content_type}
+                                    {contentTypeLabel}
                                 </span>
                             </div>
                         )}

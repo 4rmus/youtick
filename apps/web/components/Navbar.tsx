@@ -12,7 +12,7 @@ import { Branding } from '@/components/landing/Branding';
 
 export function Navbar() {
     const { connect, accountId, signOut } = useWallet();
-    const { language, t } = useLanguage();
+    const { t } = useLanguage();
     const [mounted, setMounted] = useState(false);
     const pathname = usePathname();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -74,7 +74,7 @@ export function Navbar() {
                         <Link href="/trial">
                             <button className="flex items-center gap-1 px-3 py-2 text-sm font-semibold text-near-green border border-near-green/50 rounded-full hover:bg-near-green/10 transition-colors">
                                 <Sparkles className="w-4 h-4" />
-                                {language === 'tr' ? 'Ücretsiz Dene' : 'Try Free'}
+                                {t.landing.nav_extra.try_free}
                             </button>
                         </Link>
                     )}
@@ -131,7 +131,7 @@ export function Navbar() {
                     {!accountId && (
                         <Link href="/trial" onClick={() => setIsMenuOpen(false)} className="text-near-green font-semibold flex items-center gap-2">
                             <Sparkles className="w-4 h-4" />
-                            {language === 'tr' ? 'Ücretsiz Dene' : 'Try Free'}
+                            {t.landing.nav_extra.try_free}
                         </Link>
                     )}
                     {accountId ? (

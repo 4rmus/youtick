@@ -7,7 +7,7 @@ import { useWallet } from '@/components/providers/WalletProvider';
 import { Sparkles, Menu, X } from 'lucide-react';
 
 interface NavigationProps {
-  onDiscoverClick: () => void;
+  onDiscoverClick?: () => void;
   variant?: 'landing' | 'discover';
 }
 

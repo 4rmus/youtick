@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { IpfsPlayer } from './IpfsPlayer';
+import { useLanguage } from '@/components/providers/LanguageContext';
 
 interface VideoPlayerProps {
     // IPFS data
@@ -22,6 +23,8 @@ export function VideoPlayer({
     initialDurationSeconds,
     className = '',
 }: VideoPlayerProps) {
+    const { t } = useLanguage();
+
     if (cid) {
         return (
             <div className={`video-player-container ${className}`}>
@@ -31,7 +34,7 @@ export function VideoPlayer({
                     initialDurationSeconds={initialDurationSeconds}
                 />
                 <p className="text-xs text-zinc-500 mt-2 text-center">
-                    🌐 Decentralized playback via IPFS
+                    {t.video_player.secure_delivery_note}
                 </p>
             </div>
         );
@@ -41,8 +44,8 @@ export function VideoPlayer({
     return (
         <div className={`video-player-container ${className} flex items-center justify-center bg-zinc-900 rounded-xl p-12`}>
             <div className="text-center">
-                <p className="text-zinc-400 mb-2">❌ No video source available</p>
-                <p className="text-xs text-zinc-600">IPFS CID not provided</p>
+                <p className="text-zinc-400 mb-2">{t.video_player.no_source}</p>
+                <p className="text-xs text-zinc-600">{t.video_player.no_source_desc}</p>
             </div>
         </div>
     );
