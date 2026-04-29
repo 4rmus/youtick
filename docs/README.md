@@ -19,10 +19,6 @@ behind source code, so release decisions should use the current readiness report
 - `TARGET`: hedef mimari veya gelecekte tamamlanacak tasarim
 - `LEGACY`: uyumluluk icin duran eski yol
 - `EXPERIMENTAL`: env veya operator karariyla acilan, public-alpha deneme yuzeyi
-- `HISTORICAL ANALYSIS`: karar gecmisi icin tutulan, uygulama dogrusu olmayan analiz
-
----
-
 ## Current Source of Truth
 
 - [Mainnet and Open Source Readiness, 2026-04-26](mainnet-open-source-readiness-2026-04-26.md)
@@ -80,4 +76,4 @@ For a new engineer, the shortest path is:
 
 ---
 
-*Last Updated: April 26, 2026*
+*Last Updated: April 29, 2026*

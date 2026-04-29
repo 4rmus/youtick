@@ -144,12 +144,10 @@ documents should be read with the labels below:
 | Document | Status | Required handling |
 |---|---|---|
 | `docs/mainnet-open-source-readiness-2026-04-26.md` | current | Use for launch decision. |
-| `docs/decentralization-assessment-2026-04-25.md` | current background | Keep as detailed decentralization analysis. |
 | `docs/operations/known-issues.md` | current risk log | Keep updated after deployment. |
 | `docs/operations/mainnet-deploy-runbook.md` | current runbook | Must use timelock-only admin flow. |
 | `docs/release-runbook.md` | current short release checklist | No direct admin calls. |
-| `docs/business/*` | historical / planning | Do not treat as live operational truth. |
-| old roadmap claims saying “5 operators active” | stale | Superseded by this report. |
+| historical analysis and planning reports | removed | Do not treat old analysis drafts as live operational truth. |
 
 Fixed consistency rules:
 
