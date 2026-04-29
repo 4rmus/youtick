@@ -101,7 +101,8 @@ export function useEvmPayment({ onSuccess, onError }: UseEvmPaymentOptions = {})
 
         // Use raw amount directly (already in smallest token units from 1Click API)
         const amountBigInt = BigInt(rawAmount);
-        const humanReadable = Number(amountBigInt) / 1e6; // USDC/USDT = 6 decimals
+        const displayDecimals = 6;
+        const humanReadable = Number(amountBigInt) / Math.pow(10, displayDecimals);
 
         console.log('[EVM sendToken]', {
             tokenSymbol,
@@ -140,7 +141,7 @@ export function useEvmPayment({ onSuccess, onError }: UseEvmPaymentOptions = {})
                     args: [address],
                 }) as bigint;
 
-                const balanceHuman = Number(balance) / 1e6;
+                const balanceHuman = Number(balance) / Math.pow(10, displayDecimals);
                 console.log('[EVM sendToken] Balance check:', {
                     balance: balance.toString(),
                     balanceHuman: `${balanceHuman} ${tokenSymbol}`,
@@ -158,7 +159,6 @@ export function useEvmPayment({ onSuccess, onError }: UseEvmPaymentOptions = {})
                 }
             }
 
-            // Send ERC-20 transfer using raw amount (no parseUnits — avoids double-scaling)
             await writeContractAsync({
                 address: tokenAddress,
                 abi: ERC20_ABI,
@@ -166,7 +166,7 @@ export function useEvmPayment({ onSuccess, onError }: UseEvmPaymentOptions = {})
                 args: [depositAddress as Hex, amountBigInt],
                 chainId: evmChainId,
             });
-            // txHash will be set via useWriteContract, and useWaitForTransactionReceipt
+            // txHash will be set via wagmi, and useWaitForTransactionReceipt
             // will trigger onSuccess when confirmed
         } catch (err) {
             setIsSending(false);

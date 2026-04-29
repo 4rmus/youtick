@@ -4,7 +4,6 @@ import { useReducer, useRef, useCallback } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { uploadToCrust } from '@/lib/crust';
 import { CidCollector } from '@/lib/crust/cid-collector';
-import type { UploadedAssetType } from '@/lib/crust/cid-collector';
 import {
     encryptBufferWithCounter,
     generateAESKey,
@@ -16,7 +15,6 @@ import {
     type SignlessUploadManager,
 } from '@/lib/batch-transactions';
 import { nearAmountToYocto } from '@/lib/near-amount';
-import { NEAR_CONFIG } from '@/lib/constants';
 import type { DeliverySegmentPayload } from '@/lib/types';
 import type { PackagedDeliveryAsset } from '@/lib/video-delivery';
 
@@ -108,9 +106,6 @@ function uploadReducer(state: UploadState, action: UploadAction): UploadState {
     }
 }
 
-// File size limits (KMS-based flow)
-const MAX_FILE_SIZE = 500 * 1024 * 1024;
-const MAX_FREE_FILE_SIZE = 100 * 1024 * 1024;
 const STRICT_SEGMENTED_DELIVERY = true;
 
 interface UploadParams {
@@ -430,6 +425,7 @@ export function useUpload() {
                 const mediaUrl = thumbnailUrl || '';
                 const priceYocto = nearAmountToYocto(price || '0').toString();
                 const priceUsdCents = priceUsdNum > 0 ? Math.round(priceUsdNum * 100) : null;
+                const priceUsdcUnits = priceUsdNum > 0 ? Math.round(priceUsdNum * 1_000_000).toString() : null;
 
                 const videoMetadata = {
                     receiver_id: accountId,
@@ -453,6 +449,7 @@ export function useUpload() {
                     description: description || 'No description provided',
                     price: priceYocto.toString(),
                     price_usd: priceUsdCents,
+                    price_usdc: priceUsdcUnits,
                     access_mode: accessMode,
                     content_type: params.contentType,
                 };
@@ -533,7 +530,7 @@ export function useUpload() {
             setUploading(false);
             throw error;
         }
-    }, [accountId, dispatch, extractIpfsCid, getErrorText, setStatus, setUploading, updateStep, uploadSegmentedDeliveryAsset]);
+    }, [accountId, dispatch, setStatus, setUploading, updateStep, uploadSegmentedDeliveryAsset]);
 
     const handleUpload = useCallback(async (params: UploadParams): Promise<boolean> => {
         if (!params.file || !accountId) return false;

@@ -33,7 +33,7 @@ Bu alanlar olmadan uygulama dogru contract setine ve ağa baglanamaz.
 | Degisken | Aciklama | Ne zaman gerekir |
 |----------|----------|------------------|
 | `NEXT_PUBLIC_APP_URL` | Hediye linklerinde kullanilan ana URL | Farkli domain veya local tunnel kullaniyorsan |
-| `NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT` | 1Click + MetaMask yolunu acar | Ayrica readiness review gectiyse |
+| `NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT` | 1Click + MetaMask yolunu acar | Sadece degeri tam olarak `true` ise; varsayilan kapali |
 | `NEXT_PUBLIC_ONE_CLICK_API_TOKEN` | 1Click quote ve swap istekleri icin partner tokeni | Arbitrum/Base odemelerini kullanacaksan |
 | `NEXT_PUBLIC_DEPLOY_TARGET` | Web4 build davranisini degistirir | `npm run build:web4` kullaniyorsan |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Trial/onboarding ekraninda Turnstile challenge acar | Onboarding key endpoint'ini botlara karsi korumak istiyorsan |
@@ -92,9 +92,23 @@ NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
 NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true
 ```
 
+Cross-chain checkout public alpha icin deneyseldir ve EVM v1 kapsami
+Arbitrum + Base ile sinirlidir. Ethereum mainnet UI'da secilebilir degildir.
+
 Trial ve guest hesap olusturma icin `ONBOARDING_KEY` veya `ONBOARDING_KEYS`
 kullanilir. Bu anahtarlar contract owner tarafindan `add_onboarding_key` ile
 kaydedilir; `NEXT_PUBLIC_` prefix'i kullanilmaz.
+
+### Web4 proxy API davranisi
+
+`https://youtick.net` proxy destekli Web4 modunda `/api/onboarding-key` ve
+`/api/crust/*` isteklerini destekler. `https://youtick.near.page` veya ciplak
+IPFS gateway uzerinden acilan static build bu API'leri calistirmaz; onboarding
+key ve storage-order gerektiren akislar bu ortamda desteklenmez.
+
+`npm run build:web4` sirasinda Next static export icin `headers()` kurallarinin
+uygulanmadigini belirten uyari beklenir. Web4 CSP ve guvenlik header'lari
+`workers/web4-proxy` tarafindan uygulanir.
 
 ---
 

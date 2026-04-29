@@ -13,6 +13,11 @@ import { IPFSThumbnail } from './IPFSThumbnail';
 import { PaymentMethodSelector } from './PaymentMethodSelector';
 import { useStablecoinPayment } from '@/lib/hooks/useStablecoinPayment';
 import { getTokenConfig, submitDeposit, type PaymentMethod, type ChainId, type SwapQuote } from '@/lib/intents';
+import {
+    buildNearToUsdcSwapTransactions,
+    buildUsdcTicketPaymentTransaction,
+    quoteNearToUsdc,
+} from '@/lib/rhea/client';
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { useEvmPayment } from '@/lib/evm/useEvmPayment';
 import { claimFreeTicketDirect, hasOnboardingKey } from '@/lib/gift-service';
@@ -30,6 +35,8 @@ interface TicketPurchaseCardProps {
 interface EventDetails {
     price: string;
     priceUsdCents: number | null;
+    /** USDC price in 6-decimal units (e.g. 500000 = $0.50). Null = not USDC-priced. */
+    priceUsdc: number | null;
     accessMode: 'paid' | 'free_collectible' | 'public_free';
     title: string;
     media?: string;
@@ -41,10 +48,14 @@ type PaymentSelection = {
     chain: ChainId;
     quote: SwapQuote | null;
     estimatedNear: number;
+    rheaQuoteError: string | null;
 };
 
 const STORAGE_DEPOSIT_NEAR = 0.01;
 const GAS_BUFFER_NEAR = 0.01;
+const NEAR_USDC_CONTRACT_ID = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
+const NEAR_USDT_CONTRACT_ID = 'usdt.tether-token.near';
+const NEAR_USDC_ASSET_ID = `nep141:${NEAR_USDC_CONTRACT_ID}`;
 
 export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: TicketPurchaseCardProps) {
     const { accountId, isTrial, managedAccountKind, getWallet, connect, setEvmLinkedAccount, setManagedAccount } = useWallet();
@@ -92,7 +103,10 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         chain: 'near',
         quote: null,
         estimatedNear: 0,
+        rheaQuoteError: null,
     });
+    const paymentSelectionRef = useRef(paymentSelection);
+    useEffect(() => { paymentSelectionRef.current = paymentSelection; }, [paymentSelection]);
 
     // Post-swap state: 1Click delivers native NEAR (not wNEAR), ready for purchase
     const [swapNearReady, setSwapNearReady] = useState(false);
@@ -146,20 +160,36 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         }
     };
 
-    // Stablecoin swap hook
+    // Stablecoin swap hook (also used for Arbitrum/Base → NEAR-native USDC)
     const {
         status: swapStatus,
+        quote: activeSwapQuote,
         error: swapError,
         initiateSwap,
         reset: resetSwap,
     } = useStablecoinPayment({
         accountId: accountId || '',
-        onSwapComplete: async (nearAmount) => {
+        onSwapComplete: async (amountOut) => {
+            const method = paymentSelectionRef.current.method;
+            const chain = paymentSelectionRef.current.chain;
+            const isCrossChainUsdc = chain !== 'near' && method !== 'NEAR';
+
+            if (isCrossChainUsdc) {
+                // Cross-chain V1 settles into NEAR-native USDC before minting.
+                console.log('[Swap Complete] USDC received from cross-chain swap. amountOut:', amountOut);
+                const keypair = evmSwapKeypairRef.current;
+                if (keypair) {
+                    await handleUsdcDirectPurchase(amountOut || undefined, keypair.implicitAccountId);
+                } else {
+                    await handleUsdcDirectPurchase(amountOut || undefined);
+                }
+                return;
+            }
+
             // 1Click delivers NATIVE NEAR (not wNEAR) via NativeWithdraw intent.
-            console.log('[Swap Complete] Native NEAR received. amountOut:', nearAmount);
+            console.log('[Swap Complete] Native NEAR received. amountOut:', amountOut);
 
             // EVM flow with implicit account: auto-complete purchase
-            // Use ref to get the latest value (avoids stale closure from setInterval)
             const keypair = evmSwapKeypairRef.current;
             if (keypair) {
                 console.log('[MetaMask Flow] Auto-completing purchase on implicit account:', keypair.implicitAccountId);
@@ -192,6 +222,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     price: string;
                     creator_id: string;
                     price_usd?: number | null;
+                    price_usdc?: string | null;
                     access_mode?: 'paid' | 'free_collectible' | 'public_free';
                     banned?: boolean;
                 }>(provider, contractId, 'get_event', { encrypted_cid: cid });
@@ -209,6 +240,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     setEventDetails({
                         price: yoctoToNear(BigInt(event.price)),
                         priceUsdCents: event.price_usd ?? null,
+                        priceUsdc: event.price_usdc ? parseInt(event.price_usdc, 10) : null,
                         accessMode: event.access_mode ?? (event.price === '0' ? 'public_free' : 'paid'),
                         title: parsed.title,
                         media: media ?? parsed.thumbnailUrl,
@@ -361,7 +393,43 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         }
     };
 
-    // Buy Ticket with Stablecoin (1Click swap → native NEAR → direct buy_ticket)
+    const handleRheaNearPurchase = async () => {
+        if (!eventDetails?.priceUsdc) return;
+        if (!accountId) {
+            connect();
+            return;
+        }
+
+        setActionLoading(true);
+        setError(null);
+
+        try {
+            const quote = await quoteNearToUsdc(eventDetails.priceUsdc);
+            const paymentId = `rhea:${accountId}:${cid}:${Date.now()}`;
+            const swapTransactions = await buildNearToUsdcSwapTransactions(accountId, quote);
+            const ticketPayment = buildUsdcTicketPaymentTransaction({
+                buyerId: accountId,
+                encryptedCid: cid,
+                amount: eventDetails.priceUsdc.toString(),
+                paymentId,
+            });
+
+            const wallet = await getWallet();
+            await wallet.signAndSendTransactions({
+                transactions: [...swapTransactions, ticketPayment],
+            });
+
+            if (onPurchaseSuccess) onPurchaseSuccess();
+        } catch (e) {
+            console.error('Rhea NEAR payment failed:', e);
+            const message = e instanceof Error ? e.message : 'Rhea swap failed';
+            setError(`${message}. Swap failed, no ticket minted.`);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    // Buy Ticket with Stablecoin (cross-chain 1Click → NEAR-native USDC → ft_transfer_call)
     const handleStablecoinPurchase = async () => {
         if (!eventDetails) return;
 
@@ -411,7 +479,12 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         const totalWithSlippage = totalWithBuffer * 1.10;
 
         let usdCents: number;
-        if (eventDetails.priceUsdCents && nearPrice > 0) {
+        const isCrossChainToUsdc = paymentSelection.chain !== 'near';
+
+        if (isCrossChainToUsdc && eventDetails.priceUsdc) {
+            // Cross-chain to USDC: use event's USDC price directly (priceUsdc is 6-decimal units)
+            usdCents = Math.ceil((eventDetails.priceUsdc / 10000) * 1.05);
+        } else if (eventDetails.priceUsdCents && nearPrice > 0) {
             // USD-priced ticket: calculate overhead in USD and add slippage
             const overheadNear = STORAGE_DEPOSIT_NEAR + GAS_BUFFER_NEAR;
             const overheadUsdCents = Math.ceil(overheadNear * nearPrice * 100);
@@ -425,12 +498,17 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         }
         // Sanity check: minimum swap amount to avoid dust swaps that won't cover ticket cost
         if (usdCents < 5) {
-            setError('Calculated swap amount is too small. NEAR price data may be unavailable. Please try again or pay with NEAR.');
+            setError('Calculated swap amount is too small. Please try again or select a different payment method.');
             setActionLoading(false);
             return;
         }
 
         try {
+            // Cross-chain V1 settlement is USDC on NEAR.
+            const destinationAsset = paymentSelection.chain !== 'near'
+                ? NEAR_USDC_ASSET_ID
+                : undefined;
+
             const swapQuote = await initiateSwap(
                 paymentSelection.method,
                 paymentSelection.chain,
@@ -438,13 +516,14 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 nearRecipient,
                 refundOverride,
                 recipientOverride,
+                destinationAsset,
             );
 
             if (!swapQuote?.depositAddress) {
                 throw new Error('No deposit address received');
             }
 
-            // For EVM chains (Arbitrum/Base): auto-send ERC-20 via MetaMask
+            // For EVM chains: auto-send ERC-20 via MetaMask
             if (isEvmChain) {
                 await sendEvmToken({
                     tokenSymbol: paymentSelection.method,
@@ -540,11 +619,126 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         }
     };
 
-    // Handle the purchase button click based on payment method
+    // Buy Ticket with USDC/USDT direct transfer (NEAR-native, no swap needed)
+    const handleUsdcDirectPurchase = async (amountOverride?: string, buyerOverride?: string) => {
+        if (!eventDetails) return;
+        const buyerId = buyerOverride || accountId;
+        if (!buyerId) {
+            setError(tp.error_connect_wallet);
+            return;
+        }
+        const amount = amountOverride || (eventDetails.priceUsdc?.toString() ?? '0');
+        if (amount === '0') {
+            setError('This event is not priced in USDC. Please select NEAR payment.');
+            return;
+        }
+
+        setActionLoading(true);
+        setError(null);
+
+        try {
+            const tokenContractId = paymentSelection.chain === 'near' && paymentSelection.method === 'USDT'
+                ? NEAR_USDT_CONTRACT_ID
+                : NEAR_USDC_CONTRACT_ID;
+            const paymentId = activeSwapQuote?.depositAddress
+                ? `${activeSwapQuote.depositAddress}:${activeSwapQuote.depositMemo ?? 'no-memo'}`
+                : `direct:${buyerId}:${cid}:${Date.now()}`;
+
+            const msg = JSON.stringify({
+                action: 'buy_ticket',
+                buyer_id: buyerId,
+                encrypted_cid: cid,
+                payment_id: paymentId,
+            });
+
+            // For implicit accounts (MetaMask flow with generated keypair), use Account directly
+            const keypair = evmSwapKeypairRef.current;
+            if (keypair && buyerId === keypair.implicitAccountId) {
+                const { getCurrentRpcUrl } = await import('@/lib/rpc-failover');
+                const keyPair = KeyPair.fromString(keypair.secretKey as KeyPairString);
+                const signer = new KeyPairSigner(keyPair);
+                const account = new Account(buyerId, getCurrentRpcUrl(), signer);
+
+                await account.signAndSendTransaction({
+                    receiverId: tokenContractId,
+                    actions: [
+                        actions.functionCall(
+                            'ft_transfer_call',
+                            {
+                                receiver_id: NEAR_CONFIG.contractId,
+                                amount,
+                                msg,
+                                memo: 'Youtick ticket purchase',
+                            },
+                            GAS_CONSTANTS.mediumGas,
+                            BigInt(1)
+                        ),
+                    ],
+                });
+            } else {
+                const wallet = await getWallet();
+                await wallet.signAndSendTransaction({
+                    receiverId: tokenContractId,
+                    actions: [
+                        actions.functionCall(
+                            'ft_transfer_call',
+                            {
+                                receiver_id: NEAR_CONFIG.contractId,
+                                amount,
+                                msg,
+                                memo: 'Youtick ticket purchase',
+                            },
+                            GAS_CONSTANTS.mediumGas,
+                            BigInt(1) // 1 yoctoNEAR required by NEP-141
+                        ),
+                    ],
+                });
+            }
+
+            if (keypair && buyerId === keypair.implicitAccountId) {
+                await persistManagedKeyPair(keypair.implicitAccountId, keypair.secretKey);
+                setEvmLinkedAccount(keypair.implicitAccountId);
+            }
+
+            if (onPurchaseSuccess) onPurchaseSuccess();
+        } catch (e) {
+            console.error('USDC direct purchase failed:', e);
+            setError(e instanceof Error ? e.message : tp.error_tx_rejected);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    // Handle the purchase button click based on payment method and event pricing
     const handlePurchase = async () => {
-        if (!FEATURE_FLAGS.enableCrossChainCheckout || paymentSelection.method === 'NEAR') {
+        const method = paymentSelection.method;
+        const chain = paymentSelection.chain;
+        const hasUsdcPrice = !!eventDetails?.priceUsdc && eventDetails.priceUsdc > 0;
+        const hasNearPrice = priceNear > 0;
+
+        if (method === 'NEAR') {
+            if (hasUsdcPrice) {
+                if (paymentSelection.rheaQuoteError) {
+                    setError('Rhea swap unavailable. Please select USDC or USDT.');
+                    return;
+                }
+                await handleRheaNearPurchase();
+                return;
+            }
+            if (!hasNearPrice) {
+                setError('This event does not have a NEAR fallback price.');
+                return;
+            }
             await handleNearPurchase();
+        } else if (chain === 'near') {
+            if (!hasUsdcPrice) {
+                setError('This event is priced in NEAR. Please select NEAR payment.');
+                return;
+            }
+            // NEAR-native USDC/USDT: direct ft_transfer_call (no swap)
+            await handleUsdcDirectPurchase();
         } else {
+            // EVM chain: 1Click cross-chain swap
             await handleStablecoinPurchase();
         }
     };
@@ -560,7 +754,10 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     if (!eventDetails) return null;
 
     const priceNear = parseFloat(eventDetails.price) || 0;
-    const isFree = priceNear === 0;
+    const hasUsdcPrice = !!eventDetails.priceUsdc && eventDetails.priceUsdc > 0;
+    const usdcDisplay = hasUsdcPrice ? eventDetails.priceUsdc! / 1_000_000 : null;
+    const displayUsdCents = hasUsdcPrice ? Math.ceil(eventDetails.priceUsdc! / 10_000) : eventDetails.priceUsdCents;
+    const isFree = priceNear === 0 && !hasUsdcPrice;
     const isPublicFree = isFree && eventDetails.accessMode === 'public_free';
     const isCreator = isCreatorData === true || (accountId && eventDetails.uploader === accountId);
     const crossChainEnabled = FEATURE_FLAGS.enableCrossChainCheckout;
@@ -606,11 +803,18 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                         <div className="w-8 h-8 rounded-full bg-near-green/20 flex items-center justify-center">
-                            <span className="text-near-green font-bold text-sm">{eventDetails.priceUsdCents ? '$' : 'Ⓝ'}</span>
+                            <span className="text-near-green font-bold text-sm">{displayUsdCents ? '$' : 'Ⓝ'}</span>
                         </div>
                         <div>
                             {isFree ? (
                                 <p className="text-2xl font-bold text-white">{t.watch_page.free_badge}</p>
+                            ) : usdcDisplay !== null ? (
+                                <>
+                                    <p className="text-2xl font-bold text-white">
+                                        ${usdcDisplay.toFixed(2)}
+                                    </p>
+                                    <p className="text-xs text-zinc-500">USDC</p>
+                                </>
                             ) : eventDetails.priceUsdCents ? (
                                 <>
                                     <p className="text-2xl font-bold text-white">
@@ -634,10 +838,11 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     )}
                 </div>
 
-                {/* Payment Method Selector (paid tickets, non-creator — always visible so MetaMask-only users can pick EVM chain) */}
-                {!isFree && !isCreator && !isSwapInProgress && !swapNearReady && crossChainEnabled && (
+                {/* Payment Method Selector (paid tickets, non-creator) */}
+                {!isFree && !isCreator && !isSwapInProgress && !swapNearReady && (
                     <PaymentMethodSelector
                         priceNear={priceNear}
+                        priceUsdc={eventDetails.priceUsdc}
                         priceUsdCents={eventDetails.priceUsdCents}
                         accountId={accountId || undefined}
                         onSelectionChange={handleSelectionChange}
@@ -676,7 +881,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 )}
 
                 {/* Cross-chain swap progress (Arbitrum/Base via MetaMask — auto-deposit + auto-purchase) */}
-                {(isSwapInProgress || (actionLoading && evmSwapKeypair)) && (paymentSelection.chain === 'arb' || paymentSelection.chain === 'base') && (
+                {(isSwapInProgress || (actionLoading && evmSwapKeypair)) && isEvmChain && (
                     <div className="space-y-2 rounded-lg border border-near-purple/30 bg-near-purple/5 p-4">
                         <div className="flex items-center gap-2">
                             <Loader2 className="h-4 w-4 animate-spin text-near-purple" />
@@ -717,8 +922,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     </div>
                 )}
 
-                {/* Cost Breakdown (NEAR payments, paid tickets only) */}
-                {!isFree && !isCreator && !isStablecoinFlow && !isSwapInProgress && (() => {
+                {/* Cost Breakdown (legacy NEAR payments, paid tickets only) */}
+                {!isFree && !isCreator && !isStablecoinFlow && !hasUsdcPrice && !isSwapInProgress && (() => {
                     const costItems = [
                         { label: tp.cost_ticket_price, amount: priceNear },
                         { label: tp.cost_nft_storage, amount: STORAGE_DEPOSIT_NEAR },
@@ -855,8 +1060,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                                 ? `${tp.pay_with_metamask} • ${paymentSelection.method}`
                                                 : crossChainEnabled && isStablecoinFlow
                                                     ? `${tp.pay_with} ${paymentSelection.method}`
-                                                    : eventDetails.priceUsdCents
-                                                        ? `${tp.buy_ticket} • $${(eventDetails.priceUsdCents / 100).toFixed(2)}`
+                                                    : displayUsdCents
+                                                        ? `${tp.buy_ticket} • $${(displayUsdCents / 100).toFixed(2)}`
                                                         : `${tp.buy_ticket} • ${nearToUsdStr(priceNear)}`
                                         }
                                     </>

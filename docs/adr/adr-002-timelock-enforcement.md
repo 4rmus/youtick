@@ -1,13 +1,19 @@
 # ADR-002: Timelock — Enforce Exclusive Use for All Admin Actions
 
 ## Status
-Accepted for MVP
+Superseded for V1 public alpha
+
+V1 deliberately ships as an owner-controlled public alpha to reduce launch
+complexity. Timelock governance remains a later hardening path, not a V1
+requirement.
 
 ## Context
 `nft-ticket` has a 24-hour timelock (`TIMELOCK_DELAY_NS`) and a `TimelockAction` enum, but **every** timelocked action also has a direct owner-only bypass function. This makes the timelock a logging mechanism, not a security control.
 
 ## Decision
-**Remove all direct owner-only admin paths.** Every sensitive action (pause, ban, withdrawal, onboarding key changes, operator registry changes, event removal) MUST route through `propose_action` → 24h delay → `execute_action`. The only exception is `cancel_action`, which remains owner-only (or multi-sig gated) for emergency reversal.
+For the V1 public alpha, keep direct owner-only admin paths and make the release
+posture explicit. Destructive/debug paths must be disabled outside migration
+builds, and user-facing docs must not claim full timelock governance.
 
 ## Consequences
 ### Positive

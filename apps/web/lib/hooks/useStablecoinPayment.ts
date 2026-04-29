@@ -42,6 +42,7 @@ interface UseStablecoinPaymentReturn {
         refundAddress: string,
         refundAddressOverride?: string,
         recipientOverride?: string,
+        destinationAsset?: string,
     ) => Promise<SwapQuote | null>;
     /** Notify 1Click of deposit tx hash (optional, speeds up processing) */
     notifyDeposit: (txHash: string) => Promise<void>;
@@ -105,7 +106,7 @@ export function useStablecoinPayment({
             if (elapsed > MAX_POLL_DURATION_MS) {
                 console.warn('[Swap Polling] Timed out after', Math.round(elapsed / 1000), 'seconds');
                 setStatus('failed');
-                setError('Swap timed out. Please check your account balance — if NEAR arrived, try purchasing with NEAR directly.');
+                setError(`Swap timed out. Check the 1Click deposit status for ${address}. If funds arrived later, refresh and try completing the purchase again.`);
                 stopPolling();
                 onSwapFailedRef.current?.('Swap polling timed out');
                 return;
@@ -165,7 +166,7 @@ export function useStablecoinPayment({
                     console.error('[Swap Polling] Too many consecutive errors, stopping');
                     if (mountedRef.current) {
                         setStatus('failed');
-                        setError('Lost connection to swap service. Please check your account — if NEAR arrived, try purchasing with NEAR directly.');
+                        setError(`Lost connection to swap service. Check the 1Click deposit status for ${address}.`);
                         stopPolling();
                         onSwapFailedRef.current?.('Swap status polling failed repeatedly');
                     }
@@ -181,6 +182,7 @@ export function useStablecoinPayment({
         refundAddress: string,
         refundAddressOverride?: string,
         recipientOverride?: string,
+        destinationAsset?: string,
     ): Promise<SwapQuote | null> => {
         setStatus('quoting');
         setError(null);
@@ -195,6 +197,7 @@ export function useStablecoinPayment({
                 refundAddress,
                 false, // real quote, not dry
                 refundAddressOverride,
+                destinationAsset,
             );
 
             if (!mountedRef.current) return null;

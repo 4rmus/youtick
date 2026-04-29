@@ -33,6 +33,8 @@ pub struct NftPurchasedEvent {
     pub event_cid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub price_yoctonear: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_usdc: Option<String>,
 }
 
 /// Event emitted when a gift drop is created
@@ -61,6 +63,10 @@ pub struct EventCreatedEvent {
     pub title: String,
     pub creator_id: AccountId,
     pub price_yoctonear: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_usdc: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_near: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tickets: Option<u64>,
 }
@@ -101,6 +107,7 @@ pub fn emit_nft_purchased(
     owner_id: AccountId,
     event_cid: Option<String>,
     price_yoctonear: Option<String>,
+    price_usdc: Option<String>,
 ) {
     let event = Nep297Event {
         standard: NEP297_STANDARD,
@@ -111,6 +118,7 @@ pub fn emit_nft_purchased(
             owner_id,
             event_cid,
             price_yoctonear,
+            price_usdc,
         }],
     };
     env::log_str(&serde_json::to_string(&event).expect("Failed to serialize nft_purchased event"));
@@ -154,6 +162,8 @@ pub fn emit_event_created(
     title: String,
     creator_id: AccountId,
     price_yoctonear: String,
+    price_usdc: Option<String>,
+    price_near: Option<String>,
     max_tickets: Option<u64>,
 ) {
     let event = Nep297Event {
@@ -165,6 +175,8 @@ pub fn emit_event_created(
             title,
             creator_id,
             price_yoctonear,
+            price_usdc,
+            price_near,
             max_tickets,
         }],
     };
@@ -184,7 +196,5 @@ pub fn emit_event_takedown(encrypted_cid: String, reason: String, by: AccountId,
             at,
         }],
     };
-    env::log_str(
-        &serde_json::to_string(&event).expect("Failed to serialize event_takedown event"),
-    );
+    env::log_str(&serde_json::to_string(&event).expect("Failed to serialize event_takedown event"));
 }

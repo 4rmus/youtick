@@ -2,7 +2,7 @@
 
 > Date: 2026-04-26  
 > Scope: live mainnet state, source code, KMS workers, runbooks, roadmap and open source release readiness  
-> Current recommendation: publish as **public alpha**, not as production-ready mainnet software
+> Current recommendation: publish as **public alpha**, not as production-ready or fully decentralized mainnet software
 
 ---
 
@@ -11,6 +11,9 @@
 YouTick is close to a credible public alpha. The source code has a serious
 architecture: browser-side encryption, NEAR-based entitlements, an access
 contract, an operator registry and share-based KMS custody.
+The current decentralization posture is hybrid: NEAR and IPFS/Crust carry core
+state and media delivery, while KMS operators still run on Cloudflare Workers
+with KV-backed share storage.
 
 The live mainnet KMS/operator layer is now aligned with the source-level design:
 
@@ -151,6 +154,8 @@ documents should be read with the labels below:
 Fixed consistency rules:
 
 - Do not say “production-ready” until live mainnet checks pass.
+- Do not say “fully decentralized” until KMS/operator hosting, persistence
+  redundancy and governance are no longer owner/operator centralized.
 - “KMS active” now means registry has five active operators and all five worker
   health checks are green. End-to-end playback still needs its own smoke test.
 - Do not call direct admin methods in runbooks; use timelock proposals and

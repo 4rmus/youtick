@@ -1,6 +1,6 @@
 # Known Issues & Operational Risks
 
-> Last updated: 2026-04-28 (Faz 0 frontend critical fixes + contract build verification)
+> Last updated: 2026-04-29 (public-alpha wording, Web4 proxy, payment-scope alignment)
 >
 > This document is a **living transparency report**. It lists confirmed mainnet
 > anomalies, active security mitigations, and risks that operators should be
@@ -142,6 +142,31 @@ The items in this section have source-level fixes. They should only be called
 fully resolved after the patched contracts, workers or web app are deployed and
 verified on mainnet.
 
+### Web4 proxy and direct gateway API gap
+
+**Status:** Documented in source - 2026-04-29
+**Impact:** `youtick.net` is the supported Web4 entrypoint for API-backed flows.
+It proxies `/api/onboarding-key` and `/api/crust/*`. Direct
+`youtick.near.page` or raw IPFS gateway URLs are static-only and cannot support
+onboarding key or storage-order calls.
+
+**Resolution:** The UI should show a clear unsupported-environment error for
+API-backed flows when the proxy is not available. Web4 CSP/security headers are
+applied by `workers/web4-proxy`; the static Next export warning about ignored
+headers is expected.
+
+### Hybrid decentralization risk remains
+
+**Status:** Accepted public-alpha risk
+**Impact:** KMS operators are Cloudflare Worker deployments and share state is
+stored in Cloudflare KV. Crust is the primary pinning provider; the second
+persistence route is not complete. Owner governance and emergency takedown are
+still owner-controlled.
+
+**Resolution:** Keep public wording as "public alpha" and "hybrid
+decentralized" until independent operator hosting, redundant persistence and
+DAO/multisig governance are implemented and verified.
+
 ### 6. Pause Bypass in Prepaid Functions
 
 **Status:** Resolved in source — 2026-04-23  
@@ -177,13 +202,13 @@ propagation.
 **Status:** Resolved in source — 2026-04-24  
 **Location:** All three contracts (`nft-ticket`, `access-control`, `operator-registry`)
 
-Direct calls to sensitive admin functions (ownership transfer, policy changes,
-operator management) could bypass the 24-hour timelock by calling the public
-wrapper directly.
+Earlier hardening work treated direct admin calls as a timelock bypass. For V1,
+the product posture is intentionally owner-controlled public alpha, so direct
+owner-only admin calls are not treated as a launch blocker by themselves.
 
 **Resolution:**
-- All admin functions now call `panic_timelock_required()` in their public
-  wrappers, forcing `propose_action` → `execute_action` flow.
+- Covered timelocked admin wrappers can still force `propose_action` →
+  `execute_action` where governance hardening is enabled.
 - `access-control` and `operator-registry` received full timelock + pause
   protection for all admin functions.
 - 34 new unit tests verify both direct-call panic and timelock success paths.

@@ -15,7 +15,7 @@ hero:
 
 features:
   - title: NFT-Gated Access
-    details: Viewers buy NFT tickets for permanent, transferable access to content.
+    details: Viewers buy on-chain NFT tickets for content access. Transfers and resale are outside the V1 public alpha scope.
   - title: Client-Side Encryption
     details: Paid videos are encrypted in the browser with AES-CTR before upload.
   - title: Share-Based Playback

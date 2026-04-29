@@ -21,7 +21,7 @@ Projedeki mimari ciddi ve güvenlik katmanları iyi tasarlanmış. Ancak **canl�
 |------|-------|-----|
 | **Mimari** | Güçlü | Browser-side AES-CTR + Shamir SSS + 3-of-5 threshold + Crust/IPFS delivery. Merkeziyetsiz key custody gerçekten çalışıyor. |
 | **KMS Operatör Katmanı** | Aktif | `registry.youtick.near`'te 5 aktif operator, threshold `3/5`. Tüm worker'lar `200`/`ok: true` dönüyor. |
-| **Timelock + Pause** | Güçlü | Tüm 3 kontratta 24 saat timelock ve pause mekanizması var. Doğrudan admin çağrıları panikliyor. |
+| **Admin + Pause** | Public alpha | V1 owner-controlled ilerler; timelock governance kodda dursa da V1 launch şartı değildir. Yıkıcı/debug yüzeyler production build dışında kapatılmalıdır. |
 | **Güvenlik Faz 1** | Patched | replay attack, reset_v11 bypass, onboarding key leak, pause bypass, timelock bypass gibi kritik açıklar **kaynak kodda** kapatılmış. |
 | **Frontend Testleri** | İyi | 22 dosya, 178 test, hepsi geçiyor. Lint temiz, build başarılı. |
 | **Kontrat Unit Testleri** | İyi | nft-ticket: 28, access-control: 8, operator-registry: 4 test geçiyor. |

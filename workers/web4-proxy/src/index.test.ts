@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Env } from './index';
 
 // Mock Cloudflare Workers globals
 const createMockCache = () => {
@@ -10,15 +11,19 @@ const createMockCache = () => {
     };
 };
 
+type TestHandler = {
+    fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response>;
+};
+
 // We need to import the handler after setting up mocks
 const importHandler = async () => {
     const mod = await import('./index');
-    return mod.default;
+    return mod.default as unknown as TestHandler;
 };
 
 describe('web4-proxy', () => {
     let mockCache: ReturnType<typeof createMockCache>;
-    let handler: ExportedHandler<Env>;
+    let handler: TestHandler;
 
     const createEnv = (): Env => ({
         WEB4_ORIGIN: 'https://youtick.near.page',
@@ -83,6 +88,7 @@ describe('web4-proxy', () => {
         expect(response.status).toBe(502);
         expect(response.headers.get('Content-Type')).toContain('text/html');
         expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(response.headers.get('Content-Security-Policy')).toContain("default-src 'self'");
         const text = await response.text();
         expect(text).toContain('Temporarily Unavailable');
     });
@@ -107,6 +113,8 @@ describe('web4-proxy', () => {
         expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
         expect(response.headers.get('X-Frame-Options')).toBe('DENY');
         expect(response.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin');
+        expect(response.headers.get('Content-Security-Policy')).toContain("default-src 'self'");
+        expect(response.headers.get('Content-Security-Policy')).toContain('https://challenges.cloudflare.com');
     });
 
     it('sets long cache headers for static hashed assets', async () => {
@@ -167,5 +175,69 @@ describe('web4-proxy', () => {
 
         expect(response.status).toBe(200);
         expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('serves onboarding keys from the proxy API without hitting Web4 origin', async () => {
+        globalThis.fetch = vi.fn();
+        const request = new Request('https://youtick.net/api/onboarding-key', {
+            headers: { 'CF-Connecting-IP': '203.0.113.10' },
+        });
+        const env = {
+            ...createEnv(),
+            ONBOARDING_KEYS: 'ed25519:test-key',
+        };
+
+        const response = await handler.fetch(request, env, {
+            waitUntil: vi.fn(),
+        } as unknown as ExecutionContext);
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get('Cache-Control')).toContain('no-store');
+        expect(await response.json()).toEqual({ key: 'ed25519:test-key' });
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it('returns a clear onboarding error when no key is configured', async () => {
+        const request = new Request('https://youtick.net/api/onboarding-key');
+        const response = await handler.fetch(request, createEnv(), {
+            waitUntil: vi.fn(),
+        } as unknown as ExecutionContext);
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'Onboarding key not configured' });
+    });
+
+    it('proxies Crust API requests and preserves CORS headers', async () => {
+        const fetchMock = vi.fn(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+            const url = typeof input === 'string'
+                ? input
+                : input instanceof URL
+                    ? input.toString()
+                    : input.url;
+            expect(url).toBe('https://pin.crustcode.com/psa/pins?limit=1');
+            expect(init?.method).toBe('POST');
+            expect((init?.headers as Headers).get('authorization')).toBe('Bearer token');
+            return new Response(JSON.stringify({ requestid: 'req-1' }), {
+                status: 202,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        });
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+        const request = new Request('https://youtick.net/api/crust/psa/pins?limit=1', {
+            method: 'POST',
+            headers: {
+                authorization: 'Bearer token',
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({ cid: 'QmTest' }),
+        });
+        const response = await handler.fetch(request, createEnv(), {
+            waitUntil: vi.fn(),
+        } as unknown as ExecutionContext);
+
+        expect(response.status).toBe(202);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        expect(await response.json()).toEqual({ requestid: 'req-1' });
     });
 });

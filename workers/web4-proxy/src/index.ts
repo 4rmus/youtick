@@ -8,7 +8,7 @@
  * Flow: youtick.net → Cloudflare Workers → youtick.near.page → web4_get() → IPFS
  */
 
-interface Env {
+export interface Env {
     WEB4_ORIGIN: string;
     WEB4_FALLBACK_ORIGIN?: string;
     ALLOWED_DOMAINS: string;
@@ -23,6 +23,19 @@ const STATIC_EXTENSIONS = new Set([
     '.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.svg',
     '.ico', '.woff', '.woff2', '.ttf', '.webp', '.wasm', '.map',
 ]);
+
+const WEB4_CSP_VALUE = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://challenges.cloudflare.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' https://fonts.gstatic.com",
+    "connect-src 'self' https:",
+    "media-src 'self' blob: https:",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+].join('; ');
 
 /** Check if a path points to a static asset */
 function isStaticAsset(pathname: string): boolean {
@@ -202,6 +215,7 @@ export default {
             {
                 status: 502,
                 headers: {
+                    'Content-Security-Policy': WEB4_CSP_VALUE,
                     'Content-Type': 'text/html; charset=utf-8',
                     'Cache-Control': 'no-store',
                 },
@@ -265,6 +279,7 @@ function applyProxyHeaders(
     } else {
         // Keep browser HTML cache near-zero so old pages do not point at missing chunk hashes.
         responseHeaders.set('Cache-Control', `public, max-age=0, must-revalidate, s-maxage=${cacheTtl}, stale-while-revalidate=30`);
+        responseHeaders.set('Content-Security-Policy', WEB4_CSP_VALUE);
     }
 
     return responseHeaders;

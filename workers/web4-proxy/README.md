@@ -1,0 +1,64 @@
+# YouTick Web4 Proxy
+
+Web4 proxy, `youtick.net` alan adini Web4/static origin uzerine tasir ve static
+export'un tek basina veremedigi runtime davranislarini ekler.
+
+## Origin ve fallback
+
+- `WEB4_ORIGIN`: Birincil static origin. Genelde Cloudflare Pages build'i.
+- `WEB4_FALLBACK_ORIGIN`: Birincil origin hata verirse kullanilan Web4/IPFS yolu.
+- `ALLOWED_DOMAINS`: Proxy'nin servis edecegi host listesi.
+
+## API proxy sorumlulugu
+
+`youtick.net` proxy destekli modda su API yuzeylerini destekler:
+
+- `/api/onboarding-key`
+- `/api/crust/*`
+
+`youtick.near.page` veya ciplak IPFS gateway static-only calisir. Bu ortamlarda
+onboarding key veya storage-order gerektiren akislar desteklenmez.
+
+## Header ve CSP
+
+Next static export, `next.config.ts` icindeki `headers()` kurallarini Web4
+build'ine uygulamaz. Bu nedenle CSP ve temel guvenlik header'lari proxy
+tarafindan eklenir. `npm run build:web4` sirasinda gorulen "headers not
+applied" uyarisi beklenen bir durumdur.
+
+## Secrets
+
+Trial onboarding icin:
+
+```bash
+npx wrangler secret put ONBOARDING_KEYS
+```
+
+`ONBOARDING_KEYS` virgulle ayrilmis `ed25519:` prefiksli key havuzu olabilir.
+Onboarding key rotation icin root `scripts/rotate-onboarding-key.mjs` kullanilir.
+
+## Local dev ve test
+
+```bash
+cd workers/web4-proxy
+npm install
+npm test -- --run
+npm run check
+npx wrangler dev
+```
+
+## Deploy
+
+```bash
+npx wrangler deploy
+```
+
+Custom domain route'lari `wrangler.toml` icindedir. Deploy sonrasi:
+
+```bash
+curl https://youtick.net/__health
+curl -I https://youtick.net/
+```
+
+`/__health` JSON donmeli; HTML cevaplarda `Content-Security-Policy` ve
+`X-Proxy: youtick-web4` header'lari gorulmelidir.

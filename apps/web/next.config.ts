@@ -64,11 +64,19 @@ const nextConfig: NextConfig = {
     root: path.resolve(__dirname),
   },
 
-  webpack: (config) => {
+  webpack: (config, { isServer }) => {
     config.resolve.alias = {
       ...(config.resolve.alias || {}),
       '@react-native-async-storage/async-storage': false,
     };
+
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...(config.resolve.fallback || {}),
+        fs: false,
+      };
+    }
+
     return config;
   },
 

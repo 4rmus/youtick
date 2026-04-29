@@ -60,6 +60,35 @@ jobs:
       - name: Test
         run: npm test -- --run
 
+      - name: Type check
+        run: npm run check
+
+  web4-proxy-worker:
+    name: Web4 Proxy Worker
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers/web4-proxy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: workers/web4-proxy/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test -- --run
+
+      - name: Type check
+        run: npm run check
+
   contracts:
     name: Contracts
     runs-on: ubuntu-latest
@@ -75,6 +104,10 @@ jobs:
 
       - name: Test nft-ticket unit tests
         run: cargo test --lib
+        working-directory: contracts/nft-ticket
+
+      - name: Test nft-ticket sandbox tests
+        run: cargo test --test sandbox
         working-directory: contracts/nft-ticket
 
       - name: Build nft-ticket wasm

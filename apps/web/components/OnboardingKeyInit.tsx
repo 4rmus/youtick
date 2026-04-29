@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { NEAR_CONFIG, APP_CONFIG } from '@/lib/constants';
 import { isYoctoAmountBelowNear } from '@/lib/near-amount';
 import { getCurrentRpcUrl } from '@/lib/rpc-failover';
@@ -12,6 +12,8 @@ import { getCurrentRpcUrl } from '@/lib/rpc-failover';
 const isDev = process.env.NODE_ENV === 'development';
 
 export function OnboardingKeyInit() {
+    const [apiWarning, setApiWarning] = useState<string | null>(null);
+
     useEffect(() => {
         const storageKey = `onboarding_key:${NEAR_CONFIG.contractId}`;
         const existingKey = sessionStorage.getItem(storageKey);
@@ -33,18 +35,19 @@ export function OnboardingKeyInit() {
                     if (process.env.NODE_ENV !== 'development') {
                         console.warn('[ONBOARDING_KEY] Endpoint returned', res.status);
                     }
+                    setApiWarning(getUnsupportedApiMessage());
                     return;
                 }
                 const data = await res.json();
                 if (data?.key) {
+                    setApiWarning(null);
                     sessionStorage.setItem(storageKey, data.key);
                     console.log(
                         '[ONBOARDING_KEY] Bootstrapped onboarding key from secure endpoint'
                     );
                 }
             } catch {
-                // Non-blocking: if the endpoint is unavailable the app still works
-                // for users who already have a key or use wallet-based flows.
+                setApiWarning(getUnsupportedApiMessage());
             }
         }
 
@@ -66,7 +69,21 @@ export function OnboardingKeyInit() {
         }
     }, []);
 
-    return null;
+    if (!apiWarning) return null;
+
+    return (
+        <div className="fixed bottom-4 left-4 z-50 max-w-sm rounded-md border border-amber-500/40 bg-zinc-950/95 p-3 text-xs text-amber-100 shadow-lg">
+            {apiWarning}
+        </div>
+    );
+}
+
+function getUnsupportedApiMessage(): string {
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    if (host.endsWith('.near.page') || host.includes('ipfs') || host.includes('gateway')) {
+        return 'Trial account API is not available from this static Web4 gateway. Open youtick.net or connect a wallet.';
+    }
+    return 'Trial account API is not available right now. Connect a wallet or try again later.';
 }
 
 /** Dynamically load Turnstile script and render an invisible challenge */

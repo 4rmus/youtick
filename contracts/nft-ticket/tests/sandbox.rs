@@ -893,8 +893,7 @@ async fn test_withdraw_commission() -> anyhow::Result<()> {
         .await?
         .into_result()?;
 
-    // Direct owner withdrawals are now blocked; sensitive admin actions must
-    // go through the timelock path.
+    // V1 public alpha keeps owner-only direct admin actions.
     let direct_withdraw = owner
         .call(contract.id(), "withdraw_commission")
         .args_json(json!({
@@ -904,19 +903,19 @@ async fn test_withdraw_commission() -> anyhow::Result<()> {
         .transact()
         .await?;
     assert!(
-        direct_withdraw.is_failure(),
-        "Direct owner withdrawal should require timelock"
+        direct_withdraw.is_success(),
+        "Owner withdrawal should be direct in V1 public alpha"
     );
 
-    // Verify commission pool is unchanged.
+    // Verify commission pool was debited.
     let pool: String = contract
         .view("get_commission_pool")
         .args_json(json!({}))
         .await?
         .json()?;
-    assert_eq!(pool, "100000000000000000000000");
+    assert_eq!(pool, "0");
 
-    println!("✅ Direct withdraw commission rejection test passed");
+    println!("✅ Direct owner withdraw commission test passed");
     Ok(())
 }
 

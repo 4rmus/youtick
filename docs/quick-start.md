@@ -44,9 +44,12 @@ NEXT_PUBLIC_NEAR_NETWORK=testnet
 NEXT_PUBLIC_MARKET_CONTRACT_ID=dev-fresh-kurulum-3.testnet
 NEXT_PUBLIC_ACCESS_CONTRACT_ID=access-1773606802388.v2-0.utick.testnet
 NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry-1773606802388.v2-0.utick.testnet
+NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
 ```
 
 See full variable list in [Configuration Reference](./getting-started/configuration.md).
+Cross-chain checkout only opens when this value is exactly `true`; the default
+local flow is NEAR-first.
 
 ### 4. Start app
 
@@ -100,6 +103,11 @@ cargo test
 
 - Retry playback; gateway failover is automatic.
 - Verify uploaded CID exists on `crustipfs.xyz` or fallback gateways.
+
+### Web4 API issues
+
+- `youtick.net` uses the Web4 proxy and supports `/api/onboarding-key` plus `/api/crust/*`.
+- Direct `youtick.near.page` or raw IPFS gateway URLs are static-only and do not support onboarding/storage-order API calls.
 
 ---
 

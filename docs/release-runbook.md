@@ -14,8 +14,9 @@ YouTick may be released as **public alpha** after the open-source checklist is
 complete. It should not be described as production-ready until live KMS
 operator health and encrypted playback are verified on mainnet.
 
-This file intentionally avoids direct admin calls. Sensitive contract changes
-must go through each contract's `propose_action` and `execute_action` flow.
+V1 public alpha is owner-controlled. Use owner-only direct admin calls only for
+the documented launch tasks, and keep destructive/debug methods out of normal
+production builds. Timelock governance is a later hardening step, not a V1 gate.
 
 ---
 
@@ -26,7 +27,9 @@ Run from the repository root:
 ```bash
 (cd apps/web && npm ci && npm run lint && npm test -- --run && npm run build)
 (cd workers/youtick-kms && npm ci && npm test -- --run && npm run check)
+(cd workers/web4-proxy && npm ci && npm run check && npm test -- --run)
 (cd contracts/nft-ticket && cargo test --lib)
+(cd contracts/nft-ticket && cargo test --test sandbox)
 (cd contracts/access-control && cargo test)
 (cd contracts/operator-registry && cargo test)
 ```

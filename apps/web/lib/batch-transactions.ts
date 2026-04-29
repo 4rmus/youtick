@@ -40,6 +40,7 @@ export async function batchUploadActionsSignless(
         description: string;
         price: string;
         price_usd?: number | null;
+        price_usdc?: string | null;
         access_mode?: 'paid' | 'free_collectible' | 'public_free';
         content_type?: string;
     }
@@ -61,6 +62,7 @@ export async function batchUploadActionsSignless(
             description: eventMetadata.description,
             price: eventMetadata.price,
             price_usd: eventMetadata.price_usd ?? null,
+            price_usdc: eventMetadata.price_usdc ?? null,
             access_mode: eventMetadata.access_mode ?? null,
             content_type: eventMetadata.content_type ?? null,
         });

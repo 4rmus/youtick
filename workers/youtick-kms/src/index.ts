@@ -31,7 +31,12 @@ export interface Env {
     RATE_LIMIT: KVNamespace;
     ACCESS_CACHE: KVNamespace;
     ALLOWED_ORIGINS: string;
+    NEAR_NETWORK: string;
+    NEAR_CONTRACT_ID: string;
+    NEAR_ACCESS_CONTRACT_ID: string;
+    NEAR_REGISTRY_CONTRACT_ID: string;
     OPERATOR_SHARE_SECRET?: string;
+    OPERATOR_SHARE_SECRET_PREVIOUS?: string;
     REGISTRY_OPERATOR_ACCOUNT_ID?: string;
     CACHE_KEY_PREFIX?: string;
 }

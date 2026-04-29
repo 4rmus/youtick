@@ -62,7 +62,7 @@ export const NEAR_CONFIG = {
 } as const;
 
 export const FEATURE_FLAGS = {
-    /** Launch scope is core-only until cross-chain checkout completes its own readiness review. */
+    /** Cross-chain checkout is experimental and must be explicitly enabled. */
     enableCrossChainCheckout: process.env.NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT === 'true',
 } as const;
 

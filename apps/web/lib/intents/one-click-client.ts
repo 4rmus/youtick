@@ -67,15 +67,16 @@ function usdCentsToTokenUnits(cents: number, decimals: number): string {
 }
 
 /**
- * Get a swap quote: Stablecoin → NEAR
+ * Get a swap quote: Stablecoin → destination asset (NEAR or USDC)
  *
  * @param token - USDC or USDT
  * @param chain - Source chain (near, arb, base)
  * @param amountUsdCents - Amount in USD cents (500 = $5.00)
- * @param recipientNearAccountId - NEAR account to receive NEAR tokens
+ * @param recipientNearAccountId - NEAR account to receive tokens
  * @param refundAddress - Address for refunds (NEAR account or EVM address)
  * @param dry - If true, returns quote without generating deposit address
  * @param refundAddressOverride - Optional EVM address override for cross-chain refunds
+ * @param destinationAsset - Target asset (default: NEAR_NATIVE_ASSET for backward compat)
  */
 export async function getSwapQuote(
     token: PaymentMethod,
@@ -85,6 +86,7 @@ export async function getSwapQuote(
     refundAddress: string,
     dry: boolean = false,
     refundAddressOverride?: string,
+    destinationAsset: string = NEAR_NATIVE_ASSET,
 ): Promise<SwapQuote> {
     ensureInitialized();
 
@@ -127,7 +129,7 @@ export async function getSwapQuote(
         slippageTolerance: ONE_CLICK_CONFIG.defaultSlippageBps,
         originAsset: tokenConfig.assetId,
         depositType,
-        destinationAsset: NEAR_NATIVE_ASSET,
+        destinationAsset,
         amount,
         refundTo: effectiveRefundAddress,
         refundType,
@@ -179,6 +181,7 @@ export async function getDryQuote(
     chain: ChainId,
     amountUsdCents: number,
     recipientNearAccountId: string,
+    destinationAsset?: string,
 ): Promise<SwapQuote> {
     return getSwapQuote(
         token,
@@ -187,6 +190,8 @@ export async function getDryQuote(
         recipientNearAccountId,
         recipientNearAccountId, // refund to self for dry quotes
         true,
+        undefined,
+        destinationAsset,
     );
 }
 

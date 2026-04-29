@@ -1,6 +1,6 @@
 # YouTick System Architecture
 
-> Current live runtime: browser encryption, NEAR entitlements, access grants, registry-enforced operators, and share-based playback
+> Current live runtime: browser encryption, NEAR entitlements, access grants, registry-enforced operators, share-based playback, and hybrid decentralized operations
 
 ---
 
@@ -16,9 +16,14 @@ Today, YouTick runs through five active layers:
 | Registry contract | Stores active decryption operators and relayers |
 | KMS operators | Store encrypted key shares and release them only after authorization checks |
 
-Crust/IPFS stores encrypted media assets and manifests. The browser is still the place where the final playback key is reconstructed and media is decrypted.
+Crust/IPFS stores encrypted media assets and manifests. Crust is the primary
+pinning provider today; a second persistence path is still a target item. The
+browser is still the place where the final playback key is reconstructed and
+media is decrypted.
 
-This page describes the current live model.
+This page describes the current public-alpha model. It is hybrid decentralized:
+ownership and policy live on NEAR, encrypted media lives on IPFS/Crust, while
+KMS operators currently run on Cloudflare Workers with KV-backed share storage.
 
 ---
 
@@ -118,6 +123,11 @@ The registry no longer acts as a passive address book. Operators and relayers mu
 ### 5. Access grants standardize off-chain authorization
 
 The access contract standardizes short-lived `Play`, `Publish`, `ClaimGift`, and `ClaimTrial` authorization checks without replacing the upload session model.
+
+### 6. Governance is owner-controlled in public alpha
+
+Emergency takedown and owner governance remain owner-controlled in V1 public
+alpha. DAO/multisig governance is a target, not an implemented guarantee.
 
 ---
 

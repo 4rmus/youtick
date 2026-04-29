@@ -1,21 +1,25 @@
 # YouTick Documentation
 
 > Current source architecture: browser encryption, NEAR entitlements,
-> registry-enforced operators, and share-based playback
+> registry-enforced operators, share-based playback, and hybrid decentralized
+> operations
 
 YouTick's source code supports client-side media encryption, a market/access/registry
-contract split, and a multi-operator playback path. Live mainnet can lag behind
-source code, so release decisions should use the current readiness report first.
+contract split, and a multi-operator playback path. It is public alpha software,
+not production-ready and not fully decentralized today. Live mainnet can lag
+behind source code, so release decisions should use the current readiness report first.
 
 **Mainnet target:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`
 **Target playback path:** Browser AES-CTR + registry-enforced operator share reconstruction
-**Current release posture:** public alpha candidate, not production-ready
+**Current release posture:** public alpha, not production-ready
 
 ## Reading Labels
 
 - `LIVE`: bugun kodda aktif olan veya operasyonu dogrudan etkileyen yuzey
 - `TARGET`: hedef mimari veya gelecekte tamamlanacak tasarim
 - `LEGACY`: uyumluluk icin duran eski yol
+- `EXPERIMENTAL`: env veya operator karariyla acilan, public-alpha deneme yuzeyi
+- `HISTORICAL ANALYSIS`: karar gecmisi icin tutulan, uygulama dogrusu olmayan analiz
 
 ---
 
@@ -49,12 +53,12 @@ source code, so release decisions should use the current readiness report first.
 > kontrat kaynaklari gecerlidir.
 
 - [Storage & Delivery](architecture/storage.md) `LIVE`
-- [Contract Methods](api/contract-methods.md) `TARGET`
+- [Contract Methods](api/contract-methods.md) `LIVE`
 - [Security](security.md)
 
 ## Reference
 
-- [Contract Methods](api/contract-methods.md) `TARGET`
+- [Contract Methods](api/contract-methods.md) `LIVE`
 - [Frontend](frontend.md)
 - [Security](security.md)
 - [Testing](testing.md)

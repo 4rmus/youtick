@@ -26,12 +26,50 @@ function setCachedPrice(price: number): void {
     } catch { /* ignore storage errors */ }
 }
 
+import { getProvider, viewContract } from './near';
+
+const PYTH_CONTRACT_ID = 'pyth-oracle.near';
+const PYTH_NEAR_USD_PRICE_ID = 'c415de8d2eba7db216527dff4b60e8f3a5311c740dadb233e13e12547e226750';
+/** Max staleness for Pyth price (seconds) */
+const PYTH_MAX_STALENESS_S = 60;
+
+interface PythPrice {
+    price: string;
+    conf: string;
+    expo: number;
+    publish_time: number;
+}
+
 /**
- * Fetch NEAR/USD price from multiple sources with localStorage cache fallback.
- * Tries: Binance → CoinGecko → cached price → hardcoded fallback.
+ * Fetch NEAR/USD price from Pyth oracle (primary), with CEX fallback chain.
+ * Tries: Pyth on-chain → Binance → CoinGecko → CryptoCompare → cached price → hardcoded fallback.
  */
 export async function getNearPrice(): Promise<number> {
-    // Source 1: Binance (no API key needed, generous rate limits)
+    // Source 1: Pyth on-chain oracle (most trustworthy, on-chain attestable)
+    try {
+        const provider = getProvider();
+        const pythPrice = await viewContract<PythPrice>(
+            provider,
+            PYTH_CONTRACT_ID,
+            'get_price',
+            { price_id: PYTH_NEAR_USD_PRICE_ID }
+        );
+        if (pythPrice?.price && typeof pythPrice.expo === 'number') {
+            const price = parseInt(pythPrice.price, 10) * Math.pow(10, pythPrice.expo);
+            const ageSec = Math.floor(Date.now() / 1000) - pythPrice.publish_time;
+            if (price > 0 && ageSec <= PYTH_MAX_STALENESS_S) {
+                setCachedPrice(price);
+                return price;
+            }
+            if (ageSec > PYTH_MAX_STALENESS_S) {
+                console.warn(`[Price] Pyth price stale by ${ageSec}s, falling back`);
+            }
+        }
+    } catch (e) {
+        console.warn('[Price] Pyth oracle failed:', e);
+    }
+
+    // Source 2: Binance (no API key needed, generous rate limits)
     try {
         const res = await fetch(
             'https://api.binance.com/api/v3/ticker/price?symbol=NEARUSDT',

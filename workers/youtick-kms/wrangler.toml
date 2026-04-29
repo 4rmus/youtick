@@ -3,11 +3,8 @@ main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
-# Production (mainnet) — default environment
-# Sensitive values (OPERATOR_SHARE_SECRET, REGISTRY_OPERATOR_ACCOUNT_ID) must be
-# set via wrangler secrets, not committed here:
-#   wrangler secret put OPERATOR_SHARE_SECRET
-#   wrangler secret put REGISTRY_OPERATOR_ACCOUNT_ID
+# Production (mainnet) default environment. See README.md for KV, secret and
+# operator deploy procedure.
 [vars]
 ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net"
 NEAR_CONTRACT_ID = "youtick.near"
@@ -16,14 +13,8 @@ NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"
 NEAR_NETWORK = "mainnet"
 CACHE_KEY_PREFIX = "v2:"
 
-# Default environment — local development ONLY.
-# These placeholder IDs will NOT work with `wrangler dev` until you create
-# your own local KV namespaces and replace the IDs below:
-#   wrangler kv:namespace create VIDEO_KEYS
-#   wrangler kv:namespace create RATE_LIMIT
-#   wrangler kv:namespace create ACCESS_CACHE
-#
-# IMPORTANT: Never use production namespace IDs here.
+# Default environment is local development only. Replace placeholders with
+# dedicated local KV namespace IDs before running wrangler dev.
 [[kv_namespaces]]
 binding = "VIDEO_KEYS"
 id = "<replace-with-your-local-dev-video-keys-namespace-id>"
@@ -36,26 +27,8 @@ id = "<replace-with-your-local-dev-rate-limit-namespace-id>"
 binding = "ACCESS_CACHE"
 id = "<replace-with-your-local-dev-access-cache-namespace-id>"
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Multi-operator production environments
-# ═══════════════════════════════════════════════════════════════════════════════
-#
-# CRITICAL: Each operator MUST have its own isolated KV namespaces.
-# Sharing KV namespaces across operators breaks the Shamir threshold security
-# model — any operator could read/overwrite another operator's share data.
-#
-# Before deploying each operator:
-#   1. Create dedicated KV namespaces:
-#        wrangler kv:namespace create VIDEO_KEYS   --env operator_a
-#        wrangler kv:namespace create RATE_LIMIT   --env operator_a
-#        wrangler kv:namespace create ACCESS_CACHE --env operator_a
-#   2. Replace the placeholder IDs below with the real IDs from step 1.
-#   3. Set unique secrets per operator:
-#        wrangler secret put OPERATOR_SHARE_SECRET --env operator_a
-#        wrangler secret put REGISTRY_OPERATOR_ACCOUNT_ID --env operator_a
-#
-# NEVER reuse KV namespace IDs across operators.
-# ═══════════════════════════════════════════════════════════════════════════════
+# Multi-operator production environments. Each operator needs isolated KV
+# namespaces and unique secrets; see README.md.
 
 [env.operator_a]
 name = "youtick-kms-a"

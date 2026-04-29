@@ -11,7 +11,7 @@
 Bu contract su alanlari yonetir:
 
 - event kayitlari
-- NFT ticket mint ve transferleri
+- NFT ticket mint ve sahiplik kayitlari
 - satin alma mantigi
 - gift drop ve claim
 - trial hesap olusturma
@@ -96,21 +96,18 @@ Upload icin:
 
 ---
 
-## Admin modeli ve timelock
+## Admin modeli
 
-Tum hassas admin islemleri `propose_action` ve `execute_action` uzerinden
-24 saatlik timelock ile calisir:
+V1 public alpha owner-controlled ilerler. `nft-ticket` icin admin islemleri
+owner-only direct akistadir; timelock governance V1 kapsaminda zorunlu degildir.
+Bu hizli yayina cikis tercihinin karsiligi olarak yikici/debug metotlari normal
+production build disinda kapatilir.
 
-- Admin fonksiyonlarinin dogrudan cagrilmasi `panic_timelock_required()` ile engellenir.
-- Owner `propose_action` ile teklif eder, 24 saat sonra `execute_action` ile yurutur.
-- `cancel_action` ile beklemedeki teklif iptal edilebilir.
+- `add_onboarding_key` ve `remove_onboarding_key` owner-only'dir.
+- `reset_v11`, `wipe_and_reinit`, `test_insert` gibi yikici/debug yuzeyler migration build disindaki normal build'de kullanilmaz.
+- `propose_action` / `execute_action` kod yuzeyi korunur, ama V1 icin urun iddiasi timelock governance degildir.
 - `takedown_event` (acil icerik icin) timelock'a tabi degildir, NEP-297 event log yayar.
 - `accept_ownership` iki asamali sahiplik devrinin ikinci adimidir.
-
-Timelock'a tabi islemler: `ban_event`, `unban_event`, `admin_remove_events`,
-`add_onboarding_key`, `remove_onboarding_key`, `set_onboarding_config`,
-`withdraw_trial_pool`, `withdraw_commission`, `set_web4_static_url`,
-`set_next_token_id`, `nft_mint`, `pause`, `unpause`, `propose_owner`.
 
 ---
 

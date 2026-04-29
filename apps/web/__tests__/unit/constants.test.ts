@@ -6,6 +6,7 @@ const ENV_KEYS = [
     'NEXT_PUBLIC_MARKET_CONTRACT_ID',
     'NEXT_PUBLIC_ACCESS_CONTRACT_ID',
     'NEXT_PUBLIC_REGISTRY_CONTRACT_ID',
+    'NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT',
 ] as const;
 
 function resetNearEnv(): void {
@@ -57,5 +58,36 @@ describe('NEAR_CONFIG', () => {
         expect(NEAR_CONFIG.marketContractId).toBe('legacy-market.testnet');
         expect(NEAR_CONFIG.accessContractId).toBe('access-1773606802388.v2-0.utick.testnet');
         expect(NEAR_CONFIG.registryContractId).toBe('registry-1773606802388.v2-0.utick.testnet');
+    });
+});
+
+describe('FEATURE_FLAGS', () => {
+    afterEach(() => {
+        vi.resetModules();
+        resetNearEnv();
+    });
+
+    it('keeps cross-chain checkout disabled by default', async () => {
+        resetNearEnv();
+
+        const { FEATURE_FLAGS } = await import('@/lib/constants');
+
+        expect(FEATURE_FLAGS.enableCrossChainCheckout).toBe(false);
+    });
+
+    it('enables cross-chain checkout only when explicitly set to true', async () => {
+        process.env.NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT = 'true';
+
+        const { FEATURE_FLAGS } = await import('@/lib/constants');
+
+        expect(FEATURE_FLAGS.enableCrossChainCheckout).toBe(true);
+    });
+
+    it('keeps cross-chain checkout disabled when explicitly set to false', async () => {
+        process.env.NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT = 'false';
+
+        const { FEATURE_FLAGS } = await import('@/lib/constants');
+
+        expect(FEATURE_FLAGS.enableCrossChainCheckout).toBe(false);
     });
 });

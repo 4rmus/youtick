@@ -7,21 +7,16 @@
 
 ---
 
-## Important Rule
+## Admin Rule
 
-Current contracts intentionally reject direct sensitive admin calls. Do not call
-admin methods directly just because the method exists in the ABI.
+V1 public alpha is owner-controlled. Use owner-only direct admin calls only for
+the documented deploy tasks and keep owner keys in the intended secure signing
+path. Timelock governance is intentionally deferred for V1; do not market this
+release as DAO-governed or fully production-ready.
 
-Use this flow for sensitive actions:
-
-```bash
-near call <contract> propose_action '<ACTION_JSON>' --accountId <owner>
-# wait at least 24 hours
-near call <contract> execute_action '{"id": <id>}' --accountId <owner>
-```
-
-This applies to operator changes, threshold changes, access contract config,
-pauses, unpauses, owner changes and withdrawals.
+`reset_v11`, `wipe_and_reinit`, `test_insert` and similar destructive/debug
+paths must not be available in normal production builds. Build `nft-ticket`
+with migration features only when the deploy explicitly requires a migration.
 
 ---
 
@@ -41,7 +36,9 @@ Run:
 ```bash
 (cd apps/web && npm ci && npm run lint && npm test -- --run && npm run build)
 (cd workers/youtick-kms && npm ci && npm test -- --run && npm run check)
+(cd workers/web4-proxy && npm ci && npm run check && npm test -- --run)
 (cd contracts/nft-ticket && cargo test --lib)
+(cd contracts/nft-ticket && cargo test --test sandbox)
 (cd contracts/access-control && cargo test)
 (cd contracts/operator-registry && cargo test)
 ```

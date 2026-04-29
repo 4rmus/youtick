@@ -1,8 +1,8 @@
 # YouTick
 
-> Decentralized video platform on NEAR with browser-side encryption, KMS-backed key custody and IPFS delivery
+> Public-alpha, hybrid decentralized video platform on NEAR with browser-side encryption, KMS-backed key custody and IPFS delivery
 
-YouTick is an open-source VOD platform where creators upload encrypted videos to IPFS and sell access through NFT tickets. The active architecture uses browser-side AES encryption, multi-operator KMS workers with Shamir threshold shares for key custody, and Crust-backed IPFS delivery.
+YouTick is an open-source VOD platform where creators upload encrypted videos to IPFS and sell access through NFT tickets. The active architecture is hybrid decentralized: NEAR stores ownership and access rules, the browser encrypts media, KMS workers custody threshold key shares on Cloudflare/KV, and Crust is the primary IPFS persistence provider.
 
 ![NEAR Protocol](https://img.shields.io/badge/Blockchain-NEAR%20Protocol-00C1DE?style=flat&logo=near&logoColor=white)
 ![Rust](https://img.shields.io/badge/Contract-Rust-DEA584?style=flat&logo=rust&logoColor=white)
@@ -24,7 +24,7 @@ YouTick is an open-source VOD platform where creators upload encrypted videos to
 | Crust/IPFS Delivery | Sifreli medya birden fazla gateway ile okunur |
 | Gift Links | Paylasilabilir tek kullanimlik linkler |
 | Trial Accounts | Onboarding key ile dusuk surtunmeli baslangic |
-| Cross-Chain Checkout | Deneysel 1Click + MetaMask yolu, varsayilan olarak kapali |
+| Cross-Chain Checkout | Deneysel 1Click + MetaMask yolu; sadece `NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true` iken acilir |
 
 ---
 
@@ -72,6 +72,7 @@ NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
 ```
 
 KMS endpointleri env ile verilmez. Web app aktif operatorleri registry kontratindan okur.
+Cross-chain checkout varsayilan olarak kapalidir; `false`, bos veya tanimsiz env bu yolu acmaz.
 
 ---
 
@@ -85,18 +86,16 @@ KMS endpointleri env ile verilmez. Web app aktif operatorleri registry kontratin
 - [Contract methods](./docs/api/contract-methods.md)
 - [Security](./docs/security.md)
 - [Known issues](./docs/operations/known-issues.md)
-- [Launch plan (2026-04)](./docs/launch-plan-2026-04.md)
 - [Mainnet readiness report](./docs/mainnet-open-source-readiness-2026-04-26.md)
-- [Business (TR)](./docs/business/youtick-avrupa-sirketlesme-raporu-2026-04.md)
 
 ---
 
 ## Status
 
 Uygulama kaynak kod seviyesinde aktif KMS + Crust + NEAR mimarisine gore
-hazirlanmistir. Canli mainnet durumu ise public alpha seviyesindedir; production
-ready olarak sunulmadan once KMS operator aktivasyonu ve smoke testler
-tamamlanmalidir.
+hazirlanmistir. Canli mainnet durumu public alpha seviyesindedir; production
+ready veya tam merkeziyetsiz olarak sunulmadan once canli `upload -> purchase -> watch`
+smoke testleri ve kalan operasyonel kontroller tamamlanmalidir.
 
 Guncel karar kaynagi:
 

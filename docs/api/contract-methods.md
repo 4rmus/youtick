@@ -2,8 +2,8 @@
 
 > Live runtime contract surface for YouTick Zero Trust Architecture
 
-**Status:** Source reference. Sensitive admin methods are timelock-only even when
-their public wrapper exists.
+**Status:** Source reference. V1 public alpha is owner-controlled; timelock
+governance is present in the codebase but is not required for V1 launch.
 **Contracts:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`
 
 ---
@@ -47,21 +47,21 @@ This contract is the market, content, and entitlement source of truth.
 
 | Method | Purpose |
 |--------|---------|
-| `web4_set_static_url` | Timelock-only Web4 static asset URL update |
-| `set_next_token_id` | Timelock-only admin override for token ID counter |
-| `ban_event` | Direct calls rejected; use `propose_action` + `execute_action` |
-| `unban_event` | Direct calls rejected; use `propose_action` + `execute_action` |
-| `admin_remove_events` | Direct calls rejected; use `propose_action` + `execute_action` |
-| `pause` | Direct calls rejected; use `propose_action` + `execute_action` |
-| `unpause` | Direct calls rejected; use `propose_action` + `execute_action` |
-| `propose_action` | Timelock: proposes a sensitive action |
-| `execute_action` | Timelock: executes a proposed action after delay |
+| `web4_set_static_url` | Owner-only Web4 static asset URL update |
+| `set_next_token_id` | Owner-only admin override for token ID counter |
+| `ban_event` | Owner-only moderation action |
+| `unban_event` | Owner-only moderation action |
+| `admin_remove_events` | Owner-only removal action |
+| `pause` | Owner-only emergency pause |
+| `unpause` | Owner-only unpause |
+| `propose_action` | Timelock proposal surface retained for later governance |
+| `execute_action` | Timelock execution surface retained for later governance |
 | `cancel_action` | Timelock: cancels a proposed action |
 | `propose_owner` | Starts two-step ownership transfer |
 | `accept_ownership` | Proposed owner accepts ownership transfer |
-| `add_onboarding_key` | Direct calls rejected; use `propose_action` + `execute_action` |
-| `remove_onboarding_key` | Direct calls rejected; use `propose_action` + `execute_action` |
-| `set_onboarding_config` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `add_onboarding_key` | Owner-only onboarding key add |
+| `remove_onboarding_key` | Owner-only onboarding key removal |
+| `set_onboarding_config` | Owner-only onboarding configuration |
 | `create_trial_invite_drop` | Creates trial-invite access keys |
 | `create_event` | Publishes a new ticketed video event |
 | `create_event_prepaid` | Creates an event through the upload-session publish path |
@@ -70,15 +70,15 @@ This contract is the market, content, and entitlement source of truth.
 | `buy_ticket` | Purchases a ticket (free or paid) |
 | `buy_ticket_internal` | Internal purchase flow used by callbacks |
 | `nft_mint` | Direct NFT mint with attached deposit |
-| `ft_on_transfer` | Fungible-token callback for wNEAR purchases |
+| `ft_on_transfer` | Fungible-token callback for wNEAR and NEAR-native USDC/USDT purchases |
 | `nft_mint_prepaid` | Mints through the upload-session publish path |
 | `fund_trial_pool` | Adds NEAR to the trial sponsorship pool |
-| `withdraw_trial_pool` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `withdraw_trial_pool` | Owner-only trial pool withdrawal |
 | `claim_trial_invite_with_implicit_account` | Claims trial and creates implicit account |
 | `create_sponsored_trial_direct` | Direct trial creation with account creation |
 | `claim_free_ticket_direct` | Claims a free ticket with optional account creation |
 | `sponsor_implicit_guest_direct` | Direct gas sponsorship without relayer callback |
-| `withdraw_commission` | Direct calls rejected; use `propose_action` + `execute_action` |
+| `withdraw_commission` | Owner-only commission withdrawal |
 | `gift_ticket` | Creator gifts a ticket to a receiver |
 | `create_gift_drop` | Creates access-key based gift drops |
 | `claim_gift` | Claims a gift drop to an existing account |
@@ -126,6 +126,10 @@ This contract is the market, content, and entitlement source of truth.
 ### NFT Standard Surface
 
 The contract implements NEP-171 via `NonFungibleToken`:
+
+V1 intentionally disables ticket transfer at runtime. `nft_transfer` returns
+`Ticket transfers disabled for v1`; resale and marketplace flows are not part
+of V1 public alpha.
 
 - `nft_token`
 - `nft_transfer`
