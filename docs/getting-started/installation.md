@@ -8,8 +8,8 @@
 
 | Arac | Versiyon |
 |------|----------|
-| Node.js | 20.9+ |
-| npm | 9+ |
+| Node.js | 24 LTS |
+| npm | 10+ |
 | Git | Guncel |
 | Rust | Opsiyonel, contract gelistirme icin |
 

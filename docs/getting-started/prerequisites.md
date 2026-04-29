@@ -6,21 +6,21 @@
 
 ## Required
 
-### Node.js (20.9+)
+### Node.js (24 LTS)
 
 ```bash
 # Check version
-node --version   # Should be 20.9.x or higher
+node --version   # Should be 24.x
 
 # Install via nvm (recommended)
-nvm install 20
-nvm use 20
+nvm install 24
+nvm use 24
 ```
 
-### npm (9+)
+### npm (10+)
 
 ```bash
-npm --version   # Should be 9.x or higher
+npm --version   # Should be 10.x or higher
 ```
 
 ### Git
