@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Privacy Policy | YouTick",
-  description: "YouTick Privacy Policy - How we handle your data on our decentralized video platform",
+  description: "YouTick Privacy Policy - How we handle your data on our digital ticketed release platform",
 };
 
 export default function PrivacyPage() {
@@ -18,16 +18,16 @@ export default function PrivacyPage() {
             <h2 className="text-2xl font-semibold text-white mb-4">1. Introduction</h2>
             <p>
               YouTick (&quot;Platform&quot;, &quot;we&quot;, &quot;us&quot;, &quot;our&quot;) is a
-              decentralized video-on-demand platform built on the NEAR Protocol blockchain. This
+              digital ticketed release platform built on the NEAR Protocol blockchain. This
               Privacy Policy explains how we collect, use, store, and protect information when you
               use our Platform.
             </p>
             <p className="mt-3">
               YouTick is designed with a <strong className="text-white">privacy-first, client-side
               architecture</strong>. Unlike traditional platforms, the majority of data processing
-              occurs directly in your browser. We do not maintain centralized user databases,
-              authentication servers, or content delivery systems. This fundamentally limits the
-              data we can collect and access.
+              occurs directly in your browser. We do not operate a traditional application or media
+              server for playback; serverless edge components, NEAR, IPFS/Crust, and KMS operators
+              handle the active public-alpha flow. This limits the data we can collect and access.
             </p>
             <p className="mt-3">
               By using YouTick, you acknowledge and consent to the practices described in this Privacy
@@ -74,7 +74,7 @@ export default function PrivacyPage() {
               <li><strong className="text-white">Wallet Credentials</strong>: Encrypted keypairs managed by your wallet provider</li>
               <li><strong className="text-white">Trial Account Data</strong>: Locally generated account IDs and onboarding keys</li>
               <li><strong className="text-white">User Preferences</strong>: Theme settings, language selection</li>
-              <li><strong className="text-white">KMS Authentication Tokens</strong>: Tokens for TEE encryption/decryption sessions</li>
+              <li><strong className="text-white">KMS Authentication Tokens</strong>: Short-lived tokens used for authorized key-share requests</li>
             </ul>
             <p className="mt-3">
               You can delete all client-side data at any time by clearing your browser&apos;s local
@@ -191,12 +191,12 @@ export default function PrivacyPage() {
                   </tr>
                   <tr>
                     <td className="py-3 px-4 font-medium text-white">KMS</td>
-                    <td className="py-3 px-4">TEE encryption, group access</td>
-                    <td className="py-3 px-4">Encrypted content, group membership, attestation data</td>
+                    <td className="py-3 px-4">Key-share custody and ticket-based access checks</td>
+                    <td className="py-3 px-4">Encrypted key shares, account ID, content ID, access request metadata</td>
                   </tr>
                   <tr>
-                    <td className="py-3 px-4 font-medium text-white">IPFS / Pinata / Crust</td>
-                    <td className="py-3 px-4">Decentralized file storage</td>
+                    <td className="py-3 px-4 font-medium text-white">IPFS / Crust</td>
+                    <td className="py-3 px-4">Encrypted media storage and gateway delivery</td>
                     <td className="py-3 px-4">Encrypted video blobs, content identifiers (CIDs)</td>
                   </tr>
                   <tr>
@@ -253,11 +253,11 @@ export default function PrivacyPage() {
 
             <h3 className="text-lg font-medium text-white mt-6 mb-3">5.3 Content Privacy</h3>
             <p>
-              Video content uploaded through YouTick is encrypted using KMS&apos;s Trusted
-              Execution Environment before being stored on IPFS. Only authorized group members
-              (ticket holders) can decrypt and view the content. The encrypted content itself is
-              stored on the public IPFS network, but it is computationally infeasible to decrypt
-              without proper authorization.
+              Paid video content uploaded through YouTick is encrypted in the browser before media
+              segments are stored on IPFS/Crust. Playback keys are split across active KMS
+              operators and reconstructed only for authorized viewing. Ticket holders can request
+              playback access; encrypted media alone is not intended to be viewable without the
+              required key material.
             </p>
           </section>
 
@@ -267,7 +267,7 @@ export default function PrivacyPage() {
 
             <h3 className="text-lg font-medium text-white mt-6 mb-3">6.1 Encryption</h3>
             <ul className="list-disc list-inside mt-2 space-y-1 ml-4">
-              <li><strong className="text-white">Video Content</strong>: AES-256-GCM encryption via KMS TEE</li>
+              <li><strong className="text-white">Video Content</strong>: Browser-side AES-256-CTR encryption for paid releases</li>
               <li><strong className="text-white">Transport</strong>: TLS encryption for all API communications</li>
               <li><strong className="text-white">Local Storage</strong>: Wallet keys encrypted by wallet providers</li>
               <li><strong className="text-white">Gift Links</strong>: Secret keys stored in URL fragments (not sent to servers)</li>
@@ -454,22 +454,21 @@ export default function PrivacyPage() {
 
           {/* 12. KMS */}
           <section>
-            <h2 className="text-2xl font-semibold text-white mb-4">12. KMS and Trusted Execution Environment</h2>
+            <h2 className="text-2xl font-semibold text-white mb-4">12. KMS and Serverless Edge Operators</h2>
             <p>
-              YouTick uses KMS for video encryption and access control. KMS operates a
-              Trusted Execution Environment (TEE) that:
+              YouTick uses KMS operators for playback key-share custody and access control in the
+              public-alpha architecture. These operators run as serverless edge workers and:
             </p>
             <ul className="list-disc list-inside mt-3 space-y-2 ml-4">
-              <li>Manages encryption keys within a hardware-secured enclave</li>
-              <li>Performs encryption/decryption operations without exposing keys</li>
-              <li>Maintains group membership lists for access control</li>
-              <li>Provides cryptographic attestation of TEE integrity</li>
+              <li>Store encrypted shares of playback keys rather than a single full key</li>
+              <li>Check registry status, short-lived authorization, and ticket ownership before returning shares</li>
+              <li>Use isolated storage per operator to preserve the threshold-key model</li>
+              <li>Support playback without a traditional centralized media server</li>
             </ul>
             <p className="mt-3">
-              YouTick does not have access to KMS&apos;s encryption keys. The TEE ensures that
-              encryption keys cannot be extracted by any party, including KMS operators
-              or YouTick. KMS&apos;s own privacy practices govern the data processed
-              within their TEE infrastructure.
+              This is a hybrid serverless architecture, not a claim of full decentralization or
+              DRM. Once media is decrypted for playback in a browser, ordinary screen recording or
+              device capture is outside the technical guarantees of the Platform.
             </p>
           </section>
 

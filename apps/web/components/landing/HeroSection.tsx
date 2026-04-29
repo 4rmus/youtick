@@ -5,11 +5,7 @@ import { Button } from '@/components/ui/button';
 import { ArrowRight, Play, ShieldCheck, Ticket } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
-interface HeroSectionProps {
-  onDiscoverClick: () => void;
-}
-
-export const HeroSection = memo(({ onDiscoverClick }: HeroSectionProps) => {
+export const HeroSection = memo(() => {
   const { t } = useLanguage();
   const h = t.landing.hero_section;
 
@@ -55,14 +51,15 @@ export const HeroSection = memo(({ onDiscoverClick }: HeroSectionProps) => {
                 {h.cta_primary} <ArrowRight className="ml-2 h-5 w-5" />
               </Button>
             </Link>
-            <Button
-              size="lg"
-              variant="outline"
-              className="rounded-full border-white/25 bg-white/5 px-8 py-7 text-base font-bold text-white hover:border-white/50 hover:bg-white/10"
-              onClick={onDiscoverClick}
-            >
-              {h.cta_secondary}
-            </Button>
+            <Link href="/discover">
+              <Button
+                size="lg"
+                variant="outline"
+                className="rounded-full border-white/25 bg-white/5 px-8 py-7 text-base font-bold text-white hover:border-white/50 hover:bg-white/10"
+              >
+                {h.cta_secondary}
+              </Button>
+            </Link>
           </div>
 
           <p className="mt-5 text-sm text-zinc-500">

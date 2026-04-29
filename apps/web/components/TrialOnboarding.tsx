@@ -33,7 +33,7 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
     // Translations with fallbacks
     const tr = {
         welcome_title: trialPageCopy?.welcome_title || "Welcome to YouTick!",
-        welcome_desc: trialPageCopy?.welcome_desc || "Discover content on the Web3 video platform",
+        welcome_desc: trialPageCopy?.welcome_desc || "Discover films, concert recordings and special screenings",
         connect_wallet: trialPageCopy?.connect_wallet || "Connect Wallet",
         create_guest_account: trialPageCopy?.create_guest_account || "Create Test Account",
         create_trial: trialPageCopy?.create_trial || "Create Test Account",

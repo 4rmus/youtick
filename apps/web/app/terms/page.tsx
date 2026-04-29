@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Terms of Service | YouTick",
-  description: "YouTick Terms of Service - Decentralized Video-on-Demand Platform on NEAR Protocol",
+  description: "YouTick Terms of Service - Digital ticketed releases on NEAR Protocol",
 };
 
 export default function TermsPage() {
@@ -17,8 +17,8 @@ export default function TermsPage() {
           <section>
             <h2 className="text-2xl font-semibold text-white mb-4">1. Acceptance of Terms</h2>
             <p>
-              By accessing or using YouTick (&quot;Platform&quot;, &quot;Service&quot;), a decentralized
-              video-on-demand platform built on the NEAR Protocol blockchain, you agree to be bound by
+              By accessing or using YouTick (&quot;Platform&quot;, &quot;Service&quot;), a digital ticketed
+              release platform built on the NEAR Protocol blockchain, you agree to be bound by
               these Terms of Service (&quot;Terms&quot;). If you do not agree to these Terms, do not use
               the Platform.
             </p>
@@ -35,9 +35,9 @@ export default function TermsPage() {
           <section>
             <h2 className="text-2xl font-semibold text-white mb-4">2. Platform Description</h2>
             <p>
-              YouTick is a decentralized video-on-demand platform that enables content creators to
-              publish, distribute, and monetize video content using blockchain technology. The Platform
-              operates on the following decentralized infrastructure:
+              YouTick enables film teams, musicians, venues, and cultural creators to publish and
+              monetize digital releases with ticket-based access. The Platform uses a hybrid
+              public-alpha architecture:
             </p>
             <ul className="list-disc list-inside mt-3 space-y-2 ml-4">
               <li>
@@ -45,12 +45,12 @@ export default function TermsPage() {
                 payment processing, and account management
               </li>
               <li>
-                <strong className="text-white">KMS (TEE)</strong>: Trusted Execution Environment
-                for video encryption, decryption, and group-based access control
+                <strong className="text-white">KMS Operators</strong>: Serverless edge workers that
+                store encrypted playback key shares and check ticket-based access
               </li>
               <li>
-                <strong className="text-white">IPFS</strong>: InterPlanetary File System for decentralized,
-                censorship-resistant video storage
+                <strong className="text-white">IPFS / Crust</strong>: Storage and gateway delivery
+                for encrypted release files
               </li>
               <li>
                 <strong className="text-white">NFT Tickets (NEP-171)</strong>: Non-fungible token standard
@@ -58,10 +58,10 @@ export default function TermsPage() {
               </li>
             </ul>
             <p className="mt-3">
-              The Platform follows a client-side architecture. All critical operations including encryption,
-              decryption, wallet interactions, and transaction signing are performed directly in your
-              browser. YouTick does not maintain centralized servers for content processing or user
-              authentication.
+              The Platform follows a client-side and serverless edge architecture. Media encryption,
+              wallet interactions, and transaction signing occur in your browser; serverless edge
+              components support KMS and Web4/proxy duties. YouTick does not operate a traditional
+              media server for playback.
             </p>
           </section>
 
@@ -137,10 +137,10 @@ export default function TermsPage() {
 
             <h3 className="text-lg font-medium text-white mt-6 mb-3">5.2 Content Storage</h3>
             <p>
-              Uploaded content is encrypted using KMS&apos;s Trusted Execution Environment and
-              stored on IPFS in encrypted form. Once uploaded and referenced on the blockchain, content
-              cannot be modified or deleted from the IPFS network or the blockchain record. Creators
-              should carefully consider the permanent nature of blockchain-stored content before uploading.
+              Paid uploaded content is encrypted in the browser and stored through IPFS/Crust in
+              encrypted form. Blockchain records are public and may be permanent; IPFS content is
+              content-addressed and may remain available while pinned or replicated. Creators should
+              carefully consider this publication model before uploading.
             </p>
 
             <h3 className="text-lg font-medium text-white mt-6 mb-3">5.3 Content Licensing</h3>
@@ -286,11 +286,11 @@ export default function TermsPage() {
               <li>Blockchain network congestion may affect transaction processing times</li>
             </ul>
 
-            <h3 className="text-lg font-medium text-white mt-6 mb-3">8.3 Decentralized Infrastructure</h3>
+            <h3 className="text-lg font-medium text-white mt-6 mb-3">8.3 Hybrid Serverless Infrastructure</h3>
             <p>
-              The Platform depends on third-party decentralized infrastructure (NEAR Protocol, IPFS,
-              KMS) that is not controlled by YouTick. We do not guarantee the availability,
-              performance, or security of these underlying protocols.
+              The Platform depends on third-party infrastructure including NEAR Protocol, IPFS/Crust,
+              wallet providers, RPC providers, and serverless edge KMS operators. YouTick does not
+              guarantee the availability, performance, or security of these underlying services.
             </p>
 
             <h3 className="text-lg font-medium text-white mt-6 mb-3">8.4 Token Volatility</h3>
