@@ -8,8 +8,8 @@
 
 | Requirement | Version |
 |-------------|---------|
-| Node.js | 20.9+ |
-| npm | 9+ |
+| Node.js | 24 LTS |
+| npm | 10+ |
 | Rust (optional) | Stable |
 | NEAR wallet | Any supported wallet |
 

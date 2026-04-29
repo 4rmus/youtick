@@ -2,6 +2,9 @@
     "name": "youtick-kms-worker",
     "version": "1.0.0",
     "private": true,
+    "engines": {
+        "node": ">=24 <25"
+    },
     "scripts": {
         "check": "tsc --noEmit -p tsconfig.json",
         "dev": "wrangler dev",
