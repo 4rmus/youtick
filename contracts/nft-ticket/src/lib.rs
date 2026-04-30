@@ -64,7 +64,7 @@ pub struct Token {
 // ═══════════════════════════════════════════════════════════════
 
 pub const TIMELOCK_DELAY_NS: u64 = 86_400_000_000_000; // 24 hours
-const PENDING_OWNER_STORAGE_KEY: &[u8] = b"po9";
+const PENDING_OWNER_STORAGE_KEY: &[u8] = b"v1:po";
 
 #[near(serializers = [borsh, json])]
 pub enum TimelockAction {
@@ -139,40 +139,40 @@ impl near_sdk::IntoStorageKey for StorageKey {
 }
 
 impl StorageKey {
-    pub const NFT: Self = Self(b"n10");
-    pub const NFT_V2: Self = Self(b"n12");
-    pub const TOKEN_METADATA: Self = Self(b"m10");
-    pub const TOKEN_METADATA_V2: Self = Self(b"m12");
-    pub const ENUMERATION: Self = Self(b"e10");
-    pub const ENUMERATION_V2: Self = Self(b"e12");
-    pub const APPROVAL: Self = Self(b"a10");
-    pub const APPROVAL_V2: Self = Self(b"a12");
-    pub const CONTRACT_METADATA: Self = Self(b"c10");
-    pub const VIDEO_METADATA: Self = Self(b"v10");
-    pub const USER_DEPOSITS: Self = Self(b"d10");
-    pub const EVENTS: Self = Self(b"x10");
-    pub const GIFT_DROPS: Self = Self(b"g10");
-    pub const ONBOARDING_KEYS: Self = Self(b"o10");
-    pub const DAILY_TRIAL_COUNTS: Self = Self(b"t10");
-    pub const PURCHASE_LOGS: Self = Self(b"p10");
-    pub const EVENT_PRICE_USD: Self = Self(b"pu10");
-    pub const EVENT_ACCESS_MODES: Self = Self(b"am10");
-    pub const BANNED_EVENTS: Self = Self(b"be10");
-    pub const UPLOAD_SESSIONS: Self = Self(b"us10");
-    pub const TRIAL_INVITES: Self = Self(b"ti10");
-    pub const CID_TO_TOKENS: Self = Self(b"ct10");
-    pub const PAUSED_STATE: Self = Self(b"ps10");
-    pub const TIMELOCKS: Self = Self(b"tl10");
-    pub const TIMELOCK_COUNTER: Self = Self(b"tc10");
-    pub const CREATOR_PROFILES: Self = Self(b"cp10");
-    pub const EVENT_PRICE_USDC: Self = Self(b"pu12");
-    pub const YtNftOwnerById: Self = Self(b"y20");
-    pub const YtNftMetadata: Self = Self(b"y21");
-    pub const YtNftTokensPerOwner: Self = Self(b"y22");
-    pub const YtNftApprovals: Self = Self(b"y23");
-    pub const STABLECOIN_CREATOR_BALANCES: Self = Self(b"scb10");
-    pub const STABLECOIN_COMMISSION_BALANCES: Self = Self(b"scm10");
-    pub const SETTLED_STABLECOIN_PAYMENTS: Self = Self(b"ssp10");
+    pub const NFT: Self = Self(b"v1:n");
+    pub const NFT_V2: Self = Self(b"v1:n2");
+    pub const TOKEN_METADATA: Self = Self(b"v1:m");
+    pub const TOKEN_METADATA_V2: Self = Self(b"v1:m2");
+    pub const ENUMERATION: Self = Self(b"v1:e");
+    pub const ENUMERATION_V2: Self = Self(b"v1:e2");
+    pub const APPROVAL: Self = Self(b"v1:a");
+    pub const APPROVAL_V2: Self = Self(b"v1:a2");
+    pub const CONTRACT_METADATA: Self = Self(b"v1:c");
+    pub const VIDEO_METADATA: Self = Self(b"v1:v");
+    pub const USER_DEPOSITS: Self = Self(b"v1:d");
+    pub const EVENTS: Self = Self(b"v1:x");
+    pub const GIFT_DROPS: Self = Self(b"v1:g");
+    pub const ONBOARDING_KEYS: Self = Self(b"v1:o");
+    pub const DAILY_TRIAL_COUNTS: Self = Self(b"v1:t");
+    pub const PURCHASE_LOGS: Self = Self(b"v1:p");
+    pub const EVENT_PRICE_USD: Self = Self(b"v1:pu");
+    pub const EVENT_ACCESS_MODES: Self = Self(b"v1:am");
+    pub const BANNED_EVENTS: Self = Self(b"v1:be");
+    pub const UPLOAD_SESSIONS: Self = Self(b"v1:us");
+    pub const TRIAL_INVITES: Self = Self(b"v1:ti");
+    pub const CID_TO_TOKENS: Self = Self(b"v1:ct");
+    pub const PAUSED_STATE: Self = Self(b"v1:ps");
+    pub const TIMELOCKS: Self = Self(b"v1:tl");
+    pub const TIMELOCK_COUNTER: Self = Self(b"v1:tc");
+    pub const CREATOR_PROFILES: Self = Self(b"v1:cp");
+    pub const EVENT_PRICE_USDC: Self = Self(b"v1:pu6");
+    pub const YtNftOwnerById: Self = Self(b"v1:y20");
+    pub const YtNftMetadata: Self = Self(b"v1:y21");
+    pub const YtNftTokensPerOwner: Self = Self(b"v1:y22");
+    pub const YtNftApprovals: Self = Self(b"v1:y23");
+    pub const STABLECOIN_CREATOR_BALANCES: Self = Self(b"v1:scb");
+    pub const STABLECOIN_COMMISSION_BALANCES: Self = Self(b"v1:scm");
+    pub const SETTLED_STABLECOIN_PAYMENTS: Self = Self(b"v1:ssp");
 }
 
 /// Storage cost constants to avoid repeated allocations
@@ -789,10 +789,7 @@ impl YtNft {
 // SECURITY: Use #[init] to prevent re-initialization attacks
 #[near]
 impl Contract {
-    #[init]
-    pub fn new(owner_id: AccountId) -> Self {
-        require!(!env::state_exists(), "Already initialized");
-
+    fn fresh_v1_state(owner_id: AccountId, web4_static_url: Option<String>) -> Self {
         let metadata = NFTContractMetadata {
             spec: NFT_METADATA_SPEC.to_string(),
             name: "YouTick Video Tickets".to_string(),
@@ -819,10 +816,9 @@ impl Contract {
             commission_pool: NearToken::from_yoctonear(0),
             purchase_logs: UnorderedMap::new(StorageKey::PURCHASE_LOGS),
             next_purchase_id: 0,
-            web4_static_url: None,
+            web4_static_url,
             creator_profiles: LookupMap::new(StorageKey::CREATOR_PROFILES),
             events_price_usdc: LookupMap::new(StorageKey::EVENT_PRICE_USDC),
-            // V12: USDC-native payment pools (initialized at 0)
             trial_pool_usdc: 0,
             commission_pool_usdc: 0,
             ft_transfer_lock: false,
@@ -830,52 +826,32 @@ impl Contract {
         }
     }
 
+    #[init]
+    pub fn new(owner_id: AccountId) -> Self {
+        require!(!env::state_exists(), "Already initialized");
+        Self::fresh_v1_state(owner_id, None)
+    }
+
     /// Complete migration reset. Disabled in normal production builds.
     #[cfg(feature = "migration")]
     #[init(ignore_state)]
     pub fn reset_v11(owner_id: AccountId) -> Self {
         require!(
-            env::predecessor_account_id() == owner_id,
+            env::predecessor_account_id() == env::current_account_id(),
             "Only owner can reset"
         );
-        let owner = owner_id;
-        let saved_trial_pool = NearToken::from_yoctonear(0);
-        let saved_web4_url: Option<String> = None;
-        let saved_commission = NearToken::from_yoctonear(0);
-        let metadata = NFTContractMetadata {
-            spec: NFT_METADATA_SPEC.to_string(),
-            name: "YouTick Video Tickets".to_string(),
-            symbol: "YTICK".to_string(),
-            icon: None,
-            base_uri: None,
-            reference: None,
-            reference_hash: None,
-        };
+        let _ = owner_id;
+        Self::fresh_v1_state(env::current_account_id(), None)
+    }
 
-        Self {
-            tokens: YtNft::new(owner),
-            metadata: LazyOption::new(StorageKey::CONTRACT_METADATA, Some(&metadata)),
-            video_metadata: UnorderedMap::new(StorageKey::VIDEO_METADATA),
-            user_deposits: LookupMap::new(StorageKey::USER_DEPOSITS),
-            events: UnorderedMap::new(StorageKey::EVENTS),
-            next_token_id: 0,
-            active_event_count: 0,
-            gift_drops: LookupMap::new(StorageKey::GIFT_DROPS),
-            trial_pool: saved_trial_pool,
-            onboarding_keys: LookupSet::new(StorageKey::ONBOARDING_KEYS),
-            daily_trial_counts: LookupMap::new(StorageKey::DAILY_TRIAL_COUNTS),
-            onboarding_config: OnboardingConfig::default(),
-            commission_pool: saved_commission,
-            purchase_logs: UnorderedMap::new(StorageKey::PURCHASE_LOGS),
-            next_purchase_id: 0,
-            web4_static_url: saved_web4_url,
-            creator_profiles: LookupMap::new(StorageKey::CREATOR_PROFILES),
-            events_price_usdc: LookupMap::new(StorageKey::EVENT_PRICE_USDC),
-            trial_pool_usdc: 0,
-            commission_pool_usdc: 0,
-            ft_transfer_lock: false,
-            next_swap_nonce: 0,
-        }
+    #[cfg(feature = "migration")]
+    #[init(ignore_state)]
+    pub fn reset_for_v1_launch(web4_static_url: Option<String>) -> Self {
+        require!(
+            env::predecessor_account_id() == env::current_account_id(),
+            "Only contract account can reset for v1 launch"
+        );
+        Self::fresh_v1_state(env::current_account_id(), web4_static_url)
     }
 
     /// Migration-only reset is intentionally unavailable in normal production builds.
@@ -884,6 +860,13 @@ impl Contract {
     pub fn reset_v11(owner_id: AccountId) -> Self {
         let _ = owner_id;
         env::panic_str("reset_v11 is disabled outside migration builds")
+    }
+
+    #[cfg(not(feature = "migration"))]
+    #[init(ignore_state)]
+    pub fn reset_for_v1_launch(web4_static_url: Option<String>) -> Self {
+        let _ = web4_static_url;
+        env::panic_str("reset_for_v1_launch is disabled outside migration builds")
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -956,6 +939,51 @@ impl Contract {
         );
     }
 
+    fn event_usdc_price(&self, cid: &str, event: &Event) -> Option<U128> {
+        event
+            .price_usdc
+            .or_else(|| self.events_price_usdc.get(&cid.to_string()))
+    }
+
+    fn event_near_price_option(event: &Event) -> Option<U128> {
+        event
+            .price_near
+            .or_else(|| if event.price.0 > 0 { Some(event.price) } else { None })
+    }
+
+    fn event_near_price(event: &Event) -> U128 {
+        Self::event_near_price_option(event).unwrap_or(U128(0))
+    }
+
+    fn event_has_paid_price(&self, cid: &str, event: &Event) -> bool {
+        Self::event_near_price(event).0 > 0
+            || self
+                .event_usdc_price(cid, event)
+                .map(|price| price.0 > 0)
+                .unwrap_or(false)
+    }
+
+    fn assert_event_not_banned(&self, encrypted_cid: &str) {
+        require!(
+            self.lazy_banned_events()
+                .get(&encrypted_cid.to_string())
+                .is_none(),
+            "This event has been banned and tickets cannot be purchased"
+        );
+    }
+
+    fn assert_near_purchase_available(&self, cid: &str, event: &Event) {
+        let near_price = Self::event_near_price(event).0;
+        let usdc_price = self
+            .event_usdc_price(cid, event)
+            .map(|price| price.0)
+            .unwrap_or(0);
+        require!(
+            near_price > 0 || usdc_price == 0,
+            "NEAR price is not configured for this event"
+        );
+    }
+
     fn stablecoin_balance_key(token_contract: &AccountId, account_id: &AccountId) -> String {
         format!("{}:{}", token_contract, account_id)
     }
@@ -1024,12 +1052,12 @@ impl Contract {
         self.lazy_cid_to_tokens().remove(cid);
     }
 
-    fn normalize_access_mode(&self, access_mode: Option<String>, price_yocto: u128) -> String {
+    fn normalize_access_mode(&self, access_mode: Option<String>, has_paid_price: bool) -> String {
         let raw = access_mode.unwrap_or_else(|| {
-            if price_yocto == 0 {
-                "public_free".to_string()
-            } else {
+            if has_paid_price {
                 "paid".to_string()
+            } else {
+                "public_free".to_string()
             }
         });
 
@@ -1037,27 +1065,27 @@ impl Contract {
         match normalized.as_str() {
             "paid" => {
                 require!(
-                    price_yocto > 0,
+                    has_paid_price,
                     "Paid events must have a price greater than zero"
                 );
                 normalized
             }
             "free_collectible" | "public_free" => {
-                require!(price_yocto == 0, "Free access modes require zero price");
+                require!(!has_paid_price, "Free access modes require zero price");
                 normalized
             }
             _ => env::panic_str("Invalid access mode"),
         }
     }
 
-    fn resolve_event_access_mode(&self, cid: &str, price_yocto: u128) -> String {
+    fn resolve_event_access_mode(&self, cid: &str, has_paid_price: bool) -> String {
         self.lazy_event_access_modes()
             .get(&cid.to_string())
             .unwrap_or_else(|| {
-                if price_yocto == 0 {
-                    "public_free".to_string()
-                } else {
+                if has_paid_price {
                     "paid".to_string()
+                } else {
+                    "public_free".to_string()
                 }
             })
     }
@@ -1225,18 +1253,22 @@ impl Contract {
     fn build_event_response(&self, cid: &str, event: &Event) -> EventResponse {
         let cid_string = cid.to_string();
         let price_usd = self.lazy_event_price_usd().get(&cid_string);
-        let price_usdc = self.events_price_usdc.get(&cid_string);
+        let price_usdc = self.event_usdc_price(cid, event);
+        let price_near = Self::event_near_price_option(event);
         let ban_info = self.lazy_banned_events().get(&cid_string);
         EventResponse {
             title: event.title.clone(),
             description: event.description.clone(),
             price: event.price,
             price_usdc,
-            price_near: event.price_near,
+            price_near,
             creator_id: event.creator_id.clone(),
             created_at: event.created_at,
             price_usd,
-            access_mode: self.resolve_event_access_mode(&cid_string, event.price.0),
+            access_mode: self.resolve_event_access_mode(
+                &cid_string,
+                self.event_has_paid_price(&cid_string, event),
+            ),
             content_type: event.content_type.to_string(),
             banned: if ban_info.is_some() { Some(true) } else { None },
             ban_reason: ban_info.map(|i| match i.reason {
@@ -1306,6 +1338,7 @@ impl Contract {
 
     /// Owner-only: Set the NEARFS static URL (e.g., "/ipfs/CID")
     pub fn web4_set_static_url(&mut self, url: String) {
+        self.assert_owner();
         self.assert_not_paused();
         self.web4_set_static_url_timelocked(url);
     }
@@ -1718,50 +1751,11 @@ impl Contract {
 
     /// Wipe ALL contract state and reinitialize with a clean owner.
     /// DESTRUCTIVE: removes all tokens, events, deposits, upload sessions, etc.
-    /// Preserves: web4_static_url and ownership.
+    /// Kept only to block older runbooks from accidentally using this path.
     pub fn wipe_and_reinit(&mut self) {
         self.assert_owner();
         Self::assert_migration_build();
-
-        let saved_url = self.web4_static_url.clone();
-        let owner = self.tokens.owner_id.clone();
-
-        let metadata = NFTContractMetadata {
-            spec: NFT_METADATA_SPEC.to_string(),
-            name: "YouTick Video Tickets".to_string(),
-            symbol: "YTICK".to_string(),
-            icon: None,
-            base_uri: None,
-            reference: None,
-            reference_hash: None,
-        };
-
-        *self = Self {
-            tokens: YtNft::new(owner.clone()),
-            metadata: LazyOption::new(StorageKey::CONTRACT_METADATA, Some(&metadata)),
-            video_metadata: UnorderedMap::new(StorageKey::VIDEO_METADATA),
-            user_deposits: LookupMap::new(StorageKey::USER_DEPOSITS),
-            events: UnorderedMap::new(StorageKey::EVENTS),
-            next_token_id: 0,
-            active_event_count: 0,
-            gift_drops: LookupMap::new(StorageKey::GIFT_DROPS),
-            trial_pool: NearToken::from_yoctonear(0),
-            onboarding_keys: LookupSet::new(StorageKey::ONBOARDING_KEYS),
-            daily_trial_counts: LookupMap::new(StorageKey::DAILY_TRIAL_COUNTS),
-            onboarding_config: OnboardingConfig::default(),
-            commission_pool: NearToken::from_yoctonear(0),
-            purchase_logs: UnorderedMap::new(StorageKey::PURCHASE_LOGS),
-            next_purchase_id: 0,
-            web4_static_url: saved_url,
-            creator_profiles: LookupMap::new(StorageKey::CREATOR_PROFILES),
-            events_price_usdc: LookupMap::new(StorageKey::EVENT_PRICE_USDC),
-            trial_pool_usdc: 0,
-            commission_pool_usdc: 0,
-            ft_transfer_lock: false,
-            next_swap_nonce: 0,
-        };
-
-        env::log_str("Contract state wiped and reinitialized");
+        env::panic_str("Use reset_for_v1_launch from a migration build")
     }
 
     /// Test: insert a single token entry directly into owner_by_id.
@@ -2113,6 +2107,7 @@ impl Contract {
         content_type: Option<String>,
     ) {
         self.assert_not_paused();
+        let price_usdc = price_usdc.filter(|value| value.0 > 0);
 
         // Minimum price check (free events allowed, but paid events must be >= 0.001 NEAR)
         if price.0 > 0 {
@@ -2150,7 +2145,9 @@ impl Contract {
             "Only owner can create ACCESS_PASS events"
         );
 
-        let normalized_access_mode = self.normalize_access_mode(access_mode, price.0);
+        let price_near = if price.0 > 0 { Some(price) } else { None };
+        let has_paid_price = price_near.is_some() || price_usdc.is_some();
+        let normalized_access_mode = self.normalize_access_mode(access_mode, has_paid_price);
 
         let parsed_content_type = match content_type.as_deref() {
             Some("Concert") => ContentType::Concert,
@@ -2168,7 +2165,7 @@ impl Contract {
             description,
             price,
             price_usdc,
-            price_near: None, // NEAR price is always the legacy `price` field
+            price_near,
             creator_id: env::predecessor_account_id(),
             created_at: env::block_timestamp(),
             content_type: parsed_content_type,
@@ -2196,7 +2193,7 @@ impl Contract {
             event.creator_id.clone(),
             event.price.0.to_string(),
             price_usdc.map(|p| p.0.to_string()),
-            None, // price_near: not yet set at creation time
+            price_near.map(|p| p.0.to_string()),
             None, // max_tickets: not yet implemented in Event struct
         );
     }
@@ -2338,6 +2335,7 @@ impl Contract {
         content_type: Option<String>,
     ) {
         self.assert_not_paused();
+        let price_usdc = price_usdc.filter(|value| value.0 > 0);
 
         // Minimum price check (free events allowed, but paid events must be >= 0.001 NEAR)
         if price.0 > 0 {
@@ -2369,7 +2367,9 @@ impl Contract {
             "Only owner can create ACCESS_PASS events"
         );
 
-        let normalized_access_mode = self.normalize_access_mode(access_mode, price.0);
+        let price_near = if price.0 > 0 { Some(price) } else { None };
+        let has_paid_price = price_near.is_some() || price_usdc.is_some();
+        let normalized_access_mode = self.normalize_access_mode(access_mode, has_paid_price);
 
         let account_id = env::predecessor_account_id();
         let session_public_key = self.use_upload_session(
@@ -2394,8 +2394,8 @@ impl Contract {
             title,
             description,
             price,
-            price_usdc: None,
-            price_near: None,
+            price_usdc,
+            price_near,
             creator_id: account_id,
             created_at: env::block_timestamp(),
             content_type: parsed_content_type,
@@ -2491,13 +2491,11 @@ impl Contract {
         let maybe_event = self.events.get(&encrypted_cid);
         require!(maybe_event.is_some(), "Event not found");
         let event = maybe_event.unwrap();
-        require!(
-            self.lazy_banned_events().get(&encrypted_cid).is_none(),
-            "This event has been banned and tickets cannot be purchased"
-        );
+        self.assert_event_not_banned(&encrypted_cid);
+        self.assert_near_purchase_available(&encrypted_cid, &event);
 
         let deposit = env::attached_deposit();
-        let required_price = NearToken::from_yoctonear(event.price.0);
+        let required_price = NearToken::from_yoctonear(Self::event_near_price(&event).0);
         let is_free = required_price.as_yoctonear() == 0;
 
         // Storage cost for NFT (safe upper bound)
@@ -2513,7 +2511,7 @@ impl Contract {
                 deposit >= min_deposit,
                 &format!(
                     "Insufficient deposit. Required: {} yoctoNEAR (price) + {} (storage)",
-                    event.price.0,
+                    required_price.as_yoctonear(),
                     storage_cost.as_yoctonear()
                 )
             );
@@ -2574,7 +2572,8 @@ impl Contract {
             } else {
                 Some(required_price.as_yoctonear().to_string())
             },
-            event.price_usdc.map(|p| p.0.to_string()),
+            self.event_usdc_price(&encrypted_cid, &event)
+                .map(|p| p.0.to_string()),
         );
 
         token
@@ -2587,12 +2586,10 @@ impl Contract {
         let maybe_event = self.events.get(&encrypted_cid);
         require!(maybe_event.is_some(), "Event not found");
         let event = maybe_event.unwrap();
-        require!(
-            self.lazy_banned_events().get(&encrypted_cid).is_none(),
-            "This event has been banned and tickets cannot be purchased"
-        );
+        self.assert_event_not_banned(&encrypted_cid);
+        self.assert_near_purchase_available(&encrypted_cid, &event);
 
-        let price_yoctonear = event.price.0;
+        let price_yoctonear = Self::event_near_price(&event).0;
 
         // Mint the NFT using helper (storage paid by attached deposit from contract)
         let token =
@@ -2601,9 +2598,10 @@ impl Contract {
         events::emit_nft_purchased(
             token.token_id.clone(),
             receiver_id.clone(),
-            Some(encrypted_cid),
+            Some(encrypted_cid.clone()),
             Some(price_yoctonear.to_string()),
-            event.price_usdc.map(|p| p.0.to_string()),
+            self.event_usdc_price(&encrypted_cid, &event)
+                .map(|p| p.0.to_string()),
         );
 
         token
@@ -2827,9 +2825,10 @@ impl Contract {
             .events
             .get(&encrypted_cid)
             .unwrap_or_else(|| env::panic_str("Event not found"));
+        self.assert_event_not_banned(&encrypted_cid);
+        self.assert_near_purchase_available(&encrypted_cid, &event);
 
-        // Legacy: use price_near if available, otherwise fall back to price_usdc conversion
-        let required_price = NearToken::from_yoctonear(event.price.0);
+        let required_price = NearToken::from_yoctonear(Self::event_near_price(&event).0);
         let storage_cost = STORAGE_COST_NFT;
         let is_free = required_price.as_yoctonear() == 0;
 
@@ -2915,11 +2914,9 @@ impl Contract {
             .events
             .get(&encrypted_cid)
             .unwrap_or_else(|| env::panic_str("Event not found"));
+        self.assert_event_not_banned(&encrypted_cid);
 
-        let price_usdc = self
-            .events_price_usdc
-            .get(&encrypted_cid)
-            .unwrap_or(U128(0));
+        let price_usdc = self.event_usdc_price(&encrypted_cid, &event).unwrap_or(U128(0));
         let required_price = price_usdc.0;
         let is_free = required_price == 0;
 
@@ -2941,15 +2938,14 @@ impl Contract {
                 amount.0
             )
         );
-        if let Some(id) = payment_id {
-            let payment_key = format!("{}:{}:{}", token_contract, sender_id, id);
-            let mut settled_payments = self.lazy_settled_stablecoin_payments();
-            require!(
-                !settled_payments.contains(&payment_key),
-                "Stablecoin payment already settled"
-            );
-            settled_payments.insert(&payment_key);
-        }
+        let payment_id = payment_id.unwrap_or_else(|| env::panic_str("payment_id is required"));
+        let payment_key = format!("{}:{}:{}", token_contract, sender_id, payment_id);
+        let mut settled_payments = self.lazy_settled_stablecoin_payments();
+        require!(
+            !settled_payments.contains(&payment_key),
+            "Stablecoin payment already settled"
+        );
+        settled_payments.insert(&payment_key);
 
         // Apply commission on the required price (not the full amount — excess is refunded)
         let (creator_amount, commission) = self.apply_commission_usdc(required_price);
@@ -2957,9 +2953,10 @@ impl Contract {
         // V1 keeps creator payouts as withdrawable balances. This avoids minting
         // an NFT based on an async creator transfer that may later fail.
         self.add_stablecoin_creator_balance(token_contract, &event.creator_id, creator_amount);
-        self.add_stablecoin_commission_balance(token_contract, commission);
         if token_contract == &usdc_contract_id() {
             self.distribute_commission_usdc(commission);
+        } else {
+            self.add_stablecoin_commission_balance(token_contract, commission);
         }
 
         // Mint NFT
@@ -3039,9 +3036,10 @@ impl Contract {
             .events
             .get(&encrypted_cid)
             .unwrap_or_else(|| env::panic_str("Event not found"));
+        self.assert_event_not_banned(&encrypted_cid);
+        self.assert_near_purchase_available(&encrypted_cid, &event);
 
-        let price_near = event.price_near.unwrap_or(U128(0));
-        let required_price = NearToken::from_yoctonear(price_near.0);
+        let required_price = NearToken::from_yoctonear(Self::event_near_price(&event).0);
         let storage_cost = STORAGE_COST_NFT;
         let token =
             self.internal_mint_ticket(buyer_id.clone(), &event, encrypted_cid.clone(), false);
@@ -3695,11 +3693,31 @@ impl Contract {
             token_contract == usdc_contract_id() || token_contract == usdt_contract_id(),
             "Unsupported stablecoin"
         );
+        if token_contract == usdc_contract_id() {
+            return U128(
+                self.trial_pool_usdc
+                    .saturating_add(self.commission_pool_usdc),
+            );
+        }
         U128(
             self.lazy_stablecoin_commission_balances()
                 .get(&token_contract.to_string())
                 .unwrap_or(0),
         )
+    }
+
+    pub fn is_stablecoin_payment_settled(
+        &self,
+        token_contract: AccountId,
+        sender_id: AccountId,
+        payment_id: String,
+    ) -> bool {
+        require!(
+            token_contract == usdc_contract_id() || token_contract == usdt_contract_id(),
+            "Unsupported stablecoin"
+        );
+        self.lazy_settled_stablecoin_payments()
+            .contains(&format!("{}:{}:{}", token_contract, sender_id, payment_id))
     }
 
     pub fn withdraw_creator_stablecoin(
@@ -4664,6 +4682,30 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Only contract owner can call this method")]
+    fn web4_set_static_url_rejects_non_owner() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id);
+
+        testing_env!(context("not-owner.testnet", "contract.testnet").build());
+        contract.web4_set_static_url("nearfs://static".to_string());
+    }
+
+    #[test]
+    fn web4_set_static_url_accepts_owner() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+
+        testing_env!(context(owner_id.as_str(), "contract.testnet").build());
+        contract.web4_set_static_url("nearfs://static".to_string());
+
+        assert_eq!(
+            contract.web4_get_static_url(),
+            Some("nearfs://static".to_string())
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "Timelock delay not yet passed")]
     fn timelock_rejects_execution_before_delay() {
         let owner_id = account("owner.testnet");
@@ -4799,6 +4841,17 @@ mod tests {
         let banned = contract.get_banned_events();
         assert_eq!(banned.len(), 1);
         assert!(matches!(banned[0].1.reason, BanReason::CopyrightViolation));
+    }
+
+    #[test]
+    #[should_panic(expected = "Only contract owner can call this method")]
+    fn ban_event_rejects_non_owner() {
+        let owner_id = account("owner.testnet");
+        let mut contract = Contract::new(owner_id.clone());
+        seed_event(&mut contract, "event-ban-1", &owner_id);
+
+        testing_env!(context("not-owner.testnet", "contract.testnet").build());
+        contract.ban_event("event-ban-1".to_string(), BanReason::Other);
     }
 
     fn seed_event(contract: &mut Contract, cid: &str, creator: &AccountId) {
@@ -5050,6 +5103,7 @@ mod tests {
         let _ = contract.remove_onboarding_key(sample_public_key(13));
     }
 
+    #[cfg(not(feature = "migration"))]
     #[test]
     #[should_panic(expected = "Method disabled outside migration builds")]
     fn wipe_and_reinit_is_disabled_without_migration_feature() {
@@ -5060,6 +5114,15 @@ mod tests {
         contract.wipe_and_reinit();
     }
 
+    #[cfg(not(feature = "migration"))]
+    #[test]
+    #[should_panic(expected = "reset_for_v1_launch is disabled outside migration builds")]
+    fn reset_for_v1_launch_is_disabled_without_migration_feature() {
+        testing_env!(context("contract.testnet", "contract.testnet").build());
+        let _ = Contract::reset_for_v1_launch(None);
+    }
+
+    #[cfg(not(feature = "migration"))]
     #[test]
     #[should_panic(expected = "Method disabled outside migration builds")]
     fn test_insert_is_disabled_without_migration_feature() {
@@ -5109,9 +5172,86 @@ mod tests {
         assert!(matches!(result, PromiseOrValue::Value(U128(0))));
         assert_eq!(contract.tokens.nft_supply_for_owner(&buyer_id).0, 1);
         assert_eq!(
-            contract.get_creator_stablecoin_balance(usdc_id, creator_id),
+            contract.get_creator_stablecoin_balance(usdc_id.clone(), creator_id),
             U128(980_000)
         );
+        assert_eq!(contract.get_usdc_pools(), (U128(10_000), U128(10_000)));
+        assert_eq!(
+            contract.get_stablecoin_commission_balance(usdc_id.clone()),
+            U128(20_000)
+        );
+        assert!(contract.is_stablecoin_payment_settled(
+            usdc_id,
+            buyer_id,
+            "deposit-1".to_string(),
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "payment_id is required")]
+    fn stablecoin_purchase_requires_payment_id() {
+        let creator_id = account("creator.testnet");
+        let buyer_id = account("buyer.testnet");
+        let contract_id = account("contract.testnet");
+        let usdc_id = account("17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1");
+        let mut contract = Contract::new(creator_id.clone());
+        let cid = "missing-payment-id-usdc-event".to_string();
+        let price_usdc = 1_000_000u128;
+
+        contract.events.insert(
+            &cid,
+            &Event {
+                title: "USDC Event".to_string(),
+                description: "Paid in USDC".to_string(),
+                price: U128(0),
+                price_usdc: Some(U128(price_usdc)),
+                price_near: None,
+                creator_id,
+                created_at: 1,
+                content_type: ContentType::Exclusive,
+            },
+        );
+        contract.active_event_count = 1;
+
+        testing_env!(context(usdc_id.as_str(), contract_id.as_str()).build());
+        let msg = near_sdk::serde_json::json!({
+            "action": "buy_ticket",
+            "buyer_id": buyer_id,
+            "encrypted_cid": cid
+        })
+        .to_string();
+
+        let _ = contract.ft_on_transfer(buyer_id, U128(price_usdc), msg);
+    }
+
+    #[test]
+    #[should_panic(expected = "NEAR price is not configured for this event")]
+    fn usdc_only_event_rejects_native_near_purchase() {
+        let creator_id = account("creator.testnet");
+        let buyer_id = account("buyer.testnet");
+        let mut contract = Contract::new(creator_id.clone());
+        let cid = "usdc-only-event".to_string();
+
+        contract.events.insert(
+            &cid,
+            &Event {
+                title: "USDC Event".to_string(),
+                description: "Paid in USDC".to_string(),
+                price: U128(0),
+                price_usdc: Some(U128(1_000_000)),
+                price_near: None,
+                creator_id,
+                created_at: 1,
+                content_type: ContentType::Exclusive,
+            },
+        );
+        contract.active_event_count = 1;
+
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(buyer_id.clone())
+            .attached_deposit(STORAGE_COST_NFT)
+            .build());
+        let _ = contract.buy_ticket(buyer_id, cid);
     }
 
     #[test]
