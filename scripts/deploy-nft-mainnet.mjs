@@ -64,8 +64,13 @@ async function main() {
   await account.deployContract(wasm);
   console.log(`Deployed NFT contract to ${CONTRACT_ID}`);
 
-  // Run state migration if the contract struct changed (e.g., V11 added creator_profiles).
-  // Safe to call every deploy — migrate is idempotent after the first run.
+  if (process.env.RUN_MIGRATION !== '1') {
+    console.log('Migration skipped — set RUN_MIGRATION=1 to call migrate() explicitly');
+    return;
+  }
+
+  // Run state migration only when the target state layout requires it.
+  // Do not enable this for normal v1.0 code-only deploys.
   try {
     const { actions } = await loadNearApiJs();
     await account.signAndSendTransaction({

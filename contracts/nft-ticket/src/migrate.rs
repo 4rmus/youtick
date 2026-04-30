@@ -12,7 +12,7 @@ pub struct OldEvent {
     pub content_type: ContentType,
 }
 
-/// Snapshot of the on-chain Contract layout **before** the V12 migration.
+/// Snapshot of the on-chain Contract layout **after** V11 and before the V12 migration.
 /// Must match the borsh encoding of the currently deployed WASM byte-for-byte.
 #[near(serializers = [borsh])]
 pub struct OldContract {
@@ -32,11 +32,12 @@ pub struct OldContract {
     purchase_logs: UnorderedMap<u64, PurchaseLog>,
     next_purchase_id: u64,
     web4_static_url: Option<String>,
+    creator_profiles: LookupMap<AccountId, CreatorProfile>,
 }
 
 #[near]
 impl Contract {
-    /// V11 state migration: adds creator_profiles for studio page.
+    /// V12 state migration: adds USDC-native payment fields.
     ///
     /// Call exactly once immediately after deploying the new WASM:
     ///
@@ -87,7 +88,7 @@ impl Contract {
             purchase_logs: old.purchase_logs,
             next_purchase_id: old.next_purchase_id,
             web4_static_url: old.web4_static_url,
-            creator_profiles: LookupMap::new(StorageKey::CREATOR_PROFILES),
+            creator_profiles: old.creator_profiles,
             events_price_usdc: LookupMap::new(StorageKey::EVENT_PRICE_USDC),
             trial_pool_usdc: 0,
             commission_pool_usdc: 0,
