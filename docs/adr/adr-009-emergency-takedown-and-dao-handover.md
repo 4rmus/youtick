@@ -19,8 +19,8 @@ path, the platform cannot respond to:
 
 Two pre-existing controls were not sufficient on their own:
 
-1. **`ban_event`** is owner-only but **timelocked 24 hours**. For illegal
-   content, 24 hours is operationally and legally unacceptable.
+1. **`ban_event`** is owner-only and intended for non-emergency moderation.
+   It is too broad for illegal-content emergency response by itself.
 2. **Crust pin removal** is off-chain and per-operator; it does not produce a
    verifiable on-chain audit trail.
 
@@ -51,7 +51,7 @@ following properties:
 
 | Track | Method | Latency | Use case |
 |---|---|---|---|
-| Planned | `ban_event` (timelocked) | 24h | Copyright disputes, ToS violations resolvable on a normal review schedule. |
+| Planned | `ban_event` | Reviewed owner action | Copyright disputes, ToS violations resolvable on a normal review schedule. |
 | Emergency | `takedown_event` (no timelock) | Immediate | Illegal content, imminent harm. |
 
 The two paths share state but produce different NEP-297 events, so external
@@ -79,8 +79,8 @@ end of Q4 2026 the contract `owner_id` will transfer to either a multisig
 - **Q4 2026:** propose `propose_owner` to the new governance address; accept
   ownership from the new address; update runbooks and ADRs.
 - **Post-handover:** `takedown_event` remains technically owner-only, but
-  "owner" then means the multisig/DAO. The 24h timelock on `ban_event` may be
-  reduced once a quorum-based approval already provides accountability.
+  "owner" then means the multisig/DAO. Planned moderation can then move to the
+  governance process chosen for the owner account.
 
 This is recorded as ADR-009 to make the deadline a public commitment.
 
@@ -135,9 +135,8 @@ report is a human-readable view of that stream.
 
 ## Open Questions
 
-- After Q4 2026 handover, should `takedown_event` keep its no-timelock property
-  (now under quorum) or move to a short-window timelock (e.g. 1 hour) with
-  emergency override?
+- After Q4 2026 handover, should `takedown_event` keep immediate execution
+  under quorum or move to a short-window delay with emergency override?
 - Should an external escrow or transparency watcher be required to co-sign
   takedowns even before the DAO handover?
 - Legal: in which jurisdictions is contract-side takedown sufficient vs. where

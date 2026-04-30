@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const viewContractMock = vi.fn();
 
@@ -13,6 +13,10 @@ describe('registry client', () => {
         viewContractMock.mockReset();
         process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
         process.env.NEXT_PUBLIC_REGISTRY_CONTRACT_ID = 'registry.testnet';
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
     it('returns only active decryption operator endpoints', async () => {
@@ -44,5 +48,40 @@ describe('registry client', () => {
         const endpoints = await listActiveDecryptionOperatorEndpoints();
 
         expect(endpoints).toEqual(['https://kms-a.example.workers.dev']);
+    });
+
+    it('fails closed when registry operators cannot be fetched', async () => {
+        viewContractMock.mockRejectedValue(new Error('rpc unavailable'));
+
+        const { listActiveDecryptionOperators } = await import('@/lib/registry');
+
+        await expect(listActiveDecryptionOperators()).rejects.toThrow(
+            'Failed to fetch active KMS operators from the registry',
+        );
+    });
+
+    it('does not reuse stale operator cache after registry refresh fails', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        viewContractMock.mockResolvedValueOnce([
+            {
+                account_id: 'operator-a.testnet',
+                endpoint: 'https://kms-a.example.workers.dev',
+                transport_public_key: 'key-a',
+                kind: 'DecryptionOperator',
+                active: true,
+            },
+        ]);
+
+        const { listActiveDecryptionOperators } = await import('@/lib/registry');
+
+        await expect(listActiveDecryptionOperators()).resolves.toHaveLength(1);
+
+        vi.setSystemTime(61_001);
+        viewContractMock.mockRejectedValueOnce(new Error('rpc unavailable'));
+
+        await expect(listActiveDecryptionOperators()).rejects.toThrow(
+            'Failed to fetch active KMS operators from the registry',
+        );
     });
 });

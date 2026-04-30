@@ -25,7 +25,7 @@ let cachedThreshold: ThresholdConfig | null = null;
 let pendingThresholdPromise: Promise<ThresholdConfig | null> | null = null;
 
 export async function listActiveDecryptionOperators(): Promise<RegistryOperatorRecord[]> {
-    if (Date.now() - cachedAt < REGISTRY_CACHE_MS) {
+    if (cachedAt > 0 && Date.now() - cachedAt < REGISTRY_CACHE_MS) {
         return cachedOperators;
     }
 
@@ -47,8 +47,10 @@ export async function listActiveDecryptionOperators(): Promise<RegistryOperatorR
             cachedAt = Date.now();
             return cachedOperators;
         } catch (error) {
-            console.warn('[REGISTRY] Failed to fetch operators, using cached data:', error);
-            return cachedOperators;
+            cachedAt = 0;
+            throw new Error('Failed to fetch active KMS operators from the registry', {
+                cause: error,
+            });
         } finally {
             pendingOperatorsPromise = null;
         }
@@ -69,7 +71,7 @@ export async function listActiveDecryptionOperatorEndpoints(): Promise<string[]>
 }
 
 export async function getThresholdConfig(): Promise<ThresholdConfig | null> {
-    if (cachedThreshold && Date.now() - thresholdCachedAt < REGISTRY_CACHE_MS) {
+    if (cachedThreshold && thresholdCachedAt > 0 && Date.now() - thresholdCachedAt < REGISTRY_CACHE_MS) {
         return cachedThreshold;
     }
 
@@ -90,8 +92,10 @@ export async function getThresholdConfig(): Promise<ThresholdConfig | null> {
             thresholdCachedAt = Date.now();
             return cachedThreshold;
         } catch (error) {
-            console.warn('[REGISTRY] Failed to fetch threshold config, using cached data:', error);
-            return cachedThreshold;
+            thresholdCachedAt = 0;
+            throw new Error('Failed to fetch KMS threshold config from the registry', {
+                cause: error,
+            });
         } finally {
             pendingThresholdPromise = null;
         }

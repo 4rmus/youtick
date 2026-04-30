@@ -37,6 +37,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
     { href: '#roi-calculator', label: t.landing.nav_extra?.calculator || 'Calculator' },
     { href: '#use-cases', label: t.landing.nav?.use_cases || 'Use cases' },
     { href: '#trust', label: t.landing.nav?.comparison || 'Trust' },
+    { href: '#roadmap', label: t.landing.nav?.roadmap || 'Roadmap' },
   ];
 
   // Guest / Marketing View

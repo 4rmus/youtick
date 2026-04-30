@@ -9,10 +9,9 @@
 
 ## Admin Rule
 
-V1 public alpha is owner-controlled. Use owner-only direct admin calls only for
-the documented deploy tasks and keep owner keys in the intended secure signing
-path. Timelock governance is intentionally deferred for V1; do not market this
-release as DAO-governed or fully production-ready.
+V1 is a public alpha. The NFT market contract remains owner-only for V1 admin
+actions. The registry and access contracts use timelock for admin changes. Do
+not market this release as DAO-governed or fully production-ready.
 
 `reset_v11`, `wipe_and_reinit`, `test_insert` and similar destructive/debug
 paths must not be available in normal production builds. Build `nft-ticket`
@@ -26,6 +25,7 @@ with migration features only when the deploy explicitly requires a migration.
 - [ ] `docs/operations/known-issues.md` reflects the current deploy state.
 - [ ] Real KMS operator config is stored outside git.
 - [ ] `.env.local` and production env do not contain stale `NEXT_PUBLIC_KMS_URL`.
+- [ ] Web KMS discovery is registry-only and fail-closed if registry reads fail.
 - [ ] `ONBOARDING_KEY` or `ONBOARDING_KEYS` is server-only.
 - [ ] Trial/free sponsor flow is funded or disabled if `trial_pool` is zero.
 - [ ] A short test video is ready for upload / purchase / watch smoke test.
@@ -56,9 +56,10 @@ Do not deploy if these checks fail.
 (cd apps/web && npm run build)
 ```
 
-Only build `nft-ticket` with `--features migration` when you intentionally need
-the migration-only `reset_v11` path. That path can wipe state and must not be
-part of normal production deploys.
+Only build `nft-ticket` with `--features migration` when a reviewed migration
+explicitly requires the migration-only `reset_v11` path. That path can wipe
+state, has not been run as part of any "mainnet clean" documentation step, and
+must not be part of normal production deploys.
 
 ---
 
@@ -202,9 +203,8 @@ npm run build:web4
 ../../scripts/deploy-web4.sh --set-url
 ```
 
-`web4_set_static_url` is timelocked by the contract. The deploy script must
-propose the update when timelock is required; it must not assume direct admin
-write access.
+`web4_set_static_url` is an NFT owner-only V1 admin call. Use only the intended
+owner signing path and record the exact CID and transaction hash.
 
 ---
 
@@ -238,9 +238,10 @@ After deploy:
 Web and KMS workers can usually roll back through hosting or Wrangler deployment
 history.
 
-Contracts do not have a simple rollback path. If contract state is affected,
-pause through the timelock path where possible, publish an incident note and fix
-forward with a reviewed migration.
+Contracts do not have a simple rollback path. If registry or access state is
+affected, pause through the timelock path where possible. If NFT state is
+affected, use the owner-only V1 admin path only after review. Publish an
+incident note and fix forward with a reviewed migration.
 
 Do not call `reset_v11` as a rollback tool. It is a destructive migration-only
 operation.

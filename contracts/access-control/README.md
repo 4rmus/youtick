@@ -1,6 +1,6 @@
 # YouTick Access Control Contract
 
-Owner-managed session grant and scope policy contract for the zero-trust target architecture.
+Timelock-managed session grant and scope policy contract for the zero-trust target architecture.
 
 ## Core responsibilities
 
@@ -9,6 +9,7 @@ Owner-managed session grant and scope policy contract for the zero-trust target 
 - store scope policy
 - expose grant verification helpers for relayers and decryption operators
 - keep market and registry contract references
+- route admin changes through `propose_action` and `execute_action`
 
 ## Main methods
 
@@ -20,4 +21,6 @@ Owner-managed session grant and scope policy contract for the zero-trust target 
 - `set_registry_contract`
 - `pause_scope`
 - `unpause_scope`
+- `propose_action`
+- `execute_action`
 - `set_owner`

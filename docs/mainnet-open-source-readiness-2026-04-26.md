@@ -78,18 +78,18 @@ Current gap:
 
 The contract direction is correct:
 
-- Sensitive admin actions are forced through `propose_action` and
-  `execute_action`.
-- Direct admin wrappers intentionally panic.
+- Registry and access sensitive admin actions are forced through
+  `propose_action` and `execute_action`.
+- NFT market V1 admin actions remain owner-only for public alpha.
+- Registry/access direct admin wrappers intentionally panic.
 - `operator-registry` validates threshold config against actual registered
   operators.
 - `nft-ticket` migration reset is gated behind test/migration builds.
 
 Current gap:
 
-- The main runbooks and current mainnet helper scripts now use timelock-only
-  admin flow. Keep checking new deploy helpers for direct admin calls before
-  release.
+- Keep new deploy helpers aligned with the split posture: NFT owner-only V1
+  admin, registry/access timelock admin.
 
 ### Web App
 
@@ -145,8 +145,8 @@ documents should be read with the labels below:
 |---|---|---|
 | `docs/mainnet-open-source-readiness-2026-04-26.md` | current | Use for launch decision. |
 | `docs/operations/known-issues.md` | current risk log | Keep updated after deployment. |
-| `docs/operations/mainnet-deploy-runbook.md` | current runbook | Must use timelock-only admin flow. |
-| `docs/release-runbook.md` | current short release checklist | No direct admin calls. |
+| `docs/operations/mainnet-deploy-runbook.md` | current runbook | NFT owner-only V1 admin; registry/access timelock. |
+| `docs/release-runbook.md` | current short release checklist | Keep admin posture split by contract. |
 | historical analysis and planning reports | removed | Do not treat old analysis drafts as live operational truth. |
 
 Fixed consistency rules:
@@ -156,9 +156,10 @@ Fixed consistency rules:
   redundancy and governance are no longer owner/operator centralized.
 - “KMS active” now means registry has five active operators and all five worker
   health checks are green. End-to-end playback still needs its own smoke test.
-- Do not call direct admin methods in runbooks; use timelock proposals and
-  executions.
+- Keep NFT owner-only V1 admin separate from registry/access timelock admin.
 - Keep “resolved in source” separate from “deployed and verified on mainnet”.
+- Do not describe any clean mainnet reset as complete unless the reset
+  transaction was explicitly executed and recorded.
 - Use testnet/local defaults for contributor onboarding where possible; use
   mainnet only for deliberate public-alpha validation.
 

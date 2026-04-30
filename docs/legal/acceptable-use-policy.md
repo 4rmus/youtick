@@ -38,7 +38,7 @@ Platform iki ayrı kontrat fonksiyonu kullanır:
 | Yol | Fonksiyon | Gecikme | Kullanım |
 |---|---|---|---|
 | Acil | `takedown_event` | Anında | §1.1, §1.2, §1.3, §1.4 — yasadışı içerik |
-| Planlı | `ban_event` | 24 saat timelock | §1.6 telif, ToS ihlali |
+| Planlı | `ban_event` | İncelenmiş owner işlemi | §1.6 telif, ToS ihlali |
 
 Her iki yol da kontrat sahibi (owner) tarafından çağrılır. Acil yol
 zincirde (`event_takedown` NEP-297 logu) izlenebilir, suistimal kamuya açıktır.

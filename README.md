@@ -71,7 +71,9 @@ NEXT_PUBLIC_APP_URL=https://youtick.net
 NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
 ```
 
-KMS endpointleri env ile verilmez. Web app aktif operatorleri registry kontratindan okur.
+KMS endpointleri env ile verilmez ve gercek operator config'i git'e konmaz.
+Web app aktif operatorleri registry kontratindan okur; registry okunamazsa KMS
+akisi fail-closed davranir, sabit veya eski endpoint'e dusmez.
 Cross-chain checkout varsayilan olarak kapalidir; `false`, bos veya tanimsiz env bu yolu acmaz.
 
 ---

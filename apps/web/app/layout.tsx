@@ -13,7 +13,7 @@ import { OnboardingKeyInit } from "@/components/OnboardingKeyInit";
 
 export const metadata: Metadata = {
     title: {
-        default: 'YouTick - Digital Ticketed Releases for Film and Live Music',
+        default: 'YouTick - Digital Ticketed Releases for Film and Music',
         template: '%s | YouTick',
     },
     description: 'YouTick helps filmmakers and musicians release films, concert recordings and special screenings directly with digital tickets, protected access and 98% creator revenue.',
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
         'digital tickets',
         'serverless edge media',
         'independent cinema',
-        'live music release',
+        'music release',
         'video on demand',
         'dApp',
         'ticketed streaming',
@@ -54,20 +54,20 @@ export const metadata: Metadata = {
         alternateLocale: 'tr_TR',
         url: 'https://youtick.net',
         siteName: 'YouTick',
-        title: 'YouTick - Digital Ticketed Releases for Film and Live Music',
+        title: 'YouTick - Digital Ticketed Releases for Film and Music',
         description: 'Filmmakers and musicians release directly with digital tickets, protected access and 98% creator revenue.',
         images: [
             {
                 url: 'https://youtick.net/og-image.png',
                 width: 1200,
                 height: 630,
-                alt: 'YouTick - Digital Ticketed Releases for Film and Live Music',
+                alt: 'YouTick - Digital Ticketed Releases for Film and Music',
             },
         ],
     },
     twitter: {
         card: 'summary_large_image',
-        title: 'YouTick - Digital Ticketed Releases for Film and Live Music',
+        title: 'YouTick - Digital Ticketed Releases for Film and Music',
         description: 'Creators release films and concert recordings directly with digital tickets.',
         images: ['https://youtick.net/og-image.png'],
         creator: '@youtick_net',

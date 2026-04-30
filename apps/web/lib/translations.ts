@@ -12,7 +12,7 @@ export const translations = {
         },
         hero: {
             title: "youtick",
-            subtitle: "Digital Ticketed Releases for Film and Live Music",
+            subtitle: "Digital Ticketed Releases for Film and Music",
             tagline: "SERVERLESS EDGE ACCESS FOR CULTURAL WORKS",
             cta_watch: "Start Watching",
             cta_upload: "Publish Work",
@@ -29,7 +29,7 @@ export const translations = {
                 { title: "Digital Tickets", desc: "Verifiable access that viewers can keep and use. Fans own their access." },
                 { title: "Protected Access", desc: "Paid releases are encrypted before delivery. Only verified ticket holders can start playback." },
                 { title: "Serverless Edge Delivery", desc: "YouTick avoids a traditional media server by combining edge workers, NEAR, IPFS and Crust." },
-                { title: "Creator Control", desc: "Set prices, royalties, and access rules directly on-chain. You own the platform." },
+                { title: "Creator Control", desc: "Set the price, access model, and release details for each work." },
                 { title: "Persistent Storage", desc: "Your encrypted content is pinned on IPFS through Crust with gateway failover." },
                 { title: "98% Revenue", desc: "Keep almost everything you earn. We only take a minimal 2% platform fee." },
             ]
@@ -38,7 +38,7 @@ export const translations = {
             title: "Use Cases",
             subtitle: "Built for cultural releases with a clear audience.",
             items: [
-                { title: "Concert Recordings", desc: "Artists release exclusive concert recordings as limited-edition NFT tickets." },
+                { title: "Concert Recordings", desc: "Musicians release concert films, sessions, and special performances with digital tickets." },
                 { title: "Independent Cinema", desc: "Filmmakers distribute movies directly to audiences without studio intermediaries." },
                 { title: "Festival Windows", desc: "Festivals open limited online selections for guests, juries and remote viewers." },
                 { title: "Special Cuts", desc: "Directors, musicians and venues share rehearsals, commentary tracks and supporter-only extras." },
@@ -318,12 +318,14 @@ export const translations = {
         },
         roadmap: {
             title: "Roadmap",
-            subtitle: "Building the future of premium video, one milestone at a time.",
+            subtitle: "A shorter path: keep the current release flow stable, make mobile use smoother, then move platform authority to stronger governance.",
+            completed_label: "Completed",
+            next_label: "Next",
+            later_label: "Later",
             phases: [
-                { year: "2026 Q1", title: "Mainnet Live", desc: "NEAR Mainnet is live. Encrypted video, NFT tickets, gift links, and trial onboarding are all running in production." },
-                { year: "2026 Q2", title: "Fast Auth", desc: "Seamless email/social login integration. Auto-wallet creation for zero-friction onboarding." },
-                { year: "2026 Q3", title: "Live Broadcast", desc: "Distributed live streaming with real-time token gating and chat." },
-                { year: "2026 Q4", title: "DAO Governance", desc: "Community-driven platform decisions, treasury management, and protocol upgrades." },
+                { year: "2026 Q1", title: "Mainnet Live", desc: "NEAR Mainnet is live for public alpha. Encrypted media, NFT tickets, gift links, and trial onboarding are being hardened with live smoke tests." },
+                { year: "2026 Q2", title: "Mobile Version + Fast Auth", desc: "Mobile-first viewing and publishing flows, with smoother email/social onboarding for new viewers." },
+                { year: "2026 Q4", title: "Governance Handover", desc: "Move owner-held platform authority toward multisig or DAO governance after public-alpha hardening." },
             ]
         },
         landing: {
@@ -430,7 +432,7 @@ export const translations = {
             },
             footer: {
                 copyright: "© 2026 youtick. All rights reserved.",
-                description: "Digital ticketed releases for independent cinema and live music.",
+                description: "Digital ticketed releases for independent cinema and music.",
                 built_on_prefix: "Built on",
                 built_on_tech: "NEAR Protocol • KMS • Crust Network",
                 privacy: "Privacy",
@@ -561,25 +563,25 @@ export const translations = {
                 login: "Login"
             },
             hero_section: {
-                badge: "For independent cinema and live music",
+                badge: "For independent cinema and music",
                 title: "Release your work directly.",
                 subtitle: "Publish films, concert recordings and special screenings with a digital ticket.",
-                description: "Protect access, set the price and sell directly to viewers, listeners and fans. You keep 98% of every ticket sale.",
+                description: "Protect access, set the price and sell directly to viewers and fans. You keep 98% of every ticket sale.",
                 cta_primary: "Publish your work",
                 cta_secondary: "Discover releases",
                 trial_hint: "Viewers can start with free releases, gift tickets or a simple secure account.",
                 card_badge: "Digital ticket",
-                card_title: "Film premiere or concert release",
-                card_desc: "A shareable release page for your screening, recording or special cut; ticketed and under your control.",
+                card_title: "Film screening or music release",
+                card_desc: "A shareable page for your screening, recording, or special cut; ticketed and under your control.",
                 stat_revenue: "98% creator revenue",
                 stat_access: "Protected access for the audience"
             },
             audience_section: {
                 eyebrow: "Built for cultural work",
-                title: "For films that need a screen and performances that deserve a second life.",
-                description: "YouTick speaks to two clear worlds: independent cinema teams releasing a screening, and musicians turning live moments into ticketed digital experiences.",
+                title: "For films, concert recordings, and special music moments.",
+                description: "YouTick focuses on two clear worlds: film teams opening a digital screening, and musicians releasing recordings or sessions with tickets.",
                 musicians_title: "Musicians",
-                musicians_desc: "Turn concert recordings, acoustic sessions, rehearsals, and special performances into paid releases for fans who could not be there.",
+                musicians_desc: "Turn concert recordings, acoustic sessions, rehearsals, and special performances into paid releases for fans.",
                 directors_title: "Filmmakers",
                 directors_desc: "Release short films, documentaries, festival cuts, and independent features without waiting for a distributor.",
                 event_teams_title: "Festivals and venues",
@@ -596,12 +598,12 @@ export const translations = {
                 audience_title: "The audience stays distant",
                 audience_desc: "Many channels hide the buyer relationship, so filmmakers and musicians cannot easily build a direct supporter base.",
                 archive_title: "Valuable recordings stay unused",
-                archive_desc: "Live shows, festival talks, director cuts, and special sessions often sit in drives instead of becoming new revenue."
+                archive_desc: "Concert recordings, festival talks, director cuts, and special sessions often sit in drives instead of becoming new revenue."
             },
             value_proposition_section: {
                 eyebrow: "The YouTick model",
-                title: "Turn a film or performance into a direct digital screening.",
-                description: "Upload the work, set the ticket price, choose the release window, and share it with your audience. Viewers buy a digital ticket and watch through simple secure access.",
+                title: "Turn film or music into a direct digital release.",
+                description: "Upload the work, set the ticket price, choose the release window, and share it with your audience. Viewers buy a digital ticket and watch through secure access.",
                 revenue_title: "Revenue",
                 revenue_text: "You keep 98% of each ticket sale.",
                 revenue_note: "The platform fee is simple and visible.",
@@ -632,11 +634,11 @@ export const translations = {
                 loss_desc: "Money that can stay closer to the filmmaker, musician, or event team."
             },
             use_cases_section: {
-                eyebrow: "Cinema and music use cases",
-                title: "Release the moments that usually stay locked away.",
-                description: "A premiere, a concert film, a festival selection, or a studio session can all become a ticketed digital release.",
+                eyebrow: "Cinema and music releases",
+                title: "Make finished work easier to sell.",
+                description: "A film screening, concert recording, festival selection, or studio session can become a ticketed digital release.",
                 concert_title: "Concert film",
-                concert_desc: "Sell the full show, backstage cut, acoustic session, or tour recording after the night is over.",
+                concert_desc: "Sell the full show, backstage cut, acoustic session, or tour recording as a focused music release.",
                 film_title: "Independent screening",
                 film_desc: "Open a short film, documentary, or feature to your own audience with a clear ticket price.",
                 festival_title: "Festival window",
@@ -648,8 +650,8 @@ export const translations = {
             },
             how_it_works_section: {
                 eyebrow: "Release flow",
-                title: "From final cut to ticketed screening in three steps.",
-                description: "The product should feel like publishing a real cultural release: add the work, define the ticket, then invite the audience.",
+                title: "From final file to ticketed release in three steps.",
+                description: "Add the work, define the ticket, then invite the audience.",
                 step1_title: "Upload your work",
                 step1_desc: "Add the film file, concert recording, poster image, synopsis, and release details.",
                 step2_title: "Set ticket and window",
@@ -669,8 +671,8 @@ export const translations = {
             },
             competitive_advantages_section: {
                 eyebrow: "Trust and infrastructure",
-                title: "Protected access without a heavy technical experience.",
-                description: "The audience should not need technical knowledge. They buy a ticket, understand what they can watch, and press play.",
+                title: "Clear ticketed access for film and music.",
+                description: "The audience does not need technical knowledge. They buy a ticket, understand what they can watch, and press play.",
                 ticket_title: "Only ticket holders watch",
                 ticket_desc: "A film, concert recording, or private screening stays available only to the right audience.",
                 keys_title: "Keys are not held in one place",
@@ -678,7 +680,7 @@ export const translations = {
                 storage_title: "Encrypted media delivery",
                 storage_desc: "Release files are prepared for IPFS/Crust delivery instead of relying on one fragile media server.",
                 records_title: "Serverless edge layer",
-                records_desc: "Cloudflare Workers run KMS operator and proxy duties as serverless edge components in the public-alpha architecture.",
+                records_desc: "Cloudflare Workers support the key and proxy flows that keep playback lightweight for viewers.",
                 near_label: "NEAR",
                 ipfs_label: "IPFS",
                 crust_label: "Crust",
@@ -899,7 +901,7 @@ export const translations = {
         },
         hero: {
             title: "youtick",
-            subtitle: "Sinema ve Canlı Müzik İçin Dijital Biletli Yayın",
+            subtitle: "Sinema ve Müzik İçin Dijital Biletli Yayın",
             tagline: "KÜLTÜR ESERLERİ İÇİN SERVERLESS EDGE ERİŞİM",
             cta_watch: "İzlemeye Başla",
             cta_upload: "Eserini Yayına Al",
@@ -916,7 +918,7 @@ export const translations = {
                 { title: "Dijital Biletler", desc: "İzleyicinin saklayabildiği ve kullanabildiği doğrulanabilir erişim hakkı." },
                 { title: "Korunan Erişim", desc: "Ücretli yayınlar teslimattan önce şifrelenir. Yalnızca doğrulanmış bilet sahipleri oynatmayı başlatabilir." },
                 { title: "Serverless Edge Teslimat", desc: "YouTick geleneksel medya sunucusu yerine edge worker'lar, NEAR, IPFS ve Crust bileşenlerini kullanır." },
-                { title: "Üretici Kontrolü", desc: "Fiyatları, telif haklarını ve erişim kurallarını doğrudan zincir üzerinde belirleyin. Platformun sahibi sizsiniz." },
+                { title: "Üretici Kontrolü", desc: "Her eser için fiyatı, erişim modelini ve yayın detaylarını sen belirlersin." },
                 { title: "Süreklilik Odaklı Depolama", desc: "Şifreli içerik IPFS üzerinde Crust ile pinlenir ve gateway yedekleriyle okunur." },
                 { title: "%98 Gelir", desc: "Kazandığınızın neredeyse tamamı sizde kalır. Biz sadece %2 platform ücreti alıyoruz." },
             ]
@@ -925,7 +927,7 @@ export const translations = {
             title: "Kullanım Alanları",
             subtitle: "Net izleyici kitlesi olan kültür yayınları için tasarlandı.",
             items: [
-                { title: "Konser Kayıtları", desc: "Sanatçılar özel konser kayıtlarını sınırlı sayıda NFT bileti olarak yayınlar." },
+                { title: "Konser Kayıtları", desc: "Müzisyenler konser filmlerini, oturumlarını ve özel performanslarını dijital biletle yayınlar." },
                 { title: "Bağımsız Sinema", desc: "Film yapımcıları filmlerini stüdyo aracıları olmadan doğrudan izleyicilere dağıtır." },
                 { title: "Festival Pencereleri", desc: "Festivaller konuk, jüri ve uzaktaki izleyiciler için sınırlı online seçkiler açar." },
                 { title: "Özel Kesitler", desc: "Yönetmenler, müzisyenler ve mekanlar prova, yorumlu gösterim ve destekçi içerikleri paylaşır." },
@@ -1205,12 +1207,14 @@ export const translations = {
         },
         roadmap: {
             title: "Yol Haritası",
-            subtitle: "Premium videonun geleceğini, adım adım inşa ediyoruz.",
+            subtitle: "Daha kısa yol: mevcut yayın akışını sağlam tut, mobil kullanımı kolaylaştır, sonra platform yetkilerini daha güçlü yönetişime taşı.",
+            completed_label: "Tamamlandı",
+            next_label: "Sıradaki",
+            later_label: "Sonraki",
             phases: [
-                { year: "2026 Q1", title: "Mainnet Yayında", desc: "NEAR Mainnet aktif. Şifreli video, NFT bilet, hediye linkleri ve trial hesap açma — hepsi canlıda çalışıyor." },
-                { year: "2026 Q2", title: "Fast Auth (Hızlı Giriş)", desc: "Sorunsuz email/sosyal giriş entegrasyonu. Sıfır sürtünme için otomatik cüzdan oluşturma." },
-                { year: "2026 Q3", title: "Canlı Yayın", desc: "Gerçek zamanlı token kontrolü ve sohbet ile dağıtık canlı yayın." },
-                { year: "2026 Q4", title: "DAO Yönetişimi", desc: "Topluluk odaklı platform kararları, hazine yönetimi ve protokol güncellemeleri." },
+                { year: "2026 Q1", title: "Mainnet Yayında", desc: "NEAR Mainnet public alpha için aktif. Şifreli medya, NFT bilet, hediye linkleri ve trial hesap akışı canlı testlerle sertleştiriliyor." },
+                { year: "2026 Q2", title: "Mobil Versiyon + Hızlı Giriş", desc: "Mobil öncelikli izleme ve yayın akışı; yeni izleyiciler için daha sade e-posta/sosyal giriş." },
+                { year: "2026 Q4", title: "Yönetişim Devri", desc: "Public alpha sertleştirmesi sonrası platform yetkilerini multisig veya DAO yönetişimine taşıma." },
             ]
         },
         landing: {
@@ -1317,7 +1321,7 @@ export const translations = {
             },
             footer: {
                 copyright: "© 2026 youtick. Tüm hakları saklıdır.",
-                description: "Bağımsız sinema ve canlı müzik için dijital biletli yayın.",
+                description: "Bağımsız sinema ve müzik için dijital biletli yayın.",
                 built_on_prefix: "Altyapısı:",
                 built_on_tech: "NEAR Protocol • KMS • Crust Network",
                 privacy: "Gizlilik",
@@ -1448,25 +1452,25 @@ export const translations = {
                 login: "Giriş"
             },
             hero_section: {
-                badge: "Bağımsız sinema ve canlı müzik için",
+                badge: "Bağımsız sinema ve müzik için",
                 title: "Eserini doğrudan yayına al.",
                 subtitle: "Filmini, konser kaydını veya özel gösterimini dijital biletle yayınla.",
-                description: "Erişimi koru, fiyatı belirle ve izleyiciye, dinleyiciye, hayranına doğrudan sat. Her bilet satışının %98'i sana kalsın.",
+                description: "Erişimi koru, fiyatı belirle ve izleyiciye, hayranına doğrudan sat. Her bilet satışının %98'i sana kalsın.",
                 cta_primary: "Eserini Yayına Al",
                 cta_secondary: "Yayınlanan Eserleri Keşfet",
                 trial_hint: "İzleyiciler ücretsiz yayın, hediye bilet veya sade bir hesapla hızlıca başlayabilir.",
                 card_badge: "Dijital bilet",
-                card_title: "Film galası veya konser yayını",
-                card_desc: "Gösterim, konser kaydı veya özel kesit için paylaşılabilir, biletli ve kontrolü sende olan yayın sayfası.",
+                card_title: "Film gösterimi veya müzik yayını",
+                card_desc: "Gösterim, kayıt veya özel kesit için paylaşılabilir, biletli ve kontrolü sende olan yayın sayfası.",
                 stat_revenue: "%98 yaratıcı geliri",
                 stat_access: "İzleyici için korunan erişim"
             },
             audience_section: {
                 eyebrow: "Kültür üretimi için tasarlandı",
-                title: "Perde arayan filmler ve ikinci hayat isteyen performanslar için.",
-                description: "YouTick iki ana dünyaya net konuşur: bağımsız sinema ekipleri için dijital gösterim, müzisyenler için biletli konser kaydı yayını.",
+                title: "Filmler, konser kayıtları ve özel müzik anları için.",
+                description: "YouTick iki ana dünyaya net konuşur: sinema ekipleri için dijital gösterim, müzisyenler için biletli kayıt ve özel oturum yayını.",
                 musicians_title: "Müzisyenler",
-                musicians_desc: "Konser kaydını, akustik oturumunu, prova görüntünü veya özel performansını canlıya gelemeyen hayranlara sun.",
+                musicians_desc: "Konser kaydını, akustik oturumunu, prova görüntünü veya özel performansını hayranlarına sun.",
                 directors_title: "Sinema ekipleri",
                 directors_desc: "Kısa film, belgesel, festival kurgusu veya bağımsız uzun metrajını dağıtımcı beklemeden izleyiciye aç.",
                 event_teams_title: "Festivaller ve mekanlar",
@@ -1483,12 +1487,12 @@ export const translations = {
                 audience_title: "İzleyici uzak kalır",
                 audience_desc: "Birçok kanal alıcı ilişkisini saklar; sinemacı ve müzisyen kendi destekçi kitlesini büyütmekte zorlanır.",
                 archive_title: "Değerli kayıtlar kullanılmaz",
-                archive_desc: "Canlı performanslar, festival konuşmaları, yönetmen kurguları ve özel oturumlar çoğu zaman diskte kalır."
+                archive_desc: "Konser kayıtları, festival konuşmaları, yönetmen kurguları ve özel oturumlar çoğu zaman diskte kalır."
             },
             value_proposition_section: {
                 eyebrow: "YouTick modeli",
-                title: "Filmini veya performansını doğrudan dijital gösterime dönüştür.",
-                description: "Eseri yükle, bilet fiyatını belirle, yayın penceresini seç ve izleyicinle paylaş. İzleyici dijital bilet alır ve sade güvenli erişimle izler.",
+                title: "Filmi veya müziği doğrudan dijital yayına dönüştür.",
+                description: "Eseri yükle, bilet fiyatını belirle, yayın penceresini seç ve izleyicinle paylaş. İzleyici dijital bilet alır ve güvenli erişimle izler.",
                 revenue_title: "Gelir",
                 revenue_text: "Her bilet satışının %98'i sana kalır.",
                 revenue_note: "Platform ücreti basit ve görünür.",
@@ -1519,11 +1523,11 @@ export const translations = {
                 loss_desc: "Film yapımcısının, müzisyenin veya etkinlik ekibinin cebinde kalabilecek para."
             },
             use_cases_section: {
-                eyebrow: "Sinema ve müzik senaryoları",
-                title: "Normalde arşivde kalan anları yayına dönüştür.",
-                description: "Bir gala, konser filmi, festival seçkisi veya stüdyo oturumu biletli dijital yayın olabilir.",
+                eyebrow: "Sinema ve müzik yayınları",
+                title: "Bitmiş işi satmayı kolaylaştır.",
+                description: "Film gösterimi, konser kaydı, festival seçkisi veya stüdyo oturumu biletli dijital yayına dönüşebilir.",
                 concert_title: "Konser filmi",
-                concert_desc: "Tam konseri, sahne arkası kesiti, akustik oturumu veya turne kaydını gösteri bittikten sonra sat.",
+                concert_desc: "Tam konseri, sahne arkası kesiti, akustik oturumu veya turne kaydını odaklı bir müzik yayını olarak sat.",
                 film_title: "Bağımsız gösterim",
                 film_desc: "Kısa film, belgesel veya uzun metrajını net bir bilet fiyatıyla kendi izleyicine aç.",
                 festival_title: "Festival penceresi",
@@ -1535,8 +1539,8 @@ export const translations = {
             },
             how_it_works_section: {
                 eyebrow: "Yayın akışı",
-                title: "Final kurgudan biletli gösterime üç adım.",
-                description: "Ürün, gerçek bir kültür yayını hazırlıyormuş gibi hissettirmeli: eseri ekle, bileti tanımla, izleyiciyi davet et.",
+                title: "Final dosyadan biletli yayına üç adım.",
+                description: "Eseri ekle, bileti tanımla, izleyiciyi davet et.",
                 step1_title: "Eserini yükle",
                 step1_desc: "Film dosyasını, konser kaydını, afiş görselini, açıklamayı ve yayın detaylarını ekle.",
                 step2_title: "Bileti ve pencereyi belirle",
@@ -1556,8 +1560,8 @@ export const translations = {
             },
             competitive_advantages_section: {
                 eyebrow: "Güven ve altyapı",
-                title: "Ağır teknik deneyim olmadan korunan erişim.",
-                description: "İzleyicinin teknik bilgiye ihtiyacı olmamalı. Biletini alır, neyi izleyebileceğini anlar ve oynat düğmesine basar.",
+                title: "Sinema ve müzik için net biletli erişim.",
+                description: "İzleyicinin teknik bilgiye ihtiyacı yok. Biletini alır, neyi izleyebileceğini anlar ve oynat düğmesine basar.",
                 ticket_title: "Sadece bilet sahipleri izler",
                 ticket_desc: "Film, konser kaydı veya özel gösterim yalnızca doğru izleyiciye açık kalır.",
                 keys_title: "Anahtar tek elde tutulmaz",
@@ -1565,7 +1569,7 @@ export const translations = {
                 storage_title: "Şifreli medya teslimatı",
                 storage_desc: "Yayın dosyaları tek bir kırılgan medya sunucusu yerine IPFS/Crust teslimatına hazırlanır.",
                 records_title: "Serverless edge katmanı",
-                records_desc: "Cloudflare Workers, public alpha mimaride KMS operatörü ve proxy görevlerini serverless edge bileşenleri olarak çalıştırır.",
+                records_desc: "Cloudflare Workers, izleyici için hafif kalan anahtar ve proxy akışlarını destekler.",
                 near_label: "NEAR",
                 ipfs_label: "IPFS",
                 crust_label: "Crust",

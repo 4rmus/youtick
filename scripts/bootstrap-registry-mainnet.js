@@ -10,6 +10,7 @@ const OPERATOR_CONFIG_PATH = process.env.KMS_OPERATORS_PATH || path.join(
     __dirname,
     'config/mainnet-kms-operators.json',
 );
+const OPERATOR_CONFIG_JSON = process.env.KMS_OPERATORS_CONFIG;
 
 async function loadNearApiJs() {
     const moduleUrl = pathToFileURL(
@@ -39,17 +40,44 @@ function ensureFileExists(filePath, label) {
     }
 }
 
+function validateConfig(config, source) {
+    if (!Array.isArray(config.decryptionOperators) || config.decryptionOperators.length === 0) {
+        throw new Error('decryptionOperators must contain at least one operator');
+    }
+
+    const endpoints = [
+        ...config.decryptionOperators.map((operator) => operator.endpoint),
+        ...(Array.isArray(config.relayers) ? config.relayers.map((relayer) => relayer.endpoint) : []),
+    ].filter((endpoint) => typeof endpoint === 'string');
+
+    const hasExampleEndpoint = endpoints.some((endpoint) => endpoint.includes('.example.'));
+    if (hasExampleEndpoint && process.env.ALLOW_EXAMPLE_KMS_CONFIG !== 'true') {
+        throw new Error(
+            `${source} contains example KMS endpoints. Provide the real config through KMS_OPERATORS_CONFIG or KMS_OPERATORS_PATH.`,
+        );
+    }
+}
+
 function loadConfig() {
+    if (OPERATOR_CONFIG_JSON && OPERATOR_CONFIG_JSON.trim()) {
+        let config;
+        try {
+            config = JSON.parse(OPERATOR_CONFIG_JSON);
+        } catch (error) {
+            throw new Error(`KMS_OPERATORS_CONFIG must be valid JSON: ${error.message}`);
+        }
+
+        validateConfig(config, 'KMS_OPERATORS_CONFIG');
+        return config;
+    }
+
     ensureFileExists(
         OPERATOR_CONFIG_PATH,
         'Operator config file. Start from scripts/config/mainnet-kms-operators.example.json',
     );
 
     const config = JSON.parse(fs.readFileSync(OPERATOR_CONFIG_PATH, 'utf-8'));
-    if (!Array.isArray(config.decryptionOperators) || config.decryptionOperators.length === 0) {
-        throw new Error('decryptionOperators must contain at least one operator');
-    }
-
+    validateConfig(config, OPERATOR_CONFIG_PATH);
     return config;
 }
 

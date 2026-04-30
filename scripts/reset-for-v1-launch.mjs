@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 const NETWORK_ID = 'mainnet';
 const RPC_URL = process.env.NEAR_RPC_URL || 'https://rpc.mainnet.fastnear.com';
 const CONTRACT_ID = process.env.NFT_CONTRACT_ID || 'youtick.near';
+const CONFIRM_RESET = process.env.CONFIRM_RESET_FOR_V1_LAUNCH;
 const CREDENTIALS_PATH = process.env.NFT_CREDENTIALS_PATH || path.join(
   os.homedir(),
   '.near-credentials',
@@ -15,6 +16,12 @@ const CREDENTIALS_PATH = process.env.NFT_CREDENTIALS_PATH || path.join(
   `${CONTRACT_ID}.json`,
 );
 const WEB4_STATIC_URL = process.env.WEB4_STATIC_URL || null;
+
+if (CONFIRM_RESET !== CONTRACT_ID) {
+  throw new Error(
+    `Refusing to call reset_for_v1_launch on ${CONTRACT_ID}. Set CONFIRM_RESET_FOR_V1_LAUNCH=${CONTRACT_ID} only for an approved migration build.`,
+  );
+}
 
 function ensureFileExists(filePath, label) {
   if (!existsSync(filePath)) {

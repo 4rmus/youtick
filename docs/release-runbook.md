@@ -14,9 +14,12 @@ YouTick may be released as **public alpha** after the open-source checklist is
 complete. It should not be described as production-ready until live KMS
 operator health and encrypted playback are verified on mainnet.
 
-V1 public alpha is owner-controlled. Use owner-only direct admin calls only for
-the documented launch tasks, and keep destructive/debug methods out of normal
-production builds. Timelock governance is a later hardening step, not a V1 gate.
+V1 public alpha separates admin posture by contract:
+
+- `youtick.near` NFT market admin remains owner-only for V1.
+- `access.youtick.near` and `registry.youtick.near` admin changes use timelock.
+
+Keep destructive/debug methods out of normal production builds.
 
 ---
 
@@ -82,6 +85,8 @@ Required result:
 - body has `ok: true`.
 
 If any KMS operator returns `503` or `ok: false`, the KMS layer is not ready.
+Web KMS discovery must be registry-only and fail-closed if registry reads fail;
+do not ship real operator endpoints or fallback KMS URLs in tracked files.
 
 ---
 
@@ -101,7 +106,8 @@ configured threshold.
 
 ## Contract Admin Rule
 
-Do not call direct admin methods such as:
+For `access.youtick.near` and `registry.youtick.near`, do not call direct admin
+methods such as:
 
 - `set_threshold_config`,
 - `upsert_decryption_operator`,
@@ -120,6 +126,9 @@ near call <contract> propose_action '<ACTION_JSON>' --accountId <owner>
 # wait at least 24 hours
 near call <contract> execute_action '{"id": <id>}' --accountId <owner>
 ```
+
+For `youtick.near`, V1 admin remains owner-only. Do not use destructive
+migration/reset paths unless a reviewed migration explicitly requires them.
 
 ---
 
@@ -161,8 +170,9 @@ Web and worker rollback can use the hosting provider or Wrangler deployment
 history.
 
 Contract rollback is not a normal path. If a contract deploy breaks state,
-pause through timelock when possible, publish an incident note and fix forward
-with a reviewed migration.
+pause registry/access through timelock when possible. If NFT state is affected,
+use the owner-only V1 admin path only after review. Publish an incident note
+and fix forward with a reviewed migration.
 
 ---
 

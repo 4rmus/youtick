@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation — Mainnet Clean Runbook
+
+- Clarified public-alpha scope: source-fixed, deployed and mainnet-verified
+  statuses are tracked separately.
+- Clarified admin posture: `youtick.near` NFT admin is owner-only for V1, while
+  `access.youtick.near` and `registry.youtick.near` use timelock admin.
+- Clarified that real KMS operator config must stay outside git and web KMS
+  discovery must fail closed if registry reads fail.
+- Clarified that no clean mainnet reset should be documented as complete unless
+  the reset transaction was explicitly executed and recorded.
+
 ### Mainnet Activation — 25-26 Nisan 2026
 
 #### Registry & KMS Operators
@@ -27,7 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Live State
 - `trial_pool` funded with 1 NEAR for initial user onboarding.
-- `youtick.near` V11 migration executed (`creator_profiles`, `get_creator_stats`).
+- `youtick.near` V11 migration executed (`creator_profiles`, `get_creator_stats`);
+  this is not a clean state reset.
 - `get_events_count` = 0, `nft_total_supply` = 0 (no content uploaded yet).
 
 ### Security — Faz 1 Hardening (2026-04-23)
@@ -37,7 +49,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Deployed
 - **registry.youtick.near** — Operator registry with timelock + pause
 - **access.youtick.near** — Session grant contract with timelock + pause  
-- **youtick.near** — NFT ticket market with timelock + state reset (`reset_v11`)
+- **youtick.near** — NFT ticket market with owner-only V1 admin; destructive
+  reset paths require explicit reviewed execution
 
 #### Operator Registry Setup (Pending — 24h timelock)
 - Proposed 5 decryption operators (kms-a..e.youtick.near) via timelock

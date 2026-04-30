@@ -2,15 +2,19 @@
 
 > Live runtime contract surface for YouTick Zero Trust Architecture
 
-**Status:** Source reference. V1 public alpha is owner-controlled; timelock
-governance is present in the codebase but is not required for V1 launch.
+**Status:** Source reference. V1 public alpha uses owner-only NFT market admin,
+while access-control and operator-registry admin changes use timelock.
 **Contracts:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`
 
 ---
 
 ## How to Read This Page
 
-This page documents the actual deployed contract method surface. The authoritative source is in `contracts/nft-ticket/src/lib.rs`, `contracts/access-control/src/lib.rs`, and `contracts/operator-registry/src/lib.rs`.
+This page documents the source-level contract method surface, not proof that
+each mainnet account is running the same WASM. Treat source-fixed and
+mainnet-verified status separately. The authoritative source is in
+`contracts/nft-ticket/src/lib.rs`, `contracts/access-control/src/lib.rs`, and
+`contracts/operator-registry/src/lib.rs`.
 
 ---
 
@@ -54,8 +58,8 @@ This contract is the market, content, and entitlement source of truth.
 | `admin_remove_events` | Owner-only removal action |
 | `pause` | Owner-only emergency pause |
 | `unpause` | Owner-only unpause |
-| `propose_action` | Timelock proposal surface retained for later governance |
-| `execute_action` | Timelock execution surface retained for later governance |
+| `propose_action` | Timelock proposal surface retained for later governance; not the V1 NFT admin path |
+| `execute_action` | Timelock execution surface retained for later governance; not the V1 NFT admin path |
 | `cancel_action` | Timelock: cancels a proposed action |
 | `propose_owner` | Starts two-step ownership transfer |
 | `accept_ownership` | Proposed owner accepts ownership transfer |
@@ -251,3 +255,6 @@ The following methods are deprecated or removed and should not be used for new i
 Operator rules:
 
 - Operators must not return shares without both `verify_session_grant` and `has_ticket`
+- Web clients discover KMS operators from `registry.youtick.near`; if registry
+  reads fail, upload/playback must fail closed instead of falling back to a
+  tracked endpoint.

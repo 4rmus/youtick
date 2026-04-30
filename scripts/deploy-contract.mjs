@@ -9,7 +9,6 @@ import path from 'node:path';
 import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 
-const RPC_URL = process.env.NEAR_RPC_URL || 'https://rpc.mainnet.near.org';
 const accountId = process.argv[2];
 const wasmPath = process.argv[3];
 
@@ -19,6 +18,10 @@ if (!accountId || !wasmPath) {
 }
 
 const networkId = accountId.endsWith('.near') ? 'mainnet' : 'testnet';
+const defaultRpcUrl = networkId === 'mainnet'
+  ? 'https://rpc.mainnet.near.org'
+  : 'https://rpc.testnet.near.org';
+const RPC_URL = process.env.NEAR_RPC_URL || defaultRpcUrl;
 const credsPath = path.join(os.homedir(), '.near-credentials', networkId, `${accountId}.json`);
 
 const raw = readFileSync(credsPath, 'utf-8');

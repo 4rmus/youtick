@@ -46,23 +46,25 @@ The original implementation used `#[init(ignore_state)]` with a caller-supplied
 `owner_id` argument. Any NEAR account could pass itself as `owner_id` and
 completely wipe all events, NFTs, purchase logs, and pool balances.
 
-**Patch:**
+**Current source behavior:**
 ```rust
-let old_owner: AccountId = env::state_read::<Contract>()
-    .map(|c| c.tokens.owner_id.clone())
-    .unwrap_or_else(|| env::panic_str("No existing state"));
 require!(
-    env::predecessor_account_id() == old_owner,
+    env::predecessor_account_id() == env::current_account_id(),
     "Only owner can reset"
 );
 ```
 
-**Action required:** Redeploy patched WASM to mainnet.
+Normal builds still disable `reset_v11`; migration builds require the contract
+account itself to call the reset.
+
+**Action required:** Redeploy patched WASM to mainnet. Do not run a clean reset
+unless the migration has separate approval and the transaction is recorded.
 
 > **Deploy Runbook (Faz 0):**
 > 1. Build verified: `contracts/nft-ticket/target/near/youtick_nft.wasm`
 > 2. Run: `node scripts/deploy-nft-mainnet.mjs`
-> 3. Verify: `near view youtick.near reset_v11` should return method metadata confirming owner check.
+> 3. Verify deployed behavior against the exact WASM/build artifact before
+>    marking it mainnet-verified.
 
 ### 3. Secret Key Exposure in Working Directory (Cleaned)
 
@@ -160,8 +162,8 @@ headers is expected.
 **Status:** Accepted public-alpha risk
 **Impact:** KMS operators are Cloudflare Worker deployments and share state is
 stored in Cloudflare KV. Crust is the primary pinning provider; the second
-persistence route is not complete. Owner governance and emergency takedown are
-still owner-controlled.
+persistence route is not complete. NFT market admin and emergency takedown are
+still owner-controlled for public alpha.
 
 **Resolution:** Keep public wording as "public alpha" and "hybrid
 decentralized" until independent operator hosting, redundant persistence and
@@ -197,39 +199,26 @@ Revoked or transferred tickets could remain valid in cache for up to a minute.
 Faz 3 — contract-event driven cache invalidation for instant revoke/transfer
 propagation.
 
-### 8. Timelock Bypass on Admin Functions
+### 8. Admin Posture Split by Contract
 
 **Status:** Resolved in source — 2026-04-24  
 **Location:** All three contracts (`nft-ticket`, `access-control`, `operator-registry`)
 
-Earlier hardening work treated direct admin calls as a timelock bypass. For V1,
-the product posture is intentionally owner-controlled public alpha, so direct
-owner-only admin calls are not treated as a launch blocker by themselves.
+Earlier hardening work treated every direct admin call as a timelock bypass.
+For V1 public alpha, the posture is split by contract:
+
+- `youtick.near` NFT market admin remains owner-only.
+- `access.youtick.near` and `registry.youtick.near` admin changes use timelock.
 
 **Resolution:**
-- Covered timelocked admin wrappers can still force `propose_action` →
-  `execute_action` where governance hardening is enabled.
-- `access-control` and `operator-registry` received full timelock + pause
-  protection for all admin functions.
-- 34 new unit tests verify both direct-call panic and timelock success paths.
+- `access-control` and `operator-registry` require `propose_action` →
+  `execute_action` for admin changes.
+- `nft-ticket` owner-only admin is documented as a public-alpha limitation, not
+  a production governance claim.
 
-**Action required:** Redeploy all three contracts to mainnet.
-
-> **Deploy Runbook (Faz 0):**
-> 1. Build verified:
->    - `contracts/access-control/target/near/youtick_access_control.wasm`
->    - `contracts/operator-registry/target/near/youtick_operator_registry.wasm`
-> 2. Deploy access-control:
->    ```bash
->    near deploy --accountId access.youtick.near \
->      --wasmFile contracts/access-control/target/near/youtick_access_control.wasm
->    ```
-> 3. Deploy operator-registry:
->    ```bash
->    near deploy --accountId registry.youtick.near \
->      --wasmFile contracts/operator-registry/target/near/youtick_operator_registry.wasm
->    ```
-> 4. Verify: Direct admin calls should panic with `panic_timelock_required`.
+**Action required:** Keep release notes and runbooks explicit about this split.
+Do not mark governance as mainnet-verified beyond the contracts actually
+deployed and checked.
 
 ### 9. KMS Legacy Signature Replay Attack
 

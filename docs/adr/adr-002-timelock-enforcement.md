@@ -1,4 +1,4 @@
-# ADR-002: Timelock — Enforce Exclusive Use for All Admin Actions
+# ADR-002: Timelock Admin Posture for V1 Public Alpha
 
 ## Status
 Superseded for V1 public alpha
@@ -8,29 +8,34 @@ complexity. Timelock governance remains a later hardening path, not a V1
 requirement.
 
 ## Context
-`nft-ticket` has a 24-hour timelock (`TIMELOCK_DELAY_NS`) and a `TimelockAction` enum, but **every** timelocked action also has a direct owner-only bypass function. This makes the timelock a logging mechanism, not a security control.
+`nft-ticket` has a 24-hour timelock (`TIMELOCK_DELAY_NS`) and a
+`TimelockAction` enum, but V1 public alpha keeps direct owner-only NFT admin
+paths. `access-control` and `operator-registry` use timelock for admin changes.
 
 ## Decision
-For the V1 public alpha, keep direct owner-only admin paths and make the release
-posture explicit. Destructive/debug paths must be disabled outside migration
-builds, and user-facing docs must not claim full timelock governance.
+For the V1 public alpha, keep NFT market admin owner-only and make the release
+posture explicit. Registry/access admin remains timelock-managed.
+Destructive/debug paths must be disabled outside migration builds, and
+user-facing docs must not claim full timelock governance.
 
 ## Consequences
 ### Positive
-- Attacker who compromises a single signer cannot instantly drain funds or censor content.
-- Users have 24h to review on-chain proposals and exit if malicious.
+- Registry/access changes remain delayed and reviewable.
+- The NFT admin limitation is explicit instead of hidden behind governance
+  wording.
 
 ### Negative
-- Genuine emergencies (e.g., active exploit) cannot be stopped instantly.
-- Mitigation: keep `pause_scope` in `access-control` as a fast emergency brake, but require multi-sig.
+- NFT owner key compromise remains a centralization risk during public alpha.
+- This is acceptable only as a temporary V1 posture before multisig/DAO
+  handover.
 
 ## KPI
-- **Direct owner bypass functions remaining:** 0
-- **Timelock coverage:** 100% of fund-moving and censorship actions
+- **Registry/access admin:** timelock-managed
+- **NFT admin:** owner-only public-alpha posture, clearly documented
 
 ## Validation
-- `grep -n "owner_id" contracts/nft-ticket/src/lib.rs` shows only timelock checks and view methods.
-- Unit test: direct `withdraw_trial_pool` call panics; timelock path succeeds after delay.
+- Unit tests cover registry/access direct admin rejection and timelock success.
+- Unit tests cover NFT owner-only enforcement for V1 admin methods.
 
 ## Open Questions
 - Should we add a "fast pause" path with a shorter delay (e.g., 1 hour) for active exploits?

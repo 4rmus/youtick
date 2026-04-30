@@ -13,14 +13,28 @@ function loadSigner(accountId) {
     return KeyPairSigner.fromSecretKey(sk);
 }
 
-const TIMELock_IDS = [1, 2, 3, 4, 5, 6];
-const CONTRACT_ID = "registry.youtick.near";
+const CONTRACT_ID = process.env.REGISTRY_CONTRACT_ID || "registry.youtick.near";
+const OWNER_ACCOUNT_ID = process.env.ZERO_TRUST_OWNER_ID || process.env.MASTER_ACCOUNT_ID || "youtick.near";
+const RPC_URL = process.env.NEAR_RPC_URL || "https://rpc.mainnet.fastnear.com";
+const TIMELOCK_IDS = (process.env.TIMELOCK_IDS || "")
+    .split(",")
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isInteger(value) && value >= 0);
+const CONFIRM_EXECUTE = process.env.CONFIRM_EXECUTE_TIMELOCKS;
 
 async function main() {
-    const signer = loadSigner(CONTRACT_ID);
-    const account = new Account(CONTRACT_ID, "https://rpc.fastnear.com", signer);
+    if (TIMELOCK_IDS.length === 0) {
+        throw new Error("TIMELOCK_IDS is required, for example TIMELOCK_IDS=1,2,3");
+    }
+
+    if (CONFIRM_EXECUTE !== CONTRACT_ID) {
+        throw new Error(`Refusing to execute timelocks on ${CONTRACT_ID}. Set CONFIRM_EXECUTE_TIMELOCKS=${CONTRACT_ID} after reviewing each proposal.`);
+    }
+
+    const signer = loadSigner(OWNER_ACCOUNT_ID);
+    const account = new Account(OWNER_ACCOUNT_ID, RPC_URL, signer);
     
-    for (const id of TIMELock_IDS) {
+    for (const id of TIMELOCK_IDS) {
         console.log(`Executing timelock ${id}...`);
         try {
             const result = await account.callFunction({

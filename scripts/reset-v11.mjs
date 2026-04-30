@@ -5,7 +5,14 @@ import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 
 const RPC_URL = process.env.NEAR_RPC_URL || 'https://rpc.mainnet.near.org';
-const CONTRACT_ID = 'youtick.near';
+const CONTRACT_ID = process.env.NFT_CONTRACT_ID || 'youtick.near';
+const CONFIRM_RESET = process.env.CONFIRM_RESET_V11;
+
+if (CONFIRM_RESET !== CONTRACT_ID) {
+  throw new Error(
+    `Refusing to call reset_v11 on ${CONTRACT_ID}. Set CONFIRM_RESET_V11=${CONTRACT_ID} only after following the mainnet migration runbook.`,
+  );
+}
 
 const credsPath = path.join(os.homedir(), '.near-credentials', 'mainnet', `${CONTRACT_ID}.json`);
 const raw = readFileSync(credsPath, 'utf-8');

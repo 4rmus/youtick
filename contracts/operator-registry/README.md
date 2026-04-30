@@ -1,6 +1,6 @@
 # YouTick Operator Registry Contract
 
-Owner-managed registry contract for decryption operators and relayers in the zero-trust target architecture.
+Timelock-managed registry contract for decryption operators and relayers in the zero-trust target architecture.
 
 ## Core responsibilities
 
@@ -8,6 +8,7 @@ Owner-managed registry contract for decryption operators and relayers in the zer
 - register and deactivate relayers
 - store threshold configuration
 - expose active operator and relayer lists
+- route admin changes through `propose_action` and `execute_action`
 
 ## Main methods
 
@@ -16,4 +17,6 @@ Owner-managed registry contract for decryption operators and relayers in the zer
 - `upsert_relayer`
 - `deactivate_relayer`
 - `set_threshold_config`
+- `propose_action`
+- `execute_action`
 - `set_owner`

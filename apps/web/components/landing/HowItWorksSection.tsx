@@ -57,7 +57,7 @@ export const HowItWorksSection = memo(() => {
             <div className="relative aspect-[16/10]">
               <Image
                 src="/concert_crowd.png"
-                alt="Audience at a live show"
+                alt="Audience at a music performance"
                 fill
                 className="object-cover opacity-80"
               />

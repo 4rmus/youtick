@@ -12,6 +12,7 @@ import { LandingFooter } from '@/components/landing/LandingFooter';
 import { PainPointsSection } from '@/components/landing/PainPointsSection';
 import { ROICalculator } from '@/components/landing/ROICalculator';
 import { FinancialComparisonChart } from '@/components/landing/FinancialComparisonChart';
+import { Roadmap } from '@/components/landing/Roadmap';
 
 export default function Home() {
   return (
@@ -26,6 +27,7 @@ export default function Home() {
       <UseCasesSection />
       <HowItWorksSection />
       <CompetitiveAdvantagesSection />
+      <Roadmap />
       <CTASection />
       <LandingFooter />
     </div>
