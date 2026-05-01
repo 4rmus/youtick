@@ -21,7 +21,7 @@ import {
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { useEvmPayment } from '@/lib/evm/useEvmPayment';
 import { claimFreeTicketDirect, hasOnboardingKey } from '@/lib/gift-service';
-import { claimFreeTicketAsGuest, getOrCreateGuestIdentity } from '@/lib/guest-account';
+import { bootstrapGuestAccount, claimFreeTicketAsGuest, getOrCreateGuestIdentity } from '@/lib/guest-account';
 import { persistManagedKeyPair } from '@/lib/managed-near-account';
 import { resolvePreferredMediaUrl } from '@/lib/video-delivery';
 import { DEPOSIT_CONSTANTS } from '@/lib/constants';
@@ -37,7 +37,7 @@ interface EventDetails {
     priceUsdCents: number | null;
     /** USDC price in 6-decimal units (e.g. 500000 = $0.50). Null = not USDC-priced. */
     priceUsdc: number | null;
-    accessMode: 'paid' | 'free_collectible' | 'public_free';
+    accessMode: 'paid' | 'free_collectible';
     title: string;
     media?: string;
     uploader?: string;
@@ -223,7 +223,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     creator_id: string;
                     price_usd?: number | null;
                     price_usdc?: string | null;
-                    access_mode?: 'paid' | 'free_collectible' | 'public_free';
+                    access_mode?: 'paid' | 'free_collectible';
                     banned?: boolean;
                 }>(provider, contractId, 'get_event', { encrypted_cid: cid });
 
@@ -241,7 +241,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         price: yoctoToNear(BigInt(event.price)),
                         priceUsdCents: event.price_usd ?? null,
                         priceUsdc: event.price_usdc ? parseInt(event.price_usdc, 10) : null,
-                        accessMode: event.access_mode ?? (event.price === '0' ? 'public_free' : 'paid'),
+                        accessMode: event.access_mode ?? (event.price === '0' ? 'free_collectible' : 'paid'),
                         title: parsed.title,
                         media: media ?? parsed.thumbnailUrl,
                         uploader: event.creator_id
@@ -274,6 +274,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             try {
                 const identity = await getOrCreateGuestIdentity();
                 const result = await claimFreeTicketAsGuest(cid, identity);
+                if (!result.ok) {
+                    throw new Error(result.error || tp.error_claim_free);
+                }
                 setManagedAccount(result.accountId, 'guest');
                 if (onPurchaseSuccess) onPurchaseSuccess();
             } catch (e: unknown) {
@@ -286,25 +289,26 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         }
 
         if (!accountId) {
-            if (eventDetails.accessMode === 'public_free') {
-                setActionLoading(true);
-                setError(null);
-                try {
-                    const identity = await getOrCreateGuestIdentity();
-                    const result = await claimFreeTicketAsGuest(cid, identity);
-                    setManagedAccount(result.accountId, 'guest');
-                    if (onPurchaseSuccess) onPurchaseSuccess();
-                } catch (e: unknown) {
-                    console.error("Anonymous free ticket claim failed:", e);
-                    setError(e instanceof Error ? e.message : t.watch_page.claim_free_ticket);
-                } finally {
-                    setActionLoading(false);
+            setActionLoading(true);
+            setError(null);
+            try {
+                const identity = await getOrCreateGuestIdentity();
+                const bootstrap = await bootstrapGuestAccount(identity);
+                if (!bootstrap.ok) {
+                    throw new Error(tp.error_claim_free);
                 }
-                return;
+                const result = await claimFreeTicketAsGuest(cid, identity);
+                if (!result.ok) {
+                    throw new Error(result.error || tp.error_claim_free);
+                }
+                setManagedAccount(result.accountId, 'guest');
+                if (onPurchaseSuccess) onPurchaseSuccess();
+            } catch (e: unknown) {
+                console.error("Guest free ticket claim failed:", e);
+                setError(e instanceof Error ? e.message : t.watch_page.claim_free_ticket);
+            } finally {
+                setActionLoading(false);
             }
-            // Redirect to trial page where user can connect wallet or create trial account
-            const redirectUrl = encodeURIComponent(`/watch?cid=${cid}`);
-            window.location.href = `/trial?redirect=${redirectUrl}`;
             return;
         }
         setActionLoading(true);
@@ -758,7 +762,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     const usdcDisplay = hasUsdcPrice ? eventDetails.priceUsdc! / 1_000_000 : null;
     const displayUsdCents = hasUsdcPrice ? Math.ceil(eventDetails.priceUsdc! / 10_000) : eventDetails.priceUsdCents;
     const isFree = priceNear === 0 && !hasUsdcPrice;
-    const isPublicFree = isFree && eventDetails.accessMode === 'public_free';
+    const isFreeCollectible = isFree && eventDetails.accessMode === 'free_collectible';
     const isCreator = isCreatorData === true || (accountId && eventDetails.uploader === accountId);
     const crossChainEnabled = FEATURE_FLAGS.enableCrossChainCheckout;
     const isStablecoinFlow = paymentSelection.method !== 'NEAR';
@@ -1008,7 +1012,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 {/* Action Button */}
                 {!isCreator && !isSwapInProgress && !swapNearReady && (
                     <>
-                        {isPublicFree ? (
+                        {isFreeCollectible ? (
                             <div className="space-y-3">
                                 <Button
                                     onClick={handleFreeTicketClaim}
@@ -1028,7 +1032,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                     )}
                                 </Button>
                                 <p className="text-xs text-zinc-400 text-center">
-                                    {t.watch_page.public_free_claim_helper}
+                                    {t.watch_page.free_collectible_claim_helper}
                                 </p>
                             </div>
                         ) : crossChainEnabled && isStablecoinFlow && isEvmChain && !isEvmConnected ? (

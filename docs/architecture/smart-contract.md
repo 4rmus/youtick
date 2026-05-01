@@ -37,13 +37,13 @@ Bu contract su alanlari yonetir:
 
 ## Ekonomi modeli
 
-Ucretli ticket akisi:
+Ucretli ticket akisi, bilet bedeli uzerinden hesaplanir:
 
 - `%98` creator
 - `%1` trial pool
 - `%1` commission pool
 
-Ek olarak NFT storage icin ayri depozit mantigi vardir.
+Creator'in yayinlama sirasinda odedigi storage, mint ve event kaydi maliyetleri bu bilet paylasimindan ayridir. Ek olarak NFT storage icin ayri depozit mantigi vardir.
 
 ---
 
@@ -141,7 +141,7 @@ production build disinda kapatilir.
 
 - `create_gift_drop`
 - `claim_gift`
-- `claim_gift_and_create_account`
+- `claim_gift_with_implicit_account`
 - `is_gift_valid`
 - `get_gift_info`
 - `get_gift_info_full`
@@ -153,10 +153,9 @@ production build disinda kapatilir.
 - `set_onboarding_config`
 - `is_onboarding_key`
 - `get_onboarding_config`
-- `create_sponsored_trial_direct`
 - `claim_free_ticket_direct`
-- `create_sponsored_trial`
-- `claim_free_ticket_sponsored`
+- `claim_trial_invite_with_implicit_account`
+- `sponsor_implicit_guest_direct`
 - `upgrade_trial_account`
 - `get_trial_pool_balance`
 - `get_daily_trial_count`

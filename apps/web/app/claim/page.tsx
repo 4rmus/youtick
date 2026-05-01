@@ -7,10 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Loader2, CheckCircle2, AlertCircle, Ticket, ExternalLink, Wallet, User, Play, Sparkles } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageContext";
 import { parseTitleMetadata } from "@/lib/metadata-parser";
-import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from "@/lib/constants";
+import { NEAR_CONFIG, GAS_CONSTANTS } from "@/lib/constants";
 import { getCurrentRpcUrl } from "@/lib/rpc-failover";
 import { IPFSThumbnail } from "@/components/IPFSThumbnail";
 import { writeManagedNearAccount } from "@/lib/managed-near-account";
+import { claimGiftWithImplicitAccount } from "@/lib/gift-service";
 
 const NETWORK_ID = NEAR_CONFIG.networkId;
 const NFT_CONTRACT = NEAR_CONFIG.contractId;
@@ -50,57 +51,10 @@ function ClaimContent() {
     const [step, setStep] = useState<"loading" | "preview" | "claim-options" | "creating-account" | "claiming" | "success" | "error">("loading");
     const [giftInfo, setGiftInfo] = useState<GiftInfo | null>(null);
     const [accountOption, setAccountOption] = useState<"new" | "existing">("new");
-    const [newUsername, setNewUsername] = useState("");
     const [existingAccountId, setExistingAccountId] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [claimedAccountId, setClaimedAccountId] = useState<string | null>(null);
     const [txHash, setTxHash] = useState<string | null>(null);
-
-    // Account existence check
-    const [accountCheckStatus, setAccountCheckStatus] = useState<"idle" | "checking" | "available" | "taken" | "error">("idle");
-
-    // Auto-check account availability when username changes
-    useEffect(() => {
-        if (!newUsername || !isValidUsername(newUsername)) {
-            setAccountCheckStatus("idle");
-            return;
-        }
-
-        const checkAccount = async () => {
-            setAccountCheckStatus("checking");
-            const fullAccountId = `${newUsername}.${NFT_CONTRACT}`;
-
-            try {
-                const rpcUrl = getCurrentRpcUrl();
-
-                try {
-                    // v7: Use JsonRpcProvider to check account existence
-                    const { JsonRpcProvider } = await import("near-api-js");
-                    const provider = new JsonRpcProvider({ url: rpcUrl });
-                    await provider.query({
-                        request_type: 'view_account',
-                        account_id: fullAccountId,
-                        finality: 'final'
-                    });
-                    setAccountCheckStatus("taken");
-                } catch (queryError) {
-                    const message = queryError instanceof Error ? queryError.message : String(queryError);
-                    if (message.includes('does not exist') || message.includes('UNKNOWN_ACCOUNT') || message.includes('unknown account')) {
-                        setAccountCheckStatus("available");
-                        return;
-                    }
-
-                    throw queryError;
-                }
-            } catch (err) {
-                console.error("Account check error:", err);
-                setAccountCheckStatus("error");
-            }
-        };
-
-        const timer = setTimeout(checkAccount, 500);
-        return () => clearTimeout(timer);
-    }, [newUsername]);
 
     // Validate secret key and fetch gift info
     useEffect(() => {
@@ -168,52 +122,18 @@ function ClaimContent() {
     }, [secretKey, t]);
 
     const handleClaimWithNewAccount = async () => {
-        if (!isValidUsername(newUsername)) return;
-
         setStep("creating-account");
 
         try {
-            const { Account, KeyPair, KeyPairSigner, actions } = await import("near-api-js");
-            const { BrowserKeyStore } = await import("@/lib/keystore-v7");
-
             const formattedKey = secretKey!.includes(":") ? secretKey! : `ed25519:${secretKey}`;
-            const giftKeyPair = KeyPair.fromString(formattedKey as `ed25519:${string}`);
+            const result = await claimGiftWithImplicitAccount(formattedKey);
+            if (!result.success || !result.accountId) {
+                throw new Error(result.error || (t.claim_page?.account_create_failed || "Failed to create account."));
+            }
 
-            // v7: Create Account with signer directly
-            const rpcUrl = getCurrentRpcUrl();
-            const signer = new KeyPairSigner(giftKeyPair);
-            const contractAccount = new Account(NFT_CONTRACT, rpcUrl, signer);
-
-            const newAccountKeyPair = KeyPair.fromRandom("ed25519");
-            const newAccountPublicKey = newAccountKeyPair.getPublicKey().toString();
-
-            const fullAccountId = `${newUsername.toLowerCase()}.${NFT_CONTRACT}`;
-
-            // v7: Use signAndSendTransaction with actions
-            const result = await contractAccount.signAndSendTransaction({
-                receiverId: NFT_CONTRACT,
-                actions: [
-                    actions.functionCall(
-                        "claim_gift_and_create_account",
-                        {
-                            new_account_id: fullAccountId,
-                            new_public_key: newAccountPublicKey,
-                        },
-                        GAS_CONSTANTS.highGas,
-                        BigInt(0)
-                    )
-                ]
-            });
-
-            // Store keys using v7 BrowserKeyStore
-            const browserKeyStore = new BrowserKeyStore();
-            await browserKeyStore.setKey(NETWORK_ID, fullAccountId, newAccountKeyPair);
-
-            writeManagedNearAccount(fullAccountId, 'trial');
-            localStorage.setItem("trialAccountNetwork", NETWORK_ID);
-
-            setClaimedAccountId(fullAccountId);
-            setTxHash(result.transaction.hash);
+            writeManagedNearAccount(result.accountId, 'guest');
+            setClaimedAccountId(result.accountId);
+            setTxHash(result.txHash || null);
             setStep("success");
         } catch (err: unknown) {
             console.error("Create account error:", err);
@@ -221,8 +141,6 @@ function ClaimContent() {
             let errorMsg = t.claim_page?.account_create_failed || "Failed to create account.";
             if (errMsg.includes("already claimed")) {
                 errorMsg = t.claim_page?.invalid_or_used || "This gift link has already been used.";
-            } else if (errMsg.includes("account already exists")) {
-                errorMsg = t.claim_page?.username_taken || "This username is already taken.";
             }
             setError(errorMsg);
             setStep("error");
@@ -253,7 +171,7 @@ function ClaimContent() {
                         "claim_gift",
                         { receiver_id: existingAccountId.trim() },
                         GAS_CONSTANTS.mediumGas,
-                        DEPOSIT_CONSTANTS.smallStorageDeposit
+                        BigInt(0)
                     )
                 ]
             });
@@ -273,11 +191,6 @@ function ClaimContent() {
             setError(errorMsg);
             setStep("error");
         }
-    };
-
-    const isValidUsername = (name: string) => {
-        const sanitized = name.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-        return sanitized.length >= 2 && sanitized.length <= 32;
     };
 
     // Loading
@@ -344,10 +257,10 @@ function ClaimContent() {
                             </div>
                         </div>
 
-                        {/* Blockchain Badge */}
+                        {/* Ticket Badge */}
                         <div className="flex items-center justify-center gap-2 text-xs text-emerald-400">
                             <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>{t.claim_page?.secured_by_blockchain || "Secured by Blockchain"}</span>
+                            <span>{t.claim_page?.secured_by_blockchain || "Secured by digital ticket"}</span>
                         </div>
 
                         {/* Description */}
@@ -399,7 +312,7 @@ function ClaimContent() {
                                     : "text-zinc-400 hover:text-white"
                                     }`}
                             >
-                                {t.claim_page?.new_account || "New Account"}
+                            {t.claim_page?.new_account || "Guest Account"}
                             </button>
                             <button
                                 onClick={() => setAccountOption("existing")}
@@ -412,58 +325,18 @@ function ClaimContent() {
                             </button>
                         </div>
 
-                        {/* New Account Form */}
+                        {/* Guest Account Claim */}
                         {accountOption === "new" && (
                             <div className="space-y-4">
                                 <p className="text-sm text-zinc-400">
-                                    {t.claim_page?.create_account_desc || "Create an account instantly and get your ticket"}
+                                    {t.claim_page?.create_account_desc || "Create a guest account and get your ticket"}
                                 </p>
-                                <div className="relative">
-                                    <Input
-                                        value={newUsername}
-                                        onChange={(e) => setNewUsername(e.target.value)}
-                                        placeholder={t.claim_page?.username_placeholder || "username"}
-                                        className={`pr-24 bg-zinc-800/50 border-zinc-700 text-white rounded-xl h-12 ${accountCheckStatus === "taken" ? "border-red-500 focus:ring-red-500" :
-                                            accountCheckStatus === "available" ? "border-emerald-500 focus:ring-emerald-500" : ""
-                                            }`}
-                                        maxLength={32}
-                                    />
-                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 text-sm">
-                                        .{NFT_CONTRACT.split('.').slice(1).join('.') || NFT_CONTRACT}
-                                    </span>
-                                </div>
-                                {newUsername && !isValidUsername(newUsername) && (
-                                    <p className="text-red-400 text-xs">
-                                        {t.claim_page?.invalid_username_msg || "At least 2 chars, letters, numbers, _ and -"}
-                                    </p>
-                                )}
-                                {accountCheckStatus === "checking" && (
-                                    <p className="text-yellow-400 text-xs flex items-center gap-2">
-                                        <Loader2 className="w-3 h-3 animate-spin" /> {t.claim_page?.checking_username || "Checking..."}
-                                    </p>
-                                )}
-                                {accountCheckStatus === "available" && (
-                                    <p className="text-emerald-400 text-xs flex items-center gap-2">
-                                        <CheckCircle2 className="w-3 h-3" /> {t.claim_page?.username_available || "Username available!"}
-                                    </p>
-                                )}
-                                {accountCheckStatus === "taken" && (
-                                    <p className="text-red-400 text-xs flex items-center gap-2">
-                                        <AlertCircle className="w-3 h-3" /> {t.claim_page?.username_taken || "Account already exists"}
-                                    </p>
-                                )}
-                                {accountCheckStatus === "error" && (
-                                    <p className="text-amber-400 text-xs flex items-center gap-2">
-                                        <AlertCircle className="w-3 h-3" /> {((t.claim_page as Record<string, string> | undefined)?.account_check_failed) || "Could not verify username right now"}
-                                    </p>
-                                )}
                                 <Button
                                     onClick={handleClaimWithNewAccount}
-                                    disabled={!isValidUsername(newUsername) || accountCheckStatus !== "available"}
                                     className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 disabled:opacity-50 font-semibold rounded-xl"
                                 >
                                     <User className="w-4 h-4 mr-2" />
-                                    {accountCheckStatus === "checking" ? (t.claim_page?.check_account_button || "Checking...") : (t.claim_page?.create_and_claim_button || "Create Account and Claim")}
+                                    {t.claim_page?.create_and_claim_button || "Create Guest Account and Claim"}
                                 </Button>
                             </div>
                         )}
@@ -515,7 +388,7 @@ function ClaimContent() {
                     </p>
                     <p className="text-zinc-500 text-sm">{t.claim_page?.please_wait || "This may take a few seconds"}</p>
                     <p className="text-xs text-emerald-400 flex items-center justify-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" /> {t.claim_page?.processing_on_blockchain || "Processing on Blockchain"}
+                        <CheckCircle2 className="w-3 h-3" /> {t.claim_page?.processing_on_blockchain || "Processing ticket transfer"}
                     </p>
                 </div>
             </div>
@@ -545,7 +418,7 @@ function ClaimContent() {
                             <div className="w-20 h-20 rounded-full bg-emerald-500/20 backdrop-blur-xl border border-emerald-500/30 flex items-center justify-center mb-4">
                                 <CheckCircle2 className="w-10 h-10 text-emerald-400" />
                             </div>
-                            <h2 className="text-2xl font-bold text-white">{t.claim_page?.success_title || "Ticket Received! 🎉"}</h2>
+                            <h2 className="text-2xl font-bold text-white">{t.claim_page?.success_title || "Ticket Received"}</h2>
                         </div>
                     </div>
 
@@ -584,7 +457,7 @@ function ClaimContent() {
                             </Button>
 
                             <p className="text-xs text-zinc-500 text-center">
-                                ✅ {t.claim_page?.trial_active_msg || "Trial account active! Automatically signed in."}
+                                {t.claim_page?.trial_active_msg || "Guest account active. Automatically signed in."}
                             </p>
                         </div>
                     </div>

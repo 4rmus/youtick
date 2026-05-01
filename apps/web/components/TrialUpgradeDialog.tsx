@@ -42,15 +42,15 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
             // Generate a new seed phrase and derive keypair
             const { seedPhrase: phrase, publicKey: pk } = generateSeedPhrase();
 
-            // Get stored trial key from localStorage
+            // Get stored guest key from localStorage
             const networkId = NEAR_CONFIG.networkId;
             const storedKey = localStorage.getItem(`near-api-js:keystore:${accountId}:${networkId}`);
 
             if (!storedKey) {
-                throw new Error(u?.key_not_found || 'Trial account key not found. Please sign in again.');
+                throw new Error(u?.key_not_found || 'Guest account key not found. Please sign in again.');
             }
 
-            // Use current trial key to add new Full Access Key
+            // Use current guest key to add new Full Access Key
             const trialKeyPair = KeyPair.fromString(storedKey as KeyPairString);
 
             // v7: Import Account, KeyPairSigner, PublicKey, and actions
@@ -266,7 +266,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                     <>
                         <DialogHeader>
                             <DialogTitle className="text-green-600">
-                                {u?.next_step || "🎉 Next Step"}
+                                {u?.next_step || "Next Step"}
                             </DialogTitle>
                         </DialogHeader>
 

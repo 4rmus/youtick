@@ -81,9 +81,9 @@ export function OnboardingKeyInit() {
 function getUnsupportedApiMessage(): string {
     const host = typeof window !== 'undefined' ? window.location.hostname : '';
     if (host.endsWith('.near.page') || host.includes('ipfs') || host.includes('gateway')) {
-        return 'Trial account API is not available from this static Web4 gateway. Open youtick.net or connect a wallet.';
+        return 'Guest account API is not available from this static Web4 gateway. Open youtick.net or connect a wallet.';
     }
-    return 'Trial account API is not available right now. Connect a wallet or try again later.';
+    return 'Guest account API is not available right now. Connect a wallet or try again later.';
 }
 
 /** Dynamically load Turnstile script and render an invisible challenge */

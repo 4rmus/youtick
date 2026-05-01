@@ -56,8 +56,9 @@ cargo test
 
 - `create_gift_drop`
 - `claim_gift`
-- `claim_gift_and_create_account`
-- `create_sponsored_trial_direct`
+- `claim_gift_with_implicit_account`
+- `claim_trial_invite_with_implicit_account`
+- `sponsor_implicit_guest_direct`
 - `claim_free_ticket_direct`
 - `upgrade_trial_account`
 

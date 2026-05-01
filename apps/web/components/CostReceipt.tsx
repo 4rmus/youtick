@@ -117,6 +117,9 @@ export function CostReceipt({
                     : t.upload_page.cost_receipt.balance_sufficient
                 }
             </p>
+            <p className="text-[10px] leading-relaxed text-zinc-500">
+                {t.upload_page.cost_receipt.revenue_split_note}
+            </p>
         </div>
     );
 }

@@ -20,12 +20,14 @@ export const ROICalculator = memo(() => {
 
   const calculations = useMemo(() => {
     const totalSales = ticketPrice * ticketCount;
+    const platformFee = totalSales * 0.02;
     const youtickRevenue = totalSales * 0.98;
     const traditionalRevenue = totalSales * 0.55;
     const traditionalLoss = youtickRevenue - traditionalRevenue;
 
     return {
       totalSales,
+      platformFee,
       youtickRevenue,
       traditionalRevenue,
       traditionalLoss,
@@ -131,6 +133,17 @@ export const ROICalculator = memo(() => {
                 {formatUsd(calculations.youtickRevenue)}
               </div>
               <p className="mt-2 text-sm text-zinc-400">{s.youtick_revenue_desc}</p>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-md border border-white/10 bg-black/50 p-4">
+                  <p className="text-xs uppercase tracking-wide text-zinc-500">{s.creator_share_label}</p>
+                  <p className="mt-1 text-2xl font-black text-white">98%</p>
+                </div>
+                <div className="rounded-md border border-white/10 bg-black/50 p-4">
+                  <p className="text-xs uppercase tracking-wide text-zinc-500">{s.platform_fee_label}</p>
+                  <p className="mt-1 text-2xl font-black text-white">{formatUsd(calculations.platformFee)}</p>
+                </div>
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-zinc-500">{s.publish_cost_note}</p>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">

@@ -3,10 +3,20 @@ import Link from '@/components/Web4Link';
 import { Button } from '@/components/ui/button';
 import { ArrowRight } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
+import { useWallet } from '@/components/providers/WalletProvider';
 
 export const CTASection = memo(() => {
   const { t } = useLanguage();
+  const { connect, accountId } = useWallet();
   const s = t.landing.cta_section;
+
+  const handlePublish = () => {
+    if (accountId) {
+      window.location.href = '/upload';
+      return;
+    }
+    connect();
+  };
 
   return (
     <section className="bg-black py-28">
@@ -22,14 +32,13 @@ export const CTASection = memo(() => {
             {s.description}
           </p>
           <div className="flex flex-col justify-center gap-3 sm:flex-row">
-            <Link href="/upload">
-              <Button
-                size="lg"
-                className="w-full rounded-full bg-near-green px-9 py-7 text-base font-bold text-near-black hover:bg-near-green/85 sm:w-auto"
-              >
-                {s.cta_primary} <ArrowRight className="ml-2 h-5 w-5" />
-              </Button>
-            </Link>
+            <Button
+              size="lg"
+              onClick={handlePublish}
+              className="w-full rounded-full bg-near-green px-9 py-7 text-base font-bold text-near-black hover:bg-near-green/85 sm:w-auto"
+            >
+              {s.cta_primary} <ArrowRight className="ml-2 h-5 w-5" />
+            </Button>
             <Link href="/discover">
               <Button
                 size="lg"

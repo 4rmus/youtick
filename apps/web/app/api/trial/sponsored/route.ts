@@ -5,7 +5,7 @@ import { addCorsHeaders, handleCorsPreflightRequest, checkCors } from "@/lib/cor
  * Sponsored Trial API - Deprecated
  *
  * Relayer-based trial creation has been removed.
- * Clients should use the direct onboarding key path via createSponsoredTrialDirect().
+ * Clients should use the implicit guest onboarding path via sponsorImplicitGuestDirect().
  */
 export async function POST(request: NextRequest) {
     const corsBlock = checkCors(request);

@@ -44,7 +44,6 @@ export function Navbar() {
     const navLinks = [
         { href: '/discover', label: t.nav.discover },
         { href: '/upload', label: t.nav.upload },
-        { href: '/watch', label: t.nav.watch },
         ...(accountId ? [{ href: '/profile', label: t.nav.profile }] : []),
     ];
 

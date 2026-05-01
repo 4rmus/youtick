@@ -4,8 +4,7 @@ import { memo } from 'react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
 /**
- * FinancialComparisonChart - Bar chart comparing platform commission rates.
- * Based on VISUAL_ASSETS_MASTER_PROMPT.md specifications.
+ * FinancialComparisonChart - Illustrative comparison of release economics.
  */
 export const FinancialComparisonChart = memo(() => {
     const { t } = useLanguage();
@@ -16,30 +15,29 @@ export const FinancialComparisonChart = memo(() => {
             name: 'YouTick',
             commission: 2,
             color: 'bg-near-green',
-            description: `${fc?.to_artist || '98% to artist'}`,
-            descriptionFormatted: true,
+            description: `98% ${fc?.to_artist || 'creator share'}`,
             highlight: true,
         },
         {
-            name: 'YouTube',
+            name: 'Ticketing stack',
             commission: 55,
             color: 'bg-near-red',
             description: fc?.platform_cut || 'Platform cut',
         },
         {
-            name: 'Spotify',
+            name: 'Platform + partner stack',
             commission: 70,
             color: 'bg-orange-500',
             description: fc?.platform_label || 'Platform + Label',
         },
         {
-            name: 'Ticketmaster',
+            name: 'Ticketing layer',
             commission: 28,
             color: 'bg-yellow-500',
             description: fc?.ticket_commission || 'Ticket commission',
         },
         {
-            name: 'Netflix',
+            name: 'License path',
             commission: 77,
             color: 'bg-red-600',
             description: fc?.license_model || 'License model',
@@ -73,8 +71,8 @@ export const FinancialComparisonChart = memo(() => {
                                         {platform.name}
                                     </span>
                                     {platform.highlight && (
-                                        <span className="px-2 py-0.5 text-xs font-bold bg-near-green/20 text-near-green rounded-full">
-                                            ⭐
+                                        <span className="rounded-full bg-near-green/20 px-2 py-0.5 text-xs font-bold text-near-green">
+                                            2%
                                         </span>
                                     )}
                                 </div>
@@ -99,7 +97,7 @@ export const FinancialComparisonChart = memo(() => {
                                     className="absolute right-2 top-1/2 -translate-y-1/2 text-sm font-bold text-zinc-300"
                                 >
                                     {platform.highlight
-                                        ? `${artistLabel}: 98% ✓`
+                                        ? `${artistLabel}: 98%`
                                         : `${artistLabel}: ${100 - platform.commission}%`
                                     }
                                 </div>
@@ -114,7 +112,7 @@ export const FinancialComparisonChart = memo(() => {
                 </div>
 
                 {/* Summary Card */}
-                <div className="mt-16 max-w-2xl mx-auto p-8 rounded-2xl bg-near-green/5 border border-near-green/20">
+                <div className="mt-16 max-w-2xl mx-auto rounded-lg border border-near-green/20 bg-near-green/5 p-8">
                     <div className="text-center">
                         <div className="text-6xl font-black text-near-green mb-4">
                             2%
@@ -123,7 +121,7 @@ export const FinancialComparisonChart = memo(() => {
                             {fc?.summary_title || 'A simple platform fee for direct releases'}
                         </p>
                         <p className="text-sm text-zinc-500">
-                            {fc?.summary_subtitle || '2% vs 55-70% platform cut'}
+                            {fc?.summary_subtitle || '2% platform fee, 98% paid-ticket creator share'}
                         </p>
                     </div>
                 </div>

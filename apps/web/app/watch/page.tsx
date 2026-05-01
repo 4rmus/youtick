@@ -58,8 +58,8 @@ function WatchContent() {
     const [purchaseCompleted, setPurchaseCompleted] = useState(false);
 
     const isCreator = accountId && event?.creator_id === accountId;
-    const isFree = event?.price === '0' || event?.access_mode === 'public_free';
-    const canWatch = isFree || hasTicket || isCreator || purchaseCompleted;
+    const isFreeCollectible = event?.price === '0' && !event?.price_usdc;
+    const canWatch = hasTicket || isCreator || purchaseCompleted;
 
     // Fetch other works by the same creator
     const { data: creatorEvents = [] } = useQuery({
@@ -179,7 +179,7 @@ function WatchContent() {
                             {canWatch ? (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-medium text-emerald-400">
                                     <CheckCircle2 className="w-3 h-3" />
-                                    {isFree ? t.watch_page.free_access_ready : t.watch_page.ticket_verified}
+                                    {t.watch_page.ticket_verified}
                                 </span>
                             ) : (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[11px] font-medium text-amber-400">
@@ -190,7 +190,7 @@ function WatchContent() {
                         </div>
                     </div>
                     {/* Price */}
-                    {!isFree && (
+                    {!isFreeCollectible && (
                         <div className="text-right">
                             <p className="text-xs text-zinc-500 uppercase tracking-wider">{t.watch_page.price}</p>
                             <p className="text-xl font-bold text-white">
@@ -214,8 +214,16 @@ function WatchContent() {
                     <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                         {/* Preview thumbnail */}
                         <div className="lg:col-span-3 relative rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-800 aspect-video flex items-center justify-center">
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
-                            <Video className="w-16 h-16 text-zinc-700" />
+                            {parsedTitle.thumbnailUrl ? (
+                                <IPFSThumbnail
+                                    url={parsedTitle.thumbnailUrl}
+                                    alt={displayTitle}
+                                    className="absolute inset-0 h-full w-full object-cover opacity-70"
+                                />
+                            ) : (
+                                <Video className="w-16 h-16 text-zinc-700" />
+                            )}
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/10" />
                             <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6">
                                 <Lock className="w-10 h-10 text-zinc-400 mb-3" />
                                 <p className="text-lg font-semibold text-white mb-1">{t.watch_page.locked_preview_title}</p>

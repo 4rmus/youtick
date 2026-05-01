@@ -89,17 +89,17 @@ export default function TermsPage() {
               private keys.
             </p>
 
-            <h3 className="text-lg font-medium text-white mt-6 mb-3">4.2 Trial Accounts</h3>
+            <h3 className="text-lg font-medium text-white mt-6 mb-3">4.2 Guest Accounts</h3>
             <p>
-              YouTick offers sponsored trial accounts that allow new users to experience the Platform
-              without an existing NEAR wallet. Trial accounts are subject to the following conditions:
+              YouTick offers sponsored guest accounts that allow new users to experience the Platform
+              without an existing NEAR wallet. Guest accounts are subject to the following conditions:
             </p>
             <ul className="list-disc list-inside mt-2 space-y-1 ml-4">
-              <li>Limited to 3 trial accounts per IP address per day</li>
+              <li>Limited to 3 guest accounts per IP address per day</li>
               <li>Subject to a global daily creation limit</li>
-              <li>Trial accounts are full NEAR accounts with restricted access keys</li>
+              <li>Guest accounts are full NEAR accounts with restricted access keys</li>
               <li>You are responsible for securing the generated credentials</li>
-              <li>YouTick reserves the right to limit or suspend trial account creation</li>
+              <li>YouTick reserves the right to limit or suspend guest account creation</li>
             </ul>
 
             <h3 className="text-lg font-medium text-white mt-6 mb-3">4.3 Session Keys</h3>
@@ -183,8 +183,8 @@ export default function TermsPage() {
             <ul className="list-disc list-inside mt-2 space-y-1 ml-4">
               <li>Prices are set by content creators and denominated in NEAR tokens</li>
               <li>All transactions are final and non-refundable once confirmed on the blockchain</li>
-              <li>A 2% platform commission is automatically deducted; 98% goes directly to the creator</li>
-              <li>Additional storage deposits (approximately 0.01 NEAR) may apply for NFT minting</li>
+              <li>A 2% platform commission is deducted from paid ticket price; the remaining 98% is paid or credited to the creator</li>
+              <li>Additional storage deposits (approximately 0.01 NEAR) may apply for NFT minting and are separate from the ticket-price split</li>
               <li>Transaction fees (gas) are borne by the purchaser</li>
             </ul>
 

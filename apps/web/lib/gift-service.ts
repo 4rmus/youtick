@@ -3,7 +3,7 @@
  * near-api-js v7 compatible
  *
  * Replaces Keypom with contract's native Access Key-based gift drops.
- * Uses contract methods: create_gift_drop, claim_gift, claim_gift_and_create_account
+ * Uses contract methods: create_gift_drop, claim_gift, claim_gift_with_implicit_account
  */
 
 import { KeyPair, PublicKey, Account, KeyPairSigner, actions, type KeyPairString } from "near-api-js";
@@ -17,7 +17,6 @@ import { persistManagedKeyPair, writeManagedNearAccount } from './managed-near-a
 
 // Contract ID from centralized config
 const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
-const NETWORK_ID = NEAR_CONFIG.networkId;
 const APP_URL = APP_CONFIG.publicAppUrl;
 
 // Cost per gift link (account creation + NFT storage + buffer)
@@ -152,8 +151,8 @@ export async function getTrialPoolBalance(): Promise<string> {
 }
 
 /**
- * RELAYER-LESS: Create a sponsored trial account directly from client
- * Uses the onboarding Function Call Access Key stored in sessionStorage
+ * Legacy named subaccount trial path.
+ * New guest/trial onboarding uses sponsorImplicitGuestDirect or trial invites.
  *
  * @param username - Just the username prefix (e.g. "alice")
  * @returns The full account ID will be returned in the result (e.g. "alice.youtick.near")
@@ -180,7 +179,7 @@ export async function createSponsoredTrialDirect(
         const signer = new KeyPairSigner(onboardingKeyPair);
         const account = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), signer);
 
-        // Call create_sponsored_trial_direct using v7 actions format
+        // Legacy named-account method retained for compatibility.
         await account.signAndSendTransaction({
             receiverId: NFT_CONTRACT_ID,
             actions: [
@@ -290,8 +289,8 @@ export async function sponsorImplicitGuestDirect(
 }
 
 /**
- * Create a sponsored trial account.
- * Uses the direct onboarding key path exclusively (no server credentials needed).
+ * Legacy named subaccount trial helper.
+ * Use implicit guest onboarding for new product flows.
  *
  * @param username - Just the username prefix (e.g. "alice")
  * @returns The full account ID and result
@@ -698,6 +697,46 @@ export async function claimGiftAndCreateAccount(
         };
     } catch (error: unknown) {
         console.error("Error claiming gift:", error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Failed to claim gift",
+        };
+    }
+}
+
+export async function claimGiftWithImplicitAccount(
+    secretKey: string,
+): Promise<SponsoredTrialResult & { txHash?: string }> {
+    try {
+        const giftKeyPair = KeyPair.fromString(secretKey as KeyPairString);
+        const implicitAccount = generateImplicitTrialAccount();
+
+        const signer = new KeyPairSigner(giftKeyPair);
+        const account = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), signer);
+
+        const result = await account.signAndSendTransaction({
+            receiverId: NFT_CONTRACT_ID,
+            actions: [
+                actions.functionCall(
+                    "claim_gift_with_implicit_account",
+                    { new_public_key: implicitAccount.publicKey },
+                    GAS_CONSTANTS.highGas,
+                    BigInt(0),
+                ),
+            ],
+        }) as { transaction?: { hash?: string } };
+
+        await persistManagedKeyPair(implicitAccount.accountId, implicitAccount.secretKey);
+        writeManagedNearAccount(implicitAccount.accountId, 'guest');
+
+        return {
+            success: true,
+            accountId: implicitAccount.accountId,
+            secretKey: implicitAccount.secretKey,
+            txHash: result.transaction?.hash,
+        };
+    } catch (error: unknown) {
+        console.error("Error claiming gift with implicit account:", error);
         return {
             success: false,
             error: error instanceof Error ? error.message : "Failed to claim gift",

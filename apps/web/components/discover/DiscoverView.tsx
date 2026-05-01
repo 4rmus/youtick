@@ -3,7 +3,7 @@
 import { memo, useState } from 'react';
 import Link from '@/components/Web4Link';
 import { Button } from '@/components/ui/button';
-import { Clapperboard, Film, Loader2, Music, Sparkles } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useAllVideos } from '@/hooks/useAllVideos';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { Navigation } from '@/components/landing/Navigation';
@@ -28,12 +28,6 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
   const { tokens, loading, error, hasNextPage, isFetchingNextPage, fetchNextPage } = useAllVideos(activeFilter);
   const { nearToUsdStr } = useNearPrice();
-  const showcaseItems = [
-    { icon: Sparkles, label: t.landing.discover.section_new },
-    { icon: Music, label: t.landing.discover.section_concerts },
-    { icon: Film, label: t.landing.discover.section_films },
-    { icon: Clapperboard, label: t.landing.discover.section_festivals },
-  ];
 
   const Filters = (
     <div className="flex flex-wrap gap-2 mb-6">
@@ -54,20 +48,6 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
           </button>
         );
       })}
-    </div>
-  );
-
-  const ShowcaseRail = (
-    <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      {showcaseItems.map(({ icon: Icon, label }) => (
-        <div
-          key={label}
-          className="flex items-center gap-3 rounded-lg border border-white/10 bg-zinc-950 px-4 py-3 text-sm font-semibold text-zinc-200"
-        >
-          <Icon className="h-4 w-4 text-near-green" />
-          {label}
-        </div>
-      ))}
     </div>
   );
 
@@ -111,14 +91,13 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
         <div className="container mx-auto px-4 py-8">
           <div className="mb-8">
             <p className="text-sm uppercase tracking-[0.24em] text-near-green mb-3">{t.landing.discover.published_works_label}</p>
-            <h2 className="text-3xl font-bold text-white border-l-4 border-near-green pl-4">
+            <h1 className="text-3xl font-bold text-white">
               {t.landing.discover.recently_uploaded}
-            </h2>
+            </h1>
             <p className="mt-3 max-w-2xl text-sm text-zinc-400">
               {t.landing.discover.description}
             </p>
           </div>
-          {ShowcaseRail}
           {Filters}
           <div className="text-center py-24 text-white">
             <p className="text-2xl font-bold mb-4">{t.landing.discover.no_videos_found}</p>
@@ -142,15 +121,13 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
       <div className="container mx-auto px-4 py-8">
         <div className="mb-8">
           <p className="text-sm uppercase tracking-[0.24em] text-near-green mb-3">{t.landing.discover.published_works_label}</p>
-          <h2 className="text-3xl font-bold text-white border-l-4 border-near-green pl-4">
+          <h1 className="text-3xl font-bold text-white">
             {t.landing.discover.recently_uploaded}
-          </h2>
+          </h1>
           <p className="mt-3 max-w-2xl text-sm text-zinc-400">
             {t.landing.discover.description}
           </p>
         </div>
-
-        {ShowcaseRail}
 
         {Filters}
 

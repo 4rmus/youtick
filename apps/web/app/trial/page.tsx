@@ -28,12 +28,7 @@ function TrialContent() {
     };
 
     const handleConnectWallet = () => {
-        if (redirect) {
-            // Open wallet modal; useEffect above handles redirect after connection
-            connect();
-        } else {
-            window.location.href = "/?connect=true";
-        }
+        connect();
     };
 
     return (

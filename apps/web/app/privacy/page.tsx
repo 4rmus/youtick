@@ -142,7 +142,7 @@ export default function PrivacyPage() {
                   <li>Facilitating smart contract interactions (ticket purchases, content uploads)</li>
                   <li>Verifying NFT ownership for content access</li>
                   <li>Managing KMS group memberships for encryption/decryption</li>
-                  <li>Processing payments and distributing creator revenue (98% / 2% split)</li>
+                  <li>Processing payments and distributing paid ticket revenue (98% creator share / 2% platform fee)</li>
                 </ul>
               </div>
 

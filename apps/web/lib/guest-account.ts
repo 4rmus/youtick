@@ -26,6 +26,7 @@ interface GuestFreeClaimResponse {
     accountId: string;
     claimed: boolean;
     alreadyOwned: boolean;
+    error?: string;
 }
 
 export function publicKeyToImplicitAccountId(publicKey: string): string {
@@ -113,6 +114,7 @@ export async function claimFreeTicketAsGuest(
             accountId: identity.accountId,
             claimed: false,
             alreadyOwned: false,
+            error: "Onboarding key unavailable.",
         };
     }
 
@@ -124,6 +126,7 @@ export async function claimFreeTicketAsGuest(
             accountId: identity.accountId,
             claimed: false,
             alreadyOwned: false,
+            error: result.error,
         };
     }
 

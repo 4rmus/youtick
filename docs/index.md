@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: YouTick
-  text: Decentralized Video-on-Demand
-  tagline: Token-gated video platform on NEAR with client-side encryption and share-based playback
+  text: Public-Alpha Digital Ticketed Publishing
+  tagline: Hybrid NEAR video platform with digital tickets, client-side encryption and share-based playback
   actions:
     - theme: brand
       text: Get Started

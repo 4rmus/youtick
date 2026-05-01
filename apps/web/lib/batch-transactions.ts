@@ -41,7 +41,7 @@ export async function batchUploadActionsSignless(
         price: string;
         price_usd?: number | null;
         price_usdc?: string | null;
-        access_mode?: 'paid' | 'free_collectible' | 'public_free';
+        access_mode?: 'paid' | 'free_collectible';
         content_type?: string;
     }
 ) {

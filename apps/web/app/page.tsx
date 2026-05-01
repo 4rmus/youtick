@@ -2,7 +2,6 @@
 
 import { Navigation } from '@/components/landing/Navigation';
 import { HeroSection } from '@/components/landing/HeroSection';
-import { AudienceSection } from '@/components/landing/AudienceSection';
 import { ValuePropositionSection } from '@/components/landing/ValuePropositionSection';
 import { CompetitiveAdvantagesSection } from '@/components/landing/CompetitiveAdvantagesSection';
 import { HowItWorksSection } from '@/components/landing/HowItWorksSection';
@@ -11,7 +10,6 @@ import { CTASection } from '@/components/landing/CTASection';
 import { LandingFooter } from '@/components/landing/LandingFooter';
 import { PainPointsSection } from '@/components/landing/PainPointsSection';
 import { ROICalculator } from '@/components/landing/ROICalculator';
-import { FinancialComparisonChart } from '@/components/landing/FinancialComparisonChart';
 import { Roadmap } from '@/components/landing/Roadmap';
 
 export default function Home() {
@@ -19,11 +17,9 @@ export default function Home() {
     <div className="flex flex-col min-h-screen bg-black text-white selection:bg-white selection:text-black">
       <Navigation variant="landing" />
       <HeroSection />
-      <AudienceSection />
       <PainPointsSection />
       <ValuePropositionSection />
       <ROICalculator />
-      <FinancialComparisonChart />
       <UseCasesSection />
       <HowItWorksSection />
       <CompetitiveAdvantagesSection />

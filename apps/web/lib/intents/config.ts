@@ -18,7 +18,7 @@ export const ONE_CLICK_CONFIG = {
     statusPollInterval: 3000,
     /** YouTick referral ID */
     referralId: 'youtick',
-    /** YouTick platform fee in basis points (50 = 0.5%) */
+    /** Optional 1Click referral fee; contract-level paid ticket platform fee is applied separately. */
     platformFeeBps: 0,
     /** Platform fee recipient NEAR account */
     platformFeeRecipient: NEAR_CONFIG.marketContractId,

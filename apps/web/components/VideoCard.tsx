@@ -138,15 +138,8 @@ export function VideoCard({
 
     // Grid variant (default)
     return (
-        <Link
-            href={defaultLink}
-            className="group"
-        >
-            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 border border-white/10 shadow-2xl shadow-black/50 transition-all duration-300 hover:border-white/20 hover:shadow-purple-500/10">
-                {/* Decorative Corner Glow */}
-                <div className="absolute -top-20 -right-20 w-40 h-40 bg-purple-500/20 rounded-full blur-3xl opacity-0 group-hover:opacity-60 transition-opacity duration-700" />
-                <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-blue-500/20 rounded-full blur-3xl opacity-0 group-hover:opacity-60 transition-opacity duration-700" />
-
+        <Link href={defaultLink} className="group">
+            <div className="relative overflow-hidden rounded-lg border border-white/10 bg-zinc-950 shadow-xl shadow-black/30 transition-all duration-300 hover:-translate-y-1 hover:border-near-green/35">
                 {/* Thumbnail */}
                 <div className="aspect-video relative overflow-hidden">
                     {token.metadata?.media ? (
@@ -157,7 +150,7 @@ export function VideoCard({
                         />
                     ) : (
                         <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-zinc-800/50 to-zinc-900/50">
-                            <div className="w-14 h-14 rounded-2xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center mb-2">
+                            <div className="w-14 h-14 rounded-lg bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center mb-2">
                                 <VideoPlaceholder />
                             </div>
                         </div>
@@ -210,7 +203,7 @@ export function VideoCard({
                 {/* Content Section */}
                 <div className="p-4 relative">
                     {/* Title */}
-                    <h3 className="font-bold text-white text-base leading-tight line-clamp-1 mb-1 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-white group-hover:to-purple-200 transition-all duration-300">
+                    <h3 className="font-bold text-white text-base leading-tight line-clamp-1 mb-1 transition-colors duration-300 group-hover:text-near-green">
                         {token.metadata?.title || `Token #${token.token_id}`}
                     </h3>
 
@@ -227,12 +220,10 @@ export function VideoCard({
                         <div className="flex items-center gap-2">
                             {/* Avatar with Ring */}
                             <div className="relative">
-                                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-purple-500 via-blue-500 to-cyan-500 p-0.5">
-                                    <div className="w-full h-full rounded-[6px] bg-zinc-900 flex items-center justify-center">
-                                        <span className="text-[9px] font-bold text-white">
-                                            {token.owner_id ? token.owner_id.substring(0, 2).toUpperCase() : "??"}
-                                        </span>
-                                    </div>
+                                <div className="w-7 h-7 rounded-lg border border-white/10 bg-zinc-900 flex items-center justify-center">
+                                    <span className="text-[9px] font-bold text-white">
+                                        {token.owner_id ? token.owner_id.substring(0, 2).toUpperCase() : "??"}
+                                    </span>
                                 </div>
                             </div>
 
@@ -252,7 +243,7 @@ export function VideoCard({
                                 ? 'bg-emerald-400'
                                 : isCreator
                                     ? 'bg-purple-400'
-                                    : 'bg-gradient-to-r from-purple-500 to-blue-500 animate-pulse'
+                                    : 'bg-near-green'
                             }`} />
                             <span className="text-[9px] font-medium">
                                 {isCreator

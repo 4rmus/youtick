@@ -45,6 +45,7 @@ interface UploadState {
     estimatedStorageFee: string;
     payAmount: string;
     storageOrderStatus: 'pending' | 'success' | 'partial' | 'failed' | null;
+    publishedCid: string | null;
 }
 
 const initialUploadState: UploadState = {
@@ -57,6 +58,7 @@ const initialUploadState: UploadState = {
     estimatedStorageFee: '0',
     payAmount: '0',
     storageOrderStatus: null,
+    publishedCid: null,
 };
 
 type UploadAction =
@@ -70,6 +72,7 @@ type UploadAction =
     | { type: 'SET_ESTIMATED_STORAGE_FEE'; payload: string }
     | { type: 'SET_PAY_AMOUNT'; payload: string }
     | { type: 'SET_STORAGE_ORDER_STATUS'; payload: UploadState['storageOrderStatus'] }
+    | { type: 'SET_PUBLISHED_CID'; payload: string | null }
     | { type: 'RESET' };
 
 function uploadReducer(state: UploadState, action: UploadAction): UploadState {
@@ -99,6 +102,8 @@ function uploadReducer(state: UploadState, action: UploadAction): UploadState {
             return { ...state, payAmount: action.payload };
         case 'SET_STORAGE_ORDER_STATUS':
             return { ...state, storageOrderStatus: action.payload };
+        case 'SET_PUBLISHED_CID':
+            return { ...state, publishedCid: action.payload };
         case 'RESET':
             return initialUploadState;
         default:
@@ -116,7 +121,7 @@ interface UploadParams {
     description: string;
     price: string;
     priceUsdNum: number;
-    accessMode: 'paid' | 'free_collectible' | 'public_free';
+    accessMode: 'paid' | 'free_collectible';
     contentType: string;
     estimatedStorageFee: string;
 }
@@ -341,7 +346,6 @@ export function useUpload() {
                 updateStep('thumbnail', 'complete');
             }
 
-            const isPublicFreeVideo = accessMode === 'public_free';
             const {
                 buildSegmentedEventTitle,
                 packageVideoForDelivery,
@@ -369,49 +373,32 @@ export function useUpload() {
                 throw new Error(`Segmented delivery packaging did not produce an asset for ${file.type}. Upload was stopped.`);
             }
 
-            let manifestCid: string;
             const videoUuid = crypto.randomUUID();
             const detectedDurationSeconds = Math.max(1, Math.round(packagedDeliveryAsset.durationMs / 1000));
 
-            if (isPublicFreeVideo) {
-                updateStep('encrypt', 'complete');
-                updateStep('upload', 'loading');
-                updateStep('kms', 'complete');
-                const deliveryUpload = await uploadSegmentedDeliveryAsset({
-                    packagedAsset: packagedDeliveryAsset,
-                    accountId,
-                    encrypted: false,
-                    thumbnailRef: thumbnailUrl,
-                    posterBlob: posterThumbnail,
-                    collector,
-                });
-                manifestCid = deliveryUpload.manifestCid;
-                updateStep('upload', 'complete');
-            } else {
-                updateStep('encrypt', 'loading');
-                setStatus('Generating encryption key...');
-                const aesKeyB64 = await generateAESKey();
-                updateStep('encrypt', 'complete');
+            updateStep('encrypt', 'loading');
+            setStatus('Generating encryption key...');
+            const aesKeyB64 = await generateAESKey();
+            updateStep('encrypt', 'complete');
 
-                updateStep('upload', 'loading');
-                setStatus('Uploading encrypted delivery segments...');
-                const deliveryUpload = await uploadSegmentedDeliveryAsset({
-                    packagedAsset: packagedDeliveryAsset,
-                    accountId,
-                    encrypted: true,
-                    aesKeyB64,
-                    thumbnailRef: thumbnailUrl,
-                    posterBlob: posterThumbnail,
-                    collector,
-                });
-                manifestCid = deliveryUpload.manifestCid;
-                updateStep('upload', 'complete');
+            updateStep('upload', 'loading');
+            setStatus('Uploading encrypted delivery segments...');
+            const deliveryUpload = await uploadSegmentedDeliveryAsset({
+                packagedAsset: packagedDeliveryAsset,
+                accountId,
+                encrypted: true,
+                aesKeyB64,
+                thumbnailRef: thumbnailUrl,
+                posterBlob: posterThumbnail,
+                collector,
+            });
+            const manifestCid = deliveryUpload.manifestCid;
+            updateStep('upload', 'complete');
 
-                updateStep('kms', 'loading');
-                setStatus('Storing encryption key on KMS...');
-                await storeEncryptionKey(videoUuid, aesKeyB64, accountId, wallet);
-                updateStep('kms', 'complete');
-            }
+            updateStep('kms', 'loading');
+            setStatus('Storing encryption key on KMS...');
+            await storeEncryptionKey(videoUuid, aesKeyB64, accountId, wallet);
+            updateStep('kms', 'complete');
 
             let blockchainPublishSucceeded = false;
             updateStep('mint', 'loading');
@@ -457,6 +444,7 @@ export function useUpload() {
                 setStatus('Minting NFT ticket & publishing event...');
                 await batchUploadActionsSignless(sessionManager, videoMetadata, eventMetadata);
                 blockchainPublishSucceeded = true;
+                dispatch({ type: 'SET_PUBLISHED_CID', payload: videoUuid });
                 updateStep('mint', 'complete');
             } catch (mintError: unknown) {
                 console.error('Minting/Event failed:', mintError);
@@ -537,6 +525,7 @@ export function useUpload() {
 
         setUploading(true);
         setStatus('Checking wallet & balance...');
+        dispatch({ type: 'SET_PUBLISHED_CID', payload: null });
         dispatch({ type: 'RESET_STEPS' });
         let cleanup: () => void = () => {};
 

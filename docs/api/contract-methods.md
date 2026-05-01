@@ -79,14 +79,13 @@ This contract is the market, content, and entitlement source of truth.
 | `fund_trial_pool` | Adds NEAR to the trial sponsorship pool |
 | `withdraw_trial_pool` | Owner-only trial pool withdrawal |
 | `claim_trial_invite_with_implicit_account` | Claims trial and creates implicit account |
-| `create_sponsored_trial_direct` | Direct trial creation with account creation |
-| `claim_free_ticket_direct` | Claims a free ticket with optional account creation |
-| `sponsor_implicit_guest_direct` | Direct gas sponsorship without relayer callback |
+| `claim_free_ticket_direct` | Claims a free collectible ticket |
+| `sponsor_implicit_guest_direct` | Sponsors an implicit guest account without relayer callback |
 | `withdraw_commission` | Owner-only commission withdrawal |
 | `gift_ticket` | Creator gifts a ticket to a receiver |
 | `create_gift_drop` | Creates access-key based gift drops |
 | `claim_gift` | Claims a gift drop to an existing account |
-| `claim_gift_and_create_account` | Claims a gift and creates a new account |
+| `claim_gift_with_implicit_account` | Claims a gift and funds an implicit guest account |
 | `upgrade_trial_account` | Upgrades a trial account to a full NEAR account |
 
 ### View Methods
@@ -234,6 +233,8 @@ The following methods are deprecated or removed and should not be used for new i
 
 | Method | Status |
 |--------|--------|
+| `create_sponsored_trial_direct` | Legacy named subaccount trial path; new guest/trial flows use implicit accounts |
+| `claim_gift_and_create_account` | Legacy named account gift path; new gift flows use `claim_gift_with_implicit_account` |
 | `create_sponsored_trial` | Removed relayer-based trial flow |
 | `claim_free_ticket_sponsored` | Removed relayer-based free ticket flow |
 | `sponsor_implicit_guest` | Removed relayer-based gas sponsorship |

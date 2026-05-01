@@ -350,7 +350,7 @@ global.fetch = vi.fn().mockImplementation(async (_url: string, options?: { body?
               description: 'Test Description',
               creator_id: 'creator.testnet',
               price: '0',
-              access_mode: 'public_free',
+              access_mode: 'free_collectible',
             })))
           }
         })

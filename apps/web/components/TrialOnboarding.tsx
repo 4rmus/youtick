@@ -2,28 +2,24 @@
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Sparkles, Wallet, ArrowRight, CheckCircle2, AlertCircle, Gift } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageContext";
 import { KeyPair, type KeyPairString } from "near-api-js";
-import { claimGiftAndCreateAccount, claimTrialInviteWithImplicitAccount, validateGiftLink, validateTrialInviteLink, getGiftEventInfo } from "@/lib/gift-service";
+import { claimGiftWithImplicitAccount, claimTrialInviteWithImplicitAccount, validateGiftLink, validateTrialInviteLink, getGiftEventInfo } from "@/lib/gift-service";
 import { bootstrapGuestAccount, getOrCreateGuestIdentity } from "@/lib/guest-account";
-import { NEAR_CONFIG } from "@/lib/constants";
-import { persistManagedKeyPair } from "@/lib/managed-near-account";
 
 interface TrialOnboardingProps {
     onAccountCreated?: (accountId: string, kind: 'guest' | 'trial') => void;
     onConnectWallet?: () => void;
 }
 
-type OnboardingStep = "choice" | "username" | "creating" | "success" | "error" | "no-link";
+type OnboardingStep = "choice" | "creating" | "success" | "error" | "no-link";
 
 export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnboardingProps) {
     const { t } = useLanguage();
     const trialPageCopy = t.trial_page as Record<string, string> | undefined;
     const [step, setStep] = useState<OnboardingStep>("choice");
-    const [username, setUsername] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [createdAccountId, setCreatedAccountId] = useState<string | null>(null);
     const [giftInfo, setGiftInfo] = useState<{ secretKey: string; publicKey: string; eventTitle?: string } | null>(null);
@@ -35,8 +31,8 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
         welcome_title: trialPageCopy?.welcome_title || "Welcome to YouTick!",
         welcome_desc: trialPageCopy?.welcome_desc || "Discover films, concert recordings and special screenings",
         connect_wallet: trialPageCopy?.connect_wallet || "Connect Wallet",
-        create_guest_account: trialPageCopy?.create_guest_account || "Create Test Account",
-        create_trial: trialPageCopy?.create_trial || "Create Test Account",
+        create_guest_account: trialPageCopy?.create_guest_account || "Create Guest Account",
+        create_trial: trialPageCopy?.create_trial || "Create Guest Account",
         start_trial: trialPageCopy?.start_trial || "Start Trial",
         or: trialPageCopy?.or || "or",
         try_free: trialPageCopy?.try_free || "Claim Gift Ticket",
@@ -46,7 +42,7 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
         validating_link: trialPageCopy?.validating_link || "Validating link...",
         trial_invite_title: trialPageCopy?.trial_invite_title || "Trial Invite",
         gift_ticket_title: trialPageCopy?.gift_ticket_title || "Gift Ticket",
-        test_account_required: trialPageCopy?.test_account_required || "To watch free videos, create a test account first or claim your existing access.",
+        test_account_required: trialPageCopy?.test_account_required || "To keep access to free videos, create a guest account or claim your existing access.",
         choose_username: trialPageCopy?.choose_username || "Choose Username",
         username_desc: trialPageCopy?.username_desc || "This will be your NEAR account address",
         username_placeholder: trialPageCopy?.username_placeholder || "username",
@@ -65,11 +61,11 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
         error_title: trialPageCopy?.error_title || "Something went wrong",
         try_again: trialPageCopy?.try_again || "Try Again",
         no_gift_link: trialPageCopy?.no_gift_link || "No gift link found. Please use a valid gift link or connect your wallet.",
-        invite_required: trialPageCopy?.invite_required || "Trial account creation now requires an invite link.",
+        invite_required: trialPageCopy?.invite_required || "Guest account creation now requires an invite link.",
         gift_for: trialPageCopy?.gift_for || "Gift ticket for:",
         invalid_gift_link: trialPageCopy?.invalid_gift_link || "Invalid or expired gift link",
         invalid_gift_format: trialPageCopy?.invalid_gift_format || "Invalid gift link format",
-        trial_account_failed: trialPageCopy?.trial_account_failed || "Failed to create implicit trial account",
+        trial_account_failed: trialPageCopy?.trial_account_failed || "Failed to create guest account",
         account_creation_failed: trialPageCopy?.account_creation_failed || "Account creation failed",
         error_occurred: trialPageCopy?.error_occurred || "An error occurred",
         guest_creation_failed: trialPageCopy?.guest_creation_failed || "Guest account creation failed",
@@ -166,60 +162,27 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
             return;
         }
 
-        setStep("username");
-    };
+        if (giftInfo) {
+            setError(null);
+            setStep("creating");
 
-    const getReturnStep = (): OnboardingStep => ((giftInfo || trialInviteInfo) ? "choice" : "no-link");
-
-    const handleCreateAccount = async () => {
-        if (!username.trim()) return;
-
-        setError(null);
-        setStep("creating");
-
-        try {
-            // Validate username
-            const sanitizedUsername = username.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-
-            let result;
-            let finalAccountId: string;
-
-            if (giftInfo) {
-                // Has gift link - use claim_gift_and_create_account
-                const accountId = `${sanitizedUsername}.${NEAR_CONFIG.contractId}`;
-                const userKeyPair = KeyPair.fromRandom("ed25519");
-                const userPublicKey = userKeyPair.getPublicKey().toString();
-
-                result = await claimGiftAndCreateAccount(
-                    giftInfo.secretKey,
-                    accountId,
-                    userPublicKey
-                );
-                finalAccountId = accountId;
-
-                if (result.success) {
-                    await persistManagedKeyPair(accountId, userKeyPair.toString());
-                }
-            } else {
-                setError(tr.invite_required);
-                setStep("error");
+            const result = await claimGiftWithImplicitAccount(giftInfo.secretKey);
+            if (result.success) {
+                setCreatedAccountId(result.accountId || null);
+                setStep("success");
+                onAccountCreated?.(result.accountId || "", 'guest');
                 return;
             }
 
-            if (result.success) {
-                setCreatedAccountId(finalAccountId);
-                setStep("success");
-                onAccountCreated?.(finalAccountId, 'trial');
-            } else {
-                setError(result.error || tr.account_creation_failed);
-                setStep("username");
-            }
-        } catch (err: unknown) {
-            console.error("Account creation error:", err);
-            setError(err instanceof Error ? err.message : tr.error_occurred);
-            setStep("username");
+            setError(result.error || tr.account_creation_failed);
+            setStep("error");
+            return;
         }
+
+        setStep("no-link");
     };
+
+    const getReturnStep = (): OnboardingStep => ((giftInfo || trialInviteInfo) ? "choice" : "no-link");
 
     const handleCreateGuestAccount = async () => {
         setError(null);
@@ -236,11 +199,6 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
             setError(err instanceof Error ? err.message : tr.guest_creation_failed);
             setStep("error");
         }
-    };
-
-    const isValidUsername = (name: string) => {
-        const sanitized = name.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-        return sanitized.length >= 2 && sanitized.length <= 32;
     };
 
     // Loading state
@@ -269,9 +227,9 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                    <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-                        <p className="text-yellow-300 text-sm text-center">
-                            {t.trial_page?.no_gift_link || tr.no_gift_link}
+                    <div className="p-4 bg-zinc-800/60 border border-zinc-700 rounded-lg">
+                        <p className="text-zinc-300 text-sm text-center">
+                            {tr.no_gift_link}
                         </p>
                     </div>
 
@@ -311,8 +269,8 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                     </div>
                     <CardTitle className="text-2xl text-white">
                         {trialInviteInfo
-                            ? `⚡ ${tr.trial_invite_title}`
-                            : giftInfo?.eventTitle ? `🎁 ${giftInfo.eventTitle}` : `🎁 ${tr.gift_ticket_title}`}
+                            ? tr.trial_invite_title
+                            : giftInfo?.eventTitle ? giftInfo.eventTitle : tr.gift_ticket_title}
                     </CardTitle>
                     <CardDescription className="text-gray-400">
                         {trialInviteInfo ? tr.no_wallet_required : (t.trial_page?.gift_for || tr.gift_for)}
@@ -358,61 +316,6 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                             {tr.upgrade_anytime}
                         </p>
                     </div>
-                </CardContent>
-            </Card>
-        );
-    }
-
-    // Username Step
-    if (step === "username") {
-        return (
-            <Card className="w-full max-w-md mx-auto bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700">
-                <CardHeader className="text-center">
-                    <CardTitle className="text-xl text-white">{tr.choose_username}</CardTitle>
-                    <CardDescription className="text-gray-400">
-                        {tr.username_desc}
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="relative">
-                        <Input
-                            value={username}
-                            onChange={(e) => setUsername(e.target.value)}
-                            placeholder={tr.username_placeholder}
-                            className="pr-24 bg-gray-800 border-gray-700 text-white"
-                            maxLength={32}
-                        />
-                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">
-                            .{NEAR_CONFIG.contractId}
-                        </span>
-                    </div>
-
-                    {username && !isValidUsername(username) && (
-                        <p className="text-red-400 text-sm">
-                            {tr.username_validation}
-                        </p>
-                    )}
-
-                    {error && (
-                        <p className="text-red-400 text-sm">{error}</p>
-                    )}
-
-                    <Button
-                        onClick={handleCreateAccount}
-                        disabled={!isValidUsername(username)}
-                        className="w-full bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-700 hover:to-purple-700"
-                    >
-                        {tr.create_account}
-                        <ArrowRight className="w-4 h-4 ml-2" />
-                    </Button>
-
-                    <Button
-                        onClick={() => setStep(getReturnStep())}
-                        variant="ghost"
-                        className="w-full text-gray-400"
-                    >
-                        {tr.back}
-                    </Button>
                 </CardContent>
             </Card>
         );

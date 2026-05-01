@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Loader2, Upload, AlertCircle, CheckCircle2, Film, LockKeyhole, Play, ShieldCheck, Ticket } from "lucide-react"
+import { Loader2, Upload, AlertCircle, CheckCircle2, Film, LockKeyhole, Play, ShieldCheck, Ticket, Copy, ExternalLink } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { getNearPrice, usdToNear } from '@/lib/price';
@@ -73,6 +73,7 @@ export function UploadForm() {
     const [nearPrice, setNearPrice] = useState<number>(0); // NEAR/USD rate
     const [fileSizeError, setFileSizeError] = useState<string | null>(null);
     const [contentType, setContentType] = useState('Exclusive');
+    const [linkCopied, setLinkCopied] = useState(false);
 
     // Derived NEAR price from USD input
     const priceUsdNum = parseFloat(priceUsd) || 0;
@@ -110,6 +111,7 @@ export function UploadForm() {
     const payAmount = uploadLogic.state.payAmount;
     const verifiedStorageFee = uploadLogic.state.verifiedStorageFee;
     const storageOrderStatus = uploadLogic.state.storageOrderStatus;
+    const publishedCid = uploadLogic.state.publishedCid;
     const dispatch = uploadLogic.dispatch;
     const setStatus = (msg: string) => dispatch({ type: 'SET_STATUS', payload: msg });
 
@@ -157,6 +159,8 @@ export function UploadForm() {
             setPosterThumbnail(null);
             revokeThumbnailPreview();
             setThumbnailPreview(null);
+            setLinkCopied(false);
+            dispatch({ type: 'SET_PUBLISHED_CID', payload: null });
 
             // Calculate storage fee
             void (async () => {
@@ -248,6 +252,7 @@ export function UploadForm() {
             setThumbnail(null);
             setPosterThumbnail(null);
             setThumbnailPreview(null);
+            setLinkCopied(false);
         }
     };
 
@@ -296,6 +301,7 @@ export function UploadForm() {
             setThumbnail(null);
             setPosterThumbnail(null);
             setThumbnailPreview(null);
+            setLinkCopied(false);
         }
     };
 
@@ -306,6 +312,18 @@ export function UploadForm() {
         ? u.paid_ticket_title
         : u.free_ticket_title;
     const ctaLabel = parseFloat(payAmount) > 0 ? u.pay_and_upload : u.upload_btn;
+    const publishedWatchPath = publishedCid ? `/watch?cid=${encodeURIComponent(publishedCid)}` : '';
+    const handleCopyPublishedLink = async () => {
+        if (!publishedWatchPath || typeof window === 'undefined') return;
+
+        try {
+            await navigator.clipboard.writeText(new URL(publishedWatchPath, window.location.origin).toString());
+            setLinkCopied(true);
+            window.setTimeout(() => setLinkCopied(false), 1800);
+        } catch (error) {
+            console.error('Copy release link failed:', error);
+        }
+    };
     const creatorStepLabels: Record<string, string> = {
         session: u.steps.session,
         thumbnail: u.steps.thumbnail,
@@ -546,6 +564,48 @@ export function UploadForm() {
                                     </Button>
                                 </AlertDescription>
                             </Alert>
+                        )}
+
+                        {publishedCid && !uploading && (
+                            <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 p-4">
+                                <div className="flex items-start gap-3">
+                                    <CheckCircle2 className="mt-0.5 h-5 w-5 flex-shrink-0 text-emerald-300" />
+                                    <div className="min-w-0 flex-1">
+                                        <h3 className="text-sm font-semibold text-emerald-100">{u.success_panel_title}</h3>
+                                        <p className="mt-1 text-xs leading-relaxed text-emerald-100/70">{u.success_panel_desc}</p>
+                                        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                onClick={() => { window.location.href = publishedWatchPath; }}
+                                                className="bg-emerald-400 text-black hover:bg-emerald-300"
+                                            >
+                                                <ExternalLink className="mr-2 h-4 w-4" />
+                                                {u.success_watch}
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => { window.location.href = '/discover'; }}
+                                                className="border-emerald-400/40 text-emerald-100 hover:bg-emerald-500/10"
+                                            >
+                                                {u.success_discover}
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="ghost"
+                                                onClick={handleCopyPublishedLink}
+                                                className="text-emerald-100 hover:bg-emerald-500/10"
+                                            >
+                                                <Copy className="mr-2 h-4 w-4" />
+                                                {linkCopied ? u.success_copied : u.success_copy}
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         )}
 
                     </CardContent>

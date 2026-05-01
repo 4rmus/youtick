@@ -32,7 +32,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
 
   // Landing page navigation links
   const navLinks = [
-    { href: '#audience', label: t.landing.nav_extra?.problems || 'For creators' },
+    { href: '#pain-points', label: t.landing.nav_extra?.problems || 'Problems' },
     { href: '#model', label: t.landing.nav?.features || 'Model' },
     { href: '#roi-calculator', label: t.landing.nav_extra?.calculator || 'Calculator' },
     { href: '#use-cases', label: t.landing.nav?.use_cases || 'Use cases' },
@@ -72,11 +72,12 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
               >
                 {t.landing.nav_extra?.login || 'Login'}
               </Button>
-              <Link href="/upload">
-                <Button className="bg-near-green hover:bg-near-green/80 text-black font-semibold">
-                  {t.landing.nav.upload}
-                </Button>
-              </Link>
+              <Button
+                onClick={handleGetStarted}
+                className="bg-near-green hover:bg-near-green/80 text-black font-semibold"
+              >
+                {t.landing.nav.upload}
+              </Button>
             </div>
           </div>
         </div>

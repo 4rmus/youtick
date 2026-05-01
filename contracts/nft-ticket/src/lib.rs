@@ -1057,7 +1057,7 @@ impl Contract {
             if has_paid_price {
                 "paid".to_string()
             } else {
-                "public_free".to_string()
+                "free_collectible".to_string()
             }
         });
 
@@ -1070,7 +1070,7 @@ impl Contract {
                 );
                 normalized
             }
-            "free_collectible" | "public_free" => {
+            "free_collectible" => {
                 require!(!has_paid_price, "Free access modes require zero price");
                 normalized
             }
@@ -1085,7 +1085,7 @@ impl Contract {
                 if has_paid_price {
                     "paid".to_string()
                 } else {
-                    "public_free".to_string()
+                    "free_collectible".to_string()
                 }
             })
     }
@@ -4078,8 +4078,8 @@ impl Contract {
                         NonZeroU128::new(GAS_FEE_ALLOWANCE.as_yoctonear()).unwrap(),
                     ),
                     env::current_account_id(),
-                    "claim_gift,claim_gift_and_create_account".to_string(),
-                )
+            "claim_gift,claim_gift_and_create_account,claim_gift_with_implicit_account".to_string(),
+        )
                 .then(
                     Self::ext(env::current_account_id())
                         .with_static_gas(near_sdk::Gas::from_tgas(20))
@@ -4227,6 +4227,47 @@ impl Contract {
                     .with_static_gas(near_sdk::Gas::from_tgas(50))
                     .on_gift_account_created(
                         new_account_id,
+                        event_cid,
+                        signer_public_key,
+                        U128(nft_storage_cost.as_yoctonear()),
+                    ),
+            )
+    }
+
+    /// Claim a gift and fund an implicit account derived from the new public key.
+    /// This is the preferred guest/trial path for walletless gift tickets.
+    pub fn claim_gift_with_implicit_account(&mut self, new_public_key: PublicKey) -> Promise {
+        self.assert_not_paused();
+        let signer_public_key = env::signer_account_pk();
+        let signer_pk: String = String::from(&signer_public_key);
+
+        let maybe_gift = self.gift_drops.get(&signer_pk);
+        require!(maybe_gift.is_some(), "Invalid or already claimed gift key");
+        let mut gift_drop = maybe_gift.unwrap();
+
+        require!(gift_drop.remaining_claims > 0, "Gift already claimed");
+        require!(
+            self.lazy_banned_events()
+                .get(&gift_drop.event_cid)
+                .is_none(),
+            "This event has been banned and gift tickets cannot be claimed"
+        );
+
+        let event_cid = gift_drop.event_cid.clone();
+        gift_drop.remaining_claims = 0;
+        self.gift_drops.insert(&signer_pk, &gift_drop);
+
+        let implicit_account_id = Self::implicit_account_id_from_public_key(&new_public_key);
+        let account_cost = TRIAL_ACCOUNT_STORAGE_COST;
+        let nft_storage_cost = STORAGE_COST_NFT;
+
+        Promise::new(implicit_account_id.clone())
+            .transfer(account_cost)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(50))
+                    .on_gift_account_created(
+                        implicit_account_id,
                         event_cid,
                         signer_public_key,
                         U128(nft_storage_cost.as_yoctonear()),
@@ -4609,7 +4650,7 @@ mod tests {
             contract
                 .build_event_response("free-cid", &free_event)
                 .access_mode,
-            "public_free"
+            "free_collectible"
         );
         assert_eq!(
             contract

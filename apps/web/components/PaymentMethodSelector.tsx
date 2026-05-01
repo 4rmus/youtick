@@ -11,6 +11,7 @@ import {
 import { FEATURE_FLAGS, NEAR_CONFIG } from '@/lib/constants';
 import { getNearPrice, formatUsdCents } from '@/lib/price';
 import { quoteNearToUsdc } from '@/lib/rhea/client';
+import { useLanguage } from '@/components/providers/LanguageContext';
 
 interface PaymentMethodSelectorProps {
     /** Ticket price in NEAR (as a number) */
@@ -32,9 +33,9 @@ interface PaymentMethodSelectorProps {
 }
 
 const TOKEN_OPTIONS: { value: PaymentMethod; label: string; icon: string }[] = [
-    { value: 'NEAR', label: 'NEAR', icon: 'Ⓝ' },
-    { value: 'USDC', label: 'USDC', icon: '💲' },
-    { value: 'USDT', label: 'USDT', icon: '💵' },
+    { value: 'NEAR', label: 'NEAR', icon: 'N' },
+    { value: 'USDC', label: 'USDC', icon: '$' },
+    { value: 'USDT', label: 'USDT', icon: '$' },
 ];
 
 export function PaymentMethodSelector({
@@ -44,7 +45,10 @@ export function PaymentMethodSelector({
     accountId,
     onSelectionChange,
 }: PaymentMethodSelectorProps) {
+    const { t } = useLanguage();
+    const p = t.payment_method_selector;
     const crossChainEnabled = FEATURE_FLAGS.enableCrossChainCheckout;
+    const hasUsdcPrice = !!priceUsdc && priceUsdc > 0;
     const [method, setMethod] = useState<PaymentMethod>('NEAR');
     const [chain, setChain] = useState<ChainId>('near');
     const [nearPrice, setNearPrice] = useState<number>(0);
@@ -84,12 +88,12 @@ export function PaymentMethodSelector({
             const dryQuote = await getDryQuote(method, chain, usdCents, quoteRecipient, destinationAsset);
             setQuote(dryQuote);
         } catch (err) {
-            setQuoteError(err instanceof Error ? err.message : 'Failed to get quote');
+            setQuoteError(err instanceof Error ? err.message : p.quote_failed);
             setQuote(null);
         } finally {
             setQuoteLoading(false);
         }
-    }, [method, chain, usdCents, accountId, crossChainEnabled]);
+    }, [method, chain, usdCents, accountId, crossChainEnabled, p.quote_failed]);
 
     useEffect(() => {
         fetchQuote();
@@ -116,7 +120,7 @@ export function PaymentMethodSelector({
             .catch(() => {
                 if (cancelled) return;
                 setRheaQuoteNear(null);
-                setRheaQuoteError('Swap unavailable');
+                setRheaQuoteError(p.swap_unavailable);
             })
             .finally(() => {
                 if (!cancelled) setRheaQuoteLoading(false);
@@ -125,7 +129,7 @@ export function PaymentMethodSelector({
         return () => {
             cancelled = true;
         };
-    }, [method, priceUsdc, crossChainEnabled]);
+    }, [method, priceUsdc, crossChainEnabled, p.swap_unavailable]);
 
     // Notify parent of selection changes
     useEffect(() => {
@@ -136,26 +140,42 @@ export function PaymentMethodSelector({
         onSelectionChange({ method, chain, quote, estimatedNear, rheaQuoteError });
     }, [method, chain, quote, priceNear, rheaQuoteNear, rheaQuoteError, onSelectionChange]);
 
+    const stablecoinAvailable = hasUsdcPrice || crossChainEnabled;
+    const tokenOptions = TOKEN_OPTIONS.filter((opt) => opt.value === 'NEAR' || stablecoinAvailable);
     const availableChains = method !== 'NEAR' ? getSupportedChains(method) : [];
 
     // Filter chains: if cross-chain disabled, only NEAR chain is available
     const displayChains = crossChainEnabled
-        ? availableChains
-        : availableChains.filter(c => c.chainId === 'near');
+        ? availableChains.filter((c) => hasUsdcPrice || c.chainId !== 'near')
+        : availableChains.filter((c) => c.chainId === 'near' && hasUsdcPrice);
+    const firstAvailableChain = displayChains[0]?.chainId;
+    const hasSelectedChain = displayChains.some((c) => c.chainId === chain);
+
+    useEffect(() => {
+        if (method !== 'NEAR' && (!stablecoinAvailable || displayChains.length === 0)) {
+            setMethod('NEAR');
+            setChain('near');
+            return;
+        }
+
+        if (method !== 'NEAR' && firstAvailableChain && !hasSelectedChain) {
+            setChain(firstAvailableChain);
+        }
+    }, [method, stablecoinAvailable, displayChains.length, firstAvailableChain, hasSelectedChain]);
 
     return (
         <div className="space-y-3">
             {/* Token Selection */}
             <div className="flex gap-1 p-1 bg-black/30 rounded-lg border border-white/10">
-                {TOKEN_OPTIONS.map((opt) => (
+                {tokenOptions.map((opt) => (
                     <button
                         key={opt.value}
                         type="button"
                         onClick={() => {
                             setMethod(opt.value);
                             if (opt.value === 'NEAR') setChain('near');
-                            else if (!crossChainEnabled) setChain('near');
-                            else setChain(accountId ? 'near' : 'arb'); // EVM-first for MetaMask-only users
+                            else if (hasUsdcPrice) setChain('near');
+                            else setChain('arb');
                         }}
                         className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-all ${
                             method === opt.value
@@ -185,7 +205,6 @@ export function PaymentMethodSelector({
                                         : 'text-zinc-600 hover:text-zinc-400'
                                 }`}
                             >
-                                <span>{chainInfo.icon}</span>
                                 <span>{chainInfo.name}</span>
                             </button>
                         );
@@ -198,37 +217,40 @@ export function PaymentMethodSelector({
                 <div className="rounded-lg bg-black/20 border border-white/5 p-3">
                     {!crossChainEnabled ? (
                         <p className="text-xs text-near-green">
-                            Direct {method} transfer — no swap needed
+                            {p.direct_transfer.replace('{method}', method)}
                         </p>
                     ) : quoteLoading ? (
                         <div className="flex items-center gap-2 text-xs text-zinc-500">
                             <Loader2 className="h-3 w-3 animate-spin" />
-                            <span>Getting best price...</span>
+                            <span>{p.getting_best_price}</span>
                         </div>
                     ) : quoteError ? (
                         <p className="text-xs text-red-400">{quoteError}</p>
                     ) : quote ? (
                         <div className="space-y-1.5 text-xs">
                             <div className="flex justify-between text-zinc-400">
-                                <span>You pay</span>
+                                <span>{p.you_pay}</span>
                                 <span className="font-mono text-white">
                                     {quote.amountInFormatted} {method}
                                 </span>
                             </div>
                             <div className="flex justify-between text-zinc-400">
-                                <span>You receive</span>
+                                <span>{p.you_receive}</span>
                                 <span className="font-mono text-near-green">
                                     ~{quote.amountOutFormatted} USDC
                                 </span>
                             </div>
                             <div className="flex justify-between text-zinc-500">
-                                <span>Est. time</span>
+                                <span>{p.estimated_time}</span>
                                 <span className="font-mono">~{quote.timeEstimate}s</span>
                             </div>
                         </div>
                     ) : usdCents > 0 ? (
                         <p className="text-xs text-zinc-500">
-                            ~{formatUsdCents(usdCents)} {method} on {CHAIN_CONFIG[chain].name}
+                            {p.cross_chain_estimate
+                                .replace('{amount}', formatUsdCents(usdCents))
+                                .replace('{method}', method)
+                                .replace('{chain}', CHAIN_CONFIG[chain].name)}
                         </p>
                     ) : null}
                 </div>
@@ -240,13 +262,13 @@ export function PaymentMethodSelector({
                     {rheaQuoteLoading ? (
                         <div className="flex items-center justify-center gap-2 text-xs text-zinc-500">
                             <Loader2 className="h-3 w-3 animate-spin" />
-                            <span>Getting Rhea price...</span>
+                            <span>{p.getting_rhea_price}</span>
                         </div>
                     ) : rheaQuoteError ? (
                         <p className="text-xs text-red-400 text-center">{rheaQuoteError}</p>
                     ) : rheaQuoteNear ? (
                         <div className="flex justify-between text-xs text-zinc-400">
-                            <span>You pay</span>
+                            <span>{p.you_pay}</span>
                             <span className="font-mono text-white">~{rheaQuoteNear} NEAR</span>
                         </div>
                     ) : null}
@@ -255,7 +277,7 @@ export function PaymentMethodSelector({
 
             {nearPrice > 0 && method === 'NEAR' && (
                 <p className="text-[11px] text-zinc-600 text-center">
-                    ≈ {formatUsdCents(usdCents)} USD
+                    {p.usd_reference.replace('{amount}', formatUsdCents(usdCents))}
                 </p>
             )}
         </div>

@@ -2,15 +2,25 @@ import { memo } from 'react';
 import Image from 'next/image';
 import Link from '@/components/Web4Link';
 import { Button } from '@/components/ui/button';
-import { ArrowRight, Play, ShieldCheck, Ticket } from 'lucide-react';
+import { ArrowRight, Play, ShieldCheck, Ticket, WalletCards } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
+import { useWallet } from '@/components/providers/WalletProvider';
 
 export const HeroSection = memo(() => {
   const { t } = useLanguage();
+  const { connect, accountId } = useWallet();
   const h = t.landing.hero_section;
 
+  const handlePublish = () => {
+    if (accountId) {
+      window.location.href = '/upload';
+      return;
+    }
+    connect();
+  };
+
   return (
-    <section className="relative min-h-screen overflow-hidden bg-black pt-20">
+    <section className="relative min-h-[88vh] overflow-hidden bg-black pt-20">
       <div className="absolute inset-0">
         <Image
           src="/hero_concert.png"
@@ -23,14 +33,14 @@ export const HeroSection = memo(() => {
         <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black to-transparent" />
       </div>
 
-      <div className="container relative z-10 mx-auto grid min-h-[calc(100vh-5rem)] items-center gap-12 px-4 py-16 lg:grid-cols-[1.05fr_0.95fr]">
-        <div className="max-w-3xl">
+      <div className="container relative z-10 mx-auto grid min-h-[calc(88vh-5rem)] items-center gap-12 px-4 py-16 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="min-w-0 max-w-3xl">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-near-green/30 bg-black/50 px-4 py-2 text-sm font-semibold text-near-green backdrop-blur">
             <Play className="h-4 w-4" />
             {h.badge}
           </div>
 
-          <h1 className="max-w-4xl text-5xl font-black leading-[0.95] tracking-tight text-white md:text-7xl lg:text-8xl">
+          <h1 className="max-w-4xl text-balance text-4xl font-black leading-[1.02] text-white sm:text-5xl md:text-7xl lg:text-8xl">
             {h.title}
           </h1>
 
@@ -43,14 +53,13 @@ export const HeroSection = memo(() => {
           </p>
 
           <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-            <Link href="/upload">
-              <Button
-                size="lg"
-                className="w-full rounded-full bg-near-green px-8 py-7 text-base font-bold text-near-black hover:bg-near-green/85 sm:w-auto"
-              >
-                {h.cta_primary} <ArrowRight className="ml-2 h-5 w-5" />
-              </Button>
-            </Link>
+            <Button
+              size="lg"
+              onClick={handlePublish}
+              className="w-full rounded-full bg-near-green px-8 py-7 text-base font-bold text-near-black hover:bg-near-green/85 sm:w-auto"
+            >
+              {h.cta_primary} <ArrowRight className="ml-2 h-5 w-5" />
+            </Button>
             <Link href="/discover">
               <Button
                 size="lg"
@@ -88,6 +97,20 @@ export const HeroSection = memo(() => {
                   <p className="mt-2 text-sm leading-relaxed text-zinc-300">
                     {h.card_desc}
                   </p>
+                  <div className="mt-5 grid gap-3 text-sm sm:grid-cols-3">
+                    <div className="rounded-md border border-white/10 bg-black/60 p-3">
+                      <p className="text-zinc-500">{h.card_price_label}</p>
+                      <p className="mt-1 font-bold text-white">{h.card_price_value}</p>
+                    </div>
+                    <div className="rounded-md border border-white/10 bg-black/60 p-3">
+                      <p className="text-zinc-500">{h.card_access_label}</p>
+                      <p className="mt-1 font-bold text-near-green">{h.card_access_value}</p>
+                    </div>
+                    <div className="rounded-md border border-white/10 bg-black/60 p-3">
+                      <p className="text-zinc-500">{h.card_share_label}</p>
+                      <p className="mt-1 font-bold text-white">{h.card_share_value}</p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -95,12 +118,19 @@ export const HeroSection = memo(() => {
             <div className="absolute -bottom-8 -left-8 w-64 rounded-lg border border-white/10 bg-black/90 p-5 shadow-xl backdrop-blur">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-near-green/10">
-                  <ShieldCheck className="h-5 w-5 text-near-green" />
+                  <WalletCards className="h-5 w-5 text-near-green" />
                 </div>
                 <div>
                   <p className="text-sm font-bold text-white">{h.stat_revenue}</p>
                   <p className="text-xs text-zinc-500">{h.stat_access}</p>
                 </div>
+              </div>
+            </div>
+
+            <div className="absolute -top-6 -right-6 rounded-lg border border-white/10 bg-black/80 p-4 shadow-xl backdrop-blur">
+              <div className="flex items-center gap-2 text-sm font-semibold text-zinc-200">
+                <ShieldCheck className="h-4 w-4 text-near-green" />
+                {h.card_secure_note}
               </div>
             </div>
           </div>

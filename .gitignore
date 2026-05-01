@@ -53,6 +53,7 @@ claudedocs/
 .skills/
 
 # AI Assistants
+AGENTS.md
 .claude/
 .agent/
 .agents/*

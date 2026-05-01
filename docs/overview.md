@@ -24,7 +24,7 @@ Temel fikir cok basit:
 
 | Alan | YouTick yaklasimi |
 |------|-------------------|
-| Gelir payi | Odemenin `%98`i creator'a gider |
+| Gelir payi | Ucretli bilet bedelinin `%98`i creator'a gider; storage, mint ve yayin kaydi maliyetleri ayridir |
 | Medya korumasi | Video browser'da sifrelenir |
 | Erisim | NFT ticket sahipligi ile belirlenir |
 | Depolama | Crust/IPFS uzerinden sifreli medya |

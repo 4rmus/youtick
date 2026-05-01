@@ -38,7 +38,7 @@ interface IpfsPlayerProps {
     initialDurationSeconds?: number;
 }
 
-type EventAccessMode = 'paid' | 'free_collectible' | 'public_free';
+type EventAccessMode = 'paid' | 'free_collectible';
 
 // State machine for player states
 type PlayerState =
@@ -225,7 +225,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
         const resolveEventAccess = async () => {
             const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid);
             if (!isUuid) {
-                setEventAccessMode('public_free');
+                setEventAccessMode(null);
                 return;
             }
 
@@ -250,7 +250,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                     return;
                 }
 
-                setEventAccessMode(event?.access_mode ?? (event?.price === '0' ? 'public_free' : 'paid'));
+                setEventAccessMode(event?.access_mode ?? (event?.price === '0' ? 'free_collectible' : 'paid'));
             } catch {
                 if (!cancelled) {
                     setEventAccessMode(null);
@@ -427,8 +427,6 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
 
     // Derived access state from React Query
     const hasAccess = hasOwnership === true;
-    const isPublicFree = eventAccessMode === 'public_free';
-
     // Show inline purchase card when no access, no error, not loading, and not in special states
     const showPurchaseCard = !videoUrl
         && playerState.type !== 'banned'
@@ -436,7 +434,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
         && !loading
         && !purchased
         && !error;
-    const shouldRenderPurchaseCard = showPurchaseCard && ((isPublicFree && hasOwnership !== true) || hasAccess === false);
+    const shouldRenderPurchaseCard = showPurchaseCard && (!accountId || hasAccess === false);
     const effectiveDurationSeconds = knownDurationSeconds && knownDurationSeconds > 0
         ? knownDurationSeconds
         : Math.max(currentTimeSeconds, 1);
@@ -593,7 +591,11 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
 
         try {
             const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid);
-            let manifestCid: string | undefined = isUuid ? undefined : cid;
+            if (!isUuid) {
+                throw new Error('This video must be opened from a ticketed YouTick event.');
+            }
+
+            let manifestCid: string | undefined;
             let resolvedAccessMode = eventAccessMode;
 
             if (isUuid) {
@@ -616,7 +618,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                         return;
                     }
 
-                    resolvedAccessMode = event?.access_mode ?? (event?.price === '0' ? 'public_free' : 'paid');
+                    resolvedAccessMode = event?.access_mode ?? (event?.price === '0' ? 'free_collectible' : 'paid');
                     setEventAccessMode(resolvedAccessMode);
 
                     const parsed = parseTitleMetadata(event?.title, 'Untitled');
@@ -680,13 +682,9 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             }
 
             const inferredAccessMode = resolvedAccessMode
-                ?? (manifestData.encrypted ? 'free_collectible' : 'public_free');
+                ?? 'free_collectible';
 
-            if (inferredAccessMode === 'public_free' && manifestData.encrypted) {
-                throw new Error('This public free video is still encrypted. Republish it as public free.');
-            }
-
-            if (manifestData.encrypted && !accountId) {
+            if (inferredAccessMode === 'free_collectible' && !accountId) {
                 throw new Error('Please connect your wallet or create a temporary account to watch this video.');
             }
 

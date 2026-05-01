@@ -119,7 +119,7 @@ export interface VideoMetadata {
     content_type: string;
     price?: string;
     price_usd?: number | null;
-    access_mode?: 'paid' | 'free_collectible' | 'public_free';
+    access_mode?: 'paid' | 'free_collectible';
 }
 
 /**
@@ -151,8 +151,9 @@ export interface NFTEvent {
     creator_id: string;
     price: string;
     price_usd?: number | null;
+    price_usdc?: string | null;
     created_at?: number;
-    access_mode?: 'paid' | 'free_collectible' | 'public_free' | string;
+    access_mode?: 'paid' | 'free_collectible' | string;
     content_type?: ContentType | string;
     banned?: boolean;
     ban_reason?: string;
