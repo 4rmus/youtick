@@ -60,4 +60,32 @@ describe('video delivery display media resolution', () => {
 
     await expect(resolvePreferredMediaUrl(thumbnailUrl, manifestCid)).resolves.toBe(thumbnailUrl);
   });
+
+  it('resolves relative poster paths from directory manifests', async () => {
+    fetchFromGatewaysMock.mockResolvedValue(
+      new Response(JSON.stringify({
+        version: 2,
+        packaging: 'cmaf',
+        encrypted: false,
+        codec: 'avc1.64001f, mp4a.40.2',
+        contentType: 'video/mp4',
+        durationMs: 12_000,
+        initSegment: { cid: 'init.mp4', byteLength: 100 },
+        thumbnails: { posterCid: 'poster.webp' },
+        tracks: [
+          { id: 1, kind: 'video', codec: 'avc1.64001f', bitrate: 1000, timescale: 90000 },
+        ],
+        segments: [],
+      })),
+    );
+
+    const { resolvePreferredMediaUrl } = await import('@/lib/video-delivery');
+
+    await expect(
+      resolvePreferredMediaUrl(
+        'ipfs://QmThumbCid123456789012345678901234567890123456',
+        'bafyrootcid1234567890123456789012345678901234567890/manifest.json',
+      ),
+    ).resolves.toBe('ipfs://bafyrootcid1234567890123456789012345678901234567890/poster.webp');
+  });
 });

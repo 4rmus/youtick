@@ -8,6 +8,8 @@
 // Types
 export type {
   CrustAuthToken,
+  CrustDirectoryUploadEntry,
+  CrustDirectoryUploadResult,
   CrustUploadResult,
   CrustPinResult,
   CrustPsaPinResult,
@@ -42,6 +44,7 @@ export {
 // Client
 export {
   uploadToCrust,
+  uploadDirectoryToCrust,
   pinOnCrust,
   verifyCrustAvailability,
 } from './client';

@@ -74,7 +74,7 @@ const preferredReadRouteByPurpose = new Map<string, PreferredRoute>();
  */
 export function getGatewayUrl(cid: string): string {
   const gateway = getBestGateway();
-  return `${gateway.url}/${cid}`;
+  return `${gateway.url}/${encodeIpfsGatewayPath(cid)}`;
 }
 
 /**
@@ -86,7 +86,7 @@ export function getGatewayUrl(cid: string): string {
  * @returns Array of gateway URLs sorted by score
  */
 export function getGatewayUrls(cid: string): string[] {
-  return getSortedGateways().map((gateway) => `${gateway.url}/${cid}`);
+  return getSortedGateways().map((gateway) => `${gateway.url}/${encodeIpfsGatewayPath(cid)}`);
 }
 
 /**
@@ -134,7 +134,7 @@ export async function resolveGatewayUrl(
   try {
     return await Promise.any(
       candidates.map(async (gateway, index) => {
-        const url = `${gateway.url}/${cid}`;
+        const url = `${gateway.url}/${encodeIpfsGatewayPath(cid)}`;
         const { controller, cleanup } = controllers[index];
         const startedAt = now();
 
@@ -412,8 +412,8 @@ async function fetchReadCandidate(
   options: Pick<FetchGatewayOptions, 'signal'> & Required<Pick<FetchGatewayOptions, 'timeout'>>,
 ): Promise<Response> {
   const requestUrl = candidate.method === 'POST'
-    ? `${candidate.url}?arg=${cid}`
-    : `${candidate.url}/${cid}`;
+    ? `${candidate.url}?arg=${encodeIpfsApiArg(cid)}`
+    : `${candidate.url}/${encodeIpfsGatewayPath(cid)}`;
   const startedAt = now();
   const response = await fetch(requestUrl, {
     method: candidate.method,
@@ -658,4 +658,20 @@ function now(): number {
   }
 
   return Date.now();
+}
+
+function normalizeIpfsRef(ref: string): string {
+  const withoutScheme = ref.startsWith('ipfs://') ? ref.slice('ipfs://'.length) : ref;
+  return withoutScheme.replace(/^\/+/, '');
+}
+
+function encodeIpfsGatewayPath(ref: string): string {
+  return normalizeIpfsRef(ref)
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+function encodeIpfsApiArg(ref: string): string {
+  return encodeURIComponent(normalizeIpfsRef(ref));
 }

@@ -90,6 +90,46 @@ export async function fetchDeliveryManifest(
     return await response.json();
 }
 
+export function resolveManifestAssetRef(ref: string, manifestRef: string | null | undefined): string {
+    const normalizedRef = normalizeIpfsRef(ref);
+    if (isAbsoluteIpfsRef(normalizedRef)) {
+        return normalizedRef;
+    }
+
+    const manifestDirectory = getIpfsRefDirectory(manifestRef);
+    if (!manifestDirectory) {
+        return normalizedRef;
+    }
+
+    return `${manifestDirectory}/${normalizeRelativeManifestPath(normalizedRef)}`;
+}
+
+export function resolveDeliveryManifestRefs(
+    manifest: DeliveryManifestV2,
+    manifestRef: string | null | undefined,
+): DeliveryManifestV2 {
+    return {
+        ...manifest,
+        thumbnails: manifest.thumbnails?.posterCid
+            ? {
+                ...manifest.thumbnails,
+                posterCid: resolveManifestAssetRef(manifest.thumbnails.posterCid, manifestRef),
+            }
+            : manifest.thumbnails,
+        initSegment: {
+            ...manifest.initSegment,
+            cid: resolveManifestAssetRef(manifest.initSegment.cid, manifestRef),
+        },
+        segments: manifest.segments.map((segment) => ({
+            ...segment,
+            payloads: segment.payloads.map((payload) => ({
+                ...payload,
+                cid: resolveManifestAssetRef(payload.cid, manifestRef),
+            })),
+        })),
+    };
+}
+
 export function buildSegmentedEventTitle(
     thumbnailRef: string | undefined,
     manifestCid: string,
@@ -174,7 +214,7 @@ export async function resolvePreferredMediaUrl(
                 timeout: DISPLAY_MEDIA_MANIFEST_TIMEOUT_MS,
             });
             if (isDeliveryManifestV2(manifest)) {
-                return pickPreferredPosterUrl(thumbnailUrl, manifest);
+                return pickPreferredPosterUrl(thumbnailUrl, resolveDeliveryManifestRefs(manifest, manifestCid));
             }
         } catch {
             // Fall back to the title-embedded thumbnail below.
@@ -219,7 +259,7 @@ export async function warmupGatewayCids(
         items.map(async ({ cid }) => {
             await Promise.allSettled(
                 warmupEndpoints.map(async (endpoint) => {
-                    await fetch(`${endpoint}?arg=${cid}`, {
+                    await fetch(`${endpoint}?arg=${encodeURIComponent(cid)}`, {
                         method: 'POST',
                     });
                 }),
@@ -488,6 +528,34 @@ function concatenateArrayBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
     }
 
     return combined.buffer;
+}
+
+function normalizeIpfsRef(ref: string): string {
+    return ref.startsWith('ipfs://') ? ref.slice('ipfs://'.length) : ref;
+}
+
+function isAbsoluteIpfsRef(ref: string): boolean {
+    const firstSegment = ref.split('/')[0];
+    return (firstSegment.startsWith('Qm') || firstSegment.startsWith('ba')) && firstSegment.length >= 20;
+}
+
+function getIpfsRefDirectory(ref: string | null | undefined): string | null {
+    if (!ref) {
+        return null;
+    }
+
+    const normalizedRef = normalizeIpfsRef(ref).replace(/^\/+|\/+$/g, '');
+    const lastSlash = normalizedRef.lastIndexOf('/');
+    if (lastSlash < 0) {
+        return null;
+    }
+
+    const directory = normalizedRef.slice(0, lastSlash);
+    return isAbsoluteIpfsRef(directory) ? directory : null;
+}
+
+function normalizeRelativeManifestPath(ref: string): string {
+    return ref.replace(/^\.?\//, '').replace(/^\/+/, '');
 }
 
 type PackagingWorkerRequest = {

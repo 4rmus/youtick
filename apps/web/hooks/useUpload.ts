@@ -2,7 +2,7 @@
 
 import { useReducer, useRef, useCallback } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { uploadToCrust } from '@/lib/crust';
+import { uploadDirectoryToCrust } from '@/lib/crust';
 import { CidCollector } from '@/lib/crust/cid-collector';
 import {
     encryptBufferWithCounter,
@@ -146,13 +146,6 @@ export function useUpload() {
         try { return JSON.stringify(error); } catch { return String(error); }
     }, []);
 
-    const extractIpfsCid = useCallback((ref: string | null | undefined): string | null => {
-        if (!ref) return null;
-        if (ref.startsWith('ipfs://')) return ref.slice('ipfs://'.length);
-        const match = ref.match(/\/ipfs\/([^/?#]+)/);
-        return match?.[1] ?? null;
-    }, []);
-
     const toBlobPart = useCallback((bytes: Uint8Array): ArrayBuffer => {
         return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     }, []);
@@ -180,16 +173,16 @@ export function useUpload() {
         accountId: string;
         encrypted: boolean;
         aesKeyB64?: string;
-        thumbnailRef?: string | null;
+        thumbnailBlob?: Blob | null;
         posterBlob?: Blob | null;
         collector: CidCollector;
-    }): Promise<{ manifestCid: string }> => {
+    }): Promise<{ manifestCid: string; thumbnailRef: string | null }> => {
         const {
             packagedAsset,
             accountId: uploaderAccountId,
             encrypted,
             aesKeyB64,
-            thumbnailRef,
+            thumbnailBlob,
             posterBlob,
             collector,
         } = params;
@@ -206,22 +199,23 @@ export function useUpload() {
         }
         const encryptionKey = aesKeyB64;
 
-        let posterCid: string | undefined;
-        if (posterBlob) {
-            try {
-                setStatus('Uploading poster image...');
-                const posterResult = await uploadToCrust(posterBlob, uploaderAccountId);
-                posterCid = posterResult.cid;
-                collector.add(posterResult.cid, posterResult.size, 'poster');
-            } catch (posterError) {
-                console.warn('[useUpload] Poster upload failed, continuing without poster:', posterError);
-            }
+        const files: Array<{ path: string; file: Blob }> = [];
+        const thumbnailPath = thumbnailBlob ? 'thumbnail.jpg' : undefined;
+        const posterPath = posterBlob ? 'poster.jpg' : undefined;
+
+        if (thumbnailBlob && thumbnailPath) {
+            files.push({ path: thumbnailPath, file: thumbnailBlob });
         }
 
-        setStatus('Uploading initialization segment...');
+        if (posterBlob && posterPath) {
+            files.push({ path: posterPath, file: posterBlob });
+        }
+
+        setStatus('Preparing initialization segment...');
         const initBytes = new Uint8Array(packagedAsset.initSegment);
         let initCounterB64: string | undefined;
         let initUploadBlob: Blob;
+        const initPath = 'init.mp4';
 
         if (encrypted) {
             const encryptedInit = await encryptBufferWithCounter(initBytes, encryptionKey as string);
@@ -231,11 +225,10 @@ export function useUpload() {
             initUploadBlob = new Blob([initBytes], { type: 'video/mp4' });
         }
 
-        const initUpload = await uploadToCrust(initUploadBlob, uploaderAccountId);
-        collector.add(initUpload.cid, initUpload.size, 'init-segment');
+        files.push({ path: initPath, file: initUploadBlob });
 
-        let uploadedSegmentCount = 0;
-        const uploadedSegments = await runWithConcurrency(
+        let preparedSegmentCount = 0;
+        const preparedSegments = await runWithConcurrency(
             packagedAsset.segments,
             DELIVERY_UPLOAD_CONCURRENCY,
             async (segment) => {
@@ -252,10 +245,9 @@ export function useUpload() {
                     payloadBlob = new Blob([payloadBytes], { type: 'video/mp4' });
                 }
 
-                const uploadResult = await uploadToCrust(payloadBlob, uploaderAccountId);
-                collector.add(uploadResult.cid, uploadResult.size, 'media-segment');
+                const segmentPath = `segments/${String(segment.seq).padStart(6, '0')}.m4s`;
                 const uploadedPayloads: DeliverySegmentPayload[] = [{
-                    cid: uploadResult.cid,
+                    cid: segmentPath,
                     trackId: payload.trackId,
                     kind: payload.kind,
                     byteLength: payload.byteLength,
@@ -264,43 +256,59 @@ export function useUpload() {
                     counterB64: payloadCounterB64,
                 }];
 
-                uploadedSegmentCount += 1;
-                const progress = Math.round((uploadedSegmentCount / packagedAsset.segments.length) * 100);
+                preparedSegmentCount += 1;
+                const progress = Math.round((preparedSegmentCount / packagedAsset.segments.length) * 100);
                 dispatch({ type: 'SET_PROGRESS', payload: progress });
-                setStatus(`Uploading delivery segments... ${progress}%`);
+                setStatus(`Preparing delivery segments... ${progress}%`);
 
-                return createDeliverySegment(segment.seq, uploadedPayloads);
+                return {
+                    file: { path: segmentPath, file: payloadBlob },
+                    segment: createDeliverySegment(segment.seq, uploadedPayloads),
+                };
             },
         );
+        const uploadedSegments = preparedSegments.map((entry) => entry.segment);
+        files.push(...preparedSegments.map((entry) => entry.file));
 
         setStatus('Uploading delivery manifest...');
         const manifest = toDeliveryManifestV2(
             packagedAsset,
-            initUpload.cid,
+            initPath,
             packagedAsset.tracks,
             uploadedSegments,
             {
                 encrypted,
-                posterCid,
+                posterCid: posterPath,
                 initSegmentCounterB64: initCounterB64,
             },
         );
 
         const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
-        const manifestResult = await uploadToCrust(manifestBlob, uploaderAccountId);
-        collector.add(manifestResult.cid, manifestResult.size, 'manifest');
+        const manifestPath = 'manifest.json';
+        files.push({ path: manifestPath, file: manifestBlob });
+
+        setStatus('Uploading delivery bundle...');
+        const directoryUpload = await uploadDirectoryToCrust(files, uploaderAccountId, {
+            onProgress: (progress) => {
+                dispatch({ type: 'SET_PROGRESS', payload: progress.percentage });
+                setStatus(`Uploading delivery bundle... ${progress.percentage}%`);
+            },
+        });
+        collector.add(directoryUpload.cid, directoryUpload.size, 'delivery-root');
+        const manifestCid = `${directoryUpload.cid}/${manifestPath}`;
+        const thumbnailRef = thumbnailPath ? `ipfs://${directoryUpload.cid}/${thumbnailPath}` : null;
 
         const warmupItems = [
-            extractIpfsCid(thumbnailRef) ? { cid: extractIpfsCid(thumbnailRef)!, kind: 'image' as const } : null,
-            posterCid ? { cid: posterCid, kind: 'image' as const } : null,
-            { cid: initUpload.cid, kind: 'segment' as const },
-            ...(uploadedSegments[0]?.payloads.map((payload) => ({ cid: payload.cid, kind: 'segment' as const })) ?? []),
+            thumbnailPath ? { cid: `${directoryUpload.cid}/${thumbnailPath}`, kind: 'image' as const } : null,
+            posterPath ? { cid: `${directoryUpload.cid}/${posterPath}`, kind: 'image' as const } : null,
+            { cid: `${directoryUpload.cid}/${initPath}`, kind: 'segment' as const },
+            ...(uploadedSegments[0]?.payloads.map((payload) => ({ cid: `${directoryUpload.cid}/${payload.cid}`, kind: 'segment' as const })) ?? []),
         ].filter(Boolean) as Array<{ cid: string; kind: 'image' | 'segment' }>;
 
         void warmupGatewayCids(warmupItems);
 
-        return { manifestCid: manifestResult.cid };
-    }, [dispatch, extractIpfsCid, runWithConcurrency, setStatus, toBlobPart]);
+        return { manifestCid, thumbnailRef };
+    }, [dispatch, runWithConcurrency, setStatus, toBlobPart]);
 
     const authorizeUpload = useCallback(async (
         wallet: Awaited<ReturnType<typeof getWallet>>,
@@ -330,21 +338,7 @@ export function useUpload() {
             console.log('[DECENTRALIZATION_METRIC] upload_process_start', { accountId, storage: 'kms_aes_ctr_encryption' });
 
             let thumbnailUrl: string | null = null;
-            if (thumbnail) {
-                updateStep('thumbnail', 'loading');
-                setStatus('Uploading cover image...');
-                try {
-                    const thumbResult = await uploadToCrust(thumbnail, accountId);
-                    thumbnailUrl = `ipfs://${thumbResult.cid}`;
-                    collector.add(thumbResult.cid, thumbResult.size, 'thumbnail');
-                    updateStep('thumbnail', 'complete');
-                } catch (thumbError) {
-                    console.error('[Thumbnail] Upload failed:', thumbError);
-                    updateStep('thumbnail', 'complete');
-                }
-            } else {
-                updateStep('thumbnail', 'complete');
-            }
+            updateStep('thumbnail', 'complete');
 
             const {
                 buildSegmentedEventTitle,
@@ -388,11 +382,12 @@ export function useUpload() {
                 accountId,
                 encrypted: true,
                 aesKeyB64,
-                thumbnailRef: thumbnailUrl,
+                thumbnailBlob: thumbnail,
                 posterBlob: posterThumbnail,
                 collector,
             });
             const manifestCid = deliveryUpload.manifestCid;
+            thumbnailUrl = deliveryUpload.thumbnailRef;
             updateStep('upload', 'complete');
 
             updateStep('kms', 'loading');

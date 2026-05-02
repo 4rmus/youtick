@@ -1,12 +1,13 @@
 /**
  * CID Collector
  *
- * Accumulates CID + size pairs during the upload flow so that
- * storage orders can be placed for every uploaded asset —
- * not just the manifest.
+ * Accumulates CID + size pairs that need persistent storage orders.
+ * New uploads store delivery assets under one IPFS directory root; legacy
+ * callers may still collect individual manifest/segment/media assets.
  */
 
 export type UploadedAssetType =
+  | 'delivery-root'
   | 'manifest'
   | 'init-segment'
   | 'media-segment'
@@ -37,6 +38,10 @@ export class CidCollector {
 
   getManifestCid(): string | undefined {
     return this.assets.find((a) => a.type === 'manifest')?.cid;
+  }
+
+  getDeliveryRootCid(): string | undefined {
+    return this.assets.find((a) => a.type === 'delivery-root')?.cid;
   }
 
   count(): number {

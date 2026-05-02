@@ -57,13 +57,12 @@ function mockFetchSequence(responses: Array<{ ok: boolean; status?: number; body
 describe('CidCollector', () => {
   it('collects and returns all assets', () => {
     const collector = new CidCollector();
-    collector.add('QmA', 100, 'manifest');
-    collector.add('QmB', 200, 'init-segment');
-    collector.add('QmC', 300, 'media-segment');
+    collector.add('QmRoot', 600, 'delivery-root');
 
-    expect(collector.count()).toBe(3);
+    expect(collector.count()).toBe(1);
     expect(collector.getTotalSize()).toBe(600);
-    expect(collector.getManifestCid()).toBe('QmA');
+    expect(collector.getDeliveryRootCid()).toBe('QmRoot');
+    expect(collector.getManifestCid()).toBeUndefined();
   });
 
   it('ignores empty CIDs', () => {
@@ -74,19 +73,25 @@ describe('CidCollector', () => {
 
   it('clears all assets', () => {
     const collector = new CidCollector();
-    collector.add('QmA', 100, 'manifest');
-    collector.add('QmB', 200, 'thumbnail');
+    collector.add('QmRoot', 300, 'delivery-root');
     collector.clear();
     expect(collector.count()).toBe(0);
+    expect(collector.getDeliveryRootCid()).toBeUndefined();
     expect(collector.getManifestCid()).toBeUndefined();
   });
 
   it('returns a copy from getAll', () => {
     const collector = new CidCollector();
-    collector.add('QmA', 100, 'poster');
+    collector.add('QmRoot', 100, 'delivery-root');
     const all = collector.getAll();
     all.push(makeAsset());
     expect(collector.count()).toBe(1);
+  });
+
+  it('still exposes manifest CIDs for legacy collected assets', () => {
+    const collector = new CidCollector();
+    collector.add('QmManifest', 100, 'manifest');
+    expect(collector.getManifestCid()).toBe('QmManifest');
   });
 });
 
@@ -96,11 +101,9 @@ describe('placeStorageOrders', () => {
     mockRecordMetric.mockClear();
   });
 
-  it('places orders for all CIDs and reports batch result', async () => {
+  it('places a storage order for the delivery root CID', async () => {
     const assets: UploadedAsset[] = [
-      makeAsset({ type: 'manifest', size: 512 }),
-      makeAsset({ type: 'init-segment', size: 1024 }),
-      makeAsset({ type: 'media-segment', size: 2048 }),
+      makeAsset({ cid: 'bafyRoot', type: 'delivery-root', size: 3584 }),
     ];
 
     mockFetchSequence(
@@ -113,10 +116,10 @@ describe('placeStorageOrders', () => {
     const { placeStorageOrders } = await import('@/lib/crust/storage-order');
     const result = await placeStorageOrders(assets, 'uploader.near');
 
-    expect(result.total).toBe(3);
-    expect(result.succeeded).toBe(3);
+    expect(result.total).toBe(1);
+    expect(result.succeeded).toBe(1);
     expect(result.failed).toBe(0);
-    expect(result.results).toHaveLength(3);
+    expect(result.results).toHaveLength(1);
     result.results.forEach((r) => {
       expect(r.status).toBe('queued');
     });

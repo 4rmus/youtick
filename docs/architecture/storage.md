@@ -44,7 +44,11 @@ The upload can include:
 - init segments and media segments
 - thumbnail and poster assets
 
-Delivery assets are uploaded through Crust. Playback reads through multiple gateway options.
+These delivery assets are uploaded through Crust as one IPFS directory bundle.
+The event points at `rootCid/manifest.json`, while the manifest refers to
+relative asset paths such as `init.mp4` and `segments/000000.m4s`. Persistent
+storage is ordered for the root CID instead of every individual segment.
+Playback reads through multiple gateway options.
 
 ### 3. Key Share Storage
 

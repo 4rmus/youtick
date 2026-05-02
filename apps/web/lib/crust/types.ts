@@ -29,6 +29,20 @@ export interface CrustUploadResult {
   size: number;
 }
 
+export interface CrustDirectoryUploadEntry {
+  /** File or directory path returned by Crust */
+  path: string;
+  /** IPFS CID for this entry */
+  cid: string;
+  /** Entry size in bytes */
+  size: number;
+}
+
+export interface CrustDirectoryUploadResult extends CrustUploadResult {
+  /** Entries returned by the IPFS add call, including the root directory */
+  entries: CrustDirectoryUploadEntry[];
+}
+
 /**
  * Result of Crust pin operation
  */

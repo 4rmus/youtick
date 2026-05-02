@@ -12,6 +12,7 @@ import {
     getEffectiveManifestDurationMs,
     isDeliveryManifestV2,
     pickPreferredPosterUrl,
+    resolveDeliveryManifestRefs,
     shouldUseSegmentedPlayback,
 } from '@/lib/video-delivery';
 import { useWallet } from '@/components/providers/WalletProvider';
@@ -657,24 +658,25 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             if (!isDeliveryManifestV2(manifestData)) {
                 throw new Error(playerCopy.unsupported_manifest);
             }
+            const resolvedManifest = resolveDeliveryManifestRefs(manifestData, manifestCid);
 
             console.info('[IpfsPlayer] Using segmented delivery manifest', {
                 manifestCid,
-                encrypted: manifestData.encrypted,
-                tracks: manifestData.tracks.length,
-                segments: manifestData.segments.length,
+                encrypted: resolvedManifest.encrypted,
+                tracks: resolvedManifest.tracks.length,
+                segments: resolvedManifest.segments.length,
             });
-            setKnownDurationSeconds(getEffectiveManifestDurationMs(manifestData) / 1000);
-            const preferredPosterUrl = pickPreferredPosterUrl(resolvedThumbnailUrl ?? null, manifestData);
+            setKnownDurationSeconds(getEffectiveManifestDurationMs(resolvedManifest) / 1000);
+            const preferredPosterUrl = pickPreferredPosterUrl(resolvedThumbnailUrl ?? null, resolvedManifest);
             if (preferredPosterUrl) {
                 setResolvedThumbnailUrl(preferredPosterUrl);
             }
 
-            const canUseSegmentedPlayback = shouldUseSegmentedPlayback(manifestData);
+            const canUseSegmentedPlayback = shouldUseSegmentedPlayback(resolvedManifest);
             if (!canUseSegmentedPlayback) {
                 console.warn('[IpfsPlayer] Manifest is not segmented enough for smooth seek', {
                     manifestCid,
-                    segments: manifestData.segments.length,
+                    segments: resolvedManifest.segments.length,
                 });
             }
 
@@ -693,10 +695,10 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                 throw new Error(playerCopy.connect_or_guest);
             }
 
-            const aesKeyB64 = manifestData.encrypted ? await resolveAesKey() : undefined;
+            const aesKeyB64 = resolvedManifest.encrypted ? await resolveAesKey() : undefined;
             setPlayerState({ type: 'decrypting', message: playerCopy.preparing_stream });
 
-            const session = createDeliveryPlaybackSession(manifestData, {
+            const session = createDeliveryPlaybackSession(resolvedManifest, {
                 aesKeyB64,
                 onBufferedTimeChange: (bufferedTime) => {
                     setBufferedSeconds(bufferedTime);

@@ -166,4 +166,30 @@ describe('crust gateway probing', () => {
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     expect(vi.mocked(global.fetch).mock.calls.length).toBeLessThanOrEqual(1);
   });
+
+  it('builds public gateway URLs for IPFS path references', async () => {
+    const { getGatewayUrl, getGatewayUrls } = await import('@/lib/crust/gateway');
+
+    expect(getGatewayUrl('bafyroot/segments/000000.m4s')).toBe(
+      'https://ipfs.io/ipfs/bafyroot/segments/000000.m4s',
+    );
+    expect(getGatewayUrls('ipfs://bafyroot/posters/main poster.webp')[0]).toBe(
+      'https://ipfs.io/ipfs/bafyroot/posters/main%20poster.webp',
+    );
+  });
+
+  it('encodes Crust read API args for IPFS path references', async () => {
+    global.fetch = vi.fn(async () => new Response('ok', { status: 200 })) as unknown as typeof fetch;
+
+    const { fetchFromGateways } = await import('@/lib/crust/gateway');
+    const response = await fetchFromGateways('bafyroot/segments/000000.m4s', {
+      purpose: 'segment',
+      timeout: 500,
+    });
+
+    expect(await response.text()).toBe('ok');
+    expect(vi.mocked(global.fetch).mock.calls[0][0]).toBe(
+      'https://crust-primary/api/v0/cat?arg=bafyroot%2Fsegments%2F000000.m4s',
+    );
+  });
 });

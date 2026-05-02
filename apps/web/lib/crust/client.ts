@@ -5,7 +5,7 @@
  * Uses W3Auth (NEAR Session Key) for authentication.
  */
 
-import { CrustUploadResult, CrustPinResult, CrustError } from './types';
+import { CrustUploadResult, CrustDirectoryUploadResult, CrustPinResult, CrustError } from './types';
 import { CRUST_CONSTANTS } from './config';
 import { generateW3AuthToken } from './w3auth';
 import { getGatewayUrl } from './gateway';
@@ -130,6 +130,145 @@ export async function uploadToCrust(
       error instanceof Error ? error : undefined
     );
   }
+}
+
+export async function uploadDirectoryToCrust(
+  files: Array<{ path: string; file: Blob }>,
+  accountId: string,
+  options?: {
+    onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void;
+    timeout?: number;
+  }
+): Promise<CrustDirectoryUploadResult> {
+  try {
+    const authToken = await generateW3AuthToken(accountId);
+    const formData = new FormData();
+    const totalSize = files.reduce((sum, entry) => sum + entry.file.size, 0);
+
+    for (const entry of files) {
+      formData.append('file', entry.file, entry.path.replace(/^\/+/, ''));
+    }
+
+    const timeout = options?.timeout || CRUST_CONSTANTS.UPLOAD_TIMEOUT;
+    const endpoints = [
+      CRUST_CONSTANTS.UPLOAD_ENDPOINT,
+      ...CRUST_CONSTANTS.UPLOAD_ENDPOINTS_FALLBACK,
+    ];
+
+    let lastError: Error | null = null;
+    let result: CrustDirectoryUploadResult | null = null;
+
+    for (const endpoint of endpoints) {
+      try {
+        result = await new Promise<CrustDirectoryUploadResult>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          const timer = setTimeout(() => {
+            xhr.abort();
+            reject(new CrustError('TIMEOUT', `Directory upload timed out after ${timeout}ms`));
+          }, timeout);
+
+          xhr.upload.addEventListener('progress', (event) => {
+            if (event.lengthComputable && options?.onProgress) {
+              options.onProgress({
+                loaded: event.loaded,
+                total: event.total,
+                percentage: Math.round((event.loaded / event.total) * 100),
+              });
+            }
+          });
+
+          xhr.addEventListener('load', () => {
+            clearTimeout(timer);
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const entries = parseDirectoryUploadEntries(xhr.responseText);
+                const rootEntry = entries.findLast((entry) => entry.path === '') ?? entries[entries.length - 1];
+                if (!rootEntry?.cid) {
+                  reject(new CrustError('UPLOAD_FAILED', `Crust directory upload returned no root CID: ${xhr.responseText}`));
+                  return;
+                }
+
+                resolve({
+                  cid: rootEntry.cid,
+                  size: totalSize || rootEntry.size,
+                  entries,
+                });
+              } catch {
+                reject(new CrustError('UPLOAD_FAILED', `Invalid directory response from Crust: ${xhr.responseText}`));
+              }
+            } else {
+              reject(new CrustError('UPLOAD_FAILED', `Crust directory upload returned HTTP ${xhr.status}: ${xhr.responseText}`));
+            }
+          });
+
+          xhr.addEventListener('error', () => {
+            clearTimeout(timer);
+            reject(new CrustError('UPLOAD_FAILED', `Network error during Crust directory upload to ${endpoint}`));
+          });
+
+          xhr.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new CrustError('TIMEOUT', 'Crust directory upload aborted'));
+          });
+
+          xhr.open('POST', buildDirectoryUploadUrl(endpoint));
+          xhr.setRequestHeader('Authorization', authToken.header);
+          xhr.send(formData);
+        });
+        break;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        console.warn(`[Crust] Directory upload failed on ${endpoint}, trying next...`, lastError.message);
+        continue;
+      }
+    }
+
+    if (!result) {
+      throw lastError ?? new CrustError('UPLOAD_FAILED', 'All Crust directory upload endpoints failed');
+    }
+
+    recordMetric('crust_upload_success');
+
+    console.log('[DECENTRALIZATION_METRIC] crust_directory_upload_success', {
+      accountId,
+      cid: result.cid,
+      size: result.size,
+      entries: result.entries.length,
+    });
+
+    return result;
+  } catch (error: unknown) {
+    if (error instanceof CrustError) {
+      throw error;
+    }
+
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new CrustError(
+      'UPLOAD_FAILED',
+      `Crust directory upload failed: ${errorMessage}`,
+      error instanceof Error ? error : undefined
+    );
+  }
+}
+
+function buildDirectoryUploadUrl(endpoint: string): string {
+  const separator = endpoint.includes('?') ? '&' : '?';
+  return `${endpoint}${separator}wrap-with-directory=true&cid-version=1&pin=true`;
+}
+
+function parseDirectoryUploadEntries(responseText: string): CrustDirectoryUploadResult['entries'] {
+  return responseText
+    .trim()
+    .split(/\n+/)
+    .filter(Boolean)
+    .map((line) => {
+      const entry = JSON.parse(line) as { Name?: string; Hash?: string; Size?: string | number };
+      return {
+        path: entry.Name ?? '',
+        cid: entry.Hash ?? '',
+        size: Number(entry.Size) || 0,
+      };
+    });
 }
 
 /**

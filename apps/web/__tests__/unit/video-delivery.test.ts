@@ -7,6 +7,7 @@ import {
   createDeliverySegment,
   isDeliveryManifestV2,
   pickPreferredPosterUrl,
+  resolveDeliveryManifestRefs,
   shouldUseSegmentedPlayback,
   shouldUseSegmentedDelivery,
 } from '@/lib/video-delivery';
@@ -84,6 +85,53 @@ describe('video delivery helpers', () => {
     expect(buildManifestPosterUrl(manifest)).toBe('ipfs://QmPoster');
     expect(pickPreferredPosterUrl('ipfs://QmThumb', manifest)).toBe('ipfs://QmPoster');
     expect(pickPreferredPosterUrl('ipfs://QmThumb', undefined)).toBe('ipfs://QmThumb');
+  });
+
+  it('resolves relative manifest asset paths against the manifest directory', () => {
+    const manifest = {
+      version: 2 as const,
+      packaging: 'cmaf' as const,
+      encrypted: true,
+      codec: 'avc1.64001f, mp4a.40.2',
+      contentType: 'video/mp4' as const,
+      durationMs: 12000,
+      initSegment: { cid: 'init.mp4', byteLength: 100 },
+      thumbnails: { posterCid: 'posters/main poster.webp' },
+      tracks: [
+        { id: 1, kind: 'video' as const, codec: 'avc1.64001f', bitrate: 1000, timescale: 90000 },
+      ],
+      segments: [
+        {
+          seq: 0,
+          durationMs: 4000,
+          payloads: [
+            { cid: 'segments/000000.m4s', trackId: 1, kind: 'video' as const, byteLength: 100, startMs: 0, endMs: 4000 },
+            { cid: 'QmAbsoluteSegmentCid123456789012345678901234567890', trackId: 2, kind: 'audio' as const, byteLength: 50, startMs: 0, endMs: 4000 },
+          ],
+        },
+      ],
+    };
+
+    const resolved = resolveDeliveryManifestRefs(
+      manifest,
+      'bafyrootcid1234567890123456789012345678901234567890/manifest.json',
+    );
+
+    expect(resolved.initSegment.cid).toBe(
+      'bafyrootcid1234567890123456789012345678901234567890/init.mp4',
+    );
+    expect(resolved.thumbnails?.posterCid).toBe(
+      'bafyrootcid1234567890123456789012345678901234567890/posters/main poster.webp',
+    );
+    expect(resolved.segments[0].payloads[0].cid).toBe(
+      'bafyrootcid1234567890123456789012345678901234567890/segments/000000.m4s',
+    );
+    expect(resolved.segments[0].payloads[1].cid).toBe(
+      'QmAbsoluteSegmentCid123456789012345678901234567890',
+    );
+    expect(buildManifestPosterUrl(resolved)).toBe(
+      'ipfs://bafyrootcid1234567890123456789012345678901234567890/posters/main poster.webp',
+    );
   });
 
   it('rejects pathological manifests for segmented playback', () => {
