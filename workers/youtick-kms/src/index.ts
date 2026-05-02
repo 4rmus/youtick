@@ -629,11 +629,13 @@ async function getEventCreatorId(
             { encrypted_cid: encryptedCid },
         );
         const creatorId = event?.creator_id ?? null;
-        await env.ACCESS_CACHE.put(
-            cacheKey,
-            creatorId || '__null__',
-            { expirationTtl: EVENT_CREATOR_CACHE_TTL_S },
-        );
+        if (creatorId) {
+            await env.ACCESS_CACHE.put(
+                cacheKey,
+                creatorId,
+                { expirationTtl: EVENT_CREATOR_CACHE_TTL_S },
+            );
+        }
         return creatorId;
     } catch (error) {
         console.error('[KMS] getEventCreatorId failed:', error);
