@@ -356,4 +356,126 @@ describe('kms/client', () => {
     expect(retrieveCalls).not.toContain('https://kms-a.example.workers.dev/retrieve');
     expect(retrieveCalls).not.toContain('https://kms-e.example.workers.dev/retrieve');
   });
+
+  it('skips an operator briefly after its health check fails', async () => {
+    const registry = await import('@/lib/registry');
+    vi.mocked(registry.listActiveDecryptionOperators).mockResolvedValue([
+      {
+        account_id: 'kms-a.testnet',
+        endpoint: 'https://kms-a.example.workers.dev',
+        transport_public_key: 'pk-a',
+        kind: 'DecryptionOperator',
+        active: true,
+      },
+      {
+        account_id: 'kms-b.testnet',
+        endpoint: 'https://kms-b.example.workers.dev',
+        transport_public_key: 'pk-b',
+        kind: 'DecryptionOperator',
+        active: true,
+      },
+      {
+        account_id: 'kms-c.testnet',
+        endpoint: 'https://kms-c.example.workers.dev',
+        transport_public_key: 'pk-c',
+        kind: 'DecryptionOperator',
+        active: true,
+      },
+      {
+        account_id: 'kms-d.testnet',
+        endpoint: 'https://kms-d.example.workers.dev',
+        transport_public_key: 'pk-d',
+        kind: 'DecryptionOperator',
+        active: true,
+      },
+    ]);
+    vi.mocked(registry.getThresholdConfig).mockResolvedValue({
+      total_operators: 4,
+      required_shares: 2,
+    });
+
+    setupMockSessionKey('alice.testnet');
+
+    const secretB64 = Buffer.from('cooldown-secret-key').toString('base64');
+    const shares = splitSecretIntoShares(secretB64, 4, 2);
+    const retrieveCalls: string[] = [];
+    let shouldFailAHealth = true;
+
+    global.fetch = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+
+      if (url === 'https://kms-a.example.workers.dev/health') {
+        if (shouldFailAHealth) {
+          return Promise.reject(new Error('connection closed'));
+        }
+        return Promise.resolve(new Response(JSON.stringify({
+          ok: true,
+          data: {
+            network: 'testnet',
+            contract: 'app-contract.testnet',
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }));
+      }
+
+      if (url.endsWith('/health')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          ok: true,
+          data: {
+            network: 'testnet',
+            contract: 'app-contract.testnet',
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }));
+      }
+
+      if (url.endsWith('/retrieve')) {
+        const operatorIndex = ['kms-a', 'kms-b', 'kms-c', 'kms-d']
+          .findIndex((operator) => url.includes(operator));
+        retrieveCalls.push(`kms-${String.fromCharCode(97 + operatorIndex)}`);
+        return Promise.resolve(new Response(JSON.stringify({
+          ok: true,
+          data: {
+            shareB64: shares[operatorIndex].shareB64,
+            shareId: shares[operatorIndex].shareId,
+            totalShares: 4,
+            requiredShares: 2,
+            scheme: 'shamir-v1',
+            operatorAccountId: `kms-${String.fromCharCode(97 + operatorIndex)}.testnet`,
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }));
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+
+    const { clearKmsOperatorStats, retrieveEncryptionKey } = await import('@/lib/kms/client');
+    clearKmsOperatorStats();
+
+    await expect(
+      retrieveEncryptionKey('video-1', 'alice.testnet', {
+        signMessage: vi.fn(),
+        signAndSendTransaction: vi.fn(),
+      } as never),
+    ).resolves.toBe(secretB64);
+    expect(retrieveCalls).not.toContain('kms-a');
+
+    shouldFailAHealth = false;
+    retrieveCalls.length = 0;
+
+    await expect(
+      retrieveEncryptionKey('video-1', 'alice.testnet', {
+        signMessage: vi.fn(),
+        signAndSendTransaction: vi.fn(),
+      } as never),
+    ).resolves.toBe(secretB64);
+    expect(retrieveCalls).not.toContain('kms-a');
+  });
 });
