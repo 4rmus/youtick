@@ -11,7 +11,6 @@ const AUTH_CACHE_PREFIX = 'youtick:kms-auth:';
 const AUTH_CACHE_SKEW_MS = 30_000;
 const KMS_HEALTH_CACHE_MS = 60_000;
 const KMS_HEALTH_TIMEOUT_MS = 1_200;
-const KMS_HEALTH_FAILURE_COOLDOWN_MS = 15_000;
 const KMS_OPERATOR_STATS_STORAGE_KEY = 'youtick:kms-operator-stats:v1';
 const KMS_OPERATOR_FAILURE_COOLDOWN_MS = 60_000;
 const KMS_OPERATOR_PRIMARY_BATCH_EXTRA = 1;
@@ -35,7 +34,6 @@ type KmsEndpointStatsStore = Record<string, KmsEndpointStats>;
 
 const kmsHealthValidatedAtByUrl = new Map<string, number>();
 const kmsHealthValidationPromiseByUrl = new Map<string, Promise<void>>();
-const kmsHealthFailureCooldownUntilByUrl = new Map<string, number>();
 let cachedKmsEndpointStats: KmsEndpointStatsStore | null = null;
 
 export interface KMSStoreResult {
@@ -119,14 +117,6 @@ async function ensureKmsConfigMatchesApp(baseUrl: string): Promise<void> {
         return;
     }
 
-    const healthRetryAfter = kmsHealthFailureCooldownUntilByUrl.get(baseUrl) || 0;
-    if (Date.now() < healthRetryAfter) {
-        throw new KMSError('HEALTH_COOLDOWN', `KMS health check is cooling down for ${baseUrl}`);
-    }
-    if (healthRetryAfter) {
-        kmsHealthFailureCooldownUntilByUrl.delete(baseUrl);
-    }
-
     const validatedAt = kmsHealthValidatedAtByUrl.get(baseUrl) || 0;
     if (Date.now() - validatedAt < KMS_HEALTH_CACHE_MS) {
         return;
@@ -149,38 +139,30 @@ async function ensureKmsConfigMatchesApp(baseUrl: string): Promise<void> {
                 method: 'GET',
                 signal: controller.signal,
             });
-        } catch (error) {
-            kmsHealthFailureCooldownUntilByUrl.set(baseUrl, Date.now() + KMS_HEALTH_FAILURE_COOLDOWN_MS);
-            throw new KMSError(
-                'HEALTH_UNAVAILABLE',
-                `KMS health check failed for ${baseUrl}`,
-                error instanceof Error ? error : undefined,
-            );
+        } catch {
+            recordKmsEndpointFailure(baseUrl);
+            return;
         } finally {
             clearTimeout(timeoutId);
         }
 
         if (!response.ok) {
-            kmsHealthFailureCooldownUntilByUrl.set(baseUrl, Date.now() + KMS_HEALTH_FAILURE_COOLDOWN_MS);
-            throw new KMSError('HEALTH_UNAVAILABLE', `KMS health check returned ${response.status} for ${baseUrl}`);
+            recordKmsEndpointFailure(baseUrl);
+            return;
         }
 
         let result: { ok: boolean; data?: KMSHealthData };
         try {
             result = await response.json() as { ok: boolean; data?: KMSHealthData };
-        } catch (error) {
-            kmsHealthFailureCooldownUntilByUrl.set(baseUrl, Date.now() + KMS_HEALTH_FAILURE_COOLDOWN_MS);
-            throw new KMSError(
-                'HEALTH_UNAVAILABLE',
-                `KMS health check returned invalid JSON for ${baseUrl}`,
-                error instanceof Error ? error : undefined,
-            );
+        } catch {
+            recordKmsEndpointFailure(baseUrl);
+            return;
         }
 
         const health = result.data;
         if (!result.ok || !health) {
-            kmsHealthFailureCooldownUntilByUrl.set(baseUrl, Date.now() + KMS_HEALTH_FAILURE_COOLDOWN_MS);
-            throw new KMSError('HEALTH_UNAVAILABLE', `KMS health check is not ready for ${baseUrl}`);
+            recordKmsEndpointFailure(baseUrl);
+            return;
         }
 
         const healthNetwork = health.network || 'unknown';
@@ -196,7 +178,6 @@ async function ensureKmsConfigMatchesApp(baseUrl: string): Promise<void> {
         }
 
         kmsHealthValidatedAtByUrl.set(baseUrl, Date.now());
-        kmsHealthFailureCooldownUntilByUrl.delete(baseUrl);
     })().finally(() => {
         kmsHealthValidationPromiseByUrl.delete(baseUrl);
     });
@@ -334,7 +315,7 @@ function shouldRecordKmsEndpointFailure(error: unknown): boolean {
     }
 
     if (error instanceof KMSError) {
-        return !['ACCESS_DENIED', 'NOT_FOUND', 'AUTH_REJECTED', 'CONFIG_MISMATCH', 'HEALTH_COOLDOWN'].includes(error.code);
+        return !['ACCESS_DENIED', 'NOT_FOUND', 'AUTH_REJECTED', 'CONFIG_MISMATCH'].includes(error.code);
     }
 
     return true;

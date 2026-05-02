@@ -357,7 +357,7 @@ describe('kms/client', () => {
     expect(retrieveCalls).not.toContain('https://kms-e.example.workers.dev/retrieve');
   });
 
-  it('skips an operator briefly after its health check fails', async () => {
+  it('still tries retrieve when an operator health check fails', async () => {
     const registry = await import('@/lib/registry');
     vi.mocked(registry.listActiveDecryptionOperators).mockResolvedValue([
       {
@@ -399,25 +399,12 @@ describe('kms/client', () => {
     const secretB64 = Buffer.from('cooldown-secret-key').toString('base64');
     const shares = splitSecretIntoShares(secretB64, 4, 2);
     const retrieveCalls: string[] = [];
-    let shouldFailAHealth = true;
 
     global.fetch = vi.fn((input: string | URL | Request) => {
       const url = String(input);
 
       if (url === 'https://kms-a.example.workers.dev/health') {
-        if (shouldFailAHealth) {
-          return Promise.reject(new Error('connection closed'));
-        }
-        return Promise.resolve(new Response(JSON.stringify({
-          ok: true,
-          data: {
-            network: 'testnet',
-            contract: 'app-contract.testnet',
-          },
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }));
+        return Promise.reject(new Error('connection closed'));
       }
 
       if (url.endsWith('/health')) {
@@ -465,17 +452,6 @@ describe('kms/client', () => {
         signAndSendTransaction: vi.fn(),
       } as never),
     ).resolves.toBe(secretB64);
-    expect(retrieveCalls).not.toContain('kms-a');
-
-    shouldFailAHealth = false;
-    retrieveCalls.length = 0;
-
-    await expect(
-      retrieveEncryptionKey('video-1', 'alice.testnet', {
-        signMessage: vi.fn(),
-        signAndSendTransaction: vi.fn(),
-      } as never),
-    ).resolves.toBe(secretB64);
-    expect(retrieveCalls).not.toContain('kms-a');
+    expect(retrieveCalls).toContain('kms-a');
   });
 });
