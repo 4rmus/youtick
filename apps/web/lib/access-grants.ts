@@ -27,11 +27,20 @@ export interface BrowserSessionGrant {
 interface PersistedSessionGrant {
     accountId: string;
     sessionPublicKey: string;
+    secretKey?: KeyPairString;
     scope: SessionGrantScope;
     resourceId: string | null;
     expiresAt: number;
     originHash: string | null;
     deviceHash: string | null;
+}
+
+export interface PreparedSessionGrant {
+    grant: BrowserSessionGrant;
+    transaction: {
+        receiverId: string;
+        actions: unknown[];
+    };
 }
 
 function cacheKey(accountId: string, scope: SessionGrantScope, resourceId?: string): string {
@@ -156,9 +165,8 @@ function readCachedGrant(accountId: string, scope: SessionGrantScope, resourceId
         return inMemory;
     }
 
-    // Check sessionStorage for public metadata only (no secretKey).
-    // This handles page navigations within the same tab where in-memory was lost
-    // but the grant is still valid — the caller will need to re-issue if signing is required.
+    // Play grants keep the resource-bound secret in sessionStorage so wallet
+    // redirects do not force a second signature before playback.
     const raw = sessionStorage.getItem(key);
     if (!raw) {
         return null;
@@ -170,28 +178,41 @@ function readCachedGrant(accountId: string, scope: SessionGrantScope, resourceId
             sessionStorage.removeItem(key);
             return null;
         }
-        // Secret key not available from persisted storage — caller must re-issue.
-        return null;
+        if (!persisted.secretKey) {
+            return null;
+        }
+
+        const grant: BrowserSessionGrant = {
+            accountId: persisted.accountId,
+            sessionPublicKey: persisted.sessionPublicKey,
+            secretKey: persisted.secretKey,
+            scope: persisted.scope,
+            resourceId: persisted.resourceId,
+            expiresAt: persisted.expiresAt,
+            originHash: persisted.originHash,
+            deviceHash: persisted.deviceHash,
+        };
+        inMemoryGrants.set(key, grant);
+        return grant;
     } catch {
         sessionStorage.removeItem(key);
         return null;
     }
 }
 
-function persistGrant(grant: BrowserSessionGrant): void {
+export function persistSessionGrant(grant: BrowserSessionGrant): void {
     if (typeof window === 'undefined') {
         return;
     }
 
     const key = cacheKey(grant.accountId, grant.scope, grant.resourceId || undefined);
 
-    // AG-1 fix: Store full grant (with secretKey) in memory only.
-    // Persist only public metadata to sessionStorage.
     inMemoryGrants.set(key, grant);
 
     const persisted: PersistedSessionGrant = {
         accountId: grant.accountId,
         sessionPublicKey: grant.sessionPublicKey,
+        secretKey: grant.scope === 'Play' ? grant.secretKey : undefined,
         scope: grant.scope,
         resourceId: grant.resourceId,
         expiresAt: grant.expiresAt,
@@ -199,6 +220,14 @@ function persistGrant(grant: BrowserSessionGrant): void {
         deviceHash: grant.deviceHash,
     };
     sessionStorage.setItem(key, JSON.stringify(persisted));
+}
+
+export function getCachedSessionGrant(
+    accountId: string,
+    scope: SessionGrantScope,
+    resourceId?: string,
+): BrowserSessionGrant | null {
+    return readCachedGrant(accountId, scope, resourceId);
 }
 
 export function clearSessionGrantCache(accountId?: string): void {
@@ -255,29 +284,65 @@ export async function ensureSessionGrant(params: {
     }
 
     const grantPromise = (async () => {
-        const keyPair = KeyPair.fromRandom('ed25519');
-        const sessionPublicKey = keyPair.getPublicKey().toString();
-        const ttlMs = getScopeTtlMs(params.scope);
-        const originHash = await getOriginHash();
-        const deviceHash = await getDeviceHash();
-        if ((params.scope === 'Play' || params.scope === 'Publish') && (!originHash || !deviceHash)) {
-            throw new Error('Secure browser hashing is required for this session grant');
-        }
-        const resourceId = params.resourceId || null;
-        const sessionPokMessage = buildSessionGrantPokMessage({
-            contractId: NEAR_CONFIG.accessContractId,
-            caller: params.accountId,
-            targetOwnerId: params.accountId,
-            sessionPublicKey,
+        const prepared = await prepareSessionGrant({
+            accountId: params.accountId,
             scope: params.scope,
-            resourceId,
-            ttlMs,
-            originHash,
-            deviceHash,
+            resourceId: params.resourceId,
         });
-        const sessionPok = await signSessionGrantProof(keyPair, sessionPokMessage);
 
-        await params.wallet.signAndSendTransaction({
+        await params.wallet.signAndSendTransaction(prepared.transaction);
+
+        persistSessionGrant(prepared.grant);
+        return prepared.grant;
+    })().finally(() => {
+        pendingGrantPromises.delete(cacheStorageKey);
+    });
+
+    pendingGrantPromises.set(cacheStorageKey, grantPromise);
+    return grantPromise;
+}
+
+export async function prepareSessionGrant(params: {
+    accountId: string;
+    scope: SessionGrantScope;
+    resourceId?: string;
+}): Promise<PreparedSessionGrant> {
+    const keyPair = KeyPair.fromRandom('ed25519');
+    const sessionPublicKey = keyPair.getPublicKey().toString();
+    const ttlMs = getScopeTtlMs(params.scope);
+    const originHash = await getOriginHash();
+    const deviceHash = await getDeviceHash();
+    if ((params.scope === 'Play' || params.scope === 'Publish') && (!originHash || !deviceHash)) {
+        throw new Error('Secure browser hashing is required for this session grant');
+    }
+    const resourceId = params.resourceId || null;
+    const sessionPokMessage = buildSessionGrantPokMessage({
+        contractId: NEAR_CONFIG.accessContractId,
+        caller: params.accountId,
+        targetOwnerId: params.accountId,
+        sessionPublicKey,
+        scope: params.scope,
+        resourceId,
+        ttlMs,
+        originHash,
+        deviceHash,
+    });
+    const sessionPok = await signSessionGrantProof(keyPair, sessionPokMessage);
+
+    const grant: BrowserSessionGrant = {
+        accountId: params.accountId,
+        sessionPublicKey,
+        secretKey: keyPair.toString(),
+        scope: params.scope,
+        resourceId,
+        expiresAt: Date.now() + ttlMs,
+        originHash,
+        deviceHash,
+    };
+
+    return {
+        grant,
+        transaction: {
             receiverId: NEAR_CONFIG.accessContractId,
             actions: [
                 actions.functionCall(
@@ -296,27 +361,8 @@ export async function ensureSessionGrant(params: {
                     BigInt(0),
                 ),
             ],
-        });
-
-        const grant: BrowserSessionGrant = {
-            accountId: params.accountId,
-            sessionPublicKey,
-            secretKey: keyPair.toString(),
-            scope: params.scope,
-            resourceId,
-            expiresAt: Date.now() + ttlMs,
-            originHash,
-            deviceHash,
-        };
-
-        persistGrant(grant);
-        return grant;
-    })().finally(() => {
-        pendingGrantPromises.delete(cacheStorageKey);
-    });
-
-    pendingGrantPromises.set(cacheStorageKey, grantPromise);
-    return grantPromise;
+        },
+    };
 }
 
 /**

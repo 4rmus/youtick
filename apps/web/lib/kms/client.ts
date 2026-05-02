@@ -5,6 +5,7 @@ import { BrowserKeyStore } from '../keystore-v7';
 import { getThresholdConfig, listActiveDecryptionOperators, type RegistryOperatorRecord } from '../registry';
 import { getActiveUploadSessionKey } from '../upload-session-manager';
 import type { WalletInstance } from '../types';
+import { getCachedSessionGrant, invalidateSessionGrant, signSessionGrantPayload } from '../access-grants';
 import { reconstructSecretFromShares, splitSecretIntoShares, type SecretShare } from './shares';
 
 const AUTH_CACHE_PREFIX = 'youtick:kms-auth:';
@@ -501,14 +502,84 @@ async function tryLocalSignedKmsRequest<T>(
         return result.data as T;
     }
 
-    if (response.status === 401 || (endpoint === 'retrieve' && (response.status === 403 || response.status === 404))) {
+    if (response.status === 401 || (endpoint === 'retrieve' && response.status === 403)) {
         return null;
+    }
+
+    if (endpoint === 'retrieve' && response.status === 404) {
+        throw new KMSError('NOT_FOUND', result.error || 'Key not found');
     }
 
     throw new KMSError(
         endpoint === 'store' ? 'STORE_FAILED' : 'RETRIEVE_FAILED',
         result.error || `Failed to ${endpoint} key`,
     );
+}
+
+async function trySessionGrantKmsRequest<T>(
+    baseUrl: string,
+    endpoint: 'store' | 'retrieve',
+    accountId: string,
+    videoId: string,
+    extraBody: Record<string, unknown>,
+    signal?: AbortSignal,
+): Promise<T | null> {
+    if (endpoint !== 'retrieve') {
+        return null;
+    }
+
+    const grant = getCachedSessionGrant(accountId, 'Play', videoId);
+    if (!grant) {
+        return null;
+    }
+
+    const timestamp = Date.now();
+    const nonce = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    const payload = JSON.stringify({
+        action: endpoint,
+        videoId,
+        timestamp,
+        originHash: grant.originHash ?? null,
+        deviceHash: grant.deviceHash ?? null,
+        nonce,
+    });
+    const signed = await signSessionGrantPayload(grant, payload);
+
+    const response = await fetch(`${baseUrl}/${endpoint}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        signal,
+        body: JSON.stringify({
+            ...extraBody,
+            timestamp,
+            signature: signed.signature,
+            publicKey: signed.publicKey,
+            originHash: signed.originHash,
+            deviceHash: signed.deviceHash,
+            nonce,
+        }),
+    });
+
+    const result = await response.json() as { ok: boolean; error?: string; data?: T };
+
+    if (result.ok) {
+        return result.data as T;
+    }
+
+    if (response.status === 401 || response.status === 403) {
+        invalidateSessionGrant(accountId, 'Play', videoId);
+        return null;
+    }
+
+    if (response.status === 404) {
+        throw new KMSError('NOT_FOUND', result.error || 'Key not found');
+    }
+
+    throw new KMSError('RETRIEVE_FAILED', result.error || 'Failed to retrieve key');
 }
 
 async function requestKmsAuthToken(
@@ -662,9 +733,6 @@ async function executeKmsRequest<T>(
 ): Promise<T> {
     await ensureKmsConfigMatchesApp(baseUrl);
 
-    // AG-1 fix: Try local key signing first (upload session or browser keystore).
-    // If unavailable, fall through to NEP-413 wallet signing via Bearer tokens.
-    // The old session-grant path that stored private keys in sessionStorage has been removed.
     const localResult = await tryLocalSignedKmsRequest<T>(
         baseUrl,
         endpoint,
@@ -675,6 +743,25 @@ async function executeKmsRequest<T>(
     );
     if (localResult) {
         return localResult;
+    }
+
+    const grantResult = await trySessionGrantKmsRequest<T>(
+        baseUrl,
+        endpoint,
+        accountId,
+        videoId,
+        extraBody,
+        options?.signal,
+    );
+    if (grantResult) {
+        return grantResult;
+    }
+
+    if (endpoint === 'retrieve') {
+        throw new KMSError(
+            'AUTH_REQUIRED',
+            'Playback access was not prepared for this session. Buy or claim the ticket again to prepare signless playback.',
+        );
     }
 
     const token = await requestKmsAuthToken(baseUrl, videoId, endpoint, accountId, wallet, options?.signal);

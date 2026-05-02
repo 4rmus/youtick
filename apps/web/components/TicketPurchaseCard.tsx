@@ -18,6 +18,12 @@ import {
     buildUsdcTicketPaymentTransaction,
     quoteNearToUsdc,
 } from '@/lib/rhea/client';
+import {
+    invalidateSessionGrant,
+    persistSessionGrant,
+    prepareSessionGrant,
+    type PreparedSessionGrant,
+} from '@/lib/access-grants';
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { useEvmPayment } from '@/lib/evm/useEvmPayment';
 import { claimFreeTicketDirect, hasOnboardingKey } from '@/lib/gift-service';
@@ -129,7 +135,14 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             const priceYocto = nearAmountToYocto(eventDetails.price);
             const storageCostYocto = nearAmountToYocto(STORAGE_DEPOSIT_NEAR);
             const totalDeposit = priceYocto + storageCostYocto;
+            const preparedGrant = await preparePlayGrantForPurchase(implicitId);
 
+            if (preparedGrant) {
+                await account.signAndSendTransaction(preparedGrant.transaction as {
+                    receiverId: string;
+                    actions: Parameters<Account['signAndSendTransaction']>[0]['actions'];
+                });
+            }
             await account.signAndSendTransaction({
                 receiverId: contractId,
                 actions: [
@@ -155,6 +168,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             if (onPurchaseSuccess) onPurchaseSuccess();
         } catch (e) {
             console.error('[MetaMask Flow] Implicit account purchase failed:', e);
+            clearPreparedPlayGrant(implicitId);
             setError(e instanceof Error ? e.message : tp.error_complete_purchase);
             setActionLoading(false);
         }
@@ -263,6 +277,27 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         setPaymentSelection(selection);
     }, []);
 
+    const preparePlayGrantForPurchase = useCallback(async (ownerId: string): Promise<PreparedSessionGrant | null> => {
+        try {
+            const prepared = await prepareSessionGrant({
+                accountId: ownerId,
+                scope: 'Play',
+                resourceId: cid,
+            });
+            persistSessionGrant(prepared.grant);
+            return prepared;
+        } catch (grantError) {
+            console.warn('[TicketPurchase] Signless playback grant could not be prepared:', grantError);
+            return null;
+        }
+    }, [cid]);
+
+    const clearPreparedPlayGrant = useCallback((ownerId: string | null | undefined) => {
+        if (ownerId) {
+            invalidateSessionGrant(ownerId, 'Play', cid);
+        }
+    }, [cid]);
+
     // Claim FREE Ticket (sponsored onboarding key or wallet fallback)
     const handleFreeTicketClaim = async () => {
         if (!eventDetails) return;
@@ -332,7 +367,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             const contractId = NEAR_CONFIG.contractId;
             const wallet = await getWallet();
-            await wallet.signAndSendTransaction({
+            const purchaseTx = {
                 receiverId: contractId,
                 actions: [
                     actions.functionCall(
@@ -342,13 +377,22 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         DEPOSIT_CONSTANTS.smallStorageDeposit
                     ),
                 ],
-            });
+            };
+            const preparedGrant = await preparePlayGrantForPurchase(accountId);
+            if (preparedGrant) {
+                await wallet.signAndSendTransactions({
+                    transactions: [preparedGrant.transaction, purchaseTx],
+                });
+            } else {
+                await wallet.signAndSendTransaction(purchaseTx);
+            }
 
             // KMS: Access control via on-chain ticket ownership — no group management needed
             if (onPurchaseSuccess) onPurchaseSuccess();
 
         } catch (e: unknown) {
             console.error("Free ticket claim failed:", e);
+            clearPreparedPlayGrant(accountId);
             setError(e instanceof Error ? e.message : tp.error_claim_free);
         } finally {
             setActionLoading(false);
@@ -370,8 +414,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             const storageCostYocto = nearAmountToYocto(STORAGE_DEPOSIT_NEAR);
             const priceYocto = nearAmountToYocto(eventDetails.price);
             const totalDeposit = priceYocto + storageCostYocto;
+            const preparedGrant = await preparePlayGrantForPurchase(accountId);
 
-            await wallet.signAndSendTransaction({
+            const purchaseTx = {
                 receiverId: contractId,
                 actions: [
                     actions.functionCall(
@@ -384,13 +429,22 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         totalDeposit
                     ),
                 ],
-            });
+            };
+
+            if (preparedGrant) {
+                await wallet.signAndSendTransactions({
+                    transactions: [preparedGrant.transaction, purchaseTx],
+                });
+            } else {
+                await wallet.signAndSendTransaction(purchaseTx);
+            }
 
             // KMS: Access control via on-chain ticket ownership — no group management needed
             if (onPurchaseSuccess) onPurchaseSuccess();
 
         } catch (e) {
             console.error("Purchase failed:", e);
+            clearPreparedPlayGrant(accountId);
             setError(tp.error_tx_rejected);
         } finally {
             setActionLoading(false);
@@ -417,15 +471,21 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 amount: eventDetails.priceUsdc.toString(),
                 paymentId,
             });
+            const preparedGrant = await preparePlayGrantForPurchase(accountId);
 
             const wallet = await getWallet();
             await wallet.signAndSendTransactions({
-                transactions: [...swapTransactions, ticketPayment],
+                transactions: [
+                    ...(preparedGrant ? [preparedGrant.transaction] : []),
+                    ...swapTransactions,
+                    ticketPayment,
+                ],
             });
 
             if (onPurchaseSuccess) onPurchaseSuccess();
         } catch (e) {
             console.error('Rhea NEAR payment failed:', e);
+            clearPreparedPlayGrant(accountId);
             const message = e instanceof Error ? e.message : 'Rhea swap failed';
             setError(`${message}. Swap failed, no ticket minted.`);
         } finally {
@@ -654,6 +714,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 encrypted_cid: cid,
                 payment_id: paymentId,
             });
+            const preparedGrant = await preparePlayGrantForPurchase(buyerId);
 
             // For implicit accounts (MetaMask flow with generated keypair), use Account directly
             const keypair = evmSwapKeypairRef.current;
@@ -663,6 +724,12 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 const signer = new KeyPairSigner(keyPair);
                 const account = new Account(buyerId, getCurrentRpcUrl(), signer);
 
+                if (preparedGrant) {
+                    await account.signAndSendTransaction(preparedGrant.transaction as {
+                        receiverId: string;
+                        actions: Parameters<Account['signAndSendTransaction']>[0]['actions'];
+                    });
+                }
                 await account.signAndSendTransaction({
                     receiverId: tokenContractId,
                     actions: [
@@ -681,7 +748,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 });
             } else {
                 const wallet = await getWallet();
-                await wallet.signAndSendTransaction({
+                const purchaseTx = {
                     receiverId: tokenContractId,
                     actions: [
                         actions.functionCall(
@@ -696,7 +763,14 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                             BigInt(1) // 1 yoctoNEAR required by NEP-141
                         ),
                     ],
-                });
+                };
+                if (preparedGrant) {
+                    await wallet.signAndSendTransactions({
+                        transactions: [preparedGrant.transaction, purchaseTx],
+                    });
+                } else {
+                    await wallet.signAndSendTransaction(purchaseTx);
+                }
             }
 
             if (keypair && buyerId === keypair.implicitAccountId) {
@@ -707,6 +781,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             if (onPurchaseSuccess) onPurchaseSuccess();
         } catch (e) {
             console.error('USDC direct purchase failed:', e);
+            clearPreparedPlayGrant(buyerId);
             setError(e instanceof Error ? e.message : tp.error_tx_rejected);
         } finally {
             setActionLoading(false);

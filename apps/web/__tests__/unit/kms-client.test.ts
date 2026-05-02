@@ -107,7 +107,119 @@ describe('kms/client', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('falls back to wallet auth when local retrieve returns 404', async () => {
+  it('uses cached play grants for retrieve without wallet message signing', async () => {
+    const registry = await import('@/lib/registry');
+    vi.mocked(registry.listActiveDecryptionOperators).mockResolvedValue([
+      {
+        account_id: 'kms-a.testnet',
+        endpoint: 'https://kms-a.example.workers.dev',
+        transport_public_key: 'pk-a',
+        kind: 'DecryptionOperator',
+        active: true,
+      },
+      {
+        account_id: 'kms-b.testnet',
+        endpoint: 'https://kms-b.example.workers.dev',
+        transport_public_key: 'pk-b',
+        kind: 'DecryptionOperator',
+        active: true,
+      },
+    ]);
+    vi.mocked(registry.getThresholdConfig).mockResolvedValue({
+      total_operators: 2,
+      required_shares: 2,
+    });
+
+    Object.assign(window, {
+      crypto: globalThis.crypto,
+      location: { origin: 'https://app.test' },
+    });
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        userAgent: 'vitest',
+        language: 'en',
+        platform: 'test',
+        hardwareConcurrency: 4,
+      },
+      configurable: true,
+    });
+
+    const { persistSessionGrant, prepareSessionGrant } = await import('@/lib/access-grants');
+    const preparedGrant = await prepareSessionGrant({
+      accountId: 'alice.testnet',
+      scope: 'Play',
+      resourceId: 'video-1',
+    });
+    persistSessionGrant(preparedGrant.grant);
+
+    const secretB64 = Buffer.from('session-grant-secret').toString('base64');
+    const shares = splitSecretIntoShares(secretB64, 2, 2);
+    const retrieveCalls: string[] = [];
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith('/health')) {
+        return new Response(JSON.stringify({
+          ok: true,
+          data: {
+            network: 'testnet',
+            contract: 'app-contract.testnet',
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.endsWith('/retrieve')) {
+        const body = JSON.parse(String(init?.body || '{}')) as {
+          accountId?: string;
+          publicKey?: string;
+          originHash?: string | null;
+          deviceHash?: string | null;
+        };
+        const operatorIndex = url.includes('kms-a') ? 0 : 1;
+
+        expect(body.accountId).toBeUndefined();
+        expect(body.publicKey).toBe(preparedGrant.grant.sessionPublicKey);
+        expect(body.originHash).toBe(preparedGrant.grant.originHash);
+        expect(body.deviceHash).toBe(preparedGrant.grant.deviceHash);
+        retrieveCalls.push(`grant-${operatorIndex}`);
+        return new Response(JSON.stringify({
+          ok: true,
+          data: {
+            shareB64: shares[operatorIndex].shareB64,
+            shareId: shares[operatorIndex].shareId,
+            totalShares: 2,
+            requiredShares: 2,
+            scheme: 'shamir-v1',
+            operatorAccountId: operatorIndex === 0 ? 'kms-a.testnet' : 'kms-b.testnet',
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+
+    const wallet = {
+      signMessage: vi.fn(),
+      signAndSendTransaction: vi.fn(),
+    };
+    const { retrieveEncryptionKey } = await import('@/lib/kms/client');
+
+    await expect(
+      retrieveEncryptionKey('video-1', 'alice.testnet', wallet as never),
+    ).resolves.toBe(secretB64);
+
+    expect(retrieveCalls).toEqual(expect.arrayContaining(['grant-0', 'grant-1']));
+    expect(wallet.signMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not open wallet message signing when retrieve shares are missing', async () => {
     const registry = await import('@/lib/registry');
     vi.mocked(registry.listActiveDecryptionOperators).mockResolvedValue([
       {
@@ -132,11 +244,7 @@ describe('kms/client', () => {
 
     setupMockSessionKey('alice.testnet');
 
-    const secretB64 = Buffer.from('wallet-token-secret').toString('base64');
-    const shares = splitSecretIntoShares(secretB64, 2, 2);
-    const retrieveCalls: string[] = [];
-
-    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    global.fetch = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
 
       if (url.endsWith('/health')) {
@@ -152,67 +260,12 @@ describe('kms/client', () => {
         });
       }
 
-      if (url.endsWith('/auth/challenge')) {
-        return new Response(JSON.stringify({
-          ok: true,
-          data: {
-            challengeId: `${url}:challenge`,
-            message: 'Sign to retrieve',
-            recipient: 'youtick.testnet',
-            nonce: Buffer.from('nonce').toString('base64'),
-            expiresAt: Date.now() + 60_000,
-          },
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      if (url.endsWith('/auth/verify')) {
-        return new Response(JSON.stringify({
-          ok: true,
-          data: {
-            token: `${url}:token`,
-            accountId: 'alice.testnet',
-            action: 'retrieve',
-            videoId: 'video-1',
-            expiresAt: Date.now() + 60_000,
-          },
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
       if (url.endsWith('/retrieve')) {
-        const headers = init?.headers as Record<string, string> | undefined;
-        const authorization = headers?.Authorization || headers?.authorization;
-        const operatorIndex = url.includes('kms-a') ? 0 : 1;
-
-        if (!authorization) {
-          retrieveCalls.push(`local-${operatorIndex}`);
-          return new Response(JSON.stringify({
-            ok: false,
-            error: 'Not found or unauthorized',
-          }), {
-            status: 404,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-
-        retrieveCalls.push(`token-${operatorIndex}`);
         return new Response(JSON.stringify({
-          ok: true,
-          data: {
-            shareB64: shares[operatorIndex].shareB64,
-            shareId: shares[operatorIndex].shareId,
-            totalShares: 2,
-            requiredShares: 2,
-            scheme: 'shamir-v1',
-            operatorAccountId: operatorIndex === 0 ? 'kms-a.testnet' : 'kms-b.testnet',
-          },
+          ok: false,
+          error: 'Not found or unauthorized',
         }), {
-          status: 200,
+          status: 404,
           headers: { 'Content-Type': 'application/json' },
         });
       }
@@ -221,21 +274,19 @@ describe('kms/client', () => {
     }) as unknown as typeof fetch;
 
     const wallet = {
-      signMessage: vi.fn(async () => ({
-        accountId: 'alice.testnet',
-        publicKey: 'ed25519:wallet-key',
-        signature: 'wallet-signature',
-      })),
+      signMessage: vi.fn(),
       signAndSendTransaction: vi.fn(),
     };
     const { retrieveEncryptionKey } = await import('@/lib/kms/client');
 
     await expect(
       retrieveEncryptionKey('video-1', 'alice.testnet', wallet as never),
-    ).resolves.toBe(secretB64);
+    ).rejects.toMatchObject({
+      name: 'KMSError',
+      code: 'RETRIEVE_FAILED',
+    });
 
-    expect(retrieveCalls).toEqual(expect.arrayContaining(['local-0', 'local-1', 'token-0', 'token-1']));
-    expect(wallet.signMessage).toHaveBeenCalled();
+    expect(wallet.signMessage).not.toHaveBeenCalled();
   });
 
   it('stores operator shares in parallel when registry-backed KMS is active', async () => {
