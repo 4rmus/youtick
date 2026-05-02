@@ -26,6 +26,7 @@ type UploadPageCopy = ReturnType<typeof useLanguage>['t']['upload_page'];
 // File size limits (KMS-based flow)
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB for paid
 const MAX_FREE_FILE_SIZE = 100 * 1024 * 1024; // 100MB for free
+const MIN_PAID_PRICE_USD = 0.5;
 
 const getFriendlyStatus = (rawStatus: string, copy: UploadPageCopy): string => {
     if (!rawStatus) return '';
@@ -37,6 +38,7 @@ const getFriendlyStatus = (rawStatus: string, copy: UploadPageCopy): string => {
     if (status.includes('description must')) return copy.status_desc_limit;
     if (status.includes('price cannot be negative')) return copy.status_price_negative;
     if (status.includes('price cannot exceed')) return copy.status_price_limit;
+    if (status.includes('usdc price must be at least') || status.includes('paid ticket price must be at least')) return copy.status_price_min;
     if (status.includes('could not generate thumbnail')) return copy.status_thumbnail_failed;
     if (status.includes('uploading cover') || status.includes('uploading poster') || status.includes('generating thumbnail') || status.includes('cover image') || status.includes('poster image')) return copy.status_cover;
     if (status.includes('authorizing') || status.includes('upload session') || status.includes('wallet ready') || status.includes('checking wallet')) return copy.status_session;
@@ -273,6 +275,10 @@ export function UploadForm() {
         }
         if (priceUsdNum < 0) {
             setStatus(u.status_price_negative);
+            return;
+        }
+        if (priceUsdNum > 0 && priceUsdNum < MIN_PAID_PRICE_USD) {
+            setStatus(u.status_price_min);
             return;
         }
         if (priceUsdNum > 50000) {
@@ -521,6 +527,9 @@ export function UploadForm() {
                                     {u.price_help_free}
                                     {priceUsdNum > 0 && nearPrice > 0 && ` ${u.approx_near} ${priceNearDerived.toFixed(2)} NEAR.`}
                                 </p>
+                                {priceUsdNum > 0 && priceUsdNum < MIN_PAID_PRICE_USD && (
+                                    <p className="text-xs text-red-400">{u.status_price_min}</p>
+                                )}
                             </div>
                         </section>
 

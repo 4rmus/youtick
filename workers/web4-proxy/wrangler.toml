@@ -5,13 +5,13 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 # Primary origin. See README.md for origin/fallback and CSP responsibilities.
-WEB4_ORIGIN = "https://1aca3475.youtick-static.pages.dev"
+WEB4_ORIGIN = "https://98b7ed44.youtick-static.pages.dev"
 WEB4_FALLBACK_ORIGIN = "https://youtick.near.page"
 
 ALLOWED_DOMAINS = "youtick.net,www.youtick.net"
 
 CACHE_TTL = "300"
-CACHE_VERSION = "v13"
+CACHE_VERSION = "v14"
 
 # Set via wrangler secret in production.
 # ONBOARDING_KEYS = "ed25519:..."
