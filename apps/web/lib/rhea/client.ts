@@ -7,6 +7,7 @@ import type {
 import { GAS_CONSTANTS, NEAR_CONFIG } from '@/lib/constants';
 import { nearAmountToYocto } from '@/lib/near-amount';
 import { getNearPrice } from '@/lib/price';
+import { getPrimaryRpcUrl } from '@/lib/rpc-failover';
 
 export const RHEA_USDC_CONTRACT_ID = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
 export const RHEA_DEFAULT_SLIPPAGE_BPS = 100;
@@ -39,7 +40,7 @@ function rheaEnv(): 'mainnet' | 'testnet' {
 
 async function loadRheaSdk(): Promise<RheaSdk> {
     const sdk = await import('@ref-finance/ref-sdk');
-    sdk.init_env(rheaEnv());
+    sdk.init_env(rheaEnv(), undefined, getPrimaryRpcUrl());
     return sdk;
 }
 
@@ -89,7 +90,7 @@ export async function quoteNearToUsdc(
     }
 
     const sdk = await loadRheaSdk();
-    const env = sdk.init_env(rheaEnv());
+    const env = sdk.init_env(rheaEnv(), undefined, getPrimaryRpcUrl());
     const tokenIn: TokenMetadata = {
         id: env.WRAP_NEAR_CONTRACT_ID,
         name: 'Wrapped NEAR',
@@ -199,7 +200,7 @@ export async function buildNearToUsdcSwapTransactions(
     });
 
     const transactions = [...swapTransactions];
-    if (quote.tokenIn.id === sdk.init_env(rheaEnv()).WRAP_NEAR_CONTRACT_ID) {
+    if (quote.tokenIn.id === sdk.init_env(rheaEnv(), undefined, getPrimaryRpcUrl()).WRAP_NEAR_CONTRACT_ID) {
         let depositYocto = nearAmountToYocto(quote.amountInNear);
         const storageBalance = await sdk.ftGetStorageBalance(quote.tokenIn.id, accountId);
 

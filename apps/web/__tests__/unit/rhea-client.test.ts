@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const rheaMocks = vi.hoisted(() => ({
   initEnv: vi.fn(),
@@ -33,6 +33,7 @@ describe('rhea client', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    process.env.NEXT_PUBLIC_NEAR_NETWORK = 'mainnet';
 
     rheaMocks.initEnv.mockReturnValue({ WRAP_NEAR_CONTRACT_ID: 'wrap.near' });
     rheaMocks.ftGetTokenMetadata.mockResolvedValue({
@@ -77,11 +78,16 @@ describe('rhea client', () => {
     }));
   });
 
+  afterEach(() => {
+    delete process.env.NEXT_PUBLIC_NEAR_NETWORK;
+  });
+
   it('quotes NEAR to USDC with slippage coverage', async () => {
     const { quoteNearToUsdc } = await import('@/lib/rhea/client');
 
     const quote = await quoteNearToUsdc(1_000_000);
 
+    expect(rheaMocks.initEnv).toHaveBeenCalledWith('mainnet', undefined, 'https://free.rpc.fastnear.com');
     expect(rheaMocks.estimateSwap).toHaveBeenCalledWith(expect.objectContaining({
       amountIn: expect.any(String),
       tokenIn: expect.objectContaining({ id: 'wrap.near' }),
