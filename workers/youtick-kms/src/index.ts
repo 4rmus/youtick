@@ -207,7 +207,6 @@ const RATE_LIMIT_MAX_RETRIEVE = 120;
 /** Access cache TTLs: keep auth caches short so revokes and transfers take effect quickly */
 const KEY_BINDING_CACHE_TTL_S = 120;
 const TICKET_ACCESS_CACHE_TTL_S = 30;
-const TICKET_ACCESS_NEGATIVE_CACHE_TTL_S = 15;
 const EVENT_CREATOR_CACHE_TTL_S = 1800;
 const REGISTRY_CACHE_TTL_S = 120;
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -580,9 +579,6 @@ async function verifyTicketAccess(
     if (cached === 'true') {
         return true;
     }
-    if (cached === 'false') {
-        return false;
-    }
 
     try {
         const hasTicket = await nearViewCall<boolean>(
@@ -597,8 +593,7 @@ async function verifyTicketAccess(
             return true;
         }
 
-        // Negative caching: short TTL to reduce RPC load while keeping revocation responsive
-        await env.ACCESS_CACHE.put(cacheKey, 'false', { expirationTtl: TICKET_ACCESS_NEGATIVE_CACHE_TTL_S });
+        // Do not cache misses; a ticket purchase can complete moments after a denied playback attempt.
         return false;
     } catch (error) {
         console.error('[KMS] verifyTicketAccess failed:', error);
