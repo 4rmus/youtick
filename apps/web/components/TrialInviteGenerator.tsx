@@ -6,9 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Loader2, Copy, Check, Download, Sparkles } from "lucide-react";
 import { useWallet } from "@/components/providers/WalletProvider";
 import { createTrialInviteLinks } from "@/lib/gift-service";
+import { useLanguage } from "@/components/providers/LanguageContext";
 
 export function TrialInviteGenerator() {
     const { getWallet, accountId } = useWallet();
+    const { t } = useLanguage();
+    const copy = t.trial_page;
     const [inviteCount, setInviteCount] = useState(5);
     const [ttlHours, setTtlHours] = useState(72);
     const [generating, setGenerating] = useState(false);
@@ -23,7 +26,7 @@ export function TrialInviteGenerator() {
         try {
             const wallet = await getWallet();
             if (!wallet || !accountId) {
-                throw new Error("Wallet not connected");
+                throw new Error(t.profile_page?.wallet_not_connected || "Wallet not connected");
             }
 
             const result = await createTrialInviteLinks(
@@ -34,7 +37,7 @@ export function TrialInviteGenerator() {
 
             setLinks(result.map((entry) => entry.link));
         } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : "Failed to create trial invites");
+            setError(err instanceof Error ? err.message : (copy?.trial_invite_failed || "Failed to create guest invites"));
         } finally {
             setGenerating(false);
         }
@@ -62,7 +65,7 @@ export function TrialInviteGenerator() {
             {links.length === 0 ? (
                 <>
                     <div className="space-y-2">
-                        <label className="text-sm text-zinc-400">How many invites?</label>
+                        <label className="text-sm text-zinc-400">{copy?.invite_count_label || "How many invites?"}</label>
                         <Input
                             type="number"
                             min={1}
@@ -74,7 +77,7 @@ export function TrialInviteGenerator() {
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-sm text-zinc-400">Expire after (hours)</label>
+                        <label className="text-sm text-zinc-400">{copy?.invite_expiry_label || "Expire after (hours)"}</label>
                         <Input
                             type="number"
                             min={1}
@@ -87,7 +90,7 @@ export function TrialInviteGenerator() {
 
                     <div className="p-3 bg-zinc-900/50 border border-zinc-600/50 rounded-lg">
                         <p className="text-sm text-zinc-300">
-                            Trial invite links now create implicit NEAR accounts directly.
+                            {copy?.guest_invite_note || "Guest invite links open a guest account automatically."}
                         </p>
                     </div>
 
@@ -103,12 +106,12 @@ export function TrialInviteGenerator() {
                         {generating ? (
                             <>
                                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Generating...
+                                {copy?.generating || "Generating..."}
                             </>
                         ) : (
                             <>
                                 <Sparkles className="w-4 h-4 mr-2" />
-                                Generate Trial Invites
+                                {copy?.generate_guest_invites || "Generate Guest Invites"}
                             </>
                         )}
                     </Button>
@@ -117,7 +120,7 @@ export function TrialInviteGenerator() {
                 <>
                     <div className="flex items-center gap-2 text-near-green text-sm">
                         <Check className="w-4 h-4" />
-                        <span>{links.length} trial invites created</span>
+                        <span>{links.length} {copy?.guest_invites_created || "guest invites created"}</span>
                     </div>
 
                     <div className="space-y-2 max-h-48 overflow-y-auto">
@@ -151,14 +154,14 @@ export function TrialInviteGenerator() {
                             className="flex-1 border-zinc-600 text-zinc-300 hover:bg-zinc-700 rounded-xl"
                         >
                             <Download className="w-4 h-4 mr-2" />
-                            Download CSV
+                            {copy?.download_csv || "Download CSV"}
                         </Button>
                         <Button
                             onClick={() => setLinks([])}
                             variant="ghost"
                             className="flex-1 text-zinc-400 hover:text-white"
                         >
-                            Create More
+                            {copy?.create_more || "Create More"}
                         </Button>
                     </div>
                 </>

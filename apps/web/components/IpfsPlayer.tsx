@@ -23,6 +23,7 @@ import { TicketPurchaseCard } from './TicketPurchaseCard';
 import { NEAR_CONFIG } from '@/lib/constants';
 import { getProvider, viewContract } from '@/lib/near';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
+import { useLanguage } from '@/components/providers/LanguageContext';
 import {
     extractIpfsCid,
     getIpfsMediaCandidates,
@@ -103,6 +104,8 @@ async function playVideoSafely(video: HTMLVideoElement): Promise<boolean> {
 
 export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPlayerProps) {
     const { accountId, getWallet } = useWallet();
+    const { t } = useLanguage();
+    const playerCopy = t.video_player;
 
     // React Query hooks for cached state
     const { data: hasOwnership, isLoading: checkingAccess, refetch: refetchOwnership } = useNFTOwnership(accountId, cid);
@@ -387,7 +390,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
 
         if (!playbackMetrics) {
             if (isWaitingForMedia || resumeAfterSeekRef.current) {
-                setBackgroundStatus(resumeAfterSeekRef.current ? 'Buffering...' : 'Loading video...');
+                setBackgroundStatus(resumeAfterSeekRef.current ? playerCopy.buffering : playerCopy.loading_video);
             }
             return;
         }
@@ -397,13 +400,15 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             playbackMetrics.targetPlayableAheadSeconds,
         ));
         const target = formatReadySeconds(playbackMetrics.targetPlayableAheadSeconds);
-        const details = `${ready}s / ${target}s ready`;
+        const details = playerCopy.ready_status
+            .replace('{ready}', ready)
+            .replace('{target}', target);
 
         if (
             playbackMetrics.phase === 'startup'
             && playbackMetrics.playableAheadSeconds < playbackMetrics.targetPlayableAheadSeconds
         ) {
-            setBackgroundStatus(`Loading video... ${details}`);
+            setBackgroundStatus(`${playerCopy.loading_video} ${details}`);
             return;
         }
 
@@ -412,12 +417,12 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             || resumeAfterSeekRef.current
             || isWaitingForMedia
         ) {
-            setBackgroundStatus(`Buffering... ${details}`);
+            setBackgroundStatus(`${playerCopy.buffering} ${details}`);
             return;
         }
 
         setBackgroundStatus(null);
-    }, [isWaitingForMedia, playbackMetrics, playerState.type]);
+    }, [isWaitingForMedia, playbackMetrics, playerCopy, playerState.type]);
 
     // Derived states from state machine
     const videoUrl = playerState.type === 'playing' ? playerState.videoUrl : null;
@@ -507,7 +512,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
         pendingSeekTimeRef.current = preferredSeekTime;
         seekFrameReadyRef.current = !('requestVideoFrameCallback' in video)
             || typeof video.requestVideoFrameCallback !== 'function';
-        setBackgroundStatus(shouldResume ? 'Buffering...' : null);
+        setBackgroundStatus(shouldResume ? playerCopy.buffering : null);
 
         if (!seekFrameReadyRef.current) {
             const targetTime = preferredSeekTime;
@@ -586,20 +591,20 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
 
         setPlayerState({
             type: 'decrypting',
-            message: isRetry ? 'Retrying...' : 'Initializing...'
+            message: isRetry ? playerCopy.retrying : playerCopy.initializing
         });
 
         try {
             const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid);
             if (!isUuid) {
-                throw new Error('This video must be opened from a ticketed YouTick event.');
+                throw new Error(playerCopy.invalid_release);
             }
 
             let manifestCid: string | undefined;
             let resolvedAccessMode = eventAccessMode;
 
             if (isUuid) {
-                setPlayerState({ type: 'decrypting', message: 'Resolving Video Metadata...' });
+                setPlayerState({ type: 'decrypting', message: playerCopy.resolving_metadata });
                 try {
                     const contractId = NEAR_CONFIG.contractId;
                     const provider = getProvider();
@@ -621,7 +626,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                     resolvedAccessMode = event?.access_mode ?? (event?.price === '0' ? 'free_collectible' : 'paid');
                     setEventAccessMode(resolvedAccessMode);
 
-                    const parsed = parseTitleMetadata(event?.title, 'Untitled');
+                    const parsed = parseTitleMetadata(event?.title, t.watch_page.untitled);
                     manifestCid = parsed.manifestCid || undefined;
 
                     if (parsed.thumbnailCid && parsed.thumbnailUrl) {
@@ -629,28 +634,28 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                     }
                 } catch (e) {
                     console.error("Error resolving metadata:", e);
-                    throw new Error("Failed to resolve video metadata");
+                    throw new Error(playerCopy.metadata_failed);
                 }
             }
 
             if (!manifestCid) {
-                throw new Error('This video does not have a segmented manifest.');
+                throw new Error(playerCopy.missing_manifest);
             }
 
             const resolveAesKey = async (): Promise<string> => {
                 if (!accountId) {
-                    throw new Error('Please connect your wallet or create a temporary account to watch this video.');
+                    throw new Error(playerCopy.connect_or_guest);
                 }
-                setPlayerState({ type: 'decrypting', message: 'Authorizing playback...' });
+                setPlayerState({ type: 'decrypting', message: playerCopy.authorizing });
                 const wallet = await getWallet();
                 return await retrieveEncryptionKey(cid, accountId, wallet);
             };
 
-            setPlayerState({ type: 'decrypting', message: 'Resolving Video Manifest...' });
+            setPlayerState({ type: 'decrypting', message: playerCopy.resolving_manifest });
             const manifestData = await fetchDeliveryManifest(manifestCid);
 
             if (!isDeliveryManifestV2(manifestData)) {
-                throw new Error('Unsupported video manifest format.');
+                throw new Error(playerCopy.unsupported_manifest);
             }
 
             console.info('[IpfsPlayer] Using segmented delivery manifest', {
@@ -676,7 +681,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             if (typeof MediaSource === 'undefined') {
                 setPlayerState({
                     type: 'error',
-                    message: 'This browser does not support segmented playback for this video.',
+                    message: playerCopy.unsupported_browser,
                 });
                 return;
             }
@@ -685,11 +690,11 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                 ?? 'free_collectible';
 
             if (inferredAccessMode === 'free_collectible' && !accountId) {
-                throw new Error('Please connect your wallet or create a temporary account to watch this video.');
+                throw new Error(playerCopy.connect_or_guest);
             }
 
             const aesKeyB64 = manifestData.encrypted ? await resolveAesKey() : undefined;
-            setPlayerState({ type: 'decrypting', message: 'Preparing segmented stream...' });
+            setPlayerState({ type: 'decrypting', message: playerCopy.preparing_stream });
 
             const session = createDeliveryPlaybackSession(manifestData, {
                 aesKeyB64,
@@ -704,7 +709,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                     cleanupPlaybackArtifacts();
                     setPlayerState({
                         type: 'error',
-                        message: sessionError.message || 'Failed to start segmented playback.',
+                        message: sessionError.message || playerCopy.segmented_failed,
                     });
                 },
             });
@@ -712,13 +717,13 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             playbackStartedRef.current = true;
             blobUrlRef.current = session.objectUrl;
             pendingDeliverySessionRef.current = session;
-            setBackgroundStatus('Loading video...');
+            setBackgroundStatus(playerCopy.loading_video);
             setPlayerState({ type: 'playing', videoUrl: session.objectUrl });
         } catch (err: unknown) {
             console.error('Playback failed:', err);
-            setPlayerState({ type: 'error', message: err instanceof Error ? err.message : 'Failed to load video' });
+            setPlayerState({ type: 'error', message: err instanceof Error ? err.message : playerCopy.load_failed });
         }
-    }, [accountId, cid, cleanupPlaybackArtifacts, eventAccessMode, getWallet, resolvedThumbnailUrl]);
+    }, [accountId, cid, cleanupPlaybackArtifacts, eventAccessMode, getWallet, playerCopy, resolvedThumbnailUrl, t.watch_page.untitled]);
 
     const handlePlay = () => playVideo(false);
 
@@ -729,7 +734,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
         if (playerState.videoUrl.startsWith('blob:')) {
             console.error("Video playback error with blob");
             cleanupPlaybackArtifacts();
-            setPlayerState({ type: 'error', message: 'Segmented playback failed. Please retry.' });
+            setPlayerState({ type: 'error', message: playerCopy.segmented_failed });
             return;
         }
 
@@ -756,7 +761,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             setPlayerState({ type: 'playing', videoUrl: nextUrl });
         } else {
             console.error("All fallback gateways failed for video playback");
-            setPlayerState({ type: 'error', message: 'Failed to load video from IPFS gateways. Please try again later.' });
+            setPlayerState({ type: 'error', message: playerCopy.gateway_failed });
         }
     };
 
@@ -767,21 +772,21 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                     {playerState.type === 'banned' ? (
                         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md w-full h-full p-6 text-center">
                             <ShieldOff className="w-16 h-16 text-red-500 mb-4" />
-                            <h3 className="text-2xl font-bold text-white mb-2">Content Removed</h3>
+                            <h3 className="text-2xl font-bold text-white mb-2">{t.moderation.content_removed}</h3>
                             <p className="text-zinc-400 max-w-sm mb-6">
-                                This content has been removed for violating platform guidelines.
+                                {t.moderation.content_removed_desc}
                             </p>
                             <Button
                                 variant="outline"
                                 onClick={() => window.location.href = '/discover'}
                             >
-                                Back to Discover
+                                {t.moderation.back_to_discover}
                             </Button>
                         </div>
                     ) : checkingAccess && !purchased ? (
                         <div className="text-center">
                             <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-zinc-500" />
-                            <p className="text-xs text-zinc-500">Verifying access...</p>
+                            <p className="text-xs text-zinc-500">{playerCopy.authorizing}</p>
                         </div>
                     ) : loading ? (
                         <div className="text-center">
@@ -805,10 +810,10 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                         // SHOW ERROR / RETRY
                         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md w-full h-full p-6 text-center">
                             <Lock className="w-16 h-16 text-zinc-600 mb-4" />
-                            <h3 className="text-2xl font-bold text-white mb-2">Playback Error</h3>
+                            <h3 className="text-2xl font-bold text-white mb-2">{playerCopy.error_title}</h3>
                             <p className="text-zinc-400 max-w-sm mb-8">
                                 {hasAccess
-                                    ? 'Access sync in progress. Try again in a moment.'
+                                    ? playerCopy.access_sync
                                     : error}
                             </p>
                             <div className="flex flex-col gap-4 w-full max-w-xs">
@@ -817,7 +822,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                                     onClick={handlePlay}
                                 >
                                     <Play className="w-5 h-5" />
-                                    Retry Playback
+                                    {playerCopy.retry}
                                 </Button>
                             </div>
                         </div>
@@ -830,7 +835,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                                     <div className="absolute inset-0 z-0">
                                         <IPFSThumbnail
                                             url={resolvedThumbnailUrl}
-                                            alt="Video Thumbnail"
+                                            alt={playerCopy.thumbnail_alt}
                                             className="w-full h-full object-cover opacity-50 blur-sm"
                                             loading="eager"
                                         />
@@ -841,13 +846,13 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
 
                             <div className="relative z-10 p-6 bg-black/30 backdrop-blur-sm rounded-xl border border-white/10">
                                 <Lock className="h-12 w-12 mx-auto mb-4 text-primary" />
-                                <h3 className="text-xl font-bold mb-2 text-white">Encrypted Content</h3>
+                                <h3 className="text-xl font-bold mb-2 text-white">{playerCopy.protected_title}</h3>
                                 <p className="text-sm text-slate-200 mb-6 font-medium">
-                                    Valid ticket found. You can watch this video.
+                                    {playerCopy.protected_desc}
                                 </p>
                                 <Button onClick={handlePlay} size="lg" className="gap-2 shadow-xl shadow-primary/20">
                                     <Play className="h-5 w-5" />
-                                    Decrypt & Play
+                                    {playerCopy.play}
                                 </Button>
                             </div>
                         </div>

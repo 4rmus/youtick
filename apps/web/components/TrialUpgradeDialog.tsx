@@ -121,7 +121,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                     className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
                 >
                     <Wallet className="w-4 h-4 mr-2" />
-                    {u?.upgrade_button || "Upgrade Account"}
+                    {u?.upgrade_button || "Make Account Permanent"}
                 </Button>
             </DialogTrigger>
 
@@ -133,10 +133,10 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                         <DialogHeader>
                             <DialogTitle className="flex items-center gap-2">
                                 <Wallet className="w-5 h-5 text-purple-500" />
-                                {u?.title || "Upgrade to Full Wallet"}
+                                {u?.title || "Make your guest account permanent"}
                             </DialogTitle>
                             <DialogDescription>
-                                {u?.description || "Convert your trial account to a permanent NEAR wallet"}
+                                {u?.description || "Save a recovery phrase so you can keep access to your tickets outside this device."}
                             </DialogDescription>
                         </DialogHeader>
 
@@ -146,9 +146,9 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                                     {u?.how_it_works || "How does it work?"}
                                 </h4>
                                 <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
-                                    <li>• {u?.step1 || "A secure 12-word seed phrase is generated"}</li>
-                                    <li>• {u?.step2 || "You can create an account on MyNearWallet with this seed"}</li>
-                                    <li>• {u?.step3 || "You can transfer your NFTs to your new account"}</li>
+                                    <li>• {u?.step1 || "A secure 12-word recovery phrase is generated"}</li>
+                                    <li>• {u?.step2 || "You can use it to recover the account later"}</li>
+                                    <li>• {u?.step3 || "You can keep or move your digital tickets from this account"}</li>
                                 </ul>
                             </div>
 
@@ -160,7 +160,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                                             {u?.important || "Important"}
                                         </h4>
                                         <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
-                                            {u?.important_desc || "Store your seed phrase in a safe place. If you lose it, you won't be able to access your account!"}
+                                            {u?.important_desc || "Store your recovery phrase in a safe place. If you lose it, you will not be able to access your account."}
                                         </p>
                                     </div>
                                 </div>
@@ -172,7 +172,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                                 {u?.cancel || "Cancel"}
                             </Button>
                             <Button onClick={handleUpgrade} className="bg-purple-600 hover:bg-purple-700">
-                                {u?.generate_seed || "Generate Seed Phrase"}
+                                {u?.generate_seed || "Generate Recovery Phrase"}
                                 <ArrowRight className="w-4 h-4 ml-2" />
                             </Button>
                         </DialogFooter>
@@ -187,7 +187,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                         <div className="flex flex-col items-center justify-center py-8">
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mb-4" />
                             <p className="text-muted-foreground">
-                                {u?.generating_seed || "Generating seed phrase..."}
+                                {u?.generating_seed || "Generating recovery phrase..."}
                             </p>
                         </div>
                     </>
@@ -197,7 +197,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                     <>
                         <DialogHeader>
                             <DialogTitle className="text-green-600">
-                                {u?.seed_ready || "✓ Seed Phrase Ready!"}
+                                {u?.seed_ready || "Recovery Phrase Ready"}
                             </DialogTitle>
                             <DialogDescription>
                                 {u?.save_words || "Save these words in a safe place"}
@@ -232,7 +232,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                                 ) : (
                                     <>
                                         <Copy className="w-4 h-4 mr-2" />
-                                        {u?.copy_seed || "Copy Seed Phrase"}
+                                        {u?.copy_seed || "Copy Recovery Phrase"}
                                     </>
                                 )}
                             </Button>
@@ -245,7 +245,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                                     className="mt-1"
                                 />
                                 <span className="text-sm text-muted-foreground">
-                                    {u?.confirm_saved || "I have saved my seed phrase in a safe place. I understand I cannot access my account if I lose it."}
+                                    {u?.confirm_saved || "I have saved my recovery phrase in a safe place. I understand I cannot access my account if I lose it."}
                                 </span>
                             </label>
                         </div>
@@ -272,7 +272,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
 
                         <div className="space-y-4 py-4 text-center">
                             <p className="text-muted-foreground">
-                                {u?.next_step_desc || "Create an account on MyNearWallet using your seed phrase. Then you can transfer your NFTs to your new account."}
+                                {u?.next_step_desc || "Create or recover an account with your recovery phrase. Then keep your digital tickets in the new account."}
                             </p>
 
                             <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-3">

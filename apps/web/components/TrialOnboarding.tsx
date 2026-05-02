@@ -28,23 +28,23 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
 
     // Translations with fallbacks
     const tr = {
-        welcome_title: trialPageCopy?.welcome_title || "Welcome to YouTick!",
-        welcome_desc: trialPageCopy?.welcome_desc || "Discover films, concert recordings and special screenings",
+        welcome_title: trialPageCopy?.welcome_title || "Start with a Guest Account",
+        welcome_desc: trialPageCopy?.welcome_desc || "Discover films, concert recordings and special screenings with a digital ticket.",
         connect_wallet: trialPageCopy?.connect_wallet || "Connect Wallet",
         create_guest_account: trialPageCopy?.create_guest_account || "Create Guest Account",
         create_trial: trialPageCopy?.create_trial || "Create Guest Account",
-        start_trial: trialPageCopy?.start_trial || "Start Trial",
+        start_trial: trialPageCopy?.start_trial || "Start Guest Access",
         or: trialPageCopy?.or || "or",
         try_free: trialPageCopy?.try_free || "Claim Gift Ticket",
         no_wallet_required: trialPageCopy?.no_wallet_required || "No wallet required",
-        free_content_access: trialPageCopy?.free_content_access || "Access free content",
-        upgrade_anytime: trialPageCopy?.upgrade_anytime || "Upgrade to full wallet anytime",
+        free_content_access: trialPageCopy?.free_content_access || "Claim free-ticket releases",
+        upgrade_anytime: trialPageCopy?.upgrade_anytime || "Upgrade to a permanent wallet anytime",
         validating_link: trialPageCopy?.validating_link || "Validating link...",
-        trial_invite_title: trialPageCopy?.trial_invite_title || "Trial Invite",
+        trial_invite_title: trialPageCopy?.trial_invite_title || "Guest Invite",
         gift_ticket_title: trialPageCopy?.gift_ticket_title || "Gift Ticket",
-        test_account_required: trialPageCopy?.test_account_required || "To keep access to free videos, create a guest account or claim your existing access.",
+        test_account_required: trialPageCopy?.test_account_required || "To keep access to free-ticket releases, create a guest account or claim your existing access.",
         choose_username: trialPageCopy?.choose_username || "Choose Username",
-        username_desc: trialPageCopy?.username_desc || "This will be your NEAR account address",
+        username_desc: trialPageCopy?.username_desc || "This becomes your guest account name",
         username_placeholder: trialPageCopy?.username_placeholder || "username",
         username_validation: trialPageCopy?.username_validation || "At least 2 characters, only letters, numbers, _ and -",
         username_taken: trialPageCopy?.username_taken || "This username is already taken. Please choose another.",
@@ -54,13 +54,13 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
         creating_wait: trialPageCopy?.creating_wait || "This may take a few seconds",
         welcome_success: trialPageCopy?.welcome_success || "Welcome!",
         account_ready: trialPageCopy?.account_ready || "Your account is ready:",
-        trial_duration: trialPageCopy?.trial_duration || "Your gift ticket has been claimed!",
+        trial_duration: trialPageCopy?.trial_duration || "Your guest access is ready.",
         ticket_ready: trialPageCopy?.ticket_ready || "Your ticket is now accessible",
         go_to_ticket: trialPageCopy?.go_to_ticket || "Go to Ticket",
         start_exploring: trialPageCopy?.start_exploring || "Start Exploring",
         error_title: trialPageCopy?.error_title || "Something went wrong",
         try_again: trialPageCopy?.try_again || "Try Again",
-        no_gift_link: trialPageCopy?.no_gift_link || "No gift link found. Please use a valid gift link or connect your wallet.",
+        no_gift_link: trialPageCopy?.no_gift_link || "Start with a guest account or connect your wallet. Gift links also open here when someone shares one with you.",
         invite_required: trialPageCopy?.invite_required || "Guest account creation now requires an invite link.",
         gift_for: trialPageCopy?.gift_for || "Gift ticket for:",
         invalid_gift_link: trialPageCopy?.invalid_gift_link || "Invalid or expired gift link",
@@ -142,7 +142,7 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
         };
 
         parseUrlParams();
-    }, []);
+    }, [tr.invalid_gift_format, tr.invalid_gift_link]);
 
     const handleStartClaim = async () => {
         if (trialInviteInfo) {

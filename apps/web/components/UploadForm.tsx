@@ -182,7 +182,7 @@ export function UploadForm() {
             // Generate thumbnail
             if (selectedFile.type.startsWith('video/')) {
                 try {
-                    setStatus('Generating thumbnail...');
+                    setStatus(u.status_cover);
 
                     const cardThumbBlob = await generateVideoThumbnail(selectedFile);
                     if (fileSelectionVersionRef.current !== selectionVersion) {
@@ -220,7 +220,7 @@ export function UploadForm() {
                     console.error('Thumbnail generation failed:', error);
                     setThumbnail(null);
                     setPosterThumbnail(null);
-                    setStatus('⚠️ Could not generate thumbnail');
+                    setStatus(u.status_thumbnail_failed);
                 }
             } else {
                 setThumbnail(null);
@@ -260,23 +260,23 @@ export function UploadForm() {
         if (!file || !accountId) return;
         if (fileSizeError) return;
         if (!title || !description) {
-            setStatus('Please enter a title and description');
+            setStatus(u.status_missing_fields);
             return;
         }
         if (title.length > 200) {
-            setStatus('Title must be 200 characters or less');
+            setStatus(u.status_title_limit);
             return;
         }
         if (description.length > 2000) {
-            setStatus('Description must be 2000 characters or less');
+            setStatus(u.status_desc_limit);
             return;
         }
         if (priceUsdNum < 0) {
-            setStatus('Price cannot be negative');
+            setStatus(u.status_price_negative);
             return;
         }
         if (priceUsdNum > 50000) {
-            setStatus('Price cannot exceed $50,000');
+            setStatus(u.status_price_limit);
             return;
         }
 

@@ -93,7 +93,7 @@ export const HowItWorksSection = memo(() => {
                     </div>
                     <div className="rounded-md bg-white/5 p-3">
                       <p className="text-zinc-500">{s.preview_share}</p>
-                      <p className="font-bold text-near-green">98%</p>
+                      <p className="font-bold text-near-green">{s.preview_share_value}</p>
                     </div>
                     <div className="rounded-md bg-white/5 p-3">
                       <p className="text-zinc-500">{s.preview_access}</p>

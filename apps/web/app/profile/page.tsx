@@ -141,7 +141,7 @@ export default function ProfilePage() {
                                 className="border-zinc-700 text-zinc-200 hover:bg-zinc-800 gap-2"
                             >
                                 <Sparkles className="w-4 h-4" />
-                                {t.trial_page?.trial_invite_title || 'Trial Invites'}
+                                {t.trial_page?.trial_invite_title || 'Guest Invites'}
                             </Button>
                         )}
 
@@ -251,7 +251,7 @@ export default function ProfilePage() {
                         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                             <div>
                                 <h3 className="font-semibold text-white flex items-center gap-2">
-                                    <span className="text-near-green">⚡</span>
+                                    <Sparkles className="w-4 h-4 text-near-green" />
                                     {t.profile_page.upgrade_trial_title}
                                 </h3>
                                 <p className="text-sm text-zinc-300 mt-1">
@@ -608,10 +608,10 @@ export default function ProfilePage() {
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Sparkles className="w-5 h-5 text-zinc-400" />
-                            {t.trial_page?.trial_invite_title || 'Trial Invites'}
+                            {t.trial_page?.trial_invite_title || 'Guest Invites'}
                         </DialogTitle>
                         <DialogDescription>
-                            Create invite-only trial links that open implicit NEAR accounts directly.
+                            {t.trial_page?.trial_invite_desc || 'Create invite-only guest links for viewers.'}
                         </DialogDescription>
                     </DialogHeader>
 

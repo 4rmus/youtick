@@ -53,10 +53,10 @@ export const FinancialComparisonChart = memo(() => {
                 {/* Header - Left aligned per NEAR guidelines */}
                 <div className="max-w-3xl mb-16">
                     <h2 className="text-3xl md:text-4xl font-black text-white mb-4 text-left">
-                        {fc?.title || 'Commission Comparison'}
+                        {fc?.title || 'Ticket Split Comparison'}
                     </h2>
                     <p className="text-lg text-zinc-400 text-left">
-                        {fc?.subtitle || "Traditional platforms take most of artist revenue. We're different."}
+                        {fc?.subtitle || 'Illustrative release paths can reduce the creator share. YouTick keeps the paid-ticket split simple for film and music releases.'}
                     </p>
                 </div>
 

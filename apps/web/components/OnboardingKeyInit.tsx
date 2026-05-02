@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { NEAR_CONFIG, APP_CONFIG } from '@/lib/constants';
 import { isYoctoAmountBelowNear } from '@/lib/near-amount';
 import { getCurrentRpcUrl } from '@/lib/rpc-failover';
+import { useLanguage } from '@/components/providers/LanguageContext';
 
 /**
  * Validates any manually provisioned onboarding key and monitors trial pool health.
@@ -12,6 +13,8 @@ import { getCurrentRpcUrl } from '@/lib/rpc-failover';
 const isDev = process.env.NODE_ENV === 'development';
 
 export function OnboardingKeyInit() {
+    const { t } = useLanguage();
+    const systemCopy = t.system_messages;
     const [apiWarning, setApiWarning] = useState<string | null>(null);
 
     useEffect(() => {
@@ -35,7 +38,7 @@ export function OnboardingKeyInit() {
                     if (process.env.NODE_ENV !== 'development') {
                         console.warn('[ONBOARDING_KEY] Endpoint returned', res.status);
                     }
-                    setApiWarning(getUnsupportedApiMessage());
+                    setApiWarning(getUnsupportedApiMessage(systemCopy));
                     return;
                 }
                 const data = await res.json();
@@ -47,7 +50,7 @@ export function OnboardingKeyInit() {
                     );
                 }
             } catch {
-                setApiWarning(getUnsupportedApiMessage());
+                setApiWarning(getUnsupportedApiMessage(systemCopy));
             }
         }
 
@@ -67,7 +70,7 @@ export function OnboardingKeyInit() {
         if (!isDev) {
             monitorTrialPool().catch(() => {});
         }
-    }, []);
+    }, [systemCopy]);
 
     if (!apiWarning) return null;
 
@@ -78,12 +81,12 @@ export function OnboardingKeyInit() {
     );
 }
 
-function getUnsupportedApiMessage(): string {
+function getUnsupportedApiMessage(copy: Record<string, string>): string {
     const host = typeof window !== 'undefined' ? window.location.hostname : '';
     if (host.endsWith('.near.page') || host.includes('ipfs') || host.includes('gateway')) {
-        return 'Guest account API is not available from this static Web4 gateway. Open youtick.net or connect a wallet.';
+        return copy.guest_api_static;
     }
-    return 'Guest account API is not available right now. Connect a wallet or try again later.';
+    return copy.guest_api_unavailable;
 }
 
 /** Dynamically load Turnstile script and render an invisible challenge */

@@ -64,7 +64,7 @@ export function GiftLinkGenerator({
         try {
             const wallet = await getWallet();
             if (!wallet || !accountId) {
-                throw new Error("Wallet not connected");
+                throw new Error(t.profile_page?.wallet_not_connected || "Wallet not connected");
             }
 
             const { KeyPair } = await import("near-api-js");
@@ -149,7 +149,7 @@ export function GiftLinkGenerator({
                     {/* Cost Estimate */}
                     <div className="p-3 bg-zinc-900/50 border border-zinc-600/50 rounded-lg">
                         <p className="text-sm text-zinc-300">
-                            💰 {g?.estimated_cost || "Estimated Cost"}: <span className="font-bold text-white">{estimatedCost} NEAR</span>
+                            {g?.estimated_cost || "Estimated setup cost"}: <span className="font-bold text-white">{estimatedCost} NEAR</span>
                         </p>
                         <p className="text-xs text-zinc-500 mt-1">
                             {ticketCount} {g?.tickets_storage || "tickets × 0.12 NEAR storage"}

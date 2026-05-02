@@ -249,7 +249,7 @@ export function VideoCard({
                                 {isCreator
                                     ? t.video_card?.yours || 'Yours'
                                     : isFree
-                                        ? t.discover_page?.watch_free || 'Free Watch'
+                                        ? t.discover_page?.watch_free || 'Get Free Ticket'
                                         : t.discover_page?.buy_ticket || 'Buy Ticket'}
                             </span>
                         </div>

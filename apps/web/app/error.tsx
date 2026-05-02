@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { useLanguage } from '@/components/providers/LanguageContext';
 
 interface ErrorProps {
   error: Error & { digest?: string };
@@ -8,6 +9,8 @@ interface ErrorProps {
 }
 
 export default function Error({ error }: ErrorProps) {
+  const { t } = useLanguage();
+  const copy = t.system_messages;
   const isChunkError = error.name === 'ChunkLoadError' || error.message?.includes('ChunkLoadError');
   const retryKey = '__ytk_chunk_retry';
   const shouldAutoRetry = isChunkError && (() => {
@@ -40,7 +43,7 @@ export default function Error({ error }: ErrorProps) {
       <div className="min-h-screen flex items-center justify-center bg-gray-900 px-4">
         <div className="max-w-md w-full text-center">
           <div className="w-12 h-12 mx-auto border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-6" />
-          <p className="text-gray-400">Loading resources, retrying...</p>
+          <p className="text-gray-400">{copy.loading_retrying}</p>
         </div>
       </div>
     );
@@ -59,17 +62,17 @@ export default function Error({ error }: ErrorProps) {
         </div>
 
         <h1 className="text-2xl font-bold text-white mb-4">
-          {isChunkError ? 'Loading failed' : 'Something went wrong'}
+          {isChunkError ? copy.loading_failed : copy.something_wrong}
         </h1>
 
         <p className="text-gray-400 mb-6">
           {isChunkError
-            ? 'A required resource could not be loaded from the decentralized network. This is usually temporary.'
-            : 'We encountered an unexpected error. Please try again or contact support if the problem persists.'}
+            ? copy.resource_retry_desc
+            : copy.unexpected_desc}
         </p>
 
         {error.digest && (
-          <p className="text-xs text-gray-500 mb-6">Error ID: {error.digest}</p>
+          <p className="text-xs text-gray-500 mb-6">{copy.error_id}: {error.digest}</p>
         )}
 
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
@@ -77,13 +80,13 @@ export default function Error({ error }: ErrorProps) {
             onClick={() => window.location.reload()}
             className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
           >
-            {isChunkError ? 'Reload page' : 'Try again'}
+            {isChunkError ? copy.reload_page : copy.try_again}
           </button>
           <button
             onClick={() => window.location.href = '/'}
             className="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-lg transition-colors"
           >
-            Go home
+            {copy.go_home}
           </button>
         </div>
       </div>

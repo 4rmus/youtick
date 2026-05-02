@@ -100,7 +100,7 @@ function ClaimContent() {
                 // Parse title and media from event using centralized parser
                 const parsed = parseTitleMetadata(
                     eventData?.title,
-                    t.claim_page?.exclusive_content || "YouTick Exclusive Content"
+                    t.claim_page?.exclusive_content || "Gifted YouTick Release"
                 );
 
                 setGiftInfo({
@@ -108,7 +108,7 @@ function ClaimContent() {
                     creator: giftData.creator_id,
                     eventCid: giftData.event_cid,
                     media: parsed.thumbnailUrl,
-                    description: t.claim_page?.ticket_for_content || "Ticket for exclusive content"
+                    description: t.claim_page?.ticket_for_content || "Digital ticket for this release"
                 });
                 setStep("preview");
             } catch (err: unknown) {
@@ -265,7 +265,7 @@ function ClaimContent() {
 
                         {/* Description */}
                         <p className="text-sm text-zinc-400 text-center">
-                            {t.claim_page?.gift_received_msg || "This ticket was gifted to you! Continue to claim it."}
+                            {t.claim_page?.gift_received_msg || "A digital ticket was shared with you. Continue to claim it."}
                         </p>
 
                         {/* CTA Button */}
@@ -274,7 +274,7 @@ function ClaimContent() {
                             className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
                         >
                             <Ticket className="w-5 h-5 mr-2" />
-                            {t.claim_page?.claim_gift_button || "Claim Gift"}
+                            {t.claim_page?.claim_gift_button || "Claim Ticket"}
                         </Button>
                     </div>
                 </div>
@@ -329,7 +329,7 @@ function ClaimContent() {
                         {accountOption === "new" && (
                             <div className="space-y-4">
                                 <p className="text-sm text-zinc-400">
-                                    {t.claim_page?.create_account_desc || "Create a guest account and get your ticket"}
+                                    {t.claim_page?.create_account_desc || "Create a guest account and claim the ticket"}
                                 </p>
                                 <Button
                                     onClick={handleClaimWithNewAccount}
@@ -345,7 +345,7 @@ function ClaimContent() {
                         {accountOption === "existing" && (
                             <div className="space-y-4">
                                 <p className="text-sm text-zinc-400">
-                                    {t.claim_page?.existing_wallet_desc || "Enter your NEAR account address"}
+                                    {t.claim_page?.existing_wallet_desc || "Enter the wallet account that will receive the ticket"}
                                 </p>
                                 <Input
                                     value={existingAccountId}

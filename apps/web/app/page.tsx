@@ -2,8 +2,8 @@
 
 import { Navigation } from '@/components/landing/Navigation';
 import { HeroSection } from '@/components/landing/HeroSection';
+import { AudienceSection } from '@/components/landing/AudienceSection';
 import { ValuePropositionSection } from '@/components/landing/ValuePropositionSection';
-import { CompetitiveAdvantagesSection } from '@/components/landing/CompetitiveAdvantagesSection';
 import { HowItWorksSection } from '@/components/landing/HowItWorksSection';
 import { UseCasesSection } from '@/components/landing/UseCasesSection';
 import { CTASection } from '@/components/landing/CTASection';
@@ -17,12 +17,12 @@ export default function Home() {
     <div className="flex flex-col min-h-screen bg-black text-white selection:bg-white selection:text-black">
       <Navigation variant="landing" />
       <HeroSection />
-      <PainPointsSection />
       <ValuePropositionSection />
-      <ROICalculator />
+      <AudienceSection />
+      <PainPointsSection />
       <UseCasesSection />
+      <ROICalculator />
       <HowItWorksSection />
-      <CompetitiveAdvantagesSection />
       <Roadmap />
       <CTASection />
       <LandingFooter />

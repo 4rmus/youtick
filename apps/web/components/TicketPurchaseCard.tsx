@@ -234,7 +234,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 }
 
                 if (event) {
-                    const parsed = parseTitleMetadata(event.title, "Exclusive Content");
+                    const parsed = parseTitleMetadata(event.title, tp.release_fallback);
                     const media = await resolvePreferredMediaUrl(parsed.thumbnailUrl, parsed.manifestCid);
 
                     setEventDetails({
@@ -257,7 +257,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         };
 
         init();
-    }, [cid]);
+    }, [cid, tp.error_banned, tp.error_load_ticket, tp.release_fallback]);
 
     const handleSelectionChange = useCallback((selection: PaymentSelection) => {
         setPaymentSelection(selection);
@@ -327,7 +327,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             }
 
             if (isTrial) {
-                throw new Error("Secure sponsored free ticket claim is not configured for this trial account yet. Use a gift link or connect a wallet.");
+                throw new Error(tp.error_trial_free_claim);
             }
 
             const contractId = NEAR_CONFIG.contractId;
@@ -633,7 +633,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         }
         const amount = amountOverride || (eventDetails.priceUsdc?.toString() ?? '0');
         if (amount === '0') {
-            setError('This event is not priced in USDC. Please select NEAR payment.');
+            setError('This release is not priced in USDC. Please select NEAR payment.');
             return;
         }
 
@@ -730,13 +730,13 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 return;
             }
             if (!hasNearPrice) {
-                setError('This event does not have a NEAR fallback price.');
+                setError('This release does not have a NEAR fallback price.');
                 return;
             }
             await handleNearPurchase();
         } else if (chain === 'near') {
             if (!hasUsdcPrice) {
-                setError('This event is priced in NEAR. Please select NEAR payment.');
+                setError('This release is priced in NEAR. Please select NEAR payment.');
                 return;
             }
             // NEAR-native USDC/USDT: direct ft_transfer_call (no swap)
@@ -908,7 +908,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         </p>
                         {evmSwapKeypair && (
                             <p className="text-[10px] text-zinc-600">
-                                NEAR account: <span className="font-mono text-zinc-400">{evmSwapKeypair.implicitAccountId.slice(0, 8)}...{evmSwapKeypair.implicitAccountId.slice(-6)}</span>
+                                {tp.near_account_label}: <span className="font-mono text-zinc-400">{evmSwapKeypair.implicitAccountId.slice(0, 8)}...{evmSwapKeypair.implicitAccountId.slice(-6)}</span>
                             </p>
                         )}
                         <button

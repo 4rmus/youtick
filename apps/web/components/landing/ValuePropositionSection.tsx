@@ -10,6 +10,7 @@ export const ValuePropositionSection = memo(() => {
     { icon: WalletCards, title: s.revenue_title, text: s.revenue_text, note: s.revenue_note },
     { icon: Ticket, title: s.control_title, text: s.control_text, note: s.control_note },
     { icon: ShieldCheck, title: s.trust_title, text: s.trust_text, note: s.trust_note },
+    { icon: KeyRound, title: s.viewer_title, text: s.viewer_text, note: s.viewer_note },
   ];
 
   return (
@@ -36,7 +37,7 @@ export const ValuePropositionSection = memo(() => {
             </div>
           </div>
 
-          <div className="grid gap-5 md:grid-cols-3 lg:grid-cols-1">
+          <div className="grid gap-5 md:grid-cols-2">
             {promises.map(({ icon: Icon, title, text, note }) => (
               <article
                 key={title}

@@ -32,11 +32,10 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
 
   // Landing page navigation links
   const navLinks = [
-    { href: '#pain-points', label: t.landing.nav_extra?.problems || 'Problems' },
     { href: '#model', label: t.landing.nav?.features || 'Model' },
-    { href: '#roi-calculator', label: t.landing.nav_extra?.calculator || 'Calculator' },
     { href: '#use-cases', label: t.landing.nav?.use_cases || 'Use cases' },
-    { href: '#trust', label: t.landing.nav?.comparison || 'Trust' },
+    { href: '#roi-calculator', label: t.landing.nav_extra?.calculator || 'Fee model' },
+    { href: '#how-it-works', label: t.landing.nav?.how_it_works || 'How it works' },
     { href: '#roadmap', label: t.landing.nav?.roadmap || 'Roadmap' },
   ];
 
@@ -63,7 +62,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
                   className="text-near-green hover:text-near-green/80"
                 >
                   <Sparkles className="w-4 h-4 mr-1" />
-                  {t.landing.nav_extra?.try_free || 'Try Free'}
+                  {t.landing.nav_extra?.try_free || 'Guest ticket'}
                 </Button>
               </Link>
               <Button
@@ -116,7 +115,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
               className="border-near-green/50 text-near-green hover:bg-near-green/10 hover:border-near-green font-semibold px-4"
             >
               <Sparkles className="w-4 h-4 mr-1" />
-              {t.landing.nav_extra?.try_free || 'Try Free'}
+              {t.landing.nav_extra?.try_free || 'Guest ticket'}
             </Button>
           </Link>
 
@@ -124,7 +123,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
             onClick={handleGetStarted}
             className="bg-near-green hover:bg-near-green/80 text-black font-semibold px-6"
           >
-            {t.landing.hero_section?.cta_primary || 'Publish your work'}
+            {t.landing.hero_section?.cta_primary || 'Publish a release'}
           </Button>
         </div>
 
@@ -163,7 +162,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
                 className="w-full border-near-green/50 text-near-green hover:bg-near-green/10 hover:border-near-green font-semibold"
               >
                 <Sparkles className="w-4 h-4 mr-2" />
-                {t.landing.nav_extra?.try_free || 'Try Free'}
+                {t.landing.nav_extra?.try_free || 'Guest ticket'}
               </Button>
             </Link>
 
@@ -174,7 +173,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
               }}
               className="w-full bg-near-green hover:bg-near-green/80 text-black font-semibold"
             >
-              {t.landing.hero_section?.cta_primary || 'Publish your work'}
+              {t.landing.hero_section?.cta_primary || 'Publish a release'}
             </Button>
           </div>
         </div>

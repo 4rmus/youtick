@@ -7,6 +7,7 @@ import { getProvider, viewContract } from '@/lib/near';
 import { NEAR_CONFIG, GAS_CONSTANTS, DEPOSIT_CONSTANTS } from '@/lib/constants';
 import { nearAmountToYocto } from '@/lib/near-amount';
 import { useNearPrice } from '@/hooks/useNearPrice';
+import { useLanguage } from '@/components/providers/LanguageContext';
 
 interface MintButtonProps {
     cid?: string;
@@ -14,6 +15,9 @@ interface MintButtonProps {
 
 export function MintButton({ cid }: MintButtonProps) {
     const { accountId, getWallet } = useWallet();
+    const { t } = useLanguage();
+    const tp = t.ticket_purchase;
+    const legacy = t.legacy_mint;
     const { nearToUsdStr } = useNearPrice();
     const [minting, setMinting] = useState(false);
     const [price, setPrice] = useState<string | null>(null);
@@ -85,13 +89,13 @@ export function MintButton({ cid }: MintButtonProps) {
                     actions: [action],
                 });
             }
-            // LEGACY FLOW: Mint Generic Access Pass
+            // LEGACY FLOW: Create old generic access record
             else {
                 const args = {
                     receiver_id: accountId,
                     token_metadata: {
-                        title: "youtick Access Pass",
-                        description: "Global access pass for youtick exclusive content",
+                        title: legacy.token_title,
+                        description: legacy.token_description,
                         media: "https://bafybeiejkf54bn7q3d3j6w3c3j3j3j3j3j3j3j3.ipfs.dweb.link/token.png",
                         copies: 1
                     },
@@ -126,7 +130,7 @@ export function MintButton({ cid }: MintButtonProps) {
     if (!accountId || isBanned) return null;
 
     if (loadingPrice) {
-        return <Button disabled variant="outline" size="sm"><Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading price...</Button>;
+        return <Button disabled variant="outline" size="sm"><Loader2 className="h-4 w-4 animate-spin mr-2" /> {tp.loading_price}</Button>;
     }
 
     return (
@@ -143,7 +147,7 @@ export function MintButton({ cid }: MintButtonProps) {
             ) : (
                 <Coins className="h-4 w-4" />
             )}
-            {minting ? "Processing..." : price ? (priceUsdCents ? `Buy Ticket ($${(priceUsdCents / 100).toFixed(2)})` : `Buy Ticket (${nearToUsdStr(parseFloat(price))})`) : "Mint Global Access Pass"}
+            {minting ? tp.processing : price ? (priceUsdCents ? `${tp.buy_ticket} ($${(priceUsdCents / 100).toFixed(2)})` : `${tp.buy_ticket} (${nearToUsdStr(parseFloat(price))})`) : legacy.button_legacy}
         </Button>
     );
 }

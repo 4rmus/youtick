@@ -129,7 +129,7 @@ function WatchContent() {
             <div className="container mx-auto px-4 py-24">
                 <div className="max-w-xl mx-auto text-center">
                     <Video className="w-16 h-16 mx-auto mb-6 text-zinc-700" />
-                    <h1 className="text-2xl font-bold mb-3">{t.discover_page?.no_videos || 'No Works Found'}</h1>
+                    <h1 className="text-2xl font-bold mb-3">{t.discover_page?.no_videos || 'No Releases Found'}</h1>
                     <p className="text-zinc-400 mb-8">{t.watch_page.select_video_desc}</p>
                     <Link href="/discover">
                         <Button variant="outline" className="border-white/20 text-white hover:bg-white/10">

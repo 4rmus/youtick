@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { CalendarDays, Film, Music } from 'lucide-react';
+import { CalendarDays, Film, Music, Ticket } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
 export const AudienceSection = memo(() => {
@@ -10,6 +10,7 @@ export const AudienceSection = memo(() => {
     { icon: Music, title: s.musicians_title, text: s.musicians_desc },
     { icon: Film, title: s.directors_title, text: s.directors_desc },
     { icon: CalendarDays, title: s.event_teams_title, text: s.event_teams_desc },
+    { icon: Ticket, title: s.viewers_title, text: s.viewers_desc },
   ];
 
   return (
@@ -27,7 +28,7 @@ export const AudienceSection = memo(() => {
           </p>
         </div>
 
-        <div className="grid gap-5 md:grid-cols-3">
+        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
           {audienceCards.map(({ icon: Icon, title, text }) => (
             <article
               key={title}
