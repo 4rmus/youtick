@@ -6,6 +6,16 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const nearMocks = vi.hoisted(() => ({
+  getProvider: vi.fn(() => ({})),
+  viewContract: vi.fn(),
+}));
+
+vi.mock('@/lib/near', () => ({
+  getProvider: nearMocks.getProvider,
+  viewContract: nearMocks.viewContract,
+}));
+
 import {
   getNearPrice,
   calculateStorageFee,
@@ -15,9 +25,32 @@ import {
 describe('Price Utils', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    nearMocks.getProvider.mockReturnValue({});
+    nearMocks.viewContract.mockRejectedValue(new Error('Pyth unavailable'));
   });
 
   describe('getNearPrice', () => {
+    it('should fetch fresh price from Pyth oracle with the expected args', async () => {
+      nearMocks.viewContract.mockResolvedValueOnce({
+        price: '500000000',
+        conf: '1',
+        expo: -8,
+        publish_time: Math.floor(Date.now() / 1000),
+      });
+      global.fetch = vi.fn();
+
+      const price = await getNearPrice();
+
+      expect(price).toBe(5);
+      expect(nearMocks.viewContract).toHaveBeenCalledWith(
+        {},
+        'pyth-oracle.near',
+        'get_price',
+        { price_identifier: 'c415de8d2eba7db216527dff4b60e8f3a5311c740dadb233e13e12547e226750' },
+      );
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
     it('should fetch price from CoinGecko API', async () => {
       const mockPrice = 4.50;
 

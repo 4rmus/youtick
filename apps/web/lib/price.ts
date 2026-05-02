@@ -52,7 +52,7 @@ export async function getNearPrice(): Promise<number> {
             provider,
             PYTH_CONTRACT_ID,
             'get_price',
-            { price_id: PYTH_NEAR_USD_PRICE_ID }
+            { price_identifier: PYTH_NEAR_USD_PRICE_ID }
         );
         if (pythPrice?.price && typeof pythPrice.expo === 'number') {
             const price = parseInt(pythPrice.price, 10) * Math.pow(10, pythPrice.expo);
