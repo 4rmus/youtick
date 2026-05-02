@@ -4,6 +4,7 @@ import { browserKeyStore, inMemoryKeyStore } from './keystore-v7';
 import { NEAR_CONFIG } from './constants';
 import {
     getCurrentRpcUrl,
+    getRpcEndpoints,
     getPrimaryRpcUrl,
     withRpcFailover,
     RPC_ENDPOINTS
@@ -15,11 +16,6 @@ const NETWORK_ID = NEAR_CONFIG.networkId;
 
 // Primary RPC URL (first in list) - exposed for compatibility/debugging.
 const RPC_URL = getPrimaryRpcUrl();
-
-// Failover provider with all RPC endpoints for resilient queries
-const failoverProvider = new FailoverRpcProvider(
-    RPC_ENDPOINTS.map(url => new JsonRpcProvider({ url }))
-);
 
 // v7: viewContract helper since Account.viewFunction doesn't exist
 async function viewContract<T>(
@@ -66,7 +62,9 @@ export function getReadOnlyAccount(accountId: string): Account {
  * Uses near-api-js v7 FailoverRpcProvider for resilient queries.
  */
 export function getProvider(): FailoverRpcProvider {
-    return failoverProvider;
+    return new FailoverRpcProvider(
+        getRpcEndpoints().map(url => new JsonRpcProvider({ url }))
+    );
 }
 
 // Export viewContract helper for view calls

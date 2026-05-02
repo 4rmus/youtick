@@ -6,19 +6,21 @@
  * import { getCurrentRpcUrl, withRpcFailover, RPC_ENDPOINTS } from '@/lib/rpc-failover';
  */
 
-import { NEAR_CONFIG } from './constants';
+import { APP_CONFIG, NEAR_CONFIG } from './constants';
+
+export const NEAR_RPC_PROXY_PATH = '/api/near-rpc';
 
 // RPC Endpoints - ordered by priority
 export const MAINNET_RPC_ENDPOINTS = [
-    'https://free.rpc.fastnear.com',
-    // Official near.org RPC endpoints are intentionally excluded here: browser
-    // preflight requests from youtick.net are blocked before wallet flows open.
+    NEAR_RPC_PROXY_PATH,
+    // Browser RPC calls go through the same-origin proxy to avoid third-party
+    // RPC CORS drift before wallet flows open.
 ];
 
 export const TESTNET_RPC_ENDPOINTS = [
-    'https://test.rpc.fastnear.com',
-    // Official near.org RPC endpoints are intentionally excluded here: browser
-    // preflight requests from youtick.net are blocked before wallet flows open.
+    NEAR_RPC_PROXY_PATH,
+    // Browser RPC calls go through the same-origin proxy to avoid third-party
+    // RPC CORS drift before wallet flows open.
 ];
 
 // Select endpoints based on network
@@ -29,18 +31,33 @@ export const RPC_ENDPOINTS = NEAR_CONFIG.networkId === 'mainnet'
 // Track current working endpoint index (module-level state)
 let currentRpcIndex = 0;
 
+function resolveRpcUrl(url: string): string {
+    if (/^https?:\/\//.test(url)) return url;
+
+    const origin = typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : APP_CONFIG.publicAppUrl;
+    const normalizedOrigin = origin.replace(/\/$/, '');
+    const normalizedPath = url.startsWith('/') ? url : `/${url}`;
+    return `${normalizedOrigin}${normalizedPath}`;
+}
+
+export function getRpcEndpoints(): string[] {
+    return RPC_ENDPOINTS.map(resolveRpcUrl);
+}
+
 /**
  * Get the current best RPC URL
  */
 export function getCurrentRpcUrl(): string {
-    return RPC_ENDPOINTS[currentRpcIndex];
+    return resolveRpcUrl(RPC_ENDPOINTS[currentRpcIndex]);
 }
 
 /**
  * Get the primary RPC URL (first in list)
  */
 export function getPrimaryRpcUrl(): string {
-    return RPC_ENDPOINTS[0];
+    return resolveRpcUrl(RPC_ENDPOINTS[0]);
 }
 
 /**

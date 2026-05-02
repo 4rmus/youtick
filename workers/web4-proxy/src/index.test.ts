@@ -208,6 +208,57 @@ describe('web4-proxy', () => {
         expect(await response.json()).toEqual({ error: 'Onboarding key not configured' });
     });
 
+    it('handles NEAR RPC preflight without hitting the origin', async () => {
+        globalThis.fetch = vi.fn();
+
+        const request = new Request('https://youtick.net/api/near-rpc', {
+            method: 'OPTIONS',
+            headers: {
+                origin: 'https://youtick.net',
+                'access-control-request-method': 'POST',
+                'access-control-request-headers': 'content-type',
+            },
+        });
+        const response = await handler.fetch(request, createEnv(), {
+            waitUntil: vi.fn(),
+        } as unknown as ExecutionContext);
+
+        expect(response.status).toBe(204);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        expect(response.headers.get('Access-Control-Allow-Methods')).toContain('POST');
+        expect(response.headers.get('Access-Control-Allow-Headers')).toContain('content-type');
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it('proxies NEAR RPC POST requests with no-store CORS headers', async () => {
+        const body = JSON.stringify({ jsonrpc: '2.0', id: '1', method: 'status', params: [] });
+        const fetchMock = vi.fn(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+            expect(input).toBe('https://free.rpc.fastnear.com/');
+            expect(init?.method).toBe('POST');
+            expect((init?.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+            expect(init?.body).toBe(body);
+            return new Response(JSON.stringify({ result: { chain_id: 'mainnet' } }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        });
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+        const request = new Request('https://youtick.net/api/near-rpc', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body,
+        });
+        const response = await handler.fetch(request, createEnv(), {
+            waitUntil: vi.fn(),
+        } as unknown as ExecutionContext);
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(await response.json()).toEqual({ result: { chain_id: 'mainnet' } });
+    });
+
     it('proxies Crust API requests and preserves CORS headers', async () => {
         const fetchMock = vi.fn(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
             const url = typeof input === 'string'

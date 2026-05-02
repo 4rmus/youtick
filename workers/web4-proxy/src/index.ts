@@ -24,6 +24,8 @@ const STATIC_EXTENSIONS = new Set([
     '.ico', '.woff', '.woff2', '.ttf', '.webp', '.wasm', '.map',
 ]);
 
+const NEAR_RPC_UPSTREAM = 'https://free.rpc.fastnear.com/';
+
 const WEB4_CSP_VALUE = [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://challenges.cloudflare.com https://static.cloudflareinsights.com",
@@ -85,6 +87,11 @@ export default {
         // --- Onboarding key endpoint (replaces Next.js API route in static export) ---
         if (url.pathname === '/api/onboarding-key' && request.method === 'GET') {
             return handleOnboardingKey(request, env, ctx);
+        }
+
+        // --- NEAR RPC proxy (same-origin CORS workaround for wallet/RPC calls) ---
+        if (url.pathname === '/api/near-rpc') {
+            return handleNearRpc(request);
         }
 
         // --- Crust IPFS proxy (CORS workaround for PSA/API calls) ---
@@ -223,6 +230,56 @@ export default {
         );
     },
 } satisfies ExportedHandler<Env>;
+
+function jsonResponse(body: Record<string, unknown>, status: number, headers?: HeadersInit): Response {
+    const responseHeaders = new Headers(headers);
+    responseHeaders.set('Content-Type', 'application/json');
+
+    return new Response(JSON.stringify(body), {
+        status,
+        headers: responseHeaders,
+    });
+}
+
+function nearRpcCorsHeaders(): HeadersInit {
+    return {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'content-type',
+        'Cache-Control': 'no-store',
+    };
+}
+
+async function handleNearRpc(request: Request): Promise<Response> {
+    const corsHeaders = nearRpcCorsHeaders();
+
+    if (request.method === 'OPTIONS') {
+        return new Response(null, { status: 204, headers: corsHeaders });
+    }
+
+    if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders);
+    }
+
+    const upstream = await fetch(NEAR_RPC_UPSTREAM, {
+        method: 'POST',
+        headers: {
+            'Content-Type': request.headers.get('content-type') || 'application/json',
+        },
+        body: await request.text(),
+    });
+
+    const headers = new Headers(upstream.headers);
+    for (const [key, value] of Object.entries(corsHeaders)) {
+        headers.set(key, value);
+    }
+
+    return new Response(upstream.body, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers,
+    });
+}
 
 /**
  * Build headers to send to the Web4 origin.

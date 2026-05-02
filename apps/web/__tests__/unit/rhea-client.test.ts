@@ -87,7 +87,7 @@ describe('rhea client', () => {
 
     const quote = await quoteNearToUsdc(1_000_000);
 
-    expect(rheaMocks.initEnv).toHaveBeenCalledWith('mainnet', undefined, 'https://free.rpc.fastnear.com');
+    expect(rheaMocks.initEnv).toHaveBeenCalledWith('mainnet', undefined, 'https://youtick.net/api/near-rpc');
     expect(rheaMocks.estimateSwap).toHaveBeenCalledWith(expect.objectContaining({
       amountIn: expect.any(String),
       tokenIn: expect.objectContaining({ id: 'wrap.near' }),

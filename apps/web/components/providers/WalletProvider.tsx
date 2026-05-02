@@ -5,6 +5,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import type { WalletSelector, Wallet } from '@near-wallet-selector/core';
 import type { WalletSelectorModal } from '@near-wallet-selector/modal-ui';
 import { NEAR_CONFIG } from '@/lib/constants';
+import { getPrimaryRpcUrl } from '@/lib/rpc-failover';
 import type { WalletInstance } from '@/lib/types';
 import { clearKmsAuthCache } from '@/lib/kms/client';
 import { clearSessionGrantCache } from '@/lib/access-grants';
@@ -73,6 +74,28 @@ function createWalletAdapter(wallet: Wallet): WalletInstance {
     };
 }
 
+function getWalletSelectorNetwork() {
+    const rpcUrl = getPrimaryRpcUrl();
+
+    if (NEAR_CONFIG.networkId === 'testnet') {
+        return {
+            networkId: 'testnet' as const,
+            nodeUrl: rpcUrl,
+            helperUrl: 'https://helper.testnet.near.org',
+            explorerUrl: 'https://testnet.nearblocks.io',
+            indexerUrl: 'https://test.api.fastnear.com/v0',
+        };
+    }
+
+    return {
+        networkId: 'mainnet' as const,
+        nodeUrl: rpcUrl,
+        helperUrl: 'https://helper.mainnet.near.org',
+        explorerUrl: 'https://nearblocks.io',
+        indexerUrl: 'https://api.fastnear.com/v0',
+    };
+}
+
 export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const selectorRef = useRef<WalletSelector | null>(null);
     const modalRef = useRef<WalletSelectorModal | null>(null);
@@ -94,7 +117,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             }
         }
 
-        const network = NEAR_CONFIG.networkId;
+        const network = getWalletSelectorNetwork();
 
         if (typeof window !== 'undefined') {
             localStorage.removeItem('DEV__METEOR_WALLET_BASE_URL');
@@ -116,6 +139,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
             const selector = await setupWalletSelector({
                 network,
+                fallbackRpcUrls: [network.nodeUrl],
                 createAccessKeyFor: {
                     contractId: NEAR_CONFIG.contractId,
                     methodNames: [],
