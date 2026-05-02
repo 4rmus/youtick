@@ -11,6 +11,7 @@ export const HowItWorksSection = memo(() => {
     { number: '1', title: s.step1_title, text: s.step1_desc },
     { number: '2', title: s.step2_title, text: s.step2_desc },
     { number: '3', title: s.step3_title, text: s.step3_desc },
+    { number: '4', title: s.step4_title, text: s.step4_desc },
   ];
 
   const previewItems = [

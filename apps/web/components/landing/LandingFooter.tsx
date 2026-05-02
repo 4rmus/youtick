@@ -18,7 +18,7 @@ export const LandingFooter = memo(() => {
           <div className="flex flex-col items-start gap-4">
             <Branding size="md" />
             <p className="text-sm text-zinc-500 max-w-xs text-left leading-relaxed">
-              {t.landing.footer.description || 'Digital ticketed releases for independent cinema and music.'}
+              {t.landing.footer.description || 'Digital ticketed screenings for independent cinema and music.'}
             </p>
           </div>
 
