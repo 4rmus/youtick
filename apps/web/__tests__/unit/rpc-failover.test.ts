@@ -39,4 +39,16 @@ describe('RPC failover endpoints', () => {
 
         expect(getPrimaryRpcUrl()).toBe('https://preview.youtick-static.pages.dev/api/near-rpc');
     });
+
+    it('does not retry the same RPC proxy when no alternate endpoint exists', async () => {
+        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'mainnet';
+
+        const { withRpcFailover } = await import('@/lib/rpc-failover');
+        const fn = vi.fn(async () => {
+            throw new Error('RPC 429');
+        });
+
+        await expect(withRpcFailover(fn, 3)).rejects.toThrow('RPC 429');
+        expect(fn).toHaveBeenCalledTimes(1);
+    });
 });

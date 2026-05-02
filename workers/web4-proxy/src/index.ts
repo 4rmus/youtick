@@ -24,7 +24,27 @@ const STATIC_EXTENSIONS = new Set([
     '.ico', '.woff', '.woff2', '.ttf', '.webp', '.wasm', '.map',
 ]);
 
-const NEAR_RPC_UPSTREAM = 'https://free.rpc.fastnear.com/';
+const NEAR_RPC_UPSTREAMS = [
+    'https://free.rpc.fastnear.com/',
+    'https://rpc.mainnet.near.org/',
+    'https://near.drpc.org/',
+];
+const NEAR_RPC_CACHE_TTL_SECONDS = 5;
+const NEAR_RPC_CACHEABLE_VIEW_METHODS = new Set([
+    'get_event',
+    'get_events',
+    'get_events_count',
+    'get_all_events',
+    'get_trial_pool_balance',
+    'get_daily_trial_count',
+    'get_onboarding_config',
+    'get_gift_info_full',
+    'get_trial_invite_info',
+    'is_onboarding_key',
+    'list_decryption_operators',
+    'get_threshold_config',
+]);
+const pendingNearRpcRequests = new Map<string, Promise<Response>>();
 
 const WEB4_CSP_VALUE = [
     "default-src 'self'",
@@ -90,8 +110,8 @@ export default {
         }
 
         // --- NEAR RPC proxy (same-origin CORS workaround for wallet/RPC calls) ---
-        if (url.pathname === '/api/near-rpc') {
-            return handleNearRpc(request);
+        if (url.pathname === '/api/near-rpc' || url.pathname === '/api/near-rpc/') {
+            return handleNearRpc(request, ctx);
         }
 
         // --- Crust IPFS proxy (CORS workaround for PSA/API calls) ---
@@ -250,7 +270,107 @@ function nearRpcCorsHeaders(): HeadersInit {
     };
 }
 
-async function handleNearRpc(request: Request): Promise<Response> {
+type NearRpcPayload = {
+    method?: string;
+    params?: {
+        request_type?: string;
+        finality?: string;
+        method_name?: string;
+    };
+};
+
+function withNearRpcHeaders(response: Response, cacheState: 'BYPASS' | 'HIT' | 'MISS', upstream?: string): Response {
+    const headers = new Headers(response.headers);
+    for (const [key, value] of Object.entries(nearRpcCorsHeaders())) {
+        headers.set(key, value);
+    }
+    headers.set('X-Near-Rpc-Cache', cacheState);
+    if (upstream) {
+        headers.set('X-Near-Rpc-Upstream', new URL(upstream).hostname);
+    }
+    headers.delete('set-cookie');
+
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+    });
+}
+
+function getCacheableRpcScope(payload: unknown): string | null {
+    if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
+        return null;
+    }
+
+    const rpcPayload = payload as NearRpcPayload;
+    if (rpcPayload.method === 'status') {
+        return 'status';
+    }
+
+    if (rpcPayload.method !== 'query') {
+        return null;
+    }
+
+    const params = rpcPayload.params;
+    if (!params || params.request_type !== 'call_function') {
+        return null;
+    }
+
+    if (params.finality && params.finality !== 'final') {
+        return null;
+    }
+
+    return params.method_name && NEAR_RPC_CACHEABLE_VIEW_METHODS.has(params.method_name)
+        ? params.method_name
+        : null;
+}
+
+async function sha256Hex(value: string): Promise<string> {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+    return Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+async function buildNearRpcCacheKey(request: Request, body: string, scope: string): Promise<Request> {
+    const url = new URL(request.url);
+    url.pathname = `/__near-rpc-cache/${scope}/${await sha256Hex(body)}`;
+    url.search = '';
+    return new Request(url.toString(), { method: 'GET' });
+}
+
+async function fetchNearRpcFromUpstream(body: string, contentType: string): Promise<Response> {
+    let lastResponse: Response | null = null;
+    let lastError: unknown;
+
+    for (const upstreamUrl of NEAR_RPC_UPSTREAMS) {
+        try {
+            const response = await fetch(upstreamUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': contentType },
+                body,
+            });
+
+            if ((response.status === 429 || response.status >= 500) && upstreamUrl !== NEAR_RPC_UPSTREAMS[NEAR_RPC_UPSTREAMS.length - 1]) {
+                lastResponse = response;
+                continue;
+            }
+
+            return withNearRpcHeaders(response, 'BYPASS', upstreamUrl);
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    if (lastResponse) {
+        return withNearRpcHeaders(lastResponse, 'BYPASS');
+    }
+
+    console.warn('NEAR RPC proxy: all upstreams failed', lastError);
+    return jsonResponse({ error: 'NEAR RPC unavailable' }, 502, nearRpcCorsHeaders());
+}
+
+async function handleNearRpc(request: Request, ctx: ExecutionContext): Promise<Response> {
     const corsHeaders = nearRpcCorsHeaders();
 
     if (request.method === 'OPTIONS') {
@@ -261,24 +381,57 @@ async function handleNearRpc(request: Request): Promise<Response> {
         return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders);
     }
 
-    const upstream = await fetch(NEAR_RPC_UPSTREAM, {
-        method: 'POST',
-        headers: {
-            'Content-Type': request.headers.get('content-type') || 'application/json',
-        },
-        body: await request.text(),
-    });
-
-    const headers = new Headers(upstream.headers);
-    for (const [key, value] of Object.entries(corsHeaders)) {
-        headers.set(key, value);
+    const body = await request.text();
+    let payload: unknown;
+    try {
+        payload = JSON.parse(body);
+    } catch {
+        return jsonResponse({ error: 'Invalid JSON-RPC payload' }, 400, corsHeaders);
     }
 
-    return new Response(upstream.body, {
-        status: upstream.status,
-        statusText: upstream.statusText,
-        headers,
-    });
+    const cacheScope = getCacheableRpcScope(payload);
+    const contentType = request.headers.get('content-type') || 'application/json';
+    const cacheKey = cacheScope
+        ? await buildNearRpcCacheKey(request, body, cacheScope)
+        : null;
+
+    if (cacheKey) {
+        const cached = await caches.default.match(cacheKey);
+        if (cached) {
+            return withNearRpcHeaders(cached, 'HIT');
+        }
+
+        const pending = pendingNearRpcRequests.get(cacheKey.url);
+        if (pending) {
+            return (await pending).clone();
+        }
+
+        const fetchPromise = fetchNearRpcFromUpstream(body, contentType)
+            .then((response) => {
+                const responseWithCacheHeader = withNearRpcHeaders(response, 'MISS');
+                if (responseWithCacheHeader.status === 200) {
+                    const cachedHeaders = new Headers(responseWithCacheHeader.headers);
+                    cachedHeaders.set('Cache-Control', `public, max-age=${NEAR_RPC_CACHE_TTL_SECONDS}`);
+                    ctx.waitUntil(caches.default.put(
+                        cacheKey,
+                        new Response(responseWithCacheHeader.clone().body, {
+                            status: responseWithCacheHeader.status,
+                            statusText: responseWithCacheHeader.statusText,
+                            headers: cachedHeaders,
+                        }),
+                    ));
+                }
+                return responseWithCacheHeader;
+            })
+            .finally(() => {
+                pendingNearRpcRequests.delete(cacheKey.url);
+            });
+
+        pendingNearRpcRequests.set(cacheKey.url, fetchPromise);
+        return (await fetchPromise).clone();
+    }
+
+    return fetchNearRpcFromUpstream(body, contentType);
 }
 
 /**

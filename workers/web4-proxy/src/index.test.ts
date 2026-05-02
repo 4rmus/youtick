@@ -211,7 +211,7 @@ describe('web4-proxy', () => {
     it('handles NEAR RPC preflight without hitting the origin', async () => {
         globalThis.fetch = vi.fn();
 
-        const request = new Request('https://youtick.net/api/near-rpc', {
+        const request = new Request('https://youtick.net/api/near-rpc/', {
             method: 'OPTIONS',
             headers: {
                 origin: 'https://youtick.net',
@@ -256,7 +256,83 @@ describe('web4-proxy', () => {
         expect(response.status).toBe(200);
         expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
         expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(response.headers.get('X-Near-Rpc-Cache')).toBe('MISS');
+        expect(response.headers.get('X-Near-Rpc-Upstream')).toBe('free.rpc.fastnear.com');
         expect(await response.json()).toEqual({ result: { chain_id: 'mainnet' } });
+    });
+
+    it('tries another NEAR RPC upstream when the first is rate limited', async () => {
+        const body = JSON.stringify({
+            jsonrpc: '2.0',
+            id: '1',
+            method: 'query',
+            params: {
+                request_type: 'call_function',
+                finality: 'final',
+                account_id: 'youtick.near',
+                method_name: 'get_event',
+                args_base64: 'e30=',
+            },
+        });
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'rate limited' }), {
+                status: 429,
+                headers: { 'Content-Type': 'application/json' },
+            }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ result: { result: [] } }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            }));
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+        const response = await handler.fetch(new Request('https://youtick.net/api/near-rpc', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body,
+        }), createEnv(), {
+            waitUntil: vi.fn(),
+        } as unknown as ExecutionContext);
+
+        expect(response.status).toBe(200);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock.mock.calls[0][0]).toBe('https://free.rpc.fastnear.com/');
+        expect(fetchMock.mock.calls[1][0]).toBe('https://rpc.mainnet.near.org/');
+        expect(response.headers.get('X-Near-Rpc-Upstream')).toBe('rpc.mainnet.near.org');
+    });
+
+    it('caches allowlisted NEAR view RPC calls briefly', async () => {
+        const body = JSON.stringify({
+            jsonrpc: '2.0',
+            id: '1',
+            method: 'query',
+            params: {
+                request_type: 'call_function',
+                finality: 'final',
+                account_id: 'youtick.near',
+                method_name: 'get_event',
+                args_base64: 'e30=',
+            },
+        });
+        const fetchMock = vi.fn(async () => new Response(JSON.stringify({ result: { result: [] } }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        const waitUntil = vi.fn((promise: Promise<unknown>) => promise);
+        const ctx = { waitUntil } as unknown as ExecutionContext;
+        const requestInit = {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body,
+        };
+
+        const first = await handler.fetch(new Request('https://youtick.net/api/near-rpc', requestInit), createEnv(), ctx);
+        await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
+        const second = await handler.fetch(new Request('https://youtick.net/api/near-rpc', requestInit), createEnv(), ctx);
+
+        expect(first.headers.get('X-Near-Rpc-Cache')).toBe('MISS');
+        expect(second.headers.get('X-Near-Rpc-Cache')).toBe('HIT');
+        expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it('proxies Crust API requests and preserves CORS headers', async () => {

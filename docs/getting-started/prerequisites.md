@@ -88,8 +88,11 @@ npx near-cli view youtick.near nft_metadata '{}'
 
 | Network | Contract ID | RPC Endpoint |
 |---------|-------------|-------------|
-| **Mainnet** | `youtick.near` | `https://free.rpc.fastnear.com` |
-| **Testnet** | `dev-1773607954211-252231.v2-0.utick.testnet` | `https://rpc.testnet.near.org` |
+| **Mainnet** | `youtick.near` | Browser: `/api/near-rpc`; ops scripts: set `NEAR_RPC_URL` when needed |
+| **Testnet** | `dev-1773607954211-252231.v2-0.utick.testnet` | Browser: `/api/near-rpc`; ops scripts: set `NEAR_RPC_URL` when needed |
+
+The live browser app uses the same-origin Web4 proxy for RPC so wallet and
+read-only contract calls do not depend on public RPC CORS behavior.
 
 ---
 

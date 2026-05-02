@@ -60,7 +60,7 @@ function readOnboardingKey(): string | null {
 
 async function isOnboardingKeyAuthorized(publicKey: string): Promise<boolean> {
     try {
-        const response = await fetch(`${getCurrentRpcUrl()}/`, {
+        const response = await fetch(getCurrentRpcUrl(), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -123,7 +123,7 @@ async function getValidatedOnboardingKeyPair(retryDelayMs: number = 1500): Promi
  */
 export async function getTrialPoolBalance(): Promise<string> {
     try {
-        const response = await fetch(`${getCurrentRpcUrl()}/`, {
+        const response = await fetch(getCurrentRpcUrl(), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -392,7 +392,7 @@ export async function getOnboardingConfig(): Promise<{
     try {
         // Fetch config and daily count in parallel
         const [configResponse, countResponse] = await Promise.all([
-            fetch(`${getCurrentRpcUrl()}/`, {
+            fetch(getCurrentRpcUrl(), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -408,7 +408,7 @@ export async function getOnboardingConfig(): Promise<{
                     },
                 }),
             }),
-            fetch(`${getCurrentRpcUrl()}/`, {
+            fetch(getCurrentRpcUrl(), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -577,7 +577,7 @@ export async function createGiftLinks(
  */
 export async function validateGiftLink(publicKey: string): Promise<GiftInfo | null> {
     try {
-        const response = await fetch(`${getCurrentRpcUrl()}/`, {
+        const response = await fetch(getCurrentRpcUrl(), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -618,7 +618,7 @@ export async function validateGiftLink(publicKey: string): Promise<GiftInfo | nu
 
 export async function validateTrialInviteLink(publicKey: string): Promise<TrialInviteInfo | null> {
     try {
-        const response = await fetch(`${getCurrentRpcUrl()}/`, {
+        const response = await fetch(getCurrentRpcUrl(), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -860,7 +860,7 @@ export async function getGiftEventInfo(publicKey: string): Promise<{
     if (!giftInfo) return null;
 
     try {
-        const response = await fetch(`${getCurrentRpcUrl()}/`, {
+        const response = await fetch(getCurrentRpcUrl(), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

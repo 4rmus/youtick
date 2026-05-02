@@ -65,6 +65,10 @@ export function getPrimaryRpcUrl(): string {
  * @returns false when cycled back to start (all endpoints tried)
  */
 export function switchToNextRpc(): boolean {
+    if (RPC_ENDPOINTS.length < 2) {
+        return false;
+    }
+
     const previousIndex = currentRpcIndex;
     currentRpcIndex = (currentRpcIndex + 1) % RPC_ENDPOINTS.length;
     console.warn(`[RPC Failover] ${RPC_ENDPOINTS[previousIndex]} -> ${RPC_ENDPOINTS[currentRpcIndex]}`);
@@ -115,8 +119,9 @@ export async function withRpcFailover<T>(
     maxRetries: number = 3
 ): Promise<T> {
     let lastError: Error | null = null;
+    const attempts = Math.max(1, Math.min(maxRetries, RPC_ENDPOINTS.length));
 
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
         try {
             return await fn(getCurrentRpcUrl());
         } catch (e: unknown) {
@@ -126,9 +131,13 @@ export async function withRpcFailover<T>(
             // Only switch RPC if it looks like a network/RPC error
             if (isRpcError(error)) {
                 console.warn(`[RPC Failover] Attempt ${attempt + 1} failed:`, error.message);
-                switchToNextRpc();
-                // Exponential backoff
-                await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+                const canTryNextRpc = attempt < attempts - 1 && switchToNextRpc();
+                if (canTryNextRpc) {
+                    // Exponential backoff
+                    await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+                } else {
+                    break;
+                }
             } else {
                 // Not an RPC error, don't retry and don't log noise
                 throw error;

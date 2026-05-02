@@ -74,6 +74,8 @@ apps/web/
 - `lib/kms/streaming.ts`: progressive decrypted playback.
 - `lib/access-grants.ts`: session grant creation and verification.
 - `lib/registry.ts`: operator registry queries and caching.
+- `lib/rpc-failover.ts`: browser-safe NEAR RPC URL selection. In production,
+  browser RPC goes through same-origin `/api/near-rpc`, served by `workers/web4-proxy`.
 - `lib/crust/gateway.ts`: multi-gateway read failover.
 - `lib/upload-session-manager.ts`: upload session key creation and cleanup.
 - `lib/metadata-parser.ts`: title/CID/thumbnail metadata parsing.

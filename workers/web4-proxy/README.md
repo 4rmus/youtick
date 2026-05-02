@@ -14,10 +14,16 @@ export'un tek basina veremedigi runtime davranislarini ekler.
 `youtick.net` proxy destekli modda su API yuzeylerini destekler:
 
 - `/api/onboarding-key`
+- `/api/near-rpc`
 - `/api/crust/*`
 
 `youtick.near.page` veya ciplak IPFS gateway static-only calisir. Bu ortamlarda
 onboarding key veya storage-order gerektiren akislar desteklenmez.
+
+`/api/near-rpc`, browser RPC cagri yuzeyidir. Tarayici dogrudan public RPC
+origin'lerine gitmez; proxy FastNear, NEAR official RPC ve dRPC upstream'leri
+arasinda failover yapar. Sadece allowlist'teki read-only view cagri cevaplari
+kisa sureli edge cache'e alinir; transaction/broadcast cagri cevaplari cache'lenmez.
 
 ## Header ve CSP
 
