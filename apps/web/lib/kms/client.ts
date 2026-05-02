@@ -501,7 +501,7 @@ async function tryLocalSignedKmsRequest<T>(
         return result.data as T;
     }
 
-    if (response.status === 401) {
+    if (response.status === 401 || (endpoint === 'retrieve' && (response.status === 403 || response.status === 404))) {
         return null;
     }
 

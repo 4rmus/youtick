@@ -2,7 +2,7 @@
 
 import { useSearchParams } from 'next/navigation';
 import { VideoPlayer } from '@/components/VideoPlayer';
-import { useState, Suspense, useCallback } from 'react';
+import { useState, Suspense, useCallback, useEffect } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { useEvent } from '@/hooks/useEvent';
 import { useHasTicket } from '@/hooks/useHasTicket';
@@ -13,12 +13,13 @@ import { Button } from '@/components/ui/button';
 import { getProvider, viewContract } from '@/lib/near';
 import { NEAR_CONFIG } from '@/lib/constants';
 import type { NFTEvent } from '@/lib/types';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from '@/components/Web4Link';
 import { IPFSThumbnail } from '@/components/IPFSThumbnail';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { getContentTypeLabel } from '@/lib/content-types';
+import { hasRecentTicketPurchase, markRecentTicketPurchase } from '@/lib/ticket-access-cache';
 
 import {
     Play,
@@ -50,6 +51,7 @@ function WatchContent() {
     const { nearToUsdStr } = useNearPrice();
     const searchParams = useSearchParams();
     const cid = searchParams.get('cid') || '';
+    const queryClient = useQueryClient();
 
     const { data: event, isLoading: eventLoading } = useEvent(cid);
     const { data: hasTicket } = useHasTicket(accountId ?? undefined, cid);
@@ -85,9 +87,24 @@ function WatchContent() {
         staleTime: 60 * 1000,
     });
 
+    useEffect(() => {
+        setPurchaseCompleted(hasRecentTicketPurchase(accountId, cid));
+    }, [accountId, cid]);
+
     const handlePurchaseSuccess = useCallback(() => {
+        markRecentTicketPurchase(accountId, cid);
         setPurchaseCompleted(true);
-    }, []);
+
+        if (!accountId || !cid) {
+            return;
+        }
+
+        queryClient.setQueryData(['hasTicket', accountId, cid], true);
+        queryClient.setQueryData(['nftOwnership', accountId, cid], true);
+        void queryClient.invalidateQueries({ queryKey: ['hasTicket', accountId, cid] });
+        void queryClient.invalidateQueries({ queryKey: ['nftOwnership', accountId, cid] });
+        void queryClient.invalidateQueries({ queryKey: ['ownedTokens', accountId] });
+    }, [accountId, cid, queryClient]);
 
     // Content type badge helper
     const contentTypeLabel = (type?: string | null) => {

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { retrieveEncryptionKey } from '@/lib/kms/client';
 import {
     createDeliveryPlaybackSession,
@@ -33,6 +34,7 @@ import {
     rememberFailedIpfsMediaUrl,
     resolveIpfsMediaUrl,
 } from '@/lib/ipfs-media';
+import { hasRecentTicketPurchase, markRecentTicketPurchase } from '@/lib/ticket-access-cache';
 
 interface IpfsPlayerProps {
     cid: string;
@@ -107,6 +109,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
     const { accountId, getWallet } = useWallet();
     const { t } = useLanguage();
     const playerCopy = t.video_player;
+    const queryClient = useQueryClient();
 
     // React Query hooks for cached state
     const { data: hasOwnership, isLoading: checkingAccess, refetch: refetchOwnership } = useNFTOwnership(accountId, cid);
@@ -303,8 +306,8 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
     }, [resolvedThumbnailUrl]);
 
     useEffect(() => {
-        setPurchased(false);
-    }, [cid]);
+        setPurchased(hasRecentTicketPurchase(accountId, cid));
+    }, [accountId, cid]);
 
     useEffect(() => {
         setKnownDurationSeconds(initialDurationSeconds ?? null);
@@ -432,13 +435,13 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
     const status = playerState.type === 'decrypting' ? playerState.message : '';
 
     // Derived access state from React Query
-    const hasAccess = hasOwnership === true;
+    const hasAccess = hasOwnership === true || purchased || hasRecentTicketPurchase(accountId, cid);
     // Show inline purchase card when no access, no error, not loading, and not in special states
     const showPurchaseCard = !videoUrl
         && playerState.type !== 'banned'
         && !checkingAccess
         && !loading
-        && !purchased
+        && !hasAccess
         && !error;
     const shouldRenderPurchaseCard = showPurchaseCard && (!accountId || hasAccess === false);
     const effectiveDurationSeconds = knownDurationSeconds && knownDurationSeconds > 0
@@ -785,7 +788,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                                 {t.moderation.back_to_discover}
                             </Button>
                         </div>
-                    ) : checkingAccess && !purchased ? (
+                    ) : checkingAccess && !hasAccess ? (
                         <div className="text-center">
                             <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-zinc-500" />
                             <p className="text-xs text-zinc-500">{playerCopy.authorizing}</p>
@@ -801,8 +804,16 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                             <TicketPurchaseCard
                                 cid={cid}
                                 onPurchaseSuccess={() => {
+                                    markRecentTicketPurchase(accountId, cid);
                                     setPurchased(true);
-                                    refetchOwnership();
+                                    if (accountId && cid) {
+                                        queryClient.setQueryData(['nftOwnership', accountId, cid], true);
+                                        queryClient.setQueryData(['hasTicket', accountId, cid], true);
+                                        void queryClient.invalidateQueries({ queryKey: ['nftOwnership', accountId, cid] });
+                                        void queryClient.invalidateQueries({ queryKey: ['hasTicket', accountId, cid] });
+                                        void queryClient.invalidateQueries({ queryKey: ['ownedTokens', accountId] });
+                                    }
+                                    void refetchOwnership();
                                     handlePlay();
                                 }}
                                 className="w-full max-w-sm"
