@@ -88,7 +88,11 @@ describe('KMS retrieve', () => {
             const body = JSON.parse(String(init?.body || '{}')) as {
                 params?: { method_name?: string };
             };
-            const value = body.params?.method_name === 'has_ticket' ? false : null;
+            const methodName = body.params?.method_name;
+            let value: unknown = null;
+            if (methodName === 'has_ticket' || methodName === 'is_event_banned') {
+                value = false;
+            }
 
             return new Response(JSON.stringify({
                 jsonrpc: '2.0',
@@ -147,6 +151,67 @@ describe('KMS retrieve', () => {
         });
     });
 
+    it('denies the recorded KMS owner when the event is banned', async () => {
+        const env = makeEnv();
+        await seedAuthToken(env, 'store-token', 'store');
+        await seedAuthToken(env, 'retrieve-token', 'retrieve');
+
+        global.fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body || '{}')) as {
+                params?: { method_name?: string };
+            };
+            const methodName = body.params?.method_name;
+            let value: unknown = null;
+            if (methodName === 'is_event_banned') {
+                value = true;
+            } else if (methodName === 'has_ticket') {
+                value = false;
+            }
+
+            return new Response(JSON.stringify({
+                jsonrpc: '2.0',
+                id: 'test',
+                result: { result: encodeRpcResult(value) },
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }) as unknown as typeof fetch;
+
+        const storeResponse = await worker.fetch(new Request('https://kms.test/store', {
+            method: 'POST',
+            headers: {
+                Authorization: 'Bearer store-token',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                videoId: 'video-1',
+                shareB64: 'c2hhcmUtMQ==',
+                shareId: 1,
+                totalShares: 3,
+                requiredShares: 2,
+                scheme: 'shamir-v1',
+            }),
+        }), env);
+
+        expect(storeResponse.status).toBe(200);
+
+        const retrieveResponse = await worker.fetch(new Request('https://kms.test/retrieve', {
+            method: 'POST',
+            headers: {
+                Authorization: 'Bearer retrieve-token',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ videoId: 'video-1' }),
+        }), env);
+
+        expect(retrieveResponse.status).toBe(404);
+        await expect(retrieveResponse.json()).resolves.toEqual({
+            ok: false,
+            error: 'Not found or unauthorized',
+        });
+    });
+
     it('accepts ticket access when one mainnet RPC still returns a stale false', async () => {
         const env = makeMainnetEnv();
         await seedAuthToken(env, 'store-token', 'store', 'alice.near');
@@ -170,6 +235,8 @@ describe('KMS retrieve', () => {
                 };
             } else if (methodName === 'has_ticket') {
                 value = rpcUrl.includes('rpc.mainnet.fastnear.com') ? false : true;
+            } else if (methodName === 'is_event_banned') {
+                value = false;
             }
 
             return new Response(JSON.stringify({
@@ -240,6 +307,8 @@ describe('KMS retrieve', () => {
                 };
             } else if (methodName === 'has_ticket') {
                 value = true;
+            } else if (methodName === 'is_event_banned') {
+                value = false;
             }
 
             return new Response(JSON.stringify({

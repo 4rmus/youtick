@@ -684,6 +684,23 @@ async function verifyTicketAccess(
     }
 }
 
+async function isEventBanned(
+    env: Env,
+    encryptedCid: string,
+): Promise<boolean> {
+    try {
+        return await nearViewAnyTrue(
+            env,
+            env.NEAR_CONTRACT_ID,
+            'is_event_banned',
+            { encrypted_cid: encryptedCid },
+        );
+    } catch (error) {
+        console.error('[KMS] isEventBanned failed:', error);
+        return true;
+    }
+}
+
 /**
  * Fetch event creator by encrypted CID (video UUID).
  * Returns null if event does not exist or RPC fails.
@@ -1723,6 +1740,10 @@ async function handleRetrieve(
 
             accountId = grantVerification.owner_id;
         }
+    }
+
+    if (await isEventBanned(env, body.videoId)) {
+        return jsonResponse({ ok: false, error: 'Not found or unauthorized' }, 404, request, env);
     }
 
     let hasAccess = await verifyTicketAccess(env, accountId, body.videoId);
