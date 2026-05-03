@@ -62,6 +62,11 @@ const GAS_BUFFER_NEAR = 0.01;
 const NEAR_USDC_CONTRACT_ID = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
 const NEAR_USDT_CONTRACT_ID = 'usdt.tether-token.near';
 const NEAR_USDC_ASSET_ID = `nep141:${NEAR_USDC_CONTRACT_ID}`;
+const TICKET_CONFIRMATION_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 12_000, 16_000];
+
+function wait(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: TicketPurchaseCardProps) {
     const { accountId, isTrial, managedAccountKind, getWallet, connect, setEvmLinkedAccount, setManagedAccount } = useWallet();
@@ -156,6 +161,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             });
 
             console.log('[MetaMask Flow] Purchase complete on implicit account:', implicitId);
+            await waitForTicketAccess(implicitId);
 
             // Store keypair for future access (viewing purchased content)
             await persistManagedKeyPair(implicitId, secretKey);
@@ -298,6 +304,34 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         }
     }, [cid]);
 
+    const waitForTicketAccess = useCallback(async (ownerId: string) => {
+        const provider = getProvider();
+
+        for (let attempt = 0; attempt <= TICKET_CONFIRMATION_RETRY_DELAYS_MS.length; attempt += 1) {
+            try {
+                const hasTicket = await viewContract<boolean>(
+                    provider,
+                    NEAR_CONFIG.contractId,
+                    'has_ticket',
+                    { account_id: ownerId, encrypted_cid: cid },
+                );
+
+                if (hasTicket) {
+                    return;
+                }
+            } catch (confirmError) {
+                console.warn('[TicketPurchase] Ticket access confirmation failed:', confirmError);
+            }
+
+            const retryDelay = TICKET_CONFIRMATION_RETRY_DELAYS_MS[attempt];
+            if (typeof retryDelay === 'number') {
+                await wait(retryDelay);
+            }
+        }
+
+        throw new Error(tp.error_ticket_access_pending);
+    }, [cid, tp.error_ticket_access_pending]);
+
     // Claim FREE Ticket (sponsored onboarding key or wallet fallback)
     const handleFreeTicketClaim = async () => {
         if (!eventDetails) return;
@@ -312,6 +346,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 if (!result.ok) {
                     throw new Error(result.error || tp.error_claim_free);
                 }
+                await waitForTicketAccess(result.accountId);
                 setManagedAccount(result.accountId, 'guest');
                 if (onPurchaseSuccess) onPurchaseSuccess();
             } catch (e: unknown) {
@@ -336,6 +371,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 if (!result.ok) {
                     throw new Error(result.error || tp.error_claim_free);
                 }
+                await waitForTicketAccess(result.accountId);
                 setManagedAccount(result.accountId, 'guest');
                 if (onPurchaseSuccess) onPurchaseSuccess();
             } catch (e: unknown) {
@@ -356,6 +392,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 if (!result.success) {
                     console.warn("[FreeClaim] Direct NFT claim unavailable, falling back to wallet/session path:", result.error);
                 } else {
+                    await waitForTicketAccess(accountId);
                     if (onPurchaseSuccess) onPurchaseSuccess();
                     return;
                 }
@@ -388,6 +425,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             }
 
             // KMS: Access control via on-chain ticket ownership — no group management needed
+            await waitForTicketAccess(accountId);
             if (onPurchaseSuccess) onPurchaseSuccess();
 
         } catch (e: unknown) {
@@ -440,12 +478,13 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             }
 
             // KMS: Access control via on-chain ticket ownership — no group management needed
+            await waitForTicketAccess(accountId);
             if (onPurchaseSuccess) onPurchaseSuccess();
 
         } catch (e) {
             console.error("Purchase failed:", e);
             clearPreparedPlayGrant(accountId);
-            setError(tp.error_tx_rejected);
+            setError(e instanceof Error ? e.message : tp.error_tx_rejected);
         } finally {
             setActionLoading(false);
         }
@@ -482,12 +521,13 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 ],
             });
 
+            await waitForTicketAccess(accountId);
             if (onPurchaseSuccess) onPurchaseSuccess();
         } catch (e) {
             console.error('Rhea NEAR payment failed:', e);
             clearPreparedPlayGrant(accountId);
             const message = e instanceof Error ? e.message : 'Rhea swap failed';
-            setError(`${message}. Swap failed, no ticket minted.`);
+            setError(message === tp.error_ticket_access_pending ? message : `${message}. Swap failed, no ticket minted.`);
         } finally {
             setActionLoading(false);
         }
@@ -774,8 +814,11 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             }
 
             if (keypair && buyerId === keypair.implicitAccountId) {
+                await waitForTicketAccess(buyerId);
                 await persistManagedKeyPair(keypair.implicitAccountId, keypair.secretKey);
                 setEvmLinkedAccount(keypair.implicitAccountId);
+            } else {
+                await waitForTicketAccess(buyerId);
             }
 
             if (onPurchaseSuccess) onPurchaseSuccess();

@@ -20,9 +20,10 @@ export function markRecentTicketPurchase(accountId: string | null | undefined, c
     try {
         window.sessionStorage.setItem(key, JSON.stringify({
             expiresAt: Date.now() + RECENT_TICKET_PURCHASE_TTL_MS,
+            confirmed: true,
         }));
     } catch {
-        // Session storage is only an optimistic UI hint.
+        // Session storage only remembers already-confirmed access.
     }
 }
 
@@ -38,8 +39,8 @@ export function hasRecentTicketPurchase(accountId: string | null | undefined, ci
             return false;
         }
 
-        const parsed = JSON.parse(raw) as { expiresAt?: number };
-        if (!parsed.expiresAt || parsed.expiresAt <= Date.now()) {
+        const parsed = JSON.parse(raw) as { expiresAt?: number; confirmed?: boolean };
+        if (!parsed.expiresAt || parsed.expiresAt <= Date.now() || parsed.confirmed !== true) {
             window.sessionStorage.removeItem(key);
             return false;
         }

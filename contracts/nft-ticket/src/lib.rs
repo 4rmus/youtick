@@ -64,7 +64,7 @@ pub struct Token {
 // ═══════════════════════════════════════════════════════════════
 
 pub const TIMELOCK_DELAY_NS: u64 = 86_400_000_000_000; // 24 hours
-const PENDING_OWNER_STORAGE_KEY: &[u8] = b"v1:po";
+const PENDING_OWNER_STORAGE_KEY: &[u8] = b"v2:po";
 
 #[near(serializers = [borsh, json])]
 pub enum TimelockAction {
@@ -139,40 +139,40 @@ impl near_sdk::IntoStorageKey for StorageKey {
 }
 
 impl StorageKey {
-    pub const NFT: Self = Self(b"v1:n");
-    pub const NFT_V2: Self = Self(b"v1:n2");
-    pub const TOKEN_METADATA: Self = Self(b"v1:m");
-    pub const TOKEN_METADATA_V2: Self = Self(b"v1:m2");
-    pub const ENUMERATION: Self = Self(b"v1:e");
-    pub const ENUMERATION_V2: Self = Self(b"v1:e2");
-    pub const APPROVAL: Self = Self(b"v1:a");
-    pub const APPROVAL_V2: Self = Self(b"v1:a2");
-    pub const CONTRACT_METADATA: Self = Self(b"v1:c");
-    pub const VIDEO_METADATA: Self = Self(b"v1:v");
-    pub const USER_DEPOSITS: Self = Self(b"v1:d");
-    pub const EVENTS: Self = Self(b"v1:x");
-    pub const GIFT_DROPS: Self = Self(b"v1:g");
-    pub const ONBOARDING_KEYS: Self = Self(b"v1:o");
-    pub const DAILY_TRIAL_COUNTS: Self = Self(b"v1:t");
-    pub const PURCHASE_LOGS: Self = Self(b"v1:p");
-    pub const EVENT_PRICE_USD: Self = Self(b"v1:pu");
-    pub const EVENT_ACCESS_MODES: Self = Self(b"v1:am");
-    pub const BANNED_EVENTS: Self = Self(b"v1:be");
-    pub const UPLOAD_SESSIONS: Self = Self(b"v1:us");
-    pub const TRIAL_INVITES: Self = Self(b"v1:ti");
-    pub const CID_TO_TOKENS: Self = Self(b"v1:ct");
-    pub const PAUSED_STATE: Self = Self(b"v1:ps");
-    pub const TIMELOCKS: Self = Self(b"v1:tl");
-    pub const TIMELOCK_COUNTER: Self = Self(b"v1:tc");
-    pub const CREATOR_PROFILES: Self = Self(b"v1:cp");
-    pub const EVENT_PRICE_USDC: Self = Self(b"v1:pu6");
-    pub const YtNftOwnerById: Self = Self(b"v1:y20");
-    pub const YtNftMetadata: Self = Self(b"v1:y21");
-    pub const YtNftTokensPerOwner: Self = Self(b"v1:y22");
-    pub const YtNftApprovals: Self = Self(b"v1:y23");
-    pub const STABLECOIN_CREATOR_BALANCES: Self = Self(b"v1:scb");
-    pub const STABLECOIN_COMMISSION_BALANCES: Self = Self(b"v1:scm");
-    pub const SETTLED_STABLECOIN_PAYMENTS: Self = Self(b"v1:ssp");
+    pub const NFT: Self = Self(b"v2:n");
+    pub const NFT_V2: Self = Self(b"v2:n2");
+    pub const TOKEN_METADATA: Self = Self(b"v2:m");
+    pub const TOKEN_METADATA_V2: Self = Self(b"v2:m2");
+    pub const ENUMERATION: Self = Self(b"v2:e");
+    pub const ENUMERATION_V2: Self = Self(b"v2:e2");
+    pub const APPROVAL: Self = Self(b"v2:a");
+    pub const APPROVAL_V2: Self = Self(b"v2:a2");
+    pub const CONTRACT_METADATA: Self = Self(b"v2:c");
+    pub const VIDEO_METADATA: Self = Self(b"v2:v");
+    pub const USER_DEPOSITS: Self = Self(b"v2:d");
+    pub const EVENTS: Self = Self(b"v2:x");
+    pub const GIFT_DROPS: Self = Self(b"v2:g");
+    pub const ONBOARDING_KEYS: Self = Self(b"v2:o");
+    pub const DAILY_TRIAL_COUNTS: Self = Self(b"v2:t");
+    pub const PURCHASE_LOGS: Self = Self(b"v2:p");
+    pub const EVENT_PRICE_USD: Self = Self(b"v2:pu");
+    pub const EVENT_ACCESS_MODES: Self = Self(b"v2:am");
+    pub const BANNED_EVENTS: Self = Self(b"v2:be");
+    pub const UPLOAD_SESSIONS: Self = Self(b"v2:us");
+    pub const TRIAL_INVITES: Self = Self(b"v2:ti");
+    pub const CID_TO_TOKENS: Self = Self(b"v2:ct");
+    pub const PAUSED_STATE: Self = Self(b"v2:ps");
+    pub const TIMELOCKS: Self = Self(b"v2:tl");
+    pub const TIMELOCK_COUNTER: Self = Self(b"v2:tc");
+    pub const CREATOR_PROFILES: Self = Self(b"v2:cp");
+    pub const EVENT_PRICE_USDC: Self = Self(b"v2:pu6");
+    pub const YtNftOwnerById: Self = Self(b"v2:y20");
+    pub const YtNftMetadata: Self = Self(b"v2:y21");
+    pub const YtNftTokensPerOwner: Self = Self(b"v2:y22");
+    pub const YtNftApprovals: Self = Self(b"v2:y23");
+    pub const STABLECOIN_CREATOR_BALANCES: Self = Self(b"v2:scb");
+    pub const STABLECOIN_COMMISSION_BALANCES: Self = Self(b"v2:scm");
+    pub const SETTLED_STABLECOIN_PAYMENTS: Self = Self(b"v2:ssp");
 }
 
 /// Storage cost constants to avoid repeated allocations
