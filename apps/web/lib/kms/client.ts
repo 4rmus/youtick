@@ -5,7 +5,7 @@ import { BrowserKeyStore } from '../keystore-v7';
 import { getThresholdConfig, listActiveDecryptionOperators, type RegistryOperatorRecord } from '../registry';
 import { getActiveUploadSessionKey } from '../upload-session-manager';
 import type { WalletInstance } from '../types';
-import { getCachedSessionGrant, invalidateSessionGrant, signSessionGrantPayload } from '../access-grants';
+import { ensureSessionGrant, getCachedSessionGrant, invalidateSessionGrant, signSessionGrantPayload } from '../access-grants';
 import { reconstructSecretFromShares, splitSecretIntoShares, type SecretShare } from './shares';
 
 const AUTH_CACHE_PREFIX = 'youtick:kms-auth:';
@@ -17,6 +17,8 @@ const KMS_OPERATOR_FAILURE_COOLDOWN_MS = 60_000;
 const KMS_OPERATOR_PRIMARY_BATCH_EXTRA = 1;
 const KMS_OPERATOR_HEDGE_DELAY_MS = 250;
 const KMS_DEFAULT_LATENCY_MS = 5_000;
+const KMS_RETRIEVE_PROPAGATION_RETRY_DELAYS_MS =
+    process.env.NODE_ENV === 'test' ? [] : [1_500, 3_000, 6_000, 12_000];
 
 interface KMSHealthData {
     network?: string;
@@ -758,9 +760,28 @@ async function executeKmsRequest<T>(
     }
 
     if (endpoint === 'retrieve') {
+        await ensureSessionGrant({
+            accountId,
+            scope: 'Play',
+            resourceId: videoId,
+            wallet,
+        });
+
+        const refreshedGrantResult = await trySessionGrantKmsRequest<T>(
+            baseUrl,
+            endpoint,
+            accountId,
+            videoId,
+            extraBody,
+            options?.signal,
+        );
+        if (refreshedGrantResult) {
+            return refreshedGrantResult;
+        }
+
         throw new KMSError(
             'AUTH_REQUIRED',
-            'Playback access was not prepared for this session. Buy or claim the ticket again to prepare signless playback.',
+            'Playback access could not be prepared for this session. Please try again.',
         );
     }
 
@@ -1136,13 +1157,20 @@ export async function retrieveEncryptionKey(
     accountId: string,
     wallet: WalletInstance,
 ): Promise<string> {
-    const shareResult = await retrieveEncryptionKeyShares(
-        videoId,
-        accountId,
-        wallet,
-    );
-    if (shareResult) {
-        return shareResult;
+    for (let attempt = 0; attempt <= KMS_RETRIEVE_PROPAGATION_RETRY_DELAYS_MS.length; attempt += 1) {
+        const shareResult = await retrieveEncryptionKeyShares(
+            videoId,
+            accountId,
+            wallet,
+        );
+        if (shareResult) {
+            return shareResult;
+        }
+
+        const retryDelay = KMS_RETRIEVE_PROPAGATION_RETRY_DELAYS_MS[attempt];
+        if (typeof retryDelay === 'number') {
+            await delay(retryDelay);
+        }
     }
 
     throw new KMSError(

@@ -8,7 +8,7 @@ import {
     encryptBufferWithCounter,
     generateAESKey,
 } from '@/lib/kms/encryption';
-import { storeEncryptionKey } from '@/lib/kms/client';
+import { retrieveEncryptionKey, storeEncryptionKey } from '@/lib/kms/client';
 import { UploadSessionManager } from '@/lib/upload-session-manager';
 import {
     batchUploadActionsSignless,
@@ -393,6 +393,11 @@ export function useUpload() {
             updateStep('kms', 'loading');
             setStatus('Storing encryption key on KMS...');
             await storeEncryptionKey(videoUuid, aesKeyB64, accountId, wallet);
+            setStatus('Verifying encryption key on KMS...');
+            const verifiedAesKeyB64 = await retrieveEncryptionKey(videoUuid, accountId, wallet);
+            if (verifiedAesKeyB64 !== aesKeyB64) {
+                throw new Error('KMS verification failed. Upload was stopped before publishing.');
+            }
             updateStep('kms', 'complete');
 
             let blockchainPublishSucceeded = false;

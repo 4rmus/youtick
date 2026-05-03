@@ -45,6 +45,12 @@ function cp(env: Env): string {
     return env.CACHE_KEY_PREFIX || '';
 }
 
+function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
+
 interface StoreRequest {
     action: 'store';
     videoId: string;
@@ -187,6 +193,7 @@ export interface WorkerReadiness {
 
 /** Fastnear-first RPC pool for maximum speed */
 const RPC_POOL = [
+    'https://free.rpc.fastnear.com',
     'https://rpc.mainnet.fastnear.com',
     'https://rpc.mainnet.near.org',
     'https://near.lava.build',
@@ -206,13 +213,15 @@ const RATE_LIMIT_MAX_RETRIEVE = 120;
 
 /** Access cache TTLs: keep auth caches short so revokes and transfers take effect quickly */
 const KEY_BINDING_CACHE_TTL_S = 120;
-const TICKET_ACCESS_CACHE_TTL_S = 30;
+const TICKET_ACCESS_CACHE_TTL_S = 60;
 const EVENT_CREATOR_CACHE_TTL_S = 1800;
 const REGISTRY_CACHE_TTL_S = 120;
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const AUTH_TOKEN_TTL_MS = 10 * 60 * 1000;
 const NEP413_TAG = 2147484061;
 const RPC_REQUEST_TIMEOUT_MS = 2_500;
+const KV_READ_AFTER_WRITE_RETRY_DELAYS_MS = [50, 150, 300];
+const KV_SHARE_READ_RETRY_DELAYS_MS = [250, 750, 1_500];
 const RPC_HEALTH_TIMEOUT_MS = 1_500;
 
 const preferredRpcUrlByNetwork = new Map<string, string>();
@@ -423,6 +432,75 @@ async function nearViewCall<T>(
     }
 }
 
+async function nearViewAnyTrue(
+    env: Env,
+    contractId: string,
+    methodName: string,
+    args: Record<string, unknown> = {},
+): Promise<boolean> {
+    const rpcPool = getOrderedRpcPool(env);
+    const argsBase64 = btoa(JSON.stringify(args));
+
+    const body = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'dontcare',
+        method: 'query',
+        params: {
+            request_type: 'call_function',
+            finality: 'final',
+            account_id: contractId,
+            method_name: methodName,
+            args_base64: argsBase64,
+        },
+    });
+
+    const results = await Promise.allSettled(
+        rpcPool.map(async (rpcUrl) => {
+            const response = await fetchWithTimeout(rpcUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body,
+            }, RPC_REQUEST_TIMEOUT_MS);
+
+            if (!response.ok) {
+                throw new Error(`RPC ${rpcUrl} returned ${response.status}`);
+            }
+
+            const json = (await response.json()) as {
+                result?: { result: number[] };
+                error?: { message: string };
+            };
+
+            if (json.error) {
+                throw new Error(`RPC error: ${json.error.message}`);
+            }
+
+            if (!json.result?.result) {
+                throw new Error(`RPC ${rpcUrl}: no result`);
+            }
+
+            const resultStr = String.fromCharCode(...json.result.result);
+            const value = JSON.parse(resultStr) as unknown;
+            if (typeof value !== 'boolean') {
+                throw new Error(`RPC ${rpcUrl}: expected boolean result`);
+            }
+
+            return { rpcUrl, value };
+        }),
+    );
+
+    if (results.some((result) => result.status === 'fulfilled' && result.value.value)) {
+        return true;
+    }
+
+    if (results.some((result) => result.status === 'fulfilled')) {
+        return false;
+    }
+
+    console.error('[KMS] nearViewAnyTrue: all RPC endpoints failed:', results);
+    throw new Error('All RPC endpoints failed');
+}
+
 /**
  * Raw NEAR RPC query (non-contract, e.g. view_access_key).
  * Parallel failover across RPC pool — first success wins.
@@ -581,7 +659,7 @@ async function verifyTicketAccess(
     }
 
     try {
-        const hasTicket = await nearViewCall<boolean>(
+        const hasTicket = await nearViewAnyTrue(
             env,
             env.NEAR_CONTRACT_ID,
             'has_ticket',
@@ -589,7 +667,11 @@ async function verifyTicketAccess(
         );
 
         if (hasTicket) {
-            await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: TICKET_ACCESS_CACHE_TTL_S });
+            try {
+                await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: TICKET_ACCESS_CACHE_TTL_S });
+            } catch (cacheError) {
+                console.warn('[KMS] verifyTicketAccess cache write failed:', cacheError);
+            }
             return true;
         }
 
@@ -1017,6 +1099,50 @@ export async function decryptShareRecord(
         });
         return new TextDecoder().decode(new Uint8Array(plaintext));
     }
+}
+
+async function readStoredShare(
+    env: Env,
+    videoId: string,
+    retryDelaysMs: number[] = [],
+): Promise<(ShareMetadataRecord & { shareId: number; shareB64: string }) | null> {
+    if (!env.REGISTRY_OPERATOR_ACCOUNT_ID) {
+        return null;
+    }
+
+    for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+        const [shareMetaRaw, shareRaw] = await Promise.all([
+            env.VIDEO_KEYS.get(shareMetaKey(videoId)),
+            env.VIDEO_KEYS.get(shareRecordKey(videoId, env.REGISTRY_OPERATOR_ACCOUNT_ID)),
+        ]);
+
+        if (shareMetaRaw && shareRaw) {
+            try {
+                const metaParse = ShareMetadataRecordSchema.safeParse(JSON.parse(shareMetaRaw));
+                const shareParse = StoredShareRecordSchema.safeParse(JSON.parse(shareRaw));
+                if (!metaParse.success || !shareParse.success) {
+                    return null;
+                }
+
+                const shareRecord = shareParse.data;
+                const shareB64 = await decryptShareRecord(env, shareRecord);
+                return {
+                    ...metaParse.data,
+                    shareId: shareRecord.shareId,
+                    shareB64,
+                };
+            } catch {
+                return null;
+            }
+        }
+
+        const retryDelay = retryDelaysMs[attempt];
+        if (typeof retryDelay === 'number') {
+            await delay(retryDelay);
+        }
+    }
+
+    return null;
 }
 
 export async function serializeNep413Hash(payload: {
@@ -1471,6 +1597,19 @@ async function handleStore(
                 requiredShares: body.requiredShares as number,
             } satisfies ShareMetadataRecord),
         );
+
+        const verifiedShare = await readStoredShare(
+            env,
+            body.videoId,
+            KV_READ_AFTER_WRITE_RETRY_DELAYS_MS,
+        );
+        if (
+            !verifiedShare
+            || verifiedShare.shareId !== body.shareId
+            || verifiedShare.shareB64 !== body.shareB64
+        ) {
+            return jsonResponse({ ok: false, error: 'Stored share could not be verified' }, 503, request, env);
+        }
     }
 
     if (!recordedOwner) {
@@ -1596,39 +1735,35 @@ async function handleRetrieve(
     }
 
     if (!hasAccess) {
+        const recordedOwner = await env.VIDEO_KEYS.get(`owner:${body.videoId}`);
+        if (recordedOwner && recordedOwner === accountId) {
+            hasAccess = true;
+        }
+    }
+
+    if (!hasAccess) {
         return jsonResponse({ ok: false, error: 'Not found or unauthorized' }, 404, request, env);
     }
 
-    const shareMetaRaw = await env.VIDEO_KEYS.get(shareMetaKey(body.videoId));
-    if (!shareMetaRaw || !env.REGISTRY_OPERATOR_ACCOUNT_ID) {
-        return jsonResponse({ ok: false, error: 'Not found or unauthorized' }, 404, request, env);
-    }
-
-    const shareRaw = await env.VIDEO_KEYS.get(
-        shareRecordKey(body.videoId, env.REGISTRY_OPERATOR_ACCOUNT_ID),
+    const storedShare = await readStoredShare(
+        env,
+        body.videoId,
+        KV_SHARE_READ_RETRY_DELAYS_MS,
     );
-
-    if (!shareRaw) {
+    if (!storedShare) {
         return jsonResponse({ ok: false, error: 'Not found or unauthorized' }, 404, request, env);
     }
 
     try {
-        const shareParse = StoredShareRecordSchema.safeParse(JSON.parse(shareRaw));
-        if (!shareParse.success) {
-            return jsonResponse({ ok: false, error: 'Not found or unauthorized' }, 404, request, env);
-        }
-        const shareRecord = shareParse.data;
-        const shareB64 = await decryptShareRecord(env, shareRecord);
-
         return jsonResponse(
             {
                 ok: true,
                 data: {
-                    shareB64,
-                    shareId: shareRecord.shareId,
-                    totalShares: shareRecord.totalShares,
-                    requiredShares: shareRecord.requiredShares,
-                    scheme: shareRecord.scheme,
+                    shareB64: storedShare.shareB64,
+                    shareId: storedShare.shareId,
+                    totalShares: storedShare.totalShares,
+                    requiredShares: storedShare.requiredShares,
+                    scheme: storedShare.scheme,
                     operatorAccountId: env.REGISTRY_OPERATOR_ACCOUNT_ID,
                 },
             },
