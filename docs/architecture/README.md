@@ -16,13 +16,13 @@ Today, YouTick runs through five active layers:
 | Registry contract | Stores active decryption operators and relayers |
 | KMS operators | Store encrypted key shares and release them only after authorization checks |
 
-Crust/IPFS stores encrypted media assets and manifests. Crust is the primary
-pinning provider today; a second persistence path is still a target item. The
-browser is still the place where the final playback key is reconstructed and
-media is decrypted.
+IPFS storage stores encrypted media assets and manifests. Crust is the active
+pinning provider today; Lighthouse is a planned persistence pilot and Crust
+remains the fallback during rollout. The browser is still the place where the
+final playback key is reconstructed and media is decrypted.
 
 This page describes the current public-alpha model. It is hybrid decentralized:
-ownership and policy live on NEAR, encrypted media lives on IPFS/Crust, while
+ownership and policy live on NEAR, encrypted media lives on IPFS storage, while
 KMS operators currently run on Cloudflare Workers with KV-backed share storage.
 
 ---
@@ -31,7 +31,7 @@ KMS operators currently run on Cloudflare Workers with KV-backed share storage.
 
 ```mermaid
 flowchart LR
-    Browser["Browser App"] --> IPFS["Crust / IPFS"]
+    Browser["Browser App"] --> IPFS["IPFS Storage"]
     Browser --> Market["Market Contract"]
     Browser --> Access["Access Contract"]
     Browser --> Registry["Registry Contract"]

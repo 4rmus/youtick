@@ -261,6 +261,36 @@ describe('web4-proxy', () => {
         expect(await response.json()).toEqual({ result: { chain_id: 'mainnet' } });
     });
 
+    it('strips upstream body encoding headers from NEAR RPC responses', async () => {
+        const body = JSON.stringify({ jsonrpc: '2.0', id: '1', method: 'status', params: [] });
+        const fetchMock = vi.fn(async () => {
+            return new Response(JSON.stringify({ result: { chain_id: 'mainnet' } }), {
+                status: 200,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Encoding': 'gzip',
+                    'Content-Length': '999',
+                    'Transfer-Encoding': 'chunked',
+                },
+            });
+        });
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+        const response = await handler.fetch(new Request('https://youtick.net/api/near-rpc', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body,
+        }), createEnv(), {
+            waitUntil: vi.fn(),
+        } as unknown as ExecutionContext);
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get('content-encoding')).toBeNull();
+        expect(response.headers.get('content-length')).toBeNull();
+        expect(response.headers.get('transfer-encoding')).toBeNull();
+        expect(await response.json()).toEqual({ result: { chain_id: 'mainnet' } });
+    });
+
     it('tries another NEAR RPC upstream when the first is rate limited', async () => {
         const body = JSON.stringify({
             jsonrpc: '2.0',

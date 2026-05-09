@@ -64,11 +64,14 @@ export const NEAR_CONFIG = {
 export const FEATURE_FLAGS = {
     /** Cross-chain checkout is experimental and must be explicitly enabled. */
     enableCrossChainCheckout: process.env.NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT === 'true',
+    /** Secondary Lighthouse persistence pilot. Crust remains the primary path. */
+    enableLighthousePersistence: process.env.NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE === 'true',
 } as const;
 
 export const APP_CONFIG = {
     publicAppUrl: configuredAppUrl,
     turnstileSiteKey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '',
+    storageApiUrl: process.env.NEXT_PUBLIC_STORAGE_API_URL || '',
 } as const;
 
 /**
