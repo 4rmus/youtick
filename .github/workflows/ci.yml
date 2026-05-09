@@ -22,6 +22,7 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       kms: ${{ steps.filter.outputs.kms }}
       web4: ${{ steps.filter.outputs.web4 }}
+      storage: ${{ steps.filter.outputs.storage }}
       contracts: ${{ steps.filter.outputs.contracts }}
     steps:
       - name: Checkout
@@ -52,12 +53,14 @@ jobs:
           web=false
           kms=false
           web4=false
+          storage=false
           contracts=false
 
           if grep -Eq '^\.github/workflows/' /tmp/changed-files; then
             web=true
             kms=true
             web4=true
+            storage=true
             contracts=true
           fi
 
@@ -73,6 +76,10 @@ jobs:
             web4=true
           fi
 
+          if grep -Eq '^(workers/storage-api/|workers/shared/)' /tmp/changed-files; then
+            storage=true
+          fi
+
           if grep -Eq '^contracts/' /tmp/changed-files; then
             contracts=true
           fi
@@ -81,6 +88,7 @@ jobs:
             echo "web=${web}"
             echo "kms=${kms}"
             echo "web4=${web4}"
+            echo "storage=${storage}"
             echo "contracts=${contracts}"
           } >> "${GITHUB_OUTPUT}"
 
@@ -179,6 +187,34 @@ jobs:
       - name: Type check
         run: npm run check
 
+  storage-api-worker:
+    name: Storage API Worker
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.storage == 'true'
+    defaults:
+      run:
+        working-directory: workers/storage-api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: workers/storage-api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test -- --run
+
+      - name: Type check
+        run: npm run check
+
   contracts:
     name: Contracts
     runs-on: ubuntu-latest
@@ -236,6 +272,7 @@ jobs:
       - web
       - kms-worker
       - web4-proxy-worker
+      - storage-api-worker
       - contracts
     if: always()
     steps:
@@ -246,11 +283,12 @@ jobs:
           WEB_RESULT: ${{ needs.web.result }}
           KMS_RESULT: ${{ needs.kms-worker.result }}
           WEB4_RESULT: ${{ needs.web4-proxy-worker.result }}
+          STORAGE_RESULT: ${{ needs.storage-api-worker.result }}
           CONTRACTS_RESULT: ${{ needs.contracts.result }}
         run: |
           set -euo pipefail
 
-          for result in "${CHANGES_RESULT}" "${WEB_RESULT}" "${KMS_RESULT}" "${WEB4_RESULT}" "${CONTRACTS_RESULT}"; do
+          for result in "${CHANGES_RESULT}" "${WEB_RESULT}" "${KMS_RESULT}" "${WEB4_RESULT}" "${STORAGE_RESULT}" "${CONTRACTS_RESULT}"; do
             case "${result}" in
               success|skipped)
                 ;;

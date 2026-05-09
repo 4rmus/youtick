@@ -2,7 +2,8 @@
 
 import { useReducer, useRef, useCallback } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { uploadDirectoryToCrust } from '@/lib/crust';
+import { uploadDirectoryToStorage } from '@/lib/storage/provider';
+import { isLighthousePersistencePilotEnabled, pinCidWithStorageApi } from '@/lib/storage/storage-api';
 import { CidCollector } from '@/lib/crust/cid-collector';
 import {
     encryptBufferWithCounter,
@@ -288,13 +289,32 @@ export function useUpload() {
         files.push({ path: manifestPath, file: manifestBlob });
 
         setStatus('Uploading delivery bundle...');
-        const directoryUpload = await uploadDirectoryToCrust(files, uploaderAccountId, {
+        const directoryUpload = await uploadDirectoryToStorage(files, uploaderAccountId, {
             onProgress: (progress) => {
                 dispatch({ type: 'SET_PROGRESS', payload: progress.percentage });
                 setStatus(`Uploading delivery bundle... ${progress.percentage}%`);
             },
         });
         collector.add(directoryUpload.cid, directoryUpload.size, 'delivery-root');
+        if (isLighthousePersistencePilotEnabled()) {
+            void pinCidWithStorageApi({
+                cid: directoryUpload.cid,
+                fileName: 'delivery-root',
+            }).then((result) => {
+                if (result.status === 'pinned') {
+                    console.log('[Storage API] Lighthouse persistence pilot pinned delivery root', {
+                        cid: result.cid,
+                        provider: result.provider,
+                    });
+                } else if (result.status === 'failed') {
+                    console.warn('[Storage API] Lighthouse persistence pilot failed (non-blocking)', {
+                        cid: result.cid,
+                        reason: result.reason,
+                        httpStatus: result.httpStatus,
+                    });
+                }
+            });
+        }
         const manifestCid = `${directoryUpload.cid}/${manifestPath}`;
         const thumbnailRef = thumbnailPath ? `ipfs://${directoryUpload.cid}/${thumbnailPath}` : null;
 
@@ -462,7 +482,7 @@ export function useUpload() {
                 updateStep('storage', 'loading');
                 setStatus('Placing persistent storage orders...');
                 try {
-                    const { placeStorageOrders, verifyStorageOrders } = await import('@/lib/crust/storage-order');
+                    const { placeStorageOrders, verifyStorageOrders } = await import('@/lib/storage/provider');
                     const batchResult = await placeStorageOrders(collectedAssets, accountId);
 
                     if (batchResult.succeeded === 0) {

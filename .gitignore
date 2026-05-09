@@ -62,6 +62,7 @@ AGENTS.md
 
 # Cloudflare Wrangler
 workers/**/.wrangler/
+workers/**/.dev.vars
 
 # Test artifacts
 .vitest/

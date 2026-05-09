@@ -47,10 +47,11 @@ zincirde (`event_takedown` NEP-297 logu) izlenebilir, suistimal kamuya açıktı
 
 Kontrat takedown'u yapıldıktan sonra operasyon olarak şunlar yapılır:
 
-1. Crust üzerindeki şifrelenmiş CID pin'i kaldırılır.
+1. Aktif tüm kalıcı depolama sağlayıcılarındaki şifrelenmiş CID pin'i kaldırılır.
 2. Yasadışı içerik durumunda 5 KMS operatörü ilgili anahtar share'lerini
    KV depodan siler.
-3. İçerik aylık şeffaflık raporuna eklenir (anonim CID, sebep, tarih).
+3. Varsa sıcak medya teslim cache'i temizlenir veya denylist'e alınır.
+4. İçerik aylık şeffaflık raporuna eklenir (anonim CID, sebep, tarih).
 
 ### 2.3 Şikayet kanalı
 

@@ -45,6 +45,11 @@ const NEAR_RPC_CACHEABLE_VIEW_METHODS = new Set([
     'get_threshold_config',
 ]);
 const pendingNearRpcRequests = new Map<string, Promise<Response>>();
+const STRIPPED_UPSTREAM_BODY_HEADERS = [
+    'content-encoding',
+    'content-length',
+    'transfer-encoding',
+] as const;
 
 const WEB4_CSP_VALUE = [
     "default-src 'self'",
@@ -281,6 +286,9 @@ type NearRpcPayload = {
 
 function withNearRpcHeaders(response: Response, cacheState: 'BYPASS' | 'HIT' | 'MISS', upstream?: string): Response {
     const headers = new Headers(response.headers);
+    for (const header of STRIPPED_UPSTREAM_BODY_HEADERS) {
+        headers.delete(header);
+    }
     for (const [key, value] of Object.entries(nearRpcCorsHeaders())) {
         headers.set(key, value);
     }

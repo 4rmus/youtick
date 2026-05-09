@@ -161,13 +161,15 @@ headers is expected.
 
 **Status:** Accepted public-alpha risk
 **Impact:** KMS operators are Cloudflare Worker deployments and share state is
-stored in Cloudflare KV. Crust is the primary pinning provider; the second
-persistence route is not complete. NFT market admin and emergency takedown are
-still owner-controlled for public alpha.
+stored in Cloudflare KV. Crust is the active pinning provider; the Lighthouse
+persistence route is a planned pilot and is not complete. NFT market admin and
+emergency takedown are still owner-controlled for public alpha.
 
 **Resolution:** Keep public wording as "public alpha" and "hybrid
 decentralized" until independent operator hosting, redundant persistence and
-DAO/multisig governance are implemented and verified.
+DAO/multisig governance are implemented and verified. During the storage
+provider rollout, keep Crust behavior unchanged and put Lighthouse API keys
+behind a dedicated Storage API Worker.
 
 ### 6. Pause Bypass in Prepaid Functions
 

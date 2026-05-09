@@ -63,11 +63,13 @@ Contract takedown removes the entitlement and hides the event. The encrypted
 bytes can persist on IPFS until pins drop. Operationally, when an emergency
 takedown is issued the owner MUST:
 
-1. Remove the Crust pin on the encrypted CID.
+1. Remove pins from every active persistence provider for the encrypted CID.
 2. Where applicable, instruct the five KMS operators to delete the corresponding
    shares from KV storage. (This is a legal/operational requirement for
    illegal content where existence of the key fragments is itself harmful.)
-3. Publish the takedown in the monthly transparency report (see §5).
+3. Purge or denylist any hot media delivery cache that may still serve the
+   encrypted bytes.
+4. Publish the takedown in the monthly transparency report (see §5).
 
 ### 4. DAO handover by end of Q4 2026
 

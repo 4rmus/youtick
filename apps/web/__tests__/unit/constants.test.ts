@@ -7,6 +7,8 @@ const ENV_KEYS = [
     'NEXT_PUBLIC_ACCESS_CONTRACT_ID',
     'NEXT_PUBLIC_REGISTRY_CONTRACT_ID',
     'NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT',
+    'NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE',
+    'NEXT_PUBLIC_STORAGE_API_URL',
 ] as const;
 
 function resetNearEnv(): void {
@@ -89,5 +91,24 @@ describe('FEATURE_FLAGS', () => {
         const { FEATURE_FLAGS } = await import('@/lib/constants');
 
         expect(FEATURE_FLAGS.enableCrossChainCheckout).toBe(false);
+    });
+
+    it('keeps Lighthouse persistence disabled by default', async () => {
+        resetNearEnv();
+
+        const { FEATURE_FLAGS, APP_CONFIG } = await import('@/lib/constants');
+
+        expect(FEATURE_FLAGS.enableLighthousePersistence).toBe(false);
+        expect(APP_CONFIG.storageApiUrl).toBe('');
+    });
+
+    it('enables Lighthouse persistence only when explicitly configured', async () => {
+        process.env.NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE = 'true';
+        process.env.NEXT_PUBLIC_STORAGE_API_URL = 'https://storage-api.example';
+
+        const { FEATURE_FLAGS, APP_CONFIG } = await import('@/lib/constants');
+
+        expect(FEATURE_FLAGS.enableLighthousePersistence).toBe(true);
+        expect(APP_CONFIG.storageApiUrl).toBe('https://storage-api.example');
     });
 });

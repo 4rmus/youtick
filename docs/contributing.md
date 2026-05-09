@@ -22,6 +22,7 @@ npm run dev
 - `apps/web/components/` : urun akislarinin UI katmani
 - `apps/web/lib/` : is mantigi
 - `workers/youtick-kms/` : key custody ve erisim kontrolu
+- `workers/storage-api/` : depolama provider secret ve health yuzeyi
 - `contracts/nft-ticket/` : zincir uzerindeki mantik
 - `docs/` : aktif davranisi anlatan dokumanlar
 
@@ -56,6 +57,7 @@ Tam degisken listesi ve aciklamalar: [Configuration Reference](getting-started/c
 - `npm run lint`
 - `npm test -- --run`
 - `npm run build`
+- Storage API Worker degistiyse `cd workers/storage-api && npm test -- --run && npm run check`
 - Contract degistiyse `cargo test`
 - Dokuman degistiyse linkler ve terimler aktif akisa uyuyor mu
 

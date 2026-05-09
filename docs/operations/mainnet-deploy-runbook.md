@@ -37,6 +37,7 @@ Run:
 (cd apps/web && npm ci && npm run lint && npm test -- --run && npm run build)
 (cd workers/youtick-kms && npm ci && npm test -- --run && npm run check)
 (cd workers/web4-proxy && npm ci && npm run check && npm test -- --run)
+(cd workers/storage-api && npm ci && npm run check && npm test -- --run)
 (cd contracts/nft-ticket && cargo test --lib)
 (cd contracts/nft-ticket && cargo test --test sandbox)
 (cd contracts/access-control && cargo test)

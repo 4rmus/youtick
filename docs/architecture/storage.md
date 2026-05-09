@@ -10,7 +10,7 @@ Today, YouTick runs through this storage and playback path:
 
 1. the browser generates an AES-256-CTR key
 2. the video is encrypted in chunks or segments
-3. encrypted output is uploaded to Crust/IPFS
+3. encrypted output is uploaded to the active IPFS storage provider
 4. the AES key is split into shares
 5. shares are stored across active decryption operators
 6. playback reconstructs the AES key in the browser after enough shares arrive
@@ -44,11 +44,13 @@ The upload can include:
 - init segments and media segments
 - thumbnail and poster assets
 
-These delivery assets are uploaded through Crust as one IPFS directory bundle.
-The event points at `rootCid/manifest.json`, while the manifest refers to
-relative asset paths such as `init.mp4` and `segments/000000.m4s`. Persistent
-storage is ordered for the root CID instead of every individual segment.
-Playback reads through multiple gateway options.
+These delivery assets are uploaded as one IPFS directory bundle. Today the
+active provider is still Crust, with Lighthouse kept as a planned persistence
+pilot rather than a replacement for KMS. The event points at
+`rootCid/manifest.json`, while the manifest refers to relative asset paths such
+as `init.mp4` and `segments/000000.m4s`. Persistent storage is ordered for the
+root CID instead of every individual segment. Playback reads through multiple
+gateway options.
 
 ### 3. Key Share Storage
 
@@ -74,7 +76,7 @@ sequenceDiagram
     participant OA as Operator A
     participant OB as Operator B
     participant OC as Operator C
-    participant IPFS as Crust/IPFS
+    participant IPFS as IPFS Storage
 
     APP->>REG: List active operators
     APP->>A: Ensure Play grant
@@ -106,11 +108,21 @@ The latest implementation also stops waiting once the threshold is reached.
 Media delivery still does not depend on a single IPFS gateway:
 
 - Crust endpoints are tried first
+- Lighthouse is currently a read fallback and planned persistence pilot
 - public IPFS gateways remain available as fallback
 - range requests are used when supported
 - full-download fallback still exists for degraded cases
 
 This keeps playback resilient even if one media endpoint is slow or unreliable.
+Provider management and media delivery are separate concerns: the future Storage
+API Worker owns provider secrets and persistence status, while the future Media
+Delivery Worker may handle encrypted manifest/segment routing, Range support,
+cache and gateway fallback. Neither Worker should see decrypted video or KMS key
+shares.
+
+`workers/storage-api` is the first provider-management boundary. It exposes
+Worker health, provider readiness, CID pinning and CID status endpoints. Large
+video or manifest bodies still do not pass through this Worker.
 
 ---
 
@@ -138,7 +150,7 @@ Key material is handled off-chain by the operator layer, but entitlement remains
 | Avoid one full-key holder | Share-based operator storage |
 | Keep playback fast | AES-CTR + segmented delivery |
 | Avoid a single operator bottleneck | `3-of-5` reconstruction |
-| Keep storage decentralized | Crust + IPFS gateway fallback |
+| Keep storage decentralized | Crust active provider + IPFS gateway fallback, with Lighthouse pilot planned |
 
 ---
 
@@ -149,4 +161,6 @@ Key material is handled off-chain by the operator layer, but entitlement remains
 - `apps/web/lib/kms/client.ts`
 - `apps/web/lib/video-delivery.ts`
 - `apps/web/lib/crust/*`
+- `apps/web/lib/storage/provider.ts`
+- `workers/storage-api/src/index.ts`
 - `workers/youtick-kms/src/index.ts`

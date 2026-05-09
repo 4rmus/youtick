@@ -17,6 +17,12 @@ const CORS_HEADERS = {
     'Access-Control-Allow-Headers': 'content-type',
 };
 
+const STRIPPED_UPSTREAM_HEADERS = [
+    'content-encoding',
+    'content-length',
+    'transfer-encoding',
+] as const;
+
 function getUpstreamUrls(): readonly string[] {
     const network = process.env.NEXT_PUBLIC_NEAR_NETWORK === 'testnet' ? 'testnet' : 'mainnet';
     return NEAR_RPC_UPSTREAMS[network];
@@ -55,6 +61,9 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const headers = new Headers(upstream.headers);
+    for (const header of STRIPPED_UPSTREAM_HEADERS) {
+        headers.delete(header);
+    }
     for (const [key, value] of Object.entries(CORS_HEADERS)) {
         headers.set(key, value);
     }

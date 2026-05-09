@@ -1,43 +1,63 @@
-# ADR-006: Storage — Multi-Provider Pinning Abstraction
+# ADR-006: Storage Provider Abstraction and Lighthouse Pilot
 
 ## Status
-Deferred until Phase 2 (post-traction)
+Accepted for phased implementation
 
-## Solo Dev Note
-Crust is sufficient for MVP validation. Adding Lighthouse/Filecoin integration is a distraction before product-market fit. The abstraction interface can be designed now but secondary providers should only be implemented if Crust has an outage or pricing change.
+## Implementation Progress
+- Phase 0 docs alignment: done.
+- Phase 1 Crust storage provider adapter: done.
+- Phase 2 Storage API Worker for Lighthouse secret management and pin/status checks: done.
+- Phase 3 Lighthouse pilot as secondary persistence with Crust fallback: in progress.
+
+Next step: make Lighthouse pin status observable and reliable enough for
+operations before promoting it beyond a non-blocking pilot.
 
 ## Context
-Uploads are pinned exclusively to Crust Network (`crustipfs.xyz`). If Crust is down, censored, or changes pricing, uploads fail. Retrieval uses a hardcoded list of 5 HTTP gateways with no libp2p fallback.
+Uploads currently use Crust/IPFS for encrypted delivery bundles and Crust PSA
+orders for long-term persistence. Read paths already use multiple IPFS
+gateways, including Lighthouse as a public read fallback.
+
+The next storage work should reduce provider lock-in without changing the
+access model. Lighthouse is a persistence pilot, not a replacement for YouTick
+KMS. KMS operators remain the source of ticket, ban, session-grant and key-share
+authorization.
 
 ## Decision
-1. Create a `PinningProvider` interface abstracting upload and status check.
-2. Implement at least three backends:
-   - **Crust** (primary, W3Auth NEAR)
-   - **Lighthouse / Filecoin** (fallback, NFT.storage-style)
-   - **Self-hosted IPFS node** (community/enterprise option)
-3. Upload flow attempts all providers in parallel; success on first confirmed pin.
-4. Store `provider: string` in `VideoMetadata` so retrieval knows which gateway set to prioritize.
-5. Retrieval gateway list is sourced from a registry/config file rather than hardcoded constants, enabling dynamic updates.
+1. Add a small storage provider adapter around the current Crust upload,
+   storage-order and verification behavior.
+2. Keep Crust as the active provider and fallback during the Lighthouse rollout.
+3. Add a separate Storage API Worker before using Lighthouse API keys. Browser
+   code must never receive Lighthouse secrets.
+4. Keep media delivery separate from provider management. A future media
+   delivery Worker may route encrypted manifests and segments, support Range
+   reads, cache hot assets and fall back across gateways.
+5. Do not proxy large upload bodies through the Storage API Worker in the first
+   Lighthouse phase.
+6. Do not mix Lighthouse Kavach/token-gating with YouTick KMS in the first
+   phase.
 
 ## Consequences
 ### Positive
-- Eliminates single pinning SPoF.
-- Price competition between providers.
-- Community can run pinning nodes for niche content.
+- Creates a clean point for Lighthouse/Filecoin persistence without a big-bang
+  upload rewrite.
+- Keeps the current Crust behavior testable during migration.
+- Keeps secret management server-side.
+- Separates persistence, delivery and playback authorization.
 
 ### Negative
-- Slightly higher upload latency (parallel attempts).
-- Must handle provider-specific auth (W3Auth, API keys, FIL deals).
-- Content may be pinned on multiple networks; need deduplication logic.
-
-## KPI
-- **Pinning provider diversity:** 1 → 3+
-- **Upload success rate during Crust outage:** 0% → >95%
+- The first adapter phase does not improve outage tolerance by itself.
+- There will be a temporary period where docs and code mention both Crust and
+  the storage provider adapter.
+- Operational takedown must eventually cover every active persistence provider
+  and media cache, not only Crust pins.
 
 ## Validation
-- Upload test: Crust API mocked to 503; upload succeeds via Lighthouse.
-- Retrieval test: primary gateway blocked; fallback gateway serves content.
+- Existing Crust upload, gateway and storage-order tests must keep passing.
+- New adapter tests must show the active provider delegates to Crust without
+  changing root CID, entries or storage-order results.
+- Lighthouse worker tests are out of scope until the Storage API Worker phase.
 
 ## Open Questions
-- How do we persist provider-specific API keys securely (server-side env vs client-side)?
-- Should we use IPFS cluster or libp2p pubsub for provider discovery?
+- Which metadata field should record the provider set for each uploaded bundle?
+- Which Lighthouse status signals are reliable enough for upload completion?
+- What cache purge contract should the future media delivery Worker expose?
