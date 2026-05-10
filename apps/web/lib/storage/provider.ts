@@ -1,5 +1,7 @@
 import { uploadDirectoryToCrust } from '../crust/client';
 import type { UploadedAsset } from '../crust/cid-collector';
+import { APP_CONFIG, FEATURE_FLAGS } from '../constants';
+import { uploadDirectoryWithStorageApi } from './storage-api';
 import {
   placeStorageOrders as placeCrustStorageOrders,
   verifyStorageOrders as verifyCrustStorageOrders,
@@ -8,7 +10,7 @@ import {
 } from '../crust/storage-order';
 import type { CrustDirectoryUploadResult } from '../crust/types';
 
-export type StorageProviderId = 'crust';
+export type StorageProviderId = 'crust' | 'lighthouse';
 
 export interface StorageUploadOptions {
   onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void;
@@ -48,8 +50,58 @@ const crustStorageProvider: StorageProvider = {
   verifyStorageOrders: verifyCrustStorageOrders,
 };
 
+const lighthouseStorageProvider: StorageProvider = {
+  id: 'lighthouse',
+  async uploadDirectory(files, _accountId, options) {
+    try {
+      const result = await uploadDirectoryWithStorageApi(files, options);
+      return { ...result, provider: 'lighthouse' };
+    } catch (error) {
+      if (!FEATURE_FLAGS.enableCrustUploadFallback) {
+        throw error;
+      }
+
+      console.warn('[Storage] Lighthouse primary upload failed, falling back to Crust', {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      const result = await uploadDirectoryToCrust(files, _accountId, options);
+      return { ...result, provider: 'crust' };
+    }
+  },
+  async placeStorageOrders(assets) {
+    return {
+      total: assets.length,
+      succeeded: assets.length,
+      failed: 0,
+      results: [],
+    };
+  },
+  async verifyStorageOrders() {
+    return {
+      verified: 0,
+      pending: 0,
+      failed: 0,
+    };
+  },
+};
+
 export function getActiveStorageProvider(): StorageProvider {
+  if (isLighthouseUploadProviderActive()) {
+    return lighthouseStorageProvider;
+  }
+
   return crustStorageProvider;
+}
+
+export function isLighthouseUploadProviderActive(): boolean {
+  if (
+    APP_CONFIG.storageUploadProvider === 'lighthouse'
+    && FEATURE_FLAGS.enableLighthousePrimaryUpload
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 export async function uploadDirectoryToStorage(

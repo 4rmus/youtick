@@ -246,6 +246,15 @@ export async function fetchFromGateways(
 }
 
 function buildReadCandidates(preferredKey?: string): ReadCandidate[] {
+  const mediaDeliveryBase = getMediaDeliveryBaseUrl();
+  const mediaDeliveryCandidate = mediaDeliveryBase
+    ? {
+      key: `media-delivery:${mediaDeliveryBase}`,
+      name: 'media-delivery',
+      url: mediaDeliveryBase,
+      method: 'GET' as const,
+    }
+    : null;
   const crustCandidates = [
     { name: 'crust-api-primary', url: CRUST_CONSTANTS.READ_ENDPOINT },
     { name: 'crust-api-fallback', url: CRUST_CONSTANTS.READ_ENDPOINT_FALLBACK },
@@ -269,6 +278,7 @@ function buildReadCandidates(preferredKey?: string): ReadCandidate[] {
     }));
 
   const ordered = [
+    mediaDeliveryCandidate,
     crustCandidates[0],
     publicCandidates[0],
     crustCandidates[1],
@@ -286,6 +296,15 @@ function buildReadCandidates(preferredKey?: string): ReadCandidate[] {
   }
 
   return [preferred, ...ordered.filter((candidate) => candidate.key !== preferredKey)];
+}
+
+function getMediaDeliveryBaseUrl(): string | null {
+  const mediaDelivery = CRUST_CONSTANTS.MEDIA_DELIVERY;
+  if (!mediaDelivery?.ENABLED || !mediaDelivery.BASE_URL) {
+    return null;
+  }
+
+  return `${mediaDelivery.BASE_URL.replace(/\/+$/, '')}/ipfs`;
 }
 
 async function hedgeReadCandidates(

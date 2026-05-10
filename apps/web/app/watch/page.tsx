@@ -162,6 +162,7 @@ function WatchContent() {
     const displayTitle = parsedTitle.title || t.watch_page.untitled;
     const displayCreator = creatorProfile?.display_name || event.creator_id;
     const ctLabel = contentTypeLabel(event.content_type);
+    const playbackCid = parsedTitle.manifestCid || cid;
 
     return (
         <div className="container mx-auto px-4 py-6 max-w-5xl">
@@ -223,7 +224,7 @@ function WatchContent() {
                 {canWatch ? (
                     <div className="rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-800 shadow-2xl">
                         <VideoPlayer
-                            cid={cid}
+                            cid={playbackCid}
                             thumbnailUrl={undefined}
                         />
                     </div>

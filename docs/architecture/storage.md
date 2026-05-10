@@ -114,15 +114,26 @@ Media delivery still does not depend on a single IPFS gateway:
 - full-download fallback still exists for degraded cases
 
 This keeps playback resilient even if one media endpoint is slow or unreliable.
-Provider management and media delivery are separate concerns: the future Storage
-API Worker owns provider secrets and persistence status, while the future Media
-Delivery Worker may handle encrypted manifest/segment routing, Range support,
-cache and gateway fallback. Neither Worker should see decrypted video or KMS key
+Provider management and media delivery are separate concerns: the Storage API
+Worker owns provider secrets and persistence status, while the Media Delivery
+Worker handles encrypted manifest/segment routing, Range forwarding, edge cache
+headers and gateway fallback. Neither Worker sees decrypted video or KMS key
 shares.
 
 `workers/storage-api` is the first provider-management boundary. It exposes
-Worker health, provider readiness, CID pinning and CID status endpoints. Large
-video or manifest bodies still do not pass through this Worker.
+Worker health, provider readiness, CID pinning, CID status endpoints and
+flag-controlled Lighthouse uploads. Large videos do not use one large directory
+body as the primary path. The frontend uploads encrypted init/media payloads as
+independent Lighthouse files, splitting oversized payloads into ordered chunk
+CIDs in the delivery manifest. This keeps Lighthouse as the primary provider
+while keeping each Worker request under `MAX_UPLOAD_BYTES`. The Worker also
+exposes an upload-intent endpoint so clients can learn the current safe path,
+part limits and whether scoped direct upload is available without exposing the
+Lighthouse API key.
+
+`workers/media-delivery` is the first hot-delivery boundary. It exposes
+`/ipfs/:cid/:path*`, forwards Range requests, caches non-Range encrypted GET
+responses at the edge, and falls back across public IPFS gateways.
 
 ---
 
@@ -150,7 +161,7 @@ Key material is handled off-chain by the operator layer, but entitlement remains
 | Avoid one full-key holder | Share-based operator storage |
 | Keep playback fast | AES-CTR + segmented delivery |
 | Avoid a single operator bottleneck | `3-of-5` reconstruction |
-| Keep storage decentralized | Crust active provider + IPFS gateway fallback, with Lighthouse pilot planned |
+| Keep storage decentralized | Lighthouse primary storage + IPFS gateway fallback for legacy reads |
 
 ---
 
@@ -163,4 +174,5 @@ Key material is handled off-chain by the operator layer, but entitlement remains
 - `apps/web/lib/crust/*`
 - `apps/web/lib/storage/provider.ts`
 - `workers/storage-api/src/index.ts`
+- `workers/media-delivery/src/index.ts`
 - `workers/youtick-kms/src/index.ts`

@@ -6,7 +6,7 @@ import {
     DELIVERY_FETCH_CONCURRENCY,
     getEffectiveManifestDurationMs,
 } from './video-delivery';
-import type { DeliveryManifestV2, DeliverySegment } from './types';
+import type { DeliveryManifestV2, DeliveryPayloadChunk, DeliverySegment } from './types';
 
 export type DeliveryPlaybackPhase = 'startup' | 'seek' | 'steady';
 
@@ -365,16 +365,28 @@ export function createDeliveryPlaybackSession(
     };
 
     const fetchPayloadBuffer = async (
-        cid: string,
+        ref: { cid: string; chunks?: DeliveryPayloadChunk[] },
         counterB64?: string,
         signal?: AbortSignal,
     ): Promise<ArrayBuffer> => {
-        const response = await fetchFromGateways(cid, {
-            purpose: 'segment',
-            signal,
-            timeout: 8_000,
-        });
-        const encrypted = new Uint8Array(await response.arrayBuffer());
+        const encrypted = new Uint8Array(
+            ref.chunks?.length
+                ? concatenateArrayBuffers(await Promise.all(
+                    ref.chunks.map(async (chunk) => {
+                        const response = await fetchFromGateways(chunk.cid, {
+                            purpose: 'segment',
+                            signal,
+                            timeout: 8_000,
+                        });
+                        return await response.arrayBuffer();
+                    }),
+                ))
+                : await (await fetchFromGateways(ref.cid, {
+                    purpose: 'segment',
+                    signal,
+                    timeout: 8_000,
+                })).arrayBuffer(),
+        );
         if (!manifest.encrypted || !counterB64) {
             return encrypted.buffer.slice(encrypted.byteOffset, encrypted.byteOffset + encrypted.byteLength) as ArrayBuffer;
         }
@@ -421,7 +433,7 @@ export function createDeliveryPlaybackSession(
                         }
                         return a.kind === 'video' ? -1 : 1;
                     })
-                    .map(async (payload) => await fetchPayloadBuffer(payload.cid, payload.counterB64, controller.signal)),
+                    .map(async (payload) => await fetchPayloadBuffer(payload, payload.counterB64, controller.signal)),
             );
 
             if (destroyed || generation !== requestGeneration) {
@@ -530,7 +542,7 @@ export function createDeliveryPlaybackSession(
 
         try {
             const initBuffer = await fetchPayloadBuffer(
-                manifest.initSegment.cid,
+                manifest.initSegment,
                 manifest.initSegment.counterB64,
             );
             if (!initSegmentCounted) {

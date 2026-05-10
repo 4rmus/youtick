@@ -23,6 +23,7 @@ npm run dev
 - `apps/web/lib/` : is mantigi
 - `workers/youtick-kms/` : key custody ve erisim kontrolu
 - `workers/storage-api/` : depolama provider secret ve health yuzeyi
+- `workers/media-delivery/` : encrypted IPFS media routing ve cache yuzeyi
 - `contracts/nft-ticket/` : zincir uzerindeki mantik
 - `docs/` : aktif davranisi anlatan dokumanlar
 
@@ -58,6 +59,7 @@ Tam degisken listesi ve aciklamalar: [Configuration Reference](getting-started/c
 - `npm test -- --run`
 - `npm run build`
 - Storage API Worker degistiyse `cd workers/storage-api && npm test -- --run && npm run check`
+- Media Delivery Worker degistiyse `cd workers/media-delivery && npm test -- --run && npm run check`
 - Contract degistiyse `cargo test`
 - Dokuman degistiyse linkler ve terimler aktif akisa uyuyor mu
 

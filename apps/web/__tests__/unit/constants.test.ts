@@ -8,7 +8,12 @@ const ENV_KEYS = [
     'NEXT_PUBLIC_REGISTRY_CONTRACT_ID',
     'NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT',
     'NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE',
+    'NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PRIMARY_UPLOAD',
+    'NEXT_PUBLIC_ENABLE_CRUST_UPLOAD_FALLBACK',
+    'NEXT_PUBLIC_STORAGE_UPLOAD_PROVIDER',
     'NEXT_PUBLIC_STORAGE_API_URL',
+    'NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER',
+    'NEXT_PUBLIC_MEDIA_DELIVERY_URL',
 ] as const;
 
 function resetNearEnv(): void {
@@ -93,13 +98,18 @@ describe('FEATURE_FLAGS', () => {
         expect(FEATURE_FLAGS.enableCrossChainCheckout).toBe(false);
     });
 
-    it('keeps Lighthouse persistence disabled by default', async () => {
+    it('uses Lighthouse upload as the default storage path', async () => {
         resetNearEnv();
 
         const { FEATURE_FLAGS, APP_CONFIG } = await import('@/lib/constants');
 
         expect(FEATURE_FLAGS.enableLighthousePersistence).toBe(false);
+        expect(FEATURE_FLAGS.enableLighthousePrimaryUpload).toBe(true);
+        expect(FEATURE_FLAGS.enableCrustUploadFallback).toBe(false);
+        expect(APP_CONFIG.storageUploadProvider).toBe('lighthouse');
         expect(APP_CONFIG.storageApiUrl).toBe('');
+        expect(FEATURE_FLAGS.enableMediaDeliveryWorker).toBe(false);
+        expect(APP_CONFIG.mediaDeliveryUrl).toBe('');
     });
 
     it('enables Lighthouse persistence only when explicitly configured', async () => {
@@ -110,5 +120,33 @@ describe('FEATURE_FLAGS', () => {
 
         expect(FEATURE_FLAGS.enableLighthousePersistence).toBe(true);
         expect(APP_CONFIG.storageApiUrl).toBe('https://storage-api.example');
+    });
+
+    it('can explicitly disable Lighthouse primary upload for local diagnostics', async () => {
+        process.env.NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PRIMARY_UPLOAD = 'false';
+
+        const { FEATURE_FLAGS, APP_CONFIG } = await import('@/lib/constants');
+
+        expect(FEATURE_FLAGS.enableLighthousePrimaryUpload).toBe(false);
+        expect(FEATURE_FLAGS.enableCrustUploadFallback).toBe(false);
+        expect(APP_CONFIG.storageUploadProvider).toBe('lighthouse');
+    });
+
+    it('enables Crust upload fallback only when explicitly configured', async () => {
+        process.env.NEXT_PUBLIC_ENABLE_CRUST_UPLOAD_FALLBACK = 'true';
+
+        const { FEATURE_FLAGS } = await import('@/lib/constants');
+
+        expect(FEATURE_FLAGS.enableCrustUploadFallback).toBe(true);
+    });
+
+    it('enables media delivery worker only when explicitly configured', async () => {
+        process.env.NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER = 'true';
+        process.env.NEXT_PUBLIC_MEDIA_DELIVERY_URL = 'https://media.youtick.net';
+
+        const { FEATURE_FLAGS, APP_CONFIG } = await import('@/lib/constants');
+
+        expect(FEATURE_FLAGS.enableMediaDeliveryWorker).toBe(true);
+        expect(APP_CONFIG.mediaDeliveryUrl).toBe('https://media.youtick.net');
     });
 });

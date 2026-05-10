@@ -104,8 +104,19 @@ describe('video delivery helpers', () => {
         {
           seq: 0,
           durationMs: 4000,
-          payloads: [
-            { cid: 'segments/000000.m4s', trackId: 1, kind: 'video' as const, byteLength: 100, startMs: 0, endMs: 4000 },
+            payloads: [
+            {
+              cid: 'segments/000000.m4s.part00000',
+              chunks: [
+                { cid: 'segments/000000.m4s.part00000', byteLength: 60 },
+                { cid: 'segments/000000.m4s.part00001', byteLength: 40 },
+              ],
+              trackId: 1,
+              kind: 'video' as const,
+              byteLength: 100,
+              startMs: 0,
+              endMs: 4000,
+            },
             { cid: 'QmAbsoluteSegmentCid123456789012345678901234567890', trackId: 2, kind: 'audio' as const, byteLength: 50, startMs: 0, endMs: 4000 },
           ],
         },
@@ -124,7 +135,10 @@ describe('video delivery helpers', () => {
       'bafyrootcid1234567890123456789012345678901234567890/posters/main poster.webp',
     );
     expect(resolved.segments[0].payloads[0].cid).toBe(
-      'bafyrootcid1234567890123456789012345678901234567890/segments/000000.m4s',
+      'bafyrootcid1234567890123456789012345678901234567890/segments/000000.m4s.part00000',
+    );
+    expect(resolved.segments[0].payloads[0].chunks?.[1].cid).toBe(
+      'bafyrootcid1234567890123456789012345678901234567890/segments/000000.m4s.part00001',
     );
     expect(resolved.segments[0].payloads[1].cid).toBe(
       'QmAbsoluteSegmentCid123456789012345678901234567890',

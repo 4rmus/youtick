@@ -38,6 +38,13 @@ Bu alanlar olmadan uygulama dogru contract setine ve ağa baglanamaz.
 | `NEXT_PUBLIC_DEPLOY_TARGET` | Web4 build davranisini degistirir | `npm run build:web4` kullaniyorsan |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Trial/onboarding ekraninda Turnstile challenge acar | Onboarding key endpoint'ini botlara karsi korumak istiyorsan |
 | `NEXT_PUBLIC_SENTRY_DSN` | Sentry hata toplama adresi | Uretimde hata izleme acacaksan |
+| `NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE` | Lighthouse status/persistence kontrolunu acar | Sadece Storage API Worker hazirsa `true` yap |
+| `NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PRIMARY_UPLOAD` | Lighthouse ana upload yolunu acar | Varsayilan acik; yalniz lokal tani icin `false` yap |
+| `NEXT_PUBLIC_ENABLE_CRUST_UPLOAD_FALLBACK` | Lighthouse upload hata verirse Crust'a duser | Varsayilan kapali; yalniz acil tani icin `true` yap |
+| `NEXT_PUBLIC_STORAGE_UPLOAD_PROVIDER` | Aktif upload provider secimi | Varsayilan `lighthouse`; yeni upload'larda bunu degistirme |
+| `NEXT_PUBLIC_STORAGE_API_URL` | Storage API Worker URL'i | Lighthouse pin/status pilotu icin gerekir |
+| `NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER` | Media Delivery Worker okuma yolunu acar | Sadece worker deploy ve smoke test sonrasi `true` yap |
+| `NEXT_PUBLIC_MEDIA_DELIVERY_URL` | Media Delivery Worker URL'i | Encrypted IPFS manifest/segment routing icin gerekir |
 
 ### Server-side onboarding
 
@@ -133,6 +140,35 @@ Gerekli KV binding'leri:
 - `ACCESS_CACHE`
 
 Mainnet ve testnet icin ayri KV namespace kullan. Ayni namespace ID'lerini iki ortamda da kullanma.
+
+---
+
+## Storage ve Media Workers
+
+`workers/storage-api` tarafinda gereken ayarlar:
+
+| Degisken | Aciklama |
+|----------|----------|
+| `ALLOWED_ORIGINS` | Izin verilen origin listesi |
+| `STORAGE_PROVIDER` | Simdilik `lighthouse` |
+| `LIGHTHOUSE_API_BASE` | Lighthouse API base URL'i |
+| `LIGHTHOUSE_UPLOAD_BASE` | Lighthouse upload base URL'i |
+| `LIGHTHOUSE_API_KEY` | Wrangler secret olarak saklanan Lighthouse API key |
+| `ENABLE_LIGHTHOUSE_UPLOADS` | `true` ise `/uploads/directory` endpoint'ini acar |
+| `MAX_UPLOAD_BYTES` | Storage API Worker uzerinden kabul edilen toplam upload boyutu |
+
+`workers/media-delivery` tarafinda gereken ayarlar:
+
+| Degisken | Aciklama |
+|----------|----------|
+| `ALLOWED_ORIGINS` | Izin verilen origin listesi |
+| `IPFS_GATEWAY_BASES` | Virgulle ayrilmis IPFS gateway base URL listesi |
+| `CACHE_TTL_SECONDS` | Non-Range GET edge cache suresi |
+| `CACHE_VERSION` | Opsiyonel cache bust anahtari |
+| `UPSTREAM_TIMEOUT_MS` | Her gateway denemesi icin zaman asimi |
+
+Media Delivery Worker encrypted IPFS asset route eder. AES key, decrypted video
+ve KMS share bu Worker'a verilmez.
 
 ---
 

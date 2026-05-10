@@ -43,6 +43,12 @@ export const CRUST_CONSTANTS = {
   PSA_ENDPOINT: process.env.NEXT_PUBLIC_DEPLOY_TARGET === 'web4'
     ? '/api/crust/psa/pins'
     : 'https://pin.crustcode.com/psa/pins',
+
+  /** Optional hot media delivery Worker for encrypted manifest/segment reads */
+  MEDIA_DELIVERY: {
+    ENABLED: process.env.NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER === 'true',
+    BASE_URL: (process.env.NEXT_PUBLIC_MEDIA_DELIVERY_URL || '').trim().replace(/\/+$/, ''),
+  },
 } as const;
 
 /**
