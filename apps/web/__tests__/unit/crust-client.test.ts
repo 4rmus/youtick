@@ -90,4 +90,21 @@ describe('crust client', () => {
     );
     expect(uploadedNames).toEqual(['manifest.json', 'segments/000000.m4s']);
   });
+
+  it('rejects directory uploads when Crust does not return an explicit root CID', async () => {
+    responseText = [
+      '{"Name":"manifest.json","Hash":"bafyManifest","Size":"64"}',
+      '{"Name":"segments/000000.m4s","Hash":"bafySegment","Size":"8"}',
+    ].join('\n');
+
+    const { uploadDirectoryToCrust } = await import('@/lib/crust/client');
+
+    await expect(uploadDirectoryToCrust(
+      [
+        { path: 'manifest.json', file: new Blob(['{}'], { type: 'application/json' }) },
+        { path: 'segments/000000.m4s', file: new Blob(['segment']) },
+      ],
+      'uploader.near',
+    )).rejects.toThrow('Crust directory upload returned no explicit directory root CID');
+  });
 });

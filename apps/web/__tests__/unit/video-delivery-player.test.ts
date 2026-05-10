@@ -353,6 +353,65 @@ describe('video delivery playback session', () => {
     session.destroy();
   });
 
+  it('fetches chunked payload parts before appending a segment', async () => {
+    const chunkedManifest: DeliveryManifestV2 = {
+      ...manifest,
+      segments: [
+        {
+          seq: 0,
+          durationMs: 4_000,
+          payloads: [
+            {
+              cid: 'QmSeg0Part0',
+              chunks: [
+                { cid: 'QmSeg0Part0', byteLength: 2 },
+                { cid: 'QmSeg0Part1', byteLength: 2 },
+              ],
+              trackId: 1,
+              kind: 'video',
+              byteLength: 4,
+              startMs: 0,
+              endMs: 4_000,
+            },
+          ],
+        },
+      ],
+    };
+
+    fetchFromGateways.mockImplementation(async (cid: string) => {
+      if (cid === 'QmInit') {
+        return new Response(Uint8Array.from([1]), { status: 200 });
+      }
+      if (cid === 'QmSeg0Part0') {
+        return new Response(Uint8Array.from([10, 11]), { status: 200 });
+      }
+      if (cid === 'QmSeg0Part1') {
+        return new Response(Uint8Array.from([12, 13]), { status: 200 });
+      }
+      throw new Error(`Unexpected CID ${cid}`);
+    });
+
+    const session = createDeliveryPlaybackSession(chunkedManifest);
+    const video = new FakeVideoElement();
+
+    session.start(video as unknown as HTMLVideoElement);
+    const mediaSource = FakeMediaSource.latest;
+    mediaSource?.open();
+    await flushAsyncWork();
+
+    expect(fetchFromGateways.mock.calls.map(([cid]) => cid)).toEqual([
+      'QmInit',
+      'QmSeg0Part0',
+      'QmSeg0Part1',
+    ]);
+
+    mediaSource?.sourceBuffer.flushNext();
+    await flushAsyncWork();
+
+    expect(Array.from(new Uint8Array((mediaSource?.sourceBuffer.operations[0].buffer) as ArrayBuffer))).toEqual([10, 11, 12, 13]);
+    session.destroy();
+  });
+
   it('snaps seeks to the next real video segment when a manifest has an audio-only gap', () => {
     const session = createDeliveryPlaybackSession(manifestWithAudioOnlyGap);
 

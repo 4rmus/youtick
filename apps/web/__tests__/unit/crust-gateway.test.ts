@@ -6,6 +6,7 @@ vi.mock('@/lib/crust/config', () => ({
     GATEWAY_UNHEALTHY_DURATION: 60_000,
     READ_ENDPOINT: 'https://crust-primary/api/v0/cat',
     READ_ENDPOINT_FALLBACK: 'https://crust-fallback/api/v0/cat',
+    MEDIA_DELIVERY: { ENABLED: false, BASE_URL: '' },
   },
   CRUST_GATEWAYS: [
     { name: 'ipfs-io', url: 'https://ipfs.io/ipfs', priority: 1, healthy: true, lastCheck: 0 },
@@ -190,6 +191,33 @@ describe('crust gateway probing', () => {
     expect(await response.text()).toBe('ok');
     expect(vi.mocked(global.fetch).mock.calls[0][0]).toBe(
       'https://crust-primary/api/v0/cat?arg=bafyroot%2Fsegments%2F000000.m4s',
+    );
+  });
+
+  it('uses the media delivery worker first when it is explicitly configured', async () => {
+    vi.doMock('@/lib/crust/config', () => ({
+      CRUST_CONSTANTS: {
+        FETCH_TIMEOUT: 3_000,
+        GATEWAY_UNHEALTHY_DURATION: 60_000,
+        READ_ENDPOINT: 'https://crust-primary/api/v0/cat',
+        READ_ENDPOINT_FALLBACK: 'https://crust-fallback/api/v0/cat',
+        MEDIA_DELIVERY: { ENABLED: true, BASE_URL: 'https://media.youtick.net' },
+      },
+      CRUST_GATEWAYS: [
+        { name: 'ipfs-io', url: 'https://ipfs.io/ipfs', priority: 1, healthy: true, lastCheck: 0 },
+      ],
+    }));
+    global.fetch = vi.fn(async () => new Response('edge', { status: 200 })) as unknown as typeof fetch;
+
+    const { fetchFromGateways } = await import('@/lib/crust/gateway');
+    const response = await fetchFromGateways('bafyroot/manifest.json', {
+      purpose: 'manifest',
+      timeout: 500,
+    });
+
+    expect(await response.text()).toBe('edge');
+    expect(vi.mocked(global.fetch).mock.calls[0][0]).toBe(
+      'https://media.youtick.net/ipfs/bafyroot/manifest.json',
     );
   });
 });

@@ -6,7 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 # Production (mainnet) default environment. See README.md for KV, secret and
 # operator deploy procedure.
 [vars]
-ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net,http://localhost:3001"
+ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net,http://localhost:3000,http://localhost:3001"
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
 NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"
@@ -35,7 +35,7 @@ name = "youtick-kms-a"
 
 [env.operator_a.vars]
 CACHE_KEY_PREFIX = "v2:"
-ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net,http://localhost:3001"
+ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net,http://localhost:3000,http://localhost:3001"
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
 NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"
@@ -59,7 +59,7 @@ name = "youtick-kms-b"
 
 [env.operator_b.vars]
 CACHE_KEY_PREFIX = "v2:"
-ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net,http://localhost:3001"
+ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net,http://localhost:3000,http://localhost:3001"
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
 NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"
@@ -83,7 +83,7 @@ name = "youtick-kms-c"
 
 [env.operator_c.vars]
 CACHE_KEY_PREFIX = "v2:"
-ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net,http://localhost:3001"
+ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net,http://localhost:3000,http://localhost:3001"
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
 NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"
@@ -107,7 +107,7 @@ name = "youtick-kms-d"
 
 [env.operator_d.vars]
 CACHE_KEY_PREFIX = "v2:"
-ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net,http://localhost:3001"
+ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net,http://localhost:3000,http://localhost:3001"
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
 NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"
@@ -131,7 +131,7 @@ name = "youtick-kms-e"
 
 [env.operator_e.vars]
 CACHE_KEY_PREFIX = "v2:"
-ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net,http://localhost:3001"
+ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net,http://localhost:3000,http://localhost:3001"
 NEAR_CONTRACT_ID = "youtick.near"
 NEAR_ACCESS_CONTRACT_ID = "access.youtick.near"
 NEAR_REGISTRY_CONTRACT_ID = "registry.youtick.near"

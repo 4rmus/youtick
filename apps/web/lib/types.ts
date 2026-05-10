@@ -210,11 +210,17 @@ export interface DeliveryTrackInfo {
     timescale: number;
 }
 
+export interface DeliveryPayloadChunk {
+    cid: string;
+    byteLength: number;
+}
+
 /**
  * CID-backed payload for one track inside a delivery segment
  */
 export interface DeliverySegmentPayload {
     cid: string;
+    chunks?: DeliveryPayloadChunk[];
     trackId: number;
     kind: DeliveryTrackKind;
     byteLength: number;
@@ -247,6 +253,7 @@ export interface DeliveryManifestV2 {
     };
     initSegment: {
         cid: string;
+        chunks?: DeliveryPayloadChunk[];
         byteLength: number;
         counterB64?: string;
     };

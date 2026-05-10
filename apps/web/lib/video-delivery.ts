@@ -119,12 +119,20 @@ export function resolveDeliveryManifestRefs(
         initSegment: {
             ...manifest.initSegment,
             cid: resolveManifestAssetRef(manifest.initSegment.cid, manifestRef),
+            chunks: manifest.initSegment.chunks?.map((chunk) => ({
+                ...chunk,
+                cid: resolveManifestAssetRef(chunk.cid, manifestRef),
+            })),
         },
         segments: manifest.segments.map((segment) => ({
             ...segment,
             payloads: segment.payloads.map((payload) => ({
                 ...payload,
                 cid: resolveManifestAssetRef(payload.cid, manifestRef),
+                chunks: payload.chunks?.map((chunk) => ({
+                    ...chunk,
+                    cid: resolveManifestAssetRef(chunk.cid, manifestRef),
+                })),
             })),
         })),
     };
@@ -173,7 +181,11 @@ export function shouldUseSegmentedPlayback(manifest: DeliveryManifestV2): boolea
 
     const effectiveDurationMs = getEffectiveManifestDurationMs(manifest);
     const maxSegmentDurationMs = Math.max(...manifest.segments.map((segment) => segment.durationMs));
-    const maxPayloadBytes = Math.max(...manifest.segments.flatMap((segment) => segment.payloads.map((payload) => payload.byteLength)));
+    const maxPayloadFetchBytes = Math.max(...manifest.segments.flatMap((segment) => segment.payloads.map((payload) => (
+        payload.chunks?.length
+            ? Math.max(...payload.chunks.map((chunk) => chunk.byteLength))
+            : payload.byteLength
+    ))));
 
     if (effectiveDurationMs > 20_000 && manifest.segments.length < 4) {
         return false;
@@ -183,7 +195,7 @@ export function shouldUseSegmentedPlayback(manifest: DeliveryManifestV2): boolea
         return false;
     }
 
-    if (maxPayloadBytes > 4 * 1024 * 1024) {
+    if (maxPayloadFetchBytes > 4 * 1024 * 1024) {
         return false;
     }
 
@@ -277,6 +289,7 @@ export function toDeliveryManifestV2(
         encrypted?: boolean;
         posterCid?: string;
         initSegmentCounterB64?: string;
+        initSegmentChunks?: Array<{ cid: string; byteLength: number }>;
     },
 ): DeliveryManifestV2 {
     return {
@@ -289,6 +302,7 @@ export function toDeliveryManifestV2(
         thumbnails: options?.posterCid ? { posterCid: options.posterCid } : undefined,
         initSegment: {
             cid: initSegmentCid,
+            chunks: options?.initSegmentChunks,
             byteLength: asset.initSegment.byteLength,
             counterB64: options?.initSegmentCounterB64,
         },

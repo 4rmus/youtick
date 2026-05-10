@@ -7,15 +7,20 @@ Accepted for phased implementation
 - Phase 0 docs alignment: done.
 - Phase 1 Crust storage provider adapter: done.
 - Phase 2 Storage API Worker for Lighthouse secret management and pin/status checks: done.
-- Phase 3 Lighthouse pilot as secondary persistence with Crust fallback: in progress.
+- Phase 3 Lighthouse-only storage path for new uploads: in progress.
+- Phase 4 Media Delivery Worker skeleton for encrypted IPFS routing, Range
+  forwarding, edge cache headers and gateway fallback: done.
+- Phase 5 frontend read-path flag for Media Delivery Worker: done.
+- Phase 6 guarded Lighthouse primary upload path with per-file/chunk uploads:
+  local implementation done, live smoke pending.
 
-Next step: make Lighthouse pin status observable and reliable enough for
-operations before promoting it beyond a non-blocking pilot.
+Next step: deploy the updated Storage API Worker with
+`ENABLE_LIGHTHOUSE_UPLOADS=true`, run one small `/uploads/file` smoke test, then
+publish one segmented playback upload through the default Lighthouse path.
 
 ## Context
-Uploads currently use Crust/IPFS for encrypted delivery bundles and Crust PSA
-orders for long-term persistence. Read paths already use multiple IPFS
-gateways, including Lighthouse as a public read fallback.
+New uploads use Lighthouse/IPFS for encrypted delivery assets. Read paths still
+keep multiple IPFS gateways so older Crust-backed content remains playable.
 
 The next storage work should reduce provider lock-in without changing the
 access model. Lighthouse is a persistence pilot, not a replacement for YouTick
@@ -25,14 +30,16 @@ authorization.
 ## Decision
 1. Add a small storage provider adapter around the current Crust upload,
    storage-order and verification behavior.
-2. Keep Crust as the active provider and fallback during the Lighthouse rollout.
+2. Make Lighthouse the active provider for new uploads. Crust upload fallback is
+   opt-in only for emergency diagnostics.
 3. Add a separate Storage API Worker before using Lighthouse API keys. Browser
    code must never receive Lighthouse secrets.
-4. Keep media delivery separate from provider management. A future media
-   delivery Worker may route encrypted manifests and segments, support Range
-   reads, cache hot assets and fall back across gateways.
-5. Do not proxy large upload bodies through the Storage API Worker in the first
-   Lighthouse phase.
+4. Keep media delivery separate from provider management. The media delivery
+   Worker routes encrypted manifests and segments, forwards Range reads, caches
+   hot non-Range assets and falls back across gateways.
+5. Make Lighthouse the guarded primary upload path through per-file and
+   per-chunk uploads. Do not send the full video or full delivery bundle as one
+   Worker request.
 6. Do not mix Lighthouse Kavach/token-gating with YouTick KMS in the first
    phase.
 
@@ -40,7 +47,7 @@ authorization.
 ### Positive
 - Creates a clean point for Lighthouse/Filecoin persistence without a big-bang
   upload rewrite.
-- Keeps the current Crust behavior testable during migration.
+- Keeps old Crust-backed media readable while new storage writes go to Lighthouse.
 - Keeps secret management server-side.
 - Separates persistence, delivery and playback authorization.
 
@@ -52,12 +59,18 @@ authorization.
   and media cache, not only Crust pins.
 
 ## Validation
-- Existing Crust upload, gateway and storage-order tests must keep passing.
-- New adapter tests must show the active provider delegates to Crust without
-  changing root CID, entries or storage-order results.
-- Lighthouse worker tests are out of scope until the Storage API Worker phase.
+- Existing Crust gateway and legacy diagnostic tests must keep passing.
+- Adapter tests must show Lighthouse is the default active provider and does
+  not call Crust fallback or Crust storage orders by default.
+- Lighthouse worker tests must cover secret handling, pin calls and status
+  normalization.
+- Media delivery worker tests must cover gateway fallback, Range forwarding,
+  cache hit/miss behavior and invalid CID rejection.
+- Lighthouse primary-upload tests must cover file upload response parsing,
+  directory upload response parsing, chunked playback manifests and the opt-in
+  Crust diagnostic fallback.
 
 ## Open Questions
 - Which metadata field should record the provider set for each uploaded bundle?
 - Which Lighthouse status signals are reliable enough for upload completion?
-- What cache purge contract should the future media delivery Worker expose?
+- What cache purge contract should the media delivery Worker expose?

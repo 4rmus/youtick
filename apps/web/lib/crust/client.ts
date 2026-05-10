@@ -182,9 +182,9 @@ export async function uploadDirectoryToCrust(
             if (xhr.status >= 200 && xhr.status < 300) {
               try {
                 const entries = parseDirectoryUploadEntries(xhr.responseText);
-                const rootEntry = entries.findLast((entry) => entry.path === '') ?? entries[entries.length - 1];
+                const rootEntry = entries.findLast((entry) => entry.path === '');
                 if (!rootEntry?.cid) {
-                  reject(new CrustError('UPLOAD_FAILED', `Crust directory upload returned no root CID: ${xhr.responseText}`));
+                  reject(new CrustError('UPLOAD_FAILED', `Crust directory upload returned no explicit directory root CID: ${xhr.responseText}`));
                   return;
                 }
 

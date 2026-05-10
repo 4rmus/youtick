@@ -2,8 +2,8 @@
 
 import { useReducer, useRef, useCallback } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { uploadDirectoryToStorage } from '@/lib/storage/provider';
-import { isLighthousePersistencePilotEnabled, pinCidWithStorageApi } from '@/lib/storage/storage-api';
+import { isLighthouseUploadProviderActive, uploadDirectoryToStorage } from '@/lib/storage/provider';
+import { getCidPinStatusFromStorageApi, isLighthousePersistencePilotEnabled, pinCidWithStorageApi, uploadFileWithStorageApi } from '@/lib/storage/storage-api';
 import { CidCollector } from '@/lib/crust/cid-collector';
 import {
     encryptBufferWithCounter,
@@ -18,6 +18,8 @@ import {
 import { nearAmountToYocto } from '@/lib/near-amount';
 import type { DeliverySegmentPayload } from '@/lib/types';
 import type { PackagedDeliveryAsset } from '@/lib/video-delivery';
+
+const LIGHTHOUSE_PAYLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
 
 // ── Upload state reducer ──
 
@@ -190,6 +192,8 @@ export function useUpload() {
         const {
             combinePackagedSegmentPayloads,
             createDeliverySegment,
+            fetchDeliveryManifest,
+            isDeliveryManifestV2,
             toDeliveryManifestV2,
             warmupGatewayCids,
             DELIVERY_UPLOAD_CONCURRENCY,
@@ -271,6 +275,130 @@ export function useUpload() {
         const uploadedSegments = preparedSegments.map((entry) => entry.segment);
         files.push(...preparedSegments.map((entry) => entry.file));
 
+        if (isLighthouseUploadProviderActive()) {
+            let completedBytes = 0;
+            const uploadedCids: Array<{ cid: string; kind: 'image' | 'segment' }> = [];
+            const uploadTotalBytes = [
+                thumbnailBlob,
+                posterBlob,
+                initUploadBlob,
+                ...preparedSegments.map((entry) => entry.file.file),
+            ].reduce((sum, blob) => sum + (blob?.size ?? 0), 0);
+
+            const uploadOne = async (
+                path: string,
+                blob: Blob,
+                type: 'thumbnail' | 'poster' | 'init-segment' | 'media-segment' | 'manifest',
+            ) => {
+                const result = await uploadFileWithStorageApi(path, blob);
+                completedBytes += blob.size;
+                const progress = uploadTotalBytes > 0
+                    ? Math.min(99, Math.round((completedBytes / uploadTotalBytes) * 100))
+                    : 0;
+                dispatch({ type: 'SET_PROGRESS', payload: progress });
+                setStatus(`Uploading to Lighthouse... ${progress}%`);
+                collector.add(result.cid, result.size, type);
+                if (type !== 'manifest') {
+                    uploadedCids.push({ cid: result.cid, kind: type === 'thumbnail' || type === 'poster' ? 'image' : 'segment' });
+                }
+                return result;
+            };
+
+            const uploadChunked = async (
+                path: string,
+                blob: Blob,
+                type: 'init-segment' | 'media-segment',
+            ) => {
+                if (blob.size <= LIGHTHOUSE_PAYLOAD_CHUNK_BYTES) {
+                    const result = await uploadOne(path, blob, type);
+                    return {
+                        cid: result.cid,
+                        chunks: undefined,
+                    };
+                }
+
+                const parts = [];
+                for (let offset = 0, index = 0; offset < blob.size; offset += LIGHTHOUSE_PAYLOAD_CHUNK_BYTES, index += 1) {
+                    const end = Math.min(offset + LIGHTHOUSE_PAYLOAD_CHUNK_BYTES, blob.size);
+                    parts.push({
+                        index,
+                        blob: blob.slice(offset, end),
+                        path: `${path}.part${String(index).padStart(5, '0')}`,
+                    });
+                }
+
+                const uploadedParts = await runWithConcurrency(
+                    parts,
+                    DELIVERY_UPLOAD_CONCURRENCY,
+                    async (part) => {
+                        const result = await uploadOne(part.path, part.blob, type);
+                        return {
+                            cid: result.cid,
+                            byteLength: part.blob.size,
+                        };
+                    },
+                );
+
+                return {
+                    cid: uploadedParts[0]?.cid ?? '',
+                    chunks: uploadedParts,
+                };
+            };
+
+            setStatus('Uploading encrypted delivery assets to Lighthouse...');
+            const thumbnailCid = thumbnailBlob && thumbnailPath
+                ? (await uploadOne(thumbnailPath, thumbnailBlob, 'thumbnail')).cid
+                : null;
+            const posterCid = posterBlob && posterPath
+                ? (await uploadOne(posterPath, posterBlob, 'poster')).cid
+                : null;
+            const initUpload = await uploadChunked(initPath, initUploadBlob, 'init-segment');
+            const lighthouseSegments = await runWithConcurrency(
+                preparedSegments,
+                DELIVERY_UPLOAD_CONCURRENCY,
+                async (entry) => {
+                    const result = await uploadChunked(entry.file.path, entry.file.file, 'media-segment');
+                    return {
+                        ...entry.segment,
+                        payloads: entry.segment.payloads.map((payload) => ({
+                            ...payload,
+                            cid: result.cid,
+                            chunks: result.chunks,
+                        })),
+                    };
+                },
+            );
+
+            setStatus('Uploading Lighthouse delivery manifest...');
+            const manifest = toDeliveryManifestV2(
+                packagedAsset,
+                initUpload.cid,
+                packagedAsset.tracks,
+                lighthouseSegments,
+                {
+                    encrypted,
+                    posterCid: posterCid ?? undefined,
+                    initSegmentCounterB64: initCounterB64,
+                    initSegmentChunks: initUpload.chunks,
+                },
+            );
+            const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+            const manifestUpload = await uploadOne('manifest.json', manifestBlob, 'manifest');
+            const manifestCid = manifestUpload.cid;
+
+            setStatus('Verifying delivery manifest...');
+            const uploadedManifest = await fetchDeliveryManifest(manifestCid, { timeout: 15_000 });
+            if (!isDeliveryManifestV2(uploadedManifest)) {
+                throw new Error('Delivery manifest could not be verified after Lighthouse upload. Upload was stopped before publishing.');
+            }
+
+            void warmupGatewayCids(uploadedCids.slice(0, 8));
+            return {
+                manifestCid,
+                thumbnailRef: thumbnailCid ? `ipfs://${thumbnailCid}` : null,
+            };
+        }
+
         setStatus('Uploading delivery manifest...');
         const manifest = toDeliveryManifestV2(
             packagedAsset,
@@ -300,12 +428,34 @@ export function useUpload() {
             void pinCidWithStorageApi({
                 cid: directoryUpload.cid,
                 fileName: 'delivery-root',
-            }).then((result) => {
+            }).then(async (result) => {
                 if (result.status === 'pinned') {
                     console.log('[Storage API] Lighthouse persistence pilot pinned delivery root', {
                         cid: result.cid,
                         provider: result.provider,
                     });
+                    const status = await getCidPinStatusFromStorageApi(result.cid);
+                    if (status.status === 'found') {
+                        console.log('[Storage API] Lighthouse persistence pilot verified delivery root', {
+                            cid: status.cid,
+                            provider: status.provider,
+                            fileName: status.fileName,
+                            fileSizeInBytes: status.fileSizeInBytes,
+                            checkedAt: status.checkedAt,
+                        });
+                    } else if (status.status === 'missing') {
+                        console.warn('[Storage API] Lighthouse persistence pilot status missing after pin', {
+                            cid: status.cid,
+                            provider: status.provider,
+                            checkedAt: status.checkedAt,
+                        });
+                    } else if (status.status === 'failed') {
+                        console.warn('[Storage API] Lighthouse persistence pilot status check failed (non-blocking)', {
+                            cid: status.cid,
+                            reason: status.reason,
+                            httpStatus: status.httpStatus,
+                        });
+                    }
                 } else if (result.status === 'failed') {
                     console.warn('[Storage API] Lighthouse persistence pilot failed (non-blocking)', {
                         cid: result.cid,
@@ -316,6 +466,12 @@ export function useUpload() {
             });
         }
         const manifestCid = `${directoryUpload.cid}/${manifestPath}`;
+        setStatus('Verifying delivery manifest...');
+        const uploadedManifest = await fetchDeliveryManifest(manifestCid, { timeout: 15_000 });
+        if (!isDeliveryManifestV2(uploadedManifest)) {
+            throw new Error('Delivery manifest could not be verified after upload. Upload was stopped before publishing.');
+        }
+
         const thumbnailRef = thumbnailPath ? `ipfs://${directoryUpload.cid}/${thumbnailPath}` : null;
 
         const warmupItems = [
