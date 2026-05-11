@@ -1,15 +1,13 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import {
-  DEFAULT_IPFS_MEDIA_TIMEOUT_MS,
   getIpfsMediaCandidates,
   getIpfsMediaSourceKey,
   getNextIpfsMediaUrl,
   rememberFailedIpfsMediaUrl,
   rememberSuccessfulIpfsMediaUrl,
-  resolveIpfsMediaUrl,
 } from '@/lib/ipfs-media';
 
 interface IPFSThumbnailProps {
@@ -27,8 +25,6 @@ interface IPFSThumbnailProps {
   onError?: (error: Error) => void;
   /** Browser loading hint */
   loading?: 'lazy' | 'eager';
-  /** Probe timeout before trying the next gateway candidate */
-  timeoutMs?: number;
 }
 
 /**
@@ -42,7 +38,6 @@ export function IPFSThumbnail({
   onLoad,
   onError,
   loading = 'lazy',
-  timeoutMs = DEFAULT_IPFS_MEDIA_TIMEOUT_MS,
 }: IPFSThumbnailProps) {
   const sourceKey = getIpfsMediaSourceKey(url);
   const candidates = useMemo(
@@ -53,61 +48,47 @@ export function IPFSThumbnail({
     }),
     [fallbackUrl, sourceKey, url],
   );
-  const [orderedCandidates, setOrderedCandidates] = useState<string[]>(() => candidates.length > 0 ? candidates : [fallbackUrl]);
+
+  return (
+    <ResolvedIPFSThumbnail
+      key={`${sourceKey}:${fallbackUrl}`}
+      url={url}
+      alt={alt}
+      className={className}
+      fallbackUrl={fallbackUrl}
+      onLoad={onLoad}
+      onError={onError}
+      loading={loading}
+      sourceKey={sourceKey}
+      candidates={candidates.length > 0 ? candidates : [fallbackUrl]}
+    />
+  );
+}
+
+function ResolvedIPFSThumbnail({
+  url,
+  alt,
+  className,
+  fallbackUrl,
+  onLoad,
+  onError,
+  loading,
+  sourceKey,
+  candidates,
+}: IPFSThumbnailProps & {
+  sourceKey: string;
+  candidates: string[];
+  alt: string;
+  className: string;
+  fallbackUrl: string;
+  loading: 'lazy' | 'eager';
+}) {
   const [imageUrl, setImageUrl] = useState<string>(() => candidates[0] ?? fallbackUrl);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function resolveBestCandidate() {
-      const nextFallbackCandidates = getIpfsMediaCandidates(url, {
-        sourceKey,
-        purpose: 'image',
-        fallbackUrl,
-      });
-
-      setOrderedCandidates(nextFallbackCandidates);
-      setImageUrl(nextFallbackCandidates[0] ?? fallbackUrl);
-
-      if (!url) {
-        return;
-      }
-
-      if (nextFallbackCandidates.length <= 1) {
-        return;
-      }
-
-      try {
-        const resolvedUrl = await resolveIpfsMediaUrl(url, {
-          sourceKey,
-          purpose: 'image',
-          timeoutMs,
-          fallbackUrl,
-        });
-        if (cancelled) return;
-
-        const nextCandidates = resolvedUrl
-          ? [resolvedUrl, ...nextFallbackCandidates.filter((candidate) => candidate !== resolvedUrl)]
-          : nextFallbackCandidates;
-        setOrderedCandidates(nextCandidates);
-        setImageUrl(nextCandidates[0] ?? fallbackUrl);
-      } catch {
-        if (cancelled) return;
-        setOrderedCandidates([fallbackUrl]);
-        setImageUrl(fallbackUrl);
-        onError?.(new Error('All gateways failed'));
-      }
-    }
-
-    void resolveBestCandidate();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [fallbackUrl, onError, sourceKey, timeoutMs, url]);
+  const failedUrlsRef = useRef(new Set<string>());
 
   const handleImageError = () => {
     if (imageUrl && imageUrl !== fallbackUrl) {
+      failedUrlsRef.current.add(imageUrl);
       rememberFailedIpfsMediaUrl(imageUrl, {
         input: url,
         sourceKey,
@@ -115,12 +96,20 @@ export function IPFSThumbnail({
       });
     }
 
-    const nextCandidate = getNextIpfsMediaUrl(url, {
+    const localFailed = failedUrlsRef.current;
+    const mediaFallback = getNextIpfsMediaUrl(url, {
       currentUrl: imageUrl,
       sourceKey,
       purpose: 'image',
       fallbackUrl,
-    }) ?? orderedCandidates.find((candidate) => candidate !== imageUrl && candidate !== fallbackUrl);
+    });
+    const nextCandidate = mediaFallback && !localFailed.has(mediaFallback)
+      ? mediaFallback
+      : candidates.find((candidate) => (
+        candidate !== imageUrl
+        && candidate !== fallbackUrl
+        && !localFailed.has(candidate)
+      ));
     if (nextCandidate) {
       setImageUrl(nextCandidate);
       return;

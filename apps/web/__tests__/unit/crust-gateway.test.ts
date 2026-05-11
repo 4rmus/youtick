@@ -220,4 +220,85 @@ describe('crust gateway probing', () => {
       'https://media.youtick.net/ipfs/bafyroot/manifest.json',
     );
   });
+
+  it('keeps the Lighthouse gateway in the fresh upload read race', async () => {
+    vi.doMock('@/lib/crust/config', () => ({
+      CRUST_CONSTANTS: {
+        FETCH_TIMEOUT: 3_000,
+        GATEWAY_UNHEALTHY_DURATION: 60_000,
+        READ_ENDPOINT: 'https://crust-primary/api/v0/cat',
+        READ_ENDPOINT_FALLBACK: '',
+        MEDIA_DELIVERY: { ENABLED: false, BASE_URL: '' },
+      },
+      CRUST_GATEWAYS: [
+        { name: 'ipfs-io', url: 'https://ipfs.io/ipfs', priority: 1, healthy: true, lastCheck: 0 },
+        { name: 'lighthouse', url: 'https://gateway.lighthouse.storage/ipfs', priority: 2, healthy: true, lastCheck: 0 },
+        { name: '4everland', url: 'https://4everland.io/ipfs', priority: 3, healthy: true, lastCheck: 0 },
+      ],
+    }));
+    global.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('gateway.lighthouse.storage')) {
+        return new Response('manifest', { status: 200 });
+      }
+
+      throw new Error(`Unexpected read route ${url}`);
+    }) as unknown as typeof fetch;
+
+    const { fetchFromGateways } = await import('@/lib/crust/gateway');
+    const response = await fetchFromGateways('bafyFreshManifest', {
+      purpose: 'manifest',
+      timeout: 500,
+    });
+
+    expect(await response.text()).toBe('manifest');
+    expect(vi.mocked(global.fetch).mock.calls.some(([url]) => (
+      String(url) === 'https://gateway.lighthouse.storage/ipfs/bafyFreshManifest'
+    ))).toBe(true);
+  });
+
+  it('does not let failed image probes remove Lighthouse from manifest reads', async () => {
+    vi.doMock('@/lib/crust/config', () => ({
+      CRUST_CONSTANTS: {
+        FETCH_TIMEOUT: 3_000,
+        GATEWAY_UNHEALTHY_DURATION: 60_000,
+        READ_ENDPOINT: 'https://crust-primary/api/v0/cat',
+        READ_ENDPOINT_FALLBACK: '',
+        MEDIA_DELIVERY: { ENABLED: false, BASE_URL: '' },
+      },
+      CRUST_GATEWAYS: [
+        { name: 'ipfs-io', url: 'https://ipfs.io/ipfs', priority: 1, healthy: true, lastCheck: 0 },
+        { name: 'lighthouse', url: 'https://gateway.lighthouse.storage/ipfs', priority: 2, healthy: true, lastCheck: 0 },
+        { name: 'w3s', url: 'https://w3s.link/ipfs', priority: 3, healthy: true, lastCheck: 0 },
+      ],
+    }));
+
+    const { fetchFromGateways, resolveGatewayUrl } = await import('@/lib/crust/gateway');
+
+    global.fetch = vi.fn(async () => new Response('paid', { status: 402 })) as unknown as typeof fetch;
+    await expect(resolveGatewayUrl('bafyLegacy/thumbnail.jpg', {
+      purpose: 'image',
+      timeout: 100,
+      markUnhealthyOnFailure: false,
+    })).rejects.toThrow('Could not resolve a responsive gateway');
+
+    global.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('gateway.lighthouse.storage')) {
+        return new Response('manifest', { status: 200 });
+      }
+
+      return new Response('missing', { status: 504 });
+    }) as unknown as typeof fetch;
+
+    const response = await fetchFromGateways('bafyManifest', {
+      purpose: 'manifest',
+      timeout: 500,
+    });
+
+    expect(await response.text()).toBe('manifest');
+    expect(vi.mocked(global.fetch).mock.calls.some(([url]) => (
+      String(url) === 'https://gateway.lighthouse.storage/ipfs/bafyManifest'
+    ))).toBe(true);
+  });
 });

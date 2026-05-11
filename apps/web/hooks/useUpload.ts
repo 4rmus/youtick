@@ -1,6 +1,7 @@
 'use client';
 
 import { useReducer, useRef, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { isLighthouseUploadProviderActive, uploadDirectoryToStorage } from '@/lib/storage/provider';
 import { getCidPinStatusFromStorageApi, isLighthousePersistencePilotEnabled, pinCidWithStorageApi, uploadFileWithStorageApi } from '@/lib/storage/storage-api';
@@ -131,6 +132,7 @@ interface UploadParams {
 
 export function useUpload() {
     const { accountId, getWallet } = useWallet();
+    const queryClient = useQueryClient();
     const [state, dispatch] = useReducer(uploadReducer, initialUploadState);
     const uploadStepsRef = useRef(state.steps);
 
@@ -382,15 +384,13 @@ export function useUpload() {
                     initSegmentChunks: initUpload.chunks,
                 },
             );
+            if (!isDeliveryManifestV2(manifest)) {
+                throw new Error('Delivery manifest is invalid. Upload was stopped before publishing.');
+            }
+
             const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
             const manifestUpload = await uploadOne('manifest.json', manifestBlob, 'manifest');
             const manifestCid = manifestUpload.cid;
-
-            setStatus('Verifying delivery manifest...');
-            const uploadedManifest = await fetchDeliveryManifest(manifestCid, { timeout: 15_000 });
-            if (!isDeliveryManifestV2(uploadedManifest)) {
-                throw new Error('Delivery manifest could not be verified after Lighthouse upload. Upload was stopped before publishing.');
-            }
 
             void warmupGatewayCids(uploadedCids.slice(0, 8));
             return {
@@ -621,6 +621,9 @@ export function useUpload() {
                 await batchUploadActionsSignless(sessionManager, videoMetadata, eventMetadata);
                 blockchainPublishSucceeded = true;
                 dispatch({ type: 'SET_PUBLISHED_CID', payload: videoUuid });
+                void queryClient.invalidateQueries({ queryKey: ['createdEvents', accountId] });
+                void queryClient.invalidateQueries({ queryKey: ['allVideos'] });
+                void queryClient.invalidateQueries({ queryKey: ['event', videoUuid] });
                 updateStep('mint', 'complete');
             } catch (mintError: unknown) {
                 console.error('Minting/Event failed:', mintError);
@@ -694,7 +697,7 @@ export function useUpload() {
             setUploading(false);
             throw error;
         }
-    }, [accountId, dispatch, setStatus, setUploading, updateStep, uploadSegmentedDeliveryAsset]);
+    }, [accountId, dispatch, queryClient, setStatus, setUploading, updateStep, uploadSegmentedDeliveryAsset]);
 
     const handleUpload = useCallback(async (params: UploadParams): Promise<boolean> => {
         if (!params.file || !accountId) return false;

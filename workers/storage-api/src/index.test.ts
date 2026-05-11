@@ -240,6 +240,40 @@ describe('storage-api', () => {
         expect(typeof body.checkedAt).toBe('string');
     });
 
+    it('reads top-level Lighthouse file info for pin status', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+            cid: 'bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja',
+            fileSizeInBytes: 421,
+            fileName: 'storage-api-smoke.txt',
+            mimeType: 'text/plain',
+            encryption: false,
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        })));
+
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request('https://storage.youtick.net/pins/bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja/status'),
+            createEnv(),
+        );
+
+        const body = await response.json() as Record<string, unknown>;
+        expect(response.status).toBe(200);
+        expect(body).toMatchObject({
+            provider: 'lighthouse',
+            cid: 'bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja',
+            found: true,
+            upstreamCid: 'bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja',
+            fileName: 'storage-api-smoke.txt',
+            fileSizeInBytes: 421,
+            mimeType: 'text/plain',
+            encryption: false,
+            upstreamStatus: 200,
+        });
+        expect(typeof body.checkedAt).toBe('string');
+    });
+
     it('normalizes missing Lighthouse file info as found false', async () => {
         vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
             error: { code: 404, message: 'Not Found' },
@@ -456,6 +490,12 @@ describe('storage-api', () => {
                 body: expect.any(FormData) as FormData,
             }),
         );
+        const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+        const upstreamForm = calls[0][1].body as FormData;
+        expect(Array.from(upstreamForm.entries()).map(([, value]) => (value as unknown as File).name)).toEqual([
+            '000000.m4s.part00000',
+        ]);
+
         expect(await response.json()).toMatchObject({
             provider: 'lighthouse',
             cid: 'bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja',

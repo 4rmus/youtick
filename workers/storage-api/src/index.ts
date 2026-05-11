@@ -265,7 +265,7 @@ async function handleFileUploadRequest(request: Request, env: Env): Promise<Resp
     }
 
     const upstreamForm = new FormData();
-    upstreamForm.append('file', value, path);
+    upstreamForm.append('file', value, getUploadFileName(path));
 
     const upstream = await fetch(`${getLighthouseUploadBase(env)}/api/v0/add?cid-version=1`, {
         method: 'POST',
@@ -610,11 +610,16 @@ function getUploadData(value: unknown): UploadEntry | null {
     }
 
     const data = (value as { data?: unknown }).data;
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        return null;
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+        return data as UploadEntry;
     }
 
-    return data as UploadEntry;
+    const entry = value as UploadEntry;
+    if (typeof entry.cid === 'string' || typeof entry.Hash === 'string') {
+        return entry;
+    }
+
+    return null;
 }
 
 function getLighthouseCid(data: LighthouseUploadData): string | undefined {
@@ -694,4 +699,8 @@ function sanitizeUploadPath(value: string): string | null {
     }
 
     return segments.join('/');
+}
+
+function getUploadFileName(path: string): string {
+    return path.split('/').pop() || path;
 }

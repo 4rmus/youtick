@@ -663,12 +663,14 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             }
             const resolvedManifest = resolveDeliveryManifestRefs(manifestData, manifestCid);
 
-            console.info('[IpfsPlayer] Using segmented delivery manifest', {
-                manifestCid,
-                encrypted: resolvedManifest.encrypted,
-                tracks: resolvedManifest.tracks.length,
-                segments: resolvedManifest.segments.length,
-            });
+            if (process.env.NEXT_PUBLIC_DEBUG_PLAYBACK === 'true') {
+                console.info('[IpfsPlayer] Using segmented delivery manifest', {
+                    manifestCid,
+                    encrypted: resolvedManifest.encrypted,
+                    tracks: resolvedManifest.tracks.length,
+                    segments: resolvedManifest.segments.length,
+                });
+            }
             setKnownDurationSeconds(getEffectiveManifestDurationMs(resolvedManifest) / 1000);
             const preferredPosterUrl = pickPreferredPosterUrl(resolvedThumbnailUrl ?? null, resolvedManifest);
             if (preferredPosterUrl) {

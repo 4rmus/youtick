@@ -368,24 +368,18 @@ export function createDeliveryPlaybackSession(
         ref: { cid: string; chunks?: DeliveryPayloadChunk[] },
         counterB64?: string,
         signal?: AbortSignal,
+        fallbackRefFactory?: (index: number) => string | null,
     ): Promise<ArrayBuffer> => {
         const encrypted = new Uint8Array(
             ref.chunks?.length
                 ? concatenateArrayBuffers(await Promise.all(
-                    ref.chunks.map(async (chunk) => {
-                        const response = await fetchFromGateways(chunk.cid, {
-                            purpose: 'segment',
-                            signal,
-                            timeout: 8_000,
-                        });
-                        return await response.arrayBuffer();
-                    }),
+                    ref.chunks.map(async (chunk, index) => await fetchPayloadPart(
+                        chunk.cid,
+                        signal,
+                        fallbackRefFactory?.(index),
+                    )),
                 ))
-                : await (await fetchFromGateways(ref.cid, {
-                    purpose: 'segment',
-                    signal,
-                    timeout: 8_000,
-                })).arrayBuffer(),
+                : await fetchPayloadPart(ref.cid, signal, fallbackRefFactory?.(0)),
         );
         if (!manifest.encrypted || !counterB64) {
             return encrypted.buffer.slice(encrypted.byteOffset, encrypted.byteOffset + encrypted.byteLength) as ArrayBuffer;
@@ -402,6 +396,39 @@ export function createDeliveryPlaybackSession(
             encrypted as BufferSource,
         );
         return decrypted.slice(0);
+    };
+
+    const fetchPayloadPart = async (
+        cid: string,
+        signal?: AbortSignal,
+        fallbackCid?: string | null,
+    ): Promise<ArrayBuffer> => {
+        try {
+            return await fetchPayloadPartOnce(cid, signal);
+        } catch (error) {
+            if (!fallbackCid || fallbackCid === cid || signal?.aborted) {
+                throw error;
+            }
+
+            return await fetchPayloadPartOnce(fallbackCid, signal);
+        }
+    };
+
+    const fetchPayloadPartOnce = async (
+        cid: string,
+        signal?: AbortSignal,
+    ): Promise<ArrayBuffer> => {
+        const response = await fetchFromGateways(cid, {
+            purpose: 'segment',
+            signal,
+            timeout: 8_000,
+        });
+        const contentType = response.headers.get('Content-Type') ?? response.headers.get('content-type') ?? '';
+        if (contentType.toLowerCase().includes('text/html')) {
+            throw new Error(`Segment payload resolved to a directory page for ${cid}`);
+        }
+
+        return await response.arrayBuffer();
     };
 
     const loadSegment = async (segment: DeliverySegment, generation: number) => {
@@ -433,7 +460,12 @@ export function createDeliveryPlaybackSession(
                         }
                         return a.kind === 'video' ? -1 : 1;
                     })
-                    .map(async (payload) => await fetchPayloadBuffer(payload, payload.counterB64, controller.signal)),
+                    .map(async (payload) => await fetchPayloadBuffer(
+                        payload,
+                        payload.counterB64,
+                        controller.signal,
+                        (index) => getLighthouseSingleFileFallbackRef(segment.seq, index, payload.cid, payload.chunks),
+                    )),
             );
 
             if (destroyed || generation !== requestGeneration) {
@@ -694,6 +726,24 @@ function segmentOverlapsWindow(segment: DeliverySegment, windowStartMs: number, 
     const start = Math.min(...segment.payloads.map((payload) => payload.startMs));
     const end = Math.max(...segment.payloads.map((payload) => payload.endMs));
     return end >= windowStartMs && start <= windowEndMs;
+}
+
+function getLighthouseSingleFileFallbackRef(
+    segmentSeq: number,
+    chunkIndex: number,
+    cid: string,
+    chunks?: DeliveryPayloadChunk[],
+): string | null {
+    if (!cid || cid.includes('/')) {
+        return null;
+    }
+
+    const segmentPath = `${String(segmentSeq).padStart(6, '0')}.m4s`;
+    if (!chunks?.length) {
+        return `${cid}/${segmentPath}`;
+    }
+
+    return `${cid}/${segmentPath}.part${String(chunkIndex).padStart(5, '0')}`;
 }
 
 function getSegmentPriority(

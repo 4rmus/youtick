@@ -20,6 +20,7 @@ import { parseTitleMetadata } from '@/lib/metadata-parser';
 import type { NFTEvent, PurchaseLog } from '@/lib/types';
 import { useCreatorStats, useCreatorPurchaseLogs, useCreatorProfile } from '@/hooks/useCreatorStats';
 import { CreatorProfileForm } from '@/components/CreatorProfileForm';
+import { getLatestEventsQuery } from '@/lib/event-query';
 
 interface CreatedEvent extends NFTEvent {
     cid: string;
@@ -67,16 +68,27 @@ export default function ProfilePage() {
         queryKey: ['createdEvents', accountId],
         queryFn: async () => {
             const provider = getProvider();
+            const totalCount = Number(await viewContract<number>(
+                provider,
+                NEAR_CONFIG.contractId,
+                'get_events_count',
+                {},
+            ));
+            const query = getLatestEventsQuery(totalCount);
+            if (!query) {
+                return [];
+            }
 
             const events = await viewContract<[string, NFTEvent][]>(
                 provider,
                 NEAR_CONFIG.contractId,
                 'get_events',
-                { limit: 100 }
+                query,
             );
 
             return events
                 .filter(([, event]) => event.creator_id === accountId)
+                .reverse()
                 .map(([cid, event]) => {
                     const parsed = parseTitleMetadata(event.title);
                     return {

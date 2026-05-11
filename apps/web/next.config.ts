@@ -93,6 +93,6 @@ const sentryConfig = {
   hideSourceMaps: true,
 };
 
-export default process.env.NEXT_PUBLIC_SENTRY_DSN
+export default process.env.NEXT_PUBLIC_SENTRY_ENABLED === 'true' && process.env.NEXT_PUBLIC_SENTRY_DSN
   ? withSentryConfig(nextConfig, sentryConfig)
   : nextConfig;

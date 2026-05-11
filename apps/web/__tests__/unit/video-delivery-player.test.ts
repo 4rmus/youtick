@@ -353,6 +353,64 @@ describe('video delivery playback session', () => {
     session.destroy();
   });
 
+  it('falls back to the segment file path when a Lighthouse upload returns a directory root', async () => {
+    const manifestWithDirectorySegment: DeliveryManifestV2 = {
+      ...manifest,
+      segments: [
+        {
+          seq: 0,
+          durationMs: 4_000,
+          payloads: [
+            {
+              cid: 'bafyDirectoryRoot',
+              trackId: 1,
+              kind: 'video',
+              byteLength: 2,
+              startMs: 0,
+              endMs: 4_000,
+            },
+          ],
+        },
+      ],
+    };
+
+    fetchFromGateways.mockImplementation(async (cid: string) => {
+      if (cid === 'QmInit') {
+        return new Response(Uint8Array.from([1]), { status: 200 });
+      }
+      if (cid === 'bafyDirectoryRoot') {
+        return new Response('<html>directory</html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      if (cid === 'bafyDirectoryRoot/000000.m4s') {
+        return new Response(Uint8Array.from([20, 21]), { status: 200 });
+      }
+      throw new Error(`Unexpected CID ${cid}`);
+    });
+
+    const session = createDeliveryPlaybackSession(manifestWithDirectorySegment);
+    const video = new FakeVideoElement();
+
+    session.start(video as unknown as HTMLVideoElement);
+    const mediaSource = FakeMediaSource.latest;
+    mediaSource?.open();
+    await flushAsyncWork();
+
+    expect(fetchFromGateways.mock.calls.map(([cid]) => cid)).toEqual([
+      'QmInit',
+      'bafyDirectoryRoot',
+      'bafyDirectoryRoot/000000.m4s',
+    ]);
+
+    mediaSource?.sourceBuffer.flushNext();
+    await flushAsyncWork();
+
+    expect(getFirstOperationByte(mediaSource?.sourceBuffer as FakeSourceBuffer)).toBe(20);
+    session.destroy();
+  });
+
   it('fetches chunked payload parts before appending a segment', async () => {
     const chunkedManifest: DeliveryManifestV2 = {
       ...manifest,

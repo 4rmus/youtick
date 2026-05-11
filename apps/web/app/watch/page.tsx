@@ -20,6 +20,7 @@ import { parseTitleMetadata } from '@/lib/metadata-parser';
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { getContentTypeLabel } from '@/lib/content-types';
 import { hasRecentTicketPurchase, markRecentTicketPurchase } from '@/lib/ticket-access-cache';
+import { getLatestEventsQuery } from '@/lib/event-query';
 
 import {
     Play,
@@ -69,19 +70,37 @@ function WatchContent() {
         queryFn: async () => {
             if (!event?.creator_id) return [] as Array<{ cid: string; event: NFTEvent; title: string; media?: string }>;
             const provider = getProvider();
+            const totalCount = Number(await viewContract<number>(
+                provider,
+                NEAR_CONFIG.contractId,
+                'get_events_count',
+                {},
+            ));
+            const query = getLatestEventsQuery(totalCount);
+            if (!query) {
+                return [];
+            }
             const allEvents = await viewContract<[string, NFTEvent][]>(
                 provider,
                 NEAR_CONFIG.contractId,
                 'get_events',
-                { limit: 100 },
+                query,
             );
-            return allEvents
+            const creatorItems = allEvents
                 .filter(([evtCid, evt]) => evt.creator_id === event.creator_id && evtCid !== cid)
+                .reverse()
                 .slice(0, 6)
                 .map(([evtCid, evt]) => {
                     const parsed = parseTitleMetadata(evt.title);
-                    return { cid: evtCid, event: evt, title: parsed.title, media: parsed.thumbnailUrl };
+                    return { cid: evtCid, event: evt, title: parsed.title, parsed };
                 });
+
+            return creatorItems.map((item) => ({
+                cid: item.cid,
+                event: item.event,
+                title: item.title,
+                media: item.parsed.thumbnailUrl,
+            }));
         },
         enabled: !!event?.creator_id,
         staleTime: 60 * 1000,
@@ -162,7 +181,6 @@ function WatchContent() {
     const displayTitle = parsedTitle.title || t.watch_page.untitled;
     const displayCreator = creatorProfile?.display_name || event.creator_id;
     const ctLabel = contentTypeLabel(event.content_type);
-    const playbackCid = parsedTitle.manifestCid || cid;
 
     return (
         <div className="container mx-auto px-4 py-6 max-w-5xl">
@@ -224,7 +242,7 @@ function WatchContent() {
                 {canWatch ? (
                     <div className="rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-800 shadow-2xl">
                         <VideoPlayer
-                            cid={playbackCid}
+                            cid={cid}
                             thumbnailUrl={undefined}
                         />
                     </div>

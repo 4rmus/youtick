@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 
 const isDev = process.env.NODE_ENV === "development";
+const sentryEnabled = process.env.NEXT_PUBLIC_SENTRY_ENABLED === "true";
 
 const commonInit = {
   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
@@ -27,7 +28,7 @@ const commonInit = {
 };
 
 export async function register() {
-  if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return;
+  if (!sentryEnabled || !process.env.NEXT_PUBLIC_SENTRY_DSN) return;
 
   if (process.env.NEXT_RUNTIME === "nodejs") {
     Sentry.init(commonInit);
@@ -38,4 +39,4 @@ export async function register() {
   }
 }
 
-export const onRequestError = Sentry.captureRequestError;
+export const onRequestError = sentryEnabled ? Sentry.captureRequestError : () => {};

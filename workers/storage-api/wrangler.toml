@@ -7,6 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:3001,https://youtick.net,https://www.youtick.net"
 STORAGE_PROVIDER = "lighthouse"
 LIGHTHOUSE_API_BASE = "https://api.lighthouse.storage"
+ENABLE_LIGHTHOUSE_UPLOADS = "true"
 
 # Set with:
 # npx wrangler secret put LIGHTHOUSE_API_KEY

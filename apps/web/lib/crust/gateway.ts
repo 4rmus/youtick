@@ -29,6 +29,7 @@ interface GatewayProbeOptions {
   purpose?: 'video' | 'image' | 'generic';
   acceptStatuses?: number[];
   signal?: AbortSignal;
+  markUnhealthyOnFailure?: boolean;
 }
 
 interface FetchGatewayOptions {
@@ -157,7 +158,9 @@ export async function resolveGatewayUrl(
 
           const message = error instanceof Error ? error.message : String(error);
           errors.push(`${gateway.name}: ${message}`);
-          markGatewayUnhealthy(gateway.name);
+          if (options?.markUnhealthyOnFailure !== false) {
+            markGatewayUnhealthy(gateway.name);
+          }
 
           if (options?.signal?.aborted) {
             throw error;

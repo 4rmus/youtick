@@ -1094,15 +1094,17 @@ async function retrieveEncryptionKeyShares(
             if (shares.length >= requiredShares) {
                 controllers.forEach((controller) => controller.abort());
                 const reconstructed = reconstructSecretFromShares(shares, requiredShares);
-                console.info('[KMS] Share retrieval trace', {
-                    videoId,
-                    accountId,
-                    mode: 'reconstructed',
-                    requiredShares,
-                    collectedShares: shares.length,
-                    shareIds: shares.map((share) => share.shareId),
-                    debugTrace,
-                });
+                if (process.env.NEXT_PUBLIC_DEBUG_PLAYBACK === 'true') {
+                    console.info('[KMS] Share retrieval trace', {
+                        videoId,
+                        accountId,
+                        mode: 'reconstructed',
+                        requiredShares,
+                        collectedShares: shares.length,
+                        shareIds: shares.map((share) => share.shareId),
+                        debugTrace,
+                    });
+                }
                 return reconstructed;
             }
         } else {
