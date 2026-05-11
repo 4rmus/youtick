@@ -50,6 +50,12 @@ describe('ipfs media helper', () => {
     expect(first).toBe('https://dweb.link/ipfs/QmPosterCid123456789012345678901234567890123456');
     expect(second).toBe(first);
     expect(resolveGatewayUrlMock).toHaveBeenCalledTimes(1);
+    expect(resolveGatewayUrlMock).toHaveBeenCalledWith('QmPosterCid123456789012345678901234567890123456', {
+      purpose: 'image',
+      timeout: 200,
+      range: undefined,
+      markUnhealthyOnFailure: false,
+    });
   });
 
   it('skips failed gateways when asking for the next fallback URL', async () => {
@@ -71,8 +77,6 @@ describe('ipfs media helper', () => {
     });
 
     expect(nextUrl).toBe('https://dweb.link/ipfs/QmPosterCid123456789012345678901234567890123456');
-    expect(markGatewayUnhealthyByUrlMock).toHaveBeenCalledWith(
-      'https://ipfs.io/ipfs/QmPosterCid123456789012345678901234567890123456',
-    );
+    expect(markGatewayUnhealthyByUrlMock).not.toHaveBeenCalled();
   });
 });

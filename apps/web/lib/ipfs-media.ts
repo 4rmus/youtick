@@ -182,6 +182,7 @@ export async function resolveIpfsMediaUrl(
         purpose,
         timeout: timeoutMs,
         range: purpose === 'video' ? { start: 0, end: 65_535 } : undefined,
+        markUnhealthyOnFailure: purpose !== 'image',
     })
         .then((winner) => {
             if (candidates.includes(winner)) {
@@ -245,7 +246,9 @@ export function rememberFailedIpfsMediaUrl(
 
     failed.add(url);
     failedUrlCache.set(cacheKey, failed);
-    markGatewayUnhealthyByUrl(url);
+    if (purpose !== 'image') {
+        markGatewayUnhealthyByUrl(url);
+    }
 
     if (selectedUrlCache.get(cacheKey) === url) {
         selectedUrlCache.delete(cacheKey);

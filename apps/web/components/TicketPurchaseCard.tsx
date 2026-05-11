@@ -255,7 +255,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
                 if (event) {
                     const parsed = parseTitleMetadata(event.title, tp.release_fallback);
-                    const media = await resolvePreferredMediaUrl(parsed.thumbnailUrl, parsed.manifestCid);
+                    const media = parsed.thumbnailUrl
+                        ?? await resolvePreferredMediaUrl(null, parsed.manifestCid);
 
                     setEventDetails({
                         price: yoctoToNear(BigInt(event.price)),

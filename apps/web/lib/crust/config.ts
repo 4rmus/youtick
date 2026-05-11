@@ -63,10 +63,10 @@ export const CRUST_CONSTANTS = {
 export const CRUST_GATEWAYS: GatewayConfig[] = [
   // Prioritize gateways that have been reliable for encrypted video reads.
   { name: 'ipfs-io', url: 'https://ipfs.io/ipfs', priority: 1, healthy: true, lastCheck: 0 },
+  { name: 'lighthouse', url: 'https://gateway.lighthouse.storage/ipfs', priority: 2, healthy: true, lastCheck: 0 },
   // Third-party gateways (CORS ✓)
-  { name: '4everland', url: 'https://4everland.io/ipfs', priority: 2, healthy: true, lastCheck: 0 },
-  { name: 'w3s', url: 'https://w3s.link/ipfs', priority: 3, healthy: true, lastCheck: 0 },
-  { name: 'lighthouse', url: 'https://gateway.lighthouse.storage/ipfs', priority: 4, healthy: true, lastCheck: 0 },
+  { name: '4everland', url: 'https://4everland.io/ipfs', priority: 3, healthy: true, lastCheck: 0 },
+  { name: 'w3s', url: 'https://w3s.link/ipfs', priority: 4, healthy: true, lastCheck: 0 },
   { name: 'dweb', url: 'https://dweb.link/ipfs', priority: 5, healthy: true, lastCheck: 0 },
   // Crust-operated gateways are excluded as they have TLS/CORS issues currently.
 ];

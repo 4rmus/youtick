@@ -1,8 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 
 const isDev = process.env.NODE_ENV === "development";
+const sentryEnabled = process.env.NEXT_PUBLIC_SENTRY_ENABLED === "true";
 
-if (process.env.NEXT_PUBLIC_SENTRY_DSN && !isDev) {
+if (sentryEnabled && process.env.NEXT_PUBLIC_SENTRY_DSN && !isDev) {
   Sentry.init({
     dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
     tracesSampleRate: isDev ? 1.0 : 0.1,
@@ -31,4 +32,6 @@ if (process.env.NEXT_PUBLIC_SENTRY_DSN && !isDev) {
   });
 }
 
-export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
+export const onRouterTransitionStart = sentryEnabled
+  ? Sentry.captureRouterTransitionStart
+  : () => {};

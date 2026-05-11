@@ -33,6 +33,14 @@ try {
       env: {
         ...process.env,
         NEXT_PUBLIC_DEPLOY_TARGET: 'web4',
+        NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE:
+          process.env.NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE ?? 'true',
+        NEXT_PUBLIC_STORAGE_API_URL:
+          process.env.NEXT_PUBLIC_STORAGE_API_URL ?? 'https://youtick-storage-api.araafatsum.workers.dev',
+        NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER:
+          process.env.NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER ?? 'true',
+        NEXT_PUBLIC_MEDIA_DELIVERY_URL:
+          process.env.NEXT_PUBLIC_MEDIA_DELIVERY_URL ?? 'https://youtick-media-delivery.araafatsum.workers.dev',
       },
       stdio: 'inherit',
     },
