@@ -17,6 +17,14 @@ export type StorageApiFileUploadResult = {
     size: number;
 };
 
+type StorageApiUploadKind = 'file' | 'directory' | 'pin';
+
+type StorageApiUploadIntent = {
+    token: string;
+    idempotencyKey: string;
+    expiresAt: string;
+};
+
 export type StorageApiPinStatusOutcome =
     | { status: 'skipped'; reason: 'disabled' | 'missing_url' }
     | {
@@ -42,6 +50,7 @@ export function isLighthousePrimaryUploadEnabled(): boolean {
 
 export async function uploadDirectoryWithStorageApi(
     files: Array<{ path: string; file: Blob }>,
+    accountId: string,
     options?: {
         onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void;
         timeout?: number;
@@ -58,6 +67,14 @@ export async function uploadDirectoryWithStorageApi(
 
     const formData = new FormData();
     const totalSize = files.reduce((sum, entry) => sum + entry.file.size, 0);
+    const intent = await createUploadIntent({
+        accountId,
+        uploadKind: 'directory',
+        fileName: 'directory',
+        sizeBytes: totalSize,
+        contentType: 'multipart/form-data',
+    });
+
     for (const entry of files) {
         formData.append('file', entry.file, entry.path.replace(/^\/+/, ''));
     }
@@ -125,6 +142,7 @@ export async function uploadDirectoryWithStorageApi(
         });
 
         xhr.open('POST', `${baseUrl}/uploads/directory`);
+        xhr.setRequestHeader('Authorization', `Bearer ${intent.token}`);
         xhr.send(formData);
     });
 }
@@ -132,6 +150,7 @@ export async function uploadDirectoryWithStorageApi(
 export async function uploadFileWithStorageApi(
     path: string,
     file: Blob,
+    accountId: string,
     options?: {
         onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void;
         timeout?: number;
@@ -147,6 +166,13 @@ export async function uploadFileWithStorageApi(
     }
 
     const normalizedPath = path.replace(/^\/+/, '');
+    const intent = await createUploadIntent({
+        accountId,
+        uploadKind: 'file',
+        fileName: normalizedPath,
+        sizeBytes: file.size,
+        contentType: file.type || 'application/octet-stream',
+    });
     const formData = new FormData();
     formData.append('file', file, normalizedPath);
 
@@ -207,6 +233,7 @@ export async function uploadFileWithStorageApi(
         });
 
         xhr.open('POST', `${baseUrl}/uploads/file`);
+        xhr.setRequestHeader('Authorization', `Bearer ${intent.token}`);
         xhr.send(formData);
     });
 }
@@ -214,6 +241,7 @@ export async function uploadFileWithStorageApi(
 export async function pinCidWithStorageApi(params: {
     cid: string;
     fileName?: string;
+    accountId?: string;
 }): Promise<StorageApiPinOutcome> {
     if (!FEATURE_FLAGS.enableLighthousePersistence) {
         return { status: 'skipped', reason: 'disabled' };
@@ -224,10 +252,25 @@ export async function pinCidWithStorageApi(params: {
         return { status: 'skipped', reason: 'missing_url' };
     }
 
+    if (!params.accountId) {
+        return { status: 'failed', cid: params.cid, reason: 'account_id_required' };
+    }
+
     try {
+        const intent = await createUploadIntent({
+            accountId: params.accountId,
+            uploadKind: 'pin',
+            fileName: params.fileName || params.cid,
+            sizeBytes: 1,
+            contentType: 'application/ipfs-cid',
+            cid: params.cid,
+        });
         const response = await fetch(`${baseUrl}/pins`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Authorization': `Bearer ${intent.token}`,
+                'Content-Type': 'application/json',
+            },
             body: JSON.stringify({
                 cid: params.cid,
                 ...(params.fileName ? { fileName: params.fileName } : {}),
@@ -260,7 +303,7 @@ export async function pinCidWithStorageApi(params: {
 }
 
 export async function getCidPinStatusFromStorageApi(cid: string): Promise<StorageApiPinStatusOutcome> {
-    if (!FEATURE_FLAGS.enableLighthousePersistence) {
+    if (!FEATURE_FLAGS.enableLighthousePersistence && !FEATURE_FLAGS.enableLighthousePrimaryUpload) {
         return { status: 'skipped', reason: 'disabled' };
     }
 
@@ -327,6 +370,60 @@ export async function getCidPinStatusFromStorageApi(cid: string): Promise<Storag
 function getStorageApiBaseUrl(): string | null {
     const value = APP_CONFIG.storageApiUrl.trim().replace(/\/+$/, '');
     return value || null;
+}
+
+async function createUploadIntent(params: {
+    accountId: string;
+    uploadKind: StorageApiUploadKind;
+    fileName: string;
+    sizeBytes: number;
+    contentType: string;
+    cid?: string;
+}): Promise<StorageApiUploadIntent> {
+    const baseUrl = getStorageApiBaseUrl();
+    if (!baseUrl) {
+        throw new Error('Storage API URL is missing');
+    }
+
+    const response = await fetch(`${baseUrl}/uploads/intent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            accountId: params.accountId,
+            uploadKind: params.uploadKind,
+            fileName: params.fileName,
+            sizeBytes: params.sizeBytes,
+            contentType: params.contentType,
+            ...(params.cid ? { cid: params.cid } : {}),
+        }),
+    });
+    const body = await readJson(response);
+
+    if (!response.ok) {
+        throw new Error(getErrorReason(body) || `Storage API upload intent returned HTTP ${response.status}`);
+    }
+
+    const proxy = body?.workerProxy;
+    if (!proxy || typeof proxy !== 'object' || Array.isArray(proxy)) {
+        throw new Error('Storage API upload intent returned no worker proxy details');
+    }
+
+    const intentToken = (proxy as Record<string, unknown>).intentToken;
+    const idempotencyKey = (proxy as Record<string, unknown>).idempotencyKey;
+    const expiresAt = (proxy as Record<string, unknown>).expiresAt;
+    if (
+        typeof intentToken !== 'string'
+        || typeof idempotencyKey !== 'string'
+        || typeof expiresAt !== 'string'
+    ) {
+        throw new Error('Storage API upload intent returned no upload token');
+    }
+
+    return {
+        token: intentToken,
+        idempotencyKey,
+        expiresAt,
+    };
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown> | null> {

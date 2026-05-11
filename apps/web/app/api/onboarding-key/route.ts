@@ -67,12 +67,11 @@ export async function GET(request: Request): Promise<NextResponse> {
         );
     }
 
-    // Turnstile verification (required when NEXT_PUBLIC_TURNSTILE_SITE_KEY is set)
+    // Turnstile verification (required when the server-side secret is set)
     const { searchParams } = new URL(request.url);
     const turnstileToken = searchParams.get('turnstileToken');
-    const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
-    if (turnstileSiteKey) {
+    if (process.env.TURNSTILE_SECRET_KEY) {
         if (!turnstileToken) {
             logRequest(ip, 'TURNSTILE_MISSING');
             onboardingKeyLimiter.rollback(ip);

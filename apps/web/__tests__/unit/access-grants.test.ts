@@ -87,7 +87,7 @@ describe('access-grants', () => {
         expect(sessionStorage.getItem('youtick:access-grant:bob.testnet:Play:video-1')).not.toBeNull();
     });
 
-    it('restores resource-bound play grant secrets after a redirect', async () => {
+    it('keeps resource-bound play grant secrets out of sessionStorage after a reload', async () => {
         process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
         process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';
 
@@ -99,12 +99,17 @@ describe('access-grants', () => {
         });
         persistSessionGrant(prepared.grant);
 
+        const raw = sessionStorage.getItem('youtick:access-grant:alice.testnet:Play:video-1');
+        expect(raw).not.toBeNull();
+        expect(JSON.parse(raw || '{}')).not.toHaveProperty('secretKey');
+        expect(getCachedSessionGrant('alice.testnet', 'Play', 'video-1')?.secretKey).toBe(prepared.grant.secretKey);
+
         vi.resetModules();
         const reloaded = await import('@/lib/access-grants');
         const restored = reloaded.getCachedSessionGrant('alice.testnet', 'Play', 'video-1');
 
-        expect(getCachedSessionGrant('alice.testnet', 'Play', 'video-1')?.secretKey).toBe(prepared.grant.secretKey);
-        expect(restored?.secretKey).toBe(prepared.grant.secretKey);
+        expect(restored).toBeNull();
+        expect(sessionStorage.getItem('youtick:access-grant:alice.testnet:Play:video-1')).toBeNull();
     });
 
     it('reuses a pending session grant request so only one wallet transaction is opened', async () => {

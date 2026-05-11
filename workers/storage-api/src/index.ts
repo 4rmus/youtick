@@ -6,9 +6,15 @@ export interface Env {
     LIGHTHOUSE_API_KEY?: string;
     ENABLE_LIGHTHOUSE_UPLOADS?: string;
     MAX_UPLOAD_BYTES?: string;
+    UPLOAD_INTENT_SECRET?: string;
+    UPLOAD_INTENT_TTL_SECONDS?: string;
+    UPLOAD_RATE_LIMIT_MAX?: string;
+    UPLOAD_RATE_LIMIT_WINDOW_SECONDS?: string;
+    UPLOAD_GUARD?: KVNamespace;
 }
 
 type JsonBody = Record<string, unknown>;
+type UploadKind = 'file' | 'directory' | 'pin';
 type UploadEntry = {
     cid?: string;
     Name?: string;
@@ -16,9 +22,23 @@ type UploadEntry = {
     Size?: string | number;
 };
 type UploadIntentRequest = {
+    accountId?: string;
     fileName?: string;
     sizeBytes?: number;
     contentType?: string;
+    uploadKind?: UploadKind;
+    cid?: string;
+};
+type SignedUploadIntent = {
+    v: 1;
+    accountId: string;
+    fileName: string;
+    sizeBytes: number;
+    contentType: string;
+    uploadKind: UploadKind;
+    exp: number;
+    idempotencyKey: string;
+    cid?: string;
 };
 type UploadableFile = Blob & { name: string; size: number };
 type LighthouseUploadData = {
@@ -33,11 +53,14 @@ type LighthouseUploadData = {
     txHash?: string;
 };
 
-const DEFAULT_ALLOWED_ORIGINS = 'http://localhost:3000,http://localhost:3001,https://youtick.net,https://www.youtick.net';
+const DEFAULT_ALLOWED_ORIGINS = 'https://youtick.net,https://www.youtick.net';
 const DEFAULT_STORAGE_PROVIDER = 'lighthouse';
 const DEFAULT_LIGHTHOUSE_API_BASE = 'https://api.lighthouse.storage';
 const DEFAULT_LIGHTHOUSE_UPLOAD_BASE = 'https://upload.lighthouse.storage';
 const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+const DEFAULT_UPLOAD_INTENT_TTL_SECONDS = 15 * 60;
+const DEFAULT_UPLOAD_RATE_LIMIT_MAX = 1000;
+const DEFAULT_UPLOAD_RATE_LIMIT_WINDOW_SECONDS = 60 * 60;
 const RECOMMENDED_PROXY_PART_BYTES = 4 * 1024 * 1024;
 const CID_PATTERN = /^(Qm[1-9A-HJ-NP-Za-km-z]{44,}|ba[a-z2-7]{57,})/;
 
@@ -132,6 +155,7 @@ function getProviderHealth(env: Env): JsonBody {
         ready: true,
         apiBase: getLighthouseApiBase(env),
         uploadsEnabled: areLighthouseUploadsEnabled(env),
+        uploadGuardReady: isUploadGuardReady(env),
         uploadBase: getLighthouseUploadBase(env),
         maxUploadBytes: getMaxUploadBytes(env),
     };
@@ -157,6 +181,20 @@ async function handlePinRequest(request: Request, env: Env): Promise<Response> {
         return jsonResponse(request, env, { error: 'invalid_cid' }, 400);
     }
 
+    const intent = await requireUploadIntent(request, env, 'pin');
+    if (!intent.ok) {
+        return jsonResponse(request, env, intent.body, intent.status);
+    }
+
+    if (intent.value.cid !== cid) {
+        return jsonResponse(request, env, { error: 'upload_intent_mismatch' }, 403);
+    }
+
+    const cached = await readCachedUploadResult(env, intent.value);
+    if (cached) {
+        return jsonResponse(request, env, cached);
+    }
+
     const upstream = await fetch(`${getLighthouseApiBase(env)}/api/lighthouse/pin`, {
         method: 'POST',
         headers: {
@@ -180,12 +218,15 @@ async function handlePinRequest(request: Request, env: Env): Promise<Response> {
         }, 502);
     }
 
-    return jsonResponse(request, env, {
+    const responseBody = {
         provider: 'lighthouse',
         cid,
         pinned: true,
         upstream: upstreamBody,
-    });
+    };
+    await cacheUploadResult(env, intent.value, responseBody);
+
+    return jsonResponse(request, env, responseBody);
 }
 
 async function handleUploadIntentRequest(request: Request, env: Env): Promise<Response> {
@@ -203,12 +244,41 @@ async function handleUploadIntentRequest(request: Request, env: Env): Promise<Re
     const recommendedPartBytes = Math.min(maxUploadBytes, RECOMMENDED_PROXY_PART_BYTES);
     const uploadsEnabled = areLighthouseUploadsEnabled(env);
     const providerReady = getStorageProvider(env) === 'lighthouse' && Boolean(getLighthouseApiKey(env));
+    const guardReady = isUploadGuardReady(env);
+
+    if (uploadsEnabled && providerReady && !guardReady) {
+        return jsonResponse(request, env, {
+            error: 'upload_guard_not_configured',
+            reason: getUploadGuardMissingReason(env),
+        }, 503);
+    }
+
+    const rateLimit = uploadsEnabled && providerReady
+        ? await checkUploadIntentRateLimit(request, env, parsed.value.accountId)
+        : { ok: true as const };
+    if (!rateLimit.ok) {
+        return jsonResponse(request, env, {
+            error: 'rate_limited',
+            retryAfterSeconds: rateLimit.retryAfterSeconds,
+        }, 429);
+    }
+
+    const intent = uploadsEnabled && providerReady
+        ? await createUploadIntent(parsed.value, env)
+        : null;
+    const uploadUrl = parsed.value.uploadKind === 'pin'
+        ? '/pins'
+        : parsed.value.uploadKind === 'directory'
+            ? '/uploads/directory'
+            : '/uploads/file';
 
     return jsonResponse(request, env, {
         provider: 'lighthouse',
+        accountId: parsed.value.accountId,
         fileName: parsed.value.fileName,
         sizeBytes: parsed.value.sizeBytes,
         contentType: parsed.value.contentType,
+        uploadKind: parsed.value.uploadKind,
         uploadsEnabled,
         providerReady,
         directUpload: {
@@ -216,11 +286,16 @@ async function handleUploadIntentRequest(request: Request, env: Env): Promise<Re
             reason: 'scoped_direct_upload_token_unavailable',
         },
         workerProxy: {
-            available: uploadsEnabled && providerReady,
-            uploadUrl: '/uploads/file',
+            available: uploadsEnabled && providerReady && guardReady,
+            uploadUrl,
             maxPartBytes: maxUploadBytes,
             recommendedPartBytes,
             requiresChunking: parsed.value.sizeBytes > maxUploadBytes,
+            ...(intent ? {
+                intentToken: intent.token,
+                idempotencyKey: intent.value.idempotencyKey,
+                expiresAt: new Date(intent.value.exp * 1000).toISOString(),
+            } : {}),
         },
     });
 }
@@ -264,6 +339,20 @@ async function handleFileUploadRequest(request: Request, env: Env): Promise<Resp
         return jsonResponse(request, env, { error: 'invalid_upload_path' }, 400);
     }
 
+    const intent = await requireUploadIntent(request, env, 'file');
+    if (!intent.ok) {
+        return jsonResponse(request, env, intent.body, intent.status);
+    }
+
+    if (intent.value.fileName !== path || intent.value.sizeBytes !== value.size) {
+        return jsonResponse(request, env, { error: 'upload_intent_mismatch' }, 403);
+    }
+
+    const cached = await readCachedUploadResult(env, intent.value);
+    if (cached) {
+        return jsonResponse(request, env, cached);
+    }
+
     const upstreamForm = new FormData();
     upstreamForm.append('file', value, getUploadFileName(path));
 
@@ -296,13 +385,16 @@ async function handleFileUploadRequest(request: Request, env: Env): Promise<Resp
         }, 502);
     }
 
-    return jsonResponse(request, env, {
+    const responseBody = {
         provider: 'lighthouse',
         cid,
         path,
         size: value.size,
         upstream: upstreamBody,
-    });
+    };
+    await cacheUploadResult(env, intent.value, responseBody);
+
+    return jsonResponse(request, env, responseBody);
 }
 
 async function handleDirectoryUploadRequest(request: Request, env: Env): Promise<Response> {
@@ -357,6 +449,20 @@ async function handleDirectoryUploadRequest(request: Request, env: Env): Promise
         return jsonResponse(request, env, { error: 'missing_files' }, 400);
     }
 
+    const intent = await requireUploadIntent(request, env, 'directory');
+    if (!intent.ok) {
+        return jsonResponse(request, env, intent.body, intent.status);
+    }
+
+    if (intent.value.sizeBytes !== totalSize) {
+        return jsonResponse(request, env, { error: 'upload_intent_mismatch' }, 403);
+    }
+
+    const cached = await readCachedUploadResult(env, intent.value);
+    if (cached) {
+        return jsonResponse(request, env, cached);
+    }
+
     const upstream = await fetch(`${getLighthouseUploadBase(env)}/api/v0/add?wrap-with-directory=true&cid-version=1`, {
         method: 'POST',
         headers: {
@@ -389,7 +495,7 @@ async function handleDirectoryUploadRequest(request: Request, env: Env): Promise
         }, 502);
     }
 
-    return jsonResponse(request, env, {
+    const responseBody = {
         provider: 'lighthouse',
         cid: rootCid,
         size: totalSize,
@@ -399,7 +505,10 @@ async function handleDirectoryUploadRequest(request: Request, env: Env): Promise
             size: Number(entry.Size) || 0,
         })),
         upstream: upstreamBody,
-    });
+    };
+    await cacheUploadResult(env, intent.value, responseBody);
+
+    return jsonResponse(request, env, responseBody);
 }
 
 async function handlePinStatusRequest(request: Request, env: Env, rawCid: string): Promise<Response> {
@@ -520,9 +629,49 @@ function areLighthouseUploadsEnabled(env: Env): boolean {
     return env.ENABLE_LIGHTHOUSE_UPLOADS === 'true';
 }
 
+function isUploadGuardReady(env: Env): boolean {
+    return Boolean(getUploadIntentSecret(env) && env.UPLOAD_GUARD);
+}
+
+function getUploadGuardMissingReason(env: Env): string {
+    if (!getUploadIntentSecret(env)) {
+        return 'upload_intent_secret_missing';
+    }
+
+    if (!env.UPLOAD_GUARD) {
+        return 'upload_guard_kv_missing';
+    }
+
+    return 'upload_guard_ready';
+}
+
+function getUploadIntentSecret(env: Env): string | null {
+    const raw = env.UPLOAD_INTENT_SECRET?.trim();
+    if (!raw) {
+        return null;
+    }
+
+    return raw.replace(/^(['"])(.*)\1$/, '$2');
+}
+
 function getMaxUploadBytes(env: Env): number {
     const parsed = Number.parseInt(env.MAX_UPLOAD_BYTES || '', 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_UPLOAD_BYTES;
+}
+
+function getUploadIntentTtlSeconds(env: Env): number {
+    const parsed = Number.parseInt(env.UPLOAD_INTENT_TTL_SECONDS || '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_UPLOAD_INTENT_TTL_SECONDS;
+}
+
+function getUploadRateLimitMax(env: Env): number {
+    const parsed = Number.parseInt(env.UPLOAD_RATE_LIMIT_MAX || '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_UPLOAD_RATE_LIMIT_MAX;
+}
+
+function getUploadRateLimitWindowSeconds(env: Env): number {
+    const parsed = Number.parseInt(env.UPLOAD_RATE_LIMIT_WINDOW_SECONDS || '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_UPLOAD_RATE_LIMIT_WINDOW_SECONDS;
 }
 
 function isValidIpfsCid(value: string): boolean {
@@ -542,6 +691,16 @@ async function readJsonBody(request: Request): Promise<{ ok: true; value: JsonBo
 }
 
 function parseUploadIntentRequest(value: JsonBody): { ok: true; value: Required<UploadIntentRequest> } | { ok: false; error: string } {
+    const accountId = typeof value.accountId === 'string' ? value.accountId.trim() : '';
+    if (!isValidAccountId(accountId)) {
+        return { ok: false, error: 'invalid_account_id' };
+    }
+
+    const uploadKind = parseUploadKind(value.uploadKind);
+    if (!uploadKind) {
+        return { ok: false, error: 'invalid_upload_kind' };
+    }
+
     const fileName = typeof value.fileName === 'string' ? sanitizeUploadPath(value.fileName) : '';
     if (!fileName) {
         return { ok: false, error: 'invalid_file_name' };
@@ -555,15 +714,269 @@ function parseUploadIntentRequest(value: JsonBody): { ok: true; value: Required<
     const contentType = typeof value.contentType === 'string' && value.contentType.trim()
         ? value.contentType.trim()
         : 'application/octet-stream';
+    const cid = typeof value.cid === 'string' ? value.cid.trim() : '';
+    if (uploadKind === 'pin' && !isValidIpfsCid(cid)) {
+        return { ok: false, error: 'invalid_cid' };
+    }
 
     return {
         ok: true,
         value: {
+            accountId,
             fileName,
             sizeBytes,
             contentType,
+            uploadKind,
+            cid,
         },
     };
+}
+
+function isValidAccountId(value: string): boolean {
+    return value.length >= 2
+        && value.length <= 64
+        && /^[a-z0-9._-]+$/i.test(value);
+}
+
+function parseUploadKind(value: unknown): UploadKind | null {
+    if (value === 'file' || value === 'directory' || value === 'pin') {
+        return value;
+    }
+
+    return null;
+}
+
+async function createUploadIntent(
+    request: Required<UploadIntentRequest>,
+    env: Env,
+): Promise<{ token: string; value: SignedUploadIntent }> {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const value: SignedUploadIntent = {
+        v: 1,
+        accountId: request.accountId,
+        fileName: request.fileName,
+        sizeBytes: request.sizeBytes,
+        contentType: request.contentType,
+        uploadKind: request.uploadKind,
+        exp: nowSeconds + getUploadIntentTtlSeconds(env),
+        idempotencyKey: await sha256Hex([
+            request.accountId,
+            request.uploadKind,
+            request.fileName,
+            String(request.sizeBytes),
+            request.contentType,
+            request.cid,
+            String(nowSeconds),
+            crypto.randomUUID(),
+        ].join('|')),
+        ...(request.cid ? { cid: request.cid } : {}),
+    };
+
+    return {
+        token: await signUploadIntent(value, env),
+        value,
+    };
+}
+
+async function requireUploadIntent(
+    request: Request,
+    env: Env,
+    uploadKind: UploadKind,
+): Promise<
+    | { ok: true; value: SignedUploadIntent }
+    | { ok: false; status: number; body: JsonBody }
+> {
+    const secret = getUploadIntentSecret(env);
+    if (!secret || !env.UPLOAD_GUARD) {
+        return {
+            ok: false,
+            status: 503,
+            body: {
+                error: 'upload_guard_not_configured',
+                reason: getUploadGuardMissingReason(env),
+            },
+        };
+    }
+
+    const auth = request.headers.get('Authorization') || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : '';
+    if (!token) {
+        return { ok: false, status: 401, body: { error: 'upload_intent_required' } };
+    }
+
+    const verified = await verifyUploadIntent(token, env);
+    if (!verified.ok) {
+        return { ok: false, status: 401, body: { error: verified.error } };
+    }
+
+    if (verified.value.uploadKind !== uploadKind) {
+        return { ok: false, status: 403, body: { error: 'upload_intent_mismatch' } };
+    }
+
+    if (verified.value.exp < Math.floor(Date.now() / 1000)) {
+        return { ok: false, status: 401, body: { error: 'upload_intent_expired' } };
+    }
+
+    return { ok: true, value: verified.value };
+}
+
+async function signUploadIntent(value: SignedUploadIntent, env: Env): Promise<string> {
+    const payload = base64UrlEncodeText(JSON.stringify(value));
+    const signature = await signText(payload, getUploadIntentSecret(env) || '');
+    return `${payload}.${signature}`;
+}
+
+async function verifyUploadIntent(token: string, env: Env): Promise<
+    | { ok: true; value: SignedUploadIntent }
+    | { ok: false; error: string }
+> {
+    const [payload, signature, extra] = token.split('.');
+    if (!payload || !signature || extra !== undefined) {
+        return { ok: false, error: 'invalid_upload_intent' };
+    }
+
+    const expectedSignature = await signText(payload, getUploadIntentSecret(env) || '');
+    if (!constantTimeEqual(signature, expectedSignature)) {
+        return { ok: false, error: 'invalid_upload_intent_signature' };
+    }
+
+    try {
+        const parsed = JSON.parse(base64UrlDecodeText(payload)) as SignedUploadIntent;
+        if (!isSignedUploadIntent(parsed)) {
+            return { ok: false, error: 'invalid_upload_intent_payload' };
+        }
+
+        return { ok: true, value: parsed };
+    } catch {
+        return { ok: false, error: 'invalid_upload_intent_payload' };
+    }
+}
+
+function isSignedUploadIntent(value: unknown): value is SignedUploadIntent {
+    const intent = value as Partial<SignedUploadIntent>;
+    return Boolean(value)
+        && typeof value === 'object'
+        && intent.v === 1
+        && isValidAccountId(intent.accountId || '')
+        && typeof intent.fileName === 'string'
+        && typeof intent.sizeBytes === 'number'
+        && Number.isFinite(intent.sizeBytes)
+        && intent.sizeBytes > 0
+        && typeof intent.contentType === 'string'
+        && parseUploadKind(intent.uploadKind) !== null
+        && typeof intent.exp === 'number'
+        && typeof intent.idempotencyKey === 'string'
+        && (intent.cid === undefined || isValidIpfsCid(intent.cid));
+}
+
+async function checkUploadIntentRateLimit(
+    request: Request,
+    env: Env,
+    accountId: string,
+): Promise<{ ok: true } | { ok: false; retryAfterSeconds: number }> {
+    const kv = env.UPLOAD_GUARD;
+    if (!kv) {
+        return { ok: false, retryAfterSeconds: getUploadRateLimitWindowSeconds(env) };
+    }
+
+    const windowSeconds = getUploadRateLimitWindowSeconds(env);
+    const bucket = Math.floor(Date.now() / 1000 / windowSeconds);
+    const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+    const key = `rate:${accountId}:${ip}:${bucket}`;
+    const current = Number.parseInt(await kv.get(key) || '0', 10) || 0;
+    const max = getUploadRateLimitMax(env);
+    if (current >= max) {
+        return { ok: false, retryAfterSeconds: windowSeconds };
+    }
+
+    await kv.put(key, String(current + 1), { expirationTtl: windowSeconds * 2 });
+    return { ok: true };
+}
+
+async function readCachedUploadResult(env: Env, intent: SignedUploadIntent): Promise<JsonBody | null> {
+    const raw = await env.UPLOAD_GUARD?.get(getUploadResultCacheKey(intent));
+    if (!raw) {
+        return null;
+    }
+
+    try {
+        const value = JSON.parse(raw);
+        return value && typeof value === 'object' && !Array.isArray(value)
+            ? value as JsonBody
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+async function cacheUploadResult(env: Env, intent: SignedUploadIntent, body: JsonBody): Promise<void> {
+    await env.UPLOAD_GUARD?.put(
+        getUploadResultCacheKey(intent),
+        JSON.stringify(body),
+        { expirationTtl: 24 * 60 * 60 },
+    );
+}
+
+function getUploadResultCacheKey(intent: SignedUploadIntent): string {
+    return `upload-result:${intent.idempotencyKey}`;
+}
+
+async function signText(value: string, secret: string): Promise<string> {
+    const key = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(secret),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign'],
+    );
+    const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value));
+    return base64UrlEncode(new Uint8Array(signature));
+}
+
+async function sha256Hex(value: string): Promise<string> {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function base64UrlEncodeText(value: string): string {
+    return base64UrlEncode(new TextEncoder().encode(value));
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+    let binary = '';
+    for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+    }
+
+    return btoa(binary)
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/g, '');
+}
+
+function base64UrlDecodeText(value: string): string {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+
+    return new TextDecoder().decode(bytes);
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+    if (a.length !== b.length) {
+        return false;
+    }
+
+    let diff = 0;
+    for (let index = 0; index < a.length; index += 1) {
+        diff |= a.charCodeAt(index) ^ b.charCodeAt(index);
+    }
+
+    return diff === 0;
 }
 
 async function readUpstreamJson(response: Response): Promise<unknown> {

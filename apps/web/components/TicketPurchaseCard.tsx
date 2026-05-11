@@ -64,6 +64,22 @@ const NEAR_USDT_CONTRACT_ID = 'usdt.tether-token.near';
 const NEAR_USDC_ASSET_ID = `nep141:${NEAR_USDC_CONTRACT_ID}`;
 const TICKET_CONFIRMATION_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 12_000, 16_000];
 
+function useDisabledEvmPayment(): ReturnType<typeof useEvmPayment> {
+    return {
+        connect: () => undefined,
+        sendToken: async () => undefined,
+        isConnected: false,
+        evmAddress: undefined,
+        chainId: undefined,
+        isSending: false,
+        disconnect: () => undefined,
+    };
+}
+
+const getEvmPayment = FEATURE_FLAGS.enableCrossChainCheckout
+    ? useEvmPayment
+    : useDisabledEvmPayment;
+
 function wait(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -90,7 +106,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         isConnected: isEvmConnected,
         evmAddress,
         isSending: isEvmSending,
-    } = useEvmPayment({
+    } = getEvmPayment({
         onSuccess: (txHash) => {
             console.log('[EVM] Transfer confirmed:', txHash);
             // Polling is already active from initiateSwap — the swap will be detected
@@ -874,7 +890,18 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         );
     }
 
-    if (!eventDetails) return null;
+    const visibleError = error || swapError;
+
+    if (!eventDetails) {
+        if (!visibleError) return null;
+
+        return (
+            <div className={`flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg max-w-sm mx-auto ${className}`}>
+                <AlertCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
+                <p className="text-sm text-red-400">{visibleError}</p>
+            </div>
+        );
+    }
 
     const priceNear = parseFloat(eventDetails.price) || 0;
     const hasUsdcPrice = !!eventDetails.priceUsdc && eventDetails.priceUsdc > 0;
@@ -1121,10 +1148,10 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 )}
 
                 {/* Error Message */}
-                {(error || swapError) && (
+                {visibleError && (
                     <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
                         <AlertCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
-                        <p className="text-sm text-red-400">{error || swapError}</p>
+                        <p className="text-sm text-red-400">{visibleError}</p>
                     </div>
                 )}
 

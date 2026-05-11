@@ -1,7 +1,7 @@
 import { uploadDirectoryToCrust } from '../crust/client';
 import type { UploadedAsset } from '../crust/cid-collector';
 import { APP_CONFIG, FEATURE_FLAGS } from '../constants';
-import { uploadDirectoryWithStorageApi } from './storage-api';
+import { getCidPinStatusFromStorageApi, uploadDirectoryWithStorageApi } from './storage-api';
 import {
   placeStorageOrders as placeCrustStorageOrders,
   verifyStorageOrders as verifyCrustStorageOrders,
@@ -54,7 +54,7 @@ const lighthouseStorageProvider: StorageProvider = {
   id: 'lighthouse',
   async uploadDirectory(files, _accountId, options) {
     try {
-      const result = await uploadDirectoryWithStorageApi(files, options);
+      const result = await uploadDirectoryWithStorageApi(files, _accountId, options);
       return { ...result, provider: 'lighthouse' };
     } catch (error) {
       if (!FEATURE_FLAGS.enableCrustUploadFallback) {
@@ -69,18 +69,32 @@ const lighthouseStorageProvider: StorageProvider = {
     }
   },
   async placeStorageOrders(assets) {
+    const results = assets.map((asset) => ({
+      requestId: '',
+      status: 'queued' as const,
+      cid: asset.cid,
+      createdAt: Date.now(),
+    }));
+
     return {
       total: assets.length,
       succeeded: assets.length,
       failed: 0,
-      results: [],
+      results,
     };
   },
-  async verifyStorageOrders() {
+  async verifyStorageOrders(results) {
+    const statuses = await Promise.all(results.map(async (result) => {
+      const status = await getCidPinStatusFromStorageApi(result.cid);
+      if (status.status === 'found') return 'verified';
+      if (status.status === 'missing' || status.status === 'failed' || status.status === 'skipped') return 'failed';
+      return 'pending';
+    }));
+
     return {
-      verified: 0,
-      pending: 0,
-      failed: 0,
+      verified: statuses.filter((status) => status === 'verified').length,
+      pending: statuses.filter((status) => status === 'pending').length,
+      failed: statuses.filter((status) => status === 'failed').length,
     };
   },
 };

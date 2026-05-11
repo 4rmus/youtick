@@ -90,6 +90,27 @@ describe('media-delivery', () => {
         expect(waitUntil).toHaveBeenCalledOnce();
     });
 
+    it('uses the Lighthouse gateway first by default', async () => {
+        const fetchMock = vi.fn(async () => new Response('lighthouse-manifest', {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request('https://media.youtick.net/ipfs/bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja/manifest.json'),
+            createEnv({ CRUST_READ_ENDPOINT: undefined, IPFS_GATEWAY_BASES: undefined }),
+            { waitUntil } as unknown as ExecutionContext,
+        );
+
+        expect(response.status).toBe(200);
+        expect(fetchMock).toHaveBeenCalledWith(
+            'https://gateway.lighthouse.storage/ipfs/bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja/manifest.json',
+            expect.objectContaining({ method: 'GET' }),
+        );
+    });
+
     it('uses the Crust read API before public gateways when configured', async () => {
         const fetchMock = vi.fn(async () => new Response('fresh-manifest', {
             status: 200,
@@ -253,5 +274,20 @@ describe('media-delivery', () => {
         expect(response.status).toBe(204);
         expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:3000');
         expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Range');
+    });
+
+    it('does not allow localhost from production defaults', async () => {
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request('https://media.youtick.net/ipfs/bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja/manifest.json', {
+                method: 'OPTIONS',
+                headers: { Origin: 'http://localhost:3000' },
+            }),
+            createEnv({ ALLOWED_ORIGINS: undefined }),
+            { waitUntil } as unknown as ExecutionContext,
+        );
+
+        expect(response.status).toBe(204);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
     });
 });

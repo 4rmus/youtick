@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getAllowedOrigins, getWorkerReadiness, type Env } from '../src/index';
+import worker, { getAllowedOrigins, getWorkerReadiness, type Env } from '../src/index';
 
 type TestEnv = Partial<Env>;
 
@@ -38,6 +38,23 @@ describe('getAllowedOrigins', () => {
     it('drops empty entries from trailing commas', () => {
         const env = baseEnv({ ALLOWED_ORIGINS: 'https://youtick.net,,' });
         expect(getAllowedOrigins(env).size).toBe(1);
+    });
+
+    it('does not allow localhost on mainnet even if it is configured', async () => {
+        const env = baseEnv({
+            ALLOWED_ORIGINS: 'https://youtick.net,http://localhost:3000',
+            NEAR_NETWORK: 'mainnet',
+        });
+        const response = await worker.fetch(
+            new Request('https://kms.youtick.net/retrieve', {
+                method: 'OPTIONS',
+                headers: { Origin: 'http://localhost:3000' },
+            }),
+            env,
+        );
+
+        expect(response.status).toBe(204);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
     });
 });
 

@@ -151,6 +151,36 @@ describe('KMS retrieve', () => {
         });
     });
 
+    it('returns 400 for invalid JSON request bodies', async () => {
+        const env = makeEnv();
+        await seedAuthToken(env, 'store-token', 'store');
+        await seedAuthToken(env, 'retrieve-token', 'retrieve');
+
+        const cases = [
+            { path: '/auth/challenge', token: null },
+            { path: '/auth/verify', token: null },
+            { path: '/store', token: 'store-token' },
+            { path: '/retrieve', token: 'retrieve-token' },
+        ];
+
+        for (const testCase of cases) {
+            const response = await worker.fetch(new Request(`https://kms.test${testCase.path}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(testCase.token ? { Authorization: `Bearer ${testCase.token}` } : {}),
+                },
+                body: '{',
+            }), env);
+
+            expect(response.status).toBe(400);
+            await expect(response.json()).resolves.toEqual({
+                ok: false,
+                error: 'Invalid JSON',
+            });
+        }
+    });
+
     it('denies the recorded KMS owner when the event is banned', async () => {
         const env = makeEnv();
         await seedAuthToken(env, 'store-token', 'store');

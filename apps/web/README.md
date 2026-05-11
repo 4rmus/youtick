@@ -2,7 +2,7 @@
 
 Next.js frontend for the YouTick video platform.
 
-> Aktif akis: browser tarafinda sifreleme, KMS key retrieval, Crust/IPFS delivery, NEAR ticket sahipligi.
+> Aktif akis: browser tarafinda sifreleme, KMS key retrieval, Lighthouse/IPFS delivery, NEAR ticket sahipligi.
 
 ## Documentation
 
@@ -49,7 +49,7 @@ ONBOARDING_KEY=...
 ONBOARDING_KEYS=...
 ```
 
-Trial olusturma icin birinci yol artik browser-side onboarding key akisidir. Server-side relayer akisi kaldırılmıştır (410 Gone). Onboarding key, `/api/onboarding-key` endpoint'inden alınır ve `sessionStorage`'da geçici olarak tutulur.
+Trial olusturma icin birinci yol artik browser-side onboarding key akisidir. Server-side relayer akisi kaldırılmıştır (410 Gone). Onboarding key, `/api/onboarding-key` endpoint'inden alınır ve `sessionStorage`'da geçici olarak tutulur. Bu anahtar kullaniciya ait özel anahtar degildir; sinirli bir onboarding yetkisidir. Production ortaminda rate limit ve `TURNSTILE_SECRET_KEY` ile challenge dogrulamasi acik tutulmali, key rotasyonu duzenli yapilmalidir.
 
 ## Project Shape
 
@@ -83,7 +83,7 @@ lib/
 | Video encryption | Browser AES-CTR |
 | Key custody | Shamir shares across multi-operator KMS workers |
 | Playback auth | Access-control grant + operator registry |
-| IPFS upload | Crust |
+| IPFS upload | Lighthouse via Storage API; Crust fallback is opt-in |
 | Playback | Share reconstruction + gateway failover + browser decrypt |
 | Publish auth | Upload session |
 | Ticket purchase | On-chain NEAR call |

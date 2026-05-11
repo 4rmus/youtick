@@ -2,14 +2,14 @@
 
 > Public-alpha, hybrid decentralized video platform on NEAR with browser-side encryption, KMS-backed key custody and IPFS delivery
 
-YouTick is an open-source VOD platform where creators upload encrypted videos to IPFS and sell access through NFT tickets. The active architecture is hybrid decentralized: NEAR stores ownership and access rules, the browser encrypts media, KMS workers custody threshold key shares on Cloudflare/KV, and Crust is the primary IPFS persistence provider.
+YouTick is an open-source VOD platform where creators upload encrypted videos to IPFS and sell access through NFT tickets. The active architecture is hybrid decentralized: NEAR stores ownership and access rules, the browser encrypts media, KMS workers custody threshold key shares on Cloudflare/KV, and Lighthouse is the primary write provider behind the Storage API Worker. Crust remains for legacy compatibility and opt-in diagnostics.
 
 ![NEAR Protocol](https://img.shields.io/badge/Blockchain-NEAR%20Protocol-00C1DE?style=flat&logo=near&logoColor=white)
 ![Rust](https://img.shields.io/badge/Contract-Rust-DEA584?style=flat&logo=rust&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Frontend-Next.js%2016-000000?style=flat&logo=next.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/Language-TypeScript%205-3178C6?style=flat&logo=typescript&logoColor=white)
 ![KMS](https://img.shields.io/badge/Encryption-Edge%20KMS-0EA5E9?style=flat)
-![IPFS](https://img.shields.io/badge/Storage-IPFS%20%2B%20Crust-65C2CB?style=flat&logo=ipfs&logoColor=white)
+![IPFS](https://img.shields.io/badge/Storage-IPFS%20%2B%20Lighthouse-65C2CB?style=flat&logo=ipfs&logoColor=white)
 
 ---
 
@@ -21,7 +21,7 @@ YouTick is an open-source VOD platform where creators upload encrypted videos to
 | 98% Creator Payout | Gelirin buyuk kismi creator'a gider |
 | Browser Encryption | Medya tarayicida sifrelenir |
 | Threshold Key Custody | Anahtarlar parcalanarak (SSS) birden fazla KMS operatorunde tutulur |
-| Crust/IPFS Delivery | Sifreli medya birden fazla gateway ile okunur |
+| Lighthouse/IPFS Delivery | Sifreli medya Storage API ve birden fazla gateway ile okunur |
 | Gift Links | Paylasilabilir tek kullanimlik linkler |
 | Trial Accounts | Onboarding key ile dusuk surtunmeli baslangic |
 | Cross-Chain Checkout | Deneysel 1Click + MetaMask yolu; sadece `NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true` iken acilir |
@@ -33,7 +33,7 @@ YouTick is an open-source VOD platform where creators upload encrypted videos to
 ```text
 Browser App
   -> encrypts media
-  -> uploads to Crust/IPFS
+  -> uploads to Lighthouse/IPFS through Storage API
   -> splits/reconstructs keys via multiple KMS operators
   -> reads/writes ownership on NEAR
 ```
@@ -42,6 +42,8 @@ Temel bilesenler:
 
 - `apps/web`
 - `workers/youtick-kms`
+- `workers/storage-api`
+- `workers/media-delivery`
 - `contracts/nft-ticket`
 
 Not: kontratta eski uyumluluk alanlari gorulebilir, fakat aktif yeni akis KMS tabanlidir.
@@ -75,6 +77,9 @@ KMS endpointleri env ile verilmez ve gercek operator config'i git'e konmaz.
 Web app aktif operatorleri registry kontratindan okur; registry okunamazsa KMS
 akisi fail-closed davranir, sabit veya eski endpoint'e dusmez.
 Cross-chain checkout varsayilan olarak kapalidir; `false`, bos veya tanimsiz env bu yolu acmaz.
+Upload akisi icin `NEXT_PUBLIC_STORAGE_API_URL` bir Storage API Worker'a
+bakmali ve worker tarafinda Lighthouse secret'lari ile upload guard hazir
+olmalidir. Sadece UI veya wallet akisini deneyeceksen bu adimi erteleyebilirsin.
 
 ---
 
@@ -94,7 +99,7 @@ Cross-chain checkout varsayilan olarak kapalidir; `false`, bos veya tanimsiz env
 
 ## Status
 
-Uygulama kaynak kod seviyesinde aktif KMS + Crust + NEAR mimarisine gore
+Uygulama kaynak kod seviyesinde aktif KMS + Lighthouse/IPFS + NEAR mimarisine gore
 hazirlanmistir. Canli mainnet durumu public alpha seviyesindedir; production
 ready veya tam merkeziyetsiz olarak sunulmadan once canli `upload -> purchase -> watch`
 smoke testleri ve kalan operasyonel kontroller tamamlanmalidir.

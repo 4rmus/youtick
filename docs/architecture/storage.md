@@ -44,13 +44,12 @@ The upload can include:
 - init segments and media segments
 - thumbnail and poster assets
 
-These delivery assets are uploaded as one IPFS directory bundle. Today the
-active provider is still Crust, with Lighthouse kept as a planned persistence
-pilot rather than a replacement for KMS. The event points at
-`rootCid/manifest.json`, while the manifest refers to relative asset paths such
-as `init.mp4` and `segments/000000.m4s`. Persistent storage is ordered for the
-root CID instead of every individual segment. Playback reads through multiple
-gateway options.
+These delivery assets are uploaded to IPFS through the active storage provider.
+Today the primary write path is Lighthouse behind `workers/storage-api`; Crust
+is kept for legacy compatibility and explicit fallback diagnostics. The event
+points at `rootCid/manifest.json` or a Lighthouse manifest CID, while the
+manifest refers to relative asset paths such as `init.mp4` and
+`segments/000000.m4s`. Playback reads through multiple gateway options.
 
 ### 3. Key Share Storage
 
@@ -107,8 +106,8 @@ The latest implementation also stops waiting once the threshold is reached.
 
 Media delivery still does not depend on a single IPFS gateway:
 
-- Crust endpoints are tried first
-- Lighthouse is currently a read fallback and planned persistence pilot
+- new writes use Lighthouse through the Storage API Worker
+- Crust remains a legacy/read compatibility and opt-in fallback path
 - public IPFS gateways remain available as fallback
 - range requests are used when supported
 - full-download fallback still exists for degraded cases
@@ -120,16 +119,16 @@ Worker handles encrypted manifest/segment routing, Range forwarding, edge cache
 headers and gateway fallback. Neither Worker sees decrypted video or KMS key
 shares.
 
-`workers/storage-api` is the first provider-management boundary. It exposes
-Worker health, provider readiness, CID pinning, CID status endpoints and
-flag-controlled Lighthouse uploads. Large videos do not use one large directory
-body as the primary path. The frontend uploads encrypted init/media payloads as
-independent Lighthouse files, splitting oversized payloads into ordered chunk
-CIDs in the delivery manifest. This keeps Lighthouse as the primary provider
-while keeping each Worker request under `MAX_UPLOAD_BYTES`. The Worker also
-exposes an upload-intent endpoint so clients can learn the current safe path,
-part limits and whether scoped direct upload is available without exposing the
-Lighthouse API key.
+`workers/storage-api` is the provider-management boundary. It exposes Worker
+health, provider readiness, CID pinning, CID status endpoints and guarded
+Lighthouse uploads. Large videos do not use one large directory body as the
+primary path. The frontend uploads encrypted init/media payloads as independent
+Lighthouse files, splitting oversized payloads into ordered chunk CIDs in the
+delivery manifest. This keeps Lighthouse as the primary provider while keeping
+each Worker request under `MAX_UPLOAD_BYTES`. The Worker also exposes a signed
+upload-intent endpoint so clients can learn the current safe path, part limits
+and whether scoped direct upload is available without exposing the Lighthouse
+API key.
 
 `workers/media-delivery` is the first hot-delivery boundary. It exposes
 `/ipfs/:cid/:path*`, forwards Range requests, caches non-Range encrypted GET

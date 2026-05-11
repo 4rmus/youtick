@@ -27,7 +27,6 @@ export interface BrowserSessionGrant {
 interface PersistedSessionGrant {
     accountId: string;
     sessionPublicKey: string;
-    secretKey?: KeyPairString;
     scope: SessionGrantScope;
     resourceId: string | null;
     expiresAt: number;
@@ -165,8 +164,8 @@ function readCachedGrant(accountId: string, scope: SessionGrantScope, resourceId
         return inMemory;
     }
 
-    // Play grants keep the resource-bound secret in sessionStorage so wallet
-    // redirects do not force a second signature before playback.
+    // Persisted metadata cannot sign requests. If the page reloads, the secret
+    // is gone and the wallet must issue a fresh grant.
     const raw = sessionStorage.getItem(key);
     if (!raw) {
         return null;
@@ -178,22 +177,8 @@ function readCachedGrant(accountId: string, scope: SessionGrantScope, resourceId
             sessionStorage.removeItem(key);
             return null;
         }
-        if (!persisted.secretKey) {
-            return null;
-        }
-
-        const grant: BrowserSessionGrant = {
-            accountId: persisted.accountId,
-            sessionPublicKey: persisted.sessionPublicKey,
-            secretKey: persisted.secretKey,
-            scope: persisted.scope,
-            resourceId: persisted.resourceId,
-            expiresAt: persisted.expiresAt,
-            originHash: persisted.originHash,
-            deviceHash: persisted.deviceHash,
-        };
-        inMemoryGrants.set(key, grant);
-        return grant;
+        sessionStorage.removeItem(key);
+        return null;
     } catch {
         sessionStorage.removeItem(key);
         return null;
@@ -212,7 +197,6 @@ export function persistSessionGrant(grant: BrowserSessionGrant): void {
     const persisted: PersistedSessionGrant = {
         accountId: grant.accountId,
         sessionPublicKey: grant.sessionPublicKey,
-        secretKey: grant.scope === 'Play' ? grant.secretKey : undefined,
         scope: grant.scope,
         resourceId: grant.resourceId,
         expiresAt: grant.expiresAt,

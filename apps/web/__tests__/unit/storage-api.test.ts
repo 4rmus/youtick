@@ -12,6 +12,16 @@ function resetEnv(): void {
     }
 }
 
+function uploadIntentBody(token = 'test-upload-token') {
+    return {
+        workerProxy: {
+            intentToken: token,
+            idempotencyKey: 'idem-1',
+            expiresAt: '2026-05-11T00:00:00.000Z',
+        },
+    };
+}
+
 describe('storage-api client', () => {
     afterEach(() => {
         vi.restoreAllMocks();
@@ -48,23 +58,47 @@ describe('storage-api client', () => {
     it('pins a CID through the configured Storage API URL', async () => {
         process.env.NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE = 'true';
         process.env.NEXT_PUBLIC_STORAGE_API_URL = 'https://storage-api.example/';
-        const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-            provider: 'lighthouse',
-            cid: 'bafyRoot',
-            pinned: true,
-        }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-        }));
+        const fetchMock = vi.fn(async (url: string) => {
+            if (url === 'https://storage-api.example/uploads/intent') {
+                return new Response(JSON.stringify(uploadIntentBody()), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+
+            return new Response(JSON.stringify({
+                provider: 'lighthouse',
+                cid: 'bafyRoot',
+                pinned: true,
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        });
         vi.stubGlobal('fetch', fetchMock);
 
         const { isLighthousePersistencePilotEnabled, pinCidWithStorageApi } = await import('@/lib/storage/storage-api');
-        const result = await pinCidWithStorageApi({ cid: 'bafyRoot', fileName: 'delivery-root' });
+        const result = await pinCidWithStorageApi({ cid: 'bafyRoot', fileName: 'delivery-root', accountId: 'creator.testnet' });
 
         expect(isLighthousePersistencePilotEnabled()).toBe(true);
-        expect(fetchMock).toHaveBeenCalledWith('https://storage-api.example/pins', {
+        expect(fetchMock).toHaveBeenCalledWith('https://storage-api.example/uploads/intent', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                accountId: 'creator.testnet',
+                uploadKind: 'pin',
+                fileName: 'delivery-root',
+                sizeBytes: 1,
+                contentType: 'application/ipfs-cid',
+                cid: 'bafyRoot',
+            }),
+        });
+        expect(fetchMock).toHaveBeenCalledWith('https://storage-api.example/pins', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer test-upload-token',
+                'Content-Type': 'application/json',
+            },
             body: JSON.stringify({ cid: 'bafyRoot', fileName: 'delivery-root' }),
         });
         expect(result).toEqual({
@@ -79,6 +113,12 @@ describe('storage-api client', () => {
         process.env.NEXT_PUBLIC_STORAGE_API_URL = 'https://storage-api.example/';
         let openedUrl = '';
         let sentBody: XMLHttpRequestBodyInit | null = null;
+        const requestHeaders = new Map<string, string>();
+
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(uploadIntentBody()), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        })));
 
         class MockXMLHttpRequest extends EventTarget {
             status = 200;
@@ -94,6 +134,10 @@ describe('storage-api client', () => {
 
             open(_method: string, url: string) {
                 openedUrl = url;
+            }
+
+            setRequestHeader(name: string, value: string) {
+                requestHeaders.set(name, value);
             }
 
             send(body: XMLHttpRequestBodyInit) {
@@ -112,10 +156,11 @@ describe('storage-api client', () => {
         const result = await uploadDirectoryWithStorageApi([
             { path: 'manifest.json', file: new Blob(['{}'], { type: 'application/json' }) },
             { path: 'segments/000000.m4s', file: new Blob(['segment']) },
-        ]);
+        ], 'creator.testnet');
 
         expect(isLighthousePrimaryUploadEnabled()).toBe(true);
         expect(openedUrl).toBe('https://storage-api.example/uploads/directory');
+        expect(requestHeaders.get('Authorization')).toBe('Bearer test-upload-token');
         expect(Array.from((sentBody as FormData).entries()).map(([, value]) => (value as File).name)).toEqual([
             'manifest.json',
             'segments/000000.m4s',
@@ -135,6 +180,12 @@ describe('storage-api client', () => {
         process.env.NEXT_PUBLIC_STORAGE_API_URL = 'https://storage-api.example/';
         let openedUrl = '';
         let sentBody: XMLHttpRequestBodyInit | null = null;
+        const requestHeaders = new Map<string, string>();
+
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(uploadIntentBody()), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        })));
 
         class MockXMLHttpRequest extends EventTarget {
             status = 200;
@@ -147,6 +198,10 @@ describe('storage-api client', () => {
 
             open(_method: string, url: string) {
                 openedUrl = url;
+            }
+
+            setRequestHeader(name: string, value: string) {
+                requestHeaders.set(name, value);
             }
 
             send(body: XMLHttpRequestBodyInit) {
@@ -165,9 +220,11 @@ describe('storage-api client', () => {
         const result = await uploadFileWithStorageApi(
             'segments/000000.m4s.part00000',
             new Blob(['segment']),
+            'creator.testnet',
         );
 
         expect(openedUrl).toBe('https://storage-api.example/uploads/file');
+        expect(requestHeaders.get('Authorization')).toBe('Bearer test-upload-token');
         expect(Array.from((sentBody as FormData).entries()).map(([, value]) => (value as File).name)).toEqual([
             'segments/000000.m4s.part00000',
         ]);
@@ -187,21 +244,30 @@ describe('storage-api client', () => {
         expect(isLighthousePrimaryUploadEnabled()).toBe(false);
         await expect(uploadDirectoryWithStorageApi([
             { path: 'manifest.json', file: new Blob(['{}']) },
-        ])).rejects.toThrow('Lighthouse primary upload is disabled');
+        ], 'creator.testnet')).rejects.toThrow('Lighthouse primary upload is disabled');
     });
 
     it('returns a failed outcome instead of throwing when the Storage API rejects the pin', async () => {
         process.env.NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE = 'true';
         process.env.NEXT_PUBLIC_STORAGE_API_URL = 'https://storage-api.example';
-        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-            error: 'provider_pin_failed',
-        }), {
-            status: 502,
-            headers: { 'Content-Type': 'application/json' },
-        })));
+        vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+            if (url === 'https://storage-api.example/uploads/intent') {
+                return new Response(JSON.stringify(uploadIntentBody()), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+
+            return new Response(JSON.stringify({
+                error: 'provider_pin_failed',
+            }), {
+                status: 502,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }));
 
         const { pinCidWithStorageApi } = await import('@/lib/storage/storage-api');
-        const result = await pinCidWithStorageApi({ cid: 'bafyRoot' });
+        const result = await pinCidWithStorageApi({ cid: 'bafyRoot', accountId: 'creator.testnet' });
 
         expect(result).toEqual({
             status: 'failed',
@@ -242,6 +308,31 @@ describe('storage-api client', () => {
             upstreamCid: 'bafyRoot',
             upstreamStatus: 200,
             checkedAt: '2026-05-10T00:00:00.000Z',
+        });
+    });
+
+    it('reads CID status when Lighthouse primary upload is enabled without persistence pilot', async () => {
+        process.env.NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE = 'false';
+        process.env.NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PRIMARY_UPLOAD = 'true';
+        process.env.NEXT_PUBLIC_STORAGE_API_URL = 'https://storage-api.example/';
+        const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+            provider: 'lighthouse',
+            cid: 'bafyRoot',
+            found: true,
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const { getCidPinStatusFromStorageApi } = await import('@/lib/storage/storage-api');
+        const result = await getCidPinStatusFromStorageApi('bafyRoot');
+
+        expect(fetchMock).toHaveBeenCalledWith('https://storage-api.example/pins/bafyRoot/status');
+        expect(result).toEqual({
+            status: 'found',
+            cid: 'bafyRoot',
+            provider: 'lighthouse',
         });
     });
 

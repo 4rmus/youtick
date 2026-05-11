@@ -23,11 +23,17 @@ Buyuk production upload ve media delivery bu Worker'in ana sorumlulugu degildir.
 - `LIGHTHOUSE_API_KEY`: Wrangler secret olarak verilir.
 - `ENABLE_LIGHTHOUSE_UPLOADS`: `true` ise `/uploads/directory` acilir. Default kapali.
 - `MAX_UPLOAD_BYTES`: Worker uzerinden kabul edilen toplam upload boyutu. Default 100 MiB.
+- `UPLOAD_INTENT_SECRET`: Upload intent token'larini imzalamak icin Wrangler secret.
+- `UPLOAD_GUARD`: Upload intent rate-limit ve idempotency cache icin KV binding.
+- `UPLOAD_RATE_LIMIT_MAX`: Account/IP basina intent limiti. Default 1000.
+- `UPLOAD_RATE_LIMIT_WINDOW_SECONDS`: Rate-limit penceresi. Default 3600 saniye.
 
 ```bash
 cd workers/storage-api
 npm install
 npx wrangler secret put LIGHTHOUSE_API_KEY
+npx wrangler secret put UPLOAD_INTENT_SECRET
+npx wrangler kv namespace create UPLOAD_GUARD
 ```
 
 ## Local dev ve test
@@ -62,20 +68,22 @@ olmadigini soyler.
 ```
 
 `POST /uploads/intent`, video body tasimaz ve API key dondurmez. Frontend veya
-ops icin guvenli upload yolunu soyler:
+ops icin imzali, sureli upload token'i dondurur:
 
 ```json
 {
+  "accountId": "creator.near",
+  "uploadKind": "file",
   "fileName": "concert.mov",
   "sizeBytes": 21474836480,
   "contentType": "video/quicktime"
 }
 ```
 
-Lighthouse icin scoped direct upload token henuz yoksa `directUpload.available`
-`false` doner. Bu durumda buyuk videolar, gecici pilot olarak parcalara bolunup
-`/uploads/file` uzerinden gonderilir; production hedefi Worker'i video body
-proxy'si olmaktan cikarip sadece intent/status/audit yuzeyinde tutmaktir.
+`ENABLE_LIGHTHOUSE_UPLOADS=true` olsa bile `UPLOAD_INTENT_SECRET` ve
+`UPLOAD_GUARD` hazir degilse write endpoint'leri fail-closed kalir. Token
+`Authorization: Bearer <intentToken>` ile `/uploads/file`,
+`/uploads/directory`, veya `/pins` endpoint'ine gonderilmelidir.
 
 `POST /uploads/file`, buyuk videolarda ana yoldur. Frontend encrypted media
 segmentlerini gerekirse daha kucuk byte parcalarina ayirir; manifest bu parca
