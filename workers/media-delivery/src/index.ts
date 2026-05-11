@@ -9,13 +9,13 @@ export interface Env {
 
 type JsonBody = Record<string, unknown>;
 
-const DEFAULT_ALLOWED_ORIGINS = 'http://localhost:3000,http://localhost:3001,https://youtick.net,https://www.youtick.net';
-const DEFAULT_CRUST_READ_ENDPOINT = 'https://crustipfs.xyz/api/v0/cat';
+const DEFAULT_ALLOWED_ORIGINS = 'https://youtick.net,https://www.youtick.net';
+const DEFAULT_CRUST_READ_ENDPOINT = '';
 const DEFAULT_IPFS_GATEWAY_BASES = [
+    'https://gateway.lighthouse.storage/ipfs',
     'https://ipfs.io/ipfs',
     'https://4everland.io/ipfs',
     'https://w3s.link/ipfs',
-    'https://gateway.lighthouse.storage/ipfs',
     'https://dweb.link/ipfs',
 ].join(',');
 const DEFAULT_CACHE_TTL_SECONDS = 300;

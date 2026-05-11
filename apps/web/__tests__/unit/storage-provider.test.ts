@@ -5,11 +5,13 @@ import type { CrustPsaPinResult } from '@/lib/crust/types';
 const {
   mockUploadDirectoryToCrust,
   mockUploadDirectoryWithStorageApi,
+  mockGetCidPinStatusFromStorageApi,
   mockPlaceCrustStorageOrders,
   mockVerifyCrustStorageOrders,
 } = vi.hoisted(() => ({
   mockUploadDirectoryToCrust: vi.fn(),
   mockUploadDirectoryWithStorageApi: vi.fn(),
+  mockGetCidPinStatusFromStorageApi: vi.fn(),
   mockPlaceCrustStorageOrders: vi.fn(),
   mockVerifyCrustStorageOrders: vi.fn(),
 }));
@@ -19,6 +21,7 @@ vi.mock('@/lib/crust/client', () => ({
 }));
 
 vi.mock('@/lib/storage/storage-api', () => ({
+  getCidPinStatusFromStorageApi: mockGetCidPinStatusFromStorageApi,
   uploadDirectoryWithStorageApi: mockUploadDirectoryWithStorageApi,
 }));
 
@@ -33,6 +36,7 @@ describe('storage provider adapter', () => {
     delete process.env.NEXT_PUBLIC_ENABLE_CRUST_UPLOAD_FALLBACK;
     delete process.env.NEXT_PUBLIC_STORAGE_UPLOAD_PROVIDER;
     vi.resetModules();
+    mockGetCidPinStatusFromStorageApi.mockReset();
     mockUploadDirectoryToCrust.mockReset();
     mockUploadDirectoryWithStorageApi.mockReset();
     mockPlaceCrustStorageOrders.mockReset();
@@ -52,7 +56,7 @@ describe('storage provider adapter', () => {
     const result = await uploadDirectoryToStorage(files, 'uploader.near', options);
 
     expect(getActiveStorageProvider().id).toBe('lighthouse');
-    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, options);
+    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, 'uploader.near', options);
     expect(mockUploadDirectoryToCrust).not.toHaveBeenCalled();
     expect(result).toEqual({
       cid: 'bafyLighthouseRoot',
@@ -98,7 +102,7 @@ describe('storage provider adapter', () => {
     const result = await uploadDirectoryToStorage(files, 'uploader.near', options);
 
     expect(getActiveStorageProvider().id).toBe('lighthouse');
-    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, options);
+    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, 'uploader.near', options);
     expect(mockUploadDirectoryToCrust).not.toHaveBeenCalled();
     expect(result).toEqual({
       cid: 'bafyLighthouseRoot',
@@ -122,7 +126,7 @@ describe('storage provider adapter', () => {
 
     await expect(uploadDirectoryToStorage(files, 'uploader.near', options)).rejects.toThrow('provider_upload_failed');
 
-    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, options);
+    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, 'uploader.near', options);
     expect(mockUploadDirectoryToCrust).not.toHaveBeenCalled();
   });
 
@@ -140,13 +144,18 @@ describe('storage provider adapter', () => {
     const files = [{ path: 'manifest.json', file: new Blob(['{}']) }];
     const result = await uploadDirectoryToStorage(files, 'uploader.near', options);
 
-    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, options);
+    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, 'uploader.near', options);
     expect(mockUploadDirectoryToCrust).toHaveBeenCalledWith(files, 'uploader.near', options);
     expect(result.provider).toBe('crust');
   });
 
-  it('skips Crust storage order placement and verification for Lighthouse uploads', async () => {
+  it('verifies Lighthouse uploads through the Storage API status endpoint', async () => {
     const assets: UploadedAsset[] = [{ cid: 'bafyRoot', size: 123, type: 'delivery-root' }];
+    mockGetCidPinStatusFromStorageApi.mockResolvedValue({
+      status: 'found',
+      cid: 'bafyRoot',
+      provider: 'lighthouse',
+    });
 
     const { placeStorageOrders, verifyStorageOrders } = await import('@/lib/storage/provider');
     const batch = await placeStorageOrders(assets, 'uploader.near', { concurrency: 1 });
@@ -158,12 +167,37 @@ describe('storage provider adapter', () => {
       total: 1,
       succeeded: 1,
       failed: 0,
-      results: [],
+      results: [{
+        requestId: '',
+        status: 'queued',
+        cid: 'bafyRoot',
+        createdAt: expect.any(Number),
+      }],
     });
+    expect(mockGetCidPinStatusFromStorageApi).toHaveBeenCalledWith('bafyRoot');
+    expect(verify).toEqual({
+      verified: 1,
+      pending: 0,
+      failed: 0,
+    });
+  });
+
+  it('treats missing Lighthouse status as failed verification', async () => {
+    const assets: UploadedAsset[] = [{ cid: 'bafyRoot', size: 123, type: 'delivery-root' }];
+    mockGetCidPinStatusFromStorageApi.mockResolvedValue({
+      status: 'missing',
+      cid: 'bafyRoot',
+      provider: 'lighthouse',
+    });
+
+    const { placeStorageOrders, verifyStorageOrders } = await import('@/lib/storage/provider');
+    const batch = await placeStorageOrders(assets, 'uploader.near', { concurrency: 1 });
+    const verify = await verifyStorageOrders(batch.results, 'uploader.near', { timeoutMs: 100 });
+
     expect(verify).toEqual({
       verified: 0,
       pending: 0,
-      failed: 0,
+      failed: 1,
     });
   });
 

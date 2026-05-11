@@ -288,7 +288,11 @@ function corsHeaders(request: Request, env: Env): Record<string, string> {
 
     const localhostAllowed = env.NEAR_NETWORK !== 'mainnet' && isLocalhost;
 
-    if (!localhostAllowed && !allowed.has(origin)) {
+    if (isLocalhost && !localhostAllowed) {
+        return {};
+    }
+
+    if (!isLocalhost && !allowed.has(origin)) {
         return {};
     }
 
@@ -1237,6 +1241,14 @@ function jsonResponse(
     });
 }
 
+async function readJsonRequest<T>(request: Request): Promise<{ ok: true; body: T } | { ok: false }> {
+    try {
+        return { ok: true, body: await request.json() as T };
+    } catch {
+        return { ok: false };
+    }
+}
+
 async function readBearerTokenClaims(
     request: Request,
     env: Env,
@@ -1274,7 +1286,11 @@ async function handleAuthChallenge(
     request: Request,
     env: Env,
 ): Promise<Response> {
-    const body = (await request.json()) as AuthChallengeRequest;
+    const parsedBody = await readJsonRequest<AuthChallengeRequest>(request);
+    if (!parsedBody.ok) {
+        return jsonResponse({ ok: false, error: 'Invalid JSON' }, 400, request, env);
+    }
+    const body = parsedBody.body;
 
     if (!body.accountId || !body.videoId || !body.action) {
         return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
@@ -1328,7 +1344,11 @@ async function handleAuthVerify(
     request: Request,
     env: Env,
 ): Promise<Response> {
-    const body = (await request.json()) as AuthVerifyRequest;
+    const parsedBody = await readJsonRequest<AuthVerifyRequest>(request);
+    if (!parsedBody.ok) {
+        return jsonResponse({ ok: false, error: 'Invalid JSON' }, 400, request, env);
+    }
+    const body = parsedBody.body;
 
     if (!body.challengeId || !body.accountId || !body.publicKey || !body.signature) {
         return jsonResponse({ ok: false, error: 'Missing required fields' }, 400, request, env);
@@ -1420,7 +1440,11 @@ async function handleStore(
         return jsonResponse({ ok: false, error: auth.error }, auth.status || 401, request, env);
     }
 
-    const body = (await request.json()) as Partial<StoreRequest> & { videoId?: string };
+    const parsedBody = await readJsonRequest<Partial<StoreRequest> & { videoId?: string }>(request);
+    if (!parsedBody.ok) {
+        return jsonResponse({ ok: false, error: 'Invalid JSON' }, 400, request, env);
+    }
+    const body = parsedBody.body;
     const isShareStore = Boolean(body.shareB64 && typeof body.shareId === 'number');
     if (!body.videoId || !isShareStore) {
         return jsonResponse({ ok: false, error: 'Missing required fields. Share-based storage is required.' }, 400, request, env);
@@ -1650,7 +1674,11 @@ async function handleRetrieve(
         return jsonResponse({ ok: false, error: auth.error }, auth.status || 401, request, env);
     }
 
-    const body = (await request.json()) as Partial<RetrieveRequest> & { videoId?: string };
+    const parsedBody = await readJsonRequest<Partial<RetrieveRequest> & { videoId?: string }>(request);
+    if (!parsedBody.ok) {
+        return jsonResponse({ ok: false, error: 'Invalid JSON' }, 400, request, env);
+    }
+    const body = parsedBody.body;
     if (!body.videoId) {
         return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
     }

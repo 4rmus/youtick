@@ -19,6 +19,53 @@ function createEnv(overrides?: Partial<Env>): Env {
     };
 }
 
+function createMemoryKv(): KVNamespace {
+    const store = new Map<string, string>();
+    return {
+        get: vi.fn(async (key: string) => store.get(key) ?? null),
+        put: vi.fn(async (key: string, value: string) => {
+            store.set(key, value);
+        }),
+    } as unknown as KVNamespace;
+}
+
+function createGuardedEnv(overrides?: Partial<Env>): Env {
+    return createEnv({
+        LIGHTHOUSE_API_KEY: 'secret-value',
+        ENABLE_LIGHTHOUSE_UPLOADS: 'true',
+        UPLOAD_INTENT_SECRET: 'intent-secret',
+        UPLOAD_GUARD: createMemoryKv(),
+        ...overrides,
+    });
+}
+
+async function issueUploadIntent(
+    handler: TestHandler,
+    env: Env,
+    body: Record<string, unknown>,
+): Promise<string> {
+    const response = await handler.fetch(
+        new Request('https://storage.youtick.net/uploads/intent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                accountId: 'creator.testnet',
+                ...body,
+            }),
+        }),
+        env,
+    );
+
+    expect(response.status).toBe(200);
+    const parsed = await response.json() as {
+        workerProxy?: {
+            intentToken?: string;
+        };
+    };
+    expect(typeof parsed.workerProxy?.intentToken).toBe('string');
+    return parsed.workerProxy?.intentToken || '';
+}
+
 describe('storage-api', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
@@ -72,6 +119,7 @@ describe('storage-api', () => {
             ready: true,
             apiBase: 'https://api.lighthouse.storage',
             uploadsEnabled: false,
+            uploadGuardReady: false,
             uploadBase: 'https://upload.lighthouse.storage',
             maxUploadBytes: 104857600,
         });
@@ -85,16 +133,27 @@ describe('storage-api', () => {
         vi.stubGlobal('fetch', fetchMock);
 
         const handler = await importHandler();
+        const env = createGuardedEnv({ LIGHTHOUSE_API_KEY: '"secret-value"' });
+        const token = await issueUploadIntent(handler, env, {
+            uploadKind: 'pin',
+            fileName: 'manifest-root',
+            sizeBytes: 1,
+            contentType: 'application/ipfs-cid',
+            cid: 'bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja',
+        });
         const response = await handler.fetch(
             new Request('https://storage.youtick.net/pins', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
                 body: JSON.stringify({
                     cid: 'bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja',
                     fileName: 'manifest-root',
                 }),
             }),
-            createEnv({ LIGHTHOUSE_API_KEY: '"secret-value"' }),
+            env,
         );
 
         expect(response.status).toBe(200);
@@ -309,11 +368,11 @@ describe('storage-api', () => {
                     fileName: 'concert.mov',
                     sizeBytes: 20 * 1024 * 1024 * 1024,
                     contentType: 'video/quicktime',
+                    accountId: 'creator.testnet',
+                    uploadKind: 'file',
                 }),
             }),
-            createEnv({
-                LIGHTHOUSE_API_KEY: 'secret-value',
-                ENABLE_LIGHTHOUSE_UPLOADS: 'true',
+            createGuardedEnv({
                 MAX_UPLOAD_BYTES: String(100 * 1024 * 1024),
             }),
         );
@@ -325,6 +384,8 @@ describe('storage-api', () => {
             fileName: 'concert.mov',
             sizeBytes: 20 * 1024 * 1024 * 1024,
             contentType: 'video/quicktime',
+            accountId: 'creator.testnet',
+            uploadKind: 'file',
             uploadsEnabled: true,
             providerReady: true,
             directUpload: {
@@ -337,6 +398,9 @@ describe('storage-api', () => {
                 maxPartBytes: 100 * 1024 * 1024,
                 recommendedPartBytes: 4 * 1024 * 1024,
                 requiresChunking: true,
+                intentToken: expect.any(String),
+                idempotencyKey: expect.any(String),
+                expiresAt: expect.any(String),
             },
         });
         expect(JSON.stringify(body)).not.toContain('secret-value');
@@ -351,6 +415,8 @@ describe('storage-api', () => {
                 body: JSON.stringify({
                     fileName: 'film.mp4',
                     sizeBytes: 1024,
+                    accountId: 'creator.testnet',
+                    uploadKind: 'file',
                 }),
             }),
             createEnv({ LIGHTHOUSE_API_KEY: 'secret-value' }),
@@ -361,6 +427,8 @@ describe('storage-api', () => {
             provider: 'lighthouse',
             fileName: 'film.mp4',
             contentType: 'application/octet-stream',
+            accountId: 'creator.testnet',
+            uploadKind: 'file',
             uploadsEnabled: false,
             providerReady: true,
             workerProxy: {
@@ -380,6 +448,8 @@ describe('storage-api', () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    accountId: 'creator.testnet',
+                    uploadKind: 'file',
                     fileName: '../bad.mp4',
                     sizeBytes: 0,
                 }),
@@ -409,15 +479,22 @@ describe('storage-api', () => {
         formData.append('file', new File(['segment'], 'segments/000000.m4s'));
 
         const handler = await importHandler();
+        const env = createGuardedEnv({
+            LIGHTHOUSE_API_KEY: '"secret-value"',
+        });
+        const token = await issueUploadIntent(handler, env, {
+            uploadKind: 'directory',
+            fileName: 'directory',
+            sizeBytes: 9,
+            contentType: 'multipart/form-data',
+        });
         const response = await handler.fetch(
             new Request('https://storage.youtick.net/uploads/directory', {
                 method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
                 body: formData,
             }),
-            createEnv({
-                LIGHTHOUSE_API_KEY: '"secret-value"',
-                ENABLE_LIGHTHOUSE_UPLOADS: 'true',
-            }),
+            env,
         );
 
         expect(response.status).toBe(200);
@@ -467,15 +544,20 @@ describe('storage-api', () => {
         formData.append('file', new File(['segment'], 'segments/000000.m4s.part00000'));
 
         const handler = await importHandler();
+        const env = createGuardedEnv();
+        const token = await issueUploadIntent(handler, env, {
+            uploadKind: 'file',
+            fileName: 'segments/000000.m4s.part00000',
+            sizeBytes: 7,
+            contentType: 'application/octet-stream',
+        });
         const response = await handler.fetch(
             new Request('https://storage.youtick.net/uploads/file', {
                 method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
                 body: formData,
             }),
-            createEnv({
-                LIGHTHOUSE_API_KEY: 'secret-value',
-                ENABLE_LIGHTHOUSE_UPLOADS: 'true',
-            }),
+            env,
         );
 
         expect(response.status).toBe(200);
@@ -501,6 +583,106 @@ describe('storage-api', () => {
             cid: 'bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja',
             path: 'segments/000000.m4s.part00000',
             size: 7,
+        });
+    });
+
+    it('rejects Lighthouse uploads without a signed upload intent', async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+
+        const formData = new FormData();
+        formData.append('file', new File(['segment'], 'segments/000000.m4s.part00000'));
+
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request('https://storage.youtick.net/uploads/file', {
+                method: 'POST',
+                body: formData,
+            }),
+            createGuardedEnv(),
+        );
+
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual({ error: 'upload_intent_required' });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('returns the cached upload result when the same signed intent is retried', async () => {
+        const fetchMock = vi.fn(async () => new Response(
+            '{"Name":"segments/000000.m4s.part00000","Hash":"bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja","Size":"7"}',
+            {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            },
+        ));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const handler = await importHandler();
+        const env = createGuardedEnv();
+        const token = await issueUploadIntent(handler, env, {
+            uploadKind: 'file',
+            fileName: 'segments/000000.m4s.part00000',
+            sizeBytes: 7,
+            contentType: 'application/octet-stream',
+        });
+
+        const sendUpload = () => {
+            const formData = new FormData();
+            formData.append('file', new File(['segment'], 'segments/000000.m4s.part00000'));
+            return handler.fetch(
+                new Request('https://storage.youtick.net/uploads/file', {
+                    method: 'POST',
+                    headers: { Authorization: `Bearer ${token}` },
+                    body: formData,
+                }),
+                env,
+            );
+        };
+
+        const first = await sendUpload();
+        const second = await sendUpload();
+
+        expect(first.status).toBe(200);
+        expect(second.status).toBe(200);
+        expect(await first.json()).toMatchObject({ cid: 'bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja' });
+        expect(await second.json()).toMatchObject({ cid: 'bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja' });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('rate limits repeated upload intent requests per account and IP bucket', async () => {
+        const handler = await importHandler();
+        const env = createGuardedEnv({
+            UPLOAD_RATE_LIMIT_MAX: '1',
+            UPLOAD_RATE_LIMIT_WINDOW_SECONDS: '60',
+        });
+        const requestBody = {
+            accountId: 'creator.testnet',
+            uploadKind: 'file',
+            fileName: 'manifest.json',
+            sizeBytes: 2,
+            contentType: 'application/json',
+        };
+
+        const makeRequest = () => handler.fetch(
+            new Request('https://storage.youtick.net/uploads/intent', {
+                method: 'POST',
+                headers: {
+                    'CF-Connecting-IP': '203.0.113.10',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestBody),
+            }),
+            env,
+        );
+
+        const first = await makeRequest();
+        const second = await makeRequest();
+
+        expect(first.status).toBe(200);
+        expect(second.status).toBe(429);
+        expect(await second.json()).toEqual({
+            error: 'rate_limited',
+            retryAfterSeconds: 60,
         });
     });
 
@@ -581,6 +763,20 @@ describe('storage-api', () => {
 
         expect(response.status).toBe(204);
         expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:3001');
+    });
+
+    it('does not allow localhost from production defaults', async () => {
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request('https://storage.youtick.net/provider-health', {
+                method: 'OPTIONS',
+                headers: { Origin: 'http://localhost:3000' },
+            }),
+            createEnv({ ALLOWED_ORIGINS: undefined }),
+        );
+
+        expect(response.status).toBe(204);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
     });
 
     it('does not reflect disallowed origins', async () => {

@@ -292,7 +292,7 @@ export function useUpload() {
                 blob: Blob,
                 type: 'thumbnail' | 'poster' | 'init-segment' | 'media-segment' | 'manifest',
             ) => {
-                const result = await uploadFileWithStorageApi(path, blob);
+                const result = await uploadFileWithStorageApi(path, blob, uploaderAccountId);
                 completedBytes += blob.size;
                 const progress = uploadTotalBytes > 0
                     ? Math.min(99, Math.round((completedBytes / uploadTotalBytes) * 100))
@@ -391,6 +391,11 @@ export function useUpload() {
             const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
             const manifestUpload = await uploadOne('manifest.json', manifestBlob, 'manifest');
             const manifestCid = manifestUpload.cid;
+            setStatus('Verifying Lighthouse delivery manifest...');
+            const uploadedManifest = await fetchDeliveryManifest(manifestCid, { timeout: 15_000 });
+            if (!isDeliveryManifestV2(uploadedManifest)) {
+                throw new Error('Delivery manifest could not be verified after Lighthouse upload. Upload was stopped before publishing.');
+            }
 
             void warmupGatewayCids(uploadedCids.slice(0, 8));
             return {
@@ -428,6 +433,7 @@ export function useUpload() {
             void pinCidWithStorageApi({
                 cid: directoryUpload.cid,
                 fileName: 'delivery-root',
+                accountId: uploaderAccountId,
             }).then(async (result) => {
                 if (result.status === 'pinned') {
                     console.log('[Storage API] Lighthouse persistence pilot pinned delivery root', {
@@ -576,7 +582,6 @@ export function useUpload() {
             }
             updateStep('kms', 'complete');
 
-            let blockchainPublishSucceeded = false;
             updateStep('mint', 'loading');
             setStatus('Minting NFT ticket on NEAR...');
             try {
@@ -619,7 +624,6 @@ export function useUpload() {
 
                 setStatus('Minting NFT ticket & publishing event...');
                 await batchUploadActionsSignless(sessionManager, videoMetadata, eventMetadata);
-                blockchainPublishSucceeded = true;
                 dispatch({ type: 'SET_PUBLISHED_CID', payload: videoUuid });
                 void queryClient.invalidateQueries({ queryKey: ['createdEvents', accountId] });
                 void queryClient.invalidateQueries({ queryKey: ['allVideos'] });
@@ -627,16 +631,14 @@ export function useUpload() {
                 updateStep('mint', 'complete');
             } catch (mintError: unknown) {
                 console.error('Minting/Event failed:', mintError);
+                const mintErrorMessage = mintError instanceof Error ? mintError.message : String(mintError);
                 updateStep('mint', 'error');
-                setStatus(`Video uploaded but blockchain actions failed: ${mintError instanceof Error ? mintError.message : String(mintError)}`);
-            }
-
-            if (!blockchainPublishSucceeded) {
-                setUploading(false);
-                return;
+                setStatus(`Video uploaded but blockchain actions failed: ${mintErrorMessage}`);
+                throw new Error(`Blockchain actions failed: ${mintErrorMessage}`);
             }
 
             const collectedAssets = collector.getAll();
+            let storagePersistenceStatus: 'success' | 'partial' | 'failed' = 'success';
             if (collectedAssets.length > 0) {
                 updateStep('storage', 'loading');
                 setStatus('Placing persistent storage orders...');
@@ -647,10 +649,12 @@ export function useUpload() {
                     if (batchResult.succeeded === 0) {
                         updateStep('storage', 'error');
                         dispatch({ type: 'SET_STORAGE_ORDER_STATUS', payload: 'failed' });
+                        storagePersistenceStatus = 'failed';
                         setStatus('Storage orders failed — video is accessible but long-term persistence is not guaranteed.');
                     } else if (batchResult.failed > 0) {
                         updateStep('storage', 'complete');
                         dispatch({ type: 'SET_STORAGE_ORDER_STATUS', payload: 'partial' });
+                        storagePersistenceStatus = 'partial';
                         setStatus(`Storage orders: ${batchResult.succeeded}/${batchResult.total} placed.`);
                     } else {
                         updateStep('storage', 'complete');
@@ -666,9 +670,14 @@ export function useUpload() {
                             updateStep('verify', 'complete');
                         } else if (verifyResult.verified > 0 || verifyResult.pending > 0) {
                             updateStep('verify', 'complete');
+                            if (storagePersistenceStatus === 'success') {
+                                storagePersistenceStatus = 'partial';
+                            }
                             setStatus('Storage is being processed — your video is safe.');
                         } else {
                             updateStep('verify', 'error');
+                            storagePersistenceStatus = 'failed';
+                            setStatus('Storage verification failed — video is accessible but long-term persistence is not guaranteed.');
                         }
                     } else {
                         updateStep('verify', 'complete');
@@ -678,6 +687,7 @@ export function useUpload() {
                     updateStep('storage', 'error');
                     updateStep('verify', 'complete');
                     dispatch({ type: 'SET_STORAGE_ORDER_STATUS', payload: 'failed' });
+                    storagePersistenceStatus = 'failed';
                     setStatus('Storage order failed — video is accessible but long-term persistence is not guaranteed.');
                 }
             } else {
@@ -685,7 +695,13 @@ export function useUpload() {
                 updateStep('verify', 'complete');
             }
 
-            setStatus('Success! Video uploaded & ticket sales started!');
+            if (storagePersistenceStatus === 'failed') {
+                setStatus('Video published, but storage verification failed — long-term persistence is not guaranteed.');
+            } else if (storagePersistenceStatus === 'partial') {
+                setStatus('Video published; storage is still being verified.');
+            } else {
+                setStatus('Success! Video uploaded & ticket sales started!');
+            }
             setUploading(false);
         } catch (error: unknown) {
             console.error('Upload failed:', error);
