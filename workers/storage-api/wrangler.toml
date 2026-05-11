@@ -13,8 +13,6 @@ ENABLE_LIGHTHOUSE_UPLOADS = "true"
 # npx wrangler secret put LIGHTHOUSE_API_KEY
 # npx wrangler secret put UPLOAD_INTENT_SECRET
 #
-# Create and bind before enabling production uploads:
-# npx wrangler kv namespace create UPLOAD_GUARD
-# [[kv_namespaces]]
-# binding = "UPLOAD_GUARD"
-# id = "..."
+[[kv_namespaces]]
+binding = "UPLOAD_GUARD"
+id = "5bc6908007ab4f738ce1982303a0d303"
