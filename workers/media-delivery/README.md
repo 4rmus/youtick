@@ -13,7 +13,8 @@ Range forwarding, gateway fallback and edge cache control.
 ## Env
 
 - `ALLOWED_ORIGINS`: Browser tarafindan izin verilen origin listesi.
-- `IPFS_GATEWAY_BASES`: Virgulle ayrilmis gateway base URL listesi.
+- `CRUST_READ_ENDPOINT`: Opsiyonel legacy Crust read API. Bos birakilirsa okunacak ilk yol gateway listesidir.
+- `IPFS_GATEWAY_BASES`: Virgulle ayrilmis gateway base URL listesi. Lighthouse gateway ilk sirada tutulur.
 - `CACHE_TTL_SECONDS`: Non-Range GET cevaplari icin edge cache suresi.
 - `CACHE_VERSION`: Opsiyonel cache bust anahtari.
 - `UPSTREAM_TIMEOUT_MS`: Her gateway denemesi icin zaman asimi.

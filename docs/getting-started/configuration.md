@@ -50,7 +50,8 @@ Bu alanlar olmadan uygulama dogru contract setine ve ağa baglanamaz.
 
 Trial ve guest hesap olusturma icin onboarding key artik client bundle'a konmaz.
 Anahtar server tarafinda tutulur ve `/api/onboarding-key` endpoint'i uzerinden,
-rate limit ve opsiyonel Turnstile kontrolunden sonra verilir.
+rate limit ve Turnstile kontrolunden sonra verilir. `TURNSTILE_SECRET_KEY`
+set edildiginde challenge token zorunludur.
 
 | Degisken | Aciklama |
 |----------|----------|
@@ -154,8 +155,12 @@ Mainnet ve testnet icin ayri KV namespace kullan. Ayni namespace ID'lerini iki o
 | `LIGHTHOUSE_API_BASE` | Lighthouse API base URL'i |
 | `LIGHTHOUSE_UPLOAD_BASE` | Lighthouse upload base URL'i |
 | `LIGHTHOUSE_API_KEY` | Wrangler secret olarak saklanan Lighthouse API key |
-| `ENABLE_LIGHTHOUSE_UPLOADS` | `true` ise `/uploads/directory` endpoint'ini acar |
+| `ENABLE_LIGHTHOUSE_UPLOADS` | `true` ise guarded Lighthouse write endpoint'lerini acar |
 | `MAX_UPLOAD_BYTES` | Storage API Worker uzerinden kabul edilen toplam upload boyutu |
+| `UPLOAD_INTENT_SECRET` | Upload intent token'larini imzalamak icin Wrangler secret |
+| `UPLOAD_GUARD` | Upload intent rate-limit ve idempotency cache icin KV binding |
+| `UPLOAD_RATE_LIMIT_MAX` | Account/IP basina intent limiti |
+| `UPLOAD_RATE_LIMIT_WINDOW_SECONDS` | Rate-limit penceresi |
 
 `workers/media-delivery` tarafinda gereken ayarlar:
 

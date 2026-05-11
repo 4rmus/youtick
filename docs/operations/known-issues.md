@@ -1,6 +1,6 @@
 # Known Issues & Operational Risks
 
-> Last updated: 2026-04-29 (public-alpha wording, Web4 proxy, payment-scope alignment)
+> Last updated: 2026-05-11 (storage provider and dependency triage alignment)
 >
 > This document is a **living transparency report**. It lists confirmed mainnet
 > anomalies, active security mitigations, and risks that operators should be
@@ -161,15 +161,16 @@ headers is expected.
 
 **Status:** Accepted public-alpha risk
 **Impact:** KMS operators are Cloudflare Worker deployments and share state is
-stored in Cloudflare KV. Crust is the active pinning provider; the Lighthouse
-persistence route is a planned pilot and is not complete. NFT market admin and
-emergency takedown are still owner-controlled for public alpha.
+stored in Cloudflare KV. Lighthouse is now the primary write provider behind
+the Storage API Worker, while Crust remains for legacy compatibility and
+diagnostics. NFT market admin and emergency takedown are still owner-controlled
+for public alpha.
 
 **Resolution:** Keep public wording as "public alpha" and "hybrid
 decentralized" until independent operator hosting, redundant persistence and
 DAO/multisig governance are implemented and verified. During the storage
-provider rollout, keep Crust behavior unchanged and put Lighthouse API keys
-behind a dedicated Storage API Worker.
+provider rollout, keep Crust as an explicit compatibility/fallback path and
+keep Lighthouse API keys behind the dedicated Storage API Worker.
 
 ### 6. Pause Bypass in Prepaid Functions
 

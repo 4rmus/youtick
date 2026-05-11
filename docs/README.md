@@ -24,6 +24,7 @@ behind source code, so release decisions should use the current readiness report
 - [Mainnet and Open Source Readiness, 2026-04-26](mainnet-open-source-readiness-2026-04-26.md)
 - [Known Issues & Operational Risks](operations/known-issues.md)
 - [Mainnet Deploy Runbook](operations/mainnet-deploy-runbook.md)
+- [Dependency Triage, 2026-05-11](operations/dependency-triage-2026-05-11.md)
 
 ---
 
@@ -76,4 +77,4 @@ For a new engineer, the shortest path is:
 
 ---
 
-*Last Updated: April 29, 2026*
+*Last Updated: May 11, 2026*

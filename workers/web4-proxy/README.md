@@ -38,9 +38,11 @@ Trial onboarding icin:
 
 ```bash
 npx wrangler secret put ONBOARDING_KEYS
+npx wrangler secret put TURNSTILE_SECRET_KEY
 ```
 
 `ONBOARDING_KEYS` virgulle ayrilmis `ed25519:` prefiksli key havuzu olabilir.
+`TURNSTILE_SECRET_KEY` set edildiginde `/api/onboarding-key` challenge token olmadan key vermez.
 Onboarding key rotation icin root `scripts/rotate-onboarding-key.mjs` kullanilir.
 
 ## Local dev ve test
