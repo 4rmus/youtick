@@ -58,13 +58,26 @@ describe('NEAR_CONFIG', () => {
     it('keeps NEXT_PUBLIC_NFT_CONTRACT_ID as a compatibility alias for the market contract', async () => {
         process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
         process.env.NEXT_PUBLIC_NFT_CONTRACT_ID = 'legacy-market.testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access.local.testnet';
+        process.env.NEXT_PUBLIC_REGISTRY_CONTRACT_ID = 'registry.local.testnet';
 
         const { NEAR_CONFIG } = await import('@/lib/constants');
 
         expect(NEAR_CONFIG.contractId).toBe('legacy-market.testnet');
         expect(NEAR_CONFIG.marketContractId).toBe('legacy-market.testnet');
-        expect(NEAR_CONFIG.accessContractId).toBe('access-1773606802388.v2-0.utick.testnet');
-        expect(NEAR_CONFIG.registryContractId).toBe('registry-1773606802388.v2-0.utick.testnet');
+        expect(NEAR_CONFIG.accessContractId).toBe('access.local.testnet');
+        expect(NEAR_CONFIG.registryContractId).toBe('registry.local.testnet');
+    });
+
+    it('uses placeholder testnet contract IDs instead of stale dev accounts', async () => {
+        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
+
+        const { NEAR_CONFIG } = await import('@/lib/constants');
+
+        expect(NEAR_CONFIG.contractId).toBe('replace-with-market.testnet');
+        expect(NEAR_CONFIG.marketContractId).toBe('replace-with-market.testnet');
+        expect(NEAR_CONFIG.accessContractId).toBe('replace-with-access.testnet');
+        expect(NEAR_CONFIG.registryContractId).toBe('replace-with-registry.testnet');
     });
 });
 

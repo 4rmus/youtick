@@ -1,9 +1,7 @@
 import { memo } from 'react';
 import { Github } from 'lucide-react';
 import { Branding } from './Branding';
-import { BuiltOnNEARBadge } from './BuiltOnNEARBadge';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { NEAR_CONFIG } from '@/lib/constants';
 
 export const LandingFooter = memo(() => {
   const { t } = useLanguage();
@@ -22,11 +20,15 @@ export const LandingFooter = memo(() => {
             </p>
           </div>
 
-          {/* Center: Built on NEAR Badge */}
-          <div className="flex flex-col items-center gap-4">
-            <BuiltOnNEARBadge variant="dark" size="lg" />
-            <div className="flex items-center gap-2 text-xs text-zinc-600">
-              <a href="https://crust.network" target="_blank" rel="noopener noreferrer" className="text-zinc-500 hover:text-near-green transition-colors">Crust Network</a>
+          {/* Center: Infrastructure links */}
+          <div className="flex flex-col items-start md:items-center gap-3 text-xs text-zinc-600">
+            <p className="font-semibold uppercase tracking-wide text-zinc-500">
+              {t.landing.footer.built_on_prefix}
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <a href="https://near.org" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-300 transition-colors">NEAR</a>
+              <a href="https://ipfs.tech" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-300 transition-colors">IPFS</a>
+              <a href="https://www.lighthouse.storage/" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-300 transition-colors">Lighthouse</a>
             </div>
           </div>
 
@@ -37,18 +39,10 @@ export const LandingFooter = memo(() => {
                 href="https://github.com/4rmus/youtick"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="group p-2 rounded-lg bg-zinc-900/50 hover:bg-near-green/10 border border-white/5 hover:border-near-green/30 transition-all"
+                className="group p-2 rounded-lg bg-zinc-900/50 hover:bg-white/10 border border-white/5 hover:border-white/20 transition-all"
                 title="GitHub"
               >
-                <Github className="w-5 h-5 text-zinc-400 group-hover:text-near-green transition-colors" />
-              </a>
-              <a
-                href={NEAR_CONFIG.networkId === 'mainnet' ? 'https://nearblocks.io' : 'https://testnet.nearblocks.io'}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-zinc-500 hover:text-near-green transition-colors"
-              >
-                NEAR Explorer →
+                <Github className="w-5 h-5 text-zinc-400 group-hover:text-white transition-colors" />
               </a>
             </div>
             <p className="text-xs text-zinc-600">
@@ -59,13 +53,7 @@ export const LandingFooter = memo(() => {
         </div>
 
         {/* Bottom Bar */}
-        <div className="mt-12 pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="text-xs text-zinc-600 text-left">
-            {t.landing.footer.built_on_prefix}{' '}
-            <a href="https://near.org" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-400 transition-colors">NEAR Protocol</a>
-            {' • '}
-            <a href="https://crust.network" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-400 transition-colors">Crust Network</a>
-          </p>
+        <div className="mt-12 pt-8 border-t border-white/5 flex justify-center md:justify-end">
           <div className="flex items-center gap-6 text-xs text-zinc-600">
             <a href="/privacy" className="hover:text-zinc-400 transition-colors">{t.landing.footer.privacy}</a>
             <a href="/terms" className="hover:text-zinc-400 transition-colors">{t.landing.footer.terms}</a>

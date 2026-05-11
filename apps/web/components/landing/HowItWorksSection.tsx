@@ -26,7 +26,7 @@ export const HowItWorksSection = memo(() => {
       <div className="container mx-auto px-4">
         <div className="grid gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
           <div>
-            <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-near-green">
+            <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
               {s.eyebrow}
             </p>
             <h2 className="mb-5 text-3xl font-black text-white md:text-5xl">
@@ -55,7 +55,7 @@ export const HowItWorksSection = memo(() => {
           </div>
 
           <div className="overflow-hidden rounded-lg border border-white/10 bg-zinc-950">
-            <div className="relative aspect-[16/10]">
+            <div className="relative min-h-[520px] sm:aspect-[16/10] sm:min-h-0">
               <Image
                 src="/concert_crowd.png"
                 alt="Audience at a music performance"
@@ -69,7 +69,7 @@ export const HowItWorksSection = memo(() => {
                     key={label}
                     className="flex items-center gap-2 rounded-full border border-white/10 bg-black/70 px-3 py-2 text-xs font-semibold text-zinc-200 backdrop-blur"
                   >
-                    <Icon className="h-3.5 w-3.5 text-near-green" />
+                    <Icon className="h-3.5 w-3.5 text-zinc-300" />
                     {label}
                   </div>
                 ))}
@@ -78,12 +78,12 @@ export const HowItWorksSection = memo(() => {
                 <div className="rounded-lg border border-white/10 bg-black/80 p-5 backdrop-blur">
                   <div className="mb-4 flex items-center justify-between gap-4">
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-near-green">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
                         {s.preview_studio_label}
                       </p>
                       <h3 className="mt-1 text-2xl font-black text-white">{s.preview_work_title}</h3>
                     </div>
-                    <div className="rounded-full bg-near-green px-3 py-1 text-sm font-black text-black">
+                    <div className="rounded-full bg-white px-3 py-1 text-sm font-black text-black">
                       $12
                     </div>
                   </div>
@@ -94,7 +94,7 @@ export const HowItWorksSection = memo(() => {
                     </div>
                     <div className="rounded-md bg-white/5 p-3">
                       <p className="text-zinc-500">{s.preview_share}</p>
-                      <p className="font-bold text-near-green">{s.preview_share_value}</p>
+                      <p className="font-bold text-white">{s.preview_share_value}</p>
                     </div>
                     <div className="rounded-md bg-white/5 p-3">
                       <p className="text-zinc-500">{s.preview_access}</p>

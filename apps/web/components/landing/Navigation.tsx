@@ -32,12 +32,9 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
 
   // Landing page navigation links
   const navLinks = [
-    { href: '#audience', label: t.landing.nav?.audience || 'For whom' },
-    { href: '#use-cases', label: t.landing.nav?.use_cases || 'Use cases' },
+    { href: '#audience', label: t.landing.nav?.audience || 'Benefits' },
     { href: '#how-it-works', label: t.landing.nav?.how_it_works || 'How it works' },
-    { href: '#trust', label: t.landing.nav_extra?.trust || 'Trust' },
     { href: '#roi-calculator', label: t.landing.nav_extra?.calculator || 'Fee model' },
-    { href: '#roadmap', label: t.landing.nav?.roadmap || 'Roadmap' },
   ];
 
   // Guest / Marketing View
@@ -60,10 +57,10 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
               <Link href="/trial">
                 <Button
                   variant="ghost"
-                  className="text-near-green hover:text-near-green/80"
+                  className="text-zinc-300 hover:text-white"
                 >
                   <Sparkles className="w-4 h-4 mr-1" />
-                  {t.landing.nav_extra?.try_free || 'Guest ticket'}
+                  {t.landing.nav_extra?.try_free || 'Guest account'}
                 </Button>
               </Link>
               <Button
@@ -74,7 +71,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
               </Button>
               <Button
                 onClick={handleGetStarted}
-                className="bg-near-green hover:bg-near-green/80 text-black font-semibold"
+                className="bg-white hover:bg-zinc-200 text-black font-semibold"
               >
                 {t.landing.nav.upload}
               </Button>
@@ -113,16 +110,16 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
           <Link href="/trial">
             <Button
               variant="outline"
-              className="border-near-green/50 text-near-green hover:bg-near-green/10 hover:border-near-green font-semibold px-4"
+              className="border-white/20 text-zinc-200 hover:bg-white/10 hover:border-white/40 font-semibold px-4"
             >
               <Sparkles className="w-4 h-4 mr-1" />
-              {t.landing.nav_extra?.try_free || 'Guest ticket'}
+              {t.landing.nav_extra?.try_free || 'Guest account'}
             </Button>
           </Link>
 
           <Button
             onClick={handleGetStarted}
-            className="bg-near-green hover:bg-near-green/80 text-black font-semibold px-6"
+            className="bg-white hover:bg-zinc-200 text-black font-semibold px-6"
           >
             {t.landing.hero_section?.cta_primary || 'Open a screening'}
           </Button>
@@ -130,7 +127,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
 
         {/* Mobile Menu Button */}
         <button
-          className="lg:hidden p-2 text-white hover:text-near-green transition-colors"
+          className="lg:hidden p-2 text-white hover:text-zinc-300 transition-colors"
           onClick={() => setIsMenuOpen(!isMenuOpen)}
           aria-label="Toggle menu"
         >
@@ -160,10 +157,10 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
             <Link href="/trial" onClick={closeMenu}>
               <Button
                 variant="outline"
-                className="w-full border-near-green/50 text-near-green hover:bg-near-green/10 hover:border-near-green font-semibold"
+                className="w-full border-white/20 text-zinc-200 hover:bg-white/10 hover:border-white/40 font-semibold"
               >
                 <Sparkles className="w-4 h-4 mr-2" />
-                {t.landing.nav_extra?.try_free || 'Guest ticket'}
+                {t.landing.nav_extra?.try_free || 'Guest account'}
               </Button>
             </Link>
 
@@ -172,7 +169,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
                 closeMenu();
                 handleGetStarted();
               }}
-              className="w-full bg-near-green hover:bg-near-green/80 text-black font-semibold"
+              className="w-full bg-white hover:bg-zinc-200 text-black font-semibold"
             >
               {t.landing.hero_section?.cta_primary || 'Open a screening'}
             </Button>

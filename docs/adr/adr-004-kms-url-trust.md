@@ -1,10 +1,14 @@
 # ADR-004: KMS Client — Remove Hardcoded Fallback and Enforce Registry Trust
 
 ## Status
-Accepted for MVP
+Accepted and implemented for MVP
 
 ## Context
-`apps/web/lib/kms/client.ts:10-15` defines `DEFAULT_KMS_BASE_URL` from `NEXT_PUBLIC_KMS_URL`. This hardcoded endpoint is prepended to the operator list and treated as equally trustworthy. If compromised, it receives Shamir shares and auth tokens before registry operators are attempted.
+Earlier client code defined `DEFAULT_KMS_BASE_URL` from `NEXT_PUBLIC_KMS_URL`.
+That hardcoded endpoint could be prepended to the operator list and treated as
+equally trustworthy. If compromised, it could receive Shamir shares and auth
+tokens before registry operators were attempted. The current client no longer
+uses that env fallback.
 
 ## Decision
 1. **Remove `DEFAULT_KMS_BASE_URL` entirely.** The client MUST discover operators exclusively from `operator-registry`.

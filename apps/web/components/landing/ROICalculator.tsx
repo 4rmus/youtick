@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useMemo, useState } from 'react';
-import { Calculator, TrendingDown } from 'lucide-react';
+import { Calculator } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
 export const ROICalculator = memo(() => {
@@ -22,15 +22,11 @@ export const ROICalculator = memo(() => {
     const totalSales = ticketPrice * ticketCount;
     const platformFee = totalSales * 0.02;
     const youtickRevenue = totalSales * 0.98;
-    const traditionalRevenue = totalSales * 0.55;
-    const traditionalLoss = youtickRevenue - traditionalRevenue;
 
     return {
       totalSales,
       platformFee,
       youtickRevenue,
-      traditionalRevenue,
-      traditionalLoss,
     };
   }, [ticketPrice, ticketCount]);
 
@@ -46,8 +42,8 @@ export const ROICalculator = memo(() => {
       <div className="container mx-auto px-4">
         <div className="mb-12 max-w-3xl">
           <div className="mb-4 flex items-center gap-3">
-            <Calculator className="h-7 w-7 text-near-green" />
-            <p className="text-sm font-semibold uppercase tracking-wide text-near-green">
+            <Calculator className="h-7 w-7 text-zinc-300" />
+            <p className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
               {s.eyebrow}
             </p>
           </div>
@@ -68,7 +64,7 @@ export const ROICalculator = memo(() => {
                 setTicketPrice(preset.price);
                 setTicketCount(preset.sales);
               }}
-              className="rounded-full border border-white/10 bg-zinc-950 px-4 py-2 text-sm font-semibold text-zinc-300 transition-colors hover:border-near-green/50 hover:text-white"
+              className="rounded-full border border-white/10 bg-zinc-950 px-4 py-2 text-sm font-semibold text-zinc-300 transition-colors hover:border-white/40 hover:text-white"
             >
               {preset.label}
             </button>
@@ -80,7 +76,7 @@ export const ROICalculator = memo(() => {
             <div className="mb-8">
               <div className="mb-3 flex items-center justify-between gap-4">
                 <label className="text-sm font-medium text-zinc-400">{s.ticket_price}</label>
-                <span className="text-2xl font-black text-near-green">${ticketPrice}</span>
+                <span className="text-2xl font-black text-white">${ticketPrice}</span>
               </div>
               <input
                 type="range"
@@ -88,7 +84,7 @@ export const ROICalculator = memo(() => {
                 max={100}
                 value={ticketPrice}
                 onChange={(event) => setTicketPrice(Number(event.target.value))}
-                className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-near-green"
+                className="landing-range h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-white"
               />
               <div className="mt-1 flex justify-between text-xs text-zinc-600">
                 <span>$1</span>
@@ -108,7 +104,7 @@ export const ROICalculator = memo(() => {
                 step={10}
                 value={ticketCount}
                 onChange={(event) => setTicketCount(Number(event.target.value))}
-                className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-white"
+                className="landing-range h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-white"
               />
               <div className="mt-1 flex justify-between text-xs text-zinc-600">
                 <span>10</span>
@@ -124,12 +120,12 @@ export const ROICalculator = memo(() => {
             </div>
           </div>
 
-          <div className="rounded-lg border border-near-green/25 bg-near-green/5 p-6 md:p-8">
+          <div className="rounded-lg border border-white/10 bg-zinc-950 p-6 md:p-8">
             <div className="mb-6">
-              <p className="text-sm font-semibold uppercase tracking-wide text-near-green">
+              <p className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
                 {s.youtick_revenue_label}
               </p>
-              <div className="mt-3 text-5xl font-black text-near-green">
+              <div className="mt-3 text-5xl font-black text-white">
                 {formatUsd(calculations.youtickRevenue)}
               </div>
               <p className="mt-2 text-sm text-zinc-400">{s.youtick_revenue_desc}</p>
@@ -148,19 +144,14 @@ export const ROICalculator = memo(() => {
 
             <div className="grid gap-4 md:grid-cols-2">
               <div className="rounded-lg border border-white/10 bg-black/60 p-5">
-                <p className="mb-2 text-sm text-zinc-500">{s.traditional_model}</p>
-                <p className="text-2xl font-bold text-zinc-200">{formatUsd(calculations.traditionalRevenue)}</p>
+                <p className="mb-2 text-sm font-semibold text-zinc-300">{s.traditional_model}</p>
                 <p className="mt-2 text-xs leading-relaxed text-zinc-500">
                   {s.traditional_desc}
                 </p>
               </div>
 
-              <div className="rounded-lg border border-red-400/20 bg-red-500/5 p-5">
-                <div className="mb-2 flex items-center gap-2 text-sm text-red-300">
-                  <TrendingDown className="h-4 w-4" />
-                  {s.loss_avoided}
-                </div>
-                <p className="text-2xl font-bold text-red-200">{formatUsd(calculations.traditionalLoss)}</p>
+              <div className="rounded-lg border border-white/10 bg-black/60 p-5">
+                <p className="mb-2 text-sm font-semibold text-zinc-300">{s.loss_avoided}</p>
                 <p className="mt-2 text-xs leading-relaxed text-zinc-500">
                   {s.loss_desc}
                 </p>

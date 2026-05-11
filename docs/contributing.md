@@ -34,10 +34,11 @@ npm run dev
 Minimum:
 
 ```txt
-NEXT_PUBLIC_NEAR_NETWORK=testnet
-NEXT_PUBLIC_MARKET_CONTRACT_ID=dev-fresh-kurulum-3.testnet
-NEXT_PUBLIC_ACCESS_CONTRACT_ID=access-1773606802388.v2-0.utick.testnet
-NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry-1773606802388.v2-0.utick.testnet
+NEXT_PUBLIC_NEAR_NETWORK=mainnet
+NEXT_PUBLIC_MARKET_CONTRACT_ID=youtick.near
+NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.youtick.near
+NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
+NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 ```
 
 Sik kullanilan opsiyoneller:
@@ -70,7 +71,7 @@ Tam degisken listesi ve aciklamalar: [Configuration Reference](getting-started/c
 - `upload`
 - `player`
 - `kms`
-- `crust`
+- `storage`
 - `contract`
 - `gift`
 - `trial`

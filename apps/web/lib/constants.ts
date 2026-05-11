@@ -2,7 +2,7 @@
  * YouTick Constants
  *
  * This file contains:
- * 1. Application Configuration (NEAR, KMS, IPFS)
+ * 1. Application Configuration (NEAR, storage, IPFS)
  * 2. Design System Constants (colors, layout, animation)
  */
 
@@ -18,9 +18,9 @@ const DEFAULT_CONTRACT_IDS: Record<NetworkId, {
     registryContractId: string;
 }> = {
     testnet: {
-        marketContractId: 'dev-fresh-kurulum-3.testnet',
-        accessContractId: 'access-1773606802388.v2-0.utick.testnet',
-        registryContractId: 'registry-1773606802388.v2-0.utick.testnet',
+        marketContractId: 'replace-with-market.testnet',
+        accessContractId: 'replace-with-access.testnet',
+        registryContractId: 'replace-with-registry.testnet',
     },
     mainnet: {
         marketContractId: 'youtick.near',
@@ -29,12 +29,19 @@ const DEFAULT_CONTRACT_IDS: Record<NetworkId, {
     },
 };
 
-const configuredNetworkId = (process.env.NEXT_PUBLIC_NEAR_NETWORK as NetworkId | undefined) || 'mainnet';
+function getConfiguredNetworkId(): NetworkId {
+    return process.env.NEXT_PUBLIC_NEAR_NETWORK === 'testnet' ? 'testnet' : 'mainnet';
+}
+
+function getContractId(envName: string, defaultValue: string, aliasEnvName?: string): string {
+    const value = process.env[envName] || (aliasEnvName ? process.env[aliasEnvName] : undefined);
+    return value || defaultValue;
+}
+
+const configuredNetworkId = getConfiguredNetworkId();
 const defaultContracts = DEFAULT_CONTRACT_IDS[configuredNetworkId];
 const configuredMarketContractId =
-    process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID
-    || process.env.NEXT_PUBLIC_NFT_CONTRACT_ID
-    || defaultContracts.marketContractId;
+    getContractId('NEXT_PUBLIC_MARKET_CONTRACT_ID', defaultContracts.marketContractId, 'NEXT_PUBLIC_NFT_CONTRACT_ID');
 const configuredAppUrl =
     process.env.NEXT_PUBLIC_APP_URL
     || (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'https://youtick.net');
@@ -52,13 +59,11 @@ export const NEAR_CONFIG = {
 
     /** Zero-trust access/session contract ID */
     accessContractId:
-        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID
-        || defaultContracts.accessContractId,
+        getContractId('NEXT_PUBLIC_ACCESS_CONTRACT_ID', defaultContracts.accessContractId),
 
     /** Zero-trust registry contract ID */
     registryContractId:
-        process.env.NEXT_PUBLIC_REGISTRY_CONTRACT_ID
-        || defaultContracts.registryContractId,
+        getContractId('NEXT_PUBLIC_REGISTRY_CONTRACT_ID', defaultContracts.registryContractId),
 } as const;
 
 export const FEATURE_FLAGS = {
@@ -84,7 +89,7 @@ export const APP_CONFIG = {
 
 /**
  * IPFS Configuration
- * Uses ipfs.io as primary gateway for best availability
+ * Public gateway fallback used after the configured storage/delivery path.
  */
 export const IPFS_CONFIG = {
     /** Primary public gateway URL used only for legacy fallback cases */

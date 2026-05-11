@@ -10,7 +10,7 @@ export default function TermsPage() {
     <main className="min-h-screen bg-gray-950 text-gray-200">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <h1 className="text-4xl font-bold text-white mb-2">Terms of Service</h1>
-        <p className="text-gray-400 mb-12">Last Updated: February 15, 2026</p>
+        <p className="text-gray-400 mb-12">Last Updated: May 11, 2026</p>
 
         <div className="space-y-10 text-gray-300 leading-relaxed">
           {/* 1. ACCEPTANCE */}
@@ -49,7 +49,7 @@ export default function TermsPage() {
                 store encrypted playback key shares and check ticket-based access
               </li>
               <li>
-                <strong className="text-white">IPFS / Crust</strong>: Storage and gateway delivery
+                <strong className="text-white">Lighthouse / IPFS</strong>: Storage and gateway delivery
                 for encrypted release files
               </li>
               <li>
@@ -137,7 +137,7 @@ export default function TermsPage() {
 
             <h3 className="text-lg font-medium text-white mt-6 mb-3">5.2 Content Storage</h3>
             <p>
-              Paid uploaded content is encrypted in the browser and stored through IPFS/Crust in
+              Paid uploaded content is encrypted in the browser and stored through Lighthouse/IPFS in
               encrypted form. Blockchain records are public and may be permanent; IPFS content is
               content-addressed and may remain available while pinned or replicated. Creators should
               carefully consider this publication model before uploading.
@@ -288,7 +288,7 @@ export default function TermsPage() {
 
             <h3 className="text-lg font-medium text-white mt-6 mb-3">8.3 Hybrid Serverless Infrastructure</h3>
             <p>
-              The Platform depends on third-party infrastructure including NEAR Protocol, IPFS/Crust,
+              The Platform depends on third-party infrastructure including NEAR Protocol, Lighthouse/IPFS,
               wallet providers, RPC providers, and serverless edge KMS operators. YouTick does not
               guarantee the availability, performance, or security of these underlying services.
             </p>

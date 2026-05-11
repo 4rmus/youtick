@@ -13,16 +13,21 @@ import { OnboardingKeyInit } from "@/components/OnboardingKeyInit";
 
 export const metadata: Metadata = {
     title: {
-        default: 'YouTick - Digital Ticketed Video Access Platform for Film and Music Creators',
+        default: 'YouTick - Ticketed Screenings for Film and Music',
         template: '%s | YouTick',
     },
-    description: 'YouTick helps film and music creators open ticketed screenings for films, concert recordings and special music videos that viewers unlock with digital tickets.',
+    description: 'YouTick helps filmmakers, musicians and creative teams sell ticketed screenings for films, concert recordings and special videos with protected playback.',
     keywords: [
-        'digital ticketed video access platform',
-        'digital ticketed video access',
+        'ticketed video releases',
+        'ticketed video access',
+        'digital tickets for film',
+        'independent film ticketing',
+        'documentary streaming tickets',
+        'concert recording tickets',
+        'concert video tickets',
         'film creator platform',
         'music creator platform',
-        'concert recording screening',
+        'digital ticketed screenings',
         'festival screening',
         'special screening platform',
         'fan access platform',
@@ -30,7 +35,6 @@ export const metadata: Metadata = {
         'digital tickets',
         'independent cinema',
         'music video screening',
-        'onchain access verification',
     ],
     authors: [{ name: 'YouTick' }],
     creator: 'YouTick',
@@ -52,8 +56,8 @@ export const metadata: Metadata = {
         alternateLocale: 'tr_TR',
         url: 'https://youtick.net',
         siteName: 'YouTick',
-        title: 'YouTick - Digital Ticketed Video Access Platform for Film and Music Creators',
-        description: 'A protected ticketed screening platform for films, concert recordings and special music videos, unlocked with digital tickets.',
+        title: 'YouTick - Ticketed Screenings for Film and Music',
+        description: 'Sell a film, concert recording or special video as a ticketed screening with protected playback.',
         images: [
             {
                 url: 'https://youtick.net/hero_concert.png',
@@ -65,8 +69,8 @@ export const metadata: Metadata = {
     },
     twitter: {
         card: 'summary_large_image',
-        title: 'YouTick - Digital Ticketed Video Access Platform for Film and Music Creators',
-        description: 'Film and music creators open protected ticketed screenings that viewers unlock with digital tickets.',
+        title: 'YouTick - Ticketed Screenings for Film and Music',
+        description: 'Films, concert recordings and special videos offered as ticketed screenings.',
         images: ['https://youtick.net/hero_concert.png'],
         creator: '@youtick_net',
     },
