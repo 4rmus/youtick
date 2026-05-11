@@ -26,7 +26,8 @@ apps/web/
 ├── hooks/                  # Route-level hooks
 ├── lib/
 │   ├── kms/                # Multi-operator KMS client + AES-CTR encryption + streaming
-│   ├── crust/              # Upload/retrieval gateway logic
+│   ├── storage/            # Active upload provider boundary
+│   ├── crust/              # Legacy compatibility and read fallback helpers
 │   ├── access-grants.ts    # Session grant lifecycle for playback
 │   ├── registry.ts         # Operator registry queries
 │   ├── upload-session-manager.ts  # Upload session key lifecycle
@@ -44,8 +45,8 @@ apps/web/
 
 1. Validate metadata and file constraints.
 2. Ensure upload session authority and budget.
-3. Upload thumbnail to Crust.
-4. Paid video path: AES-CTR encrypt -> upload ciphertext + manifest -> split key into Shamir shares -> distribute shares to KMS operators.
+3. Upload thumbnail/poster assets through the active storage provider.
+4. Paid video path: AES-CTR encrypt -> upload ciphertext + manifest through Storage API/IPFS -> split key into Shamir shares -> distribute shares to KMS operators.
 5. Submit batched on-chain actions (mint ticket + create event).
 
 ### Playback (`components/IpfsPlayer.tsx`)
@@ -76,6 +77,7 @@ apps/web/
 - `lib/registry.ts`: operator registry queries and caching.
 - `lib/rpc-failover.ts`: browser-safe NEAR RPC URL selection. In production,
   browser RPC goes through same-origin `/api/near-rpc`, served by `workers/web4-proxy`.
+- `lib/storage/provider.ts`: chooses Lighthouse-primary upload or explicit legacy fallback.
 - `lib/crust/gateway.ts`: multi-gateway read failover.
 - `lib/upload-session-manager.ts`: upload session key creation and cleanup.
 - `lib/metadata-parser.ts`: title/CID/thumbnail metadata parsing.

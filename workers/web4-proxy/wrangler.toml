@@ -5,7 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 # Primary origin. See README.md for origin/fallback and CSP responsibilities.
-WEB4_ORIGIN = "https://1934340a.youtick-static.pages.dev"
+WEB4_ORIGIN = "https://5740e707.youtick-static.pages.dev"
 WEB4_FALLBACK_ORIGIN = "https://youtick.near.page"
 
 ALLOWED_DOMAINS = "youtick.net,www.youtick.net"

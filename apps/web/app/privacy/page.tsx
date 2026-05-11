@@ -10,7 +10,7 @@ export default function PrivacyPage() {
     <main className="min-h-screen bg-gray-950 text-gray-200">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <h1 className="text-4xl font-bold text-white mb-2">Privacy Policy</h1>
-        <p className="text-gray-400 mb-12">Last Updated: February 15, 2026</p>
+        <p className="text-gray-400 mb-12">Last Updated: May 11, 2026</p>
 
         <div className="space-y-10 text-gray-300 leading-relaxed">
           {/* 1. INTRODUCTION */}
@@ -26,7 +26,7 @@ export default function PrivacyPage() {
               YouTick is designed with a <strong className="text-white">privacy-first, client-side
               architecture</strong>. Unlike traditional platforms, the majority of data processing
               occurs directly in your browser. We do not operate a traditional application or media
-              server for playback; serverless edge components, NEAR, IPFS/Crust, and KMS operators
+              server for playback; serverless edge components, NEAR, Lighthouse/IPFS, and KMS operators
               handle the active public-alpha flow. This limits the data we can collect and access.
             </p>
             <p className="mt-3">
@@ -195,7 +195,7 @@ export default function PrivacyPage() {
                     <td className="py-3 px-4">Encrypted key shares, account ID, content ID, access request metadata</td>
                   </tr>
                   <tr>
-                    <td className="py-3 px-4 font-medium text-white">IPFS / Crust</td>
+                    <td className="py-3 px-4 font-medium text-white">Lighthouse / IPFS</td>
                     <td className="py-3 px-4">Encrypted media storage and gateway delivery</td>
                     <td className="py-3 px-4">Encrypted video blobs, content identifiers (CIDs)</td>
                   </tr>
@@ -254,7 +254,7 @@ export default function PrivacyPage() {
             <h3 className="text-lg font-medium text-white mt-6 mb-3">5.3 Content Privacy</h3>
             <p>
               Paid video content uploaded through YouTick is encrypted in the browser before media
-              segments are stored on IPFS/Crust. Playback keys are split across active KMS
+              segments are stored on Lighthouse/IPFS. Playback keys are split across active KMS
               operators and reconstructed only for authorized viewing. Ticket holders can request
               playback access; encrypted media alone is not intended to be viewable without the
               required key material.

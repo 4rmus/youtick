@@ -9,7 +9,6 @@ import { CompetitiveAdvantagesSection } from '@/components/landing/CompetitiveAd
 import { CTASection } from '@/components/landing/CTASection';
 import { LandingFooter } from '@/components/landing/LandingFooter';
 import { ROICalculator } from '@/components/landing/ROICalculator';
-import { Roadmap } from '@/components/landing/Roadmap';
 
 export default function Home() {
   return (
@@ -17,11 +16,10 @@ export default function Home() {
       <Navigation variant="landing" />
       <HeroSection />
       <AudienceSection />
-      <UseCasesSection />
       <HowItWorksSection />
-      <CompetitiveAdvantagesSection />
+      <UseCasesSection />
       <ROICalculator />
-      <Roadmap />
+      <CompetitiveAdvantagesSection />
       <CTASection />
       <LandingFooter />
     </div>

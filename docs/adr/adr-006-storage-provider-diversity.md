@@ -56,7 +56,7 @@ authorization.
 - There will be a temporary period where docs and code mention both Crust and
   the storage provider adapter.
 - Operational takedown must eventually cover every active persistence provider
-  and media cache, not only Crust pins.
+  and media cache, not only one provider's pins.
 
 ## Validation
 - Existing Crust gateway and legacy diagnostic tests must keep passing.

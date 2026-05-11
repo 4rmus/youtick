@@ -45,7 +45,7 @@ function VideoPlaceholder() {
  *
  * Two variants:
  * - `grid`: Used in discover pages with purple/blue glow, full content section
- * - `slider`: Used in StartSlider with near-green/near-purple glow, compact layout
+ * - `slider`: Compact horizontal layout for carousel-style lists
  */
 export function VideoCard({
     token,

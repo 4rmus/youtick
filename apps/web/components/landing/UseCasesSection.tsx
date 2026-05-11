@@ -18,7 +18,7 @@ export const UseCasesSection = memo(() => {
     <section id="use-cases" className="border-y border-white/5 bg-zinc-950 py-24">
       <div className="container mx-auto px-4">
         <div className="mb-12 max-w-3xl">
-          <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-near-green">
+          <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
             {s.eyebrow}
           </p>
           <h2 className="mb-4 text-3xl font-black text-white md:text-5xl">
@@ -33,9 +33,9 @@ export const UseCasesSection = memo(() => {
           {useCases.map(({ icon: Icon, title, text }) => (
             <article
               key={title}
-              className="rounded-lg border border-white/10 bg-black p-5 transition-colors hover:border-near-green/40"
+              className="rounded-lg border border-white/10 bg-black p-5 transition-colors hover:border-white/30"
             >
-              <Icon className="mb-5 h-7 w-7 text-near-green" />
+              <Icon className="mb-5 h-7 w-7 text-zinc-200" />
               <h3 className="mb-3 text-lg font-bold text-white">{title}</h3>
               <p className="text-sm leading-relaxed text-zinc-400">{text}</p>
             </article>

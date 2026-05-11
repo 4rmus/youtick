@@ -17,7 +17,7 @@ import { TrialUpgradeDialog } from "@/components/TrialUpgradeDialog";
 import { IPFSThumbnail } from "@/components/IPFSThumbnail";
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
-import type { NFTEvent, PurchaseLog } from '@/lib/types';
+import type { NFTEvent } from '@/lib/types';
 import { useCreatorStats, useCreatorPurchaseLogs, useCreatorProfile } from '@/hooks/useCreatorStats';
 import { CreatorProfileForm } from '@/components/CreatorProfileForm';
 import { getLatestEventsQuery } from '@/lib/event-query';

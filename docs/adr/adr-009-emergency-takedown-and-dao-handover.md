@@ -9,7 +9,7 @@ and will be transferred to a multisig/DAO by **end of Q4 2026 (December 2026)**.
 
 The platform is built around browser-side encryption, on-chain entitlement and
 share-based playback. Once a creator publishes an event, the encrypted media is
-on IPFS/Crust and the entitlement is on-chain. Without an explicit takedown
+on Lighthouse/IPFS and the entitlement is on-chain. Without an explicit takedown
 path, the platform cannot respond to:
 
 - non-consensual sexual content,
@@ -21,8 +21,8 @@ Two pre-existing controls were not sufficient on their own:
 
 1. **`ban_event`** is owner-only and intended for non-emergency moderation.
    It is too broad for illegal-content emergency response by itself.
-2. **Crust pin removal** is off-chain and per-operator; it does not produce a
-   verifiable on-chain audit trail.
+2. **Provider pin/cache removal** is off-chain and per-provider; it does not
+   produce a verifiable on-chain audit trail.
 
 A separate problem is governance: in alpha, all takedown authority is held by a
 single owner key. This is a centralization risk and a single-point-of-failure.

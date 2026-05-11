@@ -16,7 +16,7 @@ export const CompetitiveAdvantagesSection = memo(() => {
   const techLabels = [
     { key: 'near', label: s.near_label },
     { key: 'ipfs', label: s.ipfs_label },
-    { key: 'crust', label: s.crust_label },
+    { key: 'lighthouse', label: s.lighthouse_label },
     { key: 'kms', label: s.kms_label },
   ];
 
@@ -25,7 +25,7 @@ export const CompetitiveAdvantagesSection = memo(() => {
       <div className="container mx-auto px-4">
         <div className="mb-12 grid gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-end">
           <div>
-            <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-near-green">
+            <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
               {s.eyebrow}
             </p>
             <h2 className="text-3xl font-black text-white md:text-5xl">
@@ -41,10 +41,10 @@ export const CompetitiveAdvantagesSection = memo(() => {
           {trustItems.map(({ icon: Icon, title, text }) => (
             <article
               key={title}
-              className="rounded-lg border border-white/10 bg-black p-6 transition-colors hover:border-near-green/40"
+              className="rounded-lg border border-white/10 bg-black p-6 transition-colors hover:border-white/30"
             >
-              <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg bg-near-green/10">
-                <Icon className="h-5 w-5 text-near-green" />
+              <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg bg-white/5">
+                <Icon className="h-5 w-5 text-zinc-200" />
               </div>
               <h3 className="mb-3 text-lg font-bold text-white">{title}</h3>
               <p className="text-sm leading-relaxed text-zinc-400">{text}</p>
@@ -58,7 +58,7 @@ export const CompetitiveAdvantagesSection = memo(() => {
               key={key}
               className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black px-4 py-2"
             >
-              <ShieldCheck className="h-4 w-4 text-near-green" />
+              <ShieldCheck className="h-4 w-4 text-zinc-300" />
               {label}
             </span>
           ))}

@@ -22,8 +22,8 @@ features:
     details: Playback keys are reconstructed from multiple active operator shares instead of a single full-key release.
   - title: Registry Enforcement
     details: Operators and relayers must be active in the registry before they can participate.
-  - title: IPFS + Crust Storage
-    details: Encrypted blobs are pinned to decentralized storage with multi-gateway playback failover.
+  - title: Lighthouse + IPFS Storage
+    details: Encrypted blobs are uploaded through the Storage API and read with multi-gateway playback failover.
 ---
 
 ## Quick Navigation

@@ -11,9 +11,9 @@
 YouTick is close to a credible public alpha. The source code has a serious
 architecture: browser-side encryption, NEAR-based entitlements, an access
 contract, an operator registry and share-based KMS custody.
-The current decentralization posture is hybrid: NEAR and IPFS/Crust carry core
-state and media delivery, while KMS operators still run on Cloudflare Workers
-with KV-backed share storage.
+The current decentralization posture is hybrid: NEAR and encrypted IPFS storage
+carry core state and media delivery, while KMS operators still run on
+Cloudflare Workers with KV-backed share storage.
 
 The live mainnet KMS/operator layer is now aligned with the source-level design:
 
@@ -99,7 +99,7 @@ reviewed.
 
 Current deploy state:
 
-- A fresh Web4 static build was uploaded to Crust/IPFS:
+- A fresh Web4 static build was uploaded to IPFS:
   `ipfs://bafybeiepp3qv635pidmh7yvckwa22ogv6oc22f6nziaj55mu2n7rejpzee`.
 - The uploaded root and `/watch/` route returned `200` through `ipfs.io`.
 - Web4 URL update proposal `0` exists on `youtick.near` and must wait 24 hours
