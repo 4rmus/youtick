@@ -428,7 +428,7 @@ Her madde binary. Bir tane FAIL = launch ertelenir.
 - [ ] Trial baseline counter captures claim events without changing `STORAGE_COST_ACCOUNT`
 - [x] R2 module split deploy verified (`near abi youtick.near` pre/post diff = empty)
 - [ ] Smoke test: 3 currency × upload-buy-watch = 9/9 PASS
-- [ ] 5 KMS operatör `/health` ready döndürüyor
+- [x] 5 KMS operatör `/health` ready döndürüyor (2026-05-12, 5/5 `ok:true`)
 - [ ] Sentry + Uptime Kuma + Telegram alert canlı, test alarmı geçti
 
 ## Residual Risks (Plan Dışı)
