@@ -2,6 +2,8 @@ import { APP_CONFIG, FEATURE_FLAGS } from '@/lib/constants';
 import { base64Decode } from '@/lib/crypto/codec';
 import type { WalletInstance } from '@/lib/types';
 
+export type StorageApiAuthSigner = Pick<WalletInstance, 'signMessage'>;
+
 export type StorageApiPinOutcome =
     | { status: 'skipped'; reason: 'disabled' | 'missing_url' }
     | { status: 'pinned'; cid: string; provider: string }
@@ -70,7 +72,7 @@ export function isLighthousePrimaryUploadEnabled(): boolean {
 export async function uploadDirectoryWithStorageApi(
     files: Array<{ path: string; file: Blob }>,
     accountId: string,
-    wallet: WalletInstance,
+    authSigner: StorageApiAuthSigner,
     options?: {
         onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void;
         timeout?: number;
@@ -89,7 +91,7 @@ export async function uploadDirectoryWithStorageApi(
     const totalSize = files.reduce((sum, entry) => sum + entry.file.size, 0);
     const intent = await createUploadIntent({
         accountId,
-        wallet,
+        authSigner,
         uploadKind: 'directory',
         fileName: 'directory',
         sizeBytes: totalSize,
@@ -172,7 +174,7 @@ export async function uploadFileWithStorageApi(
     path: string,
     file: Blob,
     accountId: string,
-    wallet: WalletInstance,
+    authSigner: StorageApiAuthSigner,
     options?: {
         onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void;
         timeout?: number;
@@ -190,7 +192,7 @@ export async function uploadFileWithStorageApi(
     const normalizedPath = path.replace(/^\/+/, '');
     const intent = await createUploadIntent({
         accountId,
-        wallet,
+        authSigner,
         uploadKind: 'file',
         fileName: normalizedPath,
         sizeBytes: file.size,
@@ -265,7 +267,7 @@ export async function pinCidWithStorageApi(params: {
     cid: string;
     fileName?: string;
     accountId?: string;
-    wallet?: WalletInstance;
+    authSigner?: StorageApiAuthSigner;
 }): Promise<StorageApiPinOutcome> {
     if (!FEATURE_FLAGS.enableLighthousePersistence) {
         return { status: 'skipped', reason: 'disabled' };
@@ -279,14 +281,14 @@ export async function pinCidWithStorageApi(params: {
     if (!params.accountId) {
         return { status: 'failed', cid: params.cid, reason: 'account_id_required' };
     }
-    if (!params.wallet) {
-        return { status: 'failed', cid: params.cid, reason: 'wallet_required' };
+    if (!params.authSigner) {
+        return { status: 'failed', cid: params.cid, reason: 'auth_signer_required' };
     }
 
     try {
         const intent = await createUploadIntent({
             accountId: params.accountId,
-            wallet: params.wallet,
+            authSigner: params.authSigner,
             uploadKind: 'pin',
             fileName: params.fileName || params.cid,
             sizeBytes: 1,
@@ -402,7 +404,7 @@ function getStorageApiBaseUrl(): string | null {
 
 async function createUploadIntent(params: {
     accountId: string;
-    wallet: WalletInstance;
+    authSigner: StorageApiAuthSigner;
     uploadKind: StorageApiUploadKind;
     fileName: string;
     sizeBytes: number;
@@ -414,7 +416,7 @@ async function createUploadIntent(params: {
         throw new Error('Storage API URL is missing');
     }
 
-    const uploadAuth = await requestStorageUploadAuthToken(baseUrl, params.accountId, params.wallet);
+    const uploadAuth = await requestStorageUploadAuthToken(baseUrl, params.accountId, params.authSigner);
     const response = await fetch(`${baseUrl}/uploads/intent`, {
         method: 'POST',
         headers: {
@@ -461,7 +463,7 @@ async function createUploadIntent(params: {
 async function requestStorageUploadAuthToken(
     baseUrl: string,
     accountId: string,
-    wallet: WalletInstance,
+    authSigner: StorageApiAuthSigner,
 ): Promise<StorageApiAuthToken> {
     const cached = readCachedStorageAuthToken(baseUrl, accountId);
     if (cached) {
@@ -483,7 +485,7 @@ async function requestStorageUploadAuthToken(
         throw new Error('Storage API auth challenge returned an invalid response');
     }
 
-    const signedMessage = await wallet.signMessage({
+    const signedMessage = await authSigner.signMessage({
         message: challenge.message,
         recipient: challenge.recipient,
         nonce: base64Decode(challenge.nonce),

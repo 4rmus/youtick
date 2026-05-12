@@ -8,6 +8,7 @@ import {
     getTransactionLastResult,
 } from 'near-api-js';
 import { GAS_CONSTANTS, NEAR_CONFIG } from './constants';
+import { base64Encode } from './crypto/codec';
 import { nearAmountToYocto } from './near-amount';
 import { getCurrentRpcUrl } from './rpc-failover';
 import type { WalletInstance } from './types';
@@ -183,6 +184,30 @@ export class UploadSessionManager {
 
     getPublicKey(): string | null {
         return getActiveUploadSessionKey(this.accountId)?.getPublicKey().toString() ?? null;
+    }
+
+    async signMessage(params: { message: string; recipient: string; nonce: Uint8Array }): Promise<{
+        accountId: string;
+        publicKey: string;
+        signature: string;
+    }> {
+        const keyPair = getActiveUploadSessionKey(this.accountId);
+        if (!keyPair) {
+            throw new Error('No active upload session. Start a new upload authorization first.');
+        }
+
+        const signer = new KeyPairSigner(keyPair);
+        const signedMessage = await signer.signNep413Message(this.accountId, {
+            message: params.message,
+            recipient: params.recipient,
+            nonce: params.nonce,
+        });
+
+        return {
+            accountId: signedMessage.accountId,
+            publicKey: signedMessage.publicKey.toString(),
+            signature: base64Encode(signedMessage.signature),
+        };
     }
 
     clearSession(): void {

@@ -67,6 +67,14 @@ vi.mock('@/lib/upload-session-manager', () => ({
             return mocks.createSession(wallet);
         }
 
+        async signMessage() {
+            return {
+                accountId: 'creator.testnet',
+                publicKey: 'ed25519:test-session-key',
+                signature: 'test-session-signature',
+            };
+        }
+
         clearSession() {
             return mocks.clearSession();
         }

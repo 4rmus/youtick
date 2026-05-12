@@ -121,7 +121,7 @@ describe('storage-api client', () => {
         vi.stubGlobal('fetch', fetchMock);
 
         const { isLighthousePersistencePilotEnabled, pinCidWithStorageApi } = await import('@/lib/storage/storage-api');
-        const result = await pinCidWithStorageApi({ cid: 'bafyRoot', fileName: 'delivery-root', accountId: 'creator.testnet', wallet: mockWallet });
+        const result = await pinCidWithStorageApi({ cid: 'bafyRoot', fileName: 'delivery-root', accountId: 'creator.testnet', authSigner: mockWallet });
 
         expect(isLighthousePersistencePilotEnabled()).toBe(true);
         expect(fetchMock).toHaveBeenCalledWith('https://storage-api.example/uploads/intent', {
@@ -355,7 +355,7 @@ describe('storage-api client', () => {
         }));
 
         const { pinCidWithStorageApi } = await import('@/lib/storage/storage-api');
-        const result = await pinCidWithStorageApi({ cid: 'bafyRoot', accountId: 'creator.testnet', wallet: mockWallet });
+        const result = await pinCidWithStorageApi({ cid: 'bafyRoot', accountId: 'creator.testnet', authSigner: mockWallet });
 
         expect(result).toEqual({
             status: 'failed',
