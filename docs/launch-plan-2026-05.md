@@ -339,7 +339,7 @@ VPS gerekli mi? Cloudflare Workers + Uptime Kuma SaaS yeterli; VPS opsiyonel pos
 | 1 | SB-2 hard cutover — **done** | 0 |
 | 1 | Personal network warm-up başlat (DM 5 kişi, "coming Day 23") | 0.5 |
 | 2 | SB-1 storage-api NEP-413 auth — **done** | 0 |
-| 3 | SB-3 pre-stage 7 proposals (1h aktif + 24h wait) — **next after SB-2** | 1 |
+| 3 | SB-3 registry proposals — **partial; access mismatch decision next** | 1 |
 | 3 | R1 chunk 1-2 (ipfs/ skeleton + import rewrite) — **done** | 0 |
 | 4 | Testnet env doğrula; yoksa setup | 0-3 |
 | 4 | R1 chunk 3-4 (eski sil + kms/streaming.ts sil) — **done** | 0 |
