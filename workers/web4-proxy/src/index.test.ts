@@ -115,6 +115,7 @@ describe('web4-proxy', () => {
         expect(response.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin');
         expect(response.headers.get('Content-Security-Policy')).toContain("default-src 'self'");
         expect(response.headers.get('Content-Security-Policy')).toContain('https://challenges.cloudflare.com');
+        expect(response.headers.get('Content-Security-Policy')).toContain('frame-src https://challenges.cloudflare.com');
         expect(response.headers.get('Content-Security-Policy')).toContain('https://static.cloudflareinsights.com');
     });
 
