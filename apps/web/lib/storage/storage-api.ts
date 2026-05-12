@@ -1,4 +1,6 @@
 import { APP_CONFIG, FEATURE_FLAGS } from '@/lib/constants';
+import { base64Decode } from '@/lib/crypto/codec';
+import type { WalletInstance } from '@/lib/types';
 
 export type StorageApiPinOutcome =
     | { status: 'skipped'; reason: 'disabled' | 'missing_url' }
@@ -25,6 +27,20 @@ type StorageApiUploadIntent = {
     expiresAt: string;
 };
 
+type StorageApiAuthChallenge = {
+    challengeId: string;
+    message: string;
+    recipient: string;
+    nonce: string;
+    expiresAt: number;
+};
+
+type StorageApiAuthToken = {
+    token: string;
+    accountId: string;
+    expiresAt: number;
+};
+
 export type StorageApiPinStatusOutcome =
     | { status: 'skipped'; reason: 'disabled' | 'missing_url' }
     | {
@@ -40,6 +56,9 @@ export type StorageApiPinStatusOutcome =
     | { status: 'missing'; cid: string; provider: string; upstreamStatus?: number; checkedAt?: string }
     | { status: 'failed'; cid: string; reason: string; httpStatus?: number };
 
+const STORAGE_AUTH_CACHE_PREFIX = 'youtick:storage-auth:';
+const STORAGE_AUTH_CACHE_SKEW_MS = 30_000;
+
 export function isLighthousePersistencePilotEnabled(): boolean {
     return FEATURE_FLAGS.enableLighthousePersistence && getStorageApiBaseUrl() !== null;
 }
@@ -51,6 +70,7 @@ export function isLighthousePrimaryUploadEnabled(): boolean {
 export async function uploadDirectoryWithStorageApi(
     files: Array<{ path: string; file: Blob }>,
     accountId: string,
+    wallet: WalletInstance,
     options?: {
         onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void;
         timeout?: number;
@@ -69,6 +89,7 @@ export async function uploadDirectoryWithStorageApi(
     const totalSize = files.reduce((sum, entry) => sum + entry.file.size, 0);
     const intent = await createUploadIntent({
         accountId,
+        wallet,
         uploadKind: 'directory',
         fileName: 'directory',
         sizeBytes: totalSize,
@@ -151,6 +172,7 @@ export async function uploadFileWithStorageApi(
     path: string,
     file: Blob,
     accountId: string,
+    wallet: WalletInstance,
     options?: {
         onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void;
         timeout?: number;
@@ -168,6 +190,7 @@ export async function uploadFileWithStorageApi(
     const normalizedPath = path.replace(/^\/+/, '');
     const intent = await createUploadIntent({
         accountId,
+        wallet,
         uploadKind: 'file',
         fileName: normalizedPath,
         sizeBytes: file.size,
@@ -242,6 +265,7 @@ export async function pinCidWithStorageApi(params: {
     cid: string;
     fileName?: string;
     accountId?: string;
+    wallet?: WalletInstance;
 }): Promise<StorageApiPinOutcome> {
     if (!FEATURE_FLAGS.enableLighthousePersistence) {
         return { status: 'skipped', reason: 'disabled' };
@@ -255,10 +279,14 @@ export async function pinCidWithStorageApi(params: {
     if (!params.accountId) {
         return { status: 'failed', cid: params.cid, reason: 'account_id_required' };
     }
+    if (!params.wallet) {
+        return { status: 'failed', cid: params.cid, reason: 'wallet_required' };
+    }
 
     try {
         const intent = await createUploadIntent({
             accountId: params.accountId,
+            wallet: params.wallet,
             uploadKind: 'pin',
             fileName: params.fileName || params.cid,
             sizeBytes: 1,
@@ -374,6 +402,7 @@ function getStorageApiBaseUrl(): string | null {
 
 async function createUploadIntent(params: {
     accountId: string;
+    wallet: WalletInstance;
     uploadKind: StorageApiUploadKind;
     fileName: string;
     sizeBytes: number;
@@ -385,11 +414,14 @@ async function createUploadIntent(params: {
         throw new Error('Storage API URL is missing');
     }
 
+    const uploadAuth = await requestStorageUploadAuthToken(baseUrl, params.accountId, params.wallet);
     const response = await fetch(`${baseUrl}/uploads/intent`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Authorization': `Bearer ${uploadAuth.token}`,
+            'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
-            accountId: params.accountId,
             uploadKind: params.uploadKind,
             fileName: params.fileName,
             sizeBytes: params.sizeBytes,
@@ -424,6 +456,136 @@ async function createUploadIntent(params: {
         idempotencyKey,
         expiresAt,
     };
+}
+
+async function requestStorageUploadAuthToken(
+    baseUrl: string,
+    accountId: string,
+    wallet: WalletInstance,
+): Promise<StorageApiAuthToken> {
+    const cached = readCachedStorageAuthToken(baseUrl, accountId);
+    if (cached) {
+        return cached;
+    }
+
+    const challengeResponse = await fetch(`${baseUrl}/uploads/auth/challenge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId }),
+    });
+    const challengeBody = await readJson(challengeResponse);
+    if (!challengeResponse.ok) {
+        throw new Error(getErrorReason(challengeBody) || `Storage API auth challenge returned HTTP ${challengeResponse.status}`);
+    }
+
+    const challenge = parseStorageAuthChallenge(challengeBody);
+    if (!challenge) {
+        throw new Error('Storage API auth challenge returned an invalid response');
+    }
+
+    const signedMessage = await wallet.signMessage({
+        message: challenge.message,
+        recipient: challenge.recipient,
+        nonce: base64Decode(challenge.nonce),
+    });
+    if (!signedMessage) {
+        throw new Error('Wallet did not return a signed storage auth message');
+    }
+
+    const verifyResponse = await fetch(`${baseUrl}/uploads/auth/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            challengeId: challenge.challengeId,
+            accountId: signedMessage.accountId,
+            publicKey: signedMessage.publicKey,
+            signature: signedMessage.signature,
+        }),
+    });
+    const verifyBody = await readJson(verifyResponse);
+    if (!verifyResponse.ok) {
+        throw new Error(getErrorReason(verifyBody) || `Storage API auth verify returned HTTP ${verifyResponse.status}`);
+    }
+
+    const authToken = parseStorageAuthToken(verifyBody);
+    if (!authToken) {
+        throw new Error('Storage API auth verify returned no token');
+    }
+
+    persistStorageAuthToken(baseUrl, authToken);
+    return authToken;
+}
+
+function parseStorageAuthChallenge(body: Record<string, unknown> | null): StorageApiAuthChallenge | null {
+    if (!body
+        || typeof body.challengeId !== 'string'
+        || typeof body.message !== 'string'
+        || typeof body.recipient !== 'string'
+        || typeof body.nonce !== 'string'
+        || typeof body.expiresAt !== 'number') {
+        return null;
+    }
+
+    return {
+        challengeId: body.challengeId,
+        message: body.message,
+        recipient: body.recipient,
+        nonce: body.nonce,
+        expiresAt: body.expiresAt,
+    };
+}
+
+function parseStorageAuthToken(body: Record<string, unknown> | null): StorageApiAuthToken | null {
+    if (!body
+        || typeof body.token !== 'string'
+        || typeof body.accountId !== 'string'
+        || typeof body.expiresAt !== 'number') {
+        return null;
+    }
+
+    return {
+        token: body.token,
+        accountId: body.accountId,
+        expiresAt: body.expiresAt,
+    };
+}
+
+function readCachedStorageAuthToken(baseUrl: string, accountId: string): StorageApiAuthToken | null {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+
+    try {
+        const cacheKey = getStorageAuthCacheKey(baseUrl, accountId);
+        const raw = window.sessionStorage.getItem(cacheKey);
+        const token = raw ? parseStorageAuthToken(JSON.parse(raw) as Record<string, unknown>) : null;
+        if (!token || Date.now() + STORAGE_AUTH_CACHE_SKEW_MS >= token.expiresAt) {
+            if (raw) {
+                window.sessionStorage.removeItem(cacheKey);
+            }
+            return null;
+        }
+
+        return token;
+    } catch {
+        return null;
+    }
+}
+
+function persistStorageAuthToken(baseUrl: string, token: StorageApiAuthToken): void {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    try {
+        window.sessionStorage.setItem(getStorageAuthCacheKey(baseUrl, token.accountId), JSON.stringify(token));
+    } catch {
+        // Best effort cache only.
+    }
+}
+
+function getStorageAuthCacheKey(baseUrl: string, accountId: string): string {
+    return `${STORAGE_AUTH_CACHE_PREFIX}${baseUrl}:${accountId}`;
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown> | null> {

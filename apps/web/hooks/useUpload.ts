@@ -176,6 +176,7 @@ export function useUpload() {
     const uploadSegmentedDeliveryAsset = useCallback(async (params: {
         packagedAsset: PackagedDeliveryAsset;
         accountId: string;
+        wallet: Awaited<ReturnType<typeof getWallet>>;
         encrypted: boolean;
         aesKeyB64?: string;
         thumbnailBlob?: Blob | null;
@@ -185,6 +186,7 @@ export function useUpload() {
         const {
             packagedAsset,
             accountId: uploaderAccountId,
+            wallet,
             encrypted,
             aesKeyB64,
             thumbnailBlob,
@@ -292,7 +294,7 @@ export function useUpload() {
                 blob: Blob,
                 type: 'thumbnail' | 'poster' | 'init-segment' | 'media-segment' | 'manifest',
             ) => {
-                const result = await uploadFileWithStorageApi(path, blob, uploaderAccountId);
+                const result = await uploadFileWithStorageApi(path, blob, uploaderAccountId, wallet);
                 completedBytes += blob.size;
                 const progress = uploadTotalBytes > 0
                     ? Math.min(99, Math.round((completedBytes / uploadTotalBytes) * 100))
@@ -423,6 +425,7 @@ export function useUpload() {
 
         setStatus('Uploading delivery bundle...');
         const directoryUpload = await uploadDirectoryToStorage(files, uploaderAccountId, {
+            wallet,
             onProgress: (progress) => {
                 dispatch({ type: 'SET_PROGRESS', payload: progress.percentage });
                 setStatus(`Uploading delivery bundle... ${progress.percentage}%`);
@@ -434,6 +437,7 @@ export function useUpload() {
                 cid: directoryUpload.cid,
                 fileName: 'delivery-root',
                 accountId: uploaderAccountId,
+                wallet,
             }).then(async (result) => {
                 if (result.status === 'pinned') {
                     console.log('[Storage API] Lighthouse persistence pilot pinned delivery root', {
@@ -562,6 +566,7 @@ export function useUpload() {
             const deliveryUpload = await uploadSegmentedDeliveryAsset({
                 packagedAsset: packagedDeliveryAsset,
                 accountId,
+                wallet,
                 encrypted: true,
                 aesKeyB64,
                 thumbnailBlob: thumbnail,
