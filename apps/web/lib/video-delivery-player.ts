@@ -1,4 +1,4 @@
-import { fetchFromGateways } from './crust';
+import { fetchFromGateways } from './ipfs';
 import { decodeCounter, importAESKey } from './kms';
 import {
     DELIVERY_BUFFER_AHEAD_MS,

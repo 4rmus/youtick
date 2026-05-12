@@ -8,7 +8,7 @@
 import { CrustUploadResult, CrustDirectoryUploadResult, CrustPinResult, CrustError } from './types';
 import { CRUST_CONSTANTS } from './config';
 import { generateW3AuthToken } from './w3auth';
-import { getGatewayUrl } from './gateway';
+import { getGatewayUrl } from '../ipfs';
 import { recordMetric } from '../decentralization-metrics';
 
 /**

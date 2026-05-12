@@ -1,7 +1,7 @@
 /**
  * Crust Network Module
  *
- * Decentralized IPFS pinning and retrieval via Crust Network.
+ * Decentralized IPFS pinning via Crust Network.
  * Uses W3Auth (NEAR Session Key) authentication for decentralized storage.
  */
 
@@ -20,7 +20,7 @@ export type {
 export { CrustError } from './types';
 
 // Config
-export { CRUST_CONSTANTS, CRUST_GATEWAYS } from './config';
+export { CRUST_CONSTANTS } from './config';
 
 // W3Auth
 export {
@@ -29,17 +29,6 @@ export {
   clearW3AuthCache,
   ensureFreshW3AuthToken,
 } from './w3auth';
-
-// Gateway
-export {
-  getGatewayUrl,
-  getGatewayUrls,
-  resolveGatewayUrl,
-  fetchFromGateways,
-  markGatewayUnhealthy,
-  markGatewayUnhealthyByUrl,
-  getBestGateway,
-} from './gateway';
 
 // Client
 export {

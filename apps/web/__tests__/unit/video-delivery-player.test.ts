@@ -7,7 +7,7 @@ const { fetchFromGateways } = vi.hoisted(() => ({
   fetchFromGateways: vi.fn(),
 }));
 
-vi.mock('@/lib/crust', () => ({
+vi.mock('@/lib/ipfs', () => ({
   fetchFromGateways,
 }));
 

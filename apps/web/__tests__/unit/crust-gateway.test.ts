@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/lib/crust/config', () => ({
-  CRUST_CONSTANTS: {
+vi.mock('@/lib/ipfs/config', () => ({
+  IPFS_CONSTANTS: {
     FETCH_TIMEOUT: 3_000,
     GATEWAY_UNHEALTHY_DURATION: 60_000,
     READ_ENDPOINT: 'https://crust-primary/api/v0/cat',
     READ_ENDPOINT_FALLBACK: 'https://crust-fallback/api/v0/cat',
     MEDIA_DELIVERY: { ENABLED: false, BASE_URL: '' },
   },
-  CRUST_GATEWAYS: [
+  IPFS_GATEWAYS: [
     { name: 'ipfs-io', url: 'https://ipfs.io/ipfs', priority: 1, healthy: true, lastCheck: 0 },
     { name: 'dweb', url: 'https://dweb.link/ipfs', priority: 2, healthy: true, lastCheck: 0 },
   ],
@@ -29,7 +29,7 @@ describe('crust gateway probing', () => {
       });
     }) as unknown as typeof fetch;
 
-    const { resolveGatewayUrl } = await import('@/lib/crust/gateway');
+    const { resolveGatewayUrl } = await import('@/lib/ipfs/gateway');
 
     const url = await resolveGatewayUrl('QmVideoCid', {
       purpose: 'video',
@@ -51,7 +51,7 @@ describe('crust gateway probing', () => {
       return new Response(null, { status: 206 });
     }) as unknown as typeof fetch;
 
-    const { resolveGatewayUrl } = await import('@/lib/crust/gateway');
+    const { resolveGatewayUrl } = await import('@/lib/ipfs/gateway');
 
     const url = await resolveGatewayUrl('QmVideoCid', {
       purpose: 'video',
@@ -72,7 +72,7 @@ describe('crust gateway probing', () => {
       });
     }) as unknown as typeof fetch;
 
-    const { resolveGatewayUrl } = await import('@/lib/crust/gateway');
+    const { resolveGatewayUrl } = await import('@/lib/ipfs/gateway');
 
     await resolveGatewayUrl('QmVideoCid', {
       purpose: 'video',
@@ -118,7 +118,7 @@ describe('crust gateway probing', () => {
       return Promise.reject(new Error(`Unexpected gateway ${url}`));
     }) as unknown as typeof fetch;
 
-    const { fetchFromGateways } = await import('@/lib/crust/gateway');
+    const { fetchFromGateways } = await import('@/lib/ipfs/gateway');
 
     const first = await fetchFromGateways('QmVideoCid', {
       purpose: 'segment',
@@ -155,7 +155,7 @@ describe('crust gateway probing', () => {
       });
     }) as unknown as typeof fetch;
 
-    const { fetchFromGateways } = await import('@/lib/crust/gateway');
+    const { fetchFromGateways } = await import('@/lib/ipfs/gateway');
     const controller = new AbortController();
     const pending = fetchFromGateways('QmVideoCid', {
       timeout: 200,
@@ -169,7 +169,7 @@ describe('crust gateway probing', () => {
   });
 
   it('builds public gateway URLs for IPFS path references', async () => {
-    const { getGatewayUrl, getGatewayUrls } = await import('@/lib/crust/gateway');
+    const { getGatewayUrl, getGatewayUrls } = await import('@/lib/ipfs/gateway');
 
     expect(getGatewayUrl('bafyroot/segments/000000.m4s')).toBe(
       'https://ipfs.io/ipfs/bafyroot/segments/000000.m4s',
@@ -182,7 +182,7 @@ describe('crust gateway probing', () => {
   it('encodes Crust read API args for IPFS path references', async () => {
     global.fetch = vi.fn(async () => new Response('ok', { status: 200 })) as unknown as typeof fetch;
 
-    const { fetchFromGateways } = await import('@/lib/crust/gateway');
+    const { fetchFromGateways } = await import('@/lib/ipfs/gateway');
     const response = await fetchFromGateways('bafyroot/segments/000000.m4s', {
       purpose: 'segment',
       timeout: 500,
@@ -195,21 +195,21 @@ describe('crust gateway probing', () => {
   });
 
   it('uses the media delivery worker first when it is explicitly configured', async () => {
-    vi.doMock('@/lib/crust/config', () => ({
-      CRUST_CONSTANTS: {
+    vi.doMock('@/lib/ipfs/config', () => ({
+      IPFS_CONSTANTS: {
         FETCH_TIMEOUT: 3_000,
         GATEWAY_UNHEALTHY_DURATION: 60_000,
         READ_ENDPOINT: 'https://crust-primary/api/v0/cat',
         READ_ENDPOINT_FALLBACK: 'https://crust-fallback/api/v0/cat',
         MEDIA_DELIVERY: { ENABLED: true, BASE_URL: 'https://media.youtick.net' },
       },
-      CRUST_GATEWAYS: [
+      IPFS_GATEWAYS: [
         { name: 'ipfs-io', url: 'https://ipfs.io/ipfs', priority: 1, healthy: true, lastCheck: 0 },
       ],
     }));
     global.fetch = vi.fn(async () => new Response('edge', { status: 200 })) as unknown as typeof fetch;
 
-    const { fetchFromGateways } = await import('@/lib/crust/gateway');
+    const { fetchFromGateways } = await import('@/lib/ipfs/gateway');
     const response = await fetchFromGateways('bafyroot/manifest.json', {
       purpose: 'manifest',
       timeout: 500,
@@ -222,15 +222,15 @@ describe('crust gateway probing', () => {
   });
 
   it('keeps the Lighthouse gateway in the fresh upload read race', async () => {
-    vi.doMock('@/lib/crust/config', () => ({
-      CRUST_CONSTANTS: {
+    vi.doMock('@/lib/ipfs/config', () => ({
+      IPFS_CONSTANTS: {
         FETCH_TIMEOUT: 3_000,
         GATEWAY_UNHEALTHY_DURATION: 60_000,
         READ_ENDPOINT: 'https://crust-primary/api/v0/cat',
         READ_ENDPOINT_FALLBACK: '',
         MEDIA_DELIVERY: { ENABLED: false, BASE_URL: '' },
       },
-      CRUST_GATEWAYS: [
+      IPFS_GATEWAYS: [
         { name: 'ipfs-io', url: 'https://ipfs.io/ipfs', priority: 1, healthy: true, lastCheck: 0 },
         { name: 'lighthouse', url: 'https://gateway.lighthouse.storage/ipfs', priority: 2, healthy: true, lastCheck: 0 },
         { name: '4everland', url: 'https://4everland.io/ipfs', priority: 3, healthy: true, lastCheck: 0 },
@@ -245,7 +245,7 @@ describe('crust gateway probing', () => {
       throw new Error(`Unexpected read route ${url}`);
     }) as unknown as typeof fetch;
 
-    const { fetchFromGateways } = await import('@/lib/crust/gateway');
+    const { fetchFromGateways } = await import('@/lib/ipfs/gateway');
     const response = await fetchFromGateways('bafyFreshManifest', {
       purpose: 'manifest',
       timeout: 500,
@@ -258,22 +258,22 @@ describe('crust gateway probing', () => {
   });
 
   it('does not let failed image probes remove Lighthouse from manifest reads', async () => {
-    vi.doMock('@/lib/crust/config', () => ({
-      CRUST_CONSTANTS: {
+    vi.doMock('@/lib/ipfs/config', () => ({
+      IPFS_CONSTANTS: {
         FETCH_TIMEOUT: 3_000,
         GATEWAY_UNHEALTHY_DURATION: 60_000,
         READ_ENDPOINT: 'https://crust-primary/api/v0/cat',
         READ_ENDPOINT_FALLBACK: '',
         MEDIA_DELIVERY: { ENABLED: false, BASE_URL: '' },
       },
-      CRUST_GATEWAYS: [
+      IPFS_GATEWAYS: [
         { name: 'ipfs-io', url: 'https://ipfs.io/ipfs', priority: 1, healthy: true, lastCheck: 0 },
         { name: 'lighthouse', url: 'https://gateway.lighthouse.storage/ipfs', priority: 2, healthy: true, lastCheck: 0 },
         { name: 'w3s', url: 'https://w3s.link/ipfs', priority: 3, healthy: true, lastCheck: 0 },
       ],
     }));
 
-    const { fetchFromGateways, resolveGatewayUrl } = await import('@/lib/crust/gateway');
+    const { fetchFromGateways, resolveGatewayUrl } = await import('@/lib/ipfs/gateway');
 
     global.fetch = vi.fn(async () => new Response('paid', { status: 402 })) as unknown as typeof fetch;
     await expect(resolveGatewayUrl('bafyLegacy/thumbnail.jpg', {

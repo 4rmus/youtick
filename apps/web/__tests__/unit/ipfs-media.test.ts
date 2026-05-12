@@ -4,7 +4,7 @@ const getGatewayUrlsMock = vi.fn();
 const markGatewayUnhealthyByUrlMock = vi.fn();
 const resolveGatewayUrlMock = vi.fn();
 
-vi.mock('@/lib/crust', () => ({
+vi.mock('@/lib/ipfs', () => ({
   getGatewayUrls: getGatewayUrlsMock,
   markGatewayUnhealthyByUrl: markGatewayUnhealthyByUrlMock,
   resolveGatewayUrl: resolveGatewayUrlMock,

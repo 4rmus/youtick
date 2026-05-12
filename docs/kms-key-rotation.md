@@ -196,7 +196,7 @@ Operator: operator_X (X = a/b/c/d/e)
 
 ## Referanslar
 
-- `workers/youtick-kms/src/index.ts` — `decryptShareRecord` (satır ~937), startup validation (satır ~196)
+- `workers/youtick-kms/src/index.ts` — `decryptShareRecord` (satır ~1090), startup validation (`getWorkerReadiness`, satır ~242-265)
 - `workers/youtick-kms/wrangler.toml` — 5 operatör environment tanımları
 - `docs/release-runbook.md` §9 — genel secret management
 - NIST SP 800-57 Part 1 Rev. 5 — cryptographic key lifecycle (harici referans)
