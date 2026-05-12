@@ -16,6 +16,8 @@ const {
   mockVerifyCrustStorageOrders: vi.fn(),
 }));
 
+const mockWallet = {} as never;
+
 vi.mock('@/lib/crust/client', () => ({
   uploadDirectoryToCrust: mockUploadDirectoryToCrust,
 }));
@@ -51,12 +53,12 @@ describe('storage provider adapter', () => {
     });
 
     const { getActiveStorageProvider, uploadDirectoryToStorage } = await import('@/lib/storage/provider');
-    const options = { timeout: 10_000 };
+    const options = { timeout: 10_000, wallet: mockWallet };
     const files = [{ path: 'manifest.json', file: new Blob(['{}']) }];
     const result = await uploadDirectoryToStorage(files, 'uploader.near', options);
 
     expect(getActiveStorageProvider().id).toBe('lighthouse');
-    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, 'uploader.near', options);
+    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, 'uploader.near', mockWallet, options);
     expect(mockUploadDirectoryToCrust).not.toHaveBeenCalled();
     expect(result).toEqual({
       cid: 'bafyLighthouseRoot',
@@ -75,7 +77,7 @@ describe('storage provider adapter', () => {
     });
 
     const { getActiveStorageProvider, uploadDirectoryToStorage } = await import('@/lib/storage/provider');
-    const options = { timeout: 10_000 };
+    const options = { timeout: 10_000, wallet: mockWallet };
     const files = [{ path: 'manifest.json', file: new Blob(['{}']) }];
     const result = await uploadDirectoryToStorage(files, 'uploader.near', options);
 
@@ -97,12 +99,12 @@ describe('storage provider adapter', () => {
     });
 
     const { getActiveStorageProvider, uploadDirectoryToStorage } = await import('@/lib/storage/provider');
-    const options = { timeout: 10_000 };
+    const options = { timeout: 10_000, wallet: mockWallet };
     const files = [{ path: 'manifest.json', file: new Blob(['{}']) }];
     const result = await uploadDirectoryToStorage(files, 'uploader.near', options);
 
     expect(getActiveStorageProvider().id).toBe('lighthouse');
-    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, 'uploader.near', options);
+    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, 'uploader.near', mockWallet, options);
     expect(mockUploadDirectoryToCrust).not.toHaveBeenCalled();
     expect(result).toEqual({
       cid: 'bafyLighthouseRoot',
@@ -121,12 +123,12 @@ describe('storage provider adapter', () => {
     });
 
     const { uploadDirectoryToStorage } = await import('@/lib/storage/provider');
-    const options = { timeout: 10_000 };
+    const options = { timeout: 10_000, wallet: mockWallet };
     const files = [{ path: 'manifest.json', file: new Blob(['{}']) }];
 
     await expect(uploadDirectoryToStorage(files, 'uploader.near', options)).rejects.toThrow('provider_upload_failed');
 
-    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, 'uploader.near', options);
+    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, 'uploader.near', mockWallet, options);
     expect(mockUploadDirectoryToCrust).not.toHaveBeenCalled();
   });
 
@@ -140,11 +142,11 @@ describe('storage provider adapter', () => {
     });
 
     const { uploadDirectoryToStorage } = await import('@/lib/storage/provider');
-    const options = { timeout: 10_000 };
+    const options = { timeout: 10_000, wallet: mockWallet };
     const files = [{ path: 'manifest.json', file: new Blob(['{}']) }];
     const result = await uploadDirectoryToStorage(files, 'uploader.near', options);
 
-    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, 'uploader.near', options);
+    expect(mockUploadDirectoryWithStorageApi).toHaveBeenCalledWith(files, 'uploader.near', mockWallet, options);
     expect(mockUploadDirectoryToCrust).toHaveBeenCalledWith(files, 'uploader.near', options);
     expect(result.provider).toBe('crust');
   });

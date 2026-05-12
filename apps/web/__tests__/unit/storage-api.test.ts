@@ -22,10 +22,41 @@ function uploadIntentBody(token = 'test-upload-token') {
     };
 }
 
+function storageAuthChallengeBody() {
+    return {
+        challengeId: 'challenge-1',
+        message: 'Authorize storage upload',
+        recipient: 'https://storage-api.example',
+        nonce: btoa(String.fromCharCode(...new Uint8Array(32))),
+        expiresAt: Date.now() + 300_000,
+    };
+}
+
+function storageAuthTokenBody(token = 'test-storage-auth-token') {
+    return {
+        token,
+        accountId: 'creator.testnet',
+        expiresAt: Date.now() + 600_000,
+    };
+}
+
+const mockWallet = {
+    signMessage: vi.fn(async () => ({
+        accountId: 'creator.testnet',
+        publicKey: 'ed25519:test-public-key',
+        signature: 'test-signature',
+    })),
+    signAndSendTransaction: vi.fn(),
+    signAndSendTransactions: vi.fn(),
+    getAccounts: vi.fn(),
+};
+
 describe('storage-api client', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         vi.resetModules();
+        mockWallet.signMessage.mockClear();
+        window.sessionStorage?.clear();
         resetEnv();
     });
 
@@ -59,6 +90,18 @@ describe('storage-api client', () => {
         process.env.NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE = 'true';
         process.env.NEXT_PUBLIC_STORAGE_API_URL = 'https://storage-api.example/';
         const fetchMock = vi.fn(async (url: string) => {
+            if (url === 'https://storage-api.example/uploads/auth/challenge') {
+                return new Response(JSON.stringify(storageAuthChallengeBody()), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            if (url === 'https://storage-api.example/uploads/auth/verify') {
+                return new Response(JSON.stringify(storageAuthTokenBody()), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
             if (url === 'https://storage-api.example/uploads/intent') {
                 return new Response(JSON.stringify(uploadIntentBody()), {
                     status: 200,
@@ -78,14 +121,16 @@ describe('storage-api client', () => {
         vi.stubGlobal('fetch', fetchMock);
 
         const { isLighthousePersistencePilotEnabled, pinCidWithStorageApi } = await import('@/lib/storage/storage-api');
-        const result = await pinCidWithStorageApi({ cid: 'bafyRoot', fileName: 'delivery-root', accountId: 'creator.testnet' });
+        const result = await pinCidWithStorageApi({ cid: 'bafyRoot', fileName: 'delivery-root', accountId: 'creator.testnet', wallet: mockWallet });
 
         expect(isLighthousePersistencePilotEnabled()).toBe(true);
         expect(fetchMock).toHaveBeenCalledWith('https://storage-api.example/uploads/intent', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Authorization': 'Bearer test-storage-auth-token',
+                'Content-Type': 'application/json',
+            },
             body: JSON.stringify({
-                accountId: 'creator.testnet',
                 uploadKind: 'pin',
                 fileName: 'delivery-root',
                 sizeBytes: 1,
@@ -115,10 +160,25 @@ describe('storage-api client', () => {
         let sentBody: XMLHttpRequestBodyInit | null = null;
         const requestHeaders = new Map<string, string>();
 
-        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(uploadIntentBody()), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-        })));
+        vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+            if (url === 'https://storage-api.example/uploads/auth/challenge') {
+                return new Response(JSON.stringify(storageAuthChallengeBody()), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            if (url === 'https://storage-api.example/uploads/auth/verify') {
+                return new Response(JSON.stringify(storageAuthTokenBody()), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+
+            return new Response(JSON.stringify(uploadIntentBody()), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }));
 
         class MockXMLHttpRequest extends EventTarget {
             status = 200;
@@ -156,7 +216,7 @@ describe('storage-api client', () => {
         const result = await uploadDirectoryWithStorageApi([
             { path: 'manifest.json', file: new Blob(['{}'], { type: 'application/json' }) },
             { path: 'segments/000000.m4s', file: new Blob(['segment']) },
-        ], 'creator.testnet');
+        ], 'creator.testnet', mockWallet);
 
         expect(isLighthousePrimaryUploadEnabled()).toBe(true);
         expect(openedUrl).toBe('https://storage-api.example/uploads/directory');
@@ -182,10 +242,25 @@ describe('storage-api client', () => {
         let sentBody: XMLHttpRequestBodyInit | null = null;
         const requestHeaders = new Map<string, string>();
 
-        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(uploadIntentBody()), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-        })));
+        vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+            if (url === 'https://storage-api.example/uploads/auth/challenge') {
+                return new Response(JSON.stringify(storageAuthChallengeBody()), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            if (url === 'https://storage-api.example/uploads/auth/verify') {
+                return new Response(JSON.stringify(storageAuthTokenBody()), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+
+            return new Response(JSON.stringify(uploadIntentBody()), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }));
 
         class MockXMLHttpRequest extends EventTarget {
             status = 200;
@@ -221,6 +296,7 @@ describe('storage-api client', () => {
             'segments/000000.m4s.part00000',
             new Blob(['segment']),
             'creator.testnet',
+            mockWallet,
         );
 
         expect(openedUrl).toBe('https://storage-api.example/uploads/file');
@@ -244,13 +320,25 @@ describe('storage-api client', () => {
         expect(isLighthousePrimaryUploadEnabled()).toBe(false);
         await expect(uploadDirectoryWithStorageApi([
             { path: 'manifest.json', file: new Blob(['{}']) },
-        ], 'creator.testnet')).rejects.toThrow('Lighthouse primary upload is disabled');
+        ], 'creator.testnet', mockWallet)).rejects.toThrow('Lighthouse primary upload is disabled');
     });
 
     it('returns a failed outcome instead of throwing when the Storage API rejects the pin', async () => {
         process.env.NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE = 'true';
         process.env.NEXT_PUBLIC_STORAGE_API_URL = 'https://storage-api.example';
         vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+            if (url === 'https://storage-api.example/uploads/auth/challenge') {
+                return new Response(JSON.stringify(storageAuthChallengeBody()), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            if (url === 'https://storage-api.example/uploads/auth/verify') {
+                return new Response(JSON.stringify(storageAuthTokenBody()), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
             if (url === 'https://storage-api.example/uploads/intent') {
                 return new Response(JSON.stringify(uploadIntentBody()), {
                     status: 200,
@@ -267,7 +355,7 @@ describe('storage-api client', () => {
         }));
 
         const { pinCidWithStorageApi } = await import('@/lib/storage/storage-api');
-        const result = await pinCidWithStorageApi({ cid: 'bafyRoot', accountId: 'creator.testnet' });
+        const result = await pinCidWithStorageApi({ cid: 'bafyRoot', accountId: 'creator.testnet', wallet: mockWallet });
 
         expect(result).toEqual({
             status: 'failed',

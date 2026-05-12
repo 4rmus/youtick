@@ -2,6 +2,7 @@ import { uploadDirectoryToCrust } from '../crust/client';
 import type { UploadedAsset } from '../crust/cid-collector';
 import { APP_CONFIG, FEATURE_FLAGS } from '../constants';
 import { getCidPinStatusFromStorageApi, uploadDirectoryWithStorageApi } from './storage-api';
+import type { WalletInstance } from '../types';
 import {
   placeStorageOrders as placeCrustStorageOrders,
   verifyStorageOrders as verifyCrustStorageOrders,
@@ -15,6 +16,7 @@ export type StorageProviderId = 'crust' | 'lighthouse';
 export interface StorageUploadOptions {
   onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void;
   timeout?: number;
+  wallet?: WalletInstance;
 }
 
 export interface StorageDirectoryUploadResult extends CrustDirectoryUploadResult {
@@ -53,8 +55,12 @@ const crustStorageProvider: StorageProvider = {
 const lighthouseStorageProvider: StorageProvider = {
   id: 'lighthouse',
   async uploadDirectory(files, _accountId, options) {
+    if (!options?.wallet) {
+      throw new Error('Wallet is required for Lighthouse storage uploads');
+    }
+
     try {
-      const result = await uploadDirectoryWithStorageApi(files, _accountId, options);
+      const result = await uploadDirectoryWithStorageApi(files, _accountId, options.wallet, options);
       return { ...result, provider: 'lighthouse' };
     } catch (error) {
       if (!FEATURE_FLAGS.enableCrustUploadFallback) {
