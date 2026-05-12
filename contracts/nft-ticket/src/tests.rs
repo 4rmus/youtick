@@ -1059,7 +1059,7 @@ fn get_creator_stats_sums_purchases() {
 }
 
 #[test]
-fn get_purchase_logs_by_creator_filters_correctly() {
+fn purchase_log_views_return_empty_after_runtime_hotfix() {
     let owner1 = account("owner1.testnet");
     let owner2 = account("owner2.testnet");
     let buyer = account("buyer.testnet");
@@ -1090,7 +1090,7 @@ fn get_purchase_logs_by_creator_filters_correctly() {
     contract.buy_ticket(buyer.clone(), "event-1".to_string());
 
     let owner1_logs = contract.get_purchase_logs_by_creator(owner1.clone(), None, None);
-    assert_eq!(owner1_logs.len(), 1);
+    assert!(owner1_logs.is_empty());
 
     let owner2_logs = contract.get_purchase_logs_by_creator(owner2.clone(), None, None);
     assert!(owner2_logs.is_empty());

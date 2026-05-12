@@ -26,12 +26,11 @@ impl Contract {
         };
 
         let purchase_id = self.next_purchase_id;
-        self.purchase_logs.insert(&purchase_id, &log);
         self.next_purchase_id += 1;
 
         env::log_str(&format!(
-            "PurchaseLog #{}: token={}, price={}, creator_share={}, commission={}",
-            purchase_id, token_id, price, creator_amount, commission_amount
+            "PurchaseLog #{}: buyer={}, creator={}, event={}, token={}, price={}, creator_share={}, commission={}",
+            purchase_id, log.buyer_id, log.creator_id, log.event_cid, token_id, price, creator_amount, commission_amount
         ));
     }
 

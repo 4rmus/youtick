@@ -109,6 +109,22 @@ describe('useOwnedTokens data logic', () => {
     });
 });
 
+describe('useNFTOwnership data logic', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('falls back to creator access when has_ticket fails', async () => {
+        const { viewContract } = await import('@/lib/near');
+        vi.mocked(viewContract)
+            .mockRejectedValueOnce(new Error('collection is an inconsistent state'))
+            .mockResolvedValueOnce({ creator_id: 'creator.testnet' });
+
+        const { resolveNFTOwnership } = await import('@/lib/hooks/useSessionState');
+        await expect(resolveNFTOwnership('creator.testnet', 'video-1')).resolves.toBe(true);
+    });
+});
+
 describe('useEventDescription data logic', () => {
     beforeEach(() => {
         vi.clearAllMocks();
