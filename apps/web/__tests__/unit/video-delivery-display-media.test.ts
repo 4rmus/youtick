@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchFromGatewaysMock = vi.fn();
 
-vi.mock('@/lib/crust', () => ({
+vi.mock('@/lib/ipfs', () => ({
   fetchFromGateways: fetchFromGatewaysMock,
 }));
 

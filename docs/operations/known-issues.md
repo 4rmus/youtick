@@ -1,6 +1,6 @@
 # Known Issues & Operational Risks
 
-> Last updated: 2026-05-11 (storage provider and dependency triage alignment)
+> Last updated: 2026-05-12 (V11 clean-launch and line-number drift alignment)
 >
 > This document is a **living transparency report**. It lists confirmed mainnet
 > anomalies, active security mitigations, and risks that operators should be
@@ -8,30 +8,32 @@
 
 ---
 
-## 🔴 Critical — Under Active Mitigation
+## ✅ Resolved by V11 Clean-Launch State
 
-### 1. Mainnet Contract State Inconsistency
+### 1. Empty Mainnet Launch State
 
-**Status:** Confirmed, monitoring  
-**Impact:** `nft_total_supply()` reports `0` while 33 trie entries exist.
+**Status:** Resolved by V11 clean-launch state; monitor as expected empty state
+**Impact:** `nft_total_supply()` reporting `0` is no longer treated as a launch
+anomaly when paired with an empty launch inventory.
 
-**What happened:**
-The currently deployed WASM on `youtick.near` is older than the HEAD of this
-repository (approximately commits `99f07bd` / `afd4231`). A prior migration
-left orphaned storage entries. The contract is functional for new operations,
-but historical enumeration queries may return inconsistent counts.
+**What changed:**
+The pre-launch posture now treats a clean V11/V1 launch state as the expected
+baseline: no migrated historical NFTs, no active launch events, and fresh event
+creation after the launch cutover. The previous `nft_total_supply() = 0` wording
+was written as an anomaly tracker for an older state and should not be used as a
+current launch blocker.
 
-**Mitigation in progress:**
-- `reset_v11` has been **hardened** in Faz 1 to prevent unauthorized invocation.
-  It now reads the previous owner from `env::state_read()` instead of trusting
-  a caller-supplied `owner_id` argument.
-- A full state reset to a clean v11 is planned but **not yet executed**.
-  Execution requires:
-  1. Operator key rotation (all 5 KMS operators).
-  2. Re-upload of all active event metadata to the new contract state.
-  3. Community / user notification (minimum 7-day lead time).
+**Current source behavior:**
+- Normal builds disable migration reset methods.
+- Migration builds require the contract account itself for `reset_v11` and
+  `reset_for_v1_launch`.
+- `reset_for_v1_launch` initializes fresh owner state and can set the Web4 static
+  URL during an approved launch reset.
 
-**Do NOT call `reset_v11` without coordinating with the core team.**
+**Operator note:**
+Do not call `reset_v11` as an operational fix. If a future clean reset is ever
+needed, use the reviewed migration path, record the exact transaction hash, and
+update this document only after the recorded reset evidence exists.
 
 ---
 
@@ -39,7 +41,7 @@ but historical enumeration queries may return inconsistent counts.
 
 ### 2. reset_v11 Authorization Bypass (Patched)
 
-**Status:** Patched in source, **not yet redeployed to mainnet**  
+**Status:** Resolved in source; migration-only path
 **Commit:** `contracts/nft-ticket/src/lib.rs` — `reset_v11`
 
 The original implementation used `#[init(ignore_state)]` with a caller-supplied
@@ -57,8 +59,8 @@ require!(
 Normal builds still disable `reset_v11`; migration builds require the contract
 account itself to call the reset.
 
-**Action required:** Redeploy patched WASM to mainnet. Do not run a clean reset
-unless the migration has separate approval and the transaction is recorded.
+**Action required:** No normal launch action. Do not run a clean reset unless the
+migration has separate approval and the transaction is recorded.
 
 > **Deploy Runbook (Faz 0):**
 > 1. Build verified: `contracts/nft-ticket/target/near/youtick_nft.wasm`
@@ -178,7 +180,7 @@ keep Lighthouse API keys behind the dedicated Storage API Worker.
 **Location:** `contracts/nft-ticket/src/lib.rs`
 
 All state-mutating public functions now call `self.assert_not_paused()`,
-including `create_event_prepaid` (line 1553) and `nft_mint_prepaid` (line 2090).
+including `create_event_prepaid` (line 2326) and `nft_mint_prepaid` (line 3087).
 
 **Resolution:** Patch applied to source. Pending mainnet redeploy alongside
 other Faz 1/Faz 2 hardened changes.

@@ -31,11 +31,3 @@ export {
     type EncryptedChunk,
     type VideoManifest,
 } from './encryption';
-
-// Streaming Video Player
-export {
-    createDecryptedBlobUrl,
-    streamKmsVideo,
-    revokeVideoUrl,
-    type StreamingPlayerOptions,
-} from './streaming';

@@ -1,6 +1,6 @@
 import { METADATA_SCHEMA } from './constants';
 import { CRUST_CONSTANTS } from './crust/config';
-import { fetchFromGateways } from './crust';
+import { fetchFromGateways } from './ipfs';
 import type {
     DeliveryManifestV2,
     DeliverySegment,

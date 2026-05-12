@@ -1,3 +1,5 @@
+import { base58Decode } from '../../shared/src/base58';
+
 export interface Env {
     ALLOWED_ORIGINS?: string;
     STORAGE_PROVIDER?: string;
@@ -10,6 +12,7 @@ export interface Env {
     UPLOAD_INTENT_TTL_SECONDS?: string;
     UPLOAD_RATE_LIMIT_MAX?: string;
     UPLOAD_RATE_LIMIT_WINDOW_SECONDS?: string;
+    NEAR_NETWORK?: string;
     UPLOAD_GUARD?: KVNamespace;
 }
 
@@ -52,6 +55,19 @@ type LighthouseUploadData = {
     encryption?: boolean;
     txHash?: string;
 };
+type UploadAuthChallengeRecord = {
+    challengeId: string;
+    accountId: string;
+    message: string;
+    recipient: string;
+    nonce: string;
+    expiresAt: number;
+};
+type UploadAuthTokenClaims = {
+    accountId: string;
+    publicKey: string;
+    expiresAt: number;
+};
 
 const DEFAULT_ALLOWED_ORIGINS = 'https://youtick.net,https://www.youtick.net';
 const DEFAULT_STORAGE_PROVIDER = 'lighthouse';
@@ -63,6 +79,19 @@ const DEFAULT_UPLOAD_RATE_LIMIT_MAX = 1000;
 const DEFAULT_UPLOAD_RATE_LIMIT_WINDOW_SECONDS = 60 * 60;
 const RECOMMENDED_PROXY_PART_BYTES = 4 * 1024 * 1024;
 const CID_PATTERN = /^(Qm[1-9A-HJ-NP-Za-km-z]{44,}|ba[a-z2-7]{57,})/;
+const UPLOAD_AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const UPLOAD_AUTH_TOKEN_TTL_MS = 10 * 60 * 1000;
+const NEP413_TAG = 2147484061;
+const RPC_REQUEST_TIMEOUT_MS = 2_500;
+const MAINNET_RPC_POOL = [
+    'https://free.rpc.fastnear.com',
+    'https://rpc.mainnet.fastnear.com',
+    'https://rpc.mainnet.near.org',
+    'https://near.lava.build',
+];
+const TESTNET_RPC_POOL = [
+    'https://rpc.testnet.near.org',
+];
 
 export default {
     async fetch(request: Request, env: Env): Promise<Response> {
@@ -89,6 +118,14 @@ export default {
             return handlePinRequest(request, env);
         }
 
+        if (request.method === 'POST' && url.pathname === '/uploads/auth/challenge') {
+            return handleUploadAuthChallengeRequest(request, env);
+        }
+
+        if (request.method === 'POST' && url.pathname === '/uploads/auth/verify') {
+            return handleUploadAuthVerifyRequest(request, env);
+        }
+
         if (request.method === 'POST' && url.pathname === '/uploads/intent') {
             return handleUploadIntentRequest(request, env);
         }
@@ -111,7 +148,7 @@ export default {
             env,
             {
                 error: 'not_found',
-                endpoints: ['/__health', '/provider-health', '/pins', '/pins/:cid/status', '/uploads/intent', '/uploads/file', '/uploads/directory'],
+                endpoints: ['/__health', '/provider-health', '/pins', '/pins/:cid/status', '/uploads/auth/challenge', '/uploads/auth/verify', '/uploads/intent', '/uploads/file', '/uploads/directory'],
             },
             404,
         );
@@ -230,12 +267,17 @@ async function handlePinRequest(request: Request, env: Env): Promise<Response> {
 }
 
 async function handleUploadIntentRequest(request: Request, env: Env): Promise<Response> {
+    const auth = await readUploadAuthTokenClaims(request, env);
+    if (!auth.ok) {
+        return jsonResponse(request, env, { error: auth.error }, 401);
+    }
+
     const body = await readJsonBody(request);
     if (!body.ok) {
         return jsonResponse(request, env, { error: 'invalid_json' }, 400);
     }
 
-    const parsed = parseUploadIntentRequest(body.value);
+    const parsed = parseUploadIntentRequest(body.value, auth.value.accountId);
     if (!parsed.ok) {
         return jsonResponse(request, env, { error: parsed.error }, 400);
     }
@@ -297,6 +339,125 @@ async function handleUploadIntentRequest(request: Request, env: Env): Promise<Re
                 expiresAt: new Date(intent.value.exp * 1000).toISOString(),
             } : {}),
         },
+    });
+}
+
+async function handleUploadAuthChallengeRequest(request: Request, env: Env): Promise<Response> {
+    if (!env.UPLOAD_GUARD) {
+        return jsonResponse(request, env, {
+            error: 'upload_guard_not_configured',
+            reason: 'upload_guard_kv_missing',
+        }, 503);
+    }
+
+    const body = await readJsonBody(request);
+    if (!body.ok) {
+        return jsonResponse(request, env, { error: 'invalid_json' }, 400);
+    }
+
+    const accountId = typeof body.value.accountId === 'string' ? body.value.accountId.trim() : '';
+    if (!isValidAccountId(accountId)) {
+        return jsonResponse(request, env, { error: 'invalid_account_id' }, 400);
+    }
+
+    const challengeId = randomToken(18);
+    const nonceBytes = crypto.getRandomValues(new Uint8Array(32));
+    const expiresAt = Date.now() + UPLOAD_AUTH_CHALLENGE_TTL_MS;
+    const recipient = new URL(request.url).origin;
+    const message = `Authorize Youtick upload access for ${accountId} until ${new Date(expiresAt).toISOString()}`;
+    const challenge: UploadAuthChallengeRecord = {
+        challengeId,
+        accountId,
+        message,
+        recipient,
+        nonce: bytesToBase64(nonceBytes),
+        expiresAt,
+    };
+
+    await env.UPLOAD_GUARD.put(
+        getUploadAuthChallengeKey(challengeId),
+        JSON.stringify(challenge),
+        { expirationTtl: Math.ceil(UPLOAD_AUTH_CHALLENGE_TTL_MS / 1000) },
+    );
+
+    return jsonResponse(request, env, {
+        challengeId,
+        message,
+        recipient,
+        nonce: challenge.nonce,
+        expiresAt,
+    });
+}
+
+async function handleUploadAuthVerifyRequest(request: Request, env: Env): Promise<Response> {
+    if (!env.UPLOAD_GUARD) {
+        return jsonResponse(request, env, {
+            error: 'upload_guard_not_configured',
+            reason: 'upload_guard_kv_missing',
+        }, 503);
+    }
+
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+        return jsonResponse(request, env, { error: 'invalid_json' }, 400);
+    }
+
+    const body = parsed.value;
+    const challengeId = typeof body.challengeId === 'string' ? body.challengeId : '';
+    const accountId = typeof body.accountId === 'string' ? body.accountId.trim() : '';
+    const publicKey = typeof body.publicKey === 'string' ? body.publicKey.trim() : '';
+    const signature = typeof body.signature === 'string' ? body.signature.trim() : '';
+    if (!challengeId || !isValidAccountId(accountId) || !publicKey || !signature) {
+        return jsonResponse(request, env, { error: 'invalid_auth_request' }, 400);
+    }
+
+    const challengeKey = getUploadAuthChallengeKey(challengeId);
+    const rawChallenge = await env.UPLOAD_GUARD.get(challengeKey);
+    const challenge = rawChallenge ? parseUploadAuthChallenge(rawChallenge) : null;
+    if (!challenge || challenge.accountId !== accountId || Date.now() > challenge.expiresAt) {
+        if (rawChallenge) {
+            await env.UPLOAD_GUARD.delete(challengeKey);
+        }
+        return jsonResponse(request, env, { error: 'Unauthorized' }, 401);
+    }
+
+    const isFullAccess = await verifyFullAccessKeyBinding(env, accountId, publicKey);
+    if (!isFullAccess) {
+        return jsonResponse(request, env, { error: 'Unauthorized' }, 401);
+    }
+
+    const signatureValid = await verifyNep413Signature(
+        {
+            message: challenge.message,
+            nonce: base64ToBytes(challenge.nonce),
+            recipient: challenge.recipient,
+        },
+        signature,
+        publicKey,
+    );
+    if (!signatureValid) {
+        return jsonResponse(request, env, { error: 'Invalid NEP-413 signature' }, 401);
+    }
+
+    await env.UPLOAD_GUARD.delete(challengeKey);
+
+    const token = randomToken(32);
+    const expiresAt = Date.now() + UPLOAD_AUTH_TOKEN_TTL_MS;
+    const claims: UploadAuthTokenClaims = {
+        accountId: challenge.accountId,
+        publicKey,
+        expiresAt,
+    };
+    await env.UPLOAD_GUARD.put(
+        getUploadAuthTokenKey(token),
+        JSON.stringify(claims),
+        { expirationTtl: Math.ceil(UPLOAD_AUTH_TOKEN_TTL_MS / 1000) },
+    );
+
+    return jsonResponse(request, env, {
+        token,
+        accountId: claims.accountId,
+        expiresAt,
     });
 }
 
@@ -690,8 +851,7 @@ async function readJsonBody(request: Request): Promise<{ ok: true; value: JsonBo
     }
 }
 
-function parseUploadIntentRequest(value: JsonBody): { ok: true; value: Required<UploadIntentRequest> } | { ok: false; error: string } {
-    const accountId = typeof value.accountId === 'string' ? value.accountId.trim() : '';
+function parseUploadIntentRequest(value: JsonBody, accountId: string): { ok: true; value: Required<UploadIntentRequest> } | { ok: false; error: string } {
     if (!isValidAccountId(accountId)) {
         return { ok: false, error: 'invalid_account_id' };
     }
@@ -891,6 +1051,239 @@ async function checkUploadIntentRateLimit(
 
     await kv.put(key, String(current + 1), { expirationTtl: windowSeconds * 2 });
     return { ok: true };
+}
+
+async function readUploadAuthTokenClaims(
+    request: Request,
+    env: Env,
+): Promise<{ ok: true; value: UploadAuthTokenClaims } | { ok: false; error: string }> {
+    if (!env.UPLOAD_GUARD) {
+        return { ok: false, error: 'Unauthorized' };
+    }
+
+    const auth = request.headers.get('Authorization') || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : '';
+    if (!token) {
+        return { ok: false, error: 'Unauthorized' };
+    }
+
+    const key = getUploadAuthTokenKey(token);
+    const rawClaims = await env.UPLOAD_GUARD.get(key);
+    const claims = rawClaims ? parseUploadAuthTokenClaims(rawClaims) : null;
+    if (!claims) {
+        return { ok: false, error: 'Unauthorized' };
+    }
+
+    if (Date.now() > claims.expiresAt) {
+        await env.UPLOAD_GUARD.delete(key);
+        return { ok: false, error: 'Unauthorized' };
+    }
+
+    return { ok: true, value: claims };
+}
+
+function parseUploadAuthChallenge(raw: string): UploadAuthChallengeRecord | null {
+    try {
+        const value = JSON.parse(raw) as Partial<UploadAuthChallengeRecord>;
+        if (!value
+            || typeof value.challengeId !== 'string'
+            || !isValidAccountId(value.accountId || '')
+            || typeof value.message !== 'string'
+            || typeof value.recipient !== 'string'
+            || typeof value.nonce !== 'string'
+            || typeof value.expiresAt !== 'number') {
+            return null;
+        }
+
+        return value as UploadAuthChallengeRecord;
+    } catch {
+        return null;
+    }
+}
+
+function parseUploadAuthTokenClaims(raw: string): UploadAuthTokenClaims | null {
+    try {
+        const value = JSON.parse(raw) as Partial<UploadAuthTokenClaims>;
+        if (!value
+            || !isValidAccountId(value.accountId || '')
+            || typeof value.publicKey !== 'string'
+            || typeof value.expiresAt !== 'number') {
+            return null;
+        }
+
+        return value as UploadAuthTokenClaims;
+    } catch {
+        return null;
+    }
+}
+
+async function verifyFullAccessKeyBinding(
+    env: Env,
+    accountId: string,
+    publicKey: string,
+): Promise<boolean> {
+    try {
+        const accessKey = await nearRpcQuery<{ permission: unknown }>(env, {
+            request_type: 'view_access_key',
+            finality: 'final',
+            account_id: accountId,
+            public_key: publicKey,
+        });
+
+        return accessKey.permission === 'FullAccess';
+    } catch {
+        return false;
+    }
+}
+
+async function nearRpcQuery<T>(env: Env, params: JsonBody): Promise<T> {
+    const body = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'storage-api-auth',
+        method: 'query',
+        params,
+    });
+    const errors: Error[] = [];
+
+    for (const rpcUrl of getRpcPool(env)) {
+        try {
+            const response = await fetchWithTimeout(rpcUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body,
+            }, RPC_REQUEST_TIMEOUT_MS);
+            if (!response.ok) {
+                throw new Error(`RPC returned ${response.status}`);
+            }
+
+            const json = await response.json() as { result?: T; error?: { message?: string } };
+            if (json.error || !json.result) {
+                throw new Error(json.error?.message || 'RPC query failed');
+            }
+
+            return json.result;
+        } catch (error) {
+            errors.push(error instanceof Error ? error : new Error(String(error)));
+        }
+    }
+
+    throw errors[errors.length - 1] || new Error('RPC query failed');
+}
+
+function getRpcPool(env: Env): string[] {
+    return env.NEAR_NETWORK === 'testnet' ? TESTNET_RPC_POOL : MAINNET_RPC_POOL;
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function verifyNep413Signature(
+    payload: {
+        message: string;
+        nonce: Uint8Array;
+        recipient: string;
+    },
+    signatureBase64: string,
+    publicKeyBase58: string,
+): Promise<boolean> {
+    try {
+        const publicKeyBytes = base58Decode(publicKeyBase58);
+        const signatureBytes = base64ToBytes(signatureBase64);
+        const payloadHash = await serializeNep413Hash(payload);
+        const cryptoKey = await crypto.subtle.importKey(
+            'raw',
+            publicKeyBytes,
+            { name: 'Ed25519' },
+            false,
+            ['verify'],
+        );
+
+        return await crypto.subtle.verify('Ed25519', cryptoKey, signatureBytes, payloadHash);
+    } catch {
+        return false;
+    }
+}
+
+async function serializeNep413Hash(payload: {
+    message: string;
+    nonce: Uint8Array;
+    recipient: string;
+}): Promise<Uint8Array> {
+    if (payload.nonce.length !== 32) {
+        throw new Error('Nonce must be exactly 32 bytes long');
+    }
+
+    const serialized = concatBytes(
+        encodeU32LE(NEP413_TAG),
+        encodeStringBorsh(payload.message),
+        payload.nonce,
+        encodeStringBorsh(payload.recipient),
+        new Uint8Array([0]),
+    );
+    const digest = await crypto.subtle.digest('SHA-256', serialized);
+    return new Uint8Array(digest);
+}
+
+function randomToken(byteLength = 32): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(byteLength));
+    return base64UrlEncode(bytes);
+}
+
+function encodeU32LE(value: number): Uint8Array {
+    const out = new Uint8Array(4);
+    new DataView(out.buffer).setUint32(0, value, true);
+    return out;
+}
+
+function encodeStringBorsh(value: string): Uint8Array {
+    const bytes = new TextEncoder().encode(value);
+    const out = new Uint8Array(4 + bytes.length);
+    out.set(encodeU32LE(bytes.length), 0);
+    out.set(bytes, 4);
+    return out;
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+    const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+    let offset = 0;
+    for (const part of parts) {
+        out.set(part, offset);
+        offset += part.length;
+    }
+    return out;
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+    let binary = '';
+    for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+    }
+
+    return btoa(binary);
+}
+
+function getUploadAuthChallengeKey(challengeId: string): string {
+    return `auth:challenge:${challengeId}`;
+}
+
+function getUploadAuthTokenKey(token: string): string {
+    return `auth:token:${token}`;
 }
 
 async function readCachedUploadResult(env: Env, intent: SignedUploadIntent): Promise<JsonBody | null> {

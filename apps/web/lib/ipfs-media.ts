@@ -1,4 +1,4 @@
-import { getGatewayUrls, markGatewayUnhealthyByUrl, resolveGatewayUrl } from './crust';
+import { getGatewayUrls, markGatewayUnhealthyByUrl, resolveGatewayUrl } from './ipfs';
 
 export type IpfsMediaPurpose = 'image' | 'video' | 'generic';
 

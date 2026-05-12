@@ -1,5 +1,5 @@
 /**
- * Crust Gateway Module
+ * IPFS Gateway Module
  *
  * Multi-gateway failover for IPFS content retrieval.
  *
@@ -8,8 +8,8 @@
  * 2. Public IPFS gateways — useful when a CDN-backed gateway becomes faster for this user
  */
 
-import { GatewayConfig, CrustError } from './types';
-import { CRUST_GATEWAYS, CRUST_CONSTANTS } from './config';
+import { GatewayConfig, CrustError } from '../crust/types';
+import { IPFS_GATEWAYS, IPFS_CONSTANTS } from './config';
 
 interface GatewayRuntimeState extends GatewayConfig {
   avgLatencyMs: number | null;
@@ -56,7 +56,7 @@ const GATEWAY_FAILURE_PENALTY_MS = 250;
 /**
  * Runtime gateway state (cloned from config to allow mutation)
  */
-const gateways: GatewayRuntimeState[] = CRUST_GATEWAYS.map((gateway) => ({
+const gateways: GatewayRuntimeState[] = IPFS_GATEWAYS.map((gateway) => ({
   ...gateway,
   avgLatencyMs: null,
   successCount: 0,
@@ -101,7 +101,7 @@ export async function resolveGatewayUrl(
   options?: GatewayProbeOptions,
 ): Promise<string> {
   const purpose = options?.purpose ?? 'generic';
-  const timeout = options?.timeout ?? Math.min(CRUST_CONSTANTS.FETCH_TIMEOUT, 4_000);
+  const timeout = options?.timeout ?? Math.min(IPFS_CONSTANTS.FETCH_TIMEOUT, 4_000);
   const acceptStatuses = options?.acceptStatuses ?? (options?.range ? [206] : [200, 206]);
   const freshPreferred = getFreshPreferredRoute(
     preferredGatewayByPurpose,
@@ -200,7 +200,7 @@ export async function fetchFromGateways(
   cid: string,
   options?: FetchGatewayOptions,
 ): Promise<Response> {
-  const timeout = options?.timeout ?? CRUST_CONSTANTS.FETCH_TIMEOUT;
+  const timeout = options?.timeout ?? IPFS_CONSTANTS.FETCH_TIMEOUT;
   const purpose = options?.purpose ?? 'generic';
   const errors: string[] = [];
   const baseCandidates = buildReadCandidates();
@@ -259,8 +259,8 @@ function buildReadCandidates(preferredKey?: string): ReadCandidate[] {
     }
     : null;
   const crustCandidates = [
-    { name: 'crust-api-primary', url: CRUST_CONSTANTS.READ_ENDPOINT },
-    { name: 'crust-api-fallback', url: CRUST_CONSTANTS.READ_ENDPOINT_FALLBACK },
+    { name: 'crust-api-primary', url: IPFS_CONSTANTS.READ_ENDPOINT },
+    { name: 'crust-api-fallback', url: IPFS_CONSTANTS.READ_ENDPOINT_FALLBACK },
   ]
     .filter((candidate) => candidate.url && candidate.url.startsWith('https://'))
     .map<ReadCandidate>((candidate) => ({
@@ -302,7 +302,7 @@ function buildReadCandidates(preferredKey?: string): ReadCandidate[] {
 }
 
 function getMediaDeliveryBaseUrl(): string | null {
-  const mediaDelivery = CRUST_CONSTANTS.MEDIA_DELIVERY;
+  const mediaDelivery = IPFS_CONSTANTS.MEDIA_DELIVERY;
   if (!mediaDelivery?.ENABLED || !mediaDelivery.BASE_URL) {
     return null;
   }
@@ -613,7 +613,7 @@ function getGatewayScore(gateway: GatewayRuntimeState): number {
 function refreshGatewayHealth(): void {
   const nowMs = Date.now();
   for (const gateway of gateways) {
-    if (!gateway.healthy && nowMs - gateway.lastCheck > CRUST_CONSTANTS.GATEWAY_UNHEALTHY_DURATION) {
+    if (!gateway.healthy && nowMs - gateway.lastCheck > IPFS_CONSTANTS.GATEWAY_UNHEALTHY_DURATION) {
       gateway.healthy = true;
     }
   }

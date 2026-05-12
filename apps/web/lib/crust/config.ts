@@ -1,10 +1,8 @@
 /**
  * Crust Network Configuration
  *
- * Gateway URLs, timeouts, and constants for Crust IPFS integration.
+ * Upload endpoints, timeouts, and constants for Crust IPFS integration.
  */
-
-import { GatewayConfig } from './types';
 
 /**
  * Crust configuration constants
@@ -50,23 +48,3 @@ export const CRUST_CONSTANTS = {
     BASE_URL: (process.env.NEXT_PUBLIC_MEDIA_DELIVERY_URL || '').trim().replace(/\/+$/, ''),
   },
 } as const;
-
-/**
- * IPFS gateway list (ordered by priority)
- *
- * All gateways support CORS (Access-Control-Allow-Origin: *).
- * Crust-operated /ipfs/ gateways are excluded — they return 403/410 and lack CORS.
- * For Crust-pinned content, use CRUST_CONSTANTS.READ_ENDPOINT (POST /api/v0/cat).
- *
- * @see https://ipfs.github.io/public-gateway-checker/ — live status
- */
-export const CRUST_GATEWAYS: GatewayConfig[] = [
-  // Prioritize gateways that have been reliable for encrypted video reads.
-  { name: 'ipfs-io', url: 'https://ipfs.io/ipfs', priority: 1, healthy: true, lastCheck: 0 },
-  { name: 'lighthouse', url: 'https://gateway.lighthouse.storage/ipfs', priority: 2, healthy: true, lastCheck: 0 },
-  // Third-party gateways (CORS ✓)
-  { name: '4everland', url: 'https://4everland.io/ipfs', priority: 3, healthy: true, lastCheck: 0 },
-  { name: 'w3s', url: 'https://w3s.link/ipfs', priority: 4, healthy: true, lastCheck: 0 },
-  { name: 'dweb', url: 'https://dweb.link/ipfs', priority: 5, healthy: true, lastCheck: 0 },
-  // Crust-operated gateways are excluded as they have TLS/CORS issues currently.
-];

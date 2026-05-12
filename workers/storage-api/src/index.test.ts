@@ -26,6 +26,9 @@ function createMemoryKv(): KVNamespace {
         put: vi.fn(async (key: string, value: string) => {
             store.set(key, value);
         }),
+        delete: vi.fn(async (key: string) => {
+            store.delete(key);
+        }),
     } as unknown as KVNamespace;
 }
 
@@ -39,17 +42,30 @@ function createGuardedEnv(overrides?: Partial<Env>): Env {
     });
 }
 
+async function seedUploadAuthToken(env: Env, accountId = 'creator.testnet'): Promise<string> {
+    const token = `auth-token-${crypto.randomUUID()}`;
+    await env.UPLOAD_GUARD?.put(`auth:token:${token}`, JSON.stringify({
+        accountId,
+        publicKey: 'ed25519:test-public-key',
+        expiresAt: Date.now() + 10 * 60 * 1000,
+    }));
+    return token;
+}
+
 async function issueUploadIntent(
     handler: TestHandler,
     env: Env,
     body: Record<string, unknown>,
 ): Promise<string> {
+    const authToken = await seedUploadAuthToken(env);
     const response = await handler.fetch(
         new Request('https://storage.youtick.net/uploads/intent', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json',
+            },
             body: JSON.stringify({
-                accountId: 'creator.testnet',
                 ...body,
             }),
         }),
@@ -64,6 +80,92 @@ async function issueUploadIntent(
     };
     expect(typeof parsed.workerProxy?.intentToken).toBe('string');
     return parsed.workerProxy?.intentToken || '';
+}
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function base58Encode(bytes: Uint8Array): string {
+    if (bytes.length === 0) {
+        return '';
+    }
+
+    const digits: number[] = [0];
+    for (const byte of bytes) {
+        let carry = byte;
+        for (let index = 0; index < digits.length; index += 1) {
+            carry += digits[index] << 8;
+            digits[index] = carry % 58;
+            carry = (carry / 58) | 0;
+        }
+        while (carry > 0) {
+            digits.push(carry % 58);
+            carry = (carry / 58) | 0;
+        }
+    }
+
+    let leading = 0;
+    while (leading < bytes.length && bytes[leading] === 0) {
+        leading += 1;
+    }
+
+    return '1'.repeat(leading) + digits.reverse().map((digit) => BASE58_ALPHABET[digit]).join('');
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+    let binary = '';
+    for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+    }
+    return btoa(binary);
+}
+
+function encodeU32LE(value: number): Uint8Array {
+    const out = new Uint8Array(4);
+    new DataView(out.buffer).setUint32(0, value, true);
+    return out;
+}
+
+function encodeStringBorsh(value: string): Uint8Array {
+    const bytes = new TextEncoder().encode(value);
+    const out = new Uint8Array(4 + bytes.length);
+    out.set(encodeU32LE(bytes.length), 0);
+    out.set(bytes, 4);
+    return out;
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+    const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+    let offset = 0;
+    for (const part of parts) {
+        out.set(part, offset);
+        offset += part.length;
+    }
+    return out;
+}
+
+async function serializeNep413Hash(payload: {
+    message: string;
+    nonce: Uint8Array;
+    recipient: string;
+}): Promise<Uint8Array> {
+    const serialized = concatBytes(
+        encodeU32LE(2147484061),
+        encodeStringBorsh(payload.message),
+        payload.nonce,
+        encodeStringBorsh(payload.recipient),
+        new Uint8Array([0]),
+    );
+    const digest = await crypto.subtle.digest('SHA-256', serialized);
+    return new Uint8Array(digest);
 }
 
 describe('storage-api', () => {
@@ -360,21 +462,26 @@ describe('storage-api', () => {
 
     it('returns a large-video upload intent without exposing provider secrets', async () => {
         const handler = await importHandler();
+        const env = createGuardedEnv({
+            MAX_UPLOAD_BYTES: String(100 * 1024 * 1024),
+        });
+        const authToken = await seedUploadAuthToken(env, 'creator.testnet');
         const response = await handler.fetch(
             new Request('https://storage.youtick.net/uploads/intent', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Authorization': `Bearer ${authToken}`,
+                    'Content-Type': 'application/json',
+                },
                 body: JSON.stringify({
                     fileName: 'concert.mov',
                     sizeBytes: 20 * 1024 * 1024 * 1024,
                     contentType: 'video/quicktime',
-                    accountId: 'creator.testnet',
+                    accountId: 'attacker.testnet',
                     uploadKind: 'file',
                 }),
             }),
-            createGuardedEnv({
-                MAX_UPLOAD_BYTES: String(100 * 1024 * 1024),
-            }),
+            env,
         );
 
         expect(response.status).toBe(200);
@@ -406,20 +513,116 @@ describe('storage-api', () => {
         expect(JSON.stringify(body)).not.toContain('secret-value');
     });
 
-    it('keeps upload intent available as guidance when uploads are disabled', async () => {
+    it('rejects upload intents without Authorization', async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+
         const handler = await importHandler();
         const response = await handler.fetch(
             new Request('https://storage.youtick.net/uploads/intent', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    fileName: 'film.mp4',
+                    fileName: 'concert.mov',
                     sizeBytes: 1024,
                     accountId: 'creator.testnet',
                     uploadKind: 'file',
                 }),
             }),
-            createEnv({ LIGHTHOUSE_API_KEY: 'secret-value' }),
+            createGuardedEnv(),
+        );
+
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual({ error: 'Unauthorized' });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('issues upload auth tokens from a valid NEP-413 challenge', async () => {
+        const keyPair = await crypto.subtle.generateKey(
+            { name: 'Ed25519' },
+            true,
+            ['sign', 'verify'],
+        ) as CryptoKeyPair;
+        const rawPublicKey = await crypto.subtle.exportKey('raw', keyPair.publicKey) as ArrayBuffer;
+        const publicKey = `ed25519:${base58Encode(new Uint8Array(rawPublicKey))}`;
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+            result: { nonce: 1, permission: 'FullAccess' },
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        })));
+
+        const handler = await importHandler();
+        const env = createGuardedEnv({ NEAR_NETWORK: 'testnet' });
+        const challengeResponse = await handler.fetch(
+            new Request('https://storage.youtick.net/uploads/auth/challenge', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ accountId: 'creator.testnet' }),
+            }),
+            env,
+        );
+        expect(challengeResponse.status).toBe(200);
+        const challenge = await challengeResponse.json() as {
+            challengeId: string;
+            message: string;
+            recipient: string;
+            nonce: string;
+        };
+        const payloadHash = await serializeNep413Hash({
+            message: challenge.message,
+            nonce: base64ToBytes(challenge.nonce),
+            recipient: challenge.recipient,
+        });
+        const signature = bytesToBase64(new Uint8Array(await crypto.subtle.sign(
+            { name: 'Ed25519' },
+            keyPair.privateKey,
+            payloadHash,
+        )));
+
+        const verifyResponse = await handler.fetch(
+            new Request('https://storage.youtick.net/uploads/auth/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    challengeId: challenge.challengeId,
+                    accountId: 'creator.testnet',
+                    publicKey,
+                    signature,
+                }),
+            }),
+            env,
+        );
+
+        expect(verifyResponse.status).toBe(200);
+        expect(await verifyResponse.json()).toMatchObject({
+            token: expect.any(String),
+            accountId: 'creator.testnet',
+            expiresAt: expect.any(Number),
+        });
+    });
+
+    it('keeps upload intent available as guidance when uploads are disabled', async () => {
+        const handler = await importHandler();
+        const env = createEnv({
+            LIGHTHOUSE_API_KEY: 'secret-value',
+            UPLOAD_GUARD: createMemoryKv(),
+        });
+        const authToken = await seedUploadAuthToken(env);
+        const response = await handler.fetch(
+            new Request('https://storage.youtick.net/uploads/intent', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${authToken}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    fileName: 'film.mp4',
+                    sizeBytes: 1024,
+                    uploadKind: 'file',
+                }),
+            }),
+            env,
         );
 
         expect(response.status).toBe(200);
@@ -443,18 +646,22 @@ describe('storage-api', () => {
         vi.stubGlobal('fetch', fetchMock);
 
         const handler = await importHandler();
+        const env = createGuardedEnv();
+        const authToken = await seedUploadAuthToken(env);
         const response = await handler.fetch(
             new Request('https://storage.youtick.net/uploads/intent', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Authorization': `Bearer ${authToken}`,
+                    'Content-Type': 'application/json',
+                },
                 body: JSON.stringify({
-                    accountId: 'creator.testnet',
                     uploadKind: 'file',
                     fileName: '../bad.mp4',
                     sizeBytes: 0,
                 }),
             }),
-            createEnv({ LIGHTHOUSE_API_KEY: 'secret-value' }),
+            env,
         );
 
         expect(response.status).toBe(400);
@@ -655,8 +862,8 @@ describe('storage-api', () => {
             UPLOAD_RATE_LIMIT_MAX: '1',
             UPLOAD_RATE_LIMIT_WINDOW_SECONDS: '60',
         });
+        const authToken = await seedUploadAuthToken(env);
         const requestBody = {
-            accountId: 'creator.testnet',
             uploadKind: 'file',
             fileName: 'manifest.json',
             sizeBytes: 2,
@@ -667,6 +874,7 @@ describe('storage-api', () => {
             new Request('https://storage.youtick.net/uploads/intent', {
                 method: 'POST',
                 headers: {
+                    'Authorization': `Bearer ${authToken}`,
                     'CF-Connecting-IP': '203.0.113.10',
                     'Content-Type': 'application/json',
                 },
@@ -801,7 +1009,7 @@ describe('storage-api', () => {
         expect(response.status).toBe(404);
         expect(await response.json()).toEqual({
             error: 'not_found',
-            endpoints: ['/__health', '/provider-health', '/pins', '/pins/:cid/status', '/uploads/intent', '/uploads/file', '/uploads/directory'],
+            endpoints: ['/__health', '/provider-health', '/pins', '/pins/:cid/status', '/uploads/auth/challenge', '/uploads/auth/verify', '/uploads/intent', '/uploads/file', '/uploads/directory'],
         });
     });
 });
