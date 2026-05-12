@@ -499,6 +499,7 @@ impl AccessControlContract {
     }
 }
 
+#[near]
 impl AccessControlContract {
     fn assert_owner(&self) {
         require!(
