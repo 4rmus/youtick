@@ -13,6 +13,7 @@ export interface Env {
     UPLOAD_RATE_LIMIT_MAX?: string;
     UPLOAD_RATE_LIMIT_WINDOW_SECONDS?: string;
     NEAR_NETWORK?: string;
+    UPLOAD_SESSION_CONTRACT_ID?: string;
     UPLOAD_GUARD?: KVNamespace;
 }
 
@@ -92,6 +93,8 @@ const MAINNET_RPC_POOL = [
 const TESTNET_RPC_POOL = [
     'https://rpc.testnet.near.org',
 ];
+const DEFAULT_UPLOAD_SESSION_CONTRACT_ID = 'youtick.near';
+const TRUSTED_UPLOAD_SESSION_METHODS = new Set(['nft_mint_prepaid', 'create_event_prepaid']);
 
 export default {
     async fetch(request: Request, env: Env): Promise<Response> {
@@ -421,8 +424,8 @@ async function handleUploadAuthVerifyRequest(request: Request, env: Env): Promis
         return jsonResponse(request, env, { error: 'Unauthorized' }, 401);
     }
 
-    const isFullAccess = await verifyFullAccessKeyBinding(env, accountId, publicKey);
-    if (!isFullAccess) {
+    const isTrustedKey = await verifyUploadAuthKeyBinding(env, accountId, publicKey);
+    if (!isTrustedKey) {
         return jsonResponse(request, env, { error: 'Unauthorized' }, 401);
     }
 
@@ -1117,7 +1120,7 @@ function parseUploadAuthTokenClaims(raw: string): UploadAuthTokenClaims | null {
     }
 }
 
-async function verifyFullAccessKeyBinding(
+async function verifyUploadAuthKeyBinding(
     env: Env,
     accountId: string,
     publicKey: string,
@@ -1130,10 +1133,67 @@ async function verifyFullAccessKeyBinding(
             public_key: publicKey,
         });
 
-        return accessKey.permission === 'FullAccess';
+        if (accessKey.permission === 'FullAccess') {
+            return true;
+        }
+
+        if (!isTrustedUploadSessionAccessKey(env, accessKey.permission)) {
+            return false;
+        }
+
+        return await verifyActiveUploadSession(env, accountId, publicKey);
     } catch {
         return false;
     }
+}
+
+function isTrustedUploadSessionAccessKey(env: Env, permission: unknown): boolean {
+    if (!permission || typeof permission !== 'object' || Array.isArray(permission)) {
+        return false;
+    }
+
+    const functionCall = (permission as { FunctionCall?: unknown }).FunctionCall;
+    if (!functionCall || typeof functionCall !== 'object' || Array.isArray(functionCall)) {
+        return false;
+    }
+
+    const value = functionCall as { receiver_id?: unknown; method_names?: unknown };
+    const methodNames = value.method_names;
+    if (
+        value.receiver_id !== getUploadSessionContractId(env)
+        || !Array.isArray(methodNames)
+        || !methodNames.every((method): method is string => typeof method === 'string')
+    ) {
+        return false;
+    }
+
+    return Array.from(TRUSTED_UPLOAD_SESSION_METHODS).every((method) => methodNames.includes(method));
+}
+
+async function verifyActiveUploadSession(env: Env, accountId: string, publicKey: string): Promise<boolean> {
+    const response = await nearRpcQuery<{ result: number[] }>(env, {
+        request_type: 'call_function',
+        finality: 'final',
+        account_id: getUploadSessionContractId(env),
+        method_name: 'get_upload_session',
+        args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify({ public_key: publicKey }))),
+    });
+    const raw = new TextDecoder().decode(new Uint8Array(response.result));
+    const session = raw ? JSON.parse(raw) as {
+        owner_id?: unknown;
+        status?: unknown;
+    } | null : null;
+
+    return Boolean(
+        session
+            && session.owner_id === accountId
+            && typeof session.status === 'string'
+            && !['Completed', 'Revoked', 'Expired'].includes(session.status),
+    );
+}
+
+function getUploadSessionContractId(env: Env): string {
+    return env.UPLOAD_SESSION_CONTRACT_ID?.trim() || DEFAULT_UPLOAD_SESSION_CONTRACT_ID;
 }
 
 async function nearRpcQuery<T>(env: Env, params: JsonBody): Promise<T> {

@@ -602,6 +602,99 @@ describe('storage-api', () => {
         });
     });
 
+    it('accepts an active upload session function-call key for upload auth', async () => {
+        const keyPair = await crypto.subtle.generateKey(
+            { name: 'Ed25519' },
+            true,
+            ['sign', 'verify'],
+        ) as CryptoKeyPair;
+        const rawPublicKey = await crypto.subtle.exportKey('raw', keyPair.publicKey) as ArrayBuffer;
+        const publicKey = `ed25519:${base58Encode(new Uint8Array(rawPublicKey))}`;
+        const activeSession = new TextEncoder().encode(JSON.stringify({
+            owner_id: 'creator.testnet',
+            remaining_budget: '100000000000000000000000',
+            remaining_calls: 2,
+            expires_at_ms: Date.now() + 300_000,
+            status: 'AwaitingMint',
+        }));
+        vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body || '{}')) as {
+                params?: { request_type?: string };
+            };
+            if (body.params?.request_type === 'view_access_key') {
+                return new Response(JSON.stringify({
+                    result: {
+                        nonce: 1,
+                        permission: {
+                            FunctionCall: {
+                                allowance: '150000000000000000000000',
+                                receiver_id: 'youtick.near',
+                                method_names: ['nft_mint_prepaid', 'create_event_prepaid'],
+                            },
+                        },
+                    },
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+
+            return new Response(JSON.stringify({
+                result: { result: Array.from(activeSession) },
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }));
+
+        const handler = await importHandler();
+        const env = createGuardedEnv({ NEAR_NETWORK: 'testnet' });
+        const challengeResponse = await handler.fetch(
+            new Request('https://storage.youtick.net/uploads/auth/challenge', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ accountId: 'creator.testnet' }),
+            }),
+            env,
+        );
+        const challenge = await challengeResponse.json() as {
+            challengeId: string;
+            message: string;
+            recipient: string;
+            nonce: string;
+        };
+        const payloadHash = await serializeNep413Hash({
+            message: challenge.message,
+            nonce: base64ToBytes(challenge.nonce),
+            recipient: challenge.recipient,
+        });
+        const signature = bytesToBase64(new Uint8Array(await crypto.subtle.sign(
+            { name: 'Ed25519' },
+            keyPair.privateKey,
+            payloadHash,
+        )));
+
+        const verifyResponse = await handler.fetch(
+            new Request('https://storage.youtick.net/uploads/auth/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    challengeId: challenge.challengeId,
+                    accountId: 'creator.testnet',
+                    publicKey,
+                    signature,
+                }),
+            }),
+            env,
+        );
+
+        expect(verifyResponse.status).toBe(200);
+        expect(await verifyResponse.json()).toMatchObject({
+            token: expect.any(String),
+            accountId: 'creator.testnet',
+        });
+    });
+
     it('keeps upload intent available as guidance when uploads are disabled', async () => {
         const handler = await importHandler();
         const env = createEnv({

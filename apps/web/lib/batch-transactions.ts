@@ -4,6 +4,15 @@ export interface SignlessUploadManager {
         args: Record<string, unknown>,
         gas?: string,
     ): Promise<unknown>;
+    signMessage(params: {
+        message: string;
+        recipient: string;
+        nonce: Uint8Array;
+    }): Promise<{
+        accountId: string;
+        publicKey: string;
+        signature: string;
+    }>;
 }
 
 export class BatchPublishError extends Error {

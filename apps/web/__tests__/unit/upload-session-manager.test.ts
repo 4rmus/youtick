@@ -21,6 +21,13 @@ vi.mock('near-api-js', () => ({
   },
   KeyPairSigner: class {
     constructor(_keyPair: unknown) {}
+    async signNep413Message(accountId: string) {
+      return {
+        accountId,
+        publicKey: { toString: () => 'ed25519:session-public-key' },
+        signature: new Uint8Array([1, 2, 3]),
+      };
+    }
   },
   PublicKey: {
     fromString: vi.fn((value: string) => value),
@@ -115,5 +122,20 @@ describe('UploadSessionManager', () => {
     await expect(manager.callMethod('create_event_prepaid', {}))
       .rejects
       .toThrow('Cross-contract call failed in create_event_prepaid');
+  });
+
+  it('signs storage auth messages with the active upload session key', async () => {
+    const { UploadSessionManager } = await import('@/lib/upload-session-manager');
+    const manager = new UploadSessionManager('creator.near');
+
+    await expect(manager.signMessage({
+      message: 'Authorize upload',
+      recipient: 'https://storage.example',
+      nonce: new Uint8Array(32),
+    })).resolves.toEqual({
+      accountId: 'creator.near',
+      publicKey: 'ed25519:session-public-key',
+      signature: 'AQID',
+    });
   });
 });
