@@ -37,12 +37,12 @@ belirler.
 | R1 IPFS gateway split | Done | `apps/web/lib/ipfs/` aktif; eski `crust/gateway.ts` ve `kms/streaming.ts` yok |
 | Pre-launch architecture/runbooks | Partial done | Architecture overview + 2 incident runbook var; economics/transparency yok |
 | SB-2 onboarding key rotation | Done | Yeni key aktif; iki eski onboarding key access list + allowlist'ten kaldırıldı |
-| SB-3 emergency proposals | Open | Pre-staged proposal ID'leri henüz bu planda kayıtlı değil |
+| SB-3 emergency proposals | Partial | Registry pause/deactivate pre-staged; access pause canlı kontratta desteklenmiyor |
 | R2 module split | Open | `contracts/nft-ticket/src/lib.rs` hâlâ ana büyük dosya |
 | Signed upload smoke | Open | Auth katmanı canlı; küçük signed `/uploads/file` + segmented playback smoke sırada |
 
-**Sıradaki güvenli sıra**: SB-3 → signed upload/playback smoke → R2.
-R2'ye SB-3 kapanmadan başlanmamalı.
+**Sıradaki güvenli sıra**: access-control live mismatch kararı → signed upload/playback smoke → R2.
+R2'ye access-control canlı mismatch kararı verilmeden başlanmamalı.
 
 ## Sabit Kararlar (Locked 2026-05-12)
 
@@ -134,7 +134,7 @@ auth claim'inden gelir.
 **Kalan iş**: Küçük signed `/uploads/file` smoke ve default Lighthouse upload
 üzerinden segmented playback smoke.
 
-### SB-3 — `access-control` pause + `operator-registry` deactivate 24h timelock arkasında (HIGH, Gün 3)
+### SB-3 — Emergency registry proposals pre-staged; access pause blocked (PARTIAL, 2026-05-12)
 
 **Sorun**: KMS operatörü compromise olursa `operator-registry` içindeki `deactivate_decryption_operator` çağrısı 24 saat bekler. `access-control` contract seviyesinde pause destekler; `operator-registry` ise `Pause` action'ı destekler, `PauseContract` değil. İncident anında 24h kayıp = ek share leakage.
 
@@ -142,26 +142,24 @@ auth claim'inden gelir.
 - `contracts/access-control/src/lib.rs:68-81`, `:514-563`
 - `contracts/operator-registry/src/lib.rs:33-64`, `:269-329`
 
-**Fix yolu**: Owner-direct pause kontrat upgrade (3-4h kod + 48h+ timelock window) yerine **pre-stage proposals** seçildi.
+**Fix yolu**: Owner-direct pause kontrat upgrade (3-4h kod + 48h+ timelock window) yerine **pre-stage proposals** seçildi. Canlı gerçeklikte bu bugün yalnızca registry için uygulanabildi.
 
-**Komutlar (Gün 3, ~1h aktif + 24h passive wait)**:
-```bash
-# access-control pause
-near call access.youtick.near propose_action '{"action":"PauseContract"}'
+**Canlı sonuç (2026-05-12)**:
+- Guarded helper: `scripts/prestage-emergency-proposals.mjs`.
+- `registry.youtick.near` owner çağrısı `registry.youtick.near` credential ile yapılmalı; `youtick.near` owner değil.
+- `access.youtick.near` canlı kontratı `propose_action`, `get_timelock`, `is_paused` methodlarını taşımıyor. Bu yüzden access pause pre-stage yapılamadı; bu ayrı contract deploy/upgrade kararı gerektiriyor.
+- Registry emergency proposal'ları pre-stage edildi ve `get_timelock` ile doğrulandı:
 
-# operator-registry pause
-near call registry.youtick.near propose_action '{"action":"Pause"}'
+| ID | Action | TX |
+|---|---|---|
+| 7 | `Pause` | `4tiaXxt1SqiReqDYizxGhnhFbPpRBG6eQdMQtd74msSv` |
+| 8 | Deactivate `kms-a.youtick.near` | `EkmMWUr3tfKLMm926XKAXMG9uKhjU2oh6KmR2eiCgRHq` |
+| 9 | Deactivate `kms-b.youtick.near` | `6BW5wEbGGEXQyzvD43szE8FeYE9baDd85qNaUWtFGhQf` |
+| 10 | Deactivate `kms-c.youtick.near` | `243AE9dae7Yefotr3WFe9tMVDNqhD5Vm7dxddxYMcHV4` |
+| 11 | Deactivate `kms-d.youtick.near` | `Edvfm4VyL4CVUmqGfBeXnLfAuuD4Ad143mEnKvwMbsBK` |
+| 12 | Deactivate `kms-e.youtick.near` | `4j1uZve4Ra4BDwjqdno9z2QemBSFhhNrB76AqKa4mRif` |
 
-# Her 5 KMS operatörü için deactivate proposal:
-for op in a b c d e; do
-  near call registry.youtick.near propose_action \
-    "{\"action\":{\"DeactivateDecryptionOperator\":{\"account_id\":\"$op.youtick.near\"}}}"
-done
-```
-
-Toplam 7 proposal. İncident anında `execute_action(<id>)` çağrısı 0-saniye etki.
-
-**Doğrulama**: `near view <contract> get_timelock '{"id":<n>}'` — her birinin pending olduğunu gösterir.
+**Doğrulama**: RPC `get_timelock` ID 7-12 pending actionları döndürüyor.
 
 **Bakım**: Kodda `TimelockProposal` sadece `action`, `proposer`, `proposed_at` tutuyor; 7 günlük expire window görünmüyor. Bu yüzden haftalık yenileme iddiası yok.
 
@@ -398,7 +396,7 @@ Her madde binary. Bir tane FAIL = launch ertelenir.
 
 - [x] Mainnet onboarding key rotated; eski key `Unauthorized` döndürüyor
 - [x] `/uploads/intent` auth gerektiriyor (`curl` Authorization'suz → 401)
-- [ ] Pre-staged pause/deactivate proposals 7 adet, `get_timelock` ile görünür
+- [ ] Registry pre-staged pause/deactivate proposals 6 adet, `get_timelock` ile görünür; access pause canlı kontratta yok
 - [ ] Trial baseline counter captures claim events without changing `STORAGE_COST_ACCOUNT`
 - [ ] R2 module split deploy verified (`near abi youtick.near` pre/post diff = empty)
 - [ ] Smoke test: 3 currency × upload-buy-watch = 9/9 PASS
