@@ -86,9 +86,9 @@ retaining them in the project directory is an unacceptable risk.
 - Never store mainnet keys in the project directory; use a hardware wallet or
   secret manager (1Password, HashiCorp Vault, AWS KMS).
 
-### 4. Onboarding Key Leaked in Client Bundle (Mitigated)
+### 4. Onboarding Key Leaked in Client Bundle (Resolved Live)
 
-**Status:** Mitigated in source, **not yet redeployed to mainnet**  
+**Status:** Resolved live — rotated 2026-05-12
 **Location:** `apps/web/.env.example`, `OnboardingKeyInit.tsx`
 
 `NEXT_PUBLIC_ONBOARDING_KEY` was embedded into the Next.js client JS bundle
@@ -101,24 +101,44 @@ trial pool or DoS the daily limit.
   runtime with `Cache-Control: no-store`.
 - Updated `OnboardingKeyInit.tsx` to fetch from the secure endpoint instead of
   reading `process.env.NEXT_PUBLIC_ONBOARDING_KEY`.
+- Added new onboarding key
+  `ed25519:9orHyMRrgbG7VcabT1KEMaKSgj7PqZh5QqPU1F1zuZDs`
+  (`add_onboarding_key` tx:
+  `4FyagU6ZKvvtLP7Hbkty6DKVCW8rsKAvUgBqWuSFSHYB`).
+- Updated the Web4 proxy `ONBOARDING_KEYS` secret to the new private key.
+- Removed the two old onboarding keys:
+  `ed25519:d7DFgYQX6gPwj63PnE7cPSmtpsFFP7ykkUaHivCdZsX`
+  (`7DtbGsxiqFcRL5VJ1QZbCCkj5MALwp7ZDmcUKucCJLJk`) and
+  `ed25519:8oxP5fEc8mMvXf2kE85VZK1yN4WbQRwRDAgiab36wm2S`
+  (`BsCin778CfHnDq4Div3nHNKVzekBPEm27ixSENLfyoYL`).
 
 **Action required:**
-- Rotate the onboarding Function Call Access Key on `youtick.near`.
-- Update production `.env.local` to use `ONBOARDING_KEY` (remove the
-  `NEXT_PUBLIC_` prefix).
-- Redeploy the web app.
+- Keep `ONBOARDING_KEY` / `ONBOARDING_KEYS` server-only.
+- Keep the new private key backed up outside the repo.
+- Periodically run `node scripts/list-onboarding-keys.mjs`; expected current
+  state is one limited onboarding key.
 
 > **Deploy Runbook (Faz 0):**
-> 1. Generate a new Ed25519 keypair for onboarding.
-> 2. Run rotation script:
+> 1. List current onboarding keys and identify the old key:
 >    ```bash
->    node scripts/rotate-onboarding-key.mjs \
->      ed25519:OLD_ONBOARDING_KEY \
->      ed25519:NEW_ONBOARDING_KEY
+>    node scripts/list-onboarding-keys.mjs
 >    ```
-> 3. Update `ONBOARDING_KEYS` env var (Web4 proxy + web app).
-> 4. Rebuild web app: `cd apps/web && npm run build:web4`
-> 5. Upload to IPFS and execute Web4 URL proposal (see #9).
+> 2. Generate a new Ed25519 keypair for onboarding.
+> 3. Add the new key first; do not remove the old key yet:
+>    ```bash
+>    ONBOARDING_PUBLIC_KEY=ed25519:NEW_ONBOARDING_KEY \
+>    CONFIRM_ADD_ONBOARDING_KEY=youtick.near \
+>    node scripts/add-onboarding-key.mjs
+>    ```
+> 4. Update `ONBOARDING_KEYS` env var (Web4 proxy + web app).
+> 5. Rebuild web app: `cd apps/web && npm run build:web4`
+> 6. Upload to IPFS and execute Web4 URL proposal (see #9).
+> 7. After the new key is live and verified, remove the old key:
+>    ```bash
+>    ONBOARDING_PUBLIC_KEY=ed25519:OLD_ONBOARDING_KEY \
+>    CONFIRM_REMOVE_ONBOARDING_KEY=youtick.near \
+>    node scripts/remove-onboarding-key.mjs
+>    ```
 
 ### 5. Production KMS Operator Endpoints Exposed in Repo (Sanitized)
 

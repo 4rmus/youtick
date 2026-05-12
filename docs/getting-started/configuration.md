@@ -111,6 +111,11 @@ Arbitrum + Base ile sinirlidir. Ethereum mainnet UI'da secilebilir degildir.
 Trial ve guest hesap olusturma icin `ONBOARDING_KEY` veya `ONBOARDING_KEYS`
 kullanilir. Bu anahtarlar contract owner tarafindan `add_onboarding_key` ile
 kaydedilir; `NEXT_PUBLIC_` prefix'i kullanilmaz.
+Mainnet rotasyonda yeni key once `scripts/add-onboarding-key.mjs` ile eklenir;
+web deploy dogrulandiktan sonra eski key `scripts/remove-onboarding-key.mjs`
+ile kaldirilir.
+Mevcut onboarding key envanteri icin `scripts/list-onboarding-keys.mjs`
+kullanilir.
 
 ### Web4 proxy API davranisi
 

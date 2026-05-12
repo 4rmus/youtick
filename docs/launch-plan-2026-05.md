@@ -21,9 +21,28 @@ Ilgili dokümanlar:
 | Pitch hedefi | Gün 30 (pre-seed $100-500K) |
 | Toplam aktif iş | ~95-105 saat |
 | Günlük yük | ~3.3h ortalama |
-| Ship-blocker'lar | 3 (SB-1, SB-2, SB-3) |
-| Mimari refactor'lar | 3 (R1, R2, R3); R2 batch upgrade |
+| Ship-blocker'lar | 3 tracked; 1 open (SB-3) |
+| Mimari refactor'lar | R1 done; R2/R3 open; R2 batch upgrade |
 | Mainnet contract upgrade | 1 batch (Gün 8), R2 module split odaklı |
+
+## Durum Checkpoint'i — 2026-05-12
+
+Bu checkpoint repo ve canlı Storage API durumu tekrar okunarak işlendi. Planın
+önceki hali bazı işleri hâlâ açık gösteriyordu; aşağıdaki tablo güncel sırayı
+belirler.
+
+| Alan | Durum | Kanıt / Not |
+|---|---|---|
+| SB-1 Storage API auth | Done | Canlı auth'suz `/uploads/intent` → `Unauthorized`; `provider-health` ready |
+| R1 IPFS gateway split | Done | `apps/web/lib/ipfs/` aktif; eski `crust/gateway.ts` ve `kms/streaming.ts` yok |
+| Pre-launch architecture/runbooks | Partial done | Architecture overview + 2 incident runbook var; economics/transparency yok |
+| SB-2 onboarding key rotation | Done | Yeni key aktif; iki eski onboarding key access list + allowlist'ten kaldırıldı |
+| SB-3 emergency proposals | Open | Pre-staged proposal ID'leri henüz bu planda kayıtlı değil |
+| R2 module split | Open | `contracts/nft-ticket/src/lib.rs` hâlâ ana büyük dosya |
+| Signed upload smoke | Open | Auth katmanı canlı; küçük signed `/uploads/file` + segmented playback smoke sırada |
+
+**Sıradaki güvenli sıra**: SB-3 → signed upload/playback smoke → R2.
+R2'ye SB-3 kapanmadan başlanmamalı.
 
 ## Sabit Kararlar (Locked 2026-05-12)
 
@@ -43,7 +62,7 @@ If/Then otomatik-karar kuralları (gelecek kararlar için):
 
 ## Ship-Blocker'lar
 
-### SB-2 — Mainnet onboarding key hâlâ rotate edilmemiş (HIGH, Gün 1)
+### SB-2 — Mainnet onboarding key rotation (DONE, 2026-05-12)
 
 **Sorun**: `NEXT_PUBLIC_ONBOARDING_KEY` eski public bundle'da yayımlanmıştı. Kod fix'i (server endpoint'e taşıma) yapıldı ama mainnet'teki Function Call Access Key hâlâ aktif. Saldırı vektörü canlı:
 - `claim_free_ticket_direct` ile trial_pool drain (0.01 NEAR/call)
@@ -52,33 +71,68 @@ If/Then otomatik-karar kuralları (gelecek kararlar için):
 
 **Referanslar**: `docs/operations/known-issues.md:87-118`; `contracts/nft-ticket/src/lib.rs:3391-3447`
 
-**Hard cutover runbook (Gün 1, ~2h, 6 adım)**:
-1. Yeni keypair üret (offline). Private'ı yedekle.
-2. `near call youtick.near add_onboarding_key '{"public_key":"ed25519:NEW..."}'` — yeni key kontrata eklendi, eski hâlâ aktif.
-3. `apps/web/app/api/onboarding-key/` env var'ı yeni private/public ile güncelle. Local build koş.
-4. Local'de yeni bundle'la trial flow E2E doğrula.
-5. Web4 bundle deploy: `scripts/deploy-crust.mjs` veya `scripts/deploy-web4.sh`. Deploy başarılı mı doğrula: `curl <web4-url>/_next/.../bundle.js | grep <yeni-public-key-prefix>`.
-6. **Ancak doğrulama PASS sonrası**: `near call youtick.near remove_onboarding_key '{"public_key":"ed25519:OLD..."}'`.
+**Hard cutover runbook (Gün 1, ~2h, 7 adım)**:
+1. Canlı access-key envanterini al ve hangi key'in eski olduğunu netleştir:
+   ```bash
+   node scripts/list-onboarding-keys.mjs
+   ```
+2. Yeni keypair üret (offline). Private'ı yedekle.
+3. Yeni public key'i hem `youtick.near` access key listesine Function Call Access Key
+   olarak hem de kontrat allowlist'ine ekle. Eski key hâlâ aktif kalmalı:
+   ```bash
+   ONBOARDING_PUBLIC_KEY=ed25519:NEW... \
+   CONFIRM_ADD_ONBOARDING_KEY=youtick.near \
+   node scripts/add-onboarding-key.mjs
+   ```
+4. `apps/web/app/api/onboarding-key/` env var'ı yeni private/public ile güncelle. Local build koş.
+5. Local'de yeni bundle'la trial flow E2E doğrula.
+6. Web4 bundle deploy: `scripts/deploy-crust.mjs` veya `scripts/deploy-web4.sh`. Deploy başarılı mı doğrula: `curl <web4-url>/_next/.../bundle.js | grep <yeni-public-key-prefix>`.
+7. **Ancak doğrulama PASS sonrası**: eski key'i hem access key listesinden sil hem
+   de kontrat allowlist'inden kaldır:
+   ```bash
+   ONBOARDING_PUBLIC_KEY=ed25519:OLD... \
+   CONFIRM_REMOVE_ONBOARDING_KEY=youtick.near \
+   node scripts/remove-onboarding-key.mjs
+   ```
+
+**2026-05-12 canlı tamamlama notu**:
+- Yeni onboarding key eklendi: `ed25519:9orHyMRrgbG7VcabT1KEMaKSgj7PqZh5QqPU1F1zuZDs`
+  (`add_onboarding_key` tx: `4FyagU6ZKvvtLP7Hbkty6DKVCW8rsKAvUgBqWuSFSHYB`).
+- Web4 proxy `ONBOARDING_KEYS` secret'i yeni private key ile güncellendi.
+- Eski onboarding keyler kaldırıldı:
+  - `ed25519:d7DFgYQX6gPwj63PnE7cPSmtpsFFP7ykkUaHivCdZsX`
+    (`remove_onboarding_key` tx: `7DtbGsxiqFcRL5VJ1QZbCCkj5MALwp7ZDmcUKucCJLJk`)
+  - `ed25519:8oxP5fEc8mMvXf2kE85VZK1yN4WbQRwRDAgiab36wm2S`
+    (`remove_onboarding_key` tx: `BsCin778CfHnDq4Div3nHNKVzekBPEm27ixSENLfyoYL`)
+- Final access-key envanteri: `onboardingLimitedCount = 1`; tek kalan key yeni key.
+- Kontrat allowlist doğrulaması: yeni key `true`, iki eski key `false`.
+- Aynı hesapta `youtick.near` receiver'ına boş `method_names` ile bağlı 4 geniş
+  Function Call Access Key hâlâ var; onboarding rotasyonundan ayrı incelenmeli.
 
 **Doğrulama**: Eski key ile çağrı `Unauthorized` döner.
 
 **Risk**: Adım 5 başarısız ve adım 6 yapılırsa 24h boyunca trial kırık. Pre-launch dönem olduğu için gerçek kullanıcı etkisi yok.
 
-### SB-1 — `/uploads/intent` auth'suz — Lighthouse budget DoS (HIGH, Gün 2)
+### SB-1 — `/uploads/intent` auth'suz — Lighthouse budget DoS (DONE, 2026-05-12)
 
 **Sorun**: `workers/storage-api/src/index.ts:232-301 handleUploadIntentRequest` NEAR imzası istemiyor; `accountId` JSON'da self-declared. Default rate limit 1000 upload/saat per (accountId, IP). Saldırgan IP+accountId rotasyonu ile sınırsız intent mint eder, `/uploads/file` üzerinden Lighthouse'a 100 MiB encrypted garbage yükler, API key budget'ını saatler içinde tüketir.
 
 **Referanslar**: `workers/storage-api/src/index.ts:232-301`, `:303`, `:347`, `:62`, `:735`, `:823`, `:872`, `:887`
 
-**Fix**: `youtick-kms`'te zaten implement edilmiş challenge/verify pattern'i kopyala.
+**Durum**: Tamamlandı. Storage API artık `/uploads/auth/challenge` +
+`/uploads/auth/verify` üzerinden upload auth token ister. `/uploads/intent`
+`Authorization: Bearer <token>` olmadan ilerlemez; `accountId` body'den değil
+auth claim'inden gelir.
 
-- Kopyalanacak: `workers/youtick-kms/src/index.ts:1285-1428` (NEP-413 challenge → verify → token)
-- Eklenecek: `/uploads/auth/challenge` + `/uploads/auth/verify` endpoint'leri.
-- `/uploads/intent` istek için `Authorization: Bearer <NEP-413 token>` zorunlu olsun. `claims.accountId` token'dan gelsin; JSON body'deki self-declared `accountId` artık kabul edilmesin.
+**Kanıt**:
+- `workers/storage-api` check/test: 28 test PASS.
+- `apps/web` storage-api client test: 10 test PASS.
+- Canlı `https://youtick-storage-api.araafatsum.workers.dev/provider-health`:
+  `ready:true`, `uploadsEnabled:true`, `uploadGuardReady:true`.
+- Canlı `POST /uploads/intent` auth'suz: `{"error":"Unauthorized"}`.
 
-**Süre**: 4-6h, test dahil. ~40 LOC.
-
-**Doğrulama**: `curl -X POST <intent-url>` (Authorization header'sız) → 401 Unauthorized.
+**Kalan iş**: Küçük signed `/uploads/file` smoke ve default Lighthouse upload
+üzerinden segmented playback smoke.
 
 ### SB-3 — `access-control` pause + `operator-registry` deactivate 24h timelock arkasında (HIGH, Gün 3)
 
@@ -113,11 +167,14 @@ Toplam 7 proposal. İncident anında `execute_action(<id>)` çağrısı 0-saniye
 
 ## Mimari Refactor'lar
 
-### R1 — `lib/crust/gateway.ts` → `lib/ipfs/gateway.ts` (Gün 3-4, 4h)
+### R1 — `lib/crust/gateway.ts` → `lib/ipfs/gateway.ts` (DONE, 2026-05-12)
 
 **Sorun**: Dosya isim "Crust" ama içerik 5 public IPFS gateway + Lighthouse + `media-delivery` worker'ı route ediyor. Crust kaldırılmak istenirse yanlış dosya silinir. Investor/audit reaksiyonu kötü.
 
-**Hedef yapı**:
+**Durum**: Tamamlandı. IPFS read-path artık `apps/web/lib/ipfs/` altında.
+Crust klasörü write/compatibility yüzeyi olarak kaldı.
+
+**Mevcut yapı**:
 ```
 apps/web/lib/
   ipfs/
@@ -135,15 +192,11 @@ apps/web/lib/
     index.ts
 ```
 
-**4 chunk migration (her biri ~1h)**:
-1. `lib/ipfs/` skeleton kopya (orijinal silinmez).
-2. 5 consumer import rewrite: `apps/web/lib/ipfs-media.ts:1`, `lib/video-delivery.ts:3`, `lib/video-delivery-player.ts:1`, `lib/crust/client.ts:11`.
-3. Eski `lib/crust/gateway.ts` ve `CRUST_GATEWAYS` block'unu sil. `tsc` + `vitest` koş.
-4. `lib/kms/streaming.ts` (462 satır dead code) sil. `kms/index.ts:36-41` exports'tan temizle.
-
-**Doğrulama**: `npm run build && npm test -- --run` green; bundle size delta ölç (~462 LOC + dead path).
-
-**Rollback**: Chunk 3-4'ü `git revert`.
+**Kanıt**:
+- `apps/web/lib/ipfs/gateway.ts`, `config.ts`, `index.ts` mevcut.
+- `apps/web/lib/crust/gateway.ts` yok.
+- `apps/web/lib/kms/streaming.ts` yok.
+- Storage auth ve client testleri bu checkpoint'te tekrar geçti.
 
 ### R2 — `contracts/nft-ticket/src/lib.rs` Module Split (Gün 5-6, 6-8h)
 
@@ -215,30 +268,30 @@ depozit etkisiyle birlikte ayrıca tasarla.
 
 ### Pre-launch (Gün 9-11, ~10h)
 
-1. **`docs/public/architecture-overview.md`** — investor + due diligence one-pager.
+1. **DONE — `docs/public/architecture-overview.md`** — investor + due diligence one-pager.
    - TOC: What it is / Trust model / NEAR layer / IPFS layer / 5-of-3 KMS / Browser-side / Failure modes / Takedown policy / Public-alpha status.
    - Mermaid diagram reuse `docs/architecture/README.md`'den.
    - <600 kelime.
    - Decentralization score'u **sayı vermeden** tablo formatında yaz (centralized/decentralized today vs. plan).
 
-2. **`docs/operations/incident-kms-operator-down.md`** — 1 operatör 5xx döndüğünde runbook.
+2. **DONE — `docs/operations/incident-kms-operator-down.md`** — 1 operatör 5xx döndüğünde runbook.
    - Detect: Uptime Kuma alert
    - Triage: log inspect, registry view
    - Mitigate: pre-staged `DeactivateDecryptionOperator` proposal'ını execute
    - Recover: yeni operator endpoint deploy, registry update
 
-3. **`docs/operations/incident-takedown.md`** — CSAM/copyright runbook.
+3. **DONE — `docs/operations/incident-takedown.md`** — CSAM/copyright runbook.
    - Detect: report intake mekanizması
    - Onchain action: `near call youtick.near takedown_event '{"encrypted_cid":"...","reason":"..."}'`
    - IPFS unpin: Lighthouse + Crust unpin where provider tooling supports it
    - KMS share delete: public worker delete endpoint yok; operator/admin KV süreci olarak yaz
    - Post-mortem log: `docs/operations/takedowns/<date>.md`
 
-4. **Line-number drift fix**:
+4. **DONE — Line-number drift fix**:
    - `docs/kms-key-rotation.md:200` — 937 → 1090, 196 → 242-265
    - `docs/operations/known-issues.md` §6 — 1553 → 2326, 2090 → 3087
 
-5. **`docs/operations/known-issues.md` §1 status flip**: V11 migration sonrası `nft_total_supply()=0` artık anomali değil, **clean-launch state**. "Critical anomaly" → "Resolved by V11 migration".
+5. **DONE — `docs/operations/known-issues.md` §1 status flip**: V11 migration sonrası `nft_total_supply()=0` artık anomali değil, **clean-launch state**. "Critical anomaly" → "Resolved by V11 migration".
 
 6. **`docs/public/economics.md`** — unit economics, post mainnet deploy.
    - 0.002 NEAR cost per trial
@@ -285,15 +338,15 @@ VPS gerekli mi? Cloudflare Workers + Uptime Kuma SaaS yeterli; VPS opsiyonel pos
 
 | Gün | İş | Saat |
 |---|---|---|
-| 1 | SB-2 hard cutover (6-step runbook) | 2 |
+| 1 | SB-2 hard cutover — **done** | 0 |
 | 1 | Personal network warm-up başlat (DM 5 kişi, "coming Day 23") | 0.5 |
-| 2 | SB-1 storage-api NEP-413 auth | 4-6 |
-| 3 | SB-3 pre-stage 7 proposals (1h aktif + 24h wait) | 1 |
-| 3 | R1 chunk 1-2 (ipfs/ skeleton + import rewrite) | 4 |
+| 2 | SB-1 storage-api NEP-413 auth — **done** | 0 |
+| 3 | SB-3 pre-stage 7 proposals (1h aktif + 24h wait) — **next after SB-2** | 1 |
+| 3 | R1 chunk 1-2 (ipfs/ skeleton + import rewrite) — **done** | 0 |
 | 4 | Testnet env doğrula; yoksa setup | 0-3 |
-| 4 | R1 chunk 3-4 (eski sil + kms/streaming.ts sil) | 1 |
+| 4 | R1 chunk 3-4 (eski sil + kms/streaming.ts sil) — **done** | 0 |
 | 5 | R2 module split source change (Rust) | 3 |
-| 6 | Testnet deploy + smoke test (R2+SB-1) | 4 |
+| 6 | Testnet deploy + smoke test (R2 + signed storage upload) | 4 |
 | 7 | Hard cutover doğrulama + personal network DM (5 kişi daha) | 1.5 |
 
 **Hafta 1 toplam**: ~21-25h
@@ -343,8 +396,8 @@ VPS gerekli mi? Cloudflare Workers + Uptime Kuma SaaS yeterli; VPS opsiyonel pos
 
 Her madde binary. Bir tane FAIL = launch ertelenir.
 
-- [ ] Mainnet onboarding key rotated; eski key `Unauthorized` döndürüyor
-- [ ] `/uploads/intent` auth gerektiriyor (`curl` Authorization'suz → 401)
+- [x] Mainnet onboarding key rotated; eski key `Unauthorized` döndürüyor
+- [x] `/uploads/intent` auth gerektiriyor (`curl` Authorization'suz → 401)
 - [ ] Pre-staged pause/deactivate proposals 7 adet, `get_timelock` ile görünür
 - [ ] Trial baseline counter captures claim events without changing `STORAGE_COST_ACCOUNT`
 - [ ] R2 module split deploy verified (`near abi youtick.near` pre/post diff = empty)

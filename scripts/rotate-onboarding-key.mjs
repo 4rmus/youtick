@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 /**
- * Rotate the onboarding Function Call Access Key on youtick.near.
+ * Legacy one-shot rotation for the onboarding Function Call Access Key.
+ *
+ * Prefer the safer launch flow:
+ *   1. scripts/add-onboarding-key.mjs
+ *   2. deploy and verify the new web bundle
+ *   3. scripts/remove-onboarding-key.mjs
  *
  * Usage:
+ *   CONFIRM_LEGACY_ROTATE_ONBOARDING_KEY=youtick.near \
  *   node scripts/rotate-onboarding-key.mjs <OLD_PUBLIC_KEY> <NEW_PUBLIC_KEY>
  *
  * Example:
@@ -22,6 +28,7 @@ import os from 'os';
 
 const cid = 'youtick.near';
 const credsPath = path.join(os.homedir(), '.near-credentials/mainnet', `${cid}.json`);
+const confirm = process.env.CONFIRM_LEGACY_ROTATE_ONBOARDING_KEY;
 
 const oldPk = process.argv[2];
 const newPk = process.argv[3];
@@ -31,8 +38,18 @@ if (!oldPk || !newPk) {
   process.exit(1);
 }
 
+if (!oldPk.startsWith('ed25519:') || !newPk.startsWith('ed25519:')) {
+  console.error('Both public keys must start with ed25519:');
+  process.exit(1);
+}
+
 if (!fs.existsSync(credsPath)) {
   console.error(`Credentials not found: ${credsPath}`);
+  process.exit(1);
+}
+
+if (confirm !== cid) {
+  console.error(`Refusing one-shot rotation on ${cid}. Prefer add/remove scripts, or set CONFIRM_LEGACY_ROTATE_ONBOARDING_KEY=${cid}.`);
   process.exit(1);
 }
 

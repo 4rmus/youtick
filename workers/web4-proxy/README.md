@@ -43,7 +43,9 @@ npx wrangler secret put TURNSTILE_SECRET_KEY
 
 `ONBOARDING_KEYS` virgulle ayrilmis `ed25519:` prefiksli key havuzu olabilir.
 `TURNSTILE_SECRET_KEY` set edildiginde `/api/onboarding-key` challenge token olmadan key vermez.
-Onboarding key rotation icin root `scripts/rotate-onboarding-key.mjs` kullanilir.
+Onboarding key rotation icin once root `scripts/add-onboarding-key.mjs`, yeni
+deploy dogrulandiktan sonra `scripts/remove-onboarding-key.mjs` kullanilir.
+Mevcut key envanteri root `scripts/list-onboarding-keys.mjs` ile okunur.
 
 ## Local dev ve test
 
