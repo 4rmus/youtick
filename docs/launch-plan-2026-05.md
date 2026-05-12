@@ -38,10 +38,10 @@ belirler.
 | Pre-launch architecture/runbooks | Partial done | Architecture overview + 2 incident runbook var; economics/transparency yok |
 | SB-2 onboarding key rotation | Done | Yeni key aktif; iki eski onboarding key access list + allowlist'ten kaldırıldı |
 | SB-3 emergency proposals | Done for current alpha scope | Registry pause/deactivate pre-staged; access timelock bilinçli olarak ertelendi |
-| R2 module split | Open | `contracts/nft-ticket/src/lib.rs` hâlâ ana büyük dosya |
-| Signed upload smoke | Open | Auth katmanı canlı; küçük signed `/uploads/file` + segmented playback smoke sırada |
+| R2 module split | Deployed + verified | `lib.rs` 1,124 satıra indi; testnet fresh deploy + mainnet code hash verified |
+| Signed upload/read-path smoke | Done for small live smoke | `youtick.near` signed `/uploads/file` → Lighthouse CID; CID media-delivery worker'dan okundu |
 
-**Sıradaki güvenli sıra**: signed upload/playback smoke → R2.
+**Sıradaki güvenli sıra**: full upload-buy-watch smoke.
 Access-control timelock canlı deploy'u geliştirme süreci bitene kadar ertelendi.
 
 ## Sabit Kararlar (Locked 2026-05-12)
@@ -131,8 +131,15 @@ auth claim'inden gelir.
   `ready:true`, `uploadsEnabled:true`, `uploadGuardReady:true`.
 - Canlı `POST /uploads/intent` auth'suz: `{"error":"Unauthorized"}`.
 
-**Kalan iş**: Küçük signed `/uploads/file` smoke ve default Lighthouse upload
-üzerinden segmented playback smoke.
+**2026-05-12 canlı smoke notu**:
+- `youtick.near` ile NEP-413 upload auth challenge imzalandı.
+- Küçük `/uploads/file` smoke Lighthouse'a yazdı:
+  `bafkreifnpkmkjkff5xhpsz4ewcgjzpofeolss43ojketjurzsop63zjkqy`.
+- Aynı CID `gateway.lighthouse.storage` ve `youtick-media-delivery` üzerinden
+  `segment-smoke` olarak okundu.
+
+**Kalan iş**: Full upload-buy-watch smoke hâlâ GO/NO-GO gate içinde takip
+ediliyor; R2 sonrasında 3 currency smoke ile birlikte kapatılmalı.
 
 ### SB-3 — Emergency registry proposals pre-staged; access timelock deferred (DONE FOR CURRENT ALPHA SCOPE, 2026-05-12)
 
@@ -208,12 +215,13 @@ contracts/nft-ticket/src/
   nft.rs                  # NFT standard impl
   market.rs               # buy_ticket, ft_on_transfer
   gift.rs                 # create_gift_drop, claim_gift_*
-  onboarding.rs           # trial keys, claim_free_ticket_direct
-  trial_invites.rs
+  onboarding.rs           # onboarding keys, trial invite admin, daily limit helpers
+  treasury.rs             # trial pool, free/trial claim callbacks, USDC/USDT pools
+  views.rs                # metadata, purchase logs, creator profile views
   web4.rs
   moderation.rs           # ban/takedown
-  treasury_stablecoin.rs  # USDC/USDT routes
   timelock.rs
+  tests.rs
 ```
 
 **Bütünlük garantisi**: Her bölüm zaten kendi `impl Contract {}` bloğunda. Borsh serialization struct seviyesinde — fonksiyonlar farklı dosyada olsa da ABI değişmez. `near abi` veya `cargo expand` ile pre/post diff al, fark olmadığını doğrula.
@@ -221,6 +229,25 @@ contracts/nft-ticket/src/
 **Risk**: Pure split olduğu için fonksiyonel risk düşük. Test suite (`cargo test`) tüm public path'leri kapsamalı.
 
 **Trial cost notu**: `TRIAL_ACCOUNT_STORAGE_COST` kaynakta zaten `NearToken::from_millinear(2)` yani 0.002 NEAR. Bu R2 batch'i `STORAGE_COST_ACCOUNT` düşürme işiyle birleştirilmemeli; o sabit upload/event session maliyetinde kullanılıyor ve ayrı analiz gerektirir.
+
+**2026-05-12 ilerleme notu**:
+- Source split tamamlandı: `nft.rs`, `market.rs`, `gift.rs`, `onboarding.rs`,
+  `treasury.rs`, `views.rs`, `web4.rs`, `moderation.rs`, `timelock.rs`,
+  `tests.rs`.
+- `contracts/nft-ticket/src/lib.rs` 5,664 satırdan 1,124 satıra indi.
+- Doğrulama: `cargo test --lib` 48/48 PASS; `cargo test --test sandbox` 31/31 PASS;
+  `cargo build --release --target wasm32-unknown-unknown` PASS;
+  `cargo near build non-reproducible-wasm` PASS.
+- ABI generation + HEAD baseline compare PASS; before/after 119 function entry,
+  eklenen/çıkan method yok.
+- Fresh testnet deploy + init PASS:
+  `r2-1778616242663.v1-0.utick.testnet`, code hash
+  `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`.
+- Mainnet code-only deploy PASS: `youtick.near` code hash
+  `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`; migration skipped.
+- Mainnet view smoke PASS: `nft_metadata`, `get_owner`, `get_trial_pool_balance`,
+  `get_events_count`, `get_onboarding_config`.
+- Kalan gate: full upload-buy-watch smoke.
 
 ### R3 — `lib/constants.ts` Split (Gün 11, 2h, opsiyonel)
 
@@ -399,7 +426,7 @@ Her madde binary. Bir tane FAIL = launch ertelenir.
 - [x] `/uploads/intent` auth gerektiriyor (`curl` Authorization'suz → 401)
 - [x] Registry pre-staged pause/deactivate proposals 6 adet, `get_timelock` ile görünür; access timelock alpha için ertelendi
 - [ ] Trial baseline counter captures claim events without changing `STORAGE_COST_ACCOUNT`
-- [ ] R2 module split deploy verified (`near abi youtick.near` pre/post diff = empty)
+- [x] R2 module split deploy verified (`near abi youtick.near` pre/post diff = empty)
 - [ ] Smoke test: 3 currency × upload-buy-watch = 9/9 PASS
 - [ ] 5 KMS operatör `/health` ready döndürüyor
 - [ ] Sentry + Uptime Kuma + Telegram alert canlı, test alarmı geçti
