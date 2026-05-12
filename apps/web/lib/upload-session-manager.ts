@@ -153,6 +153,15 @@ export class UploadSessionManager {
         });
 
         const outcomeAny = outcome as Record<string, unknown>;
+        const result: unknown = getTransactionLastResult(outcome);
+
+        if (method === 'nft_mint_prepaid') {
+            console.log(`[UploadSession] ${method} result:`, result);
+            if (result === false) {
+                return result;
+            }
+        }
+
         const receiptsOutcome = (outcomeAny as { receipts_outcome?: Array<{
             outcome?: { status?: unknown };
         }> }).receipts_outcome;
@@ -167,12 +176,6 @@ export class UploadSessionManager {
                     );
                 }
             }
-        }
-
-        const result = getTransactionLastResult(outcome);
-
-        if (method === 'nft_mint_prepaid') {
-            console.log(`[UploadSession] ${method} result:`, result);
         }
 
         return result;

@@ -13,6 +13,7 @@ const cspValue = [
   "font-src 'self' https://fonts.gstatic.com",
   "connect-src 'self' https:",
   "media-src 'self' blob: https:",
+  "frame-src https://challenges.cloudflare.com",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
