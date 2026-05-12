@@ -21,7 +21,7 @@ Ilgili dokümanlar:
 | Pitch hedefi | Gün 30 (pre-seed $100-500K) |
 | Toplam aktif iş | ~95-105 saat |
 | Günlük yük | ~3.3h ortalama |
-| Ship-blocker'lar | 3 tracked; 1 open (SB-3) |
+| Ship-blocker'lar | 3 tracked; 0 open for current alpha scope |
 | Mimari refactor'lar | R1 done; R2/R3 open; R2 batch upgrade |
 | Mainnet contract upgrade | 1 batch (Gün 8), R2 module split odaklı |
 
@@ -37,12 +37,12 @@ belirler.
 | R1 IPFS gateway split | Done | `apps/web/lib/ipfs/` aktif; eski `crust/gateway.ts` ve `kms/streaming.ts` yok |
 | Pre-launch architecture/runbooks | Partial done | Architecture overview + 2 incident runbook var; economics/transparency yok |
 | SB-2 onboarding key rotation | Done | Yeni key aktif; iki eski onboarding key access list + allowlist'ten kaldırıldı |
-| SB-3 emergency proposals | Partial | Registry pause/deactivate pre-staged; access pause canlı kontratta desteklenmiyor |
+| SB-3 emergency proposals | Done for current alpha scope | Registry pause/deactivate pre-staged; access timelock bilinçli olarak ertelendi |
 | R2 module split | Open | `contracts/nft-ticket/src/lib.rs` hâlâ ana büyük dosya |
 | Signed upload smoke | Open | Auth katmanı canlı; küçük signed `/uploads/file` + segmented playback smoke sırada |
 
-**Sıradaki güvenli sıra**: access-control live mismatch kararı → signed upload/playback smoke → R2.
-R2'ye access-control canlı mismatch kararı verilmeden başlanmamalı.
+**Sıradaki güvenli sıra**: signed upload/playback smoke → R2.
+Access-control timelock canlı deploy'u geliştirme süreci bitene kadar ertelendi.
 
 ## Sabit Kararlar (Locked 2026-05-12)
 
@@ -134,7 +134,7 @@ auth claim'inden gelir.
 **Kalan iş**: Küçük signed `/uploads/file` smoke ve default Lighthouse upload
 üzerinden segmented playback smoke.
 
-### SB-3 — Emergency registry proposals pre-staged; access pause blocked (PARTIAL, 2026-05-12)
+### SB-3 — Emergency registry proposals pre-staged; access timelock deferred (DONE FOR CURRENT ALPHA SCOPE, 2026-05-12)
 
 **Sorun**: KMS operatörü compromise olursa `operator-registry` içindeki `deactivate_decryption_operator` çağrısı 24 saat bekler. `access-control` contract seviyesinde pause destekler; `operator-registry` ise `Pause` action'ı destekler, `PauseContract` değil. İncident anında 24h kayıp = ek share leakage.
 
@@ -142,13 +142,13 @@ auth claim'inden gelir.
 - `contracts/access-control/src/lib.rs:68-81`, `:514-563`
 - `contracts/operator-registry/src/lib.rs:33-64`, `:269-329`
 
-**Fix yolu**: Owner-direct pause kontrat upgrade (3-4h kod + 48h+ timelock window) yerine **pre-stage proposals** seçildi. Canlı gerçeklikte bu bugün yalnızca registry için uygulanabildi; access tarafında method export fix'i + deploy gerekiyor.
+**Fix yolu**: Owner-direct pause kontrat upgrade (3-4h kod + 48h+ timelock window) yerine **pre-stage proposals** seçildi. Canlı gerçeklikte bu bugün registry için uygulandı. Access tarafındaki timelock canlı deploy'u hızlı geliştirme süreci için bilinçli olarak ertelendi.
 
 **Canlı sonuç (2026-05-12)**:
 - Guarded helper: `scripts/prestage-emergency-proposals.mjs`.
 - `registry.youtick.near` owner çağrısı `registry.youtick.near` credential ile yapılmalı; `youtick.near` owner değil.
 - `access.youtick.near` canlı kontratı `propose_action` ve `get_timelock` methodlarını export etmiyor. Canlı code hash repo artefact'ı ile aynıydı; kök neden source'taki timelock bloğunun `#[near]` export macro'su dışında kalması.
-- Access fix'i hazırlandı: timelock bloğu `#[near]` ile export ediliyor. Yeni build hash'i `AC4NfQRakBFoCkcK6EqiKBwD93Pb61kPxVjWeHHa3QeC`; canlı hash hâlâ `F2xWni2HJJaZ4bhhAhognu5mcfbe1KqgyECVcLiAriL` olana kadar access pause pre-stage yapılamaz.
+- Access fix'i hazırlandı ama canlıya alınmayacak: timelock bloğu `#[near]` ile export ediliyor. Yeni build hash'i `AC4NfQRakBFoCkcK6EqiKBwD93Pb61kPxVjWeHHa3QeC`; canlı hash `F2xWni2HJJaZ4bhhAhognu5mcfbe1KqgyECVcLiAriL` kaldığı sürece access timelock devre dışı kalır.
 - Registry emergency proposal'ları pre-stage edildi ve `get_timelock` ile doğrulandı:
 
 | ID | Action | TX |
@@ -340,7 +340,7 @@ VPS gerekli mi? Cloudflare Workers + Uptime Kuma SaaS yeterli; VPS opsiyonel pos
 | 1 | SB-2 hard cutover — **done** | 0 |
 | 1 | Personal network warm-up başlat (DM 5 kişi, "coming Day 23") | 0.5 |
 | 2 | SB-1 storage-api NEP-413 auth — **done** | 0 |
-| 3 | SB-3 registry proposals — **partial; access mismatch decision next** | 1 |
+| 3 | SB-3 registry proposals — **done; access timelock deferred** | 1 |
 | 3 | R1 chunk 1-2 (ipfs/ skeleton + import rewrite) — **done** | 0 |
 | 4 | Testnet env doğrula; yoksa setup | 0-3 |
 | 4 | R1 chunk 3-4 (eski sil + kms/streaming.ts sil) — **done** | 0 |
@@ -397,7 +397,7 @@ Her madde binary. Bir tane FAIL = launch ertelenir.
 
 - [x] Mainnet onboarding key rotated; eski key `Unauthorized` döndürüyor
 - [x] `/uploads/intent` auth gerektiriyor (`curl` Authorization'suz → 401)
-- [ ] Registry pre-staged pause/deactivate proposals 6 adet, `get_timelock` ile görünür; access pause canlı kontratta yok
+- [x] Registry pre-staged pause/deactivate proposals 6 adet, `get_timelock` ile görünür; access timelock alpha için ertelendi
 - [ ] Trial baseline counter captures claim events without changing `STORAGE_COST_ACCOUNT`
 - [ ] R2 module split deploy verified (`near abi youtick.near` pre/post diff = empty)
 - [ ] Smoke test: 3 currency × upload-buy-watch = 9/9 PASS
