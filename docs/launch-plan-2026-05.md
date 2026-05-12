@@ -142,12 +142,13 @@ auth claim'inden gelir.
 - `contracts/access-control/src/lib.rs:68-81`, `:514-563`
 - `contracts/operator-registry/src/lib.rs:33-64`, `:269-329`
 
-**Fix yolu**: Owner-direct pause kontrat upgrade (3-4h kod + 48h+ timelock window) yerine **pre-stage proposals** seçildi. Canlı gerçeklikte bu bugün yalnızca registry için uygulanabildi.
+**Fix yolu**: Owner-direct pause kontrat upgrade (3-4h kod + 48h+ timelock window) yerine **pre-stage proposals** seçildi. Canlı gerçeklikte bu bugün yalnızca registry için uygulanabildi; access tarafında method export fix'i + deploy gerekiyor.
 
 **Canlı sonuç (2026-05-12)**:
 - Guarded helper: `scripts/prestage-emergency-proposals.mjs`.
 - `registry.youtick.near` owner çağrısı `registry.youtick.near` credential ile yapılmalı; `youtick.near` owner değil.
-- `access.youtick.near` canlı kontratı `propose_action`, `get_timelock`, `is_paused` methodlarını taşımıyor. Bu yüzden access pause pre-stage yapılamadı; bu ayrı contract deploy/upgrade kararı gerektiriyor.
+- `access.youtick.near` canlı kontratı `propose_action` ve `get_timelock` methodlarını export etmiyor. Canlı code hash repo artefact'ı ile aynıydı; kök neden source'taki timelock bloğunun `#[near]` export macro'su dışında kalması.
+- Access fix'i hazırlandı: timelock bloğu `#[near]` ile export ediliyor. Yeni build hash'i `AC4NfQRakBFoCkcK6EqiKBwD93Pb61kPxVjWeHHa3QeC`; canlı hash hâlâ `F2xWni2HJJaZ4bhhAhognu5mcfbe1KqgyECVcLiAriL` olana kadar access pause pre-stage yapılamaz.
 - Registry emergency proposal'ları pre-stage edildi ve `get_timelock` ile doğrulandı:
 
 | ID | Action | TX |
