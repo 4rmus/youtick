@@ -17,7 +17,8 @@ operator health and encrypted playback are verified on mainnet.
 V1 public alpha separates admin posture by contract:
 
 - `youtick.near` NFT market admin remains owner-only for V1.
-- `access.youtick.near` and `registry.youtick.near` admin changes use timelock.
+- `registry.youtick.near` admin changes use timelock.
+- `access.youtick.near` timelock is deferred during active development; do not deploy an access timelock build unless this decision is reopened.
 
 Keep destructive/debug methods out of normal production builds.
 
@@ -107,8 +108,7 @@ configured threshold.
 
 ## Contract Admin Rule
 
-For `access.youtick.near` and `registry.youtick.near`, do not call direct admin
-methods such as:
+For `registry.youtick.near`, do not call direct admin methods such as:
 
 - `set_threshold_config`,
 - `upsert_decryption_operator`,
@@ -120,13 +120,16 @@ methods such as:
 - `withdraw_commission`,
 - `withdraw_trial_pool`.
 
-Current contracts intentionally reject those direct paths. Use:
+The registry contract intentionally rejects those direct paths. Use:
 
 ```bash
 near call <contract> propose_action '<ACTION_JSON>' --accountId <owner>
 # wait at least 24 hours
 near call <contract> execute_action '{"id": <id>}' --accountId <owner>
 ```
+
+For `access.youtick.near`, confirm the live method surface before any admin
+operation; access timelock is not part of the current alpha gate.
 
 For `youtick.near`, V1 admin remains owner-only. Do not use destructive
 migration/reset paths unless a reviewed migration explicitly requires them.
@@ -171,7 +174,7 @@ Web and worker rollback can use the hosting provider or Wrangler deployment
 history.
 
 Contract rollback is not a normal path. If a contract deploy breaks state,
-pause registry/access through timelock when possible. If NFT state is affected,
+pause registry through timelock when possible. If NFT state is affected,
 use the owner-only V1 admin path only after review. Publish an incident note
 and fix forward with a reviewed migration.
 
