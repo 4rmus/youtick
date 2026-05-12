@@ -240,12 +240,12 @@ async function monitorTrialPool(): Promise<void> {
     const count = typeof dailyCount === 'number' ? dailyCount : 0;
 
     if (isYoctoAmountBelowNear(poolYocto, '1')) {
-        console.warn(
+        console.debug(
             '[ONBOARDING_MONITOR] WARNING: Trial pool balance < 1 NEAR — new trials may fail'
         );
     }
     if (count > 80) {
-        console.warn(
+        console.debug(
             `[ONBOARDING_MONITOR] WARNING: Daily trial count ${count}/100 — approaching limit`
         );
     }

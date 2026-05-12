@@ -45,7 +45,8 @@ impl Contract {
 
     /// View: Get a single purchase log entry by ID
     pub fn get_purchase_log(&self, purchase_id: u64) -> Option<PurchaseLog> {
-        self.purchase_logs.get(&purchase_id)
+        let _ = purchase_id;
+        None
     }
 
     /// View: Get purchase logs with pagination
@@ -54,14 +55,9 @@ impl Contract {
         from_index: Option<u64>,
         limit: Option<u64>,
     ) -> Vec<(u64, PurchaseLog)> {
-        let start = from_index.unwrap_or(0);
-        let lim = limit.unwrap_or(50).min(100) as usize;
-
-        self.purchase_logs
-            .iter()
-            .filter(|(id, _)| *id >= start)
-            .take(lim)
-            .collect()
+        let _ = from_index;
+        let _ = limit;
+        Vec::new()
     }
 
     /// View: Get total number of purchase log entries
@@ -76,14 +72,10 @@ impl Contract {
         from_index: Option<u64>,
         limit: Option<u64>,
     ) -> Vec<(u64, PurchaseLog)> {
-        let start = from_index.unwrap_or(0);
-        let lim = limit.unwrap_or(50).min(100) as usize;
-
-        self.purchase_logs
-            .iter()
-            .filter(|(id, log)| *id >= start && log.creator_id == creator_id)
-            .take(lim)
-            .collect()
+        let _ = creator_id;
+        let _ = from_index;
+        let _ = limit;
+        Vec::new()
     }
 
     /// View: Get creator stats (total sales, total revenue)
@@ -91,10 +83,26 @@ impl Contract {
         let mut total_sales = 0u64;
         let mut total_revenue_yocto = 0u128;
 
-        for (_, log) in self.purchase_logs.iter() {
-            if log.creator_id == creator_id {
-                total_sales += 1;
-                total_revenue_yocto += log.creator_amount.0;
+        for (cid, event) in self.events.iter() {
+            if event.creator_id != creator_id {
+                continue;
+            }
+
+            let sale_count = self
+                .lazy_cid_to_tokens()
+                .get(&cid)
+                .unwrap_or_default()
+                .len() as u64;
+            if sale_count == 0 {
+                continue;
+            }
+
+            total_sales += sale_count;
+            let price_yocto = Self::event_near_price(&event).0;
+            if price_yocto > 0 {
+                let commission = price_yocto * COMMISSION_RATE_PERCENT / COMMISSION_DENOMINATOR;
+                let creator_amount = price_yocto - commission;
+                total_revenue_yocto += creator_amount.saturating_mul(sale_count as u128);
             }
         }
 

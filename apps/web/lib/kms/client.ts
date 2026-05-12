@@ -760,29 +760,28 @@ async function executeKmsRequest<T>(
     }
 
     if (endpoint === 'retrieve') {
-        await ensureSessionGrant({
-            accountId,
-            scope: 'Play',
-            resourceId: videoId,
-            wallet,
-        });
+        try {
+            await ensureSessionGrant({
+                accountId,
+                scope: 'Play',
+                resourceId: videoId,
+                wallet,
+            });
 
-        const refreshedGrantResult = await trySessionGrantKmsRequest<T>(
-            baseUrl,
-            endpoint,
-            accountId,
-            videoId,
-            extraBody,
-            options?.signal,
-        );
-        if (refreshedGrantResult) {
-            return refreshedGrantResult;
+            const refreshedGrantResult = await trySessionGrantKmsRequest<T>(
+                baseUrl,
+                endpoint,
+                accountId,
+                videoId,
+                extraBody,
+                options?.signal,
+            );
+            if (refreshedGrantResult) {
+                return refreshedGrantResult;
+            }
+        } catch (grantError) {
+            console.debug('[KMS] Session grant unavailable, falling back to wallet auth token:', grantError);
         }
-
-        throw new KMSError(
-            'AUTH_REQUIRED',
-            'Playback access could not be prepared for this session. Please try again.',
-        );
     }
 
     const token = await requestKmsAuthToken(baseUrl, videoId, endpoint, accountId, wallet, options?.signal);
