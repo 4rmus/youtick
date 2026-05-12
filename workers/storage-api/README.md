@@ -9,6 +9,8 @@ Buyuk production upload ve media delivery bu Worker'in ana sorumlulugu degildir.
 - Lighthouse API key tarayiciya verilmez.
 - Lighthouse upload sadece `ENABLE_LIGHTHOUSE_UPLOADS=true` ile acilir.
 - Upload body'leri `MAX_UPLOAD_BYTES` ile sinirlanir.
+- `/uploads/intent` self-declared `accountId` kabul etmez; once NEP-413
+  challenge/verify akisiyle kisa omurlu upload auth token gerekir.
 - Buyuk video upload yolu tek directory body yerine parca parca `/uploads/file`
   uzerinden akar.
 - KMS, ticket, ban, session grant ve key-share kararlari bu Worker'a tasinmaz.
@@ -27,6 +29,8 @@ Buyuk production upload ve media delivery bu Worker'in ana sorumlulugu degildir.
 - `UPLOAD_GUARD`: Upload intent rate-limit ve idempotency cache icin KV binding.
 - `UPLOAD_RATE_LIMIT_MAX`: Account/IP basina intent limiti. Default 1000.
 - `UPLOAD_RATE_LIMIT_WINDOW_SECONDS`: Rate-limit penceresi. Default 3600 saniye.
+- `NEAR_NETWORK`: Full-access key kontrolu icin RPC pool secimi. Default
+  `mainnet`.
 
 ```bash
 cd workers/storage-api
@@ -51,6 +55,8 @@ npx wrangler dev
 - `GET /provider-health`: provider ayari hazir mi?
 - `POST /pins`: mevcut IPFS CID'ini Lighthouse pin API'ye gonderir.
 - `GET /pins/:cid/status`: Lighthouse file-info API uzerinden CID durumunu okur.
+- `POST /uploads/auth/challenge`: upload auth icin NEP-413 challenge dondurur.
+- `POST /uploads/auth/verify`: imzali challenge'i dogrular ve upload auth token dondurur.
 - `POST /uploads/intent`: buyuk upload icin guvenli yol ve parca limitlerini dondurur.
 - `POST /uploads/file`: tek dosyayi veya segment parcasini Lighthouse'a yukler.
 - `POST /uploads/directory`: multipart `file` alanlarini Lighthouse'a directory olarak yukler.
@@ -67,12 +73,27 @@ olmadigini soyler.
 }
 ```
 
-`POST /uploads/intent`, video body tasimaz ve API key dondurmez. Frontend veya
-ops icin imzali, sureli upload token'i dondurur:
+Upload intent iki tokenli akar:
+
+1. Frontend `/uploads/auth/challenge` cagirir, cüzdana NEP-413 mesaj
+   imzalatir, sonra `/uploads/auth/verify` ile upload auth token alir.
+2. Frontend upload auth token'i `Authorization: Bearer <uploadAuthToken>`
+   olarak `/uploads/intent` istegine ekler.
+3. `/uploads/intent`, API key dondurmez; sadece `/uploads/file`,
+   `/uploads/directory`, veya `/pins` icin sureli intent token dondurur.
+
+`POST /uploads/auth/challenge` body:
 
 ```json
 {
-  "accountId": "creator.near",
+  "accountId": "creator.near"
+}
+```
+
+`POST /uploads/intent` body. `accountId` auth token'dan gelir:
+
+```json
+{
   "uploadKind": "file",
   "fileName": "concert.mov",
   "sizeBytes": 21474836480,

@@ -12,11 +12,11 @@ Accepted for phased implementation
   forwarding, edge cache headers and gateway fallback: done.
 - Phase 5 frontend read-path flag for Media Delivery Worker: done.
 - Phase 6 guarded Lighthouse primary upload path with per-file/chunk uploads:
-  local implementation done, live smoke pending.
+  source deployed; authless live `/uploads/intent` returns `401 Unauthorized`.
 
-Next step: deploy the updated Storage API Worker with
-`ENABLE_LIGHTHOUSE_UPLOADS=true`, run one small `/uploads/file` smoke test, then
-publish one segmented playback upload through the default Lighthouse path.
+Next step: run one signed small `/uploads/file` smoke test through the frontend
+wallet auth path, then publish one segmented playback upload through the default
+Lighthouse path.
 
 ## Context
 New uploads use Lighthouse/IPFS for encrypted delivery assets. Read paths still
