@@ -58,6 +58,109 @@ function readOnboardingKey(): string | null {
     return sessionStorage.getItem(onboardingStorageKey());
 }
 
+async function getTurnstileToken(siteKey: string): Promise<string | null> {
+    return new Promise((resolve) => {
+        if (typeof window === "undefined") {
+            resolve(null);
+            return;
+        }
+
+        const w = window as unknown as {
+            turnstile?: {
+                render: (selector: string, opts: Record<string, unknown>) => string;
+                remove: (widgetId: string) => void;
+            };
+        };
+
+        function render() {
+            if (!w.turnstile) {
+                resolve(null);
+                return;
+            }
+
+            const containerId = 'turnstile-onboarding-' + Math.random().toString(36).slice(2);
+            const container = document.createElement('div');
+            container.id = containerId;
+            container.style.position = 'absolute';
+            container.style.visibility = 'hidden';
+            container.style.width = '0';
+            container.style.height = '0';
+            document.body.appendChild(container);
+
+            const widgetId = w.turnstile.render(`#${containerId}`, {
+                sitekey: siteKey,
+                size: 'invisible',
+                callback: (token: string) => {
+                    w.turnstile?.remove(widgetId);
+                    container.remove();
+                    resolve(token);
+                },
+                'error-callback': () => {
+                    w.turnstile?.remove(widgetId);
+                    container.remove();
+                    resolve(null);
+                },
+                'expired-callback': () => {
+                    w.turnstile?.remove(widgetId);
+                    container.remove();
+                    resolve(null);
+                },
+            });
+        }
+
+        if (!w.turnstile) {
+            const script = document.createElement('script');
+            script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+            script.async = true;
+            script.defer = true;
+            script.onload = render;
+            script.onerror = () => resolve(null);
+            document.head.appendChild(script);
+        } else {
+            render();
+        }
+    });
+}
+
+export async function ensureOnboardingKey(): Promise<{ ok: boolean; error?: string }> {
+    if (readOnboardingKey()) {
+        return { ok: true };
+    }
+
+    if (typeof window === "undefined") {
+        return { ok: false, error: "Onboarding key is unavailable in this context." };
+    }
+
+    let turnstileToken: string | null = null;
+    if (APP_CONFIG.turnstileSiteKey) {
+        turnstileToken = await getTurnstileToken(APP_CONFIG.turnstileSiteKey);
+    }
+
+    const url = turnstileToken
+        ? `/api/onboarding-key?turnstileToken=${encodeURIComponent(turnstileToken)}`
+        : '/api/onboarding-key';
+
+    try {
+        const response = await fetch(url);
+        const data = await response.json().catch(() => null) as { key?: string; error?: string } | null;
+        if (!response.ok) {
+            return { ok: false, error: data?.error || "Guest account creation is temporarily unavailable." };
+        }
+
+        if (!data?.key) {
+            return { ok: false, error: "Onboarding key was not returned by the server." };
+        }
+
+        sessionStorage.setItem(onboardingStorageKey(), data.key);
+        return { ok: true };
+    } catch (error: unknown) {
+        return {
+            ok: false,
+            error: error instanceof Error ? error.message : "Failed to fetch onboarding key.",
+        };
+    }
+}
+
 async function isOnboardingKeyAuthorized(publicKey: string): Promise<boolean> {
     try {
         const response = await fetch(getCurrentRpcUrl(), {
@@ -87,7 +190,7 @@ async function isOnboardingKeyAuthorized(publicKey: string): Promise<boolean> {
     }
 }
 
-async function getValidatedOnboardingKeyPair(retryDelayMs: number = 1500): Promise<KeyPair | null> {
+async function getValidatedOnboardingKeyPair(retryDelayMs: number = 0): Promise<KeyPair | null> {
     let onboardingKeyStr = readOnboardingKey();
 
     if (!onboardingKeyStr && retryDelayMs > 0) {
