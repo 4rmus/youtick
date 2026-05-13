@@ -70,8 +70,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     // Turnstile verification (required when the server-side secret is set)
     const { searchParams } = new URL(request.url);
     const turnstileToken = searchParams.get('turnstileToken');
+    const requireTurnstile = process.env.NODE_ENV !== 'development' && Boolean(process.env.TURNSTILE_SECRET_KEY);
 
-    if (process.env.TURNSTILE_SECRET_KEY) {
+    if (requireTurnstile) {
         if (!turnstileToken) {
             logRequest(ip, 'TURNSTILE_MISSING');
             onboardingKeyLimiter.rollback(ip);

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { setupMockSessionKey } from '../setup';
+import { clearMockKeyStore, setupMockSessionKey } from '../setup';
 import { splitSecretIntoShares } from '@/lib/kms/shares';
 
 vi.mock('@/lib/registry', () => ({
@@ -27,6 +27,7 @@ async function waitForAssertion(assertion: () => void): Promise<void> {
 describe('kms/client', () => {
   beforeEach(() => {
     vi.resetModules();
+    clearMockKeyStore();
     process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
     process.env.NEXT_PUBLIC_NFT_CONTRACT_ID = 'app-contract.testnet';
     process.env[`NEXT_PUBLIC_${'KMS_URL'}`] = 'https://ignored-kms.example.workers.dev';
@@ -219,7 +220,7 @@ describe('kms/client', () => {
     expect(wallet.signMessage).not.toHaveBeenCalled();
   });
 
-  it('prepares a play grant for retrieve when the browser has no local KMS key', async () => {
+  it('prepares a play grant for retrieve instead of using a local signless key directly', async () => {
     const registry = await import('@/lib/registry');
     vi.mocked(registry.listActiveDecryptionOperators).mockResolvedValue([
       {
@@ -242,6 +243,8 @@ describe('kms/client', () => {
       required_shares: 2,
     });
 
+    const localKey = setupMockSessionKey('alice.testnet');
+    const localPublicKey = localKey.getPublicKey().toString();
     Object.assign(window, {
       crypto: globalThis.crypto,
       location: { origin: 'https://app.test' },
@@ -255,7 +258,6 @@ describe('kms/client', () => {
       },
       configurable: true,
     });
-    localStorage.clear();
     sessionStorage.clear();
 
     const secretB64 = Buffer.from('grant-created-secret').toString('base64');
@@ -289,6 +291,7 @@ describe('kms/client', () => {
 
         expect(body.accountId).toBeUndefined();
         expect(body.publicKey).toMatch(/^ed25519:/);
+        expect(body.publicKey).not.toBe(localPublicKey);
         expect(body.originHash).toBeTruthy();
         expect(body.deviceHash).toBeTruthy();
         retrieveCalls.push(`grant-${operatorIndex}`);
@@ -326,7 +329,103 @@ describe('kms/client', () => {
     expect(wallet.signMessage).not.toHaveBeenCalled();
   });
 
-  it('falls back to wallet auth token when a play grant transaction fails', async () => {
+  it('uses a managed guest local key for retrieve without issuing a play grant', async () => {
+    const registry = await import('@/lib/registry');
+    vi.mocked(registry.listActiveDecryptionOperators).mockResolvedValue([
+      {
+        account_id: 'kms-a.testnet',
+        endpoint: 'https://kms-a.example.workers.dev',
+        transport_public_key: 'pk-a',
+        kind: 'DecryptionOperator',
+        active: true,
+      },
+      {
+        account_id: 'kms-b.testnet',
+        endpoint: 'https://kms-b.example.workers.dev',
+        transport_public_key: 'pk-b',
+        kind: 'DecryptionOperator',
+        active: true,
+      },
+    ]);
+    vi.mocked(registry.getThresholdConfig).mockResolvedValue({
+      total_operators: 2,
+      required_shares: 2,
+    });
+
+    const localKey = setupMockSessionKey('guest.testnet');
+    const localPublicKey = localKey.getPublicKey().toString();
+    sessionStorage.clear();
+
+    const secretB64 = Buffer.from('managed-guest-secret').toString('base64');
+    const shares = splitSecretIntoShares(secretB64, 2, 2);
+    const retrieveCalls: string[] = [];
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith('/health')) {
+        return new Response(JSON.stringify({
+          ok: true,
+          data: {
+            network: 'testnet',
+            contract: 'app-contract.testnet',
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.endsWith('/retrieve')) {
+        const body = JSON.parse(String(init?.body || '{}')) as {
+          accountId?: string;
+          publicKey?: string;
+          originHash?: string | null;
+          deviceHash?: string | null;
+        };
+        const operatorIndex = url.includes('kms-a') ? 0 : 1;
+
+        expect(body.accountId).toBe('guest.testnet');
+        expect(body.publicKey).toBe(localPublicKey);
+        expect(body.originHash).toBeUndefined();
+        expect(body.deviceHash).toBeUndefined();
+        retrieveCalls.push(`local-${operatorIndex}`);
+        return new Response(JSON.stringify({
+          ok: true,
+          data: {
+            shareB64: shares[operatorIndex].shareB64,
+            shareId: shares[operatorIndex].shareId,
+            totalShares: 2,
+            requiredShares: 2,
+            scheme: 'shamir-v1',
+            operatorAccountId: operatorIndex === 0 ? 'kms-a.testnet' : 'kms-b.testnet',
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+
+    const wallet = {
+      managedAccountKind: 'guest',
+      signMessage: vi.fn(),
+      signAndSendTransaction: vi.fn(async () => ({})),
+    };
+    const { retrieveEncryptionKey } = await import('@/lib/kms/client');
+
+    await expect(
+      retrieveEncryptionKey('video-1', 'guest.testnet', wallet as never),
+    ).resolves.toBe(secretB64);
+
+    expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+    expect(retrieveCalls).toEqual(expect.arrayContaining(['local-0', 'local-1']));
+    expect(wallet.signMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not open a wallet popup when a cached play grant is rejected', async () => {
     const registry = await import('@/lib/registry');
     vi.mocked(registry.listActiveDecryptionOperators).mockResolvedValue([
       {
@@ -365,8 +464,14 @@ describe('kms/client', () => {
     localStorage.clear();
     sessionStorage.clear();
 
-    const secretB64 = Buffer.from('token-fallback-secret').toString('base64');
-    const shares = splitSecretIntoShares(secretB64, 2, 2);
+    const { persistSessionGrant, prepareSessionGrant } = await import('@/lib/access-grants');
+    const staleGrant = await prepareSessionGrant({
+      accountId: 'alice.testnet',
+      scope: 'Play',
+      resourceId: 'video-1',
+    });
+    persistSessionGrant(staleGrant.grant);
+
     const retrieveCalls: string[] = [];
 
     global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -385,51 +490,104 @@ describe('kms/client', () => {
         });
       }
 
-      if (url.endsWith('/auth/challenge')) {
-        return new Response(JSON.stringify({
-          ok: true,
-          data: {
-            challengeId: `challenge-${retrieveCalls.length}`,
-            message: 'Sign to retrieve',
-            recipient: 'kms-a.example.workers.dev',
-            nonce: Buffer.from('nonce').toString('base64'),
-            expiresAt: Date.now() + 60_000,
-          },
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      if (url.endsWith('/auth/verify')) {
-        return new Response(JSON.stringify({
-          ok: true,
-          data: {
-            token: `token-${url.includes('kms-a') ? 'a' : 'b'}`,
-            accountId: 'alice.testnet',
-            action: 'retrieve',
-            videoId: 'video-1',
-            expiresAt: Date.now() + 60_000,
-          },
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
       if (url.endsWith('/retrieve')) {
-        expect((init?.headers as Record<string, string>).Authorization).toMatch(/^Bearer token-/);
-        const operatorIndex = url.includes('kms-a') ? 0 : 1;
-        retrieveCalls.push(`token-${operatorIndex}`);
+        const body = JSON.parse(String(init?.body || '{}')) as {
+          accountId?: string;
+          publicKey?: string;
+          originHash?: string | null;
+          deviceHash?: string | null;
+        };
+
+        expect(body.accountId).toBeUndefined();
+        expect(body.publicKey).toMatch(/^ed25519:/);
+        expect(body.originHash).toBeTruthy();
+        expect(body.deviceHash).toBeTruthy();
+
+        if (body.publicKey === staleGrant.grant.sessionPublicKey) {
+          retrieveCalls.push('stale-rejected');
+          return new Response(JSON.stringify({
+            ok: false,
+            error: 'Unauthorized',
+          }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        throw new Error('Expected only the stale cached grant to be used');
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+
+    const wallet = {
+      signMessage: vi.fn(),
+      signAndSendTransaction: vi.fn(async () => ({})),
+    };
+    const { retrieveEncryptionKey } = await import('@/lib/kms/client');
+
+    await expect(
+      retrieveEncryptionKey('video-1', 'alice.testnet', wallet as never),
+    ).rejects.toMatchObject({
+      name: 'KMSError',
+      code: 'RETRIEVE_FAILED',
+    });
+
+    expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+    expect(wallet.signMessage).not.toHaveBeenCalled();
+    expect(retrieveCalls).toContain('stale-rejected');
+    const fetchedUrls = vi.mocked(global.fetch).mock.calls.map(([input]) => String(input));
+    expect(fetchedUrls.some((url) => url.includes('/auth/'))).toBe(false);
+  });
+
+  it('does not fall back to wallet message signing when play grant preparation fails', async () => {
+    const registry = await import('@/lib/registry');
+    vi.mocked(registry.listActiveDecryptionOperators).mockResolvedValue([
+      {
+        account_id: 'kms-a.testnet',
+        endpoint: 'https://kms-a.example.workers.dev',
+        transport_public_key: 'pk-a',
+        kind: 'DecryptionOperator',
+        active: true,
+      },
+      {
+        account_id: 'kms-b.testnet',
+        endpoint: 'https://kms-b.example.workers.dev',
+        transport_public_key: 'pk-b',
+        kind: 'DecryptionOperator',
+        active: true,
+      },
+    ]);
+    vi.mocked(registry.getThresholdConfig).mockResolvedValue({
+      total_operators: 2,
+      required_shares: 2,
+    });
+
+    Object.assign(window, {
+      crypto: globalThis.crypto,
+      location: { origin: 'https://app.test' },
+    });
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        userAgent: 'vitest',
+        language: 'en',
+        platform: 'test',
+        hardwareConcurrency: 4,
+      },
+      configurable: true,
+    });
+    localStorage.clear();
+    sessionStorage.clear();
+
+    global.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+
+      if (url.endsWith('/health')) {
         return new Response(JSON.stringify({
           ok: true,
           data: {
-            shareB64: shares[operatorIndex].shareB64,
-            shareId: shares[operatorIndex].shareId,
-            totalShares: 2,
-            requiredShares: 2,
-            scheme: 'shamir-v1',
-            operatorAccountId: operatorIndex === 0 ? 'kms-a.testnet' : 'kms-b.testnet',
+            network: 'testnet',
+            contract: 'app-contract.testnet',
           },
         }), {
           status: 200,
@@ -441,14 +599,148 @@ describe('kms/client', () => {
     }) as unknown as typeof fetch;
 
     const wallet = {
-      signMessage: vi.fn(async () => ({
-        accountId: 'alice.testnet',
-        publicKey: 'ed25519:mock_public_key',
-        signature: 'mock_signature',
-      })),
+      signMessage: vi.fn(),
       signAndSendTransaction: vi.fn(async () => {
-        throw new Error('Smart contract panicked: Index out of bounds');
+        throw new Error('Access key unavailable');
       }),
+    };
+    const { retrieveEncryptionKey } = await import('@/lib/kms/client');
+
+    await expect(
+      retrieveEncryptionKey('video-1', 'alice.testnet', wallet as never),
+    ).rejects.toMatchObject({
+      name: 'KMSError',
+      code: 'SIGNLESS_PLAYBACK_UNAVAILABLE',
+    });
+
+    expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce();
+    expect(wallet.signMessage).not.toHaveBeenCalled();
+    const fetchedUrls = vi.mocked(global.fetch).mock.calls.map(([input]) => String(input));
+    expect(fetchedUrls.some((url) => url.endsWith('/retrieve'))).toBe(false);
+  });
+
+  it('continues playback when one operator rejects a cached play grant', async () => {
+    const registry = await import('@/lib/registry');
+    vi.mocked(registry.listActiveDecryptionOperators).mockResolvedValue([
+      {
+        account_id: 'kms-a.testnet',
+        endpoint: 'https://kms-a.example.workers.dev',
+        transport_public_key: 'pk-a',
+        kind: 'DecryptionOperator',
+        active: true,
+      },
+      {
+        account_id: 'kms-b.testnet',
+        endpoint: 'https://kms-b.example.workers.dev',
+        transport_public_key: 'pk-b',
+        kind: 'DecryptionOperator',
+        active: true,
+      },
+      {
+        account_id: 'kms-c.testnet',
+        endpoint: 'https://kms-c.example.workers.dev',
+        transport_public_key: 'pk-c',
+        kind: 'DecryptionOperator',
+        active: true,
+      },
+    ]);
+    vi.mocked(registry.getThresholdConfig).mockResolvedValue({
+      total_operators: 3,
+      required_shares: 2,
+    });
+
+    Object.assign(window, {
+      crypto: globalThis.crypto,
+      location: { origin: 'https://app.test' },
+    });
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        userAgent: 'vitest',
+        language: 'en',
+        platform: 'test',
+        hardwareConcurrency: 4,
+      },
+      configurable: true,
+    });
+    localStorage.clear();
+    sessionStorage.clear();
+
+    const { persistSessionGrant, prepareSessionGrant } = await import('@/lib/access-grants');
+    const preparedGrant = await prepareSessionGrant({
+      accountId: 'alice.testnet',
+      scope: 'Play',
+      resourceId: 'video-1',
+    });
+    persistSessionGrant(preparedGrant.grant);
+
+    const secretB64 = Buffer.from('one-operator-rejects-secret').toString('base64');
+    const shares = splitSecretIntoShares(secretB64, 3, 2);
+    const retrieveCalls: string[] = [];
+
+    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith('/health')) {
+        return new Response(JSON.stringify({
+          ok: true,
+          data: {
+            network: 'testnet',
+            contract: 'app-contract.testnet',
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.endsWith('/retrieve')) {
+        const body = JSON.parse(String(init?.body || '{}')) as {
+          accountId?: string;
+          publicKey?: string;
+          originHash?: string | null;
+          deviceHash?: string | null;
+        };
+
+        expect(body.accountId).toBeUndefined();
+        expect(body.publicKey).toBe(preparedGrant.grant.sessionPublicKey);
+        expect(body.originHash).toBe(preparedGrant.grant.originHash);
+        expect(body.deviceHash).toBe(preparedGrant.grant.deviceHash);
+
+        if (url.includes('kms-a')) {
+          retrieveCalls.push('rejected-a');
+          return new Response(JSON.stringify({
+            ok: false,
+            error: 'Unauthorized',
+          }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        const operatorIndex = url.includes('kms-b') ? 1 : 2;
+        retrieveCalls.push(`grant-${operatorIndex}`);
+        return new Response(JSON.stringify({
+          ok: true,
+          data: {
+            shareB64: shares[operatorIndex].shareB64,
+            shareId: shares[operatorIndex].shareId,
+            totalShares: 3,
+            requiredShares: 2,
+            scheme: 'shamir-v1',
+            operatorAccountId: operatorIndex === 1 ? 'kms-b.testnet' : 'kms-c.testnet',
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+
+    const wallet = {
+      signMessage: vi.fn(),
+      signAndSendTransaction: vi.fn(async () => ({})),
     };
     const { retrieveEncryptionKey } = await import('@/lib/kms/client');
 
@@ -456,9 +748,11 @@ describe('kms/client', () => {
       retrieveEncryptionKey('video-1', 'alice.testnet', wallet as never),
     ).resolves.toBe(secretB64);
 
-    expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce();
-    expect(wallet.signMessage).toHaveBeenCalled();
-    expect(retrieveCalls).toEqual(expect.arrayContaining(['token-0', 'token-1']));
+    expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+    expect(wallet.signMessage).not.toHaveBeenCalled();
+    expect(retrieveCalls).toEqual(expect.arrayContaining(['rejected-a', 'grant-1', 'grant-2']));
+    const fetchedUrls = vi.mocked(global.fetch).mock.calls.map(([input]) => String(input));
+    expect(fetchedUrls.some((url) => url.includes('/auth/'))).toBe(false);
   });
 
   it('does not open wallet message signing when retrieve shares are missing', async () => {

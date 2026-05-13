@@ -446,14 +446,7 @@ async function getLocalKmsSigningKey(accountId: string): Promise<KeyPair | null>
     }
 
     const keyStore = new BrowserKeyStore();
-    const defaultKey = await keyStore.getKey(NEAR_CONFIG.networkId, accountId);
-    if (defaultKey) {
-        return defaultKey;
-    }
-
-    // Meteor wallet stores its browser-managed key under a custom prefix.
-    const meteorKeyStore = new BrowserKeyStore('_meteor_wallet');
-    return await meteorKeyStore.getKey(NEAR_CONFIG.networkId, accountId);
+    return await keyStore.getKey(NEAR_CONFIG.networkId, accountId);
 }
 
 async function tryLocalSignedKmsRequest<T>(
@@ -525,6 +518,9 @@ async function trySessionGrantKmsRequest<T>(
     videoId: string,
     extraBody: Record<string, unknown>,
     signal?: AbortSignal,
+    options: {
+        invalidateOnUnauthorized?: boolean;
+    } = {},
 ): Promise<T | null> {
     if (endpoint !== 'retrieve') {
         return null;
@@ -573,8 +569,11 @@ async function trySessionGrantKmsRequest<T>(
     }
 
     if (response.status === 401 || response.status === 403) {
-        invalidateSessionGrant(accountId, 'Play', videoId);
-        return null;
+        if (options.invalidateOnUnauthorized !== false) {
+            invalidateSessionGrant(accountId, 'Play', videoId);
+            return null;
+        }
+        throw new KMSError('SESSION_GRANT_REJECTED', result.error || 'Session grant was rejected');
     }
 
     if (response.status === 404) {
@@ -582,6 +581,10 @@ async function trySessionGrantKmsRequest<T>(
     }
 
     throw new KMSError('RETRIEVE_FAILED', result.error || 'Failed to retrieve key');
+}
+
+function canUseManagedLocalRetrieve(wallet: WalletInstance): boolean {
+    return wallet.managedAccountKind === 'guest' || wallet.managedAccountKind === 'trial';
 }
 
 async function requestKmsAuthToken(
@@ -735,6 +738,71 @@ async function executeKmsRequest<T>(
 ): Promise<T> {
     await ensureKmsConfigMatchesApp(baseUrl);
 
+    if (endpoint === 'retrieve') {
+        const grantResult = await trySessionGrantKmsRequest<T>(
+            baseUrl,
+            endpoint,
+            accountId,
+            videoId,
+            extraBody,
+            options?.signal,
+            { invalidateOnUnauthorized: false },
+        );
+        if (grantResult) {
+            return grantResult;
+        }
+
+        if (canUseManagedLocalRetrieve(wallet)) {
+            const localResult = await tryLocalSignedKmsRequest<T>(
+                baseUrl,
+                endpoint,
+                accountId,
+                videoId,
+                extraBody,
+                options?.signal,
+            );
+            if (localResult) {
+                return localResult;
+            }
+            throw new KMSError(
+                'AUTH_REJECTED',
+                'Managed guest playback key was not accepted by this KMS operator yet.',
+            );
+        }
+
+        try {
+            await ensureSessionGrant({
+                accountId,
+                scope: 'Play',
+                resourceId: videoId,
+                wallet,
+            });
+        } catch {
+            throw new KMSError(
+                'SIGNLESS_PLAYBACK_UNAVAILABLE',
+                'Signless playback is not ready for this wallet session. Reconnect the wallet once to enable fast playback.',
+            );
+        }
+
+        const refreshedGrantResult = await trySessionGrantKmsRequest<T>(
+            baseUrl,
+            endpoint,
+            accountId,
+            videoId,
+            extraBody,
+            options?.signal,
+            { invalidateOnUnauthorized: false },
+        );
+        if (refreshedGrantResult) {
+            return refreshedGrantResult;
+        }
+
+        throw new KMSError(
+            'SIGNLESS_PLAYBACK_UNAVAILABLE',
+            'Signless playback is not ready for this wallet session. Reconnect the wallet once to enable fast playback.',
+        );
+    }
+
     const localResult = await tryLocalSignedKmsRequest<T>(
         baseUrl,
         endpoint,
@@ -745,43 +813,6 @@ async function executeKmsRequest<T>(
     );
     if (localResult) {
         return localResult;
-    }
-
-    const grantResult = await trySessionGrantKmsRequest<T>(
-        baseUrl,
-        endpoint,
-        accountId,
-        videoId,
-        extraBody,
-        options?.signal,
-    );
-    if (grantResult) {
-        return grantResult;
-    }
-
-    if (endpoint === 'retrieve') {
-        try {
-            await ensureSessionGrant({
-                accountId,
-                scope: 'Play',
-                resourceId: videoId,
-                wallet,
-            });
-
-            const refreshedGrantResult = await trySessionGrantKmsRequest<T>(
-                baseUrl,
-                endpoint,
-                accountId,
-                videoId,
-                extraBody,
-                options?.signal,
-            );
-            if (refreshedGrantResult) {
-                return refreshedGrantResult;
-            }
-        } catch (grantError) {
-            console.debug('[KMS] Session grant unavailable, falling back to wallet auth token:', grantError);
-        }
     }
 
     const token = await requestKmsAuthToken(baseUrl, videoId, endpoint, accountId, wallet, options?.signal);
@@ -990,6 +1021,9 @@ async function retrieveEncryptionKeyShares(
     videoId: string,
     accountId: string,
     wallet: WalletInstance,
+    options: {
+        logInsufficientShares?: boolean;
+    } = {},
 ): Promise<string | null> {
     const operators = await listActiveDecryptionOperators();
     const threshold = await getThresholdConfig();
@@ -1068,6 +1102,11 @@ async function retrieveEncryptionKeyShares(
                 continue;
             }
 
+            if (settled.reason instanceof KMSError && settled.reason.code === 'SIGNLESS_PLAYBACK_UNAVAILABLE') {
+                controllers.forEach((controller) => controller.abort());
+                throw settled.reason;
+            }
+
             debugTrace.push({
                 operatorEndpoint: operator.endpoint,
                 status: 'rejected',
@@ -1117,14 +1156,16 @@ async function retrieveEncryptionKeyShares(
     }
 
     if (shares.length < requiredShares) {
-        console.warn('[KMS] Share retrieval trace', {
-            videoId,
-            accountId,
-            mode: 'insufficient-shares',
-            requiredShares,
-            collectedShares: shares.length,
-            debugTrace,
-        });
+        if (options.logInsufficientShares !== false) {
+            console.warn('[KMS] Share retrieval trace', {
+                videoId,
+                accountId,
+                mode: 'insufficient-shares',
+                requiredShares,
+                collectedShares: shares.length,
+                debugTrace,
+            });
+        }
         return null;
     }
 
@@ -1159,10 +1200,14 @@ export async function retrieveEncryptionKey(
     wallet: WalletInstance,
 ): Promise<string> {
     for (let attempt = 0; attempt <= KMS_RETRIEVE_PROPAGATION_RETRY_DELAYS_MS.length; attempt += 1) {
+        const isFinalAttempt = attempt === KMS_RETRIEVE_PROPAGATION_RETRY_DELAYS_MS.length;
         const shareResult = await retrieveEncryptionKeyShares(
             videoId,
             accountId,
             wallet,
+            {
+                logInsufficientShares: isFinalAttempt,
+            },
         );
         if (shareResult) {
             return shareResult;
