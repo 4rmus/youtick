@@ -192,7 +192,7 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
             const identity = await getOrCreateGuestIdentity();
             const result = await bootstrapGuestAccount(identity);
             if (!result.ok) {
-                throw new Error(tr.guest_creation_failed);
+                throw new Error(result.error || tr.guest_creation_failed);
             }
             setCreatedAccountId(result.accountId);
             setStep("success");

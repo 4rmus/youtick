@@ -3,7 +3,7 @@ import { useWallet } from '@/components/providers/WalletProvider';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { Button } from "@/components/ui/button";
 import { Loader2, Ticket, AlertCircle, Play, ChevronDown, ChevronUp, Check, Wallet } from "lucide-react";
-import { actions, KeyPair, KeyPairSigner, Account, yoctoToNear, type KeyPairString } from 'near-api-js';
+import { actions, yoctoToNear } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
 import { useIsCreator } from '@/lib/hooks/useSessionState';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
@@ -21,8 +21,6 @@ import {
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { useEvmPayment } from '@/lib/evm/useEvmPayment';
 import { claimFreeTicketDirect, hasOnboardingKey } from '@/lib/gift-service';
-import { bootstrapGuestAccount, claimFreeTicketAsGuest, getOrCreateGuestIdentity } from '@/lib/guest-account';
-import { persistManagedKeyPair } from '@/lib/managed-near-account';
 import { resolvePreferredMediaUrl } from '@/lib/video-delivery';
 import { DEPOSIT_CONSTANTS } from '@/lib/constants';
 
@@ -79,7 +77,7 @@ function wait(ms: number): Promise<void> {
 }
 
 export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: TicketPurchaseCardProps) {
-    const { accountId, isTrial, managedAccountKind, getWallet, connect, setEvmLinkedAccount, setManagedAccount } = useWallet();
+    const { accountId, getWallet, connect, managedAccountKind } = useWallet();
     const { t } = useLanguage();
     const tp = t.ticket_purchase;
 
@@ -101,8 +99,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         evmAddress,
         isSending: isEvmSending,
     } = getEvmPayment({
-        onSuccess: (txHash) => {
-            console.log('[EVM] Transfer confirmed:', txHash);
+        onSuccess: () => {
             // Polling is already active from initiateSwap — the swap will be detected
         },
         onError: (err) => {
@@ -110,13 +107,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             setActionLoading(false);
         },
     });
-
-    // Implicit NEAR account for MetaMask-only users (keypair only, no on-chain creation needed)
-    // 1Click delivers NEAR to implicit account → auto-created on first receive
-    const [evmSwapKeypair, setEvmSwapKeypair] = useState<{ secretKey: string; implicitAccountId: string } | null>(null);
-    // Ref to avoid stale closure in onSwapComplete callback
-    const evmSwapKeypairRef = useRef(evmSwapKeypair);
-    useEffect(() => { evmSwapKeypairRef.current = evmSwapKeypair; }, [evmSwapKeypair]);
 
     // Payment method state
     const [paymentSelection, setPaymentSelection] = useState<PaymentSelection>({
@@ -131,55 +121,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
     // Post-swap state: 1Click delivers native NEAR (not wNEAR), ready for purchase
     const [swapNearReady, setSwapNearReady] = useState(false);
-
-    // Complete purchase from implicit account (MetaMask-only flow)
-    // Called automatically after 1Click swap delivers NEAR to the implicit account
-    const handleImplicitAccountPurchase = async (secretKey: string, implicitId: string) => {
-        if (!eventDetails) return;
-        setActionLoading(true);
-        setError(null);
-
-        try {
-            const contractId = NEAR_CONFIG.contractId;
-            const { getCurrentRpcUrl } = await import('@/lib/rpc-failover');
-
-            const keyPair = KeyPair.fromString(secretKey as KeyPairString);
-            const signer = new KeyPairSigner(keyPair);
-            const account = new Account(implicitId, getCurrentRpcUrl(), signer);
-
-            const priceYocto = nearAmountToYocto(eventDetails.price);
-            const storageCostYocto = nearAmountToYocto(STORAGE_DEPOSIT_NEAR);
-            const totalDeposit = priceYocto + storageCostYocto;
-            await account.signAndSendTransaction({
-                receiverId: contractId,
-                actions: [
-                    actions.functionCall(
-                        'buy_ticket',
-                        { receiver_id: implicitId, encrypted_cid: cid },
-                        GAS_CONSTANTS.mediumGas,
-                        totalDeposit
-                    ),
-                ],
-            });
-
-            console.log('[MetaMask Flow] Purchase complete on implicit account:', implicitId);
-            await waitForTicketAccess(implicitId);
-
-            // Store keypair for future access (viewing purchased content)
-            await persistManagedKeyPair(implicitId, secretKey);
-
-            // KMS access control uses ticket ownership — no group management needed
-
-            // Batch all state updates after async work completes (single render)
-            setEvmLinkedAccount(implicitId);
-            setActionLoading(false);
-            if (onPurchaseSuccess) onPurchaseSuccess();
-        } catch (e) {
-            console.error('[MetaMask Flow] Implicit account purchase failed:', e);
-            setError(e instanceof Error ? e.message : tp.error_complete_purchase);
-            setActionLoading(false);
-        }
-    };
 
     // Stablecoin swap hook (also used for Arbitrum/Base → NEAR-native USDC)
     const {
@@ -197,27 +138,11 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
             if (isCrossChainUsdc) {
                 // Cross-chain V1 settles into NEAR-native USDC before minting.
-                console.log('[Swap Complete] USDC received from cross-chain swap. amountOut:', amountOut);
-                const keypair = evmSwapKeypairRef.current;
-                if (keypair) {
-                    await handleUsdcDirectPurchase(amountOut || undefined, keypair.implicitAccountId);
-                } else {
-                    await handleUsdcDirectPurchase(amountOut || undefined);
-                }
+                await handleUsdcDirectPurchase(amountOut || undefined);
                 return;
             }
 
             // 1Click delivers NATIVE NEAR (not wNEAR) via NativeWithdraw intent.
-            console.log('[Swap Complete] Native NEAR received. amountOut:', amountOut);
-
-            // EVM flow with implicit account: auto-complete purchase
-            const keypair = evmSwapKeypairRef.current;
-            if (keypair) {
-                console.log('[MetaMask Flow] Auto-completing purchase on implicit account:', keypair.implicitAccountId);
-                await handleImplicitAccountPurchase(keypair.secretKey, keypair.implicitAccountId);
-                return;
-            }
-
             // NEAR wallet flow: mark ready for manual "Complete Purchase" click
             setSwapNearReady(true);
             setActionLoading(false);
@@ -316,51 +241,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     // Claim FREE Ticket (sponsored onboarding key or wallet fallback)
     const handleFreeTicketClaim = async () => {
         if (!eventDetails) return;
-        const isGuestManagedAccount = managedAccountKind === 'guest';
-
-        if (isGuestManagedAccount) {
-            setActionLoading(true);
-            setError(null);
-            try {
-                const identity = await getOrCreateGuestIdentity();
-                const result = await claimFreeTicketAsGuest(cid, identity);
-                if (!result.ok) {
-                    throw new Error(result.error || tp.error_claim_free);
-                }
-                await waitForTicketAccess(result.accountId);
-                setManagedAccount(result.accountId, 'guest');
-                if (onPurchaseSuccess) onPurchaseSuccess();
-            } catch (e: unknown) {
-                console.error("Guest free ticket claim failed:", e);
-                setError(e instanceof Error ? e.message : t.watch_page.claim_free_ticket);
-            } finally {
-                setActionLoading(false);
-            }
-            return;
-        }
 
         if (!accountId) {
-            setActionLoading(true);
-            setError(null);
-            try {
-                const identity = await getOrCreateGuestIdentity();
-                const bootstrap = await bootstrapGuestAccount(identity);
-                if (!bootstrap.ok) {
-                    throw new Error(tp.error_claim_free);
-                }
-                const result = await claimFreeTicketAsGuest(cid, identity);
-                if (!result.ok) {
-                    throw new Error(result.error || tp.error_claim_free);
-                }
-                await waitForTicketAccess(result.accountId);
-                setManagedAccount(result.accountId, 'guest');
-                if (onPurchaseSuccess) onPurchaseSuccess();
-            } catch (e: unknown) {
-                console.error("Guest free ticket claim failed:", e);
-                setError(e instanceof Error ? e.message : t.watch_page.claim_free_ticket);
-            } finally {
-                setActionLoading(false);
-            }
+            connect();
             return;
         }
         setActionLoading(true);
@@ -377,10 +260,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     if (onPurchaseSuccess) onPurchaseSuccess();
                     return;
                 }
-            }
-
-            if (isTrial) {
-                throw new Error(tp.error_trial_free_claim);
             }
 
             const contractId = NEAR_CONFIG.contractId;
@@ -489,7 +368,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         } catch (e) {
             console.error('Rhea NEAR payment failed:', e);
             const message = e instanceof Error ? e.message : 'Rhea swap failed';
-            setError(message === tp.error_ticket_access_pending ? message : `${message}. Swap failed, no ticket minted.`);
+            setError(message === tp.error_ticket_access_pending ? message : tp.error_complete_purchase);
         } finally {
             setActionLoading(false);
         }
@@ -501,6 +380,10 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
         // For EVM chains: ensure MetaMask is connected
         const isEvmChain = paymentSelection.chain === 'arb' || paymentSelection.chain === 'base';
+        if (isEvmChain && !accountId) {
+            connect();
+            return;
+        }
         if (isEvmChain && !isEvmConnected) {
             connectMetaMask();
             return;
@@ -509,24 +392,13 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         setActionLoading(true);
         setError(null);
 
-        // Determine NEAR recipient:
-        // - Existing NEAR wallet user → use their accountId
-        // - MetaMask-only user → generate implicit account (just math, no blockchain call)
+        // Determine NEAR recipient. During the Near Connect migration,
+        // cross-chain checkout requires a real connected NEAR wallet.
         let nearRecipient: string;
         let refundOverride: string | undefined;
-        let recipientOverride: string | undefined;
 
         if (accountId) {
             nearRecipient = accountId;
-        } else if (isEvmChain) {
-            // Generate keypair → implicit account (64-char hex, auto-created when NEAR arrives)
-            const kp = KeyPair.fromRandom('ed25519');
-            const pubKeyBytes = kp.getPublicKey().data;
-            const implicitId = Array.from(pubKeyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-            setEvmSwapKeypair({ secretKey: kp.toString(), implicitAccountId: implicitId });
-            nearRecipient = implicitId;
-            recipientOverride = implicitId;
-            console.log('[MetaMask Flow] Generated implicit account:', implicitId);
         } else {
             setError(tp.error_connect_wallet);
             setActionLoading(false);
@@ -581,7 +453,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 usdCents,
                 nearRecipient,
                 refundOverride,
-                recipientOverride,
+                undefined,
                 destinationAsset,
             );
 
@@ -598,7 +470,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     targetChainId: paymentSelection.chain,
                 });
                 // MetaMask tx submitted → 1Click polling will detect the deposit
-                // onSwapComplete auto-triggers handleImplicitAccountPurchase
+                // onSwapComplete mints through the connected NEAR wallet.
                 return;
             }
 
@@ -652,23 +524,19 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 // NOTE: Use submitDeposit directly with local swapQuote.depositAddress
                 // to avoid stale closure issue with notifyDeposit hook callback
                 try {
-                    const txHashes: string[] = Array.isArray(txResult)
-                        ? txResult.map((tx: { transaction?: { hash?: string }; transaction_outcome?: { id?: string } }) =>
+                    if (Array.isArray(txResult)) {
+                        const txHashes = txResult.map((tx: { transaction?: { hash?: string }; transaction_outcome?: { id?: string } }) =>
                             tx?.transaction?.hash || tx?.transaction_outcome?.id || ''
-                        ).filter(Boolean)
-                        : [];
-                    const depositTxHash = txHashes[txHashes.length - 1]; // Last tx is the ft_transfer
-                    if (depositTxHash && swapQuote.depositAddress) {
-                        console.log('[1Click] Submitting deposit tx:', depositTxHash, 'to address:', swapQuote.depositAddress);
-                        const depositResult = await submitDeposit(
-                            depositTxHash,
-                            swapQuote.depositAddress,
-                            nearRecipient,
-                            swapQuote.depositMemo,
-                        );
-                        console.log('[1Click] Deposit submission result:', depositResult);
-                    } else {
-                        console.warn('[1Click] Missing tx hash or deposit address:', { depositTxHash: txHashes, depositAddress: swapQuote.depositAddress });
+                        ).filter(Boolean);
+                        const depositTxHash = txHashes[txHashes.length - 1]; // Last tx is the ft_transfer
+                        if (depositTxHash && swapQuote.depositAddress) {
+                            await submitDeposit(
+                                depositTxHash,
+                                swapQuote.depositAddress,
+                                nearRecipient,
+                                swapQuote.depositMemo,
+                            );
+                        }
                     }
                 } catch (notifyErr) {
                     console.error('[1Click] Failed to submit deposit tx:', notifyErr);
@@ -686,10 +554,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     };
 
     // Buy Ticket with USDC/USDT direct transfer (NEAR-native, no swap needed)
-    const handleUsdcDirectPurchase = async (amountOverride?: string, buyerOverride?: string) => {
+    const handleUsdcDirectPurchase = async (amountOverride?: string) => {
         if (!eventDetails) return;
-        const buyerId = buyerOverride || accountId;
-        if (!buyerId) {
+        if (!accountId) {
             setError(tp.error_connect_wallet);
             return;
         }
@@ -708,67 +575,35 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 : NEAR_USDC_CONTRACT_ID;
             const paymentId = activeSwapQuote?.depositAddress
                 ? `${activeSwapQuote.depositAddress}:${activeSwapQuote.depositMemo ?? 'no-memo'}`
-                : `direct:${buyerId}:${cid}:${Date.now()}`;
+                : `direct:${accountId}:${cid}:${Date.now()}`;
 
             const msg = JSON.stringify({
                 action: 'buy_ticket',
-                buyer_id: buyerId,
+                buyer_id: accountId,
                 encrypted_cid: cid,
                 payment_id: paymentId,
             });
 
-            // For implicit accounts (MetaMask flow with generated keypair), use Account directly
-            const keypair = evmSwapKeypairRef.current;
-            if (keypair && buyerId === keypair.implicitAccountId) {
-                const { getCurrentRpcUrl } = await import('@/lib/rpc-failover');
-                const keyPair = KeyPair.fromString(keypair.secretKey as KeyPairString);
-                const signer = new KeyPairSigner(keyPair);
-                const account = new Account(buyerId, getCurrentRpcUrl(), signer);
+            const wallet = await getWallet();
+            const purchaseTx = {
+                receiverId: tokenContractId,
+                actions: [
+                    actions.functionCall(
+                        'ft_transfer_call',
+                        {
+                            receiver_id: NEAR_CONFIG.contractId,
+                            amount,
+                            msg,
+                            memo: 'Youtick ticket purchase',
+                        },
+                        GAS_CONSTANTS.mediumGas,
+                        BigInt(1) // 1 yoctoNEAR required by NEP-141
+                    ),
+                ],
+            };
+            await wallet.signAndSendTransaction(purchaseTx);
 
-                await account.signAndSendTransaction({
-                    receiverId: tokenContractId,
-                    actions: [
-                        actions.functionCall(
-                            'ft_transfer_call',
-                            {
-                                receiver_id: NEAR_CONFIG.contractId,
-                                amount,
-                                msg,
-                                memo: 'Youtick ticket purchase',
-                            },
-                            GAS_CONSTANTS.mediumGas,
-                            BigInt(1)
-                        ),
-                    ],
-                });
-            } else {
-                const wallet = await getWallet();
-                const purchaseTx = {
-                    receiverId: tokenContractId,
-                    actions: [
-                        actions.functionCall(
-                            'ft_transfer_call',
-                            {
-                                receiver_id: NEAR_CONFIG.contractId,
-                                amount,
-                                msg,
-                                memo: 'Youtick ticket purchase',
-                            },
-                            GAS_CONSTANTS.mediumGas,
-                            BigInt(1) // 1 yoctoNEAR required by NEP-141
-                        ),
-                    ],
-                };
-                await wallet.signAndSendTransaction(purchaseTx);
-            }
-
-            if (keypair && buyerId === keypair.implicitAccountId) {
-                await waitForTicketAccess(buyerId);
-                await persistManagedKeyPair(keypair.implicitAccountId, keypair.secretKey);
-                setEvmLinkedAccount(keypair.implicitAccountId);
-            } else {
-                await waitForTicketAccess(buyerId);
-            }
+            await waitForTicketAccess(accountId);
 
             if (onPurchaseSuccess) onPurchaseSuccess();
         } catch (e) {
@@ -785,6 +620,11 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         const chain = paymentSelection.chain;
         const hasUsdcPrice = !!eventDetails?.priceUsdc && eventDetails.priceUsdc > 0;
         const hasNearPrice = priceNear > 0;
+
+        if (managedAccountKind === 'guest' || managedAccountKind === 'trial') {
+            setError(tp.guest_paid_requires_wallet);
+            return;
+        }
 
         if (method === 'NEAR') {
             if (hasUsdcPrice) {
@@ -841,10 +681,26 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     const isFree = priceNear === 0 && !hasUsdcPrice;
     const isFreeCollectible = isFree && eventDetails.accessMode === 'free_collectible';
     const isCreator = isCreatorData === true || (accountId && eventDetails.uploader === accountId);
-    const crossChainEnabled = FEATURE_FLAGS.enableCrossChainCheckout;
+    const crossChainEnabled = FEATURE_FLAGS.enableCrossChainCheckout && !!accountId;
     const isStablecoinFlow = paymentSelection.method !== 'NEAR';
     const isEvmChain = paymentSelection.chain === 'arb' || paymentSelection.chain === 'base';
     const isSwapInProgress = swapStatus === 'awaiting_deposit' || swapStatus === 'processing' || swapStatus === 'quoting';
+    const isManagedGuestAccount = managedAccountKind === 'guest' || managedAccountKind === 'trial';
+
+    let purchaseButtonLabel: string;
+    if (isFree) {
+        purchaseButtonLabel = t.watch_page.claim_free_ticket;
+    } else if (isManagedGuestAccount) {
+        purchaseButtonLabel = tp.connect_wallet_to_buy;
+    } else if (crossChainEnabled && isStablecoinFlow && isEvmChain) {
+        purchaseButtonLabel = `${tp.pay_with_metamask} • ${paymentSelection.method}`;
+    } else if (crossChainEnabled && isStablecoinFlow) {
+        purchaseButtonLabel = `${tp.pay_with} ${paymentSelection.method}`;
+    } else if (displayUsdCents) {
+        purchaseButtonLabel = `${tp.buy_ticket} • $${(displayUsdCents / 100).toFixed(2)}`;
+    } else {
+        purchaseButtonLabel = `${tp.buy_ticket} • ${nearToUsdStr(priceNear)}`;
+    }
 
     return (
         <div className={`relative group overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 border border-white/10 shadow-2xl shadow-black/50 max-w-sm mx-auto ${className}`}>
@@ -920,7 +776,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 </div>
 
                 {/* Payment Method Selector (paid tickets, non-creator) */}
-                {!isFree && !isCreator && !isSwapInProgress && !swapNearReady && (
+                {!isFree && !isCreator && !isManagedGuestAccount && !isSwapInProgress && !swapNearReady && (
                     <PaymentMethodSelector
                         priceNear={priceNear}
                         priceUsdc={eventDetails.priceUsdc}
@@ -928,6 +784,13 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         accountId={accountId || undefined}
                         onSelectionChange={handleSelectionChange}
                     />
+                )}
+
+                {!isFree && !isCreator && isManagedGuestAccount && (
+                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                        <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
+                        <p className="text-sm text-amber-100">{tp.guest_paid_requires_wallet}</p>
+                    </div>
                 )}
 
                 {/* NEAR chain swap progress (auto-deposit) */}
@@ -951,7 +814,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                             onClick={() => {
                                 resetSwap();
                                 setSwapNearReady(false);
-                                setEvmSwapKeypair(null);
                                 setActionLoading(false);
                             }}
                             className="text-[11px] text-zinc-600 hover:text-zinc-400 underline"
@@ -961,39 +823,30 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     </div>
                 )}
 
-                {/* Cross-chain swap progress (Arbitrum/Base via MetaMask — auto-deposit + auto-purchase) */}
-                {(isSwapInProgress || (actionLoading && evmSwapKeypair)) && isEvmChain && (
+                {/* Cross-chain swap progress (Arbitrum/Base via MetaMask) */}
+                {isSwapInProgress && isEvmChain && (
                     <div className="space-y-2 rounded-lg border border-near-purple/30 bg-near-purple/5 p-4">
                         <div className="flex items-center gap-2">
                             <Loader2 className="h-4 w-4 animate-spin text-near-purple" />
                             <span className="text-sm font-medium text-near-purple">
                                 {isEvmSending ? tp.swap_confirm_metamask :
-                                    actionLoading && evmSwapKeypair && !isSwapInProgress ? tp.swap_purchasing_auto :
-                                        swapStatus === 'awaiting_deposit' ? tp.swap_awaiting_deposit :
-                                            swapStatus === 'processing' ? tp.swap_processing :
-                                                tp.swap_preparing}
+                                    swapStatus === 'awaiting_deposit' ? tp.swap_awaiting_deposit :
+                                        swapStatus === 'processing' ? tp.swap_processing :
+                                            tp.swap_preparing}
                             </span>
                         </div>
                         <p className="text-[11px] text-zinc-500">
                             {isEvmSending
                                 ? tp.swap_confirm_metamask
-                                : actionLoading && evmSwapKeypair && !isSwapInProgress
-                                    ? tp.swap_purchasing_auto
-                                    : swapStatus === 'awaiting_deposit'
-                                        ? tp.swap_detecting_metamask.replace('{method}', paymentSelection.method)
-                                        : tp.swap_converting_method.replace('{method}', paymentSelection.method)}
+                                : swapStatus === 'awaiting_deposit'
+                                    ? tp.swap_detecting_metamask.replace('{method}', paymentSelection.method)
+                                    : tp.swap_converting_method.replace('{method}', paymentSelection.method)}
                         </p>
-                        {evmSwapKeypair && (
-                            <p className="text-[10px] text-zinc-600">
-                                {tp.near_account_label}: <span className="font-mono text-zinc-400">{evmSwapKeypair.implicitAccountId.slice(0, 8)}...{evmSwapKeypair.implicitAccountId.slice(-6)}</span>
-                            </p>
-                        )}
                         <button
                             type="button"
                             onClick={() => {
                                 resetSwap();
                                 setSwapNearReady(false);
-                                setEvmSwapKeypair(null);
                                 setActionLoading(false);
                             }}
                             className="text-[11px] text-zinc-600 hover:text-zinc-400 underline"
@@ -1056,10 +909,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                             {tp.swap_complete_desc}
                         </p>
                         <Button
-                            onClick={evmSwapKeypair
-                                ? () => handleImplicitAccountPurchase(evmSwapKeypair.secretKey, evmSwapKeypair.implicitAccountId)
-                                : handleNearPurchase
-                            }
+                            onClick={handleNearPurchase}
                             disabled={actionLoading}
                             className="w-full h-10 bg-gradient-to-r from-near-green to-emerald-500 hover:from-near-green/90 hover:to-emerald-500/90 text-near-black font-bold text-sm rounded-xl"
                         >
@@ -1104,7 +954,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                     ) : (
                                         <>
                                             <Ticket className="h-5 w-5 mr-2" />
-                                            {!accountId ? t.watch_page.test_account_claim : t.watch_page.claim_and_watch}
+                                            {!accountId ? t.nav.connect : t.watch_page.claim_and_watch}
                                         </>
                                     )}
                                 </Button>
@@ -1123,7 +973,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                             </Button>
                         ) : (
                             <Button
-                                onClick={isFree ? handleFreeTicketClaim : handlePurchase}
+                                onClick={isFree ? handleFreeTicketClaim : isManagedGuestAccount ? connect : handlePurchase}
                                 disabled={actionLoading}
                                 className="w-full h-12 bg-gradient-to-r from-near-green to-emerald-500 hover:from-near-green/90 hover:to-emerald-500/90 text-near-black font-bold text-base rounded-xl shadow-lg shadow-near-green/20 transition-all duration-300"
                             >
@@ -1135,16 +985,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                 ) : (
                                     <>
                                         <Ticket className="h-5 w-5 mr-2" />
-                                        {isFree
-                                            ? t.watch_page.claim_free_ticket
-                                            : crossChainEnabled && isStablecoinFlow && isEvmChain
-                                                ? `${tp.pay_with_metamask} • ${paymentSelection.method}`
-                                                : crossChainEnabled && isStablecoinFlow
-                                                    ? `${tp.pay_with} ${paymentSelection.method}`
-                                                    : displayUsdCents
-                                                        ? `${tp.buy_ticket} • $${(displayUsdCents / 100).toFixed(2)}`
-                                                        : `${tp.buy_ticket} • ${nearToUsdStr(priceNear)}`
-                                        }
+                                        {purchaseButtonLabel}
                                     </>
                                 )}
                             </Button>

@@ -6,14 +6,12 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getProvider, viewContract } from '@/lib/near';
 import { NEAR_CONFIG } from '@/lib/constants';
-import { User, Wallet, Ticket, Loader2, ArrowLeft, Gift, Video, Sparkles, BarChart3, DollarSign, Edit, Globe, AtSign, Camera } from 'lucide-react';
+import { User, Wallet, Ticket, Loader2, ArrowLeft, Gift, Video, BarChart3, DollarSign, Edit, Globe, AtSign, Camera } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from '@/components/Web4Link';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { GiftLinkGenerator } from "@/components/GiftLinkGenerator";
-import { TrialInviteGenerator } from "@/components/TrialInviteGenerator";
-import { TrialUpgradeDialog } from "@/components/TrialUpgradeDialog";
 import { IPFSThumbnail } from "@/components/IPFSThumbnail";
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
@@ -30,7 +28,7 @@ interface CreatedEvent extends NFTEvent {
 
 export default function ProfilePage() {
     const { t } = useLanguage();
-    const { accountId, isTrial } = useWallet();
+    const { accountId } = useWallet();
     const { yoctoToUsd, nearToUsdStr } = useNearPrice();
     const { tokens, loading: tokensLoading } = useOwnedTokens();
     const { data: creatorStats } = useCreatorStats(accountId ?? undefined);
@@ -40,7 +38,6 @@ export default function ProfilePage() {
     // Gift Modal State
     const [showGiftModal, setShowGiftModal] = useState(false);
     const [selectedEventForGift, setSelectedEventForGift] = useState<CreatedEvent | null>(null);
-    const [showTrialInviteModal, setShowTrialInviteModal] = useState(false);
     const [showProfileDialog, setShowProfileDialog] = useState(false);
 
     // Wallet balance via React Query + FailoverRpcProvider
@@ -146,17 +143,6 @@ export default function ProfilePage() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                        {accountId === NEAR_CONFIG.contractId && (
-                            <Button
-                                onClick={() => setShowTrialInviteModal(true)}
-                                variant="outline"
-                                className="border-zinc-700 text-zinc-200 hover:bg-zinc-800 gap-2"
-                            >
-                                <Sparkles className="w-4 h-4" />
-                                {t.trial_page?.trial_invite_title || 'Guest Invites'}
-                            </Button>
-                        )}
-
                         {createdEvents.length > 0 && (
                             <Button
                                 onClick={() => setShowGiftModal(true)}
@@ -256,27 +242,6 @@ export default function ProfilePage() {
                         </div>
                     </div>
                 </div>
-
-                {/* Trial Account Upgrade Banner */}
-                {isTrial && accountId && (
-                    <div className="bg-zinc-800/50 border border-zinc-700 rounded-xl p-6">
-                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                            <div>
-                                <h3 className="font-semibold text-white flex items-center gap-2">
-                                    <Sparkles className="w-4 h-4 text-near-green" />
-                                    {t.profile_page.upgrade_trial_title}
-                                </h3>
-                                <p className="text-sm text-zinc-300 mt-1">
-                                    {t.profile_page.upgrade_trial_desc}
-                                </p>
-                            </div>
-                            <TrialUpgradeDialog
-                                accountId={accountId}
-                                onUpgradeComplete={() => window.location.reload()}
-                            />
-                        </div>
-                    </div>
-                )}
 
                 {/* Role Summary */}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -611,24 +576,6 @@ export default function ProfilePage() {
                         <CreatorProfileForm
                             onSuccess={() => setShowProfileDialog(false)}
                         />
-                    </div>
-                </DialogContent>
-            </Dialog>
-
-            <Dialog open={showTrialInviteModal} onOpenChange={setShowTrialInviteModal}>
-                <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-[550px] max-h-[85vh] overflow-y-auto flex flex-col">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
-                            <Sparkles className="w-5 h-5 text-zinc-400" />
-                            {t.trial_page?.trial_invite_title || 'Guest Invites'}
-                        </DialogTitle>
-                        <DialogDescription>
-                            {t.trial_page?.trial_invite_desc || 'Create invite-only guest links for viewers.'}
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <div className="mt-4 w-full">
-                        <TrialInviteGenerator />
                     </div>
                 </DialogContent>
             </Dialog>

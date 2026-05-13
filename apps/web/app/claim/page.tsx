@@ -4,13 +4,14 @@ import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, CheckCircle2, AlertCircle, Ticket, ExternalLink, Wallet, User, Play, Sparkles } from "lucide-react";
+import { Loader2, CheckCircle2, AlertCircle, Ticket, ExternalLink, Wallet, Play, Sparkles } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageContext";
 import { parseTitleMetadata } from "@/lib/metadata-parser";
 import { NEAR_CONFIG, GAS_CONSTANTS } from "@/lib/constants";
 import { getCurrentRpcUrl } from "@/lib/rpc-failover";
 import { IPFSThumbnail } from "@/components/IPFSThumbnail";
-import { writeManagedNearAccount } from "@/lib/managed-near-account";
+import { TrialUpgradeDialog } from "@/components/TrialUpgradeDialog";
+import { useWallet } from "@/components/providers/WalletProvider";
 import { claimGiftWithImplicitAccount } from "@/lib/gift-service";
 
 const NETWORK_ID = NEAR_CONFIG.networkId;
@@ -26,6 +27,7 @@ interface GiftInfo {
 
 function ClaimContent() {
     const { t } = useLanguage();
+    const { setManagedAccount } = useWallet();
     const searchParams = useSearchParams();
     // Read key from hash fragment (secure) or query params (backward compat)
     const [secretKey, setSecretKey] = useState<string | null>(null);
@@ -48,13 +50,13 @@ function ClaimContent() {
         }
     }, [searchParams]);
 
-    const [step, setStep] = useState<"loading" | "preview" | "claim-options" | "creating-account" | "claiming" | "success" | "error">("loading");
+    const [step, setStep] = useState<"loading" | "preview" | "claim-options" | "claiming" | "success" | "error">("loading");
     const [giftInfo, setGiftInfo] = useState<GiftInfo | null>(null);
-    const [accountOption, setAccountOption] = useState<"new" | "existing">("new");
     const [existingAccountId, setExistingAccountId] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [claimedAccountId, setClaimedAccountId] = useState<string | null>(null);
     const [txHash, setTxHash] = useState<string | null>(null);
+    const [claimMode, setClaimMode] = useState<"guest" | "wallet" | null>(null);
 
     // Validate secret key and fetch gift info
     useEffect(() => {
@@ -121,35 +123,10 @@ function ClaimContent() {
         validateGift();
     }, [secretKey, t]);
 
-    const handleClaimWithNewAccount = async () => {
-        setStep("creating-account");
-
-        try {
-            const formattedKey = secretKey!.includes(":") ? secretKey! : `ed25519:${secretKey}`;
-            const result = await claimGiftWithImplicitAccount(formattedKey);
-            if (!result.success || !result.accountId) {
-                throw new Error(result.error || (t.claim_page?.account_create_failed || "Failed to create account."));
-            }
-
-            writeManagedNearAccount(result.accountId, 'guest');
-            setClaimedAccountId(result.accountId);
-            setTxHash(result.txHash || null);
-            setStep("success");
-        } catch (err: unknown) {
-            console.error("Create account error:", err);
-            const errMsg = err instanceof Error ? err.message : '';
-            let errorMsg = t.claim_page?.account_create_failed || "Failed to create account.";
-            if (errMsg.includes("already claimed")) {
-                errorMsg = t.claim_page?.invalid_or_used || "This gift link has already been used.";
-            }
-            setError(errorMsg);
-            setStep("error");
-        }
-    };
-
     const handleClaimToExisting = async () => {
         if (!existingAccountId.trim()) return;
 
+        setClaimMode("wallet");
         setStep("claiming");
 
         try {
@@ -191,6 +168,36 @@ function ClaimContent() {
             setError(errorMsg);
             setStep("error");
         }
+    };
+
+    const handleClaimAsGuest = async () => {
+        if (!secretKey) return;
+
+        setClaimMode("guest");
+        setStep("claiming");
+
+        const formattedKey = secretKey.includes(":") ? secretKey : `ed25519:${secretKey}`;
+        const result = await claimGiftWithImplicitAccount(formattedKey);
+
+        if (result.success) {
+            setClaimedAccountId(result.accountId || null);
+            setTxHash(result.txHash || null);
+            if (result.accountId) {
+                setManagedAccount(result.accountId, "guest");
+            }
+            setStep("success");
+            return;
+        }
+
+        const errMsg = result.error || "";
+        let errorMsg = t.claim_page?.account_create_failed || "Failed to create account.";
+        if (errMsg.includes("already claimed")) {
+            errorMsg = t.claim_page?.invalid_or_used || "This gift link has already been used.";
+        } else if (errMsg.includes("Invalid")) {
+            errorMsg = t.claim_page?.invalid_link || "Invalid gift link.";
+        }
+        setError(errorMsg);
+        setStep("error");
     };
 
     // Loading
@@ -303,66 +310,42 @@ function ClaimContent() {
                     <div className="p-6 space-y-5">
                         <h2 className="text-lg font-semibold text-white text-center">{t.claim_page?.choose_claim_method || "How would you like to claim?"}</h2>
 
-                        {/* Option Tabs */}
-                        <div className="flex gap-2 p-1 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
-                            <button
-                                onClick={() => setAccountOption("new")}
-                                className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all ${accountOption === "new"
-                                    ? "bg-near-green text-near-black shadow-lg"
-                                    : "text-zinc-400 hover:text-white"
-                                    }`}
-                            >
-                            {t.claim_page?.new_account || "Guest Account"}
-                            </button>
-                            <button
-                                onClick={() => setAccountOption("existing")}
-                                className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all ${accountOption === "existing"
-                                    ? "bg-near-green text-near-black shadow-lg"
-                                    : "text-zinc-400 hover:text-white"
-                                    }`}
-                            >
-                                {t.claim_page?.existing_wallet || "Existing Wallet"}
-                            </button>
-                        </div>
-
-                        {/* Guest Account Claim */}
-                        {accountOption === "new" && (
-                            <div className="space-y-4">
-                                <p className="text-sm text-zinc-400">
+                        <div className="space-y-3 rounded-xl border border-zinc-700/60 bg-zinc-800/30 p-4">
+                            <div>
+                                <h3 className="text-sm font-semibold text-white">{t.claim_page?.new_account || "Guest Account"}</h3>
+                                <p className="mt-1 text-sm text-zinc-400">
                                     {t.claim_page?.create_account_desc || "Create a guest account and claim the ticket"}
                                 </p>
-                                <Button
-                                    onClick={handleClaimWithNewAccount}
-                                    className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 disabled:opacity-50 font-semibold rounded-xl"
-                                >
-                                    <User className="w-4 h-4 mr-2" />
-                                    {t.claim_page?.create_and_claim_button || "Create Guest Account and Claim"}
-                                </Button>
                             </div>
-                        )}
+                            <Button
+                                onClick={handleClaimAsGuest}
+                                className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
+                            >
+                                <Sparkles className="w-4 h-4 mr-2" />
+                                {t.claim_page?.create_and_claim_button || "Create Guest Account and Claim"}
+                            </Button>
+                        </div>
 
-                        {/* Existing Wallet Form */}
-                        {accountOption === "existing" && (
-                            <div className="space-y-4">
-                                <p className="text-sm text-zinc-400">
-                                    {t.claim_page?.existing_wallet_desc || "Enter the wallet account that will receive the ticket"}
-                                </p>
-                                <Input
-                                    value={existingAccountId}
-                                    onChange={(e) => setExistingAccountId(e.target.value)}
-                                    placeholder={t.claim_page?.existing_placeholder || "account.near"}
-                                    className="bg-zinc-800/50 border-zinc-700 text-white rounded-xl h-12"
-                                />
-                                <Button
-                                    onClick={handleClaimToExisting}
-                                    disabled={!existingAccountId.trim()}
-                                    className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 disabled:opacity-50 font-semibold rounded-xl"
-                                >
-                                    <Wallet className="w-4 h-4 mr-2" />
-                                    {t.claim_page?.transfer_to_wallet || "Transfer to Wallet"}
-                                </Button>
-                            </div>
-                        )}
+                        <div className="space-y-4 rounded-xl border border-zinc-700/60 bg-zinc-800/30 p-4">
+                            <h3 className="text-sm font-semibold text-white">{t.claim_page?.existing_wallet || "Existing Wallet"}</h3>
+                            <p className="text-sm text-zinc-400">
+                                {t.claim_page?.existing_wallet_desc || "Enter the wallet account that will receive the ticket"}
+                            </p>
+                            <Input
+                                value={existingAccountId}
+                                onChange={(e) => setExistingAccountId(e.target.value)}
+                                placeholder={t.claim_page?.existing_placeholder || "account.near"}
+                                className="bg-zinc-800/50 border-zinc-700 text-white rounded-xl h-12"
+                            />
+                            <Button
+                                onClick={handleClaimToExisting}
+                                disabled={!existingAccountId.trim()}
+                                className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 disabled:opacity-50 font-semibold rounded-xl"
+                            >
+                                <Wallet className="w-4 h-4 mr-2" />
+                                {t.claim_page?.transfer_to_wallet || "Transfer to Wallet"}
+                            </Button>
+                        </div>
 
                         <Button
                             onClick={() => setStep("preview")}
@@ -378,13 +361,15 @@ function ClaimContent() {
     }
 
     // Creating/Claiming
-    if (step === "creating-account" || step === "claiming") {
+    if (step === "claiming") {
         return (
             <div className="w-full max-w-md mx-auto">
                 <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-8 text-center space-y-4">
                     <Loader2 className="w-10 h-10 animate-spin text-zinc-400 mx-auto" />
                     <p className="text-white text-lg font-medium">
-                        {step === "creating-account" ? (t.claim_page?.creating_account_loading || "Creating account...") : (t.claim_page?.claiming_ticket_loading || "Claiming ticket...")}
+                        {claimMode === "guest"
+                            ? (t.claim_page?.creating_account_loading || "Creating guest account...")
+                            : (t.claim_page?.claiming_ticket_loading || "Claiming ticket...")}
                     </p>
                     <p className="text-zinc-500 text-sm">{t.claim_page?.please_wait || "This may take a few seconds"}</p>
                     <p className="text-xs text-emerald-400 flex items-center justify-center gap-1">
@@ -440,25 +425,33 @@ function ClaimContent() {
                         )}
 
                         <div className="space-y-3 pt-2">
-                            <Button
-                                onClick={() => window.location.href = `/watch?cid=${giftInfo?.eventCid}`}
-                                className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
-                            >
-                                <Play className="w-4 h-4 mr-2" />
-                                {t.claim_page?.watch_now || "Watch Now"}
-                            </Button>
+                            {claimMode === "guest" && claimedAccountId ? (
+                                <>
+                                    <p className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-center text-sm text-emerald-300">
+                                        {t.claim_page?.trial_active_msg || "Guest account active. Automatically signed in."}
+                                    </p>
+                                    <TrialUpgradeDialog accountId={claimedAccountId} />
+                                </>
+                            ) : (
+                                <Button
+                                    onClick={() => window.location.href = `/watch?cid=${giftInfo?.eventCid}`}
+                                    className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
+                                >
+                                    <Play className="w-4 h-4 mr-2" />
+                                    {t.claim_page?.watch_now || "Watch Now"}
+                                </Button>
+                            )}
 
                             <Button
-                                onClick={() => window.location.href = "/discover"}
+                                onClick={() => window.location.href = claimMode === "guest" ? "/trial" : "/discover"}
                                 variant="outline"
                                 className="w-full h-12 border-zinc-700 text-zinc-300 hover:bg-zinc-800 rounded-xl"
                             >
-                                {t.claim_page?.explore_more || "Explore More"}
+                                {claimMode === "guest"
+                                    ? (t.claim_page?.go_to_guest_account || "Go to Guest Account")
+                                    : (t.claim_page?.explore_more || "Explore More")}
                             </Button>
 
-                            <p className="text-xs text-zinc-500 text-center">
-                                {t.claim_page?.trial_active_msg || "Guest account active. Automatically signed in."}
-                            </p>
                         </div>
                     </div>
                 </div>
