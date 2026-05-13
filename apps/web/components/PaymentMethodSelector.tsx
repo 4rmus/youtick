@@ -8,7 +8,7 @@ import {
     getSupportedChains,
     getDryQuote,
 } from '@/lib/intents';
-import { FEATURE_FLAGS, NEAR_CONFIG } from '@/lib/constants';
+import { FEATURE_FLAGS } from '@/lib/constants';
 import { getNearPrice, formatUsdCents } from '@/lib/price';
 import { quoteNearToUsdc } from '@/lib/rhea/client';
 import { useLanguage } from '@/components/providers/LanguageContext';
@@ -20,7 +20,7 @@ interface PaymentMethodSelectorProps {
     priceUsdc: number | null;
     /** Ticket price in USD cents (if set by creator). Null = calculate from NEAR price */
     priceUsdCents: number | null;
-    /** NEAR account ID of the buyer (optional — MetaMask-only users may not have one yet) */
+    /** NEAR account ID of the buyer. Cross-chain checkout requires this during Near Connect migration. */
     accountId?: string;
     /** Called when payment method or chain changes */
     onSelectionChange: (selection: {
@@ -47,7 +47,7 @@ export function PaymentMethodSelector({
 }: PaymentMethodSelectorProps) {
     const { t } = useLanguage();
     const p = t.payment_method_selector;
-    const crossChainEnabled = FEATURE_FLAGS.enableCrossChainCheckout;
+    const crossChainEnabled = FEATURE_FLAGS.enableCrossChainCheckout && !!accountId;
     const hasUsdcPrice = !!priceUsdc && priceUsdc > 0;
     const [method, setMethod] = useState<PaymentMethod>('NEAR');
     const [chain, setChain] = useState<ChainId>('near');
@@ -69,10 +69,10 @@ export function PaymentMethodSelector({
         ? Math.ceil(priceUsdc / 10_000)
         : priceUsdCents ?? (nearPrice > 0 ? Math.round(priceNear * nearPrice * 100) : 0);
 
-    // Fetch dry quote when stablecoin is selected (cross-chain only)
-    // For MetaMask-only users (no accountId), use a placeholder NEAR account for the quote
+    // Fetch dry quote when stablecoin is selected (cross-chain only).
+    // Cross-chain checkout is shown only after a real NEAR wallet is connected.
     const fetchQuote = useCallback(async () => {
-        if (method === 'NEAR' || chain === 'near' || usdCents === 0 || !crossChainEnabled) {
+        if (method === 'NEAR' || chain === 'near' || usdCents === 0 || !crossChainEnabled || !accountId) {
             setQuote(null);
             return;
         }
@@ -81,11 +81,9 @@ export function PaymentMethodSelector({
         setQuoteError(null);
 
         try {
-            // Use accountId if available, otherwise a placeholder for dry quote estimation
-            const quoteRecipient = accountId || NEAR_CONFIG.marketContractId;
             // Cross-chain V1 settles into NEAR-native USDC before mint.
             const destinationAsset = 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
-            const dryQuote = await getDryQuote(method, chain, usdCents, quoteRecipient, destinationAsset);
+            const dryQuote = await getDryQuote(method, chain, usdCents, accountId, destinationAsset);
             setQuote(dryQuote);
         } catch (err) {
             setQuoteError(err instanceof Error ? err.message : p.quote_failed);

@@ -138,5 +138,6 @@ alpha. DAO/multisig governance is a target, not an implemented guarantee.
 
 - [Storage & Delivery](./storage.md)
 - [Session Keys & Upload Sessions](./session-keys.md)
+- [Wallet Integration](./wallet-integration.md)
 - [Smart Contract](./smart-contract.md)
 - [Security](../security.md)

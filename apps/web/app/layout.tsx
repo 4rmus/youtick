@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import "@near-wallet-selector/modal-ui/styles.css";
 import { WalletProvider } from "@/components/providers/WalletProvider";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { OptionalEvmProvider } from "@/components/providers/OptionalEvmProvider";

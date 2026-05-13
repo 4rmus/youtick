@@ -7,6 +7,7 @@
  * - Provide single source of truth for shared types
  */
 
+import type { ManagedNearAccountKind } from './managed-near-account';
 
 // ============================================================================
 // NEAR Protocol Types
@@ -266,15 +267,16 @@ export interface DeliveryManifestV2 {
 // ============================================================================
 
 /**
- * Wallet selector instance type
+ * Wallet instance type
  *
  * Uses method syntax (not property syntax) so TypeScript applies bivariant
- * parameter checking — required because NearWalletBase and TrialWallet use
- * narrower Action types from different packages.
+ * parameter checking — required because wallet connectors may use narrower
+ * Action types from different packages.
  * Return type is `object` to stay compatible with both FinalExecutionOutcome
  * (NearWalletBase) and RpcTransactionResponse (near-api-js Account).
  */
 export interface WalletInstance {
+    managedAccountKind?: ManagedNearAccountKind;
     signAndSendTransaction(params: {
         receiverId: string;
         actions: unknown[];
@@ -284,7 +286,7 @@ export interface WalletInstance {
             receiverId: string;
             actions: unknown[];
         }>;
-    }): Promise<object[]>;
+    }): Promise<object[] | void>;
     getAccounts(): Promise<Array<{ accountId: string }>>;
     signMessage(params: {
         message: string;
@@ -306,8 +308,8 @@ export interface WalletInstance {
 export interface WalletContextType {
     accountId: string | null;
     isTrial: boolean;
-    managedAccountKind?: 'guest' | 'trial' | 'evm' | null;
-    /** Active wallet ID: 'my-near-wallet' | 'meteor-wallet' | null */
+    managedAccountKind?: ManagedNearAccountKind | null;
+    /** Active wallet ID: ManagedNearAccountKind for managed accounts, or wallet.manifest.id from @hot-labs/near-connect for connected wallets, or null when signed out. */
     walletType: string | null;
     getWallet: () => Promise<WalletInstance>;
     signOut: () => Promise<void>;

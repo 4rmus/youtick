@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { retrieveEncryptionKey } from '@/lib/kms/client';
+import { KMSError, retrieveEncryptionKey } from '@/lib/kms/client';
 import {
     createDeliveryPlaybackSession,
     type DeliveryPlaybackMetrics,
@@ -728,7 +728,12 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             setPlayerState({ type: 'playing', videoUrl: session.objectUrl });
         } catch (err: unknown) {
             console.error('Playback failed:', err);
-            setPlayerState({ type: 'error', message: err instanceof Error ? err.message : playerCopy.load_failed });
+            const message = err instanceof KMSError && err.code === 'SIGNLESS_PLAYBACK_UNAVAILABLE'
+                ? playerCopy.signless_playback_unavailable
+                : err instanceof Error
+                    ? err.message
+                    : playerCopy.load_failed;
+            setPlayerState({ type: 'error', message });
         }
     }, [accountId, cid, cleanupPlaybackArtifacts, eventAccessMode, getWallet, playerCopy, resolvedThumbnailUrl, t.watch_page.untitled]);
 
@@ -827,9 +832,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                             <Lock className="w-16 h-16 text-zinc-600 mb-4" />
                             <h3 className="text-2xl font-bold text-white mb-2">{playerCopy.error_title}</h3>
                             <p className="text-zinc-400 max-w-sm mb-8">
-                                {hasAccess
-                                    ? playerCopy.access_sync
-                                    : error}
+                                {error}
                             </p>
                             <div className="flex flex-col gap-4 w-full max-w-xs">
                                 <Button
