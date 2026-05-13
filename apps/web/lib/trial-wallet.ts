@@ -3,7 +3,7 @@ import { Account, KeyPairSigner, type Action } from "near-api-js";
 import { BrowserKeyStore } from "./keystore-v7";
 import { NEAR_CONFIG } from "./constants";
 import { getCurrentRpcUrl } from "./rpc-failover";
-import { clearManagedNearAccount, readManagedNearAccount } from "./managed-near-account";
+import { clearManagedNearAccount, readManagedNearAccount, type ManagedNearAccountKind } from "./managed-near-account";
 
 const NETWORK_ID = NEAR_CONFIG.networkId;
 
@@ -13,12 +13,14 @@ const NETWORK_ID = NEAR_CONFIG.networkId;
  * near-api-js v7 compatible
  */
 export class TrialWallet {
+    readonly managedAccountKind?: ManagedNearAccountKind;
     private accountId: string;
     private keyStore: BrowserKeyStore;
     private account: Account | null = null;
 
-    constructor(accountId: string) {
+    constructor(accountId: string, managedAccountKind?: ManagedNearAccountKind) {
         this.accountId = accountId;
+        this.managedAccountKind = managedAccountKind;
         this.keyStore = new BrowserKeyStore();
     }
 
