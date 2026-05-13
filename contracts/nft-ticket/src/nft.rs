@@ -16,11 +16,11 @@ impl YtNft {
     pub fn new(owner_id: AccountId) -> Self {
         Self {
             owner_id,
-            owner_by_id: LookupMap::new(StorageKey::YtNftOwnerById),
+            owner_by_id: LookupMap::new(StorageKey::YT_NFT_OWNER_BY_ID),
             total_supply: 0,
-            token_metadata_by_id: LookupMap::new(StorageKey::YtNftMetadata),
-            tokens_per_owner: LookupMap::new(StorageKey::YtNftTokensPerOwner),
-            approvals_by_id: LookupMap::new(StorageKey::YtNftApprovals),
+            token_metadata_by_id: LookupMap::new(StorageKey::YT_NFT_METADATA),
+            tokens_per_owner: LookupMap::new(StorageKey::YT_NFT_TOKENS_PER_OWNER),
+            approvals_by_id: LookupMap::new(StorageKey::YT_NFT_APPROVALS),
         }
     }
 
