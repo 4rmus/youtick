@@ -7,7 +7,7 @@ import {
     readManagedNearAccount,
     writeManagedNearAccount,
 } from './managed-near-account';
-import { hasOnboardingKey } from './gift-service';
+import { ensureOnboardingKey } from './gift-service';
 
 export interface GuestIdentity {
     accountId: string;
@@ -19,6 +19,7 @@ interface GuestBootstrapResponse {
     ok: boolean;
     accountId: string;
     bootstrapped: boolean;
+    error?: string;
 }
 
 interface GuestFreeClaimResponse {
@@ -78,11 +79,13 @@ export async function persistGuestIdentity(identity: GuestIdentity): Promise<Man
 export async function bootstrapGuestAccount(
     identity: GuestIdentity,
 ): Promise<GuestBootstrapResponse> {
-    if (!hasOnboardingKey()) {
+    const onboardingKey = await ensureOnboardingKey();
+    if (!onboardingKey.ok) {
         return {
             ok: false,
             accountId: identity.accountId,
             bootstrapped: false,
+            error: onboardingKey.error,
         };
     }
 
@@ -93,6 +96,7 @@ export async function bootstrapGuestAccount(
             ok: false,
             accountId: identity.accountId,
             bootstrapped: false,
+            error: result.error,
         };
     }
 
@@ -108,13 +112,14 @@ export async function claimFreeTicketAsGuest(
     encryptedCid: string,
     identity: GuestIdentity,
 ): Promise<GuestFreeClaimResponse> {
-    if (!hasOnboardingKey()) {
+    const onboardingKey = await ensureOnboardingKey();
+    if (!onboardingKey.ok) {
         return {
             ok: false,
             accountId: identity.accountId,
             claimed: false,
             alreadyOwned: false,
-            error: "Onboarding key unavailable.",
+            error: onboardingKey.error || "Onboarding key unavailable.",
         };
     }
 

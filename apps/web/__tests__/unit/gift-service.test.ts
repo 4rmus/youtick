@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { setMockSessionStorage, clearMockSessionStorage } from '../setup';
+import { setMockSessionStorage, clearMockSessionStorage, getMockLocalStorage } from '../setup';
 
 // Import the functions to test
 import {
@@ -19,7 +19,9 @@ import {
   validateGiftLink,
   createSponsoredTrialDirect,
   claimFreeTicketDirect,
-  createSponsoredTrial
+  createSponsoredTrial,
+  claimGiftWithImplicitAccount,
+  generateImplicitTrialAccount
 } from '@/lib/gift-service';
 
 describe('Gift Service', () => {
@@ -287,6 +289,32 @@ describe('Gift Service', () => {
       expect(result.success).toBe(true);
 
       global.fetch = originalFetch;
+    });
+  });
+
+  describe('implicit guest gift claim', () => {
+    it('should generate a valid implicit account identity', () => {
+      const identity = generateImplicitTrialAccount();
+
+      expect(identity.accountId).toMatch(/^[0-9a-f]{64}$/);
+      expect(identity.publicKey).toMatch(/^ed25519:/);
+      expect(identity.secretKey).toMatch(/^ed25519:/);
+    });
+
+    it('should claim a gift into an implicit guest account and persist it locally', async () => {
+      const giftKey = generateKeyPairs(1)[0].secretKey;
+
+      const result = await claimGiftWithImplicitAccount(giftKey);
+
+      expect(result.success).toBe(true);
+      expect(result.accountId).toMatch(/^[0-9a-f]{64}$/);
+      expect(result.secretKey).toMatch(/^ed25519:/);
+
+      const managed = JSON.parse(getMockLocalStorage('managedNearAccount') || '{}');
+      expect(managed).toEqual({
+        accountId: result.accountId,
+        kind: 'guest',
+      });
     });
   });
 
