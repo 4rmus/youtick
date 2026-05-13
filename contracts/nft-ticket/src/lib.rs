@@ -177,10 +177,10 @@ impl StorageKey {
     pub const TIMELOCK_COUNTER: Self = Self(b"v2:tc");
     pub const CREATOR_PROFILES: Self = Self(b"v2:cp");
     pub const EVENT_PRICE_USDC: Self = Self(b"v2:pu6");
-    pub const YtNftOwnerById: Self = Self(b"v2:y20");
-    pub const YtNftMetadata: Self = Self(b"v2:y21");
-    pub const YtNftTokensPerOwner: Self = Self(b"v2:y22");
-    pub const YtNftApprovals: Self = Self(b"v2:y23");
+    pub const YT_NFT_OWNER_BY_ID: Self = Self(b"v2:y20");
+    pub const YT_NFT_METADATA: Self = Self(b"v2:y21");
+    pub const YT_NFT_TOKENS_PER_OWNER: Self = Self(b"v2:y22");
+    pub const YT_NFT_APPROVALS: Self = Self(b"v2:y23");
     pub const STABLECOIN_CREATOR_BALANCES: Self = Self(b"v2:scb");
     pub const STABLECOIN_COMMISSION_BALANCES: Self = Self(b"v2:scm");
     pub const SETTLED_STABLECOIN_PAYMENTS: Self = Self(b"v2:ssp");

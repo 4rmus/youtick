@@ -40,7 +40,7 @@ async fn init() -> anyhow::Result<(Contract, Account, Account)> {
 
 #[tokio::test]
 async fn test_contract_initialization() -> anyhow::Result<()> {
-    let (contract, owner, _) = init().await?;
+    let (contract, _, _) = init().await?;
 
     // Check NFT metadata
     let metadata: serde_json::Value = contract
@@ -149,7 +149,7 @@ async fn test_buy_ticket() -> anyhow::Result<()> {
         .into_result()?;
 
     // Buy ticket
-    let result = buyer
+    buyer
         .call(contract.id(), "buy_ticket")
         .args_json(json!({
             "receiver_id": buyer.id(),
@@ -209,7 +209,7 @@ async fn test_buy_ticket_excess_refund() -> anyhow::Result<()> {
     let initial_balance = buyer.view_account().await?.balance;
 
     // Buy ticket with EXCESS deposit (3 NEAR instead of ~1.01 NEAR)
-    let result = buyer
+    buyer
         .call(contract.id(), "buy_ticket")
         .args_json(json!({
             "receiver_id": buyer.id(),
@@ -315,7 +315,7 @@ async fn test_buy_free_ticket() -> anyhow::Result<()> {
         .into_result()?;
 
     // Buy free ticket (only need storage cost)
-    let result = buyer
+    buyer
         .call(contract.id(), "buy_ticket")
         .args_json(json!({
             "receiver_id": buyer.id(),
