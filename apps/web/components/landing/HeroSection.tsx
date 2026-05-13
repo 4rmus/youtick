@@ -2,7 +2,7 @@ import { memo } from 'react';
 import Image from 'next/image';
 import Link from '@/components/Web4Link';
 import { Button } from '@/components/ui/button';
-import { ArrowRight, Play } from 'lucide-react';
+import { ArrowRight, Play, UserRound } from 'lucide-react';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { useWallet } from '@/components/providers/WalletProvider';
 
@@ -71,6 +71,16 @@ export const HeroSection = memo(() => {
                 className="w-full rounded-full border-white/25 bg-white/5 px-8 py-7 text-base font-bold text-white hover:border-white/50 hover:bg-white/10"
               >
                 {h.cta_secondary}
+              </Button>
+            </Link>
+            <Link href="/trial" className="w-full sm:w-auto">
+              <Button
+                size="lg"
+                variant="outline"
+                className="w-full rounded-full border-near-green/40 bg-near-green/10 px-8 py-7 text-base font-bold text-near-green hover:border-near-green/60 hover:bg-near-green/15"
+              >
+                <UserRound className="mr-2 h-5 w-5" />
+                {h.cta_guest || t.landing.nav_extra?.try_free || 'Guest access'}
               </Button>
             </Link>
           </div>
