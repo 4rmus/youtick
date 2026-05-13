@@ -49,7 +49,7 @@ function cacheKey(accountId: string, scope: SessionGrantScope, resourceId?: stri
 function getScopeTtlMs(scope: SessionGrantScope): number {
     switch (scope) {
         case 'Play':
-            return 5 * 60 * 1000;
+            return 10 * 60 * 1000;
         case 'Publish':
             return 10 * 60 * 1000;
         case 'ClaimGift':
