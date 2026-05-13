@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Branding } from './Branding';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { Sparkles, Menu, X } from 'lucide-react';
+import { Menu, X } from 'lucide-react';
 
 interface NavigationProps {
   onDiscoverClick?: () => void;
@@ -35,6 +35,7 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
     { href: '#audience', label: t.landing.nav?.audience || 'Benefits' },
     { href: '#how-it-works', label: t.landing.nav?.how_it_works || 'How it works' },
     { href: '#roi-calculator', label: t.landing.nav_extra?.calculator || 'Fee model' },
+    { href: '/trial', label: t.landing.nav_extra?.try_free || 'Guest access' },
   ];
 
   // Guest / Marketing View
@@ -57,10 +58,9 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
               <Link href="/trial">
                 <Button
                   variant="ghost"
-                  className="text-zinc-300 hover:text-white"
+                  className="text-zinc-400 hover:text-white"
                 >
-                  <Sparkles className="w-4 h-4 mr-1" />
-                  {t.landing.nav_extra?.try_free || 'Guest account'}
+                  {t.landing.nav_extra?.try_free || 'Guest access'}
                 </Button>
               </Link>
               <Button
@@ -110,13 +110,11 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
           <Link href="/trial">
             <Button
               variant="outline"
-              className="border-white/20 text-zinc-200 hover:bg-white/10 hover:border-white/40 font-semibold px-4"
+              className="border-white/20 bg-white/5 px-5 font-semibold text-white hover:border-white/40 hover:bg-white/10"
             >
-              <Sparkles className="w-4 h-4 mr-1" />
-              {t.landing.nav_extra?.try_free || 'Guest account'}
+              {t.landing.nav_extra?.try_free || 'Guest access'}
             </Button>
           </Link>
-
           <Button
             onClick={handleGetStarted}
             className="bg-white hover:bg-zinc-200 text-black font-semibold px-6"
@@ -154,15 +152,15 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
             <div className="h-px bg-white/10 my-2" />
 
             {/* CTAs */}
-            <Link href="/trial" onClick={closeMenu}>
-              <Button
-                variant="outline"
-                className="w-full border-white/20 text-zinc-200 hover:bg-white/10 hover:border-white/40 font-semibold"
-              >
-                <Sparkles className="w-4 h-4 mr-2" />
-                {t.landing.nav_extra?.try_free || 'Guest account'}
-              </Button>
-            </Link>
+            <Button
+              variant="outline"
+              asChild
+              className="w-full border-white/20 bg-white/5 text-white hover:bg-white/10"
+            >
+              <Link href="/trial" onClick={closeMenu}>
+                {t.landing.nav_extra?.try_free || 'Guest access'}
+              </Link>
+            </Button>
 
             <Button
               onClick={() => {
