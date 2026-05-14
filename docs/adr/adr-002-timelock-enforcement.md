@@ -1,11 +1,14 @@
 # ADR-002: Timelock Admin Posture for V1 Public Alpha
 
 ## Status
-Superseded for V1 public alpha
+Accepted (alpha-only). NFT market admin is owner-only; registry timelock is
+live; access timelock is **deferred** for the current alpha (live
+`access.youtick.near` build does not export `propose_action` /
+`get_timelock` — see launch plan §SB-3).
 
 V1 deliberately ships as an owner-controlled public alpha to reduce launch
-complexity. Timelock governance remains a later hardening path, not a V1
-requirement.
+complexity. Full timelock-managed access governance is a later hardening
+path, not a V1 requirement.
 
 ## Context
 `nft-ticket` has a 24-hour timelock (`TIMELOCK_DELAY_NS`) and a

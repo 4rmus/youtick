@@ -2,8 +2,12 @@
 
 ## Status
 
-Accepted (alpha-only). Owner authority for emergency takedown is **transitional**
-and will be transferred to a multisig/DAO by **end of Q4 2026 (December 2026)**.
+Accepted (alpha-only). Owner authority for emergency takedown is
+**transitional**. Multisig/DAO handover is a stated direction; the locked
+launch plan (`docs/launch-plan-2026-05.md`, decision #4) defers DAO design
+to **Q3 2026** with scope discussion through Q3-Q4. The end-of-Q4-2026
+date previously written here is treated as a target, not a hard contract
+commitment, until the governance topology is selected.
 
 ## Context
 
@@ -71,20 +75,23 @@ takedown is issued the owner MUST:
    encrypted bytes.
 4. Publish the takedown in the monthly transparency report (see §5).
 
-### 4. DAO handover by end of Q4 2026
+### 4. DAO handover (target, not hard deadline)
 
-The owner-key authority is acceptable only as a temporary alpha measure. By
-end of Q4 2026 the contract `owner_id` will transfer to either a multisig
-(short-term) or a community DAO (target). Concretely:
+The owner-key authority is acceptable only as a temporary alpha measure.
+The locked launch plan defers DAO design to **Q3 2026** with topology
+selection (multisig vs. DAO; signer set; quorum) ahead of any
+`propose_owner` to a new governance address. End-of-Q4-2026 is the
+indicative target window; the actual handover date is conditional on
+topology selection and traction.
 
-- **Q3 2026:** select governance topology (multisig vs. DAO; signer set; quorum).
-- **Q4 2026:** propose `propose_owner` to the new governance address; accept
+Concretely:
+
+- **Q3 2026:** select governance topology.
+- **Q3-Q4 2026:** scope discussion + transparency page (`docs/public/transparency.md`).
+- **Post-decision:** `propose_owner` to the new governance address; accept
   ownership from the new address; update runbooks and ADRs.
 - **Post-handover:** `takedown_event` remains technically owner-only, but
-  "owner" then means the multisig/DAO. Planned moderation can then move to the
-  governance process chosen for the owner account.
-
-This is recorded as ADR-009 to make the deadline a public commitment.
+  "owner" then means the multisig/DAO.
 
 ### 5. Transparency reporting
 

@@ -1,122 +1,132 @@
 # YouTick Acceptable Use Policy
 
-> Sürüm: 0.1 (taslak — alpha)
-> Yürürlük: Public alpha başlangıcı (2026-04-26)
-> Geçerli yetki modeli: Geçici owner-only takedown — 2026 Q4 sonunda multisig/DAO'ya devir.
-> Detay teknik karar: [`docs/adr/adr-009-emergency-takedown-and-dao-handover.md`](../adr/adr-009-emergency-takedown-and-dao-handover.md)
+> Version: 0.2 (draft — alpha)
+> Effective: from public alpha launch (locked plan: `docs/launch-plan-2026-05.md`, Day 23 soft-launch).
+> Current authority model: temporary owner-only takedown — governance topology is selected in Q3 2026, after which authority is handed over to a multisig/DAO (exact date depends on the topology decision).
+> Technical reference: [`docs/adr/adr-009-emergency-takedown-and-dao-handover.md`](../adr/adr-009-emergency-takedown-and-dao-handover.md)
+> Contact: abuse reports to **abuse@youtick.net** (fallback: GitHub Security Advisory).
 
-Bu doküman YouTick platformunda hangi içeriğin kabul edilebilir olmadığını,
-ihlallere nasıl müdahale edildiğini ve şeffaflık taahhütlerini açıklar. Taslak
-niteliğindedir; nihai metin yayın öncesi hukuki gözden geçirmeden geçirilecektir.
-
----
-
-## 1. Kabul edilemez içerik
-
-Aşağıdaki içerik kategorileri YouTick üzerinde yayınlanamaz:
-
-1. **Çocuk istismarı materyali (CSAM)** — istisnasız.
-2. **Rıza dışı cinsel içerik** — kurban veya temsilcisinin kaldırma talebi anında uygulanır.
-3. **Gerçek kişinin onayı olmadan üretilmiş cinsel deepfake.**
-4. **Yakın zarar tehdidi içeren materyal** — terör propagandası, intihar/öz-zarar teşviki, doğrudan şiddete kışkırtma.
-5. **Yasadışı uyuşturucu, silah veya insan ticareti satışı.**
-6. **Telif ihlali** — geçerli bir takedown talebi alındığında.
-7. **Doğrudan kullanıcıyı zarara uğratan kötü amaçlı yazılım veya kimlik avı materyali.**
-
-YouTick yetişkin içeriğini doğrudan yasaklamaz; ancak yetişkin içerik
-**rıza-doğrulanabilir**, **yaş-gizli olmayan** ve geçerli yargı yetkisinde
-yasal olmalıdır.
+This document describes what content is not acceptable on the YouTick
+platform, how violations are handled, and the platform's transparency
+commitments. It is a draft; the final text will go through legal review
+before launch.
 
 ---
 
-## 2. Müdahale mekanizması
+## 1. Unacceptable Content
 
-### 2.1 İki seviyeli takedown
+The following categories may not be published on YouTick:
 
-Platform iki ayrı kontrat fonksiyonu kullanır:
+1. **Child sexual abuse material (CSAM)** — no exceptions.
+2. **Non-consensual sexual content** — applied immediately on request
+   from the victim or their representative.
+3. **Sexual deepfakes produced without the depicted person's consent.**
+4. **Material threatening imminent harm** — terrorist propaganda,
+   suicide / self-harm encouragement, direct incitement to violence.
+5. **Illegal drug, weapon or human-trafficking sales.**
+6. **Copyright infringement** — when a valid takedown request is received.
+7. **Malware or phishing material that directly harms the user.**
 
-| Yol | Fonksiyon | Gecikme | Kullanım |
+YouTick does not ban adult content outright; however, adult content must
+be **consent-verifiable**, **not age-ambiguous**, and legal in the
+applicable jurisdiction.
+
+---
+
+## 2. Enforcement Mechanism
+
+### 2.1 Two-track takedown
+
+The platform uses two distinct contract methods:
+
+| Track | Function | Latency | Use case |
 |---|---|---|---|
-| Acil | `takedown_event` | Anında | §1.1, §1.2, §1.3, §1.4 — yasadışı içerik |
-| Planlı | `ban_event` | İncelenmiş owner işlemi | §1.6 telif, ToS ihlali |
+| Emergency | `takedown_event` | Immediate | §1.1, §1.2, §1.3, §1.4 — illegal content |
+| Planned | `ban_event` | Reviewed owner action | §1.6 copyright, ToS violations |
 
-Her iki yol da kontrat sahibi (owner) tarafından çağrılır. Acil yol
-zincirde (`event_takedown` NEP-297 logu) izlenebilir, suistimal kamuya açıktır.
+Both are called by the contract owner. The emergency track is observable
+on-chain through the `event_takedown` NEP-297 log, so abuse is publicly
+detectable.
 
-### 2.2 Takedown sonrası operasyonel yükümlülükler
+### 2.2 Operational obligations after takedown
 
-Kontrat takedown'u yapıldıktan sonra operasyon olarak şunlar yapılır:
+Once the contract takedown is executed, operations:
 
-1. Aktif tüm kalıcı depolama sağlayıcılarındaki şifrelenmiş CID pin'i kaldırılır.
-2. Yasadışı içerik durumunda 5 KMS operatörü ilgili anahtar share'lerini
-   KV depodan siler.
-3. Varsa sıcak medya teslim cache'i temizlenir veya denylist'e alınır.
-4. İçerik aylık şeffaflık raporuna eklenir (anonim CID, sebep, tarih).
+1. Remove the encrypted CID pin from every active persistent storage
+   provider.
+2. For illegal content, the 5 KMS operators delete the corresponding
+   key shares from their KV stores.
+3. Purge or denylist any hot media-delivery cache that may still serve
+   the content.
+4. Add the entry to the monthly transparency report (anonymized CID,
+   reason, date).
 
-### 2.3 Şikayet kanalı
+### 2.3 Report channel
 
-İhlal bildirimi için: **abuse@youtick.example** (alpha sürecinde nihai adres
-güncellenecektir). Bildirim şu bilgileri içermelidir:
+Report violations to **abuse@youtick.net**. A report should include:
 
-- İçerik linki (event ID veya URL)
-- İhlal kategorisi (§1)
-- Şikayet edenin iletişimi (CSAM ihbarları için anonim kabul edilir)
+- Content link (event ID or URL)
+- Violation category (§1)
+- Reporter contact (anonymous reports are accepted for CSAM)
 
-CSAM bildirimleri ayrıca yasal olarak ilgili yetkili merciye (örn. NCMEC
-muadili) iletilir.
-
----
-
-## 3. Şeffaflık taahhüdü
-
-YouTick aylık olarak şeffaflık raporu yayınlar. Rapor şunları içerir:
-
-- O ay içinde yapılan takedown sayısı (kategoriye göre).
-- Her takedown için: `encrypted_cid` (kısaltılmış), kategori, tarih.
-- Reddedilen takedown talebi sayısı (ve neden).
-
-Kaynak veri zincirde `event_takedown` NEP-297 log akışıdır. Aylık rapor bu
-akışın insan tarafından okunabilir özetidir.
+CSAM reports are additionally forwarded to the relevant legal authority
+(e.g., NCMEC or equivalent).
 
 ---
 
-## 4. Yetki devri
+## 3. Transparency Commitment
 
-YouTick alpha sürecinde takedown yetkisi tek bir owner anahtarındadır. Bu
-geçici bir durumdur. **2026 Q4 sonu (Aralık 2026)** itibariyle yetki bir
-multisig veya topluluk DAO'suna devredilir. Devir sonrasında:
+YouTick publishes a monthly transparency report. The report includes:
 
-- Takedown kararı çoğunluk onayı gerektirir.
-- Acil yol (CSAM gibi durumlar için) hızlı bir quorum mekanizmasıyla korunur.
-- ADR-009 güncellenir.
+- Number of takedowns that month, by category.
+- For each takedown: shortened `encrypted_cid`, category, date.
+- Number of takedown requests that were rejected (and why).
 
----
-
-## 5. Yapımcı (creator) yükümlülükleri
-
-Bir creator yüklediği içeriğin:
-
-- Kendisine ait olduğunu veya gerekli izinleri aldığını,
-- §1'de listelenen kategorilerden hiçbirine girmediğini,
-- Yargı bölgesinin yasalarına uygun olduğunu
-
-beyan eder. İhlal durumunda ilgili etkinlik kaldırılır; tekrarlayan ihlallerde
-creator hesabı ban'lanabilir.
+The source of truth is the on-chain `event_takedown` NEP-297 log
+stream. The monthly report is a human-readable summary of that stream.
 
 ---
 
-## 6. Sınırlamalar
+## 4. Authority Handover
 
-- Şifrelenmiş bayt'lar IPFS'te dağıtık olduğundan, takedown sonrası dahi pin
-  yok edilene kadar üçüncü taraf gateway'ler içeriğe erişebilir. Platform pin
-  kaldırıldığını taahhüt eder; küresel IPFS unpinning'i garanti edemez.
-- Kontrat takedown'u entitlement'ı kaldırır; bilet sahiplerine refund kuralları
-  ayrı bir politika dokümanında ele alınacaktır.
+During alpha, takedown authority lives on a single owner key. This is
+temporary. After governance topology is selected in Q3 2026, the
+authority is handed over to a multisig or community DAO; the exact
+date is conditional on topology selection and traction. After handover:
+
+- A takedown requires majority approval.
+- The emergency path (for cases such as CSAM) is preserved through a
+  fast quorum mechanism.
+- ADR-009 is updated.
 
 ---
 
-## 7. Değişiklikler
+## 5. Creator Obligations
 
-Bu politika taslak niteliğindedir. Yayın öncesi hukuki gözden geçirme + EN
-sürümü eklenecektir. Versiyon değişikliği bu dosyanın üst kısmında ve repo
-commit geçmişinde takip edilebilir.
+A creator declares that the content they upload:
+
+- belongs to them or has all required permissions,
+- does not fall into any of the categories listed in §1,
+- is legal in the applicable jurisdiction.
+
+In case of a violation, the event is removed; repeated violations may
+result in the creator account being banned.
+
+---
+
+## 6. Limitations
+
+- Because encrypted bytes are distributed on IPFS, third-party gateways
+  may still serve them after takedown until pins drop. The platform
+  commits to removing its own pins; it cannot guarantee global IPFS
+  unpinning.
+- A contract takedown removes the entitlement; refund rules for ticket
+  holders will be addressed in a separate policy document.
+
+---
+
+## 7. Changes
+
+This policy is a draft. Legal review and a final EN release will be
+added before the public alpha launch. Version changes are tracked at
+the top of this file and in the repository commit history.

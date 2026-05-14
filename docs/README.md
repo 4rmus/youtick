@@ -7,24 +7,26 @@
 YouTick's source code supports client-side media encryption, a market/access/registry
 contract split, and a multi-operator playback path. It is public alpha software,
 not production-ready and not fully decentralized today. Live mainnet can lag
-behind source code, so release decisions should use the current readiness report first.
+behind source code, so release decisions should use the locked launch plan
+([`launch-plan-2026-05.md`](launch-plan-2026-05.md)) first.
 
-**Mainnet target:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`
-**Target playback path:** Browser AES-CTR + registry-enforced operator share reconstruction
-**Current release posture:** public alpha, not production-ready
+**Mainnet:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`
+**Playback path:** Browser AES-CTR + registry-enforced operator share reconstruction (3-of-5)
+**Release posture:** public alpha, not production-ready
 
 ## Reading Labels
 
-- `LIVE`: bugun kodda aktif olan veya operasyonu dogrudan etkileyen yuzey
-- `TARGET`: hedef mimari veya gelecekte tamamlanacak tasarim
-- `LEGACY`: uyumluluk icin duran eski yol
-- `EXPERIMENTAL`: env veya operator karariyla acilan, public-alpha deneme yuzeyi
+- `LIVE`: surface currently active in code or directly affecting operations
+- `TARGET`: target architecture or design to be completed in the future
+- `LEGACY`: older path kept for compatibility
+- `EXPERIMENTAL`: surface gated by an env flag or operator decision; public-alpha trial
 ## Current Source of Truth
 
-- [Mainnet and Open Source Readiness, 2026-04-26](mainnet-open-source-readiness-2026-04-26.md)
+- [Launch Plan 2026-05](launch-plan-2026-05.md) — locked single plan (alpha, pre-seed)
 - [Known Issues & Operational Risks](operations/known-issues.md)
 - [Mainnet Deploy Runbook](operations/mainnet-deploy-runbook.md)
-- [Dependency Triage, 2026-05-11](operations/dependency-triage-2026-05-11.md)
+- [Release Runbook](release-runbook.md)
+- [Public Alpha User Guide](public/alpha-user-guide.md)
 
 ---
 
@@ -45,9 +47,9 @@ behind source code, so release decisions should use the current readiness report
 
 ## Practical topics
 
-> Eski `docs/guides/` sayfalari kaldirildi; operasyonel konular artık
-> `docs/operations/` altında tutulur. Davranis icin `apps/web/lib/*` ve
-> kontrat kaynaklari gecerlidir.
+> The old `docs/guides/` pages have been removed; operational topics now
+> live under `docs/operations/`. For behavior, refer to `apps/web/lib/*`
+> and the contract sources.
 
 - [Storage & Delivery](architecture/storage.md) `LIVE`
 - [Contract Methods](api/contract-methods.md) `LIVE`
@@ -60,7 +62,7 @@ behind source code, so release decisions should use the current readiness report
 - [Security](security.md)
 - [Testing](testing.md)
 - [Contributing](contributing.md)
-- [Mainnet and Open Source Readiness](mainnet-open-source-readiness-2026-04-26.md)
+- [Launch Plan 2026-05](launch-plan-2026-05.md) — locked plan
 - [Overview](overview.md)
 
 ---
@@ -77,4 +79,4 @@ For a new engineer, the shortest path is:
 
 ---
 
-*Last Updated: May 11, 2026*
+*Last Updated: May 14, 2026*

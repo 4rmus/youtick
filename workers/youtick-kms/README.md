@@ -1,8 +1,8 @@
 # YouTick KMS Worker
 
-KMS worker, tarayicida uretilen AES anahtar paylarini saklar ve sadece yetkili
-izleyici/yayinci akislari icin geri verir. Public alpha'da operatorler
-Cloudflare Workers uzerinde calisir ve paylar Cloudflare KV'de tutulur.
+The KMS Worker stores AES key shares generated in the browser and
+returns them only for authorized viewer/publisher flows. In public alpha,
+operators run on Cloudflare Workers and shares are held in Cloudflare KV.
 
 ## Local dev
 
@@ -14,19 +14,19 @@ npm run check
 npx wrangler dev --env testnet
 ```
 
-`wrangler dev` icin testnet veya local registry kaydi gerekir; worker aktif
-operator olarak registry'de yoksa production-readiness kontrolu gecmez.
+`wrangler dev` requires a testnet or local registry record. If the
+Worker is not registered as an active operator in the registry, the
+production-readiness check will not pass.
 
 ## KV namespaces
 
-Her operator kendi izole KV namespace'lerini kullanmalidir:
+Each operator must use isolated KV namespaces:
 
 - `VIDEO_KEYS`
 - `RATE_LIMIT`
 - `ACCESS_CACHE`
 
-Operatorler arasinda KV namespace paylasmak threshold modelini zayiflatir. Yeni
-namespace olusturmak icin:
+Sharing namespaces across operators weakens the threshold model.
 
 ```bash
 npx wrangler kv:namespace create VIDEO_KEYS --env operator_a
@@ -34,24 +34,29 @@ npx wrangler kv:namespace create RATE_LIMIT --env operator_a
 npx wrangler kv:namespace create ACCESS_CACHE --env operator_a
 ```
 
-Sonra cikan ID'leri `wrangler.toml` icindeki ilgili operator ortamına yaz.
+Write the resulting IDs into the corresponding operator environment in
+`wrangler.toml`.
 
 ## Secrets
 
-Production sirlarini `wrangler.toml` icine koyma.
+Never place production secrets in `wrangler.toml`.
 
 ```bash
 npx wrangler secret put OPERATOR_SHARE_SECRET --env operator_a
 npx wrangler secret put REGISTRY_OPERATOR_ACCOUNT_ID --env operator_a
+# Optional, used during share re-encryption rollout:
+npx wrangler secret put OPERATOR_SHARE_SECRET_PREVIOUS --env operator_a
 ```
 
-`OPERATOR_SHARE_SECRET` en az 32 karakter olmali ve her operator icin farkli
-olmalidir. Rotation icin [KMS key rotation](../../docs/kms-key-rotation.md)
-prosedurunu kullan.
+`OPERATOR_SHARE_SECRET` must be at least 32 characters and unique per
+operator. During rotation, the Worker can continue to read records
+written with the old secret via `OPERATOR_SHARE_SECRET_PREVIOUS`; new
+writes use the new secret. Full procedure:
+[KMS key rotation](../../docs/kms-key-rotation.md).
 
 ## Deploy
 
-Operatorler tek tek deploy edilir:
+Operators are deployed one at a time:
 
 ```bash
 npx wrangler deploy --env operator_a
@@ -61,7 +66,7 @@ npx wrangler deploy --env operator_d
 npx wrangler deploy --env operator_e
 ```
 
-Her deploy sonrasi registry kaydini ve health sonucunu kontrol et.
+After each deploy, check the registry record and the health result.
 
 ## Health
 
@@ -69,5 +74,6 @@ Her deploy sonrasi registry kaydini ve health sonucunu kontrol et.
 curl https://youtick-kms-a.<subdomain>.workers.dev/health
 ```
 
-Beklenen sonuc `200` ve `ok: true` durumudur. Mainnet'te secret, KV, RPC,
-registry operator identity ve contract baglantilari eksikse health hazir sayilmaz.
+Expected: HTTP `200` and `ok: true`. On mainnet, if any of the secret,
+KV, RPC, registry operator identity or contract bindings are missing,
+the Worker is not considered ready.

@@ -1,9 +1,9 @@
 # Operator Configuration
 
-## Security Notice — Faz 1 (2026-04-23)
+## Security Notice
 
-`mainnet-kms-operators.json` now contains **dummy/example endpoints only**.
-The real production endpoints have been removed from the repository.
+`mainnet-kms-operators.json` contains **dummy/example endpoints only**.
+The real production endpoints are not stored in the repository.
 
 ## Required Action
 

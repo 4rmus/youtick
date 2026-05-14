@@ -18,7 +18,9 @@ Today, YouTick runs through this storage and playback path:
 This gives three benefits:
 
 - IPFS only sees encrypted media
-- no single operator needs the full playback key
+- playback uses a **3-of-5 share threshold**: no single operator can
+  reconstruct the playback key, and one unhealthy operator does not stop
+  playback
 - AES-CTR still supports fast seek and segmented playback
 
 ---
@@ -107,7 +109,8 @@ The latest implementation also stops waiting once the threshold is reached.
 Media delivery still does not depend on a single IPFS gateway:
 
 - new writes use Lighthouse through the Storage API Worker
-- Crust remains a legacy/read compatibility and opt-in fallback path
+- Crust is kept as a write/compat surface only; the read path moved to
+  `apps/web/lib/ipfs/` in the R1 refactor
 - public IPFS gateways remain available as fallback
 - range requests are used when supported
 - full-download fallback still exists for degraded cases
@@ -169,9 +172,10 @@ Key material is handled off-chain by the operator layer, but entitlement remains
 - `apps/web/lib/kms/encryption.ts`
 - `apps/web/lib/kms/shares.ts`
 - `apps/web/lib/kms/client.ts`
-- `apps/web/lib/video-delivery.ts`
-- `apps/web/lib/crust/*`
-- `apps/web/lib/storage/provider.ts`
+- `apps/web/lib/video-delivery*.ts`
+- `apps/web/lib/ipfs/*` — IPFS read-path (gateway list + media-ref helpers; was `lib/crust/gateway.ts` before R1)
+- `apps/web/lib/crust/*` — Crust write/compat surface only
+- `apps/web/lib/storage/storage-api.ts`, `storage/provider.ts`
 - `workers/storage-api/src/index.ts`
 - `workers/media-delivery/src/index.ts`
 - `workers/youtick-kms/src/index.ts`

@@ -31,29 +31,29 @@ git --version
 
 ### NEAR Wallet
 
-You need a NEAR wallet to interact with the platform:
+The web app uses **HOT Connect** (`@hot-labs/near-connect`) which mediates the
+wallet picker. Any HOT-supported wallet works:
 
 - **MyNearWallet**: [app.mynearwallet.com](https://app.mynearwallet.com)
 - **HOT Wallet**: [hot.tg](https://hot.tg)
 - **Meteor Wallet**: [wallet.meteorwallet.app](https://wallet.meteorwallet.app)
 
-For testnet development, use the NEAR testnet faucet:
-- [near.org/faucet](https://near.org/faucet)
+For testnet, use the NEAR testnet faucet: [near.org/faucet](https://near.org/faucet).
 
 ---
 
 ## Optional (Contract Development)
 
-### Rust (1.75+)
+### Rust (current stable)
 
 ```bash
-# Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Verify
-rustc --version   # Should be 1.75+
+rustc --version
 cargo --version
 ```
+
+The contracts use `near-sdk = "=5.5.0"` and build through `cargo near build`,
+which requires a current stable Rust toolchain.
 
 ### WASM Target
 
@@ -61,13 +61,21 @@ cargo --version
 rustup target add wasm32-unknown-unknown
 ```
 
-### NEAR CLI
+### `cargo near`
 
 ```bash
-npm install -g near-cli
+cargo install --locked cargo-near
+```
 
-# Or use npx without installing
-npx near-cli view youtick.near nft_metadata '{}'
+### NEAR CLI
+
+Use `near-cli-rs` (the modern CLI). The legacy JS `near-cli` is deprecated
+and not used by any of the operational scripts in `scripts/` (those drive
+RPC directly via `near-api-js`).
+
+```bash
+cargo install near-cli-rs
+near contract call-function as-read-only youtick.near nft_metadata json-args '{}' network-config mainnet now
 ```
 
 ---
@@ -88,8 +96,8 @@ npx near-cli view youtick.near nft_metadata '{}'
 
 | Network | Contract ID | RPC Endpoint |
 |---------|-------------|-------------|
-| **Mainnet** | `youtick.near` | Browser: `/api/near-rpc`; ops scripts: set `NEAR_RPC_URL` when needed |
-| **Testnet** | `dev-1773607954211-252231.v2-0.utick.testnet` | Browser: `/api/near-rpc`; ops scripts: set `NEAR_RPC_URL` when needed |
+| **Mainnet** | `youtick.near` (R2 hash `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`) | Browser: `/api/near-rpc`; ops scripts: set `NEAR_RPC_URL` when needed |
+| **Testnet** | Deploy your own market/access/registry set; the previous shared dev account is no longer canonical (most recent R2 fresh deploy: `r2-1778616242663.v1-0.utick.testnet`) | Browser: `/api/near-rpc`; ops scripts: set `NEAR_RPC_URL` when needed |
 
 The live browser app uses the same-origin Web4 proxy for RPC so wallet and
 read-only contract calls do not depend on public RPC CORS behavior.

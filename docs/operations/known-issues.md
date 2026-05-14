@@ -196,14 +196,17 @@ keep Lighthouse API keys behind the dedicated Storage API Worker.
 
 ### 6. Pause Bypass in Prepaid Functions
 
-**Status:** Resolved in source — 2026-04-23  
-**Location:** `contracts/nft-ticket/src/lib.rs`
+**Status:** Resolved in source AND deployed on mainnet (R2 module split,
+2026-05-12, code hash `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`)
+**Location:** `contracts/nft-ticket/src/market.rs`
 
-All state-mutating public functions now call `self.assert_not_paused()`,
-including `create_event_prepaid` (line 2326) and `nft_mint_prepaid` (line 3087).
+All state-mutating public functions call `self.assert_not_paused()`,
+including `create_event_prepaid` (`market.rs:270`) and
+`nft_mint_prepaid` (`market.rs:1033`). Line numbers reflect the
+post-split module layout.
 
-**Resolution:** Patch applied to source. Pending mainnet redeploy alongside
-other Faz 1/Faz 2 hardened changes.
+**Resolution:** Patch in source + deployed; verified by R2 mainnet view
+smoke.
 
 ### 7. Access Cache TTL and Revocation Responsiveness
 
@@ -262,16 +265,11 @@ within the window.
   window).
 - Duplicate nonces are rejected with `401 Unauthorized`.
 
-**Action required:** KMS workers were redeployed on 2026-04-26. A matching Web4
-build was uploaded to `ipfs://bafybeiepp3qv635pidmh7yvckwa22ogv6oc22f6nziaj55mu2n7rejpzee`
-and URL update proposal `0` was created on `youtick.near`. Execute that proposal
-after the 24-hour delay before relying on the new nonce path end to end.
-
-> **Deploy Runbook (Faz 0):**
-> ```bash
-> near call youtick.near execute_action '{"id":0}' \
->   --accountId youtick.near --gas 30000000000000
-> ```
+**Action required:** KMS workers were redeployed on 2026-04-26 with the
+nonce-based replay protection. The 2026-04-26 Web4 update proposal `0`
+chain is superseded by the 2026-05-12 onboarding key rotation cutover and
+the R2 mainnet redeploy; current Web4 deployment lives at the
+`youtick-static` Cloudflare Pages target (see `workers/web4-proxy/wrangler.toml`).
 
 ### 10. Shamir SSS Zero Coefficient Weakness
 
@@ -287,8 +285,10 @@ security (Cure53 PVY-01-002 class issue).
   discards `0` values.
 - Polynomial degree is now guaranteed to be `requiredShares - 1`.
 
-**Action required:** A matching Web4 build was uploaded on 2026-04-26 and URL
-update proposal `0` is pending timelock execution.
+**Action required:** A matching Web4 build is shipped through the
+current Cloudflare Pages target (see `workers/web4-proxy/wrangler.toml`).
+Proposal `0` is no longer the active path; it pre-dates the 2026-05
+onboarding key rotation and R2 redeploy.
 
 ### 11. KMS Error Message Information Leakage
 

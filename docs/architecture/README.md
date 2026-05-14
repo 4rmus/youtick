@@ -84,22 +84,32 @@ flowchart LR
 
 - `apps/web/components/UploadForm.tsx`
 - `apps/web/components/IpfsPlayer.tsx`
-- `apps/web/lib/access-grants.ts`
+- `apps/web/components/TrialOnboarding.tsx`, `TrialUpgradeDialog.tsx`
+- `apps/web/components/providers/WalletProvider.tsx` (HOT Connect)
+- `apps/web/lib/access-grants.ts` — 10-min Play / 5-min Publish session grants
+- `apps/web/lib/signless-access-key.ts` — limited-allowance ed25519 key scoped to `issue_session_grant`
+- `apps/web/lib/managed-near-account.ts`, `lib/guest-account.ts`, `lib/trial-wallet.ts`
 - `apps/web/lib/registry.ts`
-- `apps/web/lib/kms/*`
-- `apps/web/lib/crust/*`
-- `apps/web/lib/storage/*`
+- `apps/web/lib/kms/*` (`client.ts`, `encryption.ts`, `shares.ts`)
+- `apps/web/lib/ipfs/*` — multi-gateway read failover (was `lib/crust/gateway.ts` before R1)
+- `apps/web/lib/crust/*` — write/compat surface only
+- `apps/web/lib/storage/storage-api.ts`, `storage/provider.ts` — Lighthouse client
 - `apps/web/lib/upload-session-manager.ts`
 
 ### Workers
 
 - `workers/youtick-kms/src/index.ts`
-- `workers/storage-api/src/index.ts`
+- `workers/storage-api/src/index.ts` — NEP-413 upload challenge + guarded Lighthouse upload
 - `workers/media-delivery/src/index.ts`
+- `workers/web4-proxy/` — Web4 + same-origin `/api/*` proxy
 
 ### Contracts
 
-- `contracts/nft-ticket/src/lib.rs`
+Mainnet code hash (post-R2 module split): `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`.
+
+- `contracts/nft-ticket/src/` — split across `lib.rs`, `nft.rs`, `market.rs`,
+  `gift.rs`, `onboarding.rs`, `treasury.rs`, `views.rs`, `web4.rs`,
+  `moderation.rs`, `timelock.rs`, `events.rs`, `migrate.rs`, `tests.rs`
 - `contracts/access-control/src/lib.rs`
 - `contracts/operator-registry/src/lib.rs`
 

@@ -15,16 +15,16 @@ YouTick is an open-source VOD platform where creators upload encrypted videos to
 
 ## Core Features
 
-| Ozellik | Aciklama |
-|---------|----------|
-| NFT-Gated Access | Ticket sahipligi zincirde tutulur |
-| 98% Creator Payout | Gelirin buyuk kismi creator'a gider |
-| Browser Encryption | Medya tarayicida sifrelenir |
-| Threshold Key Custody | Anahtarlar parcalanarak (SSS) birden fazla KMS operatorunde tutulur |
-| Lighthouse/IPFS Delivery | Sifreli medya Storage API ve birden fazla gateway ile okunur |
-| Gift Links | Paylasilabilir tek kullanimlik linkler |
-| Trial Accounts | Onboarding key ile dusuk surtunmeli baslangic |
-| Cross-Chain Checkout | Deneysel 1Click + MetaMask yolu; sadece `NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true` iken acilir |
+| Feature | Description |
+|---------|-------------|
+| NFT-Gated Access | Ticket ownership is recorded on-chain |
+| 98% Creator Payout | The bulk of revenue goes to the creator |
+| Browser Encryption | Media is encrypted in the browser |
+| Threshold Key Custody | Keys are split (SSS) across multiple KMS operators |
+| Lighthouse/IPFS Delivery | Encrypted media is read via the Storage API and multiple gateways |
+| Gift Links | Shareable single-use claim links |
+| Trial Accounts | Low-friction start through an onboarding key |
+| Cross-Chain Checkout | Experimental 1Click + MetaMask path; opens only when `NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true` |
 
 ---
 
@@ -38,15 +38,18 @@ Browser App
   -> reads/writes ownership on NEAR
 ```
 
-Temel bilesenler:
+Core components:
 
-- `apps/web`
-- `workers/youtick-kms`
-- `workers/storage-api`
-- `workers/media-delivery`
-- `contracts/nft-ticket`
+- `apps/web` — Next.js 16 frontend (HOT Connect, signless access keys)
+- `workers/youtick-kms` — 5 KMS operator workers
+- `workers/storage-api` — Lighthouse + NEP-413 upload challenge
+- `workers/media-delivery` — encrypted IPFS manifest/segment routing
+- `workers/web4-proxy` — Web4 + same-origin `/api/*` proxy
+- `contracts/nft-ticket` — market + ticket + gift + trial (R2 split)
+- `contracts/access-control` — session grant + scope policy
+- `contracts/operator-registry` — KMS operator registry + threshold
 
-Not: kontratta eski uyumluluk alanlari gorulebilir, fakat aktif yeni akis KMS tabanlidir.
+Mainnet: `youtick.near`, `access.youtick.near`, `registry.youtick.near`.
 
 ---
 
@@ -73,19 +76,25 @@ NEXT_PUBLIC_APP_URL=https://youtick.net
 NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
 ```
 
-KMS endpointleri env ile verilmez ve gercek operator config'i git'e konmaz.
-Web app aktif operatorleri registry kontratindan okur; registry okunamazsa KMS
-akisi fail-closed davranir, sabit veya eski endpoint'e dusmez.
-Cross-chain checkout varsayilan olarak kapalidir; `false`, bos veya tanimsiz env bu yolu acmaz.
-Upload akisi icin `NEXT_PUBLIC_STORAGE_API_URL` bir Storage API Worker'a
-bakmali ve worker tarafinda Lighthouse secret'lari ile upload guard hazir
-olmalidir. Sadece UI veya wallet akisini deneyeceksen bu adimi erteleyebilirsin.
+KMS endpoints are not configured through env, and real operator configs
+are kept out of git. The web app reads active operators from the
+registry contract; if the registry can't be read, the KMS flow fails
+closed and does not fall back to a fixed or stale endpoint. Cross-chain
+checkout is off by default; `false`, empty or undefined values do not
+open the path.
+
+For the upload flow, `NEXT_PUBLIC_STORAGE_API_URL` must point at a
+Storage API Worker, and the worker side must have Lighthouse secrets
+and an upload guard ready. If you only want to try UI or wallet flows,
+this step can be deferred.
 
 ---
 
 ## Useful Docs
 
 - [Docs index](./docs/README.md)
+- [Public alpha user guide](./docs/public/alpha-user-guide.md)
+- [Architecture overview (public)](./docs/public/architecture-overview.md)
 - [System architecture](./docs/architecture/README.md)
 - [Storage and delivery](./docs/architecture/storage.md)
 - [Quick start](./docs/quick-start.md)
@@ -93,18 +102,19 @@ olmalidir. Sadece UI veya wallet akisini deneyeceksen bu adimi erteleyebilirsin.
 - [Contract methods](./docs/api/contract-methods.md)
 - [Security](./docs/security.md)
 - [Known issues](./docs/operations/known-issues.md)
-- [Mainnet readiness report](./docs/mainnet-open-source-readiness-2026-04-26.md)
+- [Launch plan 2026-05 (locked)](./docs/launch-plan-2026-05.md)
 
 ---
 
 ## Status
 
-Uygulama kaynak kod seviyesinde aktif KMS + Lighthouse/IPFS + NEAR mimarisine gore
-hazirlanmistir. Canli mainnet durumu public alpha seviyesindedir; production
-ready veya tam merkeziyetsiz olarak sunulmadan once canli `upload -> purchase -> watch`
-smoke testleri ve kalan operasyonel kontroller tamamlanmalidir.
+Mainnet `youtick.near` is live (R2 module split, code hash
+`BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`). Public alpha — not
+production-ready. The locked plan (`docs/launch-plan-2026-05.md`) tracks
+the Day 23 soft-launch gate; full `upload → purchase → watch` smoke and the
+remaining operational checks must close before any "production" claim.
 
-Guncel karar kaynagi:
+Current sources of truth:
 
-- [Mainnet and Open Source Readiness](./docs/mainnet-open-source-readiness-2026-04-26.md)
+- [Launch plan 2026-05](./docs/launch-plan-2026-05.md) — locked single plan
 - [Known Issues](./docs/operations/known-issues.md)

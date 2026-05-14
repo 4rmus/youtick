@@ -8,6 +8,83 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Public Alpha Prep — May 2026
+
+#### R2 — `nft-ticket` module split (2026-05-12)
+- Split monolithic `lib.rs` (5,664 lines) into 12 modules: `lib`, `nft`,
+  `market`, `gift`, `onboarding`, `treasury`, `views`, `web4`, `moderation`,
+  `timelock`, `events`, `migrate`, `tests`. Public ABI unchanged
+  (pre/post `near abi` diff = empty).
+- Mainnet `youtick.near` redeployed; code hash
+  `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`. View smoke: `nft_metadata`,
+  `get_owner`, `get_trial_pool_balance`, `get_events_count`,
+  `get_onboarding_config`. PASS.
+- Fresh testnet deploy: `r2-1778616242663.v1-0.utick.testnet`
+  (same code hash). 48/48 lib + 31/31 sandbox tests PASS.
+
+#### SB-1 — Storage API NEP-413 upload auth (2026-05-12)
+- `workers/storage-api` now requires `/uploads/auth/challenge` +
+  `/uploads/auth/verify` before `/uploads/intent` and `/uploads/file`.
+  Auth-less `/uploads/intent` returns `Unauthorized`.
+- Web client (`apps/web/lib/storage/storage-api.ts`) signs NEP-413
+  challenges with the connected wallet and threads the resulting
+  `Authorization: Bearer <token>` through upload flows.
+- Live smoke: `youtick.near` signed `/uploads/file` wrote
+  `bafkreifnpkmkjkff5xhpsz4ewcgjzpofeolss43ojketjurzsop63zjkqy` to
+  Lighthouse and read it back through `youtick-media-delivery`.
+
+#### SB-2 — Onboarding key hard cutover (2026-05-12)
+- Rotated mainnet onboarding key. New active key
+  `ed25519:9orHyMRrgbG7VcabT1KEMaKSgj7PqZh5QqPU1F1zuZDs` added
+  (`add_onboarding_key` tx `4FyagU6ZKvvtLP7Hbkty6DKVCW8rsKAvUgBqWuSFSHYB`).
+- Two prior onboarding keys removed from both the access-key list and
+  contract allowlist; final `onboardingLimitedCount = 1`.
+- Web4 proxy `ONBOARDING_KEYS` secret updated to the new private key.
+
+#### SB-3 — Emergency registry proposals pre-staged (2026-05-12)
+- Pre-staged registry timelock proposals 7-12 (one `Pause`, five
+  `DeactivateDecryptionOperator` for `kms-{a..e}.youtick.near`) so an
+  incident response does not need a 24h propose-and-wait window.
+- Access-control timelock deferred for the current alpha by decision; the
+  live `access.youtick.near` build does not export
+  `propose_action`/`get_timelock`. Fix build hash
+  `AC4NfQRakBFoCkcK6EqiKBwD93Pb61kPxVjWeHHa3QeC` is prepared but not
+  shipped to the live alpha.
+
+#### Web — Wallet + Signless rollout (2026-05-13)
+- Replaced `near-wallet-selector` with `@hot-labs/near-connect@0.11.4`.
+- Added `lib/signless-access-key.ts`: ed25519 keypair scoped to
+  `issue_session_grant` with limited gas allowance, persisted via
+  `BrowserKeyStore`.
+- KMS retrieve path now tries session grants first (without auto-
+  invalidating on 401) and falls back to local-signed requests for
+  managed guest/trial accounts; raises `SESSION_GRANT_REJECTED` /
+  `SIGNLESS_PLAYBACK_UNAVAILABLE` for non-managed accounts.
+- Bumped Play session grant TTL from 5m to 10m.
+- Reworked `/trial`, `/claim`, `/profile`, `/ticket` purchase flows around
+  the managed-account state and a new `TrialUpgradeDialog`.
+- Implicit-account gift claims supported through `claim_gift_with_implicit_account`
+  + invisible Turnstile.
+- Removed legacy implicit-account swap path from `TicketPurchaseCard`.
+
+#### R1 — IPFS read path split (2026-05-12)
+- `apps/web/lib/crust/gateway.ts` and `apps/web/lib/kms/streaming.ts`
+  removed. IPFS read path now lives at `apps/web/lib/ipfs/`
+  (`gateway.ts`, `config.ts`, `media-ref.ts`). `apps/web/lib/crust/` is
+  write/compat surface only.
+
+#### Documentation cleanup (2026-05-14)
+- Locked single plan: `docs/launch-plan-2026-05.md`.
+- Removed superseded `docs/mainnet-open-source-readiness-2026-04-26.md`,
+  dated `docs/operations/dependency-triage-2026-05-11.md`, and stub
+  `docs/architecture/chain-signatures.md` (content folded into
+  `wallet-integration.md` and `release-runbook.md`).
+- Audited and updated all surviving docs against current code (R2,
+  HOT Connect, signless access keys, NEP-413 upload auth).
+- Added `docs/public/alpha-user-guide.md` for end-user onboarding/claim/wallet.
+
+---
+
 ### Documentation — Mainnet Clean Runbook
 
 - Clarified public-alpha scope: source-fixed, deployed and mainnet-verified

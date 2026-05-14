@@ -1,9 +1,10 @@
 # YouTick Mainnet Deploy Runbook
 
 > **Status:** Conditional. Use only after pre-flight checks pass.
-> **Last updated:** 2026-04-26
-> **Release posture:** public alpha candidate, not production-ready
-> **Current readiness report:** [`../mainnet-open-source-readiness-2026-04-26.md`](../mainnet-open-source-readiness-2026-04-26.md)
+> **Last updated:** 2026-05-14
+> **Release posture:** public alpha (mainnet `youtick.near` live; R2 module
+> split deployed; SB-1 / SB-2 / SB-3 done — see launch plan)
+> **Locked plan:** [`../launch-plan-2026-05.md`](../launch-plan-2026-05.md)
 
 ---
 
@@ -21,15 +22,16 @@ with migration features only when the deploy explicitly requires a migration.
 
 ## Pre-Flight Checklist
 
-- [ ] Root `LICENSE` exists before public open-source announcement.
-- [ ] `docs/operations/known-issues.md` reflects the current deploy state.
-- [ ] Real KMS operator config is stored outside git.
-- [ ] `.env.local` and production env do not contain stale `NEXT_PUBLIC_KMS_URL`.
-- [ ] Web KMS discovery is registry-only and fail-closed if registry reads fail.
-- [ ] `ONBOARDING_KEY` or `ONBOARDING_KEYS` is server-only.
-- [ ] Trial/free sponsor flow is funded or disabled if `trial_pool` is zero.
-- [ ] A short test video is ready for upload / purchase / watch smoke test.
-- [ ] Owner key is available through the intended secure signing path.
+- [x] Root `LICENSE` exists.
+- [x] `docs/operations/known-issues.md` reflects current deploy state.
+- [x] Real KMS operator config is stored outside git.
+- [x] No stale `NEXT_PUBLIC_KMS_URL` in env (KMS discovery is registry-only).
+- [x] Web KMS discovery is registry-only and fail-closed.
+- [x] `ONBOARDING_KEY` / `ONBOARDING_KEYS` is server-only (post-SB-2 rotation).
+- [x] Storage API requires NEP-413 upload challenge (SB-1 done).
+- [ ] Trial pool funded for the deploy window (`get_trial_pool_balance > 0`).
+- [ ] Short test video staged for upload / purchase / watch smoke.
+- [ ] Owner key available through the intended secure signing path.
 
 Run:
 
@@ -50,17 +52,23 @@ Do not deploy if these checks fail.
 
 ## Phase 1: Build Artifacts
 
+Use `cargo near build` for contract WASM (this is what the R2 deploy used —
+launch plan §R2):
+
 ```bash
-(cd contracts/operator-registry && cargo build --target wasm32-unknown-unknown --release)
-(cd contracts/access-control && cargo build --target wasm32-unknown-unknown --release)
-(cd contracts/nft-ticket && cargo build --target wasm32-unknown-unknown --release)
+(cd contracts/operator-registry && cargo near build non-reproducible-wasm)
+(cd contracts/access-control && cargo near build non-reproducible-wasm)
+(cd contracts/nft-ticket && cargo near build non-reproducible-wasm)
 (cd apps/web && npm run build)
 ```
 
 Only build `nft-ticket` with `--features migration` when a reviewed migration
-explicitly requires the migration-only `reset_v11` path. That path can wipe
-state, has not been run as part of any "mainnet clean" documentation step, and
-must not be part of normal production deploys.
+explicitly requires the migration-only `reset_v11` / `wipe_and_reinit` paths.
+Those paths can wipe state and must not be part of normal production deploys.
+
+Mainnet `youtick.near` currently ships code hash
+`BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F` (R2 module split). Verify
+hash before/after deploy with `near contract download-wasm youtick.near`.
 
 ---
 
@@ -127,34 +135,29 @@ operator count.
 
 ## Phase 4: Access Contract Config
 
-Access-control config changes are also timelocked. Do not call
-`set_market_contract` or `set_registry_contract` directly.
+The deployed `access.youtick.near` contract does **not** currently export
+`propose_action` / `get_timelock` (the timelock block is not behind the
+`#[near]` macro on the live build — see launch plan §SB-3 and the access
+timelock deferral note). Until a new access build with the export fix is
+shipped:
+
+- Do **not** call `propose_action` / `execute_action` against the live
+  access contract — those entrypoints don't exist on the deployed code hash.
+- Owner-direct `set_market_contract` / `set_registry_contract` remain the
+  only way to change config; document each direct call with tx hash.
+- The fix build hash (`AC4NfQRakBFoCkcK6EqiKBwD93Pb61kPxVjWeHHa3QeC`) is
+  prepared but the access timelock deploy is **deferred for the current
+  alpha** by decision (launch plan §SB-3).
+
+When access timelock is reinstated, the proposal shape will be:
 
 ```bash
 near call access.youtick.near propose_action '{
   "action": {
-    "SetMarketContract": {
-      "market_contract_id": "youtick.near"
-    }
+    "SetMarketContract": { "market_contract_id": "youtick.near" }
   }
 }' --accountId youtick.near
 ```
-
-```bash
-near call access.youtick.near propose_action '{
-  "action": {
-    "SetRegistryContract": {
-      "registry_contract_id": "registry.youtick.near"
-    }
-  }
-}' --accountId youtick.near
-```
-
-Wait at least 24 hours, then execute reviewed proposal IDs.
-
-Note: if the deployed access contract does not expose config getter methods,
-document how the config was verified. Do not keep runbook checks that call
-missing getters.
 
 ---
 
@@ -229,8 +232,10 @@ Run one live path before announcing anything beyond public alpha:
 After deploy:
 
 - update [`known-issues.md`](known-issues.md),
-- update the current readiness report or add a new dated report,
-- record commit SHA, deployed worker versions and smoke result.
+- update [`../launch-plan-2026-05.md`](../launch-plan-2026-05.md) checkpoint
+  table or open a new dated readiness report (per launch plan §Cadence
+  "Once after launch"),
+- record commit SHA, deployed worker versions, code hash and smoke result.
 
 ---
 

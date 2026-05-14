@@ -4,7 +4,7 @@
 > For mainnet contract/KMS activation, use
 > [`docs/operations/mainnet-deploy-runbook.md`](operations/mainnet-deploy-runbook.md).
 > Current release posture is tracked in
-> [`docs/mainnet-open-source-readiness-2026-04-26.md`](mainnet-open-source-readiness-2026-04-26.md).
+> [`docs/launch-plan-2026-05.md`](launch-plan-2026-05.md) (single locked plan).
 
 ---
 
@@ -191,3 +191,28 @@ Every release should record:
 - web build changed,
 - smoke test result,
 - known issue updates.
+
+---
+
+## Dependency Updates
+
+Dependency upgrades on `apps/web` touch the wallet/RPC stack and need extra
+care. Treat the NEAR/wallet stack (`near-api-js`, `@hot-labs/near-connect`,
+`bn.js`, `elliptic`, `secp256k1`) as compatibility-sensitive and run wallet
+connect, upload session, ticket purchase and watch end-to-end after any
+upgrade.
+
+Workflow:
+
+1. Run `npm audit fix` (no `--force`) on a dedicated branch.
+2. Diff `package-lock.json` for major or wallet-stack changes before keeping
+   it.
+3. Run `npm test -- --run`, `npm run lint` and `npm run build` in `apps/web`.
+4. Local smoke: wallet connect, upload intent, ticket purchase render, watch
+   page render.
+5. Only consider `npm audit fix --force` after a separate compatibility
+   review — npm currently reports a breaking NEAR wallet downgrade path.
+
+Workers (`workers/youtick-kms`, `workers/storage-api`, `workers/media-delivery`,
+`workers/web4-proxy`) currently report no advisories; rerun `npm audit
+--omit=dev --audit-level=moderate` per package on each release.

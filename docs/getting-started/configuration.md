@@ -1,12 +1,12 @@
 # Configuration Reference
 
-> Gercekten kullanilan ortam degiskenleri ve ne ise yaradiklari
+> The environment variables that are actually used and what they do.
 
 ---
 
 ## Web App
 
-`apps/web/.env.local` dosyasi icin temel ayarlar:
+Core settings for `apps/web/.env.local`:
 
 ```txt
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
@@ -16,54 +16,55 @@ NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 ```
 
-Bu alanlar olmadan uygulama dogru contract setine ve ağa baglanamaz.
+Without these the app cannot connect to the right contract set or network.
 
-### Gerekli
+### Required
 
-| Degisken | Aciklama | Ornek |
-|----------|----------|-------|
-| `NEXT_PUBLIC_NEAR_NETWORK` | `mainnet` veya `testnet` | `mainnet` |
-| `NEXT_PUBLIC_MARKET_CONTRACT_ID` | Pazar ve sahiplik contract'i | `youtick.near` |
-| `NEXT_PUBLIC_ACCESS_CONTRACT_ID` | Session grant contract'i | `access.youtick.near` |
-| `NEXT_PUBLIC_REGISTRY_CONTRACT_ID` | Operator ve relayer registry contract'i | `registry.youtick.near` |
-| `NEXT_PUBLIC_NFT_CONTRACT_ID` | Eski uyumluluk alias'i | `youtick.near` |
+| Variable | Description | Example |
+|---|---|---|
+| `NEXT_PUBLIC_NEAR_NETWORK` | `mainnet` or `testnet` | `mainnet` |
+| `NEXT_PUBLIC_MARKET_CONTRACT_ID` | Market and ownership contract | `youtick.near` |
+| `NEXT_PUBLIC_ACCESS_CONTRACT_ID` | Session grant contract | `access.youtick.near` |
+| `NEXT_PUBLIC_REGISTRY_CONTRACT_ID` | Operator and relayer registry | `registry.youtick.near` |
+| `NEXT_PUBLIC_NFT_CONTRACT_ID` | Legacy compatibility alias | `youtick.near` |
 
-### Opsiyonel
+### Optional
 
-| Degisken | Aciklama | Ne zaman gerekir |
-|----------|----------|------------------|
-| `NEXT_PUBLIC_APP_URL` | Hediye linklerinde kullanilan ana URL | Farkli domain veya local tunnel kullaniyorsan |
-| `NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT` | 1Click + MetaMask yolunu acar | Sadece degeri tam olarak `true` ise; varsayilan kapali |
-| `NEXT_PUBLIC_ONE_CLICK_API_TOKEN` | 1Click quote ve swap istekleri icin partner tokeni | Arbitrum/Base odemelerini kullanacaksan |
-| `NEXT_PUBLIC_DEPLOY_TARGET` | Web4 build davranisini degistirir | `npm run build:web4` kullaniyorsan |
-| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Trial/onboarding ekraninda Turnstile challenge acar | Onboarding key endpoint'ini botlara karsi korumak istiyorsan |
-| `NEXT_PUBLIC_SENTRY_DSN` | Sentry hata toplama adresi | Uretimde hata izleme acacaksan |
-| `NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE` | Lighthouse status/persistence kontrolunu acar | Sadece Storage API Worker hazirsa `true` yap |
-| `NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PRIMARY_UPLOAD` | Lighthouse ana upload yolunu acar | Varsayilan acik; yalniz lokal tani icin `false` yap |
-| `NEXT_PUBLIC_ENABLE_CRUST_UPLOAD_FALLBACK` | Lighthouse upload hata verirse Crust'a duser | Varsayilan kapali; yalniz acil tani icin `true` yap |
-| `NEXT_PUBLIC_STORAGE_UPLOAD_PROVIDER` | Aktif upload provider secimi | Varsayilan `lighthouse`; yeni upload'larda bunu degistirme |
-| `NEXT_PUBLIC_STORAGE_API_URL` | Storage API Worker URL'i | Lighthouse pin/status pilotu icin gerekir |
-| `NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER` | Media Delivery Worker okuma yolunu acar | Sadece worker deploy ve smoke test sonrasi `true` yap |
-| `NEXT_PUBLIC_MEDIA_DELIVERY_URL` | Media Delivery Worker URL'i | Encrypted IPFS manifest/segment routing icin gerekir |
+| Variable | Description | When you need it |
+|---|---|---|
+| `NEXT_PUBLIC_APP_URL` | Base URL used in gift links | When using a different domain or a local tunnel |
+| `NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT` | Opens the 1Click + MetaMask path | Only when the value is exactly `true`; off by default |
+| `NEXT_PUBLIC_ONE_CLICK_API_TOKEN` | 1Click quote / swap partner token | When you'll use Arbitrum/Base payments |
+| `NEXT_PUBLIC_DEPLOY_TARGET` | Changes Web4 build behavior | When using `npm run build:web4` |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Enables a Turnstile challenge on the trial/onboarding screen | When protecting the onboarding-key endpoint against bots |
+| `NEXT_PUBLIC_SENTRY_ENABLED` | Master switch for Sentry (`true` / `false`) | When enabling Sentry in prod; the DSN alone is not enough |
+| `NEXT_PUBLIC_SENTRY_DSN` | Sentry error collection endpoint | Required together with `SENTRY_ENABLED=true` |
+| `NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE` | Enables Lighthouse status/persistence checks | Set `true` only when the Storage API Worker is ready |
+| `NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PRIMARY_UPLOAD` | Opens the Lighthouse primary upload path | On by default; set `false` only for local diagnosis |
+| `NEXT_PUBLIC_ENABLE_CRUST_UPLOAD_FALLBACK` | Falls back to Crust if Lighthouse upload fails | Off by default; set `true` only for emergency diagnosis |
+| `NEXT_PUBLIC_STORAGE_UPLOAD_PROVIDER` | Active upload provider selection | Default `lighthouse`; do not change for new uploads |
+| `NEXT_PUBLIC_STORAGE_API_URL` | Storage API Worker URL | Required for Lighthouse pin/status piloting |
+| `NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER` | Opens the Media Delivery Worker read path | Set `true` only after worker deploy + smoke test |
+| `NEXT_PUBLIC_MEDIA_DELIVERY_URL` | Media Delivery Worker URL | Required for encrypted IPFS manifest/segment routing |
 
 ### Server-side onboarding
 
-Trial ve guest hesap olusturma icin onboarding key artik client bundle'a konmaz.
-Anahtar server tarafinda tutulur ve `/api/onboarding-key` endpoint'i uzerinden,
-rate limit ve Turnstile kontrolunden sonra verilir. `TURNSTILE_SECRET_KEY`
-set edildiginde challenge token zorunludur.
+The onboarding key for trial and guest account creation is no longer
+placed in the client bundle. It is held server-side and handed out
+through `/api/onboarding-key` after rate-limit and Turnstile checks.
+When `TURNSTILE_SECRET_KEY` is set, the challenge token is mandatory.
 
-| Degisken | Aciklama |
-|----------|----------|
-| `ONBOARDING_KEY` | Tek Function Call Access Key |
-| `ONBOARDING_KEYS` | Virgul ile ayrilmis key havuzu; varsa `ONBOARDING_KEY` yerine kullanilir |
-| `TURNSTILE_SECRET_KEY` | Turnstile dogrulama sirri |
+| Variable | Description |
+|---|---|
+| `ONBOARDING_KEY` | Single function-call access key |
+| `ONBOARDING_KEYS` | Comma-separated key pool; takes precedence over `ONBOARDING_KEY` when set |
+| `TURNSTILE_SECRET_KEY` | Turnstile verification secret |
 
-`RELAYER_ACCOUNT_ID` ve `RELAYER_PRIVATE_KEY` artik gerekli degil.
+`RELAYER_ACCOUNT_ID` and `RELAYER_PRIVATE_KEY` are no longer required.
 
 ---
 
-## Ornek Konfigurasyonlar
+## Example Configurations
 
 ### Minimum mainnet
 
@@ -77,7 +78,7 @@ NEXT_PUBLIC_APP_URL=https://youtick.net
 NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=false
 ```
 
-### Local gelistirme
+### Local development
 
 ```txt
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
@@ -88,11 +89,11 @@ NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
-Testnet calismasi icin eski dev hesaplarini kopyalama. Kendi market,
-access ve registry contract setini deploy et, sonra bu env alanlarini kendi
-testnet hesaplarinla doldur.
+For testnet work, do not copy the old shared dev accounts. Deploy your
+own market, access and registry contract set, then point these env
+fields at your own testnet accounts.
 
-### Trial + cross-chain acik
+### Trial + cross-chain enabled
 
 ```txt
 NEXT_PUBLIC_NEAR_NETWORK=mainnet
@@ -105,93 +106,103 @@ NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
 NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT=true
 ```
 
-Cross-chain checkout public alpha icin deneyseldir ve EVM v1 kapsami
-Arbitrum + Base ile sinirlidir. Ethereum mainnet UI'da secilebilir degildir.
+Cross-chain checkout is experimental in public alpha and the EVM v1
+scope is limited to Arbitrum + Base. Ethereum mainnet is not selectable
+in the UI.
 
-Trial ve guest hesap olusturma icin `ONBOARDING_KEY` veya `ONBOARDING_KEYS`
-kullanilir. Bu anahtarlar contract owner tarafindan `add_onboarding_key` ile
-kaydedilir; `NEXT_PUBLIC_` prefix'i kullanilmaz.
-Mainnet rotasyonda yeni key once `scripts/add-onboarding-key.mjs` ile eklenir;
-web deploy dogrulandiktan sonra eski key `scripts/remove-onboarding-key.mjs`
-ile kaldirilir.
-Mevcut onboarding key envanteri icin `scripts/list-onboarding-keys.mjs`
-kullanilir.
+Trial and guest account creation uses `ONBOARDING_KEY` or
+`ONBOARDING_KEYS`. These keys are registered by the contract owner via
+`add_onboarding_key`; the `NEXT_PUBLIC_` prefix is not used. During
+mainnet rotation, the new key is added first with
+`scripts/add-onboarding-key.mjs`; once the web deploy is verified, the
+old key is removed with `scripts/remove-onboarding-key.mjs`. The current
+onboarding-key inventory can be read with `scripts/list-onboarding-keys.mjs`.
 
-### Web4 proxy API davranisi
+### Web4 proxy API behavior
 
-`https://youtick.net` proxy destekli Web4 modunda `/api/onboarding-key` ve
-`/api/crust/*` isteklerini destekler. `https://youtick.near.page` veya ciplak
-IPFS gateway uzerinden acilan static build bu API'leri calistirmaz; onboarding
-key ve storage-order gerektiren akislar bu ortamda desteklenmez.
+`https://youtick.net` in proxy-backed Web4 mode supports
+`/api/onboarding-key`, `/api/near-rpc` and `/api/crust/*`. A static
+build served directly from `https://youtick.near.page` or a bare IPFS
+gateway does not run these APIs; flows that depend on the onboarding key
+or storage-order are not supported in that environment.
 
-`npm run build:web4` sirasinda Next static export icin `headers()` kurallarinin
-uygulanmadigini belirten uyari beklenir. Web4 CSP ve guvenlik header'lari
-`workers/web4-proxy` tarafindan uygulanir.
+During `npm run build:web4`, a Next static-export warning that
+`headers()` rules are not applied is expected. Web4 CSP and security
+headers are applied by `workers/web4-proxy`.
 
 ---
 
 ## KMS Worker
 
-`workers/youtick-kms` tarafinda gereken ayarlar:
+`workers/youtick-kms` settings:
 
-| Degisken | Aciklama |
-|----------|----------|
-| `ALLOWED_ORIGINS` | Izin verilen origin listesi |
-| `NEAR_CONTRACT_ID` | Sahiplik kontrolu icin kullanilan contract |
-| `NEAR_ACCESS_CONTRACT_ID` | Session grant dogrulamasi icin kullanilan contract |
-| `NEAR_REGISTRY_CONTRACT_ID` | Active operator ve relayer kaydi icin kullanilan contract |
-| `REGISTRY_OPERATOR_ACCOUNT_ID` | Bu worker'in registry kaydindaki operator hesabi |
-| `OPERATOR_SHARE_SECRET` | Share sifreleme icin worker sirri |
-| `NEAR_NETWORK` | `mainnet` veya `testnet` |
+| Variable | Description |
+|---|---|
+| `ALLOWED_ORIGINS` | Allowed origin list |
+| `NEAR_CONTRACT_ID` | Contract used for ownership checks |
+| `NEAR_ACCESS_CONTRACT_ID` | Contract used for session-grant verification |
+| `NEAR_REGISTRY_CONTRACT_ID` | Contract for active operator and relayer records |
+| `REGISTRY_OPERATOR_ACCOUNT_ID` | This worker's operator account in the registry |
+| `OPERATOR_SHARE_SECRET` | Worker secret for share encryption |
+| `NEAR_NETWORK` | `mainnet` or `testnet` |
 
-Gerekli KV binding'leri:
+Required KV bindings:
 
 - `VIDEO_KEYS`
 - `RATE_LIMIT`
 - `ACCESS_CACHE`
 
-Mainnet ve testnet icin ayri KV namespace kullan. Ayni namespace ID'lerini iki ortamda da kullanma.
+Use separate KV namespaces for mainnet and testnet. Do not share
+namespace IDs between environments.
 
 ---
 
-## Storage ve Media Workers
+## Storage and Media Workers
 
-`workers/storage-api` tarafinda gereken ayarlar:
+`workers/storage-api` settings:
 
-| Degisken | Aciklama |
-|----------|----------|
-| `ALLOWED_ORIGINS` | Izin verilen origin listesi |
-| `STORAGE_PROVIDER` | Simdilik `lighthouse` |
-| `LIGHTHOUSE_API_BASE` | Lighthouse API base URL'i |
-| `LIGHTHOUSE_UPLOAD_BASE` | Lighthouse upload base URL'i |
-| `LIGHTHOUSE_API_KEY` | Wrangler secret olarak saklanan Lighthouse API key |
-| `ENABLE_LIGHTHOUSE_UPLOADS` | `true` ise guarded Lighthouse write endpoint'lerini acar |
-| `MAX_UPLOAD_BYTES` | Storage API Worker uzerinden kabul edilen toplam upload boyutu |
-| `UPLOAD_INTENT_SECRET` | Upload intent token'larini imzalamak icin Wrangler secret |
-| `UPLOAD_GUARD` | Upload intent rate-limit ve idempotency cache icin KV binding |
-| `UPLOAD_RATE_LIMIT_MAX` | Account/IP basina intent limiti |
-| `UPLOAD_RATE_LIMIT_WINDOW_SECONDS` | Rate-limit penceresi |
+| Variable | Description |
+|---|---|
+| `ALLOWED_ORIGINS` | Allowed origin list |
+| `STORAGE_PROVIDER` | Currently `lighthouse` |
+| `LIGHTHOUSE_API_BASE` | Lighthouse API base URL |
+| `LIGHTHOUSE_UPLOAD_BASE` | Lighthouse upload base URL |
+| `LIGHTHOUSE_API_KEY` | Lighthouse API key (Wrangler secret) |
+| `ENABLE_LIGHTHOUSE_UPLOADS` | When `true`, opens guarded Lighthouse write endpoints |
+| `MAX_UPLOAD_BYTES` | Total upload size accepted through the Storage API Worker |
+| `UPLOAD_INTENT_SECRET` | Wrangler secret for signing upload intent tokens |
+| `UPLOAD_AUTH_SECRET` | Wrangler secret for signing NEP-413 upload challenge tokens (required after SB-1) |
+| `UPLOAD_AUTH_TTL_SECONDS` | Lifetime of NEP-413 challenge / upload auth tokens |
+| `UPLOAD_GUARD` | KV binding for upload-intent rate limit and idempotency cache |
+| `UPLOAD_RATE_LIMIT_MAX` | Per-account/IP intent quota (default 1000; tightening is recommended in production) |
+| `UPLOAD_RATE_LIMIT_WINDOW_SECONDS` | Rate-limit window |
 
-`workers/media-delivery` tarafinda gereken ayarlar:
+A call to `/uploads/intent` requires `Authorization: Bearer <token>`.
+The token is obtained through `/uploads/auth/challenge` +
+`/uploads/auth/verify` over a NEP-413 signature. Unauthenticated calls
+return `Unauthorized`.
 
-| Degisken | Aciklama |
-|----------|----------|
-| `ALLOWED_ORIGINS` | Izin verilen origin listesi |
-| `IPFS_GATEWAY_BASES` | Virgulle ayrilmis IPFS gateway base URL listesi |
-| `CACHE_TTL_SECONDS` | Non-Range GET edge cache suresi |
-| `CACHE_VERSION` | Opsiyonel cache bust anahtari |
-| `UPSTREAM_TIMEOUT_MS` | Her gateway denemesi icin zaman asimi |
+`workers/media-delivery` settings:
 
-Media Delivery Worker encrypted IPFS asset route eder. AES key, decrypted video
-ve KMS share bu Worker'a verilmez.
+| Variable | Description |
+|---|---|
+| `ALLOWED_ORIGINS` | Allowed origin list |
+| `IPFS_GATEWAY_BASES` | Comma-separated list of IPFS gateway base URLs |
+| `CACHE_TTL_SECONDS` | Non-Range GET edge cache lifetime |
+| `CACHE_VERSION` | Optional cache bust key |
+| `UPSTREAM_TIMEOUT_MS` | Per-gateway request timeout |
+
+The Media Delivery Worker routes encrypted IPFS assets. AES keys,
+decrypted video and KMS shares are never passed to this Worker.
 
 ---
 
-## Notlar
+## Notes
 
-- `NEXT_PUBLIC_*` ile baslayan tum degiskenler istemciye gider.
-- Gercek sirlar sadece worker veya API route tarafinda tutulmali.
-- KMS anahtar korumasi icin browser degil, worker tarafindaki imza ve sahiplik kontrolleri esas alinir.
+- All variables prefixed with `NEXT_PUBLIC_*` ship to the client.
+- Real secrets must live only on the worker or API route side.
+- KMS key protection relies on worker-side signature and ownership
+  checks, not on the browser.
 
 ---
 

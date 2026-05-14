@@ -20,10 +20,20 @@ export default withMermaid(
         { text: 'Getting Started', link: '/getting-started/prerequisites' },
         { text: 'Architecture', link: '/architecture/' },
         { text: 'API', link: '/api/contract-methods' },
+        { text: 'Public Alpha', link: '/public/alpha-user-guide' },
         { text: 'Quick Start', link: '/quick-start' },
       ],
 
       sidebar: [
+        {
+          text: 'Public Alpha',
+          items: [
+            { text: 'User Guide', link: '/public/alpha-user-guide' },
+            { text: 'Architecture Overview', link: '/public/architecture-overview' },
+            { text: 'Acceptable Use Policy', link: '/legal/acceptable-use-policy' },
+            { text: 'Launch Plan 2026-05', link: '/launch-plan-2026-05' },
+          ],
+        },
         {
           text: 'Getting Started',
           items: [
@@ -38,8 +48,9 @@ export default withMermaid(
           items: [
             { text: 'System Architecture', link: '/architecture/' },
             { text: 'Smart Contract', link: '/architecture/smart-contract' },
-            { text: 'Session Keys', link: '/architecture/session-keys' },
+            { text: 'Session Keys & Signless', link: '/architecture/session-keys' },
             { text: 'Storage', link: '/architecture/storage' },
+            { text: 'Wallet Integration', link: '/architecture/wallet-integration' },
             { text: 'Innovations', link: '/architecture/innovations' },
           ],
         },
@@ -47,6 +58,31 @@ export default withMermaid(
           text: 'API Reference',
           items: [
             { text: 'Contract Methods', link: '/api/contract-methods' },
+          ],
+        },
+        {
+          text: 'Operations',
+          items: [
+            { text: 'Known Issues', link: '/operations/known-issues' },
+            { text: 'Mainnet Deploy Runbook', link: '/operations/mainnet-deploy-runbook' },
+            { text: 'Release Runbook', link: '/release-runbook' },
+            { text: 'Incident: KMS Operator Down', link: '/operations/incident-kms-operator-down' },
+            { text: 'Incident: Takedown', link: '/operations/incident-takedown' },
+            { text: 'KMS Key Rotation', link: '/kms-key-rotation' },
+          ],
+        },
+        {
+          text: 'Decisions (ADR)',
+          items: [
+            { text: 'ADR-001 Governance Multisig', link: '/adr/adr-001-governance-multisig' },
+            { text: 'ADR-002 Timelock Enforcement', link: '/adr/adr-002-timelock-enforcement' },
+            { text: 'ADR-003 Session Grant Auth Fix', link: '/adr/adr-003-session-grant-auth-fix' },
+            { text: 'ADR-004 KMS URL Trust', link: '/adr/adr-004-kms-url-trust' },
+            { text: 'ADR-005 VSS Share Integrity', link: '/adr/adr-005-vss-share-integrity' },
+            { text: 'ADR-006 Storage Provider Diversity', link: '/adr/adr-006-storage-provider-diversity' },
+            { text: 'ADR-007 Browser Key Hardening', link: '/adr/adr-007-browser-key-hardening' },
+            { text: 'ADR-008 Operator Onboarding', link: '/adr/adr-008-operator-onboarding' },
+            { text: 'ADR-009 Emergency Takedown & DAO Handover', link: '/adr/adr-009-emergency-takedown-and-dao-handover' },
           ],
         },
         {

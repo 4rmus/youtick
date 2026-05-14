@@ -1,20 +1,28 @@
 # Contract Methods Reference
 
-> Live runtime contract surface for YouTick Zero Trust Architecture
+> Live runtime contract surface for YouTick public alpha.
 
-**Status:** Source reference. V1 public alpha uses owner-only NFT market admin,
-while access-control and operator-registry admin changes use timelock.
 **Contracts:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`
+**Mainnet `youtick.near` code hash:** `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F` (R2 module split).
+**Admin posture:** owner-only on `youtick.near`; timelock on `registry.youtick.near`; access timelock deferred for the current alpha (live build does not export `propose_action`/`get_timelock`).
 
 ---
 
 ## How to Read This Page
 
-This page documents the source-level contract method surface, not proof that
-each mainnet account is running the same WASM. Treat source-fixed and
-mainnet-verified status separately. The authoritative source is in
-`contracts/nft-ticket/src/lib.rs`, `contracts/access-control/src/lib.rs`, and
-`contracts/operator-registry/src/lib.rs`.
+Documents the source-level contract surface, not proof that each mainnet
+account runs the same WASM — verify with `near contract download-wasm`.
+
+After the R2 refactor, the `nft-ticket` source is split across:
+
+```
+contracts/nft-ticket/src/{lib, nft, market, gift, onboarding,
+                          treasury, views, web4, moderation,
+                          timelock, events, migrate, tests}.rs
+```
+
+The public ABI did not change. Method tables below cite the module file
+where the implementation lives.
 
 ---
 
@@ -51,42 +59,40 @@ This contract is the market, content, and entitlement source of truth.
 
 | Method | Purpose |
 |--------|---------|
-| `web4_set_static_url` | Owner-only Web4 static asset URL update |
-| `set_next_token_id` | Owner-only admin override for token ID counter |
-| `ban_event` | Owner-only moderation action |
-| `unban_event` | Owner-only moderation action |
-| `admin_remove_events` | Owner-only removal action |
-| `pause` | Owner-only emergency pause |
-| `unpause` | Owner-only unpause |
-| `propose_action` | Timelock proposal surface retained for later governance; not the V1 NFT admin path |
-| `execute_action` | Timelock execution surface retained for later governance; not the V1 NFT admin path |
-| `cancel_action` | Timelock: cancels a proposed action |
-| `propose_owner` | Starts two-step ownership transfer |
-| `accept_ownership` | Proposed owner accepts ownership transfer |
-| `add_onboarding_key` | Owner-only onboarding key add |
-| `remove_onboarding_key` | Owner-only onboarding key removal |
-| `set_onboarding_config` | Owner-only onboarding configuration |
-| `create_trial_invite_drop` | Creates trial-invite access keys |
-| `create_event` | Publishes a new ticketed video event |
-| `create_event_prepaid` | Creates an event through the upload-session publish path |
-| `create_upload_session` | Creates an upload session with access key |
-| `revoke_upload_session` | Revokes an upload session |
-| `buy_ticket` | Purchases a ticket (free or paid) |
-| `buy_ticket_internal` | Internal purchase flow used by callbacks |
-| `nft_mint` | Direct NFT mint with attached deposit |
-| `ft_on_transfer` | Fungible-token callback for wNEAR and NEAR-native USDC/USDT purchases |
-| `nft_mint_prepaid` | Mints through the upload-session publish path |
-| `fund_trial_pool` | Adds NEAR to the trial sponsorship pool |
-| `withdraw_trial_pool` | Owner-only trial pool withdrawal |
-| `claim_trial_invite_with_implicit_account` | Claims trial and creates implicit account |
-| `claim_free_ticket_direct` | Claims a free collectible ticket |
-| `sponsor_implicit_guest_direct` | Sponsors an implicit guest account without relayer callback |
-| `withdraw_commission` | Owner-only commission withdrawal |
-| `gift_ticket` | Creator gifts a ticket to a receiver |
-| `create_gift_drop` | Creates access-key based gift drops |
-| `claim_gift` | Claims a gift drop to an existing account |
-| `claim_gift_with_implicit_account` | Claims a gift and funds an implicit guest account |
-| `upgrade_trial_account` | Upgrades a trial account to a full NEAR account |
+| `web4_set_static_url` (`web4.rs`) | Owner-only Web4 static asset URL update |
+| `set_next_token_id` (`lib.rs`) | Owner-only admin override for token ID counter |
+| `ban_event` (`moderation.rs`) | Owner-only moderation action |
+| `unban_event` (`moderation.rs`) | Owner-only moderation action |
+| `takedown_event` (`moderation.rs`) | Owner-only takedown — emits NEP-297 `event_takedown` |
+| `admin_remove_events` (`lib.rs`) | Owner-only removal action |
+| `pause` / `unpause` (`lib.rs`) | Owner-only emergency pause |
+| `propose_action` / `execute_action` / `cancel_action` (`timelock.rs`) | Timelock surface retained for later governance; not the V1 NFT admin path |
+| `propose_owner` / `accept_ownership` (`lib.rs`) | Two-step ownership transfer |
+| `add_onboarding_key` / `remove_onboarding_key` / `set_onboarding_config` (`onboarding.rs`) | Owner-only onboarding key management |
+| `create_trial_invite_drop` (`onboarding.rs`) | Creates trial-invite access keys |
+| `create_event` (`market.rs`) | Publishes a new ticketed video event |
+| `create_event_prepaid` (`market.rs`) | Creates an event through the upload-session publish path |
+| `create_upload_session` / `revoke_upload_session` (`market.rs`) | Upload session lifecycle |
+| `buy_ticket` (`market.rs`) | Purchases a ticket (free or paid) |
+| `nft_mint` (`nft.rs`) | Direct NFT mint with attached deposit |
+| `ft_on_transfer` (`market.rs`) | Fungible-token callback for wNEAR and NEAR-native USDC/USDT purchases |
+| `nft_mint_prepaid` (`market.rs`) | Mints through the upload-session publish path |
+| `fund_trial_pool` / `withdraw_trial_pool` (`treasury.rs`) | Trial sponsorship pool funding / owner withdrawal |
+| `claim_trial_invite_with_implicit_account` (`treasury.rs`) | Claims trial and creates implicit account |
+| `claim_free_ticket_direct` (`treasury.rs`) | Claims a free collectible ticket |
+| `sponsor_implicit_guest_direct` (`treasury.rs`) | Sponsors an implicit guest account |
+| `create_sponsored_trial_direct` (`treasury.rs`) | Legacy named-subaccount trial path (still callable; new flows use the implicit-account methods above) |
+| `withdraw_commission` (`treasury.rs`) | Owner-only commission withdrawal (NEAR) |
+| `withdraw_commission_usdc` / `withdraw_trial_pool_usdc` (`treasury.rs`) | Owner-only stablecoin withdrawals |
+| `withdraw_creator_stablecoin` (`treasury.rs`) | Creator stablecoin payout |
+| `gift_ticket` (`gift.rs`) | Creator gifts a ticket to a receiver |
+| `create_gift_drop` (`gift.rs`) | Creates access-key based gift drops |
+| `claim_gift` (`gift.rs`) | Claims a gift drop to an existing account |
+| `claim_gift_and_create_account` (`gift.rs`) | Legacy named-subaccount gift path (still callable; new flows use `claim_gift_with_implicit_account`) |
+| `claim_gift_with_implicit_account` (`gift.rs`) | Claims a gift and funds an implicit guest account |
+| `finalize_gift_claim_after_account_created` (`gift.rs`) | Internal callback for the implicit-account gift path |
+| `upgrade_trial_account` (`gift.rs`) | Upgrades a trial account to a full NEAR account |
+| `set_creator_profile` (`views.rs`) | Update creator display profile |
 
 ### View Methods
 
@@ -123,8 +129,14 @@ This contract is the market, content, and entitlement source of truth.
 | `get_storage_type` | Returns the storage type for a token |
 | `get_videos` | Returns all videos owned by an account |
 | `has_ticket` | Checks if an account has a ticket for an event |
-| `get_trial_pool_balance` | Returns the trial pool balance |
-| `get_commission_pool` | Returns the commission pool balance |
+| `get_trial_pool_balance` (`treasury.rs`) | Returns the trial pool balance |
+| `get_commission_pool` (`treasury.rs`) | Returns the commission pool balance |
+| `get_usdc_pools` (`treasury.rs`) | Returns USDC trial + commission pool balances |
+| `get_creator_stablecoin_balance` (`treasury.rs`) | Per-creator stablecoin balance |
+| `get_stablecoin_commission_balance` (`treasury.rs`) | Per-token commission balance |
+| `is_stablecoin_payment_settled` (`treasury.rs`) | Checks settlement of a stablecoin payment |
+| `get_creator_profile` / `get_creator_stats` (`views.rs`) | Creator profile + aggregate stats |
+| `get_purchase_logs_by_creator` (`views.rs`) | Purchase logs filtered by creator |
 
 ### NFT Standard Surface
 
@@ -229,18 +241,34 @@ This contract stores decryption operators and relayers.
 
 ## 5. Deprecated / Legacy
 
-The following methods are deprecated or removed and should not be used for new integrations:
+### Still callable (do not use for new integrations)
+
+These methods remain `pub fn` in source for compatibility but new flows
+should call the implicit-account / direct equivalents instead.
+
+| Method | Replacement |
+|---|---|
+| `create_sponsored_trial_direct` (`treasury.rs`) | `claim_trial_invite_with_implicit_account` / `sponsor_implicit_guest_direct` |
+| `claim_gift_and_create_account` (`gift.rs`) | `claim_gift_with_implicit_account` |
+
+### Removed (callers will fail)
+
+Relayer-based trial/free-ticket flows were removed; these are no longer
+exported from the contract.
 
 | Method | Status |
-|--------|--------|
-| `create_sponsored_trial_direct` | Legacy named subaccount trial path; new guest/trial flows use implicit accounts |
-| `claim_gift_and_create_account` | Legacy named account gift path; new gift flows use `claim_gift_with_implicit_account` |
+|---|---|
 | `create_sponsored_trial` | Removed relayer-based trial flow |
 | `claim_free_ticket_sponsored` | Removed relayer-based free ticket flow |
 | `sponsor_implicit_guest` | Removed relayer-based gas sponsorship |
-| `add_trial_relayer` | Removed relayer allowlist mutation |
-| `remove_trial_relayer` | Removed relayer allowlist mutation |
-| `is_trial_relayer` | Removed relayer allowlist view |
+| `add_trial_relayer` / `remove_trial_relayer` / `is_trial_relayer` | Removed relayer allowlist surface |
+
+### Migration / debug (build-feature only)
+
+`reset_v11`, `wipe_and_reinit`, `test_insert`, `repair_nft_state` and
+`rebuild_cid_to_tokens` (`migrate.rs` / `timelock.rs`) are gated behind
+`--features migration` and are not in normal production builds. Do not
+call as a rollback tool.
 
 ---
 

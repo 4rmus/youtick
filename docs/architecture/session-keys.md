@@ -1,41 +1,38 @@
-# Upload Sessions
+# Session Keys & Upload Sessions
 
-> YouTick'te dusuk popup'li yetkilendirme modeli
+> YouTick's low-popup authorization model splits into two halves:
+> **upload session** (publishing) and **signless access key + session grant**
+> (paid playback).
 
 ---
 
-## Aktif yol
+## 1. Upload Session
 
-Tercih edilen publish yolu **upload session** modelidir.
+The preferred publish path is the **upload session** model.
 
-Bu modelde frontend:
+In this model the frontend:
 
-1. Gecici bir public key uretir
-2. `create_upload_session` ile kontratta kisa omurlu bir yetki acar
-3. Kullanicinin hesabina sadece `nft_mint_prepaid` ve `create_event_prepaid` icin function-call key ekler
-4. Yukleme bitince bu oturumu kapatir
+1. Generates a temporary public key.
+2. Opens a short-lived authorization on the contract via
+   `create_upload_session`.
+3. Adds a function-call key on the user's account that can only call
+   `nft_mint_prepaid` and `create_event_prepaid`.
+4. Closes the session when the upload finishes.
 
-Bu akisin ana kodu:
+Main code:
 
 - `apps/web/lib/upload-session-manager.ts`
+- `apps/web/lib/batch-transactions.ts`
 - `apps/web/components/UploadForm.tsx`
 
----
+### Why?
 
-## Neden upload session?
+- opens for upload only
+- allows only two methods
+- bounded by an explicit budget and TTL
+- cleaned up when the work is done
 
-Bu model tek bir uzun omurlu anahtara dayanmaz. Daha dar kapsamlidir:
-
-- sadece upload icin acilir
-- sadece iki metoda izin verir
-- belirli bir butce ve sure ile sinirlanir
-- is bitince temizlenir
-
-Bu sayede hem daha az popup olur hem de yetki alani daha kucuk kalir.
-
----
-
-## Akis
+### Flow
 
 ```mermaid
 sequenceDiagram
@@ -44,41 +41,85 @@ sequenceDiagram
     participant B as Browser
     participant C as Contract
 
-    U->>B: Upload baslat
-    B->>B: Gecici key uret
+    U->>B: Start upload
+    B->>B: Generate temporary key
     B->>W: create_upload_session + add access key
-    W->>C: Upload session ac
-    W->>U: Tek onay
+    W->>C: Open upload session
+    W->>U: Single approval
     B->>C: nft_mint_prepaid
     B->>C: create_event_prepaid
-    B->>C: Session kapanir
+    B->>C: Session closes
 ```
 
----
+### Security Bounds
 
-## Guvenlik sinirlari
-
-Upload session modelinde yetki dar tutulur:
-
-- method listesi sabittir
-- allowance sinirlidir
-- TTL vardir
-- kontratta kalan butce izlenir
-
-Bu model, "bir kere izin ver ve uzun sure kullan" mantigindan daha guvenlidir.
+- the method list is fixed
+- the allowance is bounded
+- there is a TTL
+- the contract tracks the remaining budget
 
 ---
 
-## Dikkat edilmesi gerekenler
+## 2. Signless Access Key (paid playback)
 
-1. Upload session kontratta yoksa frontend hata verir ve upload'a izin vermez.
-2. KMS auth cache temizligi ile wallet durumunun birlikte dusunulmesi gerekir.
-3. Upload akisinda hata olursa session temizligi unutulmamalidir.
+During paid playback **no wallet popup opens**. This is achieved through a
+signless access key + session grant combination.
+
+Flow:
+
+1. When the wallet first connects (or a managed account is created), the
+   browser generates an **ed25519 keypair**. `apps/web/lib/signless-access-key.ts`
+   defines this key as a narrowly-scoped (limited-allowance) function-call
+   access key that may only call `issue_session_grant` on
+   `access.youtick.near`.
+2. The key is written to `BrowserKeyStore` through
+   `apps/web/lib/keystore-v7.ts`.
+3. When playback is needed, `apps/web/lib/access-grants.ts` calls
+   `issue_session_grant` with this key and receives a **10-minute Play
+   session grant** (5 minutes for Publish).
+4. `apps/web/lib/kms/client.ts` issues the KMS retrieve call with this
+   session grant first. If the grant is rejected
+   (`SESSION_GRANT_REJECTED` or `SIGNLESS_PLAYBACK_UNAVAILABLE`), the UI
+   asks for a reconnect.
+
+### Why?
+
+- Asking for a wallet popup per playback segment isolates users.
+- The session grant is verified on-chain; it is not an off-chain shared
+  secret.
+- The same abstraction works for managed (guest/trial) accounts.
+
+### Bounds
+
+- The grant is gated by
+  `subject_id == caller || creator || ticket_owner` in
+  `contracts/access-control/src/lib.rs::issue_session_grant`.
+- If KMS retrieve rejects the grant, the client does **not**
+  auto-invalidate; for managed accounts, retrieve falls back to a
+  local-key-signed call. For non-managed accounts,
+  `SESSION_GRANT_REJECTED` is surfaced to the UI.
+- If the local key is lost, the player surfaces
+  `SIGNLESS_PLAYBACK_UNAVAILABLE` and asks the user to reconnect.
+
+### Main Files
+
+- `apps/web/lib/signless-access-key.ts`
+- `apps/web/lib/keystore-v7.ts`
+- `apps/web/lib/access-grants.ts`
+- `apps/web/lib/kms/client.ts`
+- `apps/web/components/IpfsPlayer.tsx` (UI-side error messages)
 
 ---
 
-## Ilgili Dosyalar
+## Boundary Between the Two Halves
 
-- `apps/web/lib/upload-session-manager.ts`
-- `apps/web/lib/batch-transactions.ts`
-- `apps/web/components/UploadForm.tsx`
+| Topic | Upload Session | Signless Access Key |
+|---|---|---|
+| Contract | `youtick.near` (`create_upload_session`) | `access.youtick.near` (`issue_session_grant`) |
+| Allowed methods | `nft_mint_prepaid`, `create_event_prepaid` | `issue_session_grant` |
+| Lifetime | One publish session (short) | One device/wallet connection; each grant 5-10 min |
+| Storage | Temporary keypair + on-chain session record | `BrowserKeyStore` (local) + on-chain access key |
+| Typical UX | Single wallet approval (`create_upload_session`) | No popups after the ticket is purchased |
+
+Both paths exist to avoid a long-lived, fully-scoped device key; they
+just narrow publish and playback in different ways.

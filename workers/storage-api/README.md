@@ -1,46 +1,50 @@
 # YouTick Storage API Worker
 
-Storage API Worker, IPFS persistence provider secrets, provider status checks
-ve flag kontrollu Lighthouse upload pilotu icin ayrilmis Worker yuzeyidir.
-Buyuk production upload ve media delivery bu Worker'in ana sorumlulugu degildir.
+The Storage API Worker is a dedicated Worker surface for IPFS persistence
+provider secrets, provider status checks, and the flag-gated Lighthouse
+upload pilot. Large production uploads and media delivery are not this
+Worker's responsibility.
 
-## Sorumluluk
+## Responsibilities
 
-- Lighthouse API key tarayiciya verilmez.
-- Lighthouse upload sadece `ENABLE_LIGHTHOUSE_UPLOADS=true` ile acilir.
-- Upload body'leri `MAX_UPLOAD_BYTES` ile sinirlanir.
-- `/uploads/intent` self-declared `accountId` kabul etmez; once NEP-413
-  challenge/verify akisiyle kisa omurlu upload auth token gerekir.
-- Buyuk video upload yolu tek directory body yerine parca parca `/uploads/file`
-  uzerinden akar.
-- KMS, ticket, ban, session grant ve key-share kararlari bu Worker'a tasinmaz.
-- Media delivery ve Range/cache isi ayri bir Worker fazinda ele alinir.
+- The Lighthouse API key is never exposed to the browser.
+- Lighthouse upload is enabled only when `ENABLE_LIGHTHOUSE_UPLOADS=true`.
+- Upload bodies are bounded by `MAX_UPLOAD_BYTES`.
+- `/uploads/intent` does not accept self-declared `accountId`; a
+  short-lived upload auth token issued through the NEP-413
+  challenge/verify flow is required first.
+- The large-video upload path streams chunk-by-chunk through
+  `/uploads/file` instead of a single directory body.
+- KMS, ticket, ban, session-grant and key-share decisions are not made
+  in this Worker.
+- Media delivery and Range/cache duties live in a separate Worker.
 
-## Env ve secret
+## Env and Secrets
 
-- `ALLOWED_ORIGINS`: Browser tarafindan izin verilen origin listesi.
-- `STORAGE_PROVIDER`: Simdilik `lighthouse`.
+- `ALLOWED_ORIGINS`: list of origins the browser is allowed to use.
+- `STORAGE_PROVIDER`: currently `lighthouse`.
 - `LIGHTHOUSE_API_BASE`: Lighthouse API base URL. Default: `https://api.lighthouse.storage`.
 - `LIGHTHOUSE_UPLOAD_BASE`: Lighthouse upload base URL. Default: `https://upload.lighthouse.storage`.
-- `LIGHTHOUSE_API_KEY`: Wrangler secret olarak verilir.
-- `ENABLE_LIGHTHOUSE_UPLOADS`: `true` ise `/uploads/directory` acilir. Default kapali.
-- `MAX_UPLOAD_BYTES`: Worker uzerinden kabul edilen toplam upload boyutu. Default 100 MiB.
-- `UPLOAD_INTENT_SECRET`: Upload intent token'larini imzalamak icin Wrangler secret.
-- `UPLOAD_GUARD`: Upload intent rate-limit ve idempotency cache icin KV binding.
-- `UPLOAD_RATE_LIMIT_MAX`: Account/IP basina intent limiti. Default 1000.
-- `UPLOAD_RATE_LIMIT_WINDOW_SECONDS`: Rate-limit penceresi. Default 3600 saniye.
-- `NEAR_NETWORK`: Full-access key kontrolu icin RPC pool secimi. Default
-  `mainnet`.
+- `LIGHTHOUSE_API_KEY`: provided as a Wrangler secret.
+- `ENABLE_LIGHTHOUSE_UPLOADS`: when `true`, opens `/uploads/directory`. Off by default.
+- `MAX_UPLOAD_BYTES`: total upload size accepted through the Worker. Default 100 MiB.
+- `UPLOAD_INTENT_SECRET`: Wrangler secret used to sign upload intent tokens.
+- `UPLOAD_AUTH_SECRET`: Wrangler secret used to sign NEP-413 upload challenge tokens.
+- `UPLOAD_GUARD`: KV binding for upload-intent rate limit and idempotency cache.
+- `UPLOAD_RATE_LIMIT_MAX`: per-account/IP intent quota. Default 1000.
+- `UPLOAD_RATE_LIMIT_WINDOW_SECONDS`: rate-limit window. Default 3600 seconds.
+- `NEAR_NETWORK`: RPC pool selection for full-access key checks. Default `mainnet`.
 
 ```bash
 cd workers/storage-api
 npm install
 npx wrangler secret put LIGHTHOUSE_API_KEY
 npx wrangler secret put UPLOAD_INTENT_SECRET
+npx wrangler secret put UPLOAD_AUTH_SECRET
 npx wrangler kv namespace create UPLOAD_GUARD
 ```
 
-## Local dev ve test
+## Local dev and test
 
 ```bash
 cd workers/storage-api
@@ -51,20 +55,20 @@ npx wrangler dev
 
 ## Endpoints
 
-- `GET /__health`: Worker ayakta mi?
-- `GET /provider-health`: provider ayari hazir mi?
-- `POST /pins`: mevcut IPFS CID'ini Lighthouse pin API'ye gonderir.
-- `GET /pins/:cid/status`: Lighthouse file-info API uzerinden CID durumunu okur.
-- `POST /uploads/auth/challenge`: upload auth icin NEP-413 challenge dondurur.
-- `POST /uploads/auth/verify`: imzali challenge'i dogrular ve upload auth token dondurur.
-- `POST /uploads/intent`: buyuk upload icin guvenli yol ve parca limitlerini dondurur.
-- `POST /uploads/file`: tek dosyayi veya segment parcasini Lighthouse'a yukler.
-- `POST /uploads/directory`: multipart `file` alanlarini Lighthouse'a directory olarak yukler.
+- `GET /__health`: Is the Worker alive?
+- `GET /provider-health`: Is provider configuration ready?
+- `POST /pins`: Sends an existing IPFS CID to the Lighthouse pin API.
+- `GET /pins/:cid/status`: Reads CID status from the Lighthouse file-info API.
+- `POST /uploads/auth/challenge`: Returns a NEP-413 challenge for upload auth.
+- `POST /uploads/auth/verify`: Verifies the signed challenge and returns an upload auth token.
+- `POST /uploads/intent`: Returns the safe path and chunk limits for a large upload.
+- `POST /uploads/file`: Uploads a single file or segment chunk to Lighthouse.
+- `POST /uploads/directory`: Uploads multipart `file` fields to Lighthouse as a directory.
 
-`/provider-health`, secret degerini dondurmez. Sadece provider'in hazir olup
-olmadigini soyler.
+`/provider-health` does not return secret values. It only reports whether
+the provider is ready.
 
-`POST /pins` sadece kucuk JSON body kabul eder:
+`POST /pins` accepts only a small JSON body:
 
 ```json
 {
@@ -73,14 +77,15 @@ olmadigini soyler.
 }
 ```
 
-Upload intent iki tokenli akar:
+Upload intent is a two-token flow:
 
-1. Frontend `/uploads/auth/challenge` cagirir, cüzdana NEP-413 mesaj
-   imzalatir, sonra `/uploads/auth/verify` ile upload auth token alir.
-2. Frontend upload auth token'i `Authorization: Bearer <uploadAuthToken>`
-   olarak `/uploads/intent` istegine ekler.
-3. `/uploads/intent`, API key dondurmez; sadece `/uploads/file`,
-   `/uploads/directory`, veya `/pins` icin sureli intent token dondurur.
+1. Frontend calls `/uploads/auth/challenge`, signs a NEP-413 message
+   with the wallet, then exchanges it at `/uploads/auth/verify` for an
+   upload auth token.
+2. Frontend attaches the upload auth token as
+   `Authorization: Bearer <uploadAuthToken>` on the `/uploads/intent` request.
+3. `/uploads/intent` does not return the API key; it returns a timed
+   intent token for `/uploads/file`, `/uploads/directory`, or `/pins`.
 
 `POST /uploads/auth/challenge` body:
 
@@ -90,7 +95,7 @@ Upload intent iki tokenli akar:
 }
 ```
 
-`POST /uploads/intent` body. `accountId` auth token'dan gelir:
+`POST /uploads/intent` body. `accountId` is taken from the auth token:
 
 ```json
 {
@@ -101,15 +106,15 @@ Upload intent iki tokenli akar:
 }
 ```
 
-`ENABLE_LIGHTHOUSE_UPLOADS=true` olsa bile `UPLOAD_INTENT_SECRET` ve
-`UPLOAD_GUARD` hazir degilse write endpoint'leri fail-closed kalir. Token
-`Authorization: Bearer <intentToken>` ile `/uploads/file`,
-`/uploads/directory`, veya `/pins` endpoint'ine gonderilmelidir.
+Even when `ENABLE_LIGHTHOUSE_UPLOADS=true`, write endpoints remain
+fail-closed if `UPLOAD_INTENT_SECRET` or `UPLOAD_GUARD` are not ready.
+The intent token must be sent as `Authorization: Bearer <intentToken>`
+to `/uploads/file`, `/uploads/directory`, or `/pins`.
 
-`POST /uploads/file`, buyuk videolarda ana yoldur. Frontend encrypted media
-segmentlerini gerekirse daha kucuk byte parcalarina ayirir; manifest bu parca
-CID'lerini sirali olarak tasir. Boylece Worker hicbir zaman tum video veya tum
-delivery bundle body metabolize etmek zorunda kalmaz.
+`POST /uploads/file` is the primary path for large videos. The frontend
+splits encrypted media segments into smaller byte chunks when needed; the
+manifest carries the chunk CIDs in order, so the Worker never has to
+metabolize the entire video or delivery bundle body.
 
-`POST /uploads/directory`, kucuk bundle smoke testleri ve geriye uyumlu pilot
-icin kalir.
+`POST /uploads/directory` remains for small bundle smoke tests and
+backwards-compatible piloting.

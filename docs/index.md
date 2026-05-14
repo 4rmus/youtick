@@ -36,4 +36,5 @@ features:
 - [Smart Contract](architecture/smart-contract.md) -- Contract surfaces and invariants
 - [Contract Methods](api/contract-methods.md) -- Contract API reference
 - [Security](security.md) -- Threat model and security notes
-- [Mainnet & Open Source Readiness](mainnet-open-source-readiness-2026-04-26.md) -- Güncel durum raporu ve launch kararı
+- [Launch Plan 2026-05](launch-plan-2026-05.md) — locked single plan (alpha + pre-seed)
+- [Public Alpha User Guide](public/alpha-user-guide.md) — end-user onboarding/claim/wallet flows

@@ -1,25 +1,27 @@
 # YouTick Media Delivery Worker
 
-Media Delivery Worker, encrypted IPFS manifest and segment reads for routing,
-Range forwarding, gateway fallback and edge cache control.
+The Media Delivery Worker handles routing for encrypted IPFS manifest
+and segment reads, Range forwarding, gateway fallback and edge cache
+control.
 
-## Sorumluluk
+## Responsibilities
 
-- Buyuk upload body'leri bu Worker'dan gecmez.
-- Decrypted video, AES key veya KMS share bu Worker'a verilmez.
-- Sadece encrypted IPFS asset'leri route edilir.
-- Range istekleri upstream'e iletilir, ama ilk fazda edge cache'e yazilmaz.
+- Large upload bodies do not flow through this Worker.
+- Decrypted video, AES keys and KMS shares are never passed to this Worker.
+- It only routes encrypted IPFS assets.
+- Range requests are forwarded upstream and are not written to the edge
+  cache in the first phase.
 
 ## Env
 
-- `ALLOWED_ORIGINS`: Browser tarafindan izin verilen origin listesi.
-- `CRUST_READ_ENDPOINT`: Opsiyonel legacy Crust read API. Bos birakilirsa okunacak ilk yol gateway listesidir.
-- `IPFS_GATEWAY_BASES`: Virgulle ayrilmis gateway base URL listesi. Lighthouse gateway ilk sirada tutulur.
-- `CACHE_TTL_SECONDS`: Non-Range GET cevaplari icin edge cache suresi.
-- `CACHE_VERSION`: Opsiyonel cache bust anahtari.
-- `UPSTREAM_TIMEOUT_MS`: Her gateway denemesi icin zaman asimi.
+- `ALLOWED_ORIGINS`: list of origins the browser is allowed to use.
+- `CRUST_READ_ENDPOINT`: optional legacy Crust read API. If empty, the gateway list is the only read path.
+- `IPFS_GATEWAY_BASES`: comma-separated list of gateway base URLs. The Lighthouse gateway is kept first.
+- `CACHE_TTL_SECONDS`: edge cache lifetime for non-Range GET responses.
+- `CACHE_VERSION`: optional cache bust key.
+- `UPSTREAM_TIMEOUT_MS`: per-gateway request timeout.
 
-## Local dev ve test
+## Local dev and test
 
 ```bash
 cd workers/media-delivery
@@ -30,11 +32,11 @@ npx wrangler dev
 
 ## Endpoints
 
-- `GET /__health`: Worker ayakta mi?
-- `GET /ipfs/:cid/:path*`: encrypted IPFS asset'i gateway fallback ile okur.
-- `HEAD /ipfs/:cid/:path*`: upstream metadata okur.
+- `GET /__health`: Is the Worker alive?
+- `GET /ipfs/:cid/:path*`: Reads the encrypted IPFS asset with gateway fallback.
+- `HEAD /ipfs/:cid/:path*`: Reads upstream metadata.
 
-Ornek:
+Example:
 
 ```text
 /ipfs/bafy.../manifest.json

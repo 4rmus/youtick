@@ -66,10 +66,15 @@ Open [http://localhost:3000](http://localhost:3000).
 ### 5. Enable real upload
 
 Upload is Lighthouse-primary in the current source. For a real upload smoke
-test, run or deploy `workers/storage-api`, configure its Lighthouse secret and
-upload guard, then set `NEXT_PUBLIC_STORAGE_API_URL` in `apps/web/.env.local`.
-Without that worker, navigation and wallet screens can run locally, but upload
-will not complete.
+test:
+
+1. Run or deploy `workers/storage-api`.
+2. Configure its Lighthouse secret + `UPLOAD_AUTH_SECRET` (NEP-413 upload
+   challenge — required after SB-1).
+3. Set `NEXT_PUBLIC_STORAGE_API_URL` in `apps/web/.env.local`.
+
+Without these, the worker rejects `/uploads/intent` with `Unauthorized`.
+Navigation and wallet screens still run locally; upload won't complete.
 
 ---
 
@@ -93,8 +98,9 @@ npm run test -- --run
 
 # Contract (optional)
 cd ../../contracts/nft-ticket
-cargo near build
-cargo test
+cargo near build non-reproducible-wasm   # matches mainnet R2 deploy
+cargo test --lib
+cargo test --test sandbox
 ```
 
 ---
@@ -109,7 +115,8 @@ cargo test
 ### KMS connection issues
 
 - Confirm active KMS operators are registered in `NEXT_PUBLIC_REGISTRY_CONTRACT_ID`.
-- If using testnet or a local worker, deploy your own market/access/registry set, register that worker endpoint, and ensure Wrangler dev server is running.
+- If using testnet or a local worker, deploy your own market/access/registry set, register that worker endpoint via `propose_action` + 24h timelock + `execute_action`, and ensure Wrangler dev server is running.
+- `SIGNLESS_PLAYBACK_UNAVAILABLE` in the player means the local signless access key was lost; reconnect the wallet to mint a new one.
 
 ### IPFS playback issues
 

@@ -1,10 +1,11 @@
 # Contributing to YouTick
 
-Bu repo icin katkida bulunurken en onemli kural su: dokumani degil, aktif kodu referans al.
+The key rule when contributing to this repo: refer to the active code,
+not the documentation.
 
 ---
 
-## Hızlı baslangic
+## Quick start
 
 ```bash
 git clone https://github.com/<your-username>/youtick.git
@@ -17,19 +18,19 @@ npm run dev
 
 ---
 
-## Katki alanlari
+## Contribution areas
 
-- `apps/web/components/` : urun akislarinin UI katmani
-- `apps/web/lib/` : is mantigi
-- `workers/youtick-kms/` : key custody ve erisim kontrolu
-- `workers/storage-api/` : depolama provider secret ve health yuzeyi
-- `workers/media-delivery/` : encrypted IPFS media routing ve cache yuzeyi
-- `contracts/nft-ticket/` : zincir uzerindeki mantik
-- `docs/` : aktif davranisi anlatan dokumanlar
+- `apps/web/components/` — UI layer of the product flows
+- `apps/web/lib/` — business logic
+- `workers/youtick-kms/` — key custody and access control
+- `workers/storage-api/` — storage provider secret and health surface
+- `workers/media-delivery/` — encrypted IPFS media routing and cache
+- `contracts/nft-ticket/` — on-chain logic
+- `docs/` — documents describing active behavior
 
 ---
 
-## Env ayari
+## Env setup
 
 Minimum:
 
@@ -41,32 +42,37 @@ NEXT_PUBLIC_REGISTRY_CONTRACT_ID=registry.youtick.near
 NEXT_PUBLIC_NFT_CONTRACT_ID=youtick.near
 ```
 
-Sik kullanilan opsiyoneller:
+Common optionals:
 
 ```txt
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 NEXT_PUBLIC_ONE_CLICK_API_TOKEN=...
 ```
 
-KMS endpointleri `.env.local` ile verilmez; web app aktif operatorleri registry kontratindan okur.
+KMS endpoints are not configured through `.env.local`; the app reads
+active operators from the registry contract.
 
-Tam degisken listesi ve aciklamalar: [Configuration Reference](getting-started/configuration.md).
+Full variable list and descriptions: [Configuration Reference](getting-started/configuration.md).
 
 ---
 
-## PR oncesi kontrol
+## Pre-PR checks
 
 - `npm run lint`
 - `npm test -- --run`
 - `npm run build`
-- Storage API Worker degistiyse `cd workers/storage-api && npm test -- --run && npm run check`
-- Media Delivery Worker degistiyse `cd workers/media-delivery && npm test -- --run && npm run check`
-- Contract degistiyse `cargo test`
-- Dokuman degistiyse linkler ve terimler aktif akisa uyuyor mu
+- `npm run test:smoke` (guest/trial Playwright smoke) — optional, but
+  recommended when wallet/trial behavior changes
+- If the KMS worker changed: `cd workers/youtick-kms && npm test -- --run && npm run check`
+- If the Storage API Worker changed: `cd workers/storage-api && npm test -- --run && npm run check`
+- If the Media Delivery Worker changed: `cd workers/media-delivery && npm test -- --run && npm run check`
+- If the Web4 Proxy changed: `cd workers/web4-proxy && npm test -- --run && npm run check`
+- If contracts changed: `cargo test --lib` and `cargo test --test sandbox`
+- If docs changed: links and terminology should match the active code
 
 ---
 
-## Commit scope onerileri
+## Commit scope suggestions
 
 - `upload`
 - `player`
@@ -80,7 +86,7 @@ Tam degisken listesi ve aciklamalar: [Configuration Reference](getting-started/c
 - `intents`
 - `docs`
 
-Ornek:
+Examples:
 
 ```text
 fix(player): improve kms fallback handling
@@ -90,12 +96,15 @@ feat(upload): tighten upload session cleanup
 
 ---
 
-## Dokuman katkisi icin kural
+## Documentation contribution rule
 
-Eger bir sayfa:
+If a page centers on something that is no longer active — for example:
 
 - TEE attestation
-- kaldirilmis funding methodlari
-- kaldirilmis prepaid methodlar
+- removed Nova funding methods (`fund_nova_platform`, `set_nova_*`)
+- removed relayer methods (`*_sponsored`, `add_trial_relayer`, …)
 
-gibi artik aktif olmayan bir seyi merkezde anlatiyorsa, once kodu kontrol et ve gerekiyorsa sayfayi sadeleştir ya da kaldir.
+check the code first and either simplify the page or remove it.
+**Caveat:** the `*_prepaid` naming (`create_event_prepaid`,
+`nft_mint_prepaid`) is the **active upload session path**; it is not
+deprecated.
