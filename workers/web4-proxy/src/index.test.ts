@@ -117,6 +117,9 @@ describe('web4-proxy', () => {
         expect(response.headers.get('Content-Security-Policy')).toContain('https://challenges.cloudflare.com');
         expect(response.headers.get('Content-Security-Policy')).toContain('frame-src https://challenges.cloudflare.com');
         expect(response.headers.get('Content-Security-Policy')).toContain('https://static.cloudflareinsights.com');
+        expect(response.headers.get('Content-Security-Policy')).toContain('https://rsms.me');
+        expect(response.headers.get('Content-Security-Policy')).toContain('https://fonts.cdnfonts.com');
+        expect(response.headers.get('Content-Security-Policy')).toContain('font-src \'self\' data:');
     });
 
     it('sets long cache headers for static hashed assets', async () => {
