@@ -8,10 +8,10 @@
 Bu plan 2026-05-12 tarihli 4-agent senteziyle üretildi (`system-architect`, `security-engineer`, `socratic-mentor`, `pm-agent`). 4 iterasyonluk loophole hunt sonrası locked.
 
 Ilgili dokümanlar:
-- `docs/mainnet-open-source-readiness-2026-04-26.md` — readiness report (kapsam ve gate'lerin başlangıcı)
+- `docs/README.md` — güncel doküman indeksi ve source-of-truth yönlendirmesi
 - `docs/operations/known-issues.md` — bilinen sorunlar tracker'ı
 - `docs/architecture/README.md` — sistem mimarisi
-- `AGENTS.md` — geliştirme prensipleri
+- `docs/contributing.md` — katkı ve doğrulama rehberi
 
 ## Özet
 

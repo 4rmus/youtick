@@ -69,8 +69,8 @@ Upload is Lighthouse-primary in the current source. For a real upload smoke
 test:
 
 1. Run or deploy `workers/storage-api`.
-2. Configure its Lighthouse secret + `UPLOAD_AUTH_SECRET` (NEP-413 upload
-   challenge — required after SB-1).
+2. Configure its Lighthouse secret + `UPLOAD_INTENT_SECRET` and `UPLOAD_GUARD`
+   for guarded Worker uploads.
 3. Set `NEXT_PUBLIC_STORAGE_API_URL` in `apps/web/.env.local`.
 
 Without these, the worker rejects `/uploads/intent` with `Unauthorized`.

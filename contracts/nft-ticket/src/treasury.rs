@@ -246,7 +246,7 @@ impl Contract {
             "This event has been banned and tickets cannot be claimed"
         );
         require!(
-            event.price.0 == 0,
+            !self.event_has_paid_price(&encrypted_cid, &event),
             "This ticket is not free. Use buy_ticket instead."
         );
 
