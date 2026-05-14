@@ -26,10 +26,9 @@ Worker's responsibility.
 - `LIGHTHOUSE_API_BASE`: Lighthouse API base URL. Default: `https://api.lighthouse.storage`.
 - `LIGHTHOUSE_UPLOAD_BASE`: Lighthouse upload base URL. Default: `https://upload.lighthouse.storage`.
 - `LIGHTHOUSE_API_KEY`: provided as a Wrangler secret.
-- `ENABLE_LIGHTHOUSE_UPLOADS`: when `true`, opens `/uploads/directory`. Off by default.
+- `ENABLE_LIGHTHOUSE_UPLOADS`: when `true`, opens `/uploads/file` and `/uploads/directory`. Off by default.
 - `MAX_UPLOAD_BYTES`: total upload size accepted through the Worker. Default 100 MiB.
 - `UPLOAD_INTENT_SECRET`: Wrangler secret used to sign upload intent tokens.
-- `UPLOAD_AUTH_SECRET`: Wrangler secret used to sign NEP-413 upload challenge tokens.
 - `UPLOAD_GUARD`: KV binding for upload-intent rate limit and idempotency cache.
 - `UPLOAD_RATE_LIMIT_MAX`: per-account/IP intent quota. Default 1000.
 - `UPLOAD_RATE_LIMIT_WINDOW_SECONDS`: rate-limit window. Default 3600 seconds.
@@ -40,7 +39,6 @@ cd workers/storage-api
 npm install
 npx wrangler secret put LIGHTHOUSE_API_KEY
 npx wrangler secret put UPLOAD_INTENT_SECRET
-npx wrangler secret put UPLOAD_AUTH_SECRET
 npx wrangler kv namespace create UPLOAD_GUARD
 ```
 

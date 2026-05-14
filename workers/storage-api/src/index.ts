@@ -485,6 +485,11 @@ async function handleFileUploadRequest(request: Request, env: Env): Promise<Resp
         return jsonResponse(request, env, { error: 'invalid_content_type' }, 400);
     }
 
+    const intent = await requireUploadIntent(request, env, 'file');
+    if (!intent.ok) {
+        return jsonResponse(request, env, intent.body, intent.status);
+    }
+
     const incoming = await request.formData();
     const value = incoming.get('file');
     if (!isUploadableFile(value)) {
@@ -501,11 +506,6 @@ async function handleFileUploadRequest(request: Request, env: Env): Promise<Resp
     const path = sanitizeUploadPath(value.name);
     if (!path) {
         return jsonResponse(request, env, { error: 'invalid_upload_path' }, 400);
-    }
-
-    const intent = await requireUploadIntent(request, env, 'file');
-    if (!intent.ok) {
-        return jsonResponse(request, env, intent.body, intent.status);
     }
 
     if (intent.value.fileName !== path || intent.value.sizeBytes !== value.size) {
@@ -582,6 +582,11 @@ async function handleDirectoryUploadRequest(request: Request, env: Env): Promise
         return jsonResponse(request, env, { error: 'invalid_content_type' }, 400);
     }
 
+    const intent = await requireUploadIntent(request, env, 'directory');
+    if (!intent.ok) {
+        return jsonResponse(request, env, intent.body, intent.status);
+    }
+
     const incoming = await request.formData();
     const upstreamForm = new FormData();
     const entries: Array<{ path: string; size: number }> = [];
@@ -611,11 +616,6 @@ async function handleDirectoryUploadRequest(request: Request, env: Env): Promise
 
     if (entries.length === 0) {
         return jsonResponse(request, env, { error: 'missing_files' }, 400);
-    }
-
-    const intent = await requireUploadIntent(request, env, 'directory');
-    if (!intent.ok) {
-        return jsonResponse(request, env, intent.body, intent.status);
     }
 
     if (intent.value.sizeBytes !== totalSize) {

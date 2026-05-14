@@ -795,6 +795,40 @@ fn usdc_only_event_rejects_native_near_purchase() {
 }
 
 #[test]
+#[should_panic(expected = "This ticket is not free. Use buy_ticket instead.")]
+fn free_claim_rejects_usdc_priced_event() {
+    let creator_id = account("creator.testnet");
+    let receiver_id = account("receiver.testnet");
+    let contract_id = account("contract.testnet");
+    let mut contract = Contract::new(creator_id.clone());
+    let cid = "free-claim-usdc-event".to_string();
+    let onboarding_pk = sample_public_key(12);
+
+    contract.events.insert(
+        &cid,
+        &Event {
+            title: "USDC Event".to_string(),
+            description: "Paid in USDC".to_string(),
+            price: U128(0),
+            price_usdc: Some(U128(1_000_000)),
+            price_near: None,
+            creator_id,
+            created_at: 1,
+            content_type: ContentType::Exclusive,
+        },
+    );
+    contract.active_event_count = 1;
+    contract.trial_pool = STORAGE_COST_NFT;
+    contract.onboarding_keys.insert(&onboarding_pk);
+
+    let mut builder = context(contract_id.as_str(), contract_id.as_str());
+    builder.signer_account_pk(onboarding_pk);
+    testing_env!(builder.build());
+
+    let _ = contract.claim_free_ticket_direct(receiver_id, cid);
+}
+
+#[test]
 #[should_panic(expected = "Stablecoin payment already settled")]
 fn stablecoin_payment_id_cannot_be_used_twice() {
     let creator_id = account("creator.testnet");

@@ -907,6 +907,25 @@ describe('storage-api', () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it('checks upload intent before reading multipart upload bodies', async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request('https://storage.youtick.net/uploads/file', {
+                method: 'POST',
+                headers: { 'Content-Type': 'multipart/form-data; boundary=broken' },
+                body: 'not a valid multipart body',
+            }),
+            createGuardedEnv(),
+        );
+
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual({ error: 'upload_intent_required' });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it('returns the cached upload result when the same signed intent is retried', async () => {
         const fetchMock = vi.fn(async () => new Response(
             '{"Name":"segments/000000.m4s.part00000","Hash":"bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja","Size":"7"}',
@@ -1017,16 +1036,22 @@ describe('storage-api', () => {
         formData.append('file', new File(['too-large'], 'manifest.json'));
 
         const handler = await importHandler();
+        const env = createGuardedEnv({
+            MAX_UPLOAD_BYTES: '4',
+        });
+        const token = await issueUploadIntent(handler, env, {
+            uploadKind: 'directory',
+            fileName: 'directory',
+            sizeBytes: 9,
+            contentType: 'multipart/form-data',
+        });
         const response = await handler.fetch(
             new Request('https://storage.youtick.net/uploads/directory', {
                 method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
                 body: formData,
             }),
-            createEnv({
-                LIGHTHOUSE_API_KEY: 'secret-value',
-                ENABLE_LIGHTHOUSE_UPLOADS: 'true',
-                MAX_UPLOAD_BYTES: '4',
-            }),
+            env,
         );
 
         expect(response.status).toBe(413);

@@ -38,7 +38,7 @@ Without these the app cannot connect to the right contract set or network.
 | `NEXT_PUBLIC_DEPLOY_TARGET` | Changes Web4 build behavior | When using `npm run build:web4` |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Enables a Turnstile challenge on the trial/onboarding screen | When protecting the onboarding-key endpoint against bots |
 | `NEXT_PUBLIC_SENTRY_ENABLED` | Master switch for Sentry (`true` / `false`) | When enabling Sentry in prod; the DSN alone is not enough |
-| `NEXT_PUBLIC_SENTRY_DSN` | Sentry error collection endpoint | Required together with `SENTRY_ENABLED=true` |
+| `NEXT_PUBLIC_SENTRY_DSN` | Sentry error collection endpoint | Required together with `NEXT_PUBLIC_SENTRY_ENABLED=true` |
 | `NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE` | Enables Lighthouse status/persistence checks | Set `true` only when the Storage API Worker is ready |
 | `NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PRIMARY_UPLOAD` | Opens the Lighthouse primary upload path | On by default; set `false` only for local diagnosis |
 | `NEXT_PUBLIC_ENABLE_CRUST_UPLOAD_FALLBACK` | Falls back to Crust if Lighthouse upload fails | Off by default; set `true` only for emergency diagnosis |
@@ -171,8 +171,7 @@ namespace IDs between environments.
 | `ENABLE_LIGHTHOUSE_UPLOADS` | When `true`, opens guarded Lighthouse write endpoints |
 | `MAX_UPLOAD_BYTES` | Total upload size accepted through the Storage API Worker |
 | `UPLOAD_INTENT_SECRET` | Wrangler secret for signing upload intent tokens |
-| `UPLOAD_AUTH_SECRET` | Wrangler secret for signing NEP-413 upload challenge tokens (required after SB-1) |
-| `UPLOAD_AUTH_TTL_SECONDS` | Lifetime of NEP-413 challenge / upload auth tokens |
+| `UPLOAD_INTENT_TTL_SECONDS` | Lifetime of signed upload intent tokens |
 | `UPLOAD_GUARD` | KV binding for upload-intent rate limit and idempotency cache |
 | `UPLOAD_RATE_LIMIT_MAX` | Per-account/IP intent quota (default 1000; tightening is recommended in production) |
 | `UPLOAD_RATE_LIMIT_WINDOW_SECONDS` | Rate-limit window |
