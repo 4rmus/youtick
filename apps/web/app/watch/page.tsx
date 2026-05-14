@@ -243,7 +243,7 @@ function WatchContent() {
                     <div className="rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-800 shadow-2xl">
                         <VideoPlayer
                             cid={cid}
-                            thumbnailUrl={undefined}
+                            thumbnailUrl={parsedTitle.thumbnailCid ? parsedTitle.thumbnailUrl : undefined}
                         />
                     </div>
                 ) : (
