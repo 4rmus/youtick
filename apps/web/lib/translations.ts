@@ -736,16 +736,6 @@ export const translations = {
             cross_chain_estimate: "~{amount} {method} on {chain}",
             usd_reference: "About {amount}"
         },
-        legacy_mint: {
-            eyebrow: "Old access page",
-            title: "YouTick now uses tickets per work.",
-            description: "The old all-access flow no longer matches the current product. Open Discover to watch available works, or open a film, concert recording, or special screening with its own digital ticket.",
-            cta_discover: "Go to Discover",
-            cta_upload: "Open a screening",
-            token_title: "YouTick Legacy Access",
-            token_description: "Legacy access record for older YouTick flows",
-            button_legacy: "Legacy Access"
-        },
         gift_generator: {
             how_many: "How many tickets?",
             estimated_cost: "Estimated setup cost",
@@ -1493,16 +1483,6 @@ export const translations = {
             quote_failed: "Fiyat alınamadı",
             cross_chain_estimate: "~{amount} {method}, {chain} üzerinde",
             usd_reference: "Yaklaşık {amount}"
-        },
-        legacy_mint: {
-            eyebrow: "Eski erişim sayfası",
-            title: "YouTick artık her eser için ayrı dijital bilet kullanıyor.",
-            description: "Eski tüm içeriklere erişim akışı mevcut ürün modeliyle uyuşmuyor. Açık gösterimleri izlemek için Keşfet'e git veya film, konser kaydı ya da özel gösterimini kendi dijital biletiyle aç.",
-            cta_discover: "Keşfet'e Git",
-            cta_upload: "Gösterim Aç",
-            token_title: "YouTick Eski Erişim",
-            token_description: "Eski YouTick akışları için erişim kaydı",
-            button_legacy: "Eski Erişim"
         },
         gift_generator: {
             how_many: "Kaç adet bilet?",
