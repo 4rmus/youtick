@@ -66,6 +66,7 @@ interface StoreRequest {
     totalShares?: number;
     requiredShares?: number;
     scheme?: 'shamir-v1';
+    shareCommitments?: ShareIntegrityCommitment[];
     nonce?: string;
 }
 
@@ -148,12 +149,24 @@ export interface ShareMetadataRecord {
     scheme: 'shamir-v1';
     totalShares: number;
     requiredShares: number;
+    shareCommitments?: ShareIntegrityCommitment[];
 }
+
+export interface ShareIntegrityCommitment {
+    shareId: number;
+    digest: string;
+}
+
+const ShareIntegrityCommitmentSchema = z.object({
+    shareId: z.number().int().min(1).max(255),
+    digest: z.string().regex(/^[a-f0-9]{64}$/),
+});
 
 const ShareMetadataRecordSchema = z.object({
     scheme: z.literal('shamir-v1'),
     totalShares: z.number().int().min(2).max(255),
     requiredShares: z.number().int().min(2).max(255),
+    shareCommitments: z.array(ShareIntegrityCommitmentSchema).optional(),
 });
 
 export interface StoredShareRecord extends ShareMetadataRecord {
@@ -163,7 +176,7 @@ export interface StoredShareRecord extends ShareMetadataRecord {
 }
 
 const StoredShareRecordSchema = ShareMetadataRecordSchema.extend({
-    shareId: z.number().int().min(0).max(255),
+    shareId: z.number().int().min(1).max(255),
     nonceB64: z.string().min(1),
     ciphertextB64: z.string().min(1),
 });
@@ -278,15 +291,15 @@ function corsHeaders(request: Request, env: Env): Record<string, string> {
     const origin = request.headers.get('Origin') || '';
     const allowed = getAllowedOrigins(env);
 
-    // CORS-1 fix: localhost origins are only allowed in non-mainnet environments.
-    // On mainnet, only explicitly listed origins in ALLOWED_ORIGINS are accepted.
+    // Localhost is automatic only outside mainnet. On mainnet it must be
+    // explicitly listed so local smoke tests are intentional and auditable.
     const isLocalhost =
         origin.startsWith('http://localhost:') ||
         origin.startsWith('http://127.0.0.1:') ||
         origin === 'http://localhost' ||
         origin === 'http://127.0.0.1';
 
-    const localhostAllowed = env.NEAR_NETWORK !== 'mainnet' && isLocalhost;
+    const localhostAllowed = isLocalhost && (env.NEAR_NETWORK !== 'mainnet' || allowed.has(origin));
 
     if (isLocalhost && !localhostAllowed) {
         return {};
@@ -948,6 +961,10 @@ function hexToBytes(hex: string): Uint8Array {
     return bytes;
 }
 
+function bytesToHex(bytes: Uint8Array): string {
+    return Array.from(bytes).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 export function base64ToBytes(base64: string): Uint8Array {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
@@ -1013,6 +1030,38 @@ export function concatBytes(...parts: Uint8Array[]): Uint8Array {
 async function hashBytes(bytes: Uint8Array): Promise<Uint8Array> {
     const digest = await crypto.subtle.digest('SHA-256', bytes);
     return new Uint8Array(digest);
+}
+
+async function digestShare(
+    videoId: string,
+    record: ShareMetadataRecord & { shareId: number; shareB64: string },
+): Promise<string> {
+    const payload = [
+        'youtick-kms-share-digest-v1',
+        videoId,
+        record.scheme,
+        String(record.totalShares),
+        String(record.requiredShares),
+        String(record.shareId),
+        record.shareB64,
+    ].join(':');
+    return bytesToHex(await hashBytes(new TextEncoder().encode(payload)));
+}
+
+async function validateShareCommitment(
+    videoId: string,
+    record: ShareMetadataRecord & { shareId: number; shareB64: string },
+): Promise<boolean> {
+    if (!record.shareCommitments?.length) {
+        return true;
+    }
+
+    const expected = record.shareCommitments.find((commitment) => commitment.shareId === record.shareId);
+    if (!expected) {
+        return false;
+    }
+
+    return expected.digest === await digestShare(videoId, record);
 }
 
 function shareRecordKey(videoId: string, operatorAccountId: string): string {
@@ -1082,6 +1131,7 @@ export async function encryptShareRecord(
         totalShares: record.totalShares,
         requiredShares: record.requiredShares,
         scheme: record.scheme,
+        shareCommitments: record.shareCommitments,
         nonceB64: bytesToBase64(nonce),
         ciphertextB64: bytesToBase64(new Uint8Array(ciphertext)),
     };
@@ -1476,6 +1526,12 @@ async function handleStore(
         if (totalShares! > 255) {
             return jsonResponse({ ok: false, error: 'totalShares cannot exceed 255' }, 400, request, env);
         }
+        if (body.shareCommitments !== undefined) {
+            const commitmentsParse = z.array(ShareIntegrityCommitmentSchema).safeParse(body.shareCommitments);
+            if (!commitmentsParse.success) {
+                return jsonResponse({ ok: false, error: 'Invalid share commitments' }, 400, request, env);
+            }
+        }
     }
 
     let accountId: string;
@@ -1618,13 +1674,21 @@ async function handleStore(
             return jsonResponse({ ok: false, error: 'Internal error' }, 500, request, env);
         }
 
-        const encryptedRecord = await encryptShareRecord(env, {
+        const shareCommitments = body.shareCommitments as ShareIntegrityCommitment[] | undefined;
+        const shareRecord = {
             shareId: body.shareId as number,
             shareB64: body.shareB64 as string,
             totalShares: body.totalShares as number,
             requiredShares: body.requiredShares as number,
             scheme: body.scheme as 'shamir-v1',
-        });
+            shareCommitments,
+        };
+
+        if (!await validateShareCommitment(body.videoId, shareRecord)) {
+            return jsonResponse({ ok: false, error: 'Share commitment mismatch' }, 400, request, env);
+        }
+
+        const encryptedRecord = await encryptShareRecord(env, shareRecord);
 
         await env.VIDEO_KEYS.put(
             shareRecordKey(body.videoId, env.REGISTRY_OPERATOR_ACCOUNT_ID),
@@ -1636,6 +1700,7 @@ async function handleStore(
                 scheme: body.scheme as 'shamir-v1',
                 totalShares: body.totalShares as number,
                 requiredShares: body.requiredShares as number,
+                shareCommitments,
             } satisfies ShareMetadataRecord),
         );
 
@@ -1813,6 +1878,7 @@ async function handleRetrieve(
                     totalShares: storedShare.totalShares,
                     requiredShares: storedShare.requiredShares,
                     scheme: storedShare.scheme,
+                    shareCommitments: storedShare.shareCommitments,
                     operatorAccountId: env.REGISTRY_OPERATOR_ACCOUNT_ID,
                 },
             },

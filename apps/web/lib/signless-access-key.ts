@@ -16,6 +16,10 @@ export async function persistSignlessAccessKey(accountId: string, keyPair: KeyPa
     await signlessKeyStore.setKey(NEAR_CONFIG.networkId, accountId, keyPair);
 }
 
+export async function getSignlessAccessKey(accountId: string): Promise<KeyPair | null> {
+    return await signlessKeyStore.getKey(NEAR_CONFIG.networkId, accountId);
+}
+
 export async function clearSignlessAccessKey(accountId: string): Promise<void> {
     await signlessKeyStore.removeKey(NEAR_CONFIG.networkId, accountId);
 }

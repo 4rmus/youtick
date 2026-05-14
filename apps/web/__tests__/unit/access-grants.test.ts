@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearMockKeyStore } from '../setup';
 
 describe('access-grants', () => {
     beforeEach(() => {
+        clearMockKeyStore();
         Object.assign(window, {
             crypto: globalThis.crypto,
             location: { origin: 'https://app.test' },
@@ -19,6 +21,7 @@ describe('access-grants', () => {
 
     afterEach(() => {
         vi.resetModules();
+        clearMockKeyStore();
         sessionStorage.clear();
         delete process.env.NEXT_PUBLIC_NEAR_NETWORK;
         delete process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID;
@@ -73,6 +76,39 @@ describe('access-grants', () => {
 
         expect(secondGrant?.sessionPublicKey).toBe(firstGrant?.sessionPublicKey);
         expect(wallet.signAndSendTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses a stored signless access key to issue a play grant without opening the wallet', async () => {
+        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';
+
+        const { Account, KeyPair } = await import('near-api-js');
+        const { persistSignlessAccessKey } = await import('@/lib/signless-access-key');
+        const accountSignSpy = vi.spyOn(Account.prototype, 'signAndSendTransaction');
+        await persistSignlessAccessKey('alice.testnet', KeyPair.fromRandom('ed25519'));
+
+        const wallet = {
+            signAndSendTransaction: vi.fn(async () => ({})),
+        };
+
+        const { ensureSessionGrant } = await import('@/lib/access-grants');
+        const grant = await ensureSessionGrant({
+            accountId: 'alice.testnet',
+            scope: 'Play',
+            resourceId: 'video-1',
+            wallet: wallet as never,
+        });
+
+        expect(grant).toMatchObject({
+            accountId: 'alice.testnet',
+            scope: 'Play',
+            resourceId: 'video-1',
+        });
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+        expect(accountSignSpy).toHaveBeenCalledTimes(1);
+        expect(accountSignSpy.mock.calls[0][0]).toMatchObject({
+            receiverId: 'access-1773606802388.v2-0.utick.testnet',
+        });
     });
 
     it('clears grants by account prefix', async () => {

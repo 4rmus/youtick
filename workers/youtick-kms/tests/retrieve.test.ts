@@ -31,6 +31,30 @@ function encodeRpcResult(value: unknown): number[] {
     return Array.from(new TextEncoder().encode(JSON.stringify(value)));
 }
 
+function bytesToHex(bytes: Uint8Array): string {
+    return Array.from(bytes).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function shareDigest(
+    videoId: string,
+    shareId: number,
+    shareB64: string,
+    totalShares: number,
+    requiredShares: number,
+): Promise<string> {
+    const payload = [
+        'youtick-kms-share-digest-v1',
+        videoId,
+        'shamir-v1',
+        String(totalShares),
+        String(requiredShares),
+        String(shareId),
+        shareB64,
+    ].join(':');
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload));
+    return bytesToHex(new Uint8Array(digest));
+}
+
 function makeEnv(): Env {
     return {
         VIDEO_KEYS: new MemoryKV() as unknown as Env['VIDEO_KEYS'],
@@ -109,6 +133,8 @@ describe('KMS retrieve', () => {
         const env = makeEnv();
         await seedAuthToken(env, 'store-token', 'store');
         await seedAuthToken(env, 'retrieve-token', 'retrieve');
+        const digest = await shareDigest('video-1', 1, 'c2hhcmUtMQ==', 3, 2);
+        const shareCommitments = [{ shareId: 1, digest }];
 
         const storeResponse = await worker.fetch(new Request('https://kms.test/store', {
             method: 'POST',
@@ -123,6 +149,7 @@ describe('KMS retrieve', () => {
                 totalShares: 3,
                 requiredShares: 2,
                 scheme: 'shamir-v1',
+                shareCommitments,
             }),
         }), env);
 
@@ -146,8 +173,37 @@ describe('KMS retrieve', () => {
                 totalShares: 3,
                 requiredShares: 2,
                 scheme: 'shamir-v1',
+                shareCommitments,
                 operatorAccountId: 'kms-a.youtick.testnet',
             },
+        });
+    });
+
+    it('rejects share stores when the provided commitment does not match the share', async () => {
+        const env = makeEnv();
+        await seedAuthToken(env, 'store-token', 'store');
+
+        const storeResponse = await worker.fetch(new Request('https://kms.test/store', {
+            method: 'POST',
+            headers: {
+                Authorization: 'Bearer store-token',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                videoId: 'video-1',
+                shareB64: 'c2hhcmUtMQ==',
+                shareId: 1,
+                totalShares: 3,
+                requiredShares: 2,
+                scheme: 'shamir-v1',
+                shareCommitments: [{ shareId: 1, digest: '0'.repeat(64) }],
+            }),
+        }), env);
+
+        expect(storeResponse.status).toBe(400);
+        await expect(storeResponse.json()).resolves.toEqual({
+            ok: false,
+            error: 'Share commitment mismatch',
         });
     });
 

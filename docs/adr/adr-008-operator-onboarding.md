@@ -15,7 +15,7 @@ The operator registry is a passive directory. The contract owner can add or remo
 3. **Automated liveness challenges:** The contract (or an off-chain keeper) calls a health endpoint on each operator every N blocks. Missing 3 consecutive challenges marks the operator as `inactive` and slashes 10% of the bond.
 4. **Slashing conditions:**
    - Downtime: 10% slash + deactivation.
-   - Bad shares (provable via VSS from ADR-005): 50% slash + deactivation.
+   - Bad shares (provable once full VSS or an equivalent challenge proof exists): 50% slash + deactivation.
    - Censorship (refusing to serve shares to valid ticket holders, provable via challenge): 25% slash.
 5. **Reward pool:** A portion of platform commission (e.g., 0.5% of sales) is distributed to active operators proportional to uptime and stake.
 

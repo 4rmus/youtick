@@ -5,8 +5,23 @@ import { BrowserKeyStore } from '../keystore-v7';
 import { getThresholdConfig, listActiveDecryptionOperators, type RegistryOperatorRecord } from '../registry';
 import { getActiveUploadSessionKey } from '../upload-session-manager';
 import type { WalletInstance } from '../types';
-import { ensureSessionGrant, getCachedSessionGrant, invalidateSessionGrant, signSessionGrantPayload } from '../access-grants';
-import { reconstructSecretFromShares, splitSecretIntoShares, type SecretShare } from './shares';
+import {
+    ensureSessionGrant,
+    getCachedSessionGrant,
+    invalidateSessionGrant,
+    isSessionGrantVisible,
+    signSessionGrantPayload,
+    type BrowserSessionGrant,
+} from '../access-grants';
+import {
+    buildShareIntegrityCommitments,
+    reconstructSecretFromShares,
+    selectSharesForReconstruction,
+    splitSecretIntoShares,
+    type SecretShare,
+    type ShareCandidate,
+    type ShareIntegrityCommitment,
+} from './shares';
 
 const AUTH_CACHE_PREFIX = 'youtick:kms-auth:';
 const AUTH_CACHE_SKEW_MS = 30_000;
@@ -19,6 +34,8 @@ const KMS_OPERATOR_HEDGE_DELAY_MS = 250;
 const KMS_DEFAULT_LATENCY_MS = 5_000;
 const KMS_RETRIEVE_PROPAGATION_RETRY_DELAYS_MS =
     process.env.NODE_ENV === 'test' ? [] : [1_500, 3_000, 6_000, 12_000];
+const KMS_SESSION_GRANT_VISIBILITY_POLL_DELAYS_MS =
+    process.env.NODE_ENV === 'test' ? [] : [150, 300, 550, 1_000];
 
 interface KMSHealthData {
     network?: string;
@@ -51,6 +68,7 @@ export interface KMSRetrieveResult {
     requiredShares?: number;
     scheme?: string;
     operatorAccountId?: string;
+    shareCommitments?: ShareIntegrityCommitment[];
 }
 
 export interface KMSShareDebugTrace {
@@ -62,12 +80,15 @@ export interface KMSShareDebugTrace {
     error?: string;
 }
 
+type RetrieveAuthMode = 'playback' | 'upload-session';
+
 interface ShareStoreBody {
     shareB64: string;
     shareId: number;
     totalShares: number;
     requiredShares: number;
     scheme: 'shamir-v1';
+    shareCommitments: ShareIntegrityCommitment[];
 }
 
 interface SettledSuccess<T> {
@@ -344,6 +365,23 @@ function delay(ms: number): Promise<void> {
     });
 }
 
+async function waitForSessionGrantVisibility(grant: BrowserSessionGrant): Promise<void> {
+    for (let attempt = 0; attempt <= KMS_SESSION_GRANT_VISIBILITY_POLL_DELAYS_MS.length; attempt += 1) {
+        try {
+            if (await isSessionGrantVisible(grant)) {
+                return;
+            }
+        } catch {
+            return;
+        }
+
+        const retryDelay = KMS_SESSION_GRANT_VISIBILITY_POLL_DELAYS_MS[attempt];
+        if (typeof retryDelay === 'number') {
+            await delay(retryDelay);
+        }
+    }
+}
+
 function authCacheKey(
     baseUrl: string,
     accountId: string,
@@ -449,19 +487,15 @@ async function getLocalKmsSigningKey(accountId: string): Promise<KeyPair | null>
     return await keyStore.getKey(NEAR_CONFIG.networkId, accountId);
 }
 
-async function tryLocalSignedKmsRequest<T>(
+async function trySignedKmsRequestWithKey<T>(
     baseUrl: string,
     endpoint: 'store' | 'retrieve',
     accountId: string,
     videoId: string,
     extraBody: Record<string, unknown>,
+    keyPair: KeyPair,
     signal?: AbortSignal,
 ): Promise<T | null> {
-    const keyPair = await getLocalKmsSigningKey(accountId);
-    if (!keyPair) {
-        return null;
-    }
-
     const timestamp = Date.now();
     const nonce = typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
@@ -509,6 +543,38 @@ async function tryLocalSignedKmsRequest<T>(
         endpoint === 'store' ? 'STORE_FAILED' : 'RETRIEVE_FAILED',
         result.error || `Failed to ${endpoint} key`,
     );
+}
+
+async function tryUploadSessionKmsRequest<T>(
+    baseUrl: string,
+    endpoint: 'store' | 'retrieve',
+    accountId: string,
+    videoId: string,
+    extraBody: Record<string, unknown>,
+    signal?: AbortSignal,
+): Promise<T | null> {
+    const keyPair = getActiveUploadSessionKey(accountId);
+    if (!keyPair) {
+        return null;
+    }
+
+    return trySignedKmsRequestWithKey(baseUrl, endpoint, accountId, videoId, extraBody, keyPair, signal);
+}
+
+async function tryLocalSignedKmsRequest<T>(
+    baseUrl: string,
+    endpoint: 'store' | 'retrieve',
+    accountId: string,
+    videoId: string,
+    extraBody: Record<string, unknown>,
+    signal?: AbortSignal,
+): Promise<T | null> {
+    const keyPair = await getLocalKmsSigningKey(accountId);
+    if (!keyPair) {
+        return null;
+    }
+
+    return trySignedKmsRequestWithKey(baseUrl, endpoint, accountId, videoId, extraBody, keyPair, signal);
 }
 
 async function trySessionGrantKmsRequest<T>(
@@ -734,11 +800,30 @@ async function executeKmsRequest<T>(
     wallet: WalletInstance,
     options?: {
         signal?: AbortSignal;
+        retrieveAuthMode?: RetrieveAuthMode;
     },
 ): Promise<T> {
     await ensureKmsConfigMatchesApp(baseUrl);
 
     if (endpoint === 'retrieve') {
+        if (options?.retrieveAuthMode === 'upload-session') {
+            const uploadSessionResult = await tryUploadSessionKmsRequest<T>(
+                baseUrl,
+                endpoint,
+                accountId,
+                videoId,
+                extraBody,
+                options?.signal,
+            );
+            if (uploadSessionResult) {
+                return uploadSessionResult;
+            }
+            throw new KMSError(
+                'SIGNLESS_UPLOAD_SESSION_UNAVAILABLE',
+                'Upload session could not verify the KMS key without wallet approval.',
+            );
+        }
+
         const grantResult = await trySessionGrantKmsRequest<T>(
             baseUrl,
             endpoint,
@@ -770,8 +855,10 @@ async function executeKmsRequest<T>(
             );
         }
 
+        const hadSessionGrant = Boolean(getCachedSessionGrant(accountId, 'Play', videoId));
+        let sessionGrant: BrowserSessionGrant | null = null;
         try {
-            await ensureSessionGrant({
+            sessionGrant = await ensureSessionGrant({
                 accountId,
                 scope: 'Play',
                 resourceId: videoId,
@@ -782,6 +869,9 @@ async function executeKmsRequest<T>(
                 'SIGNLESS_PLAYBACK_UNAVAILABLE',
                 'Signless playback is not ready for this wallet session. Reconnect the wallet once to enable fast playback.',
             );
+        }
+        if (!hadSessionGrant && sessionGrant) {
+            await waitForSessionGrantVisibility(sessionGrant);
         }
 
         const refreshedGrantResult = await trySessionGrantKmsRequest<T>(
@@ -848,6 +938,7 @@ async function executeTimedKmsRequest<T>(
     wallet: WalletInstance,
     options?: {
         signal?: AbortSignal;
+        retrieveAuthMode?: RetrieveAuthMode;
     },
 ): Promise<T> {
     const startedAt = Date.now();
@@ -880,6 +971,7 @@ async function storeShareBatch(
     wallet: WalletInstance,
     totalShares: number,
     requiredShares: number,
+    shareCommitments: ShareIntegrityCommitment[],
     initialState?: {
         successfulStores: number;
         lastSuccess: KMSStoreResult | null;
@@ -912,6 +1004,7 @@ async function storeShareBatch(
                             totalShares,
                             requiredShares,
                             scheme: 'shamir-v1',
+                            shareCommitments,
                         } satisfies ShareStoreBody),
                     },
                     wallet,
@@ -957,6 +1050,12 @@ async function storeEncryptionKeyShares(
 
     const orderedOperators = sortOperatorsByKmsPreference(operators);
     const shares = splitSecretIntoShares(aesKeyB64, totalShares, requiredShares);
+    const shareCommitments = await buildShareIntegrityCommitments(
+        videoId,
+        shares,
+        totalShares,
+        requiredShares,
+    );
     const entries = orderedOperators.map((operator, index) => ({
         operator,
         share: shares[index],
@@ -970,6 +1069,7 @@ async function storeEncryptionKeyShares(
         wallet,
         totalShares,
         requiredShares,
+        shareCommitments,
     );
 
     if (state.successfulStores >= requiredShares && state.lastSuccess) {
@@ -987,6 +1087,7 @@ async function storeEncryptionKeyShares(
                         totalShares,
                         requiredShares,
                         scheme: 'shamir-v1',
+                        shareCommitments,
                     } satisfies ShareStoreBody),
                 },
                 wallet,
@@ -1003,6 +1104,7 @@ async function storeEncryptionKeyShares(
         wallet,
         totalShares,
         requiredShares,
+        shareCommitments,
         state,
     );
 
@@ -1023,6 +1125,7 @@ async function retrieveEncryptionKeyShares(
     wallet: WalletInstance,
     options: {
         logInsufficientShares?: boolean;
+        retrieveAuthMode?: RetrieveAuthMode;
     } = {},
 ): Promise<string | null> {
     const operators = await listActiveDecryptionOperators();
@@ -1034,7 +1137,7 @@ async function retrieveEncryptionKeyShares(
     }
 
     const orderedOperators = sortOperatorsByKmsPreference(operators);
-    const shares: SecretShare[] = [];
+    const shares: ShareCandidate[] = [];
     const debugTrace: KMSShareDebugTrace[] = [];
     const controllers = orderedOperators.map(() => new AbortController());
     const pendingResults = new Map<number, Promise<SettledTaskResult<KMSRetrieveResult>>>();
@@ -1057,6 +1160,7 @@ async function retrieveEncryptionKeyShares(
                         wallet,
                         {
                             signal: controllers[index].signal,
+                            retrieveAuthMode: options.retrieveAuthMode,
                         },
                     ),
                 ),
@@ -1120,6 +1224,10 @@ async function retrieveEncryptionKeyShares(
             shares.push({
                 shareB64: settled.value.shareB64,
                 shareId: settled.value.shareId,
+                totalShares: settled.value.totalShares,
+                requiredShares: settled.value.requiredShares,
+                scheme: settled.value.scheme,
+                shareCommitments: settled.value.shareCommitments,
             });
             debugTrace.push({
                 operatorEndpoint: operator.endpoint,
@@ -1130,20 +1238,23 @@ async function retrieveEncryptionKeyShares(
             });
 
             if (shares.length >= requiredShares) {
-                controllers.forEach((controller) => controller.abort());
-                const reconstructed = reconstructSecretFromShares(shares, requiredShares);
-                if (process.env.NEXT_PUBLIC_DEBUG_PLAYBACK === 'true') {
-                    console.info('[KMS] Share retrieval trace', {
-                        videoId,
-                        accountId,
-                        mode: 'reconstructed',
-                        requiredShares,
-                        collectedShares: shares.length,
-                        shareIds: shares.map((share) => share.shareId),
-                        debugTrace,
-                    });
+                const selectedShares = await selectSharesForReconstruction(videoId, shares, requiredShares);
+                if (selectedShares) {
+                    controllers.forEach((controller) => controller.abort());
+                    const reconstructed = reconstructSecretFromShares(selectedShares, requiredShares);
+                    if (process.env.NEXT_PUBLIC_DEBUG_PLAYBACK === 'true') {
+                        console.info('[KMS] Share retrieval trace', {
+                            videoId,
+                            accountId,
+                            mode: 'reconstructed',
+                            requiredShares,
+                            collectedShares: shares.length,
+                            shareIds: selectedShares.map((share) => share.shareId),
+                            debugTrace,
+                        });
+                    }
+                    return reconstructed;
                 }
-                return reconstructed;
             }
         } else {
             debugTrace.push({
@@ -1169,7 +1280,8 @@ async function retrieveEncryptionKeyShares(
         return null;
     }
 
-    return reconstructSecretFromShares(shares, requiredShares);
+    const selectedShares = await selectSharesForReconstruction(videoId, shares, requiredShares);
+    return selectedShares ? reconstructSecretFromShares(selectedShares, requiredShares) : null;
 }
 
 export async function storeEncryptionKey(
@@ -1198,6 +1310,9 @@ export async function retrieveEncryptionKey(
     videoId: string,
     accountId: string,
     wallet: WalletInstance,
+    options: {
+        authMode?: RetrieveAuthMode;
+    } = {},
 ): Promise<string> {
     for (let attempt = 0; attempt <= KMS_RETRIEVE_PROPAGATION_RETRY_DELAYS_MS.length; attempt += 1) {
         const isFinalAttempt = attempt === KMS_RETRIEVE_PROPAGATION_RETRY_DELAYS_MS.length;
@@ -1207,6 +1322,7 @@ export async function retrieveEncryptionKey(
             wallet,
             {
                 logInsufficientShares: isFinalAttempt,
+                retrieveAuthMode: options.authMode,
             },
         );
         if (shareResult) {

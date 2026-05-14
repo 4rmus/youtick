@@ -581,7 +581,9 @@ export function useUpload() {
             setStatus('Storing encryption key on KMS...');
             await storeEncryptionKey(videoUuid, aesKeyB64, accountId, wallet);
             setStatus('Verifying encryption key on KMS...');
-            const verifiedAesKeyB64 = await retrieveEncryptionKey(videoUuid, accountId, wallet);
+            const verifiedAesKeyB64 = await retrieveEncryptionKey(videoUuid, accountId, wallet, {
+                authMode: 'upload-session',
+            });
             if (verifiedAesKeyB64 !== aesKeyB64) {
                 throw new Error('KMS verification failed. Upload was stopped before publishing.');
             }
