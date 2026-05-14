@@ -1,5 +1,8 @@
-import { actions, KeyPair, type KeyPairString } from 'near-api-js';
+import { Account, actions, KeyPair, KeyPairSigner, type KeyPairString } from 'near-api-js';
 import { GAS_CONSTANTS, NEAR_CONFIG } from './constants';
+import { getProvider, viewContract } from './near';
+import { getCurrentRpcUrl } from './rpc-failover';
+import { getSignlessAccessKey } from './signless-access-key';
 import type { WalletInstance } from './types';
 
 const ACCESS_GRANT_CACHE_PREFIX = 'youtick:access-grant:';
@@ -40,6 +43,11 @@ export interface PreparedSessionGrant {
         receiverId: string;
         actions: unknown[];
     };
+}
+
+interface SessionGrantVerification {
+    valid: boolean;
+    owner_id?: string;
 }
 
 function cacheKey(accountId: string, scope: SessionGrantScope, resourceId?: string): string {
@@ -214,6 +222,22 @@ export function getCachedSessionGrant(
     return readCachedGrant(accountId, scope, resourceId);
 }
 
+export async function isSessionGrantVisible(grant: BrowserSessionGrant): Promise<boolean> {
+    const verification = await viewContract<SessionGrantVerification>(
+        getProvider(),
+        NEAR_CONFIG.accessContractId,
+        'verify_session_grant',
+        {
+            session_pk: grant.sessionPublicKey,
+            scope: grant.scope,
+            resource_id: grant.resourceId,
+            origin_hash: grant.originHash,
+            device_hash: grant.deviceHash,
+        },
+    );
+    return verification.valid === true && verification.owner_id === grant.accountId;
+}
+
 export function clearSessionGrantCache(accountId?: string): void {
     if (typeof window === 'undefined') {
         return;
@@ -274,7 +298,13 @@ export async function ensureSessionGrant(params: {
             resourceId: params.resourceId,
         });
 
-        await params.wallet.signAndSendTransaction(prepared.transaction);
+        const issuedWithSignlessKey = await tryIssueSessionGrantWithSignlessKey(
+            params.accountId,
+            prepared.transaction,
+        );
+        if (!issuedWithSignlessKey) {
+            await params.wallet.signAndSendTransaction(prepared.transaction);
+        }
 
         persistSessionGrant(prepared.grant);
         return prepared.grant;
@@ -284,6 +314,28 @@ export async function ensureSessionGrant(params: {
 
     pendingGrantPromises.set(cacheStorageKey, grantPromise);
     return grantPromise;
+}
+
+async function tryIssueSessionGrantWithSignlessKey(
+    accountId: string,
+    transaction: PreparedSessionGrant['transaction'],
+): Promise<boolean> {
+    const keyPair = await getSignlessAccessKey(accountId);
+    if (!keyPair) {
+        return false;
+    }
+
+    try {
+        const signer = new KeyPairSigner(keyPair);
+        const account = new Account(accountId, getCurrentRpcUrl(), signer);
+        await account.signAndSendTransaction({
+            receiverId: transaction.receiverId,
+            actions: transaction.actions as Parameters<Account['signAndSendTransaction']>[0]['actions'],
+        });
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 export async function prepareSessionGrant(params: {

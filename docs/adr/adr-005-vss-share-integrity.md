@@ -1,48 +1,57 @@
-# ADR-005: Share Integrity — Verifiable Secret Sharing or Per-Share HMAC
+# ADR-005: Share Integrity - Digest Commitments and Future VSS
 
 ## Status
-Deferred until Phase 2 (post-traction)
+Lightweight digest commitments implemented; full VSS deferred until Phase 2
 
 ## Solo Dev Note
-VSS adds significant complexity (curve arithmetic, commitment storage, client verification). In the MVP you will run or deeply trust 2–3 operators, so Byzantine tolerance is not required. If an operator returns a bad share, you can debug and fix it operationally. Revisit when you need permissionless operators.
+Full VSS still adds significant complexity (curve arithmetic, commitment storage, client verification). The public-alpha path now uses a smaller integrity layer: each stored KMS share carries SHA-256 commitments for the expected share set. This catches corrupted or stale shares during playback, while avoiding a large cryptographic redesign.
 
 ## Context
-`apps/web/lib/kms/shares.ts` implements GF(256) Shamir Secret Sharing but has **no integrity check**. `reconstructSecretFromShares` deduplicates by `shareId` but does not detect corrupted shares. A single malicious operator can return garbage data, causing reconstruction to fail with no way to identify the culprit.
+`apps/web/lib/kms/shares.ts` implements GF(256) Shamir Secret Sharing. New uploads generate per-share SHA-256 commitments, KMS stores them with the share metadata, and playback verifies returned shares before reconstruction. Legacy KMS records without commitments still work as a compatibility path.
 
 ## Decision
-Add **Verifiable Secret Sharing (VSS)** commitments using Feldman’s scheme over GF(256), or a lightweight **HMAC over each share** if VSS proves too complex for the browser.
+Use per-share digest commitments now, and keep full **Verifiable Secret Sharing (VSS)** as the stronger Phase 2 design.
 
-### Option A: Feldman VSS (Preferred)
+### Implemented: Per-Share Digest Commitments
+- During upload, the web app computes `shareCommitments` over `videoId`, scheme, threshold settings, `shareId`, and `shareB64`.
+- The KMS worker rejects a `/store` request if the operator share does not match its provided commitment.
+- During playback, the web app ignores returned shares that do not match a shared commitment set and keeps asking operators until it has enough valid shares.
+- Old shares without commitments remain readable.
+
+**Trust limit:** this is not full VSS. It catches bad operator responses and storage drift, but it does not create public slashing proof or protect against a malicious uploader creating a bad commitment set.
+
+### Phase 2 Option A: Feldman VSS
 - During split, generate polynomial commitment `C_j = g^{a_j}` (using an elliptic curve or discrete log group compatible with GF(256) arithmetic).
 - Store commitments on-chain or in the video manifest.
 - During reconstruction, each share is verified against commitments before use.
 - Client fetches `requiredShares + 1`, verifies all, excludes bad ones, reconstructs with `requiredShares` good shares.
 
-### Option B: Per-Share HMAC (Fallback)
-- Derive an HMAC key from the same secret used for AES encryption (or a separate HKDF output).
-- Append `HMAC(shareId || shareBytes)` to each share.
-- Client verifies HMAC; mismatch = bad share.
-- **Weakness:** Does not prevent a malicious uploader from generating bad HMACs; assumes uploader is honest.
+### Phase 2 Option B: Stronger Per-Share MAC
+- Derive a MAC key from a separate HKDF output.
+- Append `MAC(shareId || shareBytes)` to each share.
+- Client verifies the MAC; mismatch = bad share.
+- **Weakness:** Does not prevent a malicious uploader from generating bad MACs; assumes uploader is honest.
 
-**Decision:** Pursue Option A (VSS) for robustness. If NEAR gas or browser performance blocks it, fall back to Option B with documented trust assumptions.
+**Decision:** ship digest commitments as the simple public-alpha guardrail. Revisit VSS or a stronger MAC when operators become less trusted or slashing becomes real.
 
 ## Consequences
 ### Positive
-- Tolerates 1 Byzantine operator without playback failure.
-- Creates cryptographic accountability: bad shares are provably attributable.
+- Playback can skip corrupted or stale shares instead of failing on the first bad threshold.
+- The change is small and keeps legacy KMS records readable.
 
 ### Negative
-- VSS adds complexity and potentially non-trivial browser compute.
-- Commitments must be stored somewhere (manifest or on-chain) and kept available.
+- Digest commitments are not enough for decentralized slashing.
+- The commitment set still depends on the uploader path being honest.
 
 ## KPI
-- **Byzantine operator tolerance:** 0 → 1
-- **Playback success rate with 1 malicious operator:** 0% → 100%
+- **Bad-share skip path:** absent -> covered by unit tests
+- **Legacy share compatibility:** preserved
 
 ## Validation
-- Unit test: `byzantine_playback_succeeds.ts` passes with 1 corrupted share out of 5.
-- Performance benchmark: VSS verification overhead < 50ms per share on mid-tier mobile.
+- `apps/web/__tests__/unit/kms-shares.test.ts` verifies corrupted and duplicate shares are ignored.
+- `apps/web/__tests__/unit/kms-client.test.ts` verifies playback keeps fetching until enough committed shares are valid.
+- `workers/youtick-kms/tests/retrieve.test.ts` verifies KMS rejects mismatched commitments and returns commitments on retrieve.
 
 ## Open Questions
-- Which curve/group for Feldman commitments in a browser-friendly way? Ristretto255? BN256?
-- Should commitments be stored on-chain (gas cost) or in the IPFS manifest (availability risk)?
+- If full VSS is added, which curve/group is browser-friendly enough? Ristretto255? BN256?
+- Should Phase 2 commitments be stored on-chain, in the manifest, or only in KMS metadata?

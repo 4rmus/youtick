@@ -40,9 +40,26 @@ describe('getAllowedOrigins', () => {
         expect(getAllowedOrigins(env).size).toBe(1);
     });
 
-    it('does not allow localhost on mainnet even if it is configured', async () => {
+    it('allows localhost on mainnet only when it is explicitly configured', async () => {
         const env = baseEnv({
             ALLOWED_ORIGINS: 'https://youtick.net,http://localhost:3000',
+            NEAR_NETWORK: 'mainnet',
+        });
+        const response = await worker.fetch(
+            new Request('https://kms.youtick.net/retrieve', {
+                method: 'OPTIONS',
+                headers: { Origin: 'http://localhost:3000' },
+            }),
+            env,
+        );
+
+        expect(response.status).toBe(204);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:3000');
+    });
+
+    it('does not allow unconfigured localhost on mainnet', async () => {
+        const env = baseEnv({
+            ALLOWED_ORIGINS: 'https://youtick.net',
             NEAR_NETWORK: 'mainnet',
         });
         const response = await worker.fetch(

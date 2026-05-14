@@ -4,7 +4,7 @@ compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
+ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net,http://localhost:3000"
 STORAGE_PROVIDER = "lighthouse"
 LIGHTHOUSE_API_BASE = "https://api.lighthouse.storage"
 ENABLE_LIGHTHOUSE_UPLOADS = "true"

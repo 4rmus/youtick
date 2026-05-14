@@ -7,6 +7,20 @@ export interface SecretShare {
     shareB64: string;
 }
 
+export interface ShareIntegrityCommitment {
+    shareId: number;
+    digest: string;
+}
+
+export interface ShareCandidate extends SecretShare {
+    totalShares?: number;
+    requiredShares?: number;
+    scheme?: 'shamir-v1' | string;
+    shareCommitments?: ShareIntegrityCommitment[];
+}
+
+const SHARE_DIGEST_VERSION = 'youtick-kms-share-digest-v1';
+
 function gfMul(a: number, b: number): number {
     let x = a;
     let y = b;
@@ -101,6 +115,167 @@ export function splitSecretIntoShares(
         shareId: index + 1,
         shareB64: base64Encode(shareBytes.buffer),
     }));
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+    return Array.from(bytes).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function canonicalShareDigestPayload(
+    videoId: string,
+    share: SecretShare,
+    totalShares: number,
+    requiredShares: number,
+): string {
+    return [
+        SHARE_DIGEST_VERSION,
+        videoId,
+        'shamir-v1',
+        String(totalShares),
+        String(requiredShares),
+        String(share.shareId),
+        share.shareB64,
+    ].join(':');
+}
+
+export async function digestShare(
+    videoId: string,
+    share: SecretShare,
+    totalShares: number,
+    requiredShares: number,
+): Promise<string> {
+    const payload = canonicalShareDigestPayload(videoId, share, totalShares, requiredShares);
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload));
+    return bytesToHex(new Uint8Array(digest));
+}
+
+export async function buildShareIntegrityCommitments(
+    videoId: string,
+    shares: SecretShare[],
+    totalShares: number,
+    requiredShares: number,
+): Promise<ShareIntegrityCommitment[]> {
+    return Promise.all(shares.map(async (share) => ({
+        shareId: share.shareId,
+        digest: await digestShare(videoId, share, totalShares, requiredShares),
+    })));
+}
+
+function normalizeCommitments(commitments: ShareIntegrityCommitment[] | undefined): ShareIntegrityCommitment[] {
+    if (!commitments?.length) {
+        return [];
+    }
+
+    const byShareId = new Map<number, ShareIntegrityCommitment>();
+    for (const commitment of commitments) {
+        if (
+            Number.isInteger(commitment.shareId)
+            && commitment.shareId >= 1
+            && commitment.shareId <= 255
+            && /^[a-f0-9]{64}$/.test(commitment.digest)
+        ) {
+            byShareId.set(commitment.shareId, commitment);
+        }
+    }
+
+    return Array.from(byShareId.values()).sort((a, b) => a.shareId - b.shareId);
+}
+
+function commitmentKey(commitments: ShareIntegrityCommitment[]): string {
+    return JSON.stringify(commitments.map((commitment) => [commitment.shareId, commitment.digest]));
+}
+
+async function isShareValidForCommitments(
+    videoId: string,
+    candidate: ShareCandidate,
+    commitments: ShareIntegrityCommitment[],
+): Promise<boolean> {
+    if (
+        candidate.scheme !== 'shamir-v1'
+        || typeof candidate.totalShares !== 'number'
+        || typeof candidate.requiredShares !== 'number'
+    ) {
+        return false;
+    }
+
+    const expected = commitments.find((commitment) => commitment.shareId === candidate.shareId);
+    if (!expected) {
+        return false;
+    }
+
+    const actual = await digestShare(
+        videoId,
+        candidate,
+        candidate.totalShares,
+        candidate.requiredShares,
+    );
+    return actual === expected.digest;
+}
+
+export async function selectSharesForReconstruction(
+    videoId: string,
+    candidates: ShareCandidate[],
+    requiredShares: number,
+): Promise<SecretShare[] | null> {
+    const commitmentSets = new Map<string, ShareIntegrityCommitment[]>();
+
+    for (const candidate of candidates) {
+        const commitments = normalizeCommitments(candidate.shareCommitments);
+        if (commitments.length > 0) {
+            commitmentSets.set(commitmentKey(commitments), commitments);
+        }
+    }
+
+    if (commitmentSets.size === 0) {
+        const uniqueCandidates = firstUniqueShares(candidates);
+        return uniqueCandidates.length >= requiredShares
+            ? uniqueCandidates.slice(0, requiredShares)
+            : null;
+    }
+
+    let bestValidShares: SecretShare[] = [];
+
+    for (const commitments of commitmentSets.values()) {
+        const validShares: SecretShare[] = [];
+        const seenShareIds = new Set<number>();
+        for (const candidate of candidates) {
+            if (seenShareIds.has(candidate.shareId)) {
+                continue;
+            }
+            if (await isShareValidForCommitments(videoId, candidate, commitments)) {
+                seenShareIds.add(candidate.shareId);
+                validShares.push({
+                    shareId: candidate.shareId,
+                    shareB64: candidate.shareB64,
+                });
+            }
+        }
+
+        if (validShares.length > bestValidShares.length) {
+            bestValidShares = validShares;
+        }
+    }
+
+    return bestValidShares.length >= requiredShares
+        ? bestValidShares.slice(0, requiredShares)
+        : null;
+}
+
+function firstUniqueShares(candidates: ShareCandidate[]): SecretShare[] {
+    const shares: SecretShare[] = [];
+    const seenShareIds = new Set<number>();
+
+    for (const candidate of candidates) {
+        if (!seenShareIds.has(candidate.shareId)) {
+            seenShareIds.add(candidate.shareId);
+            shares.push({
+                shareId: candidate.shareId,
+                shareB64: candidate.shareB64,
+            });
+        }
+    }
+
+    return shares;
 }
 
 export function reconstructSecretFromShares(
