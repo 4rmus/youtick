@@ -24,11 +24,11 @@ function getStorageBadge(
 ): CostItem['badge'] {
     switch (status) {
         case 'success':
-            return { text: t.upload_page.cost_receipt.persistence_status_success, className: 'bg-green-500/10 text-green-400 border-green-500/30' };
+            return { text: t.upload_page.cost_receipt.persistence_status_success, className: 'bg-near-green/10 text-near-green border-near-green/30' };
         case 'partial':
-            return { text: t.upload_page.cost_receipt.persistence_status_partial, className: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30' };
+            return { text: t.upload_page.cost_receipt.persistence_status_partial, className: 'bg-near-purple/10 text-near-purple border-near-purple/30' };
         case 'failed':
-            return { text: t.upload_page.cost_receipt.persistence_status_failed, className: 'bg-orange-500/10 text-orange-400 border-orange-500/30' };
+            return { text: t.upload_page.cost_receipt.persistence_status_failed, className: 'bg-near-red/10 text-near-red border-near-red/30' };
         default:
             return null;
     }
@@ -64,9 +64,9 @@ export function CostReceipt({
                 <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
                     {t.upload_page.cost_receipt.title}
                 </h4>
-                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-green-500/10 border border-green-500/30">
-                    <Sparkles className="h-3 w-3 text-green-400" />
-                    <span className="text-[10px] font-medium text-green-400">
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-near-green/10 border border-near-green/30">
+                    <Sparkles className="h-3 w-3 text-near-green" />
+                    <span className="text-[10px] font-medium text-near-green">
                         {t.upload_page.cost_receipt.signless_upload}
                     </span>
                 </div>
@@ -95,7 +95,7 @@ export function CostReceipt({
                 ))}
 
                 {balanceCredit > 0 && (
-                    <div className="flex justify-between items-center text-green-400">
+                    <div className="flex justify-between items-center text-near-green">
                         <span>{t.upload_page.cost_receipt.from_balance}</span>
                         <span className="font-mono">-{balanceCredit.toFixed(2)} NEAR</span>
                     </div>
@@ -105,7 +105,7 @@ export function CostReceipt({
 
                 <div className="flex justify-between items-center font-bold text-white">
                     <span>{t.upload_page.cost_receipt.total}</span>
-                    <span className="font-mono text-green-400">
+                    <span className="font-mono text-near-green">
                         {loading ? "..." : walletCharge > 0 ? `${walletCharge.toFixed(4)} NEAR` : "0 NEAR"}
                     </span>
                 </div>

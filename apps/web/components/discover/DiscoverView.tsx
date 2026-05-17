@@ -36,8 +36,10 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
         return (
           <button
             key={opt.labelKey}
+            type="button"
+            aria-pressed={isActive}
             onClick={() => setActiveFilter(opt.key)}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-200 ${
+            className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green ${
               isActive
                 ? 'bg-near-green/20 border-near-green text-near-green'
                 : 'bg-white/5 border-white/10 text-zinc-400 hover:text-white hover:border-white/20'
@@ -60,7 +62,7 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
           {Filters}
         </div>
         <div className="flex flex-col items-center justify-center min-h-[40vh] text-white">
-          <Loader2 className="h-12 w-12 animate-spin mb-4 text-white" />
+          <Loader2 className="h-12 w-12 animate-spin mb-4 text-near-green" />
           <p className="text-xl">{t.landing.discover.scanning_blockchain}</p>
         </div>
       </div>
@@ -75,9 +77,9 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
         <div className="container mx-auto px-4 py-8">
           {Filters}
         </div>
-        <div className="text-center py-24 text-white">
-          <p className="text-red-500 text-xl font-bold">{t.landing.discover.failed_to_load}</p>
-          <p className="text-gray-400">{error}</p>
+        <div className="text-center py-24 text-white" role="status" aria-live="polite">
+          <p className="text-near-red text-xl font-bold">{t.landing.discover.failed_to_load}</p>
+          <p className="text-zinc-400">{t.landing.discover.try_again_later}</p>
         </div>
       </div>
     );
@@ -101,7 +103,7 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
           {Filters}
           <div className="text-center py-24 text-white">
             <p className="text-2xl font-bold mb-4">{t.landing.discover.no_videos_found}</p>
-            <p className="text-gray-400">{t.landing.discover.be_first}</p>
+            <p className="text-zinc-400">{t.landing.discover.be_first}</p>
             <Link href="/upload" className="mt-8 inline-block">
               <Button variant="outline" className="border-white text-white hover:bg-white/10">
                 {t.landing.discover.upload_now}
@@ -136,7 +138,6 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
             <VideoCard
               key={token.token_id}
               token={token}
-              variant="grid"
               nearToUsdStr={nearToUsdStr}
             />
           ))}

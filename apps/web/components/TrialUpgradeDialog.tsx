@@ -11,7 +11,7 @@ import {
     DialogTitle,
     DialogTrigger,
 } from '@/components/ui/dialog';
-import { Copy, Check, AlertTriangle, Wallet, ArrowRight, ExternalLink } from 'lucide-react';
+import { Copy, Check, AlertTriangle, Wallet, ArrowRight, ExternalLink, Loader2 } from 'lucide-react';
 import { KeyPair, type KeyPairString } from 'near-api-js';
 import { generateSeedPhrase } from 'near-seed-phrase';
 import { useLanguage } from '@/components/providers/LanguageContext';
@@ -117,8 +117,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
         }}>
             <DialogTrigger asChild>
                 <Button
-                    variant="default"
-                    className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+                    variant="near"
                 >
                     <Wallet className="w-4 h-4 mr-2" />
                     {u?.upgrade_button || "Make Account Permanent"}
@@ -132,7 +131,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                     <>
                         <DialogHeader>
                             <DialogTitle className="flex items-center gap-2">
-                                <Wallet className="w-5 h-5 text-purple-500" />
+                                <Wallet className="w-5 h-5 text-near-green" />
                                 {u?.title || "Make your guest account permanent"}
                             </DialogTitle>
                             <DialogDescription>
@@ -141,25 +140,25 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                         </DialogHeader>
 
                         <div className="space-y-4 py-4">
-                            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
-                                <h4 className="font-medium text-blue-800 dark:text-blue-200 mb-2">
+                            <div className="rounded-lg border border-near-green/20 bg-near-green/10 p-4">
+                                <h4 className="font-medium text-near-green mb-2">
                                     {u?.how_it_works || "How does it work?"}
                                 </h4>
-                                <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
+                                <ul className="text-sm text-zinc-300 space-y-1">
                                     <li>• {u?.step1 || "A secure 12-word recovery phrase is generated"}</li>
                                     <li>• {u?.step2 || "You can use it to recover the account later"}</li>
                                     <li>• {u?.step3 || "You can keep or move your digital tickets from this account"}</li>
                                 </ul>
                             </div>
 
-                            <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg p-4">
+                            <div className="rounded-lg border border-near-red/30 bg-near-red/10 p-4">
                                 <div className="flex gap-2">
-                                    <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                                    <AlertTriangle className="w-5 h-5 text-near-red flex-shrink-0 mt-0.5" />
                                     <div>
-                                        <h4 className="font-medium text-amber-800 dark:text-amber-200">
+                                        <h4 className="font-medium text-near-red">
                                             {u?.important || "Important"}
                                         </h4>
-                                        <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                                        <p className="text-sm text-zinc-300 mt-1">
                                             {u?.important_desc || "Store your recovery phrase in a safe place. If you lose it, you will not be able to access your account."}
                                         </p>
                                     </div>
@@ -171,7 +170,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                             <Button variant="outline" onClick={handleClose}>
                                 {u?.cancel || "Cancel"}
                             </Button>
-                            <Button onClick={handleUpgrade} className="bg-purple-600 hover:bg-purple-700">
+                            <Button onClick={handleUpgrade} variant="near">
                                 {u?.generate_seed || "Generate Recovery Phrase"}
                                 <ArrowRight className="w-4 h-4 ml-2" />
                             </Button>
@@ -185,8 +184,8 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                             <DialogTitle>{u?.processing || "Processing..."}</DialogTitle>
                         </DialogHeader>
                         <div className="flex flex-col items-center justify-center py-8">
-                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mb-4" />
-                            <p className="text-muted-foreground">
+                            <Loader2 className="h-12 w-12 animate-spin text-near-green mb-4" />
+                            <p className="text-zinc-400">
                                 {u?.generating_seed || "Generating recovery phrase..."}
                             </p>
                         </div>
@@ -196,7 +195,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                 {step === 'seedPhrase' && (
                     <>
                         <DialogHeader>
-                            <DialogTitle className="text-green-600">
+                            <DialogTitle className="text-near-green">
                                 {u?.seed_ready || "Recovery Phrase Ready"}
                             </DialogTitle>
                             <DialogDescription>
@@ -205,14 +204,14 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                         </DialogHeader>
 
                         <div className="space-y-4 py-4">
-                            <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
+                            <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
                                 <div className="grid grid-cols-3 gap-2">
                                     {seedWords.map((word, index) => (
                                         <div
                                             key={index}
-                                            className="bg-white dark:bg-gray-700 rounded px-2 py-1.5 text-sm font-mono"
+                                            className="rounded border border-zinc-800 bg-black/60 px-2 py-1.5 text-sm font-mono text-zinc-100"
                                         >
-                                            <span className="text-gray-400 mr-1">{index + 1}.</span>
+                                            <span className="text-zinc-500 mr-1">{index + 1}.</span>
                                             {word}
                                         </div>
                                     ))}
@@ -221,12 +220,12 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
 
                             <Button
                                 variant="outline"
-                                className="w-full"
+                                className="w-full border-zinc-700 text-zinc-200 hover:bg-zinc-900"
                                 onClick={handleCopy}
                             >
                                 {copied ? (
                                     <>
-                                        <Check className="w-4 h-4 mr-2 text-green-500" />
+                                        <Check className="w-4 h-4 mr-2 text-near-green" />
                                         {u?.copied || "Copied!"}
                                     </>
                                 ) : (
@@ -242,9 +241,9 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                                     type="checkbox"
                                     checked={confirmed}
                                     onChange={(e) => setConfirmed(e.target.checked)}
-                                    className="mt-1"
+                                    className="mt-1 accent-near-green focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                                 />
-                                <span className="text-sm text-muted-foreground">
+                                <span className="text-sm text-zinc-400">
                                     {u?.confirm_saved || "I have saved my recovery phrase in a safe place. I understand I cannot access my account if I lose it."}
                                 </span>
                             </label>
@@ -254,7 +253,8 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                             <Button
                                 onClick={handleComplete}
                                 disabled={!confirmed}
-                                className="w-full bg-green-600 hover:bg-green-700"
+                                variant="near"
+                                className="w-full"
                             >
                                 {u?.continue || "Continue"}
                             </Button>
@@ -265,23 +265,24 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                 {step === 'complete' && (
                     <>
                         <DialogHeader>
-                            <DialogTitle className="text-green-600">
+                            <DialogTitle className="text-near-green">
                                 {u?.next_step || "Next Step"}
                             </DialogTitle>
                         </DialogHeader>
 
                         <div className="space-y-4 py-4 text-center">
-                            <p className="text-muted-foreground">
+                            <p className="text-zinc-400">
                                 {u?.next_step_desc || "Create or recover an account with your recovery phrase. Then keep your digital tickets in the new account."}
                             </p>
 
-                            <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-3">
-                                <p className="text-xs text-muted-foreground mb-1">{u?.current_account || "Current Account"}</p>
+                            <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-3">
+                                <p className="text-xs text-zinc-500 mb-1">{u?.current_account || "Current Account"}</p>
                                 <p className="font-mono text-sm">{accountId}</p>
                             </div>
 
                             <Button
-                                className="w-full bg-purple-600 hover:bg-purple-700"
+                                variant="near"
+                                className="w-full"
                                 onClick={() => {
                                     const networkId = NEAR_CONFIG.networkId;
                                     window.open(networkId === 'mainnet'
@@ -305,14 +306,14 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                 {step === 'error' && (
                     <>
                         <DialogHeader>
-                            <DialogTitle className="text-red-600">
+                            <DialogTitle className="text-near-red">
                                 {u?.error_title || "Error Occurred"}
                             </DialogTitle>
                         </DialogHeader>
 
                         <div className="py-4">
-                            <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
-                                <p className="text-red-700 dark:text-red-300">
+                            <div className="rounded-lg border border-near-red/30 bg-near-red/10 p-4">
+                                <p className="text-near-red">
                                     {error}
                                 </p>
                             </div>
@@ -322,7 +323,7 @@ export function TrialUpgradeDialog({ accountId, onUpgradeComplete }: TrialUpgrad
                             <Button variant="outline" onClick={handleClose}>
                                 {u?.close || "Close"}
                             </Button>
-                            <Button onClick={() => setStep('intro')}>
+                            <Button onClick={() => setStep('intro')} variant="near">
                                 {u?.try_again || "Try Again"}
                             </Button>
                         </DialogFooter>

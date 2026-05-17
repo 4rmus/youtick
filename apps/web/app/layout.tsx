@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { WalletProvider } from "@/components/providers/WalletProvider";
 import { QueryProvider } from "@/components/providers/QueryProvider";
@@ -9,6 +10,18 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { GoogleAnalytics } from "@next/third-parties/google";
 import { OnboardingKeyInit } from "@/components/OnboardingKeyInit";
+
+const geistSans = Geist({
+    subsets: ["latin"],
+    variable: "--font-geist-sans",
+    display: "swap",
+});
+
+const geistMono = Geist_Mono({
+    subsets: ["latin"],
+    variable: "--font-geist-mono",
+    display: "swap",
+});
 
 export const metadata: Metadata = {
     title: {
@@ -124,8 +137,8 @@ export default function RootLayout({
                     })();
                 `}} />
             </head>
-            <body className="antialiased">
-                <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
+            <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+                <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} forcedTheme="dark">
                     <QueryProvider>
                         <OptionalEvmProvider>
                             <LanguageProvider>

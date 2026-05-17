@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { useOwnedTokens, TokenWithVideo } from '@/hooks/useOwnedTokens';
 import { useState } from 'react';
@@ -146,7 +147,8 @@ export default function ProfilePage() {
                         {createdEvents.length > 0 && (
                             <Button
                                 onClick={() => setShowGiftModal(true)}
-                                className="bg-near-green text-near-black hover:bg-near-green/80 font-semibold gap-2"
+                                variant="near"
+                                className="gap-2"
                             >
                                 <Gift className="w-4 h-4" />
                                 {t.profile_page.gift_button}
@@ -197,7 +199,13 @@ export default function ProfilePage() {
                             <div className="flex items-center gap-3">
                                 <div className="p-2 bg-zinc-800 rounded-lg">
                                     {creatorProfile?.avatar_url ? (
-                                        <img src={creatorProfile.avatar_url} alt="" className="w-5 h-5 rounded-full object-cover" />
+                                        <Image
+                                            src={creatorProfile.avatar_url}
+                                            alt=""
+                                            width={20}
+                                            height={20}
+                                            className="w-5 h-5 rounded-full object-cover"
+                                        />
                                     ) : (
                                         <User className="w-5 h-5 text-zinc-400" />
                                     )}
@@ -262,8 +270,8 @@ export default function ProfilePage() {
                         <p className="mt-2 text-3xl font-bold text-white">{creatorStats?.total_sales ?? 0}</p>
                         <p className="mt-1 text-xs text-zinc-500">{t.profile_page.tickets_sold || 'Tickets sold'}</p>
                     </div>
-                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5">
-                        <p className="text-xs uppercase tracking-[0.18em] text-emerald-400 flex items-center gap-1">
+                    <div className="rounded-xl border border-near-green/20 bg-near-green/10 p-5">
+                        <p className="text-xs uppercase tracking-[0.18em] text-near-green flex items-center gap-1">
                             <DollarSign className="w-3 h-3" /> {t.profile_page.total_revenue || 'Revenue'}
                         </p>
                         <p className="mt-2 text-3xl font-bold text-white">
@@ -421,14 +429,14 @@ export default function ProfilePage() {
                                                                     ? `$${(event.price_usd / 100).toFixed(2)}`
                                                                     : yoctoToUsd(event.price)}
                                                             {eventSales > 0 && (
-                                                                <span className="ml-2 text-emerald-400">
+                                                                <span className="ml-2 text-near-green">
                                                                     {eventSales} {t.profile_page.sales_count || 'sold'}
                                                                 </span>
                                                             )}
                                                         </p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <span className="text-[9px] font-bold text-black bg-white px-1.5 py-0.5 rounded uppercase">
+                                                        <span className="text-[9px] font-bold text-near-black bg-near-green px-1.5 py-0.5 rounded uppercase">
                                                             {t.profile_page.creator}
                                                         </span>
                                                     </div>
@@ -436,11 +444,13 @@ export default function ProfilePage() {
                                             </Link>
                                             {/* Quick Gift Button */}
                                             <button
+                                                type="button"
+                                                aria-label={`${t.profile_page.gift_button}: ${event.title}`}
                                                 onClick={(e) => {
                                                     e.preventDefault();
                                                     setSelectedEventForGift(event);
                                                 }}
-                                                className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-2 rounded-lg bg-white hover:bg-zinc-200 text-black"
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-2 rounded-lg bg-near-green hover:bg-near-green/80 text-near-black focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                                             >
                                                 <Gift className="w-3.5 h-3.5" />
                                             </button>
@@ -455,7 +465,7 @@ export default function ProfilePage() {
 
             {/* Gift Video Selection Modal */}
             <Dialog open={showGiftModal} onOpenChange={setShowGiftModal}>
-                <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-[500px]">
+                <DialogContent className="sm:max-w-[500px]">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Gift className="w-5 h-5 text-zinc-400" />
@@ -468,12 +478,13 @@ export default function ProfilePage() {
                     <div className="mt-4 space-y-2 max-h-[400px] overflow-y-auto">
                         {createdEvents.map((event) => (
                             <button
+                                type="button"
                                 key={event.cid}
                                 onClick={() => {
                                     setSelectedEventForGift(event);
                                     setShowGiftModal(false);
                                 }}
-                                className="w-full flex gap-3 p-3 rounded-xl bg-zinc-800/50 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800 transition-all text-left"
+                                className="w-full flex gap-3 p-3 rounded-xl bg-zinc-800/50 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800 transition-all text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                             >
                                 <div className="w-16 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-700">
                                     {event.media && !event.media.includes('token.png') ? (
@@ -506,7 +517,7 @@ export default function ProfilePage() {
 
             {/* Gift Link Generator Modal */}
             <Dialog open={!!selectedEventForGift} onOpenChange={(open) => !open && setSelectedEventForGift(null)}>
-                <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-[550px] max-h-[85vh] overflow-y-auto flex flex-col">
+                <DialogContent className="sm:max-w-[550px] max-h-[85vh] overflow-y-auto flex flex-col">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Gift className="w-5 h-5 text-zinc-400" />
@@ -562,7 +573,7 @@ export default function ProfilePage() {
 
             {/* Profile Edit Dialog */}
             <Dialog open={showProfileDialog} onOpenChange={setShowProfileDialog}>
-                <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-[550px] max-h-[85vh] overflow-y-auto flex flex-col">
+                <DialogContent className="sm:max-w-[550px] max-h-[85vh] overflow-y-auto flex flex-col">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <User className="w-5 h-5 text-zinc-400" />

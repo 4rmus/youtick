@@ -134,8 +134,10 @@ export function TrialInviteGenerator() {
                                     {link}
                                 </code>
                                 <button
+                                    type="button"
+                                    aria-label={copiedIndex === index ? "Guest invite copied" : `Copy guest invite ${index + 1}`}
                                     onClick={() => handleCopy(link, index)}
-                                    className="p-1.5 hover:bg-zinc-700 rounded transition-colors"
+                                    className="p-1.5 hover:bg-zinc-700 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                                 >
                                     {copiedIndex === index ? (
                                         <Check className="w-4 h-4 text-near-green" />

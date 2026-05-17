@@ -180,7 +180,7 @@ export function CreatorProfileForm({ onSuccess, className }: CreatorProfileFormP
                 <p className="text-sm text-red-400">{saveError}</p>
             )}
             {saved && (
-                <p className="text-sm text-emerald-400">{t.profile_page?.profile_saved || 'Profile saved!'}</p>
+                <p className="text-sm text-near-green">{t.profile_page?.profile_saved || 'Profile saved!'}</p>
             )}
 
             <div className="flex justify-end">

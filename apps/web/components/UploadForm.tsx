@@ -17,6 +17,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Loader2, Upload, AlertCircle, CheckCircle2, Film, LockKeyhole, Play, ShieldCheck, Ticket, Copy, ExternalLink } from "lucide-react"
 import { CostReceipt } from './CostReceipt';
+import { CreatorAvatar } from './CreatorAvatar';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { getNearPrice, usdToNear } from '@/lib/price';
 import { useUpload } from '@/hooks/useUpload';
@@ -347,19 +348,19 @@ export function UploadForm() {
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                 {/* Title - Same width as form (3/5) */}
                 <div className="lg:col-span-3 space-y-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-400">{u.creator_panel}</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-near-green">{u.creator_panel}</p>
                     <h1 className="text-3xl font-bold tracking-tight text-white">{u.title}</h1>
                     <p className="text-muted-foreground text-sm">
                         {u.panel_desc}
                     </p>
                 </div>
                 {/* Verified Badge - Same width as preview (2/5) */}
-                <div className="lg:col-span-2 px-4 py-3 rounded-lg border flex items-start gap-3 bg-emerald-500/10 border-emerald-500/25">
-                    <div className="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 bg-emerald-500/15 border border-emerald-500/30">
-                        <ShieldCheck className="w-4 h-4 text-emerald-300" />
+                <div className="lg:col-span-2 px-4 py-3 rounded-lg border flex items-start gap-3 bg-near-green/10 border-near-green/25">
+                    <div className="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 bg-near-green/15 border border-near-green/30">
+                        <ShieldCheck className="w-4 h-4 text-near-green" />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-emerald-200">{u.secure_permission_title}</p>
+                        <p className="text-sm font-semibold text-near-green">{u.secure_permission_title}</p>
                         <p className="text-xs text-zinc-400">
                             {u.secure_permission_desc}
                         </p>
@@ -391,7 +392,7 @@ export function UploadForm() {
 
                         <section className="space-y-4 rounded-lg border border-white/10 bg-white/[0.03] p-4">
                             <div className="flex items-center gap-2">
-                                <Film className="h-4 w-4 text-emerald-300" />
+                                <Film className="h-4 w-4 text-near-green" />
                                 <h2 className="text-sm font-semibold text-white">{u.work_info_section}</h2>
                             </div>
 
@@ -431,7 +432,7 @@ export function UploadForm() {
                                             key={hint}
                                             type="button"
                                             onClick={() => setDescription((prev) => prev ? prev + ' ' + hint : hint)}
-                                            className="text-[11px] text-zinc-500 bg-zinc-950/50 border border-white/10 px-2 py-1 rounded-full hover:text-zinc-300 hover:border-zinc-600 transition-colors"
+                                            className="text-[11px] text-zinc-500 bg-zinc-950/50 border border-white/10 px-2 py-1 rounded-full hover:text-zinc-300 hover:border-zinc-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                                         >
                                             {hint}
                                         </button>
@@ -448,7 +449,7 @@ export function UploadForm() {
                                     value={contentType}
                                     onChange={(e) => setContentType(e.target.value)}
                                     disabled={uploading || !accountId}
-                                    className="w-full rounded-md border border-white/10 bg-zinc-950/50 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-near-green"
+                                    className="w-full rounded-md border border-white/10 bg-zinc-950/50 px-3 py-2 text-sm text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                                 >
                                     <option value="Cinema">{u.content_type_film}</option>
                                     <option value="Concert">{u.content_type_concert}</option>
@@ -486,18 +487,18 @@ export function UploadForm() {
 
                         <section className="space-y-4 rounded-lg border border-white/10 bg-white/[0.03] p-4">
                             <div className="flex items-center gap-2">
-                                <Ticket className="h-4 w-4 text-sky-300" />
+                                <Ticket className="h-4 w-4 text-near-green" />
                                 <h2 className="text-sm font-semibold text-white">{u.ticket_access_title}</h2>
                             </div>
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                <div className={`rounded-md border p-3 ${accessMode === 'free_collectible' ? 'border-sky-400/60 bg-sky-500/10' : 'border-white/10 bg-zinc-950/30'}`}>
-                                    <Ticket className="h-4 w-4 text-sky-300 mb-2" />
+                                <div className={`rounded-md border p-3 ${accessMode === 'free_collectible' ? 'border-near-green/60 bg-near-green/10' : 'border-white/10 bg-zinc-950/30'}`}>
+                                    <Ticket className="h-4 w-4 text-near-green mb-2" />
                                     <span className="block text-sm font-medium text-white">{u.free_ticket_title}</span>
                                     <span className="mt-1 block text-xs text-zinc-400">{u.free_ticket_desc}</span>
                                 </div>
-                                <div className={`rounded-md border p-3 ${accessMode === 'paid' ? 'border-violet-400/60 bg-violet-500/10' : 'border-white/10 bg-zinc-950/30'}`}>
-                                    <LockKeyhole className="h-4 w-4 text-violet-300 mb-2" />
+                                <div className={`rounded-md border p-3 ${accessMode === 'paid' ? 'border-near-purple/60 bg-near-purple/10' : 'border-white/10 bg-zinc-950/30'}`}>
+                                    <LockKeyhole className="h-4 w-4 text-near-purple mb-2" />
                                     <span className="block text-sm font-medium text-white">{u.paid_ticket_title}</span>
                                     <span className="mt-1 block text-xs text-zinc-400">{u.paid_ticket_desc}</span>
                                 </div>
@@ -528,7 +529,7 @@ export function UploadForm() {
                                     {priceUsdNum > 0 && nearPrice > 0 && ` ${u.approx_near} ${priceNearDerived.toFixed(2)} NEAR.`}
                                 </p>
                                 {priceUsdNum > 0 && priceUsdNum < MIN_PAID_PRICE_USD && (
-                                    <p className="text-xs text-red-400">{u.status_price_min}</p>
+                                    <p className="text-xs text-near-red">{u.status_price_min}</p>
                                 )}
                             </div>
                         </section>
@@ -559,7 +560,7 @@ export function UploadForm() {
                         )}
 
                         {retryStep === 'sign_auth' && (
-                            <Alert className="border-yellow-500/50 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">
+                            <Alert className="border-near-red/50 bg-near-red/10 text-near-red">
                                 <AlertCircle className="h-4 w-4" />
                                 <AlertTitle>{u.continue_title}</AlertTitle>
                                 <AlertDescription className="flex flex-col gap-2">
@@ -567,7 +568,7 @@ export function UploadForm() {
                                     <Button
                                         onClick={handleRetrySign}
                                         variant="outline"
-                                        className="w-full border-yellow-500/50 hover:bg-yellow-500/20"
+                                        className="w-full border-near-red/50 hover:bg-near-red/20"
                                     >
                                         {u.retry_button}
                                     </Button>
@@ -576,18 +577,18 @@ export function UploadForm() {
                         )}
 
                         {publishedCid && !uploading && (
-                            <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 p-4">
+                            <div className="rounded-lg border border-near-green/25 bg-near-green/10 p-4">
                                 <div className="flex items-start gap-3">
-                                    <CheckCircle2 className="mt-0.5 h-5 w-5 flex-shrink-0 text-emerald-300" />
+                                    <CheckCircle2 className="mt-0.5 h-5 w-5 flex-shrink-0 text-near-green" />
                                     <div className="min-w-0 flex-1">
-                                        <h3 className="text-sm font-semibold text-emerald-100">{u.success_panel_title}</h3>
-                                        <p className="mt-1 text-xs leading-relaxed text-emerald-100/70">{u.success_panel_desc}</p>
+                                        <h3 className="text-sm font-semibold text-near-green">{u.success_panel_title}</h3>
+                                        <p className="mt-1 text-xs leading-relaxed text-zinc-300">{u.success_panel_desc}</p>
                                         <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                                             <Button
                                                 type="button"
                                                 size="sm"
                                                 onClick={() => { window.location.href = publishedWatchPath; }}
-                                                className="bg-emerald-400 text-black hover:bg-emerald-300"
+                                                className="bg-near-green text-near-black hover:bg-near-green/90"
                                             >
                                                 <ExternalLink className="mr-2 h-4 w-4" />
                                                 {u.success_watch}
@@ -597,7 +598,7 @@ export function UploadForm() {
                                                 size="sm"
                                                 variant="outline"
                                                 onClick={() => { window.location.href = '/discover'; }}
-                                                className="border-emerald-400/40 text-emerald-100 hover:bg-emerald-500/10"
+                                                className="border-near-green/40 text-near-green hover:bg-near-green/10"
                                             >
                                                 {u.success_discover}
                                             </Button>
@@ -606,7 +607,7 @@ export function UploadForm() {
                                                 size="sm"
                                                 variant="ghost"
                                                 onClick={handleCopyPublishedLink}
-                                                className="text-emerald-100 hover:bg-emerald-500/10"
+                                                className="text-near-green hover:bg-near-green/10"
                                             >
                                                 <Copy className="mr-2 h-4 w-4" />
                                                 {linkCopied ? u.success_copied : u.success_copy}
@@ -695,7 +696,7 @@ export function UploadForm() {
                                 <div className="absolute top-3 left-3 right-3 flex items-center justify-end">
                                     {/* Price Badge */}
                                     <div className={`px-3 py-1.5 rounded-lg backdrop-blur-sm border shadow-lg ${priceUsdNum === 0
-                                        ? 'bg-emerald-500/90 border-emerald-400/30'
+                                        ? 'bg-near-green/90 border-near-green/30'
                                         : 'bg-black/60 border-white/10'
                                         }`}>
                                         <span className="text-[10px] font-bold text-white tracking-wider uppercase">{priceLabel}</span>
@@ -706,7 +707,7 @@ export function UploadForm() {
                             {/* Content Section */}
                             <div className="p-5 relative">
                                 {/* Title */}
-                                <h4 className="font-bold text-white text-lg leading-tight line-clamp-1 mb-1.5 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-white group-hover:to-purple-200 transition-all duration-300">
+                                <h4 className="font-bold text-white text-lg leading-tight line-clamp-1 mb-1.5 group-hover:text-near-green transition-colors duration-300">
                                     {title || u.preview_title_fallback}
                                 </h4>
 
@@ -721,18 +722,7 @@ export function UploadForm() {
                                 {/* Creator Row */}
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-3">
-                                        {/* Avatar with Ring */}
-                                        <div className="relative">
-                                            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500 via-blue-500 to-cyan-500 p-0.5">
-                                                <div className="w-full h-full rounded-[10px] bg-zinc-900 flex items-center justify-center">
-                                                    <span className="text-xs font-bold text-white">
-                                                        {accountId ? accountId.substring(0, 2).toUpperCase() : "??"}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            {/* Online Indicator */}
-                                            <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-zinc-900" />
-                                        </div>
+                                        <CreatorAvatar name={accountId} size="md" online />
 
                                         <div className="flex flex-col">
                                             <span className="text-[10px] text-zinc-500 font-medium">{u.creator_label}</span>
@@ -744,7 +734,7 @@ export function UploadForm() {
 
                                     {/* Ticket Type Indicator */}
                                     <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-                                        <div className="w-2 h-2 rounded-full bg-sky-400" />
+                                        <div className={`w-2 h-2 rounded-full ${accessMode === 'paid' ? 'bg-near-purple' : 'bg-near-green'}`} />
                                         <span className="text-[10px] text-zinc-400 font-medium">{accessLabel}</span>
                                     </div>
                                 </div>
@@ -777,7 +767,7 @@ export function UploadForm() {
                                     <div className="mb-5">
                                         <div className="h-1 w-full rounded-full bg-zinc-800 overflow-hidden">
                                             <div
-                                                className="h-full rounded-full bg-emerald-400 transition-all duration-700 ease-out"
+                                                className="h-full rounded-full bg-near-green transition-all duration-700 ease-out"
                                                 style={{ width: `${pct}%` }}
                                             />
                                         </div>
@@ -801,13 +791,13 @@ export function UploadForm() {
                                                 {/* Filled track segment */}
                                                 {index > 0 && (
                                                     <div
-                                                        className={`absolute left-[13px] -top-1 w-[2px] h-[calc(50%+4px)] rounded-full transition-all duration-500 ${isDone || isActive || isError ? 'bg-emerald-500/80' : 'bg-transparent'
+                                                        className={`absolute left-[13px] -top-1 w-[2px] h-[calc(50%+4px)] rounded-full transition-all duration-500 ${isDone || isActive || isError ? 'bg-near-green/80' : 'bg-transparent'
                                                             }`}
                                                     />
                                                 )}
 
-                                                <div className={`flex items-center gap-3 px-2 py-2.5 rounded-md transition-all duration-300 ${isActive ? 'bg-emerald-500/[0.08] border border-emerald-500/20' :
-                                                    isError ? 'bg-red-500/[0.06] border border-red-500/15' :
+                                                <div className={`flex items-center gap-3 px-2 py-2.5 rounded-md transition-all duration-300 ${isActive ? 'bg-near-green/[0.08] border border-near-green/20' :
+                                                    isError ? 'bg-near-red/[0.06] border border-near-red/15' :
                                                         'border border-transparent'
                                                     }`}>
                                                     {/* Step indicator */}
@@ -818,33 +808,33 @@ export function UploadForm() {
                                                             </div>
                                                         )}
                                                         {step.status === 'loading' && (
-                                                            <div className="w-7 h-7 rounded-full bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center">
-                                                                <Loader2 className="w-3.5 h-3.5 text-emerald-300 animate-spin" />
+                                                            <div className="w-7 h-7 rounded-full bg-near-green/20 border-2 border-near-green flex items-center justify-center">
+                                                                <Loader2 className="w-3.5 h-3.5 text-near-green animate-spin" />
                                                             </div>
                                                         )}
                                                         {step.status === 'complete' && (
-                                                            <div className="w-7 h-7 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/25">
-                                                                <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                                                            <div className="w-7 h-7 rounded-full bg-near-green flex items-center justify-center shadow-lg shadow-near-green/25">
+                                                                <CheckCircle2 className="w-3.5 h-3.5 text-near-black" />
                                                             </div>
                                                         )}
                                                         {step.status === 'error' && (
-                                                            <div className="w-7 h-7 rounded-full bg-red-500/20 border-2 border-red-400 flex items-center justify-center shadow-lg shadow-red-500/25">
-                                                                <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                                                            <div className="w-7 h-7 rounded-full bg-near-red/20 border-2 border-near-red flex items-center justify-center shadow-lg shadow-near-red/25">
+                                                                <AlertCircle className="w-3.5 h-3.5 text-near-red" />
                                                             </div>
                                                         )}
                                                     </div>
 
                                                     {/* Step content */}
                                                     <div className="flex-1 min-w-0">
-                                                        <span className={`text-xs font-medium block transition-colors duration-300 ${isDone ? 'text-emerald-400' :
-                                                            isActive ? 'text-emerald-200' :
-                                                                isError ? 'text-red-400' :
+                                                        <span className={`text-xs font-medium block transition-colors duration-300 ${isDone ? 'text-near-green' :
+                                                            isActive ? 'text-near-green' :
+                                                                isError ? 'text-near-red' :
                                                                     'text-zinc-500'
                                                             }`}>
                                                             {creatorStepLabels[step.id] || step.label}
                                                         </span>
                                                         {isActive && (
-                                                            <span className="text-[10px] text-emerald-300/70 mt-0.5 block">
+                                                            <span className="text-[10px] text-near-green/70 mt-0.5 block">
                                                                 {u.preparing}
                                                             </span>
                                                         )}
@@ -852,7 +842,7 @@ export function UploadForm() {
 
                                                     {/* Status indicator */}
                                                     {isDone && (
-                                                        <span className="text-[9px] font-medium text-emerald-500/60 uppercase tracking-wider flex-shrink-0">
+                                                        <span className="text-[9px] font-medium text-near-green/60 uppercase tracking-wider flex-shrink-0">
                                                             {u.ready}
                                                         </span>
                                                     )}
@@ -865,8 +855,8 @@ export function UploadForm() {
 
                             {/* All done message */}
                             {uploadSteps.every(s => s.status === 'complete') && (
-                                <div className="mt-4 pt-4 border-t border-emerald-500/10">
-                                    <div className="flex items-center gap-2 text-emerald-400">
+                                <div className="mt-4 pt-4 border-t border-near-green/10">
+                                    <div className="flex items-center gap-2 text-near-green">
                                         <CheckCircle2 className="w-4 h-4" />
                                         <span className="text-xs font-semibold">
                                             {u.all_done}

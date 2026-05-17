@@ -10,6 +10,7 @@ import { parseTitleMetadata } from "@/lib/metadata-parser";
 import { NEAR_CONFIG, GAS_CONSTANTS } from "@/lib/constants";
 import { getCurrentRpcUrl } from "@/lib/rpc-failover";
 import { IPFSThumbnail } from "@/components/IPFSThumbnail";
+import { CreatorAvatar } from "@/components/CreatorAvatar";
 import { TrialUpgradeDialog } from "@/components/TrialUpgradeDialog";
 import { useWallet } from "@/components/providers/WalletProvider";
 import { claimGiftWithImplicitAccount } from "@/lib/gift-service";
@@ -249,13 +250,7 @@ function ClaimContent() {
 
                         {/* Sender Info */}
                         <div className="flex items-center gap-3 p-3 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
-                            <div className="w-10 h-10 rounded-xl bg-zinc-700 p-0.5">
-                                <div className="w-full h-full rounded-[10px] bg-zinc-900 flex items-center justify-center">
-                                    <span className="text-xs font-bold text-white">
-                                        {giftInfo?.creator?.substring(0, 2).toUpperCase() || "??"}
-                                    </span>
-                                </div>
-                            </div>
+                            <CreatorAvatar name={giftInfo?.creator} size="lg" />
                             <div className="flex-1 min-w-0">
                                 <p className="text-xs text-zinc-500 uppercase tracking-wider">{t.claim_page?.sent_by || "Sent by"}</p>
                                 <p className="text-sm text-white font-medium truncate">
@@ -265,7 +260,7 @@ function ClaimContent() {
                         </div>
 
                         {/* Ticket Badge */}
-                        <div className="flex items-center justify-center gap-2 text-xs text-emerald-400">
+                        <div className="flex items-center justify-center gap-2 text-xs text-near-green">
                             <CheckCircle2 className="w-3.5 h-3.5" />
                             <span>{t.claim_page?.secured_by_blockchain || "Secured by digital ticket"}</span>
                         </div>
@@ -332,6 +327,7 @@ function ClaimContent() {
                                 {t.claim_page?.existing_wallet_desc || "Enter the wallet account that will receive the ticket"}
                             </p>
                             <Input
+                                aria-label={t.claim_page?.existing_wallet || "Existing Wallet"}
                                 value={existingAccountId}
                                 onChange={(e) => setExistingAccountId(e.target.value)}
                                 placeholder={t.claim_page?.existing_placeholder || "account.near"}
@@ -365,14 +361,14 @@ function ClaimContent() {
         return (
             <div className="w-full max-w-md mx-auto">
                 <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-8 text-center space-y-4">
-                    <Loader2 className="w-10 h-10 animate-spin text-zinc-400 mx-auto" />
+                    <Loader2 className="w-10 h-10 animate-spin text-near-green mx-auto" />
                     <p className="text-white text-lg font-medium">
                         {claimMode === "guest"
                             ? (t.claim_page?.creating_account_loading || "Creating guest account...")
                             : (t.claim_page?.claiming_ticket_loading || "Claiming ticket...")}
                     </p>
                     <p className="text-zinc-500 text-sm">{t.claim_page?.please_wait || "This may take a few seconds"}</p>
-                    <p className="text-xs text-emerald-400 flex items-center justify-center gap-1">
+                    <p className="text-xs text-near-green flex items-center justify-center gap-1">
                         <CheckCircle2 className="w-3 h-3" /> {t.claim_page?.processing_on_blockchain || "Processing ticket transfer"}
                     </p>
                 </div>
@@ -400,8 +396,8 @@ function ClaimContent() {
 
                         {/* Success Icon */}
                         <div className="absolute inset-0 flex flex-col items-center justify-center">
-                            <div className="w-20 h-20 rounded-full bg-emerald-500/20 backdrop-blur-xl border border-emerald-500/30 flex items-center justify-center mb-4">
-                                <CheckCircle2 className="w-10 h-10 text-emerald-400" />
+                            <div className="w-20 h-20 rounded-full bg-near-green/10 backdrop-blur-xl border border-near-green/30 flex items-center justify-center mb-4">
+                                <CheckCircle2 className="w-10 h-10 text-near-green" />
                             </div>
                             <h2 className="text-2xl font-bold text-white">{t.claim_page?.success_title || "Ticket Received"}</h2>
                         </div>
@@ -427,9 +423,16 @@ function ClaimContent() {
                         <div className="space-y-3 pt-2">
                             {claimMode === "guest" && claimedAccountId ? (
                                 <>
-                                    <p className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-center text-sm text-emerald-300">
+                                    <p className="rounded-xl border border-near-green/20 bg-near-green/10 p-3 text-center text-sm text-near-green">
                                         {t.claim_page?.trial_active_msg || "Guest account active. Automatically signed in."}
                                     </p>
+                                    <Button
+                                        onClick={() => window.location.href = `/watch?cid=${giftInfo?.eventCid}`}
+                                        className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
+                                    >
+                                        <Play className="w-4 h-4 mr-2" />
+                                        {t.claim_page?.watch_now || "Watch Now"}
+                                    </Button>
                                     <TrialUpgradeDialog accountId={claimedAccountId} />
                                 </>
                             ) : (
@@ -464,8 +467,8 @@ function ClaimContent() {
         return (
             <div className="w-full max-w-md mx-auto">
                 <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-8 text-center space-y-4">
-                    <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto">
-                        <AlertCircle className="w-8 h-8 text-red-400" />
+                    <div className="w-16 h-16 bg-near-red/10 border border-near-red/30 rounded-full flex items-center justify-center mx-auto">
+                        <AlertCircle className="w-8 h-8 text-near-red" />
                     </div>
                     <h3 className="text-xl text-white font-semibold">{t.claim_page?.error_title || "An Error Occurred"}</h3>
                     <p className="text-zinc-400">{error}</p>
@@ -493,7 +496,7 @@ export default function ClaimPage() {
             <Suspense fallback={
                 <div className="w-full max-w-md mx-auto">
                     <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-8 text-center">
-                        <Loader2 className="w-10 h-10 animate-spin text-zinc-400 mx-auto" />
+                        <Loader2 className="w-10 h-10 animate-spin text-near-green mx-auto" />
                     </div>
                 </div>
             }>

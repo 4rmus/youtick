@@ -17,13 +17,13 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
 
   return (
     <html lang="en">
-      <body className="bg-gray-900">
+      <body className="bg-black">
         <div className="min-h-screen flex items-center justify-center px-4">
           <div className="max-w-md w-full text-center">
             <div className="mb-8">
-              <div className="w-20 h-20 mx-auto bg-red-500/10 rounded-full flex items-center justify-center">
+              <div className="w-20 h-20 mx-auto bg-near-red/10 rounded-full flex items-center justify-center">
                 <svg
-                  className="w-10 h-10 text-red-500"
+                  className="w-10 h-10 text-near-red"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -42,27 +42,29 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
               Application Error
             </h1>
 
-            <p className="text-gray-400 mb-6">
+            <p className="text-zinc-400 mb-6">
               A critical error occurred. We apologize for the inconvenience.
               Please refresh the page or try again later.
             </p>
 
             {error.digest && (
-              <p className="text-xs text-gray-500 mb-6">
+              <p className="text-xs text-zinc-500 mb-6">
                 Error ID: {error.digest}
               </p>
             )}
 
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <button
+                type="button"
                 onClick={reset}
-                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
+                className="px-6 py-3 bg-near-green hover:bg-near-green/80 text-near-black font-medium rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
               >
                 Try again
               </button>
               <button
+                type="button"
                 onClick={() => window.location.reload()}
-                className="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-lg transition-colors"
+                className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-medium rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
               >
                 Refresh page
               </button>

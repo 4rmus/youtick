@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { Github } from 'lucide-react';
 import { Branding } from './Branding';
+import Link from '@/components/Web4Link';
 import { useLanguage } from '@/components/providers/LanguageContext';
 
 export const LandingFooter = memo(() => {
@@ -26,9 +27,9 @@ export const LandingFooter = memo(() => {
               {t.landing.footer.built_on_prefix}
             </p>
             <div className="flex flex-wrap items-center gap-3">
-              <a href="https://near.org" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-300 transition-colors">NEAR</a>
-              <a href="https://ipfs.tech" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-300 transition-colors">IPFS</a>
-              <a href="https://www.lighthouse.storage/" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-300 transition-colors">Lighthouse</a>
+              <a href="https://near.org" target="_blank" rel="noopener noreferrer" className="rounded-sm hover:text-zinc-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green">NEAR</a>
+              <a href="https://ipfs.tech" target="_blank" rel="noopener noreferrer" className="rounded-sm hover:text-zinc-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green">IPFS</a>
+              <a href="https://www.lighthouse.storage/" target="_blank" rel="noopener noreferrer" className="rounded-sm hover:text-zinc-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green">Lighthouse</a>
             </div>
           </div>
 
@@ -39,7 +40,7 @@ export const LandingFooter = memo(() => {
                 href="https://github.com/4rmus/youtick"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="group p-2 rounded-lg bg-zinc-900/50 hover:bg-white/10 border border-white/5 hover:border-white/20 transition-all"
+                className="group p-2 rounded-lg bg-zinc-900/50 hover:bg-white/10 border border-white/5 hover:border-white/20 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                 title="GitHub"
               >
                 <Github className="w-5 h-5 text-zinc-400 group-hover:text-white transition-colors" />
@@ -55,9 +56,9 @@ export const LandingFooter = memo(() => {
         {/* Bottom Bar */}
         <div className="mt-12 pt-8 border-t border-white/5 flex justify-center md:justify-end">
           <div className="flex items-center gap-6 text-xs text-zinc-600">
-            <a href="/privacy" className="hover:text-zinc-400 transition-colors">{t.landing.footer.privacy}</a>
-            <a href="/terms" className="hover:text-zinc-400 transition-colors">{t.landing.footer.terms}</a>
-            <a href="mailto:contact@youtick.net" className="hover:text-zinc-400 transition-colors">{t.landing.footer.support}</a>
+            <Link href="/privacy" className="rounded-sm hover:text-zinc-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green">{t.landing.footer.privacy}</Link>
+            <Link href="/terms" className="rounded-sm hover:text-zinc-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green">{t.landing.footer.terms}</Link>
+            <a href="mailto:contact@youtick.net" className="rounded-sm hover:text-zinc-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green">{t.landing.footer.support}</a>
           </div>
         </div>
       </div>

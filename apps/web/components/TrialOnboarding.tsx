@@ -207,9 +207,9 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
     // Loading state
     if (isValidating) {
         return (
-            <Card className="w-full max-w-md mx-auto bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700">
+            <Card className="w-full max-w-md mx-auto bg-zinc-950 border-zinc-800 text-white">
                 <CardContent className="py-12 text-center space-y-4">
-                    <Loader2 className="w-12 h-12 animate-spin text-purple-500 mx-auto" />
+                    <Loader2 className="w-12 h-12 animate-spin text-near-green mx-auto" />
                     <p className="text-white text-lg">{tr.validating_link}</p>
                 </CardContent>
             </Card>
@@ -219,13 +219,13 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
     // No gift link - show options
     if (step === "no-link") {
         return (
-            <Card className="w-full max-w-md mx-auto bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700">
+            <Card className="w-full max-w-md mx-auto bg-zinc-950 border-zinc-800 text-white">
                 <CardHeader className="text-center space-y-2">
-                    <div className="mx-auto w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center mb-4">
-                        <Sparkles className="w-8 h-8 text-white" />
+                    <div className="mx-auto w-16 h-16 bg-near-green/10 border border-near-green/30 rounded-full flex items-center justify-center mb-4">
+                        <Sparkles className="w-8 h-8 text-near-green" />
                     </div>
                     <CardTitle className="text-2xl text-white">{tr.welcome_title}</CardTitle>
-                    <CardDescription className="text-gray-400">
+                    <CardDescription className="text-zinc-400">
                         {tr.welcome_desc}
                     </CardDescription>
                 </CardHeader>
@@ -238,7 +238,8 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
 
                     <Button
                         onClick={handleCreateGuestAccount}
-                        className="w-full h-14 text-lg bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-700 hover:to-purple-700"
+                        variant="near"
+                        className="w-full h-14 text-lg"
                     >
                         <Sparkles className="w-5 h-5 mr-2" />
                         {tr.create_guest_account}
@@ -247,7 +248,7 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                     <Button
                         onClick={onConnectWallet}
                         variant="outline"
-                        className="w-full h-12 border-gray-600 text-gray-300"
+                        className="w-full h-12 border-zinc-700 text-zinc-300 hover:bg-zinc-900"
                     >
                         <Wallet className="w-5 h-5 mr-2" />
                         {tr.connect_wallet}
@@ -265,17 +266,17 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
     // Choice Step - has gift link
     if (step === "choice") {
         return (
-            <Card className="w-full max-w-md mx-auto bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700">
+            <Card className="w-full max-w-md mx-auto bg-zinc-950 border-zinc-800 text-white">
                 <CardHeader className="text-center space-y-2">
-                    <div className="mx-auto w-16 h-16 bg-gradient-to-r from-cyan-500 to-purple-500 rounded-full flex items-center justify-center mb-4">
-                        <Gift className="w-8 h-8 text-white" />
+                    <div className="mx-auto w-16 h-16 bg-near-green/10 border border-near-green/30 rounded-full flex items-center justify-center mb-4">
+                        <Gift className="w-8 h-8 text-near-green" />
                     </div>
                     <CardTitle className="text-2xl text-white">
                         {trialInviteInfo
                             ? tr.trial_invite_title
                             : giftInfo?.eventTitle ? giftInfo.eventTitle : tr.gift_ticket_title}
                     </CardTitle>
-                    <CardDescription className="text-gray-400">
+                    <CardDescription className="text-zinc-400">
                         {trialInviteInfo ? tr.no_wallet_required : (t.trial_page?.gift_for || tr.gift_for)}
                     </CardDescription>
                 </CardHeader>
@@ -283,39 +284,40 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                     {/* Claim Gift Option */}
                     <Button
                         onClick={handleStartClaim}
-                        className="w-full h-14 text-lg bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-700 hover:to-purple-700"
+                        variant="near"
+                        className="w-full h-14 text-lg"
                     >
                         <Sparkles className="w-5 h-5 mr-2" />
                         {trialInviteInfo ? tr.start_trial : tr.try_free}
                     </Button>
 
-                    <div className="flex items-center gap-4 text-gray-500">
-                        <div className="flex-1 h-px bg-gray-700" />
+                    <div className="flex items-center gap-4 text-zinc-500">
+                        <div className="flex-1 h-px bg-zinc-800" />
                         <span className="text-sm">{tr.or}</span>
-                        <div className="flex-1 h-px bg-gray-700" />
+                        <div className="flex-1 h-px bg-zinc-800" />
                     </div>
 
                     {/* Connect Wallet Option */}
                     <Button
                         onClick={onConnectWallet}
                         variant="outline"
-                        className="w-full h-14 text-lg border-blue-500/50 text-blue-400 hover:bg-blue-500/10"
+                        className="w-full h-14 text-lg border-zinc-700 text-zinc-300 hover:bg-zinc-900"
                     >
                         <Wallet className="w-5 h-5 mr-2" />
                         {tr.connect_wallet}
                     </Button>
 
-                    <div className="pt-4 space-y-2 text-sm text-gray-500">
+                    <div className="pt-4 space-y-2 text-sm text-zinc-400">
                         <p className="flex items-center gap-2">
-                            <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            <CheckCircle2 className="w-4 h-4 text-near-green" />
                             {tr.no_wallet_required}
                         </p>
                         <p className="flex items-center gap-2">
-                            <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            <CheckCircle2 className="w-4 h-4 text-near-green" />
                             {tr.free_content_access}
                         </p>
                         <p className="flex items-center gap-2">
-                            <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            <CheckCircle2 className="w-4 h-4 text-near-green" />
                             {tr.upgrade_anytime}
                         </p>
                     </div>
@@ -327,11 +329,11 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
     // Creating Step
     if (step === "creating") {
         return (
-            <Card className="w-full max-w-md mx-auto bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700">
+            <Card className="w-full max-w-md mx-auto bg-zinc-950 border-zinc-800 text-white">
                 <CardContent className="py-12 text-center space-y-4">
-                    <Loader2 className="w-12 h-12 animate-spin text-purple-500 mx-auto" />
+                    <Loader2 className="w-12 h-12 animate-spin text-near-green mx-auto" />
                     <p className="text-white text-lg">{tr.creating_account}</p>
-                    <p className="text-gray-400 text-sm">{tr.creating_wait}</p>
+                    <p className="text-zinc-400 text-sm">{tr.creating_wait}</p>
                 </CardContent>
             </Card>
         );
@@ -340,27 +342,28 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
     // Error Step
     if (step === "error") {
         return (
-            <Card className="w-full max-w-md mx-auto bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700">
+            <Card className="w-full max-w-md mx-auto bg-zinc-950 border-zinc-800 text-white">
                 <CardContent className="py-12 text-center space-y-4">
-                    <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto">
-                        <AlertCircle className="w-8 h-8 text-red-500" />
+                    <div className="w-16 h-16 bg-near-red/10 border border-near-red/30 rounded-full flex items-center justify-center mx-auto">
+                        <AlertCircle className="w-8 h-8 text-near-red" />
                     </div>
                     <h3 className="text-xl text-white font-semibold">{tr.error_title}</h3>
-                    <p className="text-gray-400">{error || tr.unknown_error}</p>
+                    <p className="text-zinc-400">{error || tr.unknown_error}</p>
                     <div className="space-y-2">
                         <Button
                             onClick={() => {
                                 setError(null);
                                 setStep(getReturnStep());
                             }}
-                            className="w-full bg-gradient-to-r from-purple-600 to-pink-600"
+                            variant="near"
+                            className="w-full"
                         >
                             {tr.try_again}
                         </Button>
                         <Button
                             onClick={onConnectWallet}
                             variant="outline"
-                            className="w-full border-gray-600"
+                            className="w-full border-zinc-700 text-zinc-300 hover:bg-zinc-900"
                         >
                             {tr.connect_wallet}
                         </Button>
@@ -381,21 +384,22 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
         const redirectUrl = getRedirectUrl();
 
         return (
-            <Card className="w-full max-w-md mx-auto bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700">
+            <Card className="w-full max-w-md mx-auto bg-zinc-950 border-zinc-800 text-white">
                 <CardContent className="py-12 text-center space-y-4">
-                    <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto">
-                        <CheckCircle2 className="w-8 h-8 text-green-500" />
+                    <div className="w-16 h-16 bg-near-green/10 border border-near-green/30 rounded-full flex items-center justify-center mx-auto">
+                        <CheckCircle2 className="w-8 h-8 text-near-green" />
                     </div>
                     <h3 className="text-xl text-white font-semibold">{tr.welcome_success}</h3>
-                    <p className="text-gray-400">
-                        {tr.account_ready} <span className="text-purple-400 font-mono">{createdAccountId}</span>
+                    <p className="text-zinc-400">
+                        {tr.account_ready} <span className="text-near-green font-mono">{createdAccountId}</span>
                     </p>
-                    <p className="text-sm text-gray-500">
+                    <p className="text-sm text-zinc-500">
                         {redirectUrl ? tr.ticket_ready : tr.trial_duration}
                     </p>
                     <Button
                         onClick={() => window.location.href = redirectUrl || "/discover"}
-                        className="w-full bg-gradient-to-r from-cyan-600 to-purple-600"
+                        variant="near"
+                        className="w-full"
                     >
                         {redirectUrl ? (
                             <>

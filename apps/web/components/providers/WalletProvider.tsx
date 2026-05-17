@@ -344,7 +344,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             {initError && (
                 <div
                     role="alert"
-                    className="fixed left-1/2 top-4 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-lg border border-red-500/40 bg-red-950/95 px-4 py-3 text-sm text-red-50 shadow-lg"
+                    className="fixed left-1/2 top-4 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-lg border border-near-red/40 bg-zinc-950/95 px-4 py-3 text-sm text-near-red shadow-lg"
                 >
                     Wallet connection is temporarily unavailable. {initError}
                 </div>

@@ -103,7 +103,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             // Polling is already active from initiateSwap — the swap will be detected
         },
         onError: (err) => {
-            setError(`MetaMask transfer failed: ${err}`);
+            console.error('MetaMask transfer failed:', err);
+            setError(tp.error_tx_rejected);
             setActionLoading(false);
         },
     });
@@ -148,7 +149,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             setActionLoading(false);
         },
         onSwapFailed: (err) => {
-            setError(`Swap failed: ${err}`);
+            console.error('Swap failed:', err);
+            setError(tp.error_complete_purchase);
             setActionLoading(false);
         },
     });
@@ -283,7 +285,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
         } catch (e: unknown) {
             console.error("Free ticket claim failed:", e);
-            setError(e instanceof Error ? e.message : tp.error_claim_free);
+            const message = e instanceof Error ? e.message : '';
+            setError(message === tp.error_ticket_access_pending ? message : tp.error_claim_free);
         } finally {
             setActionLoading(false);
         }
@@ -328,7 +331,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
         } catch (e) {
             console.error("Purchase failed:", e);
-            setError(e instanceof Error ? e.message : tp.error_tx_rejected);
+            const message = e instanceof Error ? e.message : '';
+            setError(message === tp.error_ticket_access_pending ? message : tp.error_tx_rejected);
         } finally {
             setActionLoading(false);
         }
@@ -436,7 +440,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         }
         // Sanity check: minimum swap amount to avoid dust swaps that won't cover ticket cost
         if (usdCents < 5) {
-            setError('Calculated swap amount is too small. Please try again or select a different payment method.');
+            setError(tp.error_swap_small);
             setActionLoading(false);
             return;
         }
@@ -548,7 +552,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             }
         } catch (e) {
             console.error("Stablecoin payment failed:", e);
-            setError(e instanceof Error ? e.message : tp.error_complete_purchase);
+            setError(tp.error_complete_purchase);
             setActionLoading(false);
         }
     };
@@ -562,7 +566,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         }
         const amount = amountOverride || (eventDetails.priceUsdc?.toString() ?? '0');
         if (amount === '0') {
-            setError('This release is not priced in USDC. Please select NEAR payment.');
+            setError(tp.error_complete_purchase);
             return;
         }
 
@@ -608,7 +612,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             if (onPurchaseSuccess) onPurchaseSuccess();
         } catch (e) {
             console.error('USDC direct purchase failed:', e);
-            setError(e instanceof Error ? e.message : tp.error_tx_rejected);
+            const message = e instanceof Error ? e.message : '';
+            setError(message === tp.error_ticket_access_pending ? message : tp.error_tx_rejected);
         } finally {
             setActionLoading(false);
         }
@@ -629,20 +634,20 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         if (method === 'NEAR') {
             if (hasUsdcPrice) {
                 if (paymentSelection.rheaQuoteError) {
-                    setError('Rhea swap unavailable. Please select USDC or USDT.');
+                    setError(tp.error_complete_purchase);
                     return;
                 }
                 await handleRheaNearPurchase();
                 return;
             }
             if (!hasNearPrice) {
-                setError('This release does not have a NEAR fallback price.');
+                setError(tp.error_complete_purchase);
                 return;
             }
             await handleNearPurchase();
         } else if (chain === 'near') {
             if (!hasUsdcPrice) {
-                setError('This release is priced in NEAR. Please select NEAR payment.');
+                setError(tp.error_complete_purchase);
                 return;
             }
             // NEAR-native USDC/USDT: direct ft_transfer_call (no swap)
@@ -661,15 +666,15 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         );
     }
 
-    const visibleError = error || swapError;
+    const visibleError = error || (swapError ? tp.error_complete_purchase : null);
 
     if (!eventDetails) {
         if (!visibleError) return null;
 
         return (
-            <div className={`flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg max-w-sm mx-auto ${className}`}>
-                <AlertCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
-                <p className="text-sm text-red-400">{visibleError}</p>
+            <div className={`flex items-center gap-2 p-3 bg-near-red/10 border border-near-red/30 rounded-lg max-w-sm mx-auto ${className}`}>
+                <AlertCircle className="h-4 w-4 text-near-red flex-shrink-0" />
+                <p className="text-sm text-near-red">{visibleError}</p>
             </div>
         );
     }
@@ -787,9 +792,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 )}
 
                 {!isFree && !isCreator && isManagedGuestAccount && (
-                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-                        <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
-                        <p className="text-sm text-amber-100">{tp.guest_paid_requires_wallet}</p>
+                    <div className="flex items-start gap-2 rounded-lg border border-near-red/30 bg-near-red/10 p-3">
+                        <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-near-red" />
+                        <p className="text-sm text-near-red">{tp.guest_paid_requires_wallet}</p>
                     </div>
                 )}
 
@@ -816,7 +821,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                 setSwapNearReady(false);
                                 setActionLoading(false);
                             }}
-                            className="text-[11px] text-zinc-600 hover:text-zinc-400 underline"
+                            className="rounded-sm text-[11px] text-zinc-600 underline hover:text-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                         >
                             {tp.cancel}
                         </button>
@@ -849,7 +854,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                 setSwapNearReady(false);
                                 setActionLoading(false);
                             }}
-                            className="text-[11px] text-zinc-600 hover:text-zinc-400 underline"
+                            className="rounded-sm text-[11px] text-zinc-600 underline hover:text-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                         >
                             {tp.cancel}
                         </button>
@@ -869,8 +874,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         <div className="rounded-lg border border-white/10 bg-black/20 overflow-hidden">
                             <button
                                 type="button"
+                                aria-expanded={showCostBreakdown}
                                 onClick={() => setShowCostBreakdown(!showCostBreakdown)}
-                                className="w-full flex items-center justify-between px-3 py-2 text-xs text-zinc-400 hover:text-zinc-300 transition-colors"
+                                className="w-full flex items-center justify-between px-3 py-2 text-xs text-zinc-400 hover:text-zinc-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                             >
                                 <span>{tp.total_wallet_cost}: ~{total.toFixed(2)} Ⓝ</span>
                                 {showCostBreakdown ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
@@ -911,7 +917,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         <Button
                             onClick={handleNearPurchase}
                             disabled={actionLoading}
-                            className="w-full h-10 bg-gradient-to-r from-near-green to-emerald-500 hover:from-near-green/90 hover:to-emerald-500/90 text-near-black font-bold text-sm rounded-xl"
+                            className="w-full h-10 bg-near-green hover:bg-near-green/90 text-near-black font-bold text-sm rounded-xl"
                         >
                             {actionLoading ? (
                                 <>
@@ -930,9 +936,9 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
                 {/* Error Message */}
                 {visibleError && (
-                    <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
-                        <AlertCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
-                        <p className="text-sm text-red-400">{visibleError}</p>
+                    <div className="flex items-center gap-2 p-3 bg-near-red/10 border border-near-red/30 rounded-lg">
+                        <AlertCircle className="h-4 w-4 text-near-red flex-shrink-0" />
+                        <p className="text-sm text-near-red">{visibleError}</p>
                     </div>
                 )}
 
@@ -944,7 +950,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                                 <Button
                                     onClick={handleFreeTicketClaim}
                                     disabled={actionLoading}
-                                    className="w-full h-12 bg-gradient-to-r from-near-green to-emerald-500 hover:from-near-green/90 hover:to-emerald-500/90 text-near-black font-bold text-base rounded-xl shadow-lg shadow-near-green/20 transition-all duration-300"
+                                    className="w-full h-12 bg-near-green hover:bg-near-green/90 text-near-black font-bold text-base rounded-xl shadow-lg shadow-near-green/20 transition-all duration-300"
                                 >
                                     {actionLoading ? (
                                         <>
@@ -966,7 +972,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                             <Button
                                 onClick={connectMetaMask}
                                 disabled={actionLoading}
-                                className="w-full h-12 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-500/90 hover:to-amber-500/90 text-white font-bold text-base rounded-xl shadow-lg shadow-orange-500/20 transition-all duration-300"
+                                className="w-full h-12 bg-near-purple hover:bg-near-purple/90 text-near-black font-bold text-base rounded-xl shadow-lg shadow-near-purple/20 transition-all duration-300"
                             >
                                 <Wallet className="h-5 w-5 mr-2" />
                                 {tp.connect_metamask}
@@ -975,7 +981,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                             <Button
                                 onClick={isFree ? handleFreeTicketClaim : isManagedGuestAccount ? connect : handlePurchase}
                                 disabled={actionLoading}
-                                className="w-full h-12 bg-gradient-to-r from-near-green to-emerald-500 hover:from-near-green/90 hover:to-emerald-500/90 text-near-black font-bold text-base rounded-xl shadow-lg shadow-near-green/20 transition-all duration-300"
+                                className="w-full h-12 bg-near-green hover:bg-near-green/90 text-near-black font-bold text-base rounded-xl shadow-lg shadow-near-green/20 transition-all duration-300"
                             >
                                 {actionLoading ? (
                                     <>

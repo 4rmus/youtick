@@ -20,7 +20,7 @@ vi.mock('near-api-js', () => ({
     })),
   },
   KeyPairSigner: class {
-    constructor(_keyPair: unknown) {}
+    constructor() {}
     async signNep413Message(accountId: string) {
       return {
         accountId,
