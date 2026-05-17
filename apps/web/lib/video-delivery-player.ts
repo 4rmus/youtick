@@ -49,11 +49,50 @@ export interface DeliveryPlaybackOptions {
     onError?: (error: Error) => void;
 }
 
+type MediaSourceConstructorLike = {
+    new(): MediaSource;
+    isTypeSupported?: (type: string) => boolean;
+};
+
+type GlobalWithManagedMediaSource = typeof globalThis & {
+    ManagedMediaSource?: MediaSourceConstructorLike;
+};
+
+export function getDeliveryMediaMimeType(manifest: Pick<DeliveryManifestV2, 'codec'>): string {
+    return `video/mp4; codecs="${manifest.codec}"`;
+}
+
+function getSupportedMediaSourceConstructor(mimeType: string): MediaSourceConstructorLike | null {
+    const constructors: Array<MediaSourceConstructorLike | undefined> = [
+        typeof MediaSource !== 'undefined' ? MediaSource : undefined,
+        (globalThis as GlobalWithManagedMediaSource).ManagedMediaSource,
+    ];
+
+    return constructors.find((constructor) => {
+        if (!constructor) {
+            return false;
+        }
+
+        return typeof constructor.isTypeSupported !== 'function'
+            || constructor.isTypeSupported(mimeType);
+    }) ?? null;
+}
+
+export function isDeliveryPlaybackSupported(manifest: Pick<DeliveryManifestV2, 'codec'>): boolean {
+    return getSupportedMediaSourceConstructor(getDeliveryMediaMimeType(manifest)) !== null;
+}
+
 export function createDeliveryPlaybackSession(
     manifest: DeliveryManifestV2,
     options: DeliveryPlaybackOptions = {},
 ): DeliveryPlaybackSession {
-    const mediaSource = new MediaSource();
+    const mimeType = getDeliveryMediaMimeType(manifest);
+    const MediaSourceConstructor = getSupportedMediaSourceConstructor(mimeType);
+    if (!MediaSourceConstructor) {
+        throw new Error('Protected playback is not supported by this browser.');
+    }
+
+    const mediaSource = new MediaSourceConstructor();
     const objectUrl = URL.createObjectURL(mediaSource);
     const targetDuration = getEffectiveManifestDurationMs(manifest) / 1_000;
     const orderedSegments = [...manifest.segments].sort((a, b) => a.seq - b.seq);
@@ -546,7 +585,7 @@ export function createDeliveryPlaybackSession(
         sourceOpened = true;
         ensureFixedDuration();
         try {
-            sourceBuffer = mediaSource.addSourceBuffer(`video/mp4; codecs="${manifest.codec}"`);
+            sourceBuffer = mediaSource.addSourceBuffer(mimeType);
         } catch (error) {
             options.onError?.(error instanceof Error ? error : new Error(String(error)));
             return;
@@ -647,6 +686,9 @@ export function createDeliveryPlaybackSession(
         }
 
         video = videoElement;
+        if ('disableRemotePlayback' in video) {
+            (video as HTMLVideoElement & { disableRemotePlayback: boolean }).disableRemotePlayback = true;
+        }
         video.addEventListener('timeupdate', handleTimeUpdate);
         video.addEventListener('seeking', handleSeeking);
 
