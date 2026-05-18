@@ -2,6 +2,13 @@
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import {
+    MediaControlBar,
+    MediaController,
+    MediaFullscreenButton,
+    MediaMuteButton,
+    MediaPlayButton,
+} from 'media-chrome/react';
 import { KMSError, retrieveEncryptionKey } from '@/lib/kms/client';
 import {
     createDeliveryPlaybackSession,
@@ -18,7 +25,7 @@ import {
     shouldUseSegmentedPlayback,
 } from '@/lib/video-delivery';
 import { useWallet } from '@/components/providers/WalletProvider';
-import { Loader2, Lock, Maximize2, Pause, Play, ShieldOff, Volume2, VolumeX } from 'lucide-react';
+import { Loader2, Lock, Play, ShieldCheck, ShieldOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useNFTOwnership } from '@/lib/hooks/useSessionState';
 import { IPFSThumbnail } from './IPFSThumbnail';
@@ -54,6 +61,7 @@ type PlayerState =
     | { type: 'error'; message: string };
 
 const initialState: PlayerState = { type: 'idle' };
+const mediaChromeButtonClassName = 'flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur transition-colors hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green';
 
 function formatTime(seconds: number): string {
     if (!Number.isFinite(seconds) || seconds < 0) {
@@ -137,6 +145,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
     const [scrubTimeSeconds, setScrubTimeSeconds] = useState(0);
     const [playbackMetrics, setPlaybackMetrics] = useState<DeliveryPlaybackMetrics | null>(null);
     const [isWaitingForMedia, setIsWaitingForMedia] = useState(false);
+    const [isFullscreen, setIsFullscreen] = useState(false);
     const [eventAccessMode, setEventAccessMode] = useState<EventAccessMode | null>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -327,6 +336,23 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             console.warn('[IpfsPlayer] Initial playback request failed:', error);
         });
     }, [playerState]);
+
+    useEffect(() => {
+        const syncFullscreenState = () => {
+            const fullscreenElement = document.fullscreenElement;
+            setIsFullscreen(!!fullscreenElement && !!videoRef.current && (
+                fullscreenElement === videoRef.current
+                || fullscreenElement.contains(videoRef.current)
+            ));
+        };
+
+        document.addEventListener('fullscreenchange', syncFullscreenState);
+        syncFullscreenState();
+
+        return () => {
+            document.removeEventListener('fullscreenchange', syncFullscreenState);
+        };
+    }, []);
 
     useEffect(() => {
         const video = videoRef.current;
@@ -564,30 +590,6 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
 
     const handleSeekPreview = (nextValue: number) => {
         setScrubTimeSeconds(nextValue);
-    };
-
-    const handleToggleMute = () => {
-        const video = videoRef.current;
-        if (!video) {
-            return;
-        }
-
-        video.muted = !video.muted;
-        setIsMuted(video.muted);
-    };
-
-    const handleToggleFullscreen = async () => {
-        const video = videoRef.current;
-        if (!video) {
-            return;
-        }
-
-        if (document.fullscreenElement) {
-            await document.exitFullscreen();
-            return;
-        }
-
-        await video.requestFullscreen();
     };
 
     const playVideo = useCallback(async (isRetry: boolean = false) => {
@@ -863,13 +865,13 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                                 )
                             }
 
-                            <div className="relative z-10 p-6 bg-black/30 backdrop-blur-sm rounded-xl border border-white/10">
-                                <Lock className="h-12 w-12 mx-auto mb-4 text-near-green" />
+                            <div className="relative z-10 flex max-w-sm flex-col items-center rounded-md border border-white/10 bg-black/55 p-5 shadow-2xl backdrop-blur-md">
+                                <ShieldCheck className="h-12 w-12 mx-auto mb-4 text-near-green" />
                                 <h3 className="text-xl font-bold mb-2 text-white">{playerCopy.protected_title}</h3>
                                 <p className="text-sm text-zinc-200 mb-6 font-medium">
                                     {playerCopy.protected_desc}
                                 </p>
-                                <Button onClick={handlePlay} size="lg" className="gap-2 shadow-xl shadow-primary/20">
+                                <Button onClick={handlePlay} size="lg" className="h-12 gap-2 px-6 shadow-xl shadow-primary/20">
                                     <Play className="h-5 w-5" />
                                     {playerCopy.play}
                                 </Button>
@@ -878,24 +880,28 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                     )}
                 </div>
             ) : (
-                <>
+                <MediaController className="absolute inset-0 block h-full w-full bg-black">
                     <video
                         ref={videoRef}
+                        slot="media"
                         disableRemotePlayback
                         src={videoUrl}
                         poster={posterUrl}
                         onContextMenu={(e) => e.preventDefault()}
                         onError={handleVideoError}
                         onClick={handleTogglePlayback}
-                        className="w-full h-full"
+                        className="h-full w-full bg-black object-contain"
                         playsInline
                         preload="auto"
                     />
-                    <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-3 pb-3 pt-10">
+                    <div
+                        className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/85 via-black/50 to-transparent px-3 pt-12 md:px-4"
+                        style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+                    >
                         <div className="space-y-2">
                             <input
                                 type="range"
-                                aria-label="Seek video"
+                                aria-label={playerCopy.seek_label}
                                 aria-valuetext={`${formatTime(displayedTimeSeconds)} / ${formatTime(effectiveDurationSeconds)}`}
                                 min={0}
                                 max={Math.max(effectiveDurationSeconds, 1)}
@@ -913,43 +919,31 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                                     background: `linear-gradient(to right, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.95) ${playedPercent}%, rgba(255,255,255,0.35) ${playedPercent}%, rgba(255,255,255,0.35) ${bufferedPercent}%, rgba(255,255,255,0.16) ${bufferedPercent}%, rgba(255,255,255,0.16) 100%)`,
                                 }}
                             />
-                            <div className="flex items-center justify-between text-white">
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        type="button"
-                                        aria-label={isPaused ? "Play video" : "Pause video"}
-                                        onClick={handleTogglePlayback}
-                                        className="rounded-full bg-white/10 p-2 backdrop-blur hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
-                                    >
-                                        {isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        aria-label={isMuted ? "Unmute video" : "Mute video"}
-                                        onClick={handleToggleMute}
-                                        className="rounded-full bg-white/10 p-2 backdrop-blur hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
-                                    >
-                                        {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                                    </button>
-                                    <span className="text-xs font-medium tabular-nums">
+                            <MediaControlBar className="flex w-full items-center justify-between gap-2 bg-transparent text-white">
+                                <div className="flex min-w-0 items-center gap-2">
+                                    <MediaPlayButton
+                                        aria-label={isPaused ? playerCopy.play_label : playerCopy.pause_label}
+                                        className={mediaChromeButtonClassName}
+                                    />
+                                    <MediaMuteButton
+                                        aria-label={isMuted ? playerCopy.unmute_label : playerCopy.mute_label}
+                                        className={mediaChromeButtonClassName}
+                                    />
+                                    <span className="truncate text-xs font-medium tabular-nums">
                                         {formatTime(displayedTimeSeconds)} / {formatTime(effectiveDurationSeconds)}
                                     </span>
                                 </div>
-                                <button
-                                    type="button"
-                                    aria-label="Enter fullscreen"
-                                    onClick={() => { void handleToggleFullscreen(); }}
-                                    className="rounded-full bg-white/10 p-2 backdrop-blur hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
-                                >
-                                    <Maximize2 className="h-4 w-4" />
-                                </button>
-                            </div>
+                                <MediaFullscreenButton
+                                    aria-label={isFullscreen ? playerCopy.fullscreen_exit_label : playerCopy.fullscreen_enter_label}
+                                    className={mediaChromeButtonClassName}
+                                />
+                            </MediaControlBar>
                         </div>
                     </div>
-                </>
+                </MediaController>
             )}
             {videoUrl && backgroundStatus && (
-                <div className="absolute right-3 bottom-3 z-20 rounded-full bg-black/70 px-3 py-1 text-xs text-white backdrop-blur">
+                <div className="absolute right-3 top-3 z-30 rounded-full bg-black/70 px-3 py-1 text-xs text-white backdrop-blur">
                     {backgroundStatus}
                 </div>
             )}
