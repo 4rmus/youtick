@@ -221,7 +221,7 @@ describe('storage-api client', () => {
         expect(isLighthousePrimaryUploadEnabled()).toBe(true);
         expect(openedUrl).toBe('https://storage-api.example/uploads/directory');
         expect(requestHeaders.get('Authorization')).toBe('Bearer test-upload-token');
-        expect(Array.from((sentBody as FormData).entries()).map(([, value]) => (value as File).name)).toEqual([
+        expect(Array.from((sentBody as unknown as FormData).entries()).map(([, value]) => (value as File).name)).toEqual([
             'manifest.json',
             'segments/000000.m4s',
         ]);
@@ -301,7 +301,7 @@ describe('storage-api client', () => {
 
         expect(openedUrl).toBe('https://storage-api.example/uploads/file');
         expect(requestHeaders.get('Authorization')).toBe('Bearer test-upload-token');
-        expect(Array.from((sentBody as FormData).entries()).map(([, value]) => (value as File).name)).toEqual([
+        expect(Array.from((sentBody as unknown as FormData).entries()).map(([, value]) => (value as File).name)).toEqual([
             'segments/000000.m4s.part00000',
         ]);
         expect(result).toEqual({

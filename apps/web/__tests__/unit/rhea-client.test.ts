@@ -128,7 +128,12 @@ describe('rhea client', () => {
       paymentId: 'rhea:alice.near:cid-1:1',
     });
 
-    const action = transaction.actions[0];
+    // near-api-js is mocked in tests; the mock's actions.functionCall returns a
+    // flat { methodName, args } shape, not the real nested near-api-js Action.
+    const action = transaction.actions[0] as unknown as {
+      methodName: string;
+      args: { msg: string; amount: string };
+    };
     const msg = JSON.parse(action.args.msg);
 
     expect(transaction.receiverId).toContain('17208628');
