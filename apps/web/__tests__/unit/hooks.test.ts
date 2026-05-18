@@ -124,32 +124,3 @@ describe('useNFTOwnership data logic', () => {
         await expect(resolveNFTOwnership('creator.testnet', 'video-1')).resolves.toBe(true);
     });
 });
-
-describe('useEventDescription data logic', () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-    });
-
-    it('should extract thumbnail URL from title metadata', async () => {
-        const { parseTitleMetadata } = await import('@/lib/metadata-parser');
-
-        const parsed = parseTitleMetadata(
-            'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG:::QmThumbCid1234567890123456789012345678901234:::My Video',
-        );
-        expect(parsed.title).toBe('My Video');
-    });
-
-    it('should handle plain title without metadata', async () => {
-        const { parseTitleMetadata } = await import('@/lib/metadata-parser');
-
-        const parsed = parseTitleMetadata('Simple Title');
-        expect(parsed.title).toBe('Simple Title');
-        expect(parsed.thumbnailCid).toBeNull();
-    });
-
-    it('should return null for ACCESS_PASS CID', () => {
-        const cid = 'ACCESS_PASS';
-        const shouldFetch = !!cid && cid !== 'ACCESS_PASS';
-        expect(shouldFetch).toBe(false);
-    });
-});

@@ -14,7 +14,7 @@ vi.mock('@/lib/ipfs/config', () => ({
   ],
 }));
 
-describe('crust gateway probing', () => {
+describe('ipfs gateway probing', () => {
   beforeEach(() => {
     vi.resetModules();
   });
