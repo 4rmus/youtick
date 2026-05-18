@@ -25,7 +25,15 @@ export function OnboardingKeyInit() {
             let turnstileToken: string | null = null;
 
             if (APP_CONFIG.turnstileSiteKey) {
+                if (isLocalBrowserHost()) {
+                    return;
+                }
+
                 turnstileToken = await getTurnstileToken(APP_CONFIG.turnstileSiteKey);
+                if (!turnstileToken) {
+                    setApiWarning(getUnsupportedApiMessage(systemCopy));
+                    return;
+                }
             }
 
             const url = turnstileToken
@@ -35,9 +43,6 @@ export function OnboardingKeyInit() {
             try {
                 const res = await fetch(url);
                 if (!res.ok) {
-                    if (process.env.NODE_ENV !== 'development') {
-                        console.warn('[ONBOARDING_KEY] Endpoint returned', res.status);
-                    }
                     setApiWarning(getUnsupportedApiMessage(systemCopy));
                     return;
                 }
@@ -75,7 +80,7 @@ export function OnboardingKeyInit() {
     if (!apiWarning) return null;
 
     return (
-        <div className="fixed bottom-4 left-4 z-50 max-w-sm rounded-md border border-amber-500/40 bg-zinc-950/95 p-3 text-xs text-amber-100 shadow-lg">
+        <div role="alert" className="fixed bottom-4 right-4 z-50 max-w-sm rounded-md border border-near-red/40 bg-zinc-950/95 p-3 text-xs text-near-red shadow-lg">
             {apiWarning}
         </div>
     );
@@ -87,6 +92,13 @@ function getUnsupportedApiMessage(copy: Record<string, string>): string {
         return copy.guest_api_static;
     }
     return copy.guest_api_unavailable;
+}
+
+function isLocalBrowserHost(): boolean {
+    if (typeof window === 'undefined') return false;
+
+    const host = window.location.hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
 }
 
 /** Dynamically load Turnstile script and render an invisible challenge */

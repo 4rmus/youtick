@@ -7,12 +7,12 @@ export const metadata: Metadata = {
 
 export default function TermsPage() {
   return (
-    <main className="min-h-screen bg-gray-950 text-gray-200">
+    <main className="min-h-screen bg-zinc-950 text-zinc-200">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <h1 className="text-4xl font-bold text-white mb-2">Terms of Service</h1>
-        <p className="text-gray-400 mb-12">Last Updated: May 11, 2026</p>
+        <p className="text-zinc-400 mb-12">Last Updated: May 11, 2026</p>
 
-        <div className="space-y-10 text-gray-300 leading-relaxed">
+        <div className="space-y-10 text-zinc-300 leading-relaxed">
           {/* 1. ACCEPTANCE */}
           <section>
             <h2 className="text-2xl font-semibold text-white mb-4">1. Acceptance of Terms</h2>
@@ -452,9 +452,9 @@ export default function TermsPage() {
             </p>
           </section>
 
-          <div className="border-t border-gray-800 pt-8 mt-12">
-            <p className="text-gray-500 text-sm">
-              These Terms of Service were last updated on February 15, 2026. By using YouTick, you
+          <div className="border-t border-zinc-800 pt-8 mt-12">
+            <p className="text-zinc-500 text-sm">
+              These Terms of Service were last updated on May 11, 2026. By using YouTick, you
               acknowledge that you have read, understood, and agree to be bound by these Terms.
             </p>
           </div>

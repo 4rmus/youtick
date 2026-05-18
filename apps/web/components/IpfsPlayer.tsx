@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { KMSError, retrieveEncryptionKey } from '@/lib/kms/client';
 import {
     createDeliveryPlaybackSession,
+    isDeliveryPlaybackSupported,
     type DeliveryPlaybackMetrics,
     type DeliveryPlaybackSession,
 } from '@/lib/video-delivery-player';
@@ -685,7 +686,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                 });
             }
 
-            if (typeof MediaSource === 'undefined') {
+            if (!isDeliveryPlaybackSupported(resolvedManifest)) {
                 setPlayerState({
                     type: 'error',
                     message: playerCopy.unsupported_browser,
@@ -778,12 +779,12 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
     };
 
     return (
-        <div className={`w-full bg-slate-900 rounded-lg relative group ${showPurchaseCard ? 'min-h-[56.25%] overflow-visible' : 'aspect-video overflow-hidden'}`}>
+        <div className={`w-full bg-zinc-950 rounded-lg relative group ${showPurchaseCard ? 'min-h-[56.25%] overflow-visible' : 'aspect-video overflow-hidden'}`}>
             {!videoUrl ? (
                 <div className={`flex flex-col items-center text-white ${showPurchaseCard ? 'w-full' : 'absolute inset-0 justify-center p-4'}`}>
                     {playerState.type === 'banned' ? (
                         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/95 backdrop-blur-md w-full h-full p-6 text-center">
-                            <ShieldOff className="w-16 h-16 text-red-500 mb-4" />
+                            <ShieldOff className="w-16 h-16 text-near-red mb-4" />
                             <h3 className="text-2xl font-bold text-white mb-2">{t.moderation.content_removed}</h3>
                             <p className="text-zinc-400 max-w-sm mb-6">
                                 {t.moderation.content_removed_desc}
@@ -802,8 +803,8 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                         </div>
                     ) : loading ? (
                         <div className="text-center">
-                            <Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-primary" />
-                            <p className="text-sm text-slate-300">{status}</p>
+                            <Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-near-green" />
+                            <p className="text-sm text-zinc-300">{status}</p>
                         </div>
                     ) : shouldRenderPurchaseCard ? (
                         // SHOW INLINE PURCHASE CARD
@@ -863,9 +864,9 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                             }
 
                             <div className="relative z-10 p-6 bg-black/30 backdrop-blur-sm rounded-xl border border-white/10">
-                                <Lock className="h-12 w-12 mx-auto mb-4 text-primary" />
+                                <Lock className="h-12 w-12 mx-auto mb-4 text-near-green" />
                                 <h3 className="text-xl font-bold mb-2 text-white">{playerCopy.protected_title}</h3>
-                                <p className="text-sm text-slate-200 mb-6 font-medium">
+                                <p className="text-sm text-zinc-200 mb-6 font-medium">
                                     {playerCopy.protected_desc}
                                 </p>
                                 <Button onClick={handlePlay} size="lg" className="gap-2 shadow-xl shadow-primary/20">
@@ -880,6 +881,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                 <>
                     <video
                         ref={videoRef}
+                        disableRemotePlayback
                         src={videoUrl}
                         poster={posterUrl}
                         onContextMenu={(e) => e.preventDefault()}
@@ -893,6 +895,8 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                         <div className="space-y-2">
                             <input
                                 type="range"
+                                aria-label="Seek video"
+                                aria-valuetext={`${formatTime(displayedTimeSeconds)} / ${formatTime(effectiveDurationSeconds)}`}
                                 min={0}
                                 max={Math.max(effectiveDurationSeconds, 1)}
                                 step={0.1}
@@ -904,7 +908,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                                 onPointerUp={(event) => commitSeek(Number((event.target as HTMLInputElement).value))}
                                 onPointerCancel={() => setIsScrubbing(false)}
                                 onChange={(event) => handleSeekPreview(Number(event.target.value))}
-                                className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-transparent accent-white"
+                                className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-transparent accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                                 style={{
                                     background: `linear-gradient(to right, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.95) ${playedPercent}%, rgba(255,255,255,0.35) ${playedPercent}%, rgba(255,255,255,0.35) ${bufferedPercent}%, rgba(255,255,255,0.16) ${bufferedPercent}%, rgba(255,255,255,0.16) 100%)`,
                                 }}
@@ -913,15 +917,17 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                                 <div className="flex items-center gap-2">
                                     <button
                                         type="button"
+                                        aria-label={isPaused ? "Play video" : "Pause video"}
                                         onClick={handleTogglePlayback}
-                                        className="rounded-full bg-white/10 p-2 backdrop-blur hover:bg-white/20"
+                                        className="rounded-full bg-white/10 p-2 backdrop-blur hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                                     >
                                         {isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
                                     </button>
                                     <button
                                         type="button"
+                                        aria-label={isMuted ? "Unmute video" : "Mute video"}
                                         onClick={handleToggleMute}
-                                        className="rounded-full bg-white/10 p-2 backdrop-blur hover:bg-white/20"
+                                        className="rounded-full bg-white/10 p-2 backdrop-blur hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                                     >
                                         {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                                     </button>
@@ -931,8 +937,9 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                                 </div>
                                 <button
                                     type="button"
+                                    aria-label="Enter fullscreen"
                                     onClick={() => { void handleToggleFullscreen(); }}
-                                    className="rounded-full bg-white/10 p-2 backdrop-blur hover:bg-white/20"
+                                    className="rounded-full bg-white/10 p-2 backdrop-blur hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                                 >
                                     <Maximize2 className="h-4 w-4" />
                                 </button>

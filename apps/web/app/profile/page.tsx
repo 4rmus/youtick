@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { useOwnedTokens, TokenWithVideo } from '@/hooks/useOwnedTokens';
 import { useState } from 'react';
@@ -8,6 +9,7 @@ import { getProvider, viewContract } from '@/lib/near';
 import { NEAR_CONFIG } from '@/lib/constants';
 import { User, Wallet, Ticket, Loader2, ArrowLeft, Gift, Video, BarChart3, DollarSign, Edit, Globe, AtSign, Camera } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import Link from '@/components/Web4Link';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -19,6 +21,7 @@ import type { NFTEvent } from '@/lib/types';
 import { useCreatorStats, useCreatorPurchaseLogs, useCreatorProfile } from '@/hooks/useCreatorStats';
 import { CreatorProfileForm } from '@/components/CreatorProfileForm';
 import { getLatestEventsQuery } from '@/lib/event-query';
+import { PageShell } from '@/components/PageShell';
 
 interface CreatedEvent extends NFTEvent {
     cid: string;
@@ -110,23 +113,23 @@ export default function ProfilePage() {
 
     if (!accountId) {
         return (
-            <div className="container mx-auto px-4 py-24 min-h-screen">
+            <PageShell>
                 <div className="max-w-2xl mx-auto text-center">
-                    <div className="p-8 bg-zinc-900/50 rounded-xl border border-zinc-800">
+                    <Card className="p-8 bg-zinc-900/50">
                         <User className="w-16 h-16 mx-auto mb-4 text-zinc-600" />
                         <h2 className="text-2xl font-bold mb-2">{t.profile_page.wallet_not_connected}</h2>
                         <p className="text-zinc-400 mb-6">{t.profile_page.connect_prompt}</p>
                         <Link href="/">
                             <Button variant="outline">{t.profile_page.go_home}</Button>
                         </Link>
-                    </div>
+                    </Card>
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
     return (
-        <div className="container mx-auto px-4 py-24 min-h-screen">
+        <PageShell>
             <div className="max-w-7xl mx-auto space-y-8">
                 {/* Header */}
                 <div className="flex items-center justify-between">
@@ -146,7 +149,8 @@ export default function ProfilePage() {
                         {createdEvents.length > 0 && (
                             <Button
                                 onClick={() => setShowGiftModal(true)}
-                                className="bg-near-green text-near-black hover:bg-near-green/80 font-semibold gap-2"
+                                variant="near"
+                                className="gap-2"
                             >
                                 <Gift className="w-4 h-4" />
                                 {t.profile_page.gift_button}
@@ -157,7 +161,7 @@ export default function ProfilePage() {
 
                 {/* Account Info Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                    <Card className="p-6 bg-zinc-900">
                         <div className="flex items-center gap-3 mb-4">
                             <div className="p-2 bg-zinc-800 rounded-lg">
                                 <User className="w-5 h-5 text-zinc-400" />
@@ -168,9 +172,9 @@ export default function ProfilePage() {
                             <p className="text-xs text-zinc-500 uppercase tracking-wider">{t.profile_page.account_id}</p>
                             <p className="text-sm font-mono text-white break-all">{accountId}</p>
                         </div>
-                    </div>
+                    </Card>
 
-                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                    <Card className="p-6 bg-zinc-900">
                         <div className="flex items-center gap-3 mb-4">
                             <div className="p-2 bg-zinc-800 rounded-lg">
                                 <Wallet className="w-5 h-5 text-zinc-400" />
@@ -189,15 +193,21 @@ export default function ProfilePage() {
                                 </>
                             )}
                         </div>
-                    </div>
+                    </Card>
 
                     {/* Creator Profile Card */}
-                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                    <Card className="p-6 bg-zinc-900">
                         <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-3">
                                 <div className="p-2 bg-zinc-800 rounded-lg">
                                     {creatorProfile?.avatar_url ? (
-                                        <img src={creatorProfile.avatar_url} alt="" className="w-5 h-5 rounded-full object-cover" />
+                                        <Image
+                                            src={creatorProfile.avatar_url}
+                                            alt=""
+                                            width={20}
+                                            height={20}
+                                            className="w-5 h-5 rounded-full object-cover"
+                                        />
                                     ) : (
                                         <User className="w-5 h-5 text-zinc-400" />
                                     )}
@@ -240,42 +250,42 @@ export default function ProfilePage() {
                                 )}
                             </div>
                         </div>
-                    </div>
+                    </Card>
                 </div>
 
                 {/* Role Summary */}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+                    <Card className="p-5 border-zinc-800 bg-zinc-900/60">
                         <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">{t.profile_page.my_tickets}</p>
                         <p className="mt-2 text-3xl font-bold text-white">{ticketCount}</p>
                         <p className="mt-1 text-xs text-zinc-500">{t.watch_page.library}</p>
-                    </div>
-                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+                    </Card>
+                    <Card className="p-5 border-zinc-800 bg-zinc-900/60">
                         <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">{t.profile_page.my_events}</p>
                         <p className="mt-2 text-3xl font-bold text-white">{publishedWorkCount}</p>
                         <p className="mt-1 text-xs text-zinc-500">{t.profile_page.works_published || 'Works'}</p>
-                    </div>
-                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+                    </Card>
+                    <Card className="p-5 border-zinc-800 bg-zinc-900/60">
                         <p className="text-xs uppercase tracking-[0.18em] text-zinc-500 flex items-center gap-1">
                             <BarChart3 className="w-3 h-3" /> {t.profile_page.total_sales || 'Sales'}
                         </p>
                         <p className="mt-2 text-3xl font-bold text-white">{creatorStats?.total_sales ?? 0}</p>
                         <p className="mt-1 text-xs text-zinc-500">{t.profile_page.tickets_sold || 'Tickets sold'}</p>
-                    </div>
-                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5">
-                        <p className="text-xs uppercase tracking-[0.18em] text-emerald-400 flex items-center gap-1">
+                    </Card>
+                    <Card className="p-5 border-near-green/20 bg-near-green/10">
+                        <p className="text-xs uppercase tracking-[0.18em] text-near-green flex items-center gap-1">
                             <DollarSign className="w-3 h-3" /> {t.profile_page.total_revenue || 'Revenue'}
                         </p>
                         <p className="mt-2 text-3xl font-bold text-white">
                             {creatorStats ? nearToUsdStr(Number(creatorStats.total_revenue_yocto) / 1e24) : '$0.00'}
                         </p>
                         <p className="mt-1 text-xs text-zinc-500">{t.profile_page.earned || 'Earned'}</p>
-                    </div>
-                    <div className="rounded-xl border border-near-green/20 bg-near-green/10 p-5">
+                    </Card>
+                    <Card className="p-5 border-near-green/20 bg-near-green/10">
                         <p className="text-xs uppercase tracking-[0.18em] text-near-green">{t.profile_page.gift_button}</p>
                         <p className="mt-2 text-3xl font-bold text-white">{publishedWorkCount > 0 ? (t.profile_page.gift_ready || 'Ready') : '-'}</p>
                         <p className="mt-1 text-xs text-zinc-400">{t.profile_page.gift_create_link}</p>
-                    </div>
+                    </Card>
                 </div>
 
                 {/* Dual Column Layout - Tickets & Events */}
@@ -421,14 +431,14 @@ export default function ProfilePage() {
                                                                     ? `$${(event.price_usd / 100).toFixed(2)}`
                                                                     : yoctoToUsd(event.price)}
                                                             {eventSales > 0 && (
-                                                                <span className="ml-2 text-emerald-400">
+                                                                <span className="ml-2 text-near-green">
                                                                     {eventSales} {t.profile_page.sales_count || 'sold'}
                                                                 </span>
                                                             )}
                                                         </p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <span className="text-[9px] font-bold text-black bg-white px-1.5 py-0.5 rounded uppercase">
+                                                        <span className="text-[9px] font-bold text-near-black bg-near-green px-1.5 py-0.5 rounded uppercase">
                                                             {t.profile_page.creator}
                                                         </span>
                                                     </div>
@@ -436,11 +446,13 @@ export default function ProfilePage() {
                                             </Link>
                                             {/* Quick Gift Button */}
                                             <button
+                                                type="button"
+                                                aria-label={`${t.profile_page.gift_button}: ${event.title}`}
                                                 onClick={(e) => {
                                                     e.preventDefault();
                                                     setSelectedEventForGift(event);
                                                 }}
-                                                className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-2 rounded-lg bg-white hover:bg-zinc-200 text-black"
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-2 rounded-lg bg-near-green hover:bg-near-green/80 text-near-black focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                                             >
                                                 <Gift className="w-3.5 h-3.5" />
                                             </button>
@@ -455,7 +467,7 @@ export default function ProfilePage() {
 
             {/* Gift Video Selection Modal */}
             <Dialog open={showGiftModal} onOpenChange={setShowGiftModal}>
-                <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-[500px]">
+                <DialogContent className="sm:max-w-[500px]">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Gift className="w-5 h-5 text-zinc-400" />
@@ -468,12 +480,13 @@ export default function ProfilePage() {
                     <div className="mt-4 space-y-2 max-h-[400px] overflow-y-auto">
                         {createdEvents.map((event) => (
                             <button
+                                type="button"
                                 key={event.cid}
                                 onClick={() => {
                                     setSelectedEventForGift(event);
                                     setShowGiftModal(false);
                                 }}
-                                className="w-full flex gap-3 p-3 rounded-xl bg-zinc-800/50 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800 transition-all text-left"
+                                className="w-full flex gap-3 p-3 rounded-xl bg-zinc-800/50 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800 transition-all text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                             >
                                 <div className="w-16 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-700">
                                     {event.media && !event.media.includes('token.png') ? (
@@ -506,7 +519,7 @@ export default function ProfilePage() {
 
             {/* Gift Link Generator Modal */}
             <Dialog open={!!selectedEventForGift} onOpenChange={(open) => !open && setSelectedEventForGift(null)}>
-                <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-[550px] max-h-[85vh] overflow-y-auto flex flex-col">
+                <DialogContent className="sm:max-w-[550px] max-h-[85vh] overflow-y-auto flex flex-col">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Gift className="w-5 h-5 text-zinc-400" />
@@ -562,7 +575,7 @@ export default function ProfilePage() {
 
             {/* Profile Edit Dialog */}
             <Dialog open={showProfileDialog} onOpenChange={setShowProfileDialog}>
-                <DialogContent className="bg-zinc-900 border-zinc-800 text-white sm:max-w-[550px] max-h-[85vh] overflow-y-auto flex flex-col">
+                <DialogContent className="sm:max-w-[550px] max-h-[85vh] overflow-y-auto flex flex-col">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <User className="w-5 h-5 text-zinc-400" />
@@ -579,6 +592,6 @@ export default function ProfilePage() {
                     </div>
                 </DialogContent>
             </Dialog>
-        </div>
+        </PageShell>
     );
 }

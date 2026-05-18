@@ -9,6 +9,8 @@ import { useHasTicket } from '@/hooks/useHasTicket';
 import { useCreatorProfile } from '@/hooks/useCreatorStats';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { TicketPurchaseCard } from '@/components/TicketPurchaseCard';
+import { CreatorAvatar } from '@/components/CreatorAvatar';
+import { PageShell } from '@/components/PageShell';
 import { Button } from '@/components/ui/button';
 import { getProvider, viewContract } from '@/lib/near';
 import { NEAR_CONFIG } from '@/lib/constants';
@@ -134,46 +136,46 @@ function WatchContent() {
 
     if (!cid) {
         return (
-            <div className="container mx-auto px-4 py-24">
+            <PageShell>
                 <div className="max-w-xl mx-auto text-center">
                     <Video className="w-16 h-16 mx-auto mb-6 text-zinc-700" />
                     <h1 className="text-3xl font-bold mb-3">{t.watch_page.title}</h1>
                     <p className="text-zinc-400 mb-8">{t.watch_page.description}</p>
                     <Link href="/discover">
-                        <Button variant="outline" className="border-white/20 text-white hover:bg-white/10">
+                        <Button variant="outline">
                             {t.watch_page.browse_new}
                         </Button>
                     </Link>
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
     if (eventLoading) {
         return (
-            <div className="container mx-auto px-4 py-24">
+            <PageShell>
                 <div className="flex flex-col items-center justify-center">
                     <Loader2 className="h-10 w-10 animate-spin text-zinc-500 mb-4" />
                     <p className="text-zinc-400">{t.watch_page.loading}</p>
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
     if (!event) {
         return (
-            <div className="container mx-auto px-4 py-24">
+            <PageShell>
                 <div className="max-w-xl mx-auto text-center">
                     <Video className="w-16 h-16 mx-auto mb-6 text-zinc-700" />
                     <h1 className="text-2xl font-bold mb-3">{t.discover_page?.no_videos || 'No Releases Found'}</h1>
                     <p className="text-zinc-400 mb-8">{t.watch_page.select_video_desc}</p>
                     <Link href="/discover">
-                        <Button variant="outline" className="border-white/20 text-white hover:bg-white/10">
+                        <Button variant="outline">
                             {t.watch_page.browse_new}
                         </Button>
                     </Link>
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
@@ -183,10 +185,10 @@ function WatchContent() {
     const ctLabel = contentTypeLabel(event.content_type);
 
     return (
-        <div className="container mx-auto px-4 py-6 max-w-5xl">
+        <PageShell className="max-w-5xl">
             {/* Back button */}
             <div className="mb-4">
-                <Link href="/discover" className="inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-white transition-colors">
+                <Link href="/discover" className="inline-flex items-center gap-2 rounded-sm text-sm text-zinc-400 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green">
                     <ArrowLeft className="w-4 h-4" />
                     {t.discover_page?.title || 'Discover'}
                 </Link>
@@ -200,9 +202,7 @@ function WatchContent() {
                         <div className="flex flex-wrap items-center gap-3 mt-3">
                             {/* Creator */}
                             <div className="flex items-center gap-2">
-                                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-[10px] font-bold text-white">
-                                    {displayCreator.substring(0, 1).toUpperCase()}
-                                </div>
+                                <CreatorAvatar name={displayCreator} letters={1} />
                                 <span className="text-sm text-zinc-300">{displayCreator}</span>
                             </div>
                             {/* Content Type */}
@@ -213,12 +213,12 @@ function WatchContent() {
                             )}
                             {/* Access Status */}
                             {canWatch ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-medium text-emerald-400">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-near-green/10 border border-near-green/20 text-[11px] font-medium text-near-green">
                                     <CheckCircle2 className="w-3 h-3" />
                                     {t.watch_page.ticket_verified}
                                 </span>
                             ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[11px] font-medium text-amber-400">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-near-red/10 border border-near-red/20 text-[11px] font-medium text-near-red">
                                     <Lock className="w-3 h-3" />
                                     {t.watch_page.ticket_required_secure}
                                 </span>
@@ -336,6 +336,6 @@ function WatchContent() {
                     </div>
                 </div>
             )}
-        </div>
+        </PageShell>
     );
 }

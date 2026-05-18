@@ -7,12 +7,12 @@ export const metadata: Metadata = {
 
 export default function PrivacyPage() {
   return (
-    <main className="min-h-screen bg-gray-950 text-gray-200">
+    <main className="min-h-screen bg-zinc-950 text-zinc-200">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <h1 className="text-4xl font-bold text-white mb-2">Privacy Policy</h1>
-        <p className="text-gray-400 mb-12">Last Updated: May 11, 2026</p>
+        <p className="text-zinc-400 mb-12">Last Updated: May 11, 2026</p>
 
-        <div className="space-y-10 text-gray-300 leading-relaxed">
+        <div className="space-y-10 text-zinc-300 leading-relaxed">
           {/* 1. INTRODUCTION */}
           <section>
             <h2 className="text-2xl font-semibold text-white mb-4">1. Introduction</h2>
@@ -56,8 +56,8 @@ export default function PrivacyPage() {
               <li><strong className="text-white">Purchase Logs</strong>: Buyer ID, creator ID, amounts, timestamps, and purchase types</li>
               <li><strong className="text-white">Prepaid Balance</strong>: Deposited funds for signless transactions</li>
             </ul>
-            <p className="mt-3 p-4 bg-gray-900 rounded-lg border border-gray-800">
-              <strong className="text-yellow-400">Important</strong>: Blockchain data is public and
+            <p className="mt-3 p-4 bg-zinc-900 rounded-lg border border-zinc-800">
+              <strong className="text-near-red">Important</strong>: Blockchain data is public and
               immutable. Once recorded, it cannot be modified, deleted, or made private. This is an
               inherent characteristic of blockchain technology. We cannot fulfill deletion requests
               for on-chain data. Your NEAR account ID and all associated transactions are permanently
@@ -136,7 +136,7 @@ export default function PrivacyPage() {
             <p>The limited information we have access to is used for:</p>
 
             <div className="mt-4 space-y-4">
-              <div className="p-4 bg-gray-900/50 rounded-lg">
+              <div className="p-4 bg-zinc-900/50 rounded-lg">
                 <h4 className="text-white font-medium mb-2">Platform Operations</h4>
                 <ul className="list-disc list-inside space-y-1 ml-2">
                   <li>Facilitating smart contract interactions (ticket purchases, content uploads)</li>
@@ -146,7 +146,7 @@ export default function PrivacyPage() {
                 </ul>
               </div>
 
-              <div className="p-4 bg-gray-900/50 rounded-lg">
+              <div className="p-4 bg-zinc-900/50 rounded-lg">
                 <h4 className="text-white font-medium mb-2">Security and Abuse Prevention</h4>
                 <ul className="list-disc list-inside space-y-1 ml-2">
                   <li>Rate limiting trial account creation to prevent abuse</li>
@@ -155,7 +155,7 @@ export default function PrivacyPage() {
                 </ul>
               </div>
 
-              <div className="p-4 bg-gray-900/50 rounded-lg">
+              <div className="p-4 bg-zinc-900/50 rounded-lg">
                 <h4 className="text-white font-medium mb-2">Platform Improvement</h4>
                 <ul className="list-disc list-inside space-y-1 ml-2">
                   <li>Analyzing aggregate usage patterns via Google Analytics</li>
@@ -177,13 +177,13 @@ export default function PrivacyPage() {
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-gray-700">
+                  <tr className="border-b border-zinc-700">
                     <th className="text-left py-3 px-4 text-white">Service</th>
                     <th className="text-left py-3 px-4 text-white">Purpose</th>
                     <th className="text-left py-3 px-4 text-white">Data Shared</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-800">
+                <tbody className="divide-y divide-zinc-800">
                   <tr>
                     <td className="py-3 px-4 font-medium text-white">NEAR Protocol</td>
                     <td className="py-3 px-4">Blockchain, payments, NFTs</td>
@@ -300,13 +300,13 @@ export default function PrivacyPage() {
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-gray-700">
+                  <tr className="border-b border-zinc-700">
                     <th className="text-left py-3 px-4 text-white">Data Type</th>
                     <th className="text-left py-3 px-4 text-white">Retention Period</th>
                     <th className="text-left py-3 px-4 text-white">Deletion Method</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-800">
+                <tbody className="divide-y divide-zinc-800">
                   <tr>
                     <td className="py-3 px-4">Blockchain data</td>
                     <td className="py-3 px-4">Permanent (immutable)</td>
@@ -501,12 +501,12 @@ export default function PrivacyPage() {
           </section>
 
           {/* SUMMARY BOX */}
-          <section className="p-6 bg-gray-900 rounded-xl border border-gray-800 mt-12">
+          <section className="p-6 bg-zinc-900 rounded-xl border border-zinc-800 mt-12">
             <h2 className="text-xl font-semibold text-white mb-4">Privacy at a Glance</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div>
-                <h4 className="text-green-400 font-medium mb-2">What We Don&apos;t Collect</h4>
-                <ul className="space-y-1 text-gray-400">
+                <h4 className="text-near-green font-medium mb-2">What We Don&apos;t Collect</h4>
+                <ul className="space-y-1 text-zinc-400">
                   <li>- No email or phone numbers</li>
                   <li>- No real names or identity documents</li>
                   <li>- No payment card information</li>
@@ -516,8 +516,8 @@ export default function PrivacyPage() {
                 </ul>
               </div>
               <div>
-                <h4 className="text-yellow-400 font-medium mb-2">What Is Public (Blockchain)</h4>
-                <ul className="space-y-1 text-gray-400">
+                <h4 className="text-near-red font-medium mb-2">What Is Public (Blockchain)</h4>
+                <ul className="space-y-1 text-zinc-400">
                   <li>- Your NEAR account ID</li>
                   <li>- Transaction history</li>
                   <li>- NFT ownership records</li>
@@ -529,9 +529,9 @@ export default function PrivacyPage() {
             </div>
           </section>
 
-          <div className="border-t border-gray-800 pt-8 mt-12">
-            <p className="text-gray-500 text-sm">
-              This Privacy Policy was last updated on February 15, 2026. By using YouTick, you
+          <div className="border-t border-zinc-800 pt-8 mt-12">
+            <p className="text-zinc-500 text-sm">
+              This Privacy Policy was last updated on May 11, 2026. By using YouTick, you
               acknowledge that you have read and understood this Privacy Policy.
             </p>
           </div>

@@ -58,6 +58,13 @@ function readOnboardingKey(): string | null {
     return sessionStorage.getItem(onboardingStorageKey());
 }
 
+function isLocalBrowserHost(): boolean {
+    if (typeof window === "undefined") return false;
+
+    const host = window.location.hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
 async function getTurnstileToken(siteKey: string): Promise<string | null> {
     return new Promise((resolve) => {
         if (typeof window === "undefined") {
@@ -133,7 +140,14 @@ export async function ensureOnboardingKey(): Promise<{ ok: boolean; error?: stri
 
     let turnstileToken: string | null = null;
     if (APP_CONFIG.turnstileSiteKey) {
+        if (isLocalBrowserHost()) {
+            return { ok: false, error: "Guest account creation is temporarily unavailable." };
+        }
+
         turnstileToken = await getTurnstileToken(APP_CONFIG.turnstileSiteKey);
+        if (!turnstileToken) {
+            return { ok: false, error: "Guest account creation is temporarily unavailable." };
+        }
     }
 
     const url = turnstileToken

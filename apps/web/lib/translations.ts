@@ -384,6 +384,7 @@ export const translations = {
             discover: {
                 scanning_blockchain: "Loading ticketed screenings...",
                 failed_to_load: "Failed to load screenings",
+                try_again_later: "Please try again in a moment.",
                 no_videos_found: "No Screenings Found",
                 be_first: "Be the first to open a ticketed screening here.",
                 upload_now: "Open Screening",
@@ -1132,6 +1133,7 @@ export const translations = {
             discover: {
                 scanning_blockchain: "Gösterimler yükleniyor...",
                 failed_to_load: "Gösterimler yüklenemedi",
+                try_again_later: "Lütfen biraz sonra tekrar dene.",
                 no_videos_found: "Gösterim Bulunamadı",
                 be_first: "İlk biletli gösterimi burada sen aç.",
                 upload_now: "Gösterim Aç",

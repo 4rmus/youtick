@@ -169,13 +169,14 @@ export function PaymentMethodSelector({
                     <button
                         key={opt.value}
                         type="button"
+                        aria-pressed={method === opt.value}
                         onClick={() => {
                             setMethod(opt.value);
                             if (opt.value === 'NEAR') setChain('near');
                             else if (hasUsdcPrice) setChain('near');
                             else setChain('arb');
                         }}
-                        className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-all ${
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green ${
                             method === opt.value
                                 ? 'bg-white/10 text-white border border-white/20'
                                 : 'text-zinc-500 hover:text-zinc-300'
@@ -196,8 +197,9 @@ export function PaymentMethodSelector({
                             <button
                                 key={tokenConfig.chainId}
                                 type="button"
+                                aria-pressed={chain === tokenConfig.chainId}
                                 onClick={() => setChain(tokenConfig.chainId)}
-                                className={`flex-1 flex items-center justify-center gap-1 py-1.5 px-2 rounded text-xs font-medium transition-all ${
+                                className={`flex-1 flex items-center justify-center gap-1 py-1.5 px-2 rounded text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green ${
                                     chain === tokenConfig.chainId
                                         ? 'bg-white/10 text-white border border-white/15'
                                         : 'text-zinc-600 hover:text-zinc-400'

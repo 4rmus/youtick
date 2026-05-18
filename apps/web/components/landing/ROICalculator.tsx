@@ -56,19 +56,28 @@ export const ROICalculator = memo(() => {
         </div>
 
         <div className="mb-8 flex flex-wrap gap-3">
-          {presets.map((preset) => (
-            <button
-              key={preset.label}
-              type="button"
-              onClick={() => {
-                setTicketPrice(preset.price);
-                setTicketCount(preset.sales);
-              }}
-              className="rounded-full border border-white/10 bg-zinc-950 px-4 py-2 text-sm font-semibold text-zinc-300 transition-colors hover:border-white/40 hover:text-white"
-            >
-              {preset.label}
-            </button>
-          ))}
+          {presets.map((preset) => {
+            const isActive = ticketPrice === preset.price && ticketCount === preset.sales;
+
+            return (
+              <button
+                key={preset.label}
+                type="button"
+                aria-pressed={isActive}
+                onClick={() => {
+                  setTicketPrice(preset.price);
+                  setTicketCount(preset.sales);
+                }}
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green ${
+                  isActive
+                    ? 'border-near-green/50 bg-near-green/10 text-near-green'
+                    : 'border-white/10 bg-zinc-950 text-zinc-300 hover:border-white/40 hover:text-white'
+                }`}
+              >
+                {preset.label}
+              </button>
+            );
+          })}
         </div>
 
         <div className="grid gap-8 lg:grid-cols-[0.9fr_1.1fr]">
@@ -80,11 +89,12 @@ export const ROICalculator = memo(() => {
               </div>
               <input
                 type="range"
+                aria-label={s.ticket_price}
                 min={1}
                 max={100}
                 value={ticketPrice}
                 onChange={(event) => setTicketPrice(Number(event.target.value))}
-                className="landing-range h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-white"
+                className="landing-range h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
               />
               <div className="mt-1 flex justify-between text-xs text-zinc-600">
                 <span>$1</span>
@@ -99,12 +109,13 @@ export const ROICalculator = memo(() => {
               </div>
               <input
                 type="range"
+                aria-label={s.estimated_sales}
                 min={10}
                 max={5000}
                 step={10}
                 value={ticketCount}
                 onChange={(event) => setTicketCount(Number(event.target.value))}
-                className="landing-range h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-white"
+                className="landing-range h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
               />
               <div className="mt-1 flex justify-between text-xs text-zinc-600">
                 <span>10</span>

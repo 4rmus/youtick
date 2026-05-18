@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ArrowRight, CheckCircle2, Loader2, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { useLanguage } from "@/components/providers/LanguageContext";
 import { useWallet } from "@/components/providers/WalletProvider";
 import { TrialOnboarding } from "@/components/TrialOnboarding";
@@ -30,8 +31,8 @@ function TrialContent() {
 
     if (managedAccount) {
         return (
-            <main className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-black flex items-center justify-center p-4">
-                <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/80 p-8 text-center shadow-2xl">
+            <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
+                <Card className="w-full max-w-md bg-zinc-900/80 p-8 text-center">
                     <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-near-green/10 text-near-green">
                         <CheckCircle2 className="h-7 w-7" />
                     </div>
@@ -59,19 +60,20 @@ function TrialContent() {
 
                         <Button
                             onClick={() => window.location.href = redirect || "/discover"}
-                            className="w-full bg-near-green font-semibold text-near-black hover:bg-near-green/80"
+                            variant="near"
+                            className="w-full"
                         >
                             {redirect ? (t.trial_page?.go_to_ticket || "Go to Ticket") : (t.trial_page?.start_exploring || "Start Exploring")}
                             <ArrowRight className="ml-2 h-4 w-4" />
                         </Button>
                     </div>
-                </div>
+                </Card>
             </main>
         );
     }
 
     return (
-        <main className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-black flex items-center justify-center p-4">
+        <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
             <TrialOnboarding
                 onAccountCreated={handleManagedAccountCreated}
                 onConnectWallet={() => void connect()}
@@ -83,8 +85,8 @@ function TrialContent() {
 export default function TrialPage() {
     return (
         <Suspense fallback={
-            <main className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-black flex items-center justify-center p-4">
-                <Loader2 className="h-8 w-8 animate-spin text-white" />
+            <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
+                <Loader2 className="h-8 w-8 animate-spin text-near-green" />
             </main>
         }>
             <TrialContent />

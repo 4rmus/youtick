@@ -41,12 +41,12 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
   // Guest / Marketing View
   if (variant === 'discover') {
     return (
-      <nav className="border-b border-white/10 bg-black/95 backdrop-blur-sm sticky top-0 z-50">
+      <nav className="relative border-b border-white/10 bg-black/95 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
           <Link href="/" onClick={onDiscoverClick}>
             <Branding size="sm" />
           </Link>
-          <div className="flex items-center gap-4">
+          <div className="hidden md:flex items-center gap-4">
             <Button
               variant="ghost"
               className="text-zinc-400 hover:text-white"
@@ -77,7 +77,60 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
               </Button>
             </div>
           </div>
+          <button
+            type="button"
+            aria-label={isMenuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={isMenuOpen}
+            className="md:hidden flex h-11 w-11 items-center justify-center rounded-md text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
+            onClick={() => setIsMenuOpen(!isMenuOpen)}
+          >
+            {isMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
         </div>
+        {isMenuOpen && (
+          <div className="md:hidden absolute top-full left-0 w-full bg-black/95 backdrop-blur-md border-b border-white/10 shadow-xl">
+            <div className="container mx-auto px-4 py-6 flex flex-col gap-4">
+              <Button
+                variant="ghost"
+                className="w-full justify-start text-zinc-400 hover:text-white"
+                onClick={() => {
+                  closeMenu();
+                  onDiscoverClick?.();
+                }}
+              >
+                {t.landing.nav.home}
+              </Button>
+              <Button
+                variant="ghost"
+                asChild
+                className="w-full justify-start text-zinc-400 hover:text-white"
+              >
+                <Link href="/trial" onClick={closeMenu}>
+                  {t.landing.nav_extra?.try_free || 'Guest access'}
+                </Link>
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  closeMenu();
+                  connect();
+                }}
+                className="w-full justify-start text-zinc-400 hover:text-white"
+              >
+                {t.landing.nav_extra?.login || 'Login'}
+              </Button>
+              <Button
+                onClick={() => {
+                  closeMenu();
+                  handleGetStarted();
+                }}
+                className="w-full bg-white hover:bg-zinc-200 text-black font-semibold"
+              >
+                {t.landing.nav.upload}
+              </Button>
+            </div>
+          </div>
+        )}
       </nav>
     );
   }

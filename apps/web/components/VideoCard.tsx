@@ -3,7 +3,9 @@
 import Link from '@/components/Web4Link';
 import { Play, Ticket } from 'lucide-react';
 import { IPFSThumbnail } from '@/components/IPFSThumbnail';
+import { CreatorAvatar } from '@/components/CreatorAvatar';
 import { useLanguage } from '@/components/providers/LanguageContext';
+import { Card } from '@/components/ui/card';
 import { getContentTypeLabel } from '@/lib/content-types';
 
 export interface VideoCardToken {
@@ -24,7 +26,6 @@ export interface VideoCardToken {
 
 export interface VideoCardProps {
     token: VideoCardToken;
-    variant?: 'grid' | 'slider';
     nearToUsdStr: (nearAmount: number) => string;
     accountId?: string | null;
 }
@@ -41,15 +42,10 @@ function VideoPlaceholder() {
 }
 
 /**
- * VideoCard component - reusable card for displaying video tokens.
- *
- * Two variants:
- * - `grid`: Used in discover pages with purple/blue glow, full content section
- * - `slider`: Compact horizontal layout for carousel-style lists
+ * VideoCard component - reusable card for displaying video tokens in discover grids.
  */
 export function VideoCard({
     token,
-    variant = 'grid',
     nearToUsdStr,
     accountId,
 }: VideoCardProps) {
@@ -69,77 +65,9 @@ export function VideoCard({
         ? `/watch?cid=${token.video_metadata?.encrypted_cid || ''}`
         : '/watch';
 
-    if (variant === 'slider') {
-        return (
-            <Link
-                href={isVideo ? `/watch?cid=${token.video_metadata?.encrypted_cid}` : '/watch'}
-                className="group flex-none w-[380px] snap-center cursor-pointer"
-            >
-                <div className="relative overflow-hidden rounded-xl bg-zinc-900/80 border border-white/10 shadow-lg transition-all duration-500 hover:border-[var(--near-green)]/50 hover:shadow-[var(--near-green)]/20 hover:shadow-2xl hover:-translate-y-2">
-                    {/* Glow effect on hover */}
-                    <div className="absolute inset-0 bg-gradient-to-br from-[var(--near-green)]/0 to-[var(--near-purple)]/0 group-hover:from-[var(--near-green)]/10 group-hover:to-[var(--near-purple)]/10 transition-all duration-500 z-0" />
-
-                    {/* Thumbnail */}
-                    <div className="aspect-video relative overflow-hidden bg-zinc-800">
-                        {token.metadata?.media ? (
-                            <IPFSThumbnail
-                                url={token.metadata.media}
-                                alt={token.metadata.title || ''}
-                                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                            />
-                        ) : (
-                            <div className="w-full h-full flex items-center justify-center bg-zinc-800">
-                                <VideoPlaceholder />
-                            </div>
-                        )}
-
-                        {/* Play Overlay */}
-                        <div className="absolute inset-0 bg-black/20 group-hover:bg-black/50 transition-all duration-500 flex items-center justify-center opacity-0 group-hover:opacity-100">
-                            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[var(--near-green)] to-[var(--near-purple)] flex items-center justify-center transform scale-75 group-hover:scale-100 transition-transform duration-300">
-                                <Play className="w-6 h-6 text-white fill-current translate-x-0.5" />
-                            </div>
-                        </div>
-
-                        {/* Price Badge */}
-                        <div className="absolute top-3 right-3">
-                            <div className={`px-3 py-1.5 rounded-full text-xs font-bold backdrop-blur-md shadow-lg ${isFree
-                                ? 'bg-gradient-to-r from-[var(--near-blue)] to-[#00D4AA] text-black'
-                                : 'bg-black/60 text-white border border-white/20'
-                                }`}>
-                                {isFree ? 'FREE' : priceUsdCents ? `$${(priceUsdCents / 100).toFixed(2)}` : nearToUsdStr(priceNear)}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Content */}
-                    <div className="p-4 relative z-10">
-                        <h3 className="font-bold text-white mb-2 truncate text-lg group-hover:text-[var(--near-green)] transition-colors duration-300">
-                            {token.metadata?.title || `Token #${token.token_id}`}
-                        </h3>
-
-                        <div className="flex items-center justify-between text-xs text-zinc-400">
-                            <div className="flex items-center gap-2">
-                                <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[var(--near-green)] to-[var(--near-purple)] p-[1px]">
-                                    <div className="w-full h-full rounded-full bg-black flex items-center justify-center text-[8px] text-white font-bold">
-                                        {token.owner_id ? token.owner_id.substring(0, 1).toUpperCase() : "?"}
-                                    </div>
-                                </div>
-                                <span className="truncate max-w-[100px]">{token.owner_id}</span>
-                            </div>
-                            <span className="bg-white/5 px-2 py-1 rounded-full border border-white/10 text-[10px]">
-                                {t.profile_page.nft_ticket}
-                            </span>
-                        </div>
-                    </div>
-                </div>
-            </Link>
-        );
-    }
-
-    // Grid variant (default)
     return (
         <Link href={defaultLink} className="group">
-            <div className="relative overflow-hidden rounded-lg border border-white/10 bg-zinc-950 shadow-xl shadow-black/30 transition-all duration-300 hover:-translate-y-1 hover:border-near-green/35">
+            <Card className="relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-near-green/35">
                 {/* Thumbnail */}
                 <div className="aspect-video relative overflow-hidden">
                     {token.metadata?.media ? (
@@ -184,7 +112,7 @@ export function VideoCard({
                         )}
                         {/* Price Badge */}
                         <div className={`px-2.5 py-1 rounded-lg backdrop-blur-sm border shadow-lg ml-auto ${isFree
-                            ? 'bg-emerald-500/90 border-emerald-400/30'
+                            ? 'bg-near-green/90 border-near-green/30'
                             : 'bg-black/60 border-white/10'
                             }`}>
                             {isCreator ? (
@@ -218,14 +146,7 @@ export function VideoCard({
                     {/* Creator Row */}
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                            {/* Avatar with Ring */}
-                            <div className="relative">
-                                <div className="w-7 h-7 rounded-lg border border-white/10 bg-zinc-900 flex items-center justify-center">
-                                    <span className="text-[9px] font-bold text-white">
-                                        {token.owner_id ? token.owner_id.substring(0, 2).toUpperCase() : "??"}
-                                    </span>
-                                </div>
-                            </div>
+                            <CreatorAvatar name={token.owner_id} />
 
                             <span className="text-[10px] text-zinc-400 font-medium truncate max-w-[100px]">
                                 {token.owner_id}
@@ -234,15 +155,15 @@ export function VideoCard({
 
                         {/* CTA / ticket indicator */}
                         <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md border ${isFree
-                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                            ? 'bg-near-green/10 border-near-green/30 text-near-green'
                             : isCreator
-                                ? 'bg-purple-500/10 border-purple-500/30 text-purple-400'
+                                ? 'bg-near-purple/10 border-near-purple/30 text-near-purple'
                                 : 'bg-zinc-800/50 border-zinc-700/50 text-zinc-400'
                             }`}>
                             <div className={`w-1.5 h-1.5 rounded-full ${isFree
-                                ? 'bg-emerald-400'
+                                ? 'bg-near-green'
                                 : isCreator
-                                    ? 'bg-purple-400'
+                                    ? 'bg-near-purple'
                                     : 'bg-near-green'
                             }`} />
                             <span className="text-[9px] font-medium">
@@ -258,7 +179,7 @@ export function VideoCard({
 
                 {/* Bottom Shine Effect */}
                 <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-            </div>
+            </Card>
         </Link>
     );
 }

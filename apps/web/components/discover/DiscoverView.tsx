@@ -6,13 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import { useAllVideos } from '@/hooks/useAllVideos';
 import { useLanguage } from '@/components/providers/LanguageContext';
-import { Navigation } from '@/components/landing/Navigation';
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { VideoCard } from '@/components/VideoCard';
-
-interface DiscoverViewProps {
-  onBackClick: () => void;
-}
 
 const FILTER_OPTIONS: { key: string | null; labelKey: string }[] = [
   { key: null, labelKey: 'filter_all' },
@@ -23,7 +18,7 @@ const FILTER_OPTIONS: { key: string | null; labelKey: string }[] = [
   { key: 'FestivalSelection', labelKey: 'filter_festival' },
 ];
 
-export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
+export const DiscoverView = memo(() => {
   const { t } = useLanguage();
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
   const { tokens, loading, error, hasNextPage, isFetchingNextPage, fetchNextPage } = useAllVideos(activeFilter);
@@ -36,8 +31,10 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
         return (
           <button
             key={opt.labelKey}
+            type="button"
+            aria-pressed={isActive}
             onClick={() => setActiveFilter(opt.key)}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-200 ${
+            className={`min-h-11 px-4 py-2 rounded-full text-sm font-medium border transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green ${
               isActive
                 ? 'bg-near-green/20 border-near-green text-near-green'
                 : 'bg-white/5 border-white/10 text-zinc-400 hover:text-white hover:border-white/20'
@@ -55,12 +52,11 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white">
-        <Navigation onDiscoverClick={onBackClick} variant="discover" />
         <div className="container mx-auto px-4 py-8">
           {Filters}
         </div>
         <div className="flex flex-col items-center justify-center min-h-[40vh] text-white">
-          <Loader2 className="h-12 w-12 animate-spin mb-4 text-white" />
+          <Loader2 className="h-12 w-12 animate-spin mb-4 text-near-green" />
           <p className="text-xl">{t.landing.discover.scanning_blockchain}</p>
         </div>
       </div>
@@ -71,13 +67,12 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
   if (error) {
     return (
       <div className="min-h-screen bg-black text-white">
-        <Navigation onDiscoverClick={onBackClick} variant="discover" />
         <div className="container mx-auto px-4 py-8">
           {Filters}
         </div>
-        <div className="text-center py-24 text-white">
-          <p className="text-red-500 text-xl font-bold">{t.landing.discover.failed_to_load}</p>
-          <p className="text-gray-400">{error}</p>
+        <div className="text-center py-24 text-white" role="status" aria-live="polite">
+          <p className="text-near-red text-xl font-bold">{t.landing.discover.failed_to_load}</p>
+          <p className="text-zinc-400">{t.landing.discover.try_again_later}</p>
         </div>
       </div>
     );
@@ -87,7 +82,6 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
   if (tokens.length === 0) {
     return (
       <div className="min-h-screen bg-black text-white">
-        <Navigation onDiscoverClick={onBackClick} variant="discover" />
         <div className="container mx-auto px-4 py-8">
           <div className="mb-8">
             <p className="text-sm uppercase tracking-[0.24em] text-near-green mb-3">{t.landing.discover.published_works_label}</p>
@@ -101,7 +95,7 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
           {Filters}
           <div className="text-center py-24 text-white">
             <p className="text-2xl font-bold mb-4">{t.landing.discover.no_videos_found}</p>
-            <p className="text-gray-400">{t.landing.discover.be_first}</p>
+            <p className="text-zinc-400">{t.landing.discover.be_first}</p>
             <Link href="/upload" className="mt-8 inline-block">
               <Button variant="outline" className="border-white text-white hover:bg-white/10">
                 {t.landing.discover.upload_now}
@@ -116,8 +110,6 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
   // Content State
   return (
     <div className="min-h-screen bg-black text-white">
-      <Navigation onDiscoverClick={onBackClick} variant="discover" />
-
       <div className="container mx-auto px-4 py-8">
         <div className="mb-8">
           <p className="text-sm uppercase tracking-[0.24em] text-near-green mb-3">{t.landing.discover.published_works_label}</p>
@@ -136,7 +128,6 @@ export const DiscoverView = memo(({ onBackClick }: DiscoverViewProps) => {
             <VideoCard
               key={token.token_id}
               token={token}
-              variant="grid"
               nearToUsdStr={nearToUsdStr}
             />
           ))}

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createDeliveryPlaybackSession } from '@/lib/video-delivery-player';
+import { createDeliveryPlaybackSession, isDeliveryPlaybackSupported } from '@/lib/video-delivery-player';
 import type { DeliveryManifestV2 } from '@/lib/types';
 
 const { fetchFromGateways } = vi.hoisted(() => ({
@@ -65,6 +65,11 @@ class FakeMediaSource extends EventTarget {
   duration = Number.NaN;
   sourceBuffer = new FakeSourceBuffer();
 
+  static isTypeSupported(mimeType: string) {
+    void mimeType;
+    return true;
+  }
+
   constructor() {
     super();
     FakeMediaSource.latest = this;
@@ -88,6 +93,7 @@ class FakeMediaSource extends EventTarget {
 class FakeVideoElement extends EventTarget {
   src = '';
   currentTime = 0;
+  disableRemotePlayback = false;
   buffered = {
     length: 0,
     start: (index: number) => {
@@ -234,6 +240,12 @@ describe('video delivery playback session', () => {
       value: FakeMediaSource,
     });
 
+    Object.defineProperty(globalThis, 'ManagedMediaSource', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
       writable: true,
@@ -245,6 +257,73 @@ describe('video delivery playback session', () => {
       writable: true,
       value: vi.fn(),
     });
+  });
+
+  it('uses ManagedMediaSource when regular MediaSource is unavailable', async () => {
+    class FakeManagedMediaSource extends FakeMediaSource {
+      static latestManaged: FakeManagedMediaSource | null = null;
+
+      constructor() {
+        super();
+        FakeManagedMediaSource.latestManaged = this;
+      }
+    }
+
+    Object.defineProperty(globalThis, 'MediaSource', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+    Object.defineProperty(globalThis, 'ManagedMediaSource', {
+      configurable: true,
+      writable: true,
+      value: FakeManagedMediaSource,
+    });
+
+    expect(isDeliveryPlaybackSupported(manifest)).toBe(true);
+
+    const session = createDeliveryPlaybackSession(manifest);
+    const video = new FakeVideoElement();
+
+    session.start(video as unknown as HTMLVideoElement);
+    expect(video.disableRemotePlayback).toBe(true);
+
+    const mediaSource = FakeManagedMediaSource.latestManaged;
+    expect(mediaSource).not.toBeNull();
+
+    mediaSource?.open();
+    await flushAsyncWork();
+
+    expect(fetchFromGateways.mock.calls.map(([cid]) => cid)).toEqual([
+      'QmInit',
+      'QmSeg0',
+      'QmSeg1',
+    ]);
+
+    session.destroy();
+  });
+
+  it('reports unsupported when no source API can play the manifest codec', () => {
+    class UnsupportedMediaSource extends FakeMediaSource {
+      static isTypeSupported(mimeType: string) {
+        void mimeType;
+        return false;
+      }
+    }
+
+    Object.defineProperty(globalThis, 'MediaSource', {
+      configurable: true,
+      writable: true,
+      value: UnsupportedMediaSource,
+    });
+    Object.defineProperty(globalThis, 'ManagedMediaSource', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+
+    expect(isDeliveryPlaybackSupported(manifest)).toBe(false);
+    expect(() => createDeliveryPlaybackSession(manifest)).toThrow('Protected playback is not supported by this browser.');
   });
 
   it('refetches queued segments after seek clears pending appends', async () => {
