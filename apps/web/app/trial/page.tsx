@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ArrowRight, CheckCircle2, Loader2, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { useLanguage } from "@/components/providers/LanguageContext";
 import { useWallet } from "@/components/providers/WalletProvider";
 import { TrialOnboarding } from "@/components/TrialOnboarding";
@@ -31,7 +32,7 @@ function TrialContent() {
     if (managedAccount) {
         return (
             <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
-                <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/80 p-8 text-center shadow-2xl">
+                <Card className="w-full max-w-md bg-zinc-900/80 p-8 text-center">
                     <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-near-green/10 text-near-green">
                         <CheckCircle2 className="h-7 w-7" />
                     </div>
@@ -66,7 +67,7 @@ function TrialContent() {
                             <ArrowRight className="ml-2 h-4 w-4" />
                         </Button>
                     </div>
-                </div>
+                </Card>
             </main>
         );
     }

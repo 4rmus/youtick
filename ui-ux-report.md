@@ -197,6 +197,28 @@ Görünür `focus-visible` halkası (kalın + `near-green`), ham buton/input oda
 
 **Ek durum 4:** Semantik yüzey cleanup'ıyla `IpfsPlayer` `slate` nötründen `zinc` paletine taşındı; `CostReceipt`, `OnboardingKeyInit`, `WalletProvider` uyarısı ve privacy public-data uyarıları `near-green`/`near-purple`/`near-red` tokenlarıyla hizalandı.
 
+**Ek durum 5:** Ortak page shell paketiyle `upload`, `profile` ve `watch` ürün sayfalarının dış kabuk ritmi küçük `PageShell` bileşeninde toplandı. Navbar connect/disconnect/menü butonları ve Discover filtre çipleri 44px dokunma hedefi çizgisine yaklaştırıldı.
+
+**Ek durum 6:** Local production smoke sırasında görülen Turnstile/onboarding-key console gürültüsü kapatıldı. `OnboardingKeyInit` ve `gift-service` localhost üzerinde Turnstile yüklemiyor; Turnstile token alınamazsa token'sız `/api/onboarding-key` çağrısı yapılmıyor. Mobil `/discover` navigasyon taşması da `variant="discover"` için mobil menüye alınarak kapatıldı.
+
+**Ek durum 7:** Görsel smoke sonrası iki küçük P3 bulgu daha kapatıldı: localhost pasif onboarding uyarısı mobilde `LanguageSwitcher` ile çakıştığı için local pasif uyarı sessizleştirildi; guest `/discover` üzerindeki çift-navbar görünümü global `Navbar`'ın guest discover'da render edilmemesiyle kapatıldı. Ardından Card/radius küçük paketi uygulandı: `ui/Card` tabanı `rounded-lg` + zinc/white border/shadow çizgisine çekildi; `VideoCard` ve `TicketPurchaseCard` ortak `Card` primitive'ini kullanmaya başladı.
+
+**Ek durum 8:** Navigation merge küçük paketi uygulandı. Nav render sahipliği tek giriş noktası olan global `Navbar` içinde toplandı: guest `/` için landing nav, guest `/discover` için discover marketing nav, app rotaları için app nav render ediliyor. `app/page.tsx` ve `DiscoverView` artık ayrıca `Navigation` basmıyor; böylece çift-navbar koordinasyonu sayfa seviyesinden çıkarıldı.
+
+**Ek durum 9:** Profile Card/radius küçük paketi uygulandı. `profile/page.tsx` içinde wallet-yok paneli, hesap kartları ve rol özeti kartları ortak `Card` primitive'ine taşındı. Authenticated profile smoke sırasında görülen `LanguageSwitcher` içerik üstüne binme riski de kapatıldı; dil seçici artık içerik kartlarını örtmek yerine üst nav bandında duruyor ve 44px dokunma yüksekliği taşıyor.
+
+**Ek durum 10:** Claim/trial Card/radius küçük paketi uygulandı. `claim/page.tsx` içinde loading, preview, claim-options, claiming, success, error ve Suspense fallback dış kabukları `Card` primitive'ine taşındı. `trial/page.tsx` managed-account success paneli de aynı primitive'i kullanıyor. İç seçenek kutuları ve CTA stilleri bu pakete alınmadı.
+
+**Ek durum 11:** Claim CTA Button varyant cleanup'ı uygulandı. `claim/page.tsx` içindeki ana yeşil CTA'lar artık elle `bg-near-green text-near-black hover:bg-near-green/80 font-semibold` yazmak yerine `variant="near"` kullanıyor. Boyut ve köşe hissini korumak için yalnızca `w-full h-12 rounded-xl` gibi yerleşim sınıfları bırakıldı.
+
+**Ek durum 12:** Claim input/secondary primitive cleanup'ı uygulandı. Existing wallet input'u artık `Input` primitive'inin `border-input`/metin varsayılanlarına yaslanıyor; local class yalnız `h-12 rounded-xl bg-zinc-800/50` tutuyor. Claim success/error outline butonlarında da renk/hover override'ları kaldırıldı, sadece yerleşim/köşe sınıfları bırakıldı.
+
+**Ek durum 13:** Upload/watch CTA Button varyant taraması uygulandı. `watch/page.tsx` içindeki boş/hata durum `Browse Screenings` outline CTA'ları artık local beyaz border/hover override'ı taşımıyor. `UploadForm` publish başarı panelindeki ana `Watch` CTA'sı `variant="near"` kullanıyor; başarı panelindeki ikincil discover/copy aksanları bu tur kapsam dışında bırakıldı.
+
+**Ek durum 14:** Upload prompt chip dokunma hedefleri düzeltildi. `UploadForm` açıklama hint butonları artık `min-h-11` kullanıyor; desktop smoke'ta 44px, mobile smoke'ta kısa chip'ler 44px ve uzun chip'ler 51px ölçüldü. Console error/warning ve yatay taşma çıkmadı.
+
+**Ek durum 15:** Upload ana publish butonu 44px dokunma hedefine yaklaştırıldı. `UploadForm` içindeki `Pay & Publish`/publish CTA'sı artık `h-11 w-full` kullanıyor; desktop ve mobile smoke'ta 44px ölçüldü.
+
 ---
 
 ## 9. Doğrulama durumu ve artık risk
@@ -234,8 +256,324 @@ Route smoke yeniden kanıtlandı: eski `3000` dev server süreci kapatılıp `np
 
 ### Sıradaki en küçük güvenli iş
 
-Sıradaki kod işi artık P3 mikro-fix veya route smoke değil; ikisi de tamamlandı. Bir sonraki paket ayrı tutulmalı: ortak page shell ve dokunma hedefleri gibi daha geniş P3 düzenlemeleri.
+Bu öneri bir sonraki turda uygulandı; güncel durum için aşağıdaki page shell/dokunma hedefleri devam notuna bak.
 
 ---
 
-*Hazırlayan: Claude Code — statik kod incelemesi. Güncel sıradaki adım önerisi: ayrı bir ortak page shell/dokunma hedefi paketi.*
+## 11. Devam notu — page shell ve dokunma hedefleri
+
+Bu devam turunda raporun önerdiği küçük P3 paketi uygulandı. Geniş tasarım dili kararına girilmedi; sadece tekrar eden ürün sayfası kabuğu ve belirgin küçük dokunma hedefleri ele alındı.
+
+### Uygulanan mikro-fix
+
+1. **Ortak ürün sayfası kabuğu eklendi.** `apps/web/components/PageShell.tsx` eklendi; `upload`, `profile` ve `watch` sayfalarının tekrar eden `container mx-auto px-4 py-* min-h-screen` kabuğu buraya taşındı.
+
+2. **Dokunma hedefleri büyütüldü.** `Navbar` desktop disconnect, desktop connect, mobil menü ve mobil connect/disconnect butonları 44px hedefe yaklaştırıldı. `DiscoverView` filtre çipleri de `min-h-11` ile daha rahat dokunulabilir hale geldi.
+
+3. **Kapsam dışı bırakılanlar.** İki navigasyon sistemini birleştirme, genel `Button` boyutlarını tüm uygulamada büyütme, ortak `Card`/radius sistemi ve tam mobil görsel tur bu pakete alınmadı; bunlar daha geniş görsel regresyon riski taşıyor.
+
+### Bu turdaki doğrulama durumu
+
+`apps/web` içinde `npm run lint` temiz geçti. `npm run build` geçti; eski Sentry/Prisma/OpenTelemetry dinamik dependency uyarısı devam ediyor ve bu değişiklikle ilişkili görünmüyor. `git diff --check` geçti.
+
+Mevcut `:3000` Next süreci dinliyor ama HTTP cevap vermediği için ona dokunulmadı. Build sonrası `npm run start -- --hostname 127.0.0.1 --port 3001` ile ayrı production server açıldı; `/upload`, `/profile`, `/watch` ve `/discover` rotaları `200` döndü.
+
+### Sıradaki en küçük güvenli iş
+
+Sıradaki küçük iş artık koddan çok görsel doğrulama: desktop + mobil viewport screenshot turu yapıp `PageShell` boşluklarının ve büyüyen filtre/navbar hedeflerinin gerçek ekranda iyi durduğunu kontrol etmek. Kod işi olarak sonraki paket ancak bundan sonra seçilmeli: navigasyon birleştirme veya `Card`/radius standardı.
+
+---
+
+## 12. Devam notu — console temizliği ve mobil Discover
+
+Bu devam turunda önce `console-log.md` source-of-truth olarak okundu. Logdaki aktif zincir `Cloudflare Turnstile 110200/400` → `/api/onboarding-key 403` → `[ONBOARDING_KEY] Endpoint returned 403` idi. Temiz Playwright tarayıcısıyla aynı zincir tekrar üretildi; `bubble_compiled.js` Trusted Types satırları tarayıcı/eklenti kaynaklı gürültü olarak ayrıldı.
+
+### Uygulanan mikro-fix
+
+1. **Pasif onboarding bootstrap console gürültüsü kapatıldı.** `OnboardingKeyInit` localhost üzerinde Turnstile script'i yüklemiyor. Turnstile token alınamazsa `/api/onboarding-key` token'sız çağrılmıyor ve 403 console zinciri oluşmuyor.
+
+2. **Guest/trial aksiyon yolu aynı hataya karşı korundu.** `gift-service.ensureOnboardingKey` için de aynı localhost ve token-yok koruması eklendi.
+
+3. **Mobil Discover yatay taşması kapatıldı.** Görsel smoke sırasında `/discover` mobil viewport'ta `scrollWidth 517 / viewport 390` çıktı. Sebep `Navigation` içindeki discover varyantının mobilde desktop CTA satırını göstermesiydi; bu satır mobil menüye taşındı.
+
+### Bu turdaki doğrulama durumu
+
+`apps/web` içinde `npm run lint` temiz geçti. `npm test -- --run __tests__/unit/gift-service.test.ts` geçti (33 test). `npm run build` geçti; eski Sentry/Prisma/OpenTelemetry dinamik dependency uyarısı devam ediyor ve bu değişiklikle ilişkili görünmüyor.
+
+Build sonrası `npm run start -- --hostname 127.0.0.1 --port 3001` ile production smoke yapıldı. Playwright ile desktop `1280x900` ve mobile `390x844` viewport'larında `/upload`, `/profile`, `/watch`, `/discover` rotalarının tamamı `200` döndü; console error/warning yoktu; yatay taşma yoktu.
+
+### Sıradaki en küçük güvenli iş
+
+Kod tarafındaki bu P3 küçük paket tamamlandı. Sıradaki iş artık daha geniş tasarım kararı gerektiriyor: iki navigasyon sistemini birleştirme veya ortak `Card`/radius standardı. Bunlardan önce canlı tarayıcıda gerçek görsel screenshot incelemesi yapılmalı.
+
+---
+
+## 13. Devam notu — görsel smoke, Card/radius, navigation gate
+
+Bu devam turunda önerilen sıra kapılarla izlendi: önce desktop/mobile görsel smoke, sonra küçük Card/radius standardı, en son navigation merge risk kontrolü.
+
+### Görsel smoke bulguları
+
+İlk smoke'ta 8/8 rota `200` döndü, console error/warning yoktu ve yatay taşma yoktu. Ancak iki görsel sorun çıktı: localhost pasif onboarding uyarısı mobilde `LanguageSwitcher` ile çakışıyordu; guest `/discover` üzerinde global `Navbar` ve discover `Navigation` üst üste görünüyordu.
+
+Bu iki bulgu kapatıldı: `OnboardingKeyInit` localhost pasif bootstrap'inde uyarı göstermeden çıkıyor; guest `/discover` global `Navbar` render etmiyor. İkinci smoke'ta `/upload`, `/profile`, `/watch`, `/discover` desktop `1280x900` ve mobile `390x844` için `200`, console temiz ve yatay taşmasız geçti.
+
+### Card/radius paketi
+
+`ui/Card` tabanı `rounded-lg border-white/10 bg-zinc-950 text-white shadow-xl` çizgisine çekildi. `VideoCard` ve `TicketPurchaseCard` dış kabukları ortak `Card` primitive'ini kullanmaya başladı. Bu geniş bir kart refactor'u değil; discover kartları ve purchase kartı için en görünür, düşük riskli standardizasyon adımıdır.
+
+Card sonrası smoke tekrarlandı: aynı 4 rota ve 2 viewport `200` döndü, console error/warning yoktu, yatay taşma yoktu. Görsel kontrolte discover kartları ve upload yüzeyi kırılmadı.
+
+### Navigation merge gate
+
+Tam navigasyon birleşimi bu turun mikro-fix kapsamına alınmadı. Sebep: gerçek birleşim `RootLayout`, global `Navbar`, landing `Navigation`, `/` landing sayfası ve `/discover` guest state'lerini birlikte etkiliyor. Bu iş ayrı yapılmalı; önce mevcut davranış matrisi çıkarılmalı:
+
+1. Guest `/`: landing nav
+2. Guest `/discover`: discover marketing nav
+3. Guest app rotaları: global app nav
+4. Connected app rotaları: global app nav
+5. Connected `/discover`: global app nav, discover iç nav yok
+
+### Bu turdaki doğrulama durumu
+
+`npm run lint` temiz geçti. `npm test -- --run __tests__/unit/gift-service.test.ts` geçti (33 test). `npm run build` geçti; eski Sentry/Prisma/OpenTelemetry dynamic dependency uyarısı devam ediyor ve bu değişiklikle ilişkili görünmüyor. `git diff --check` temiz geçti.
+
+### Sıradaki en küçük güvenli iş
+
+Bu öneri bir sonraki turda uygulandı; güncel durum için aşağıdaki navigation merge devam notuna bak.
+
+---
+
+## 14. Devam notu — navigation merge
+
+Bu devam turunda navigation merge, geniş görsel refactor'a çevrilmeden uygulandı. Amaç iki ayrı nav render noktasını tek karar merkezinde toplamak ve önceki çift-navbar riskini kalıcı olarak azaltmaktı.
+
+### Uygulanan mikro-fix
+
+1. **Nav render sahipliği `Navbar` içine taşındı.** Global `Navbar`, path + wallet durumuna göre doğru nav'ı seçiyor:
+   - Guest `/`: landing marketing nav
+   - Guest `/discover`: discover marketing nav
+   - Guest app rotaları: global app nav
+   - Connected rotalar: global app nav
+
+2. **Sayfa içi nav render'ları kaldırıldı.** `app/page.tsx` içindeki landing `Navigation` çağrısı kaldırıldı. `DiscoverView` içindeki dört ayrı `Navigation variant="discover"` çağrısı kaldırıldı. `/discover/page.tsx` artık router callback taşımıyor.
+
+3. **Davranış matrisi korundu.** Guest landing ve guest discover görsel olarak kendi pazarlama nav çizgisinde kalıyor; upload/profile/watch app nav çizgisinde kalıyor. Connected `/discover` için kod yolu global app nav'a düşüyor; bu canlı wallet login ile ayrıca smoke edilebilir.
+
+### Bu turdaki doğrulama durumu
+
+`npm run lint` temiz geçti. `npm test -- --run __tests__/unit/gift-service.test.ts` geçti (33 test). `npm run build` geçti; eski Sentry/Prisma/OpenTelemetry dynamic dependency uyarısı devam ediyor ve bu değişiklikle ilişkili görünmüyor.
+
+Build sonrası `npm run start -- --hostname 127.0.0.1 --port 3001` ile production smoke yapıldı. Playwright ile desktop `1280x900` ve mobile `390x844` viewport'larında `/`, `/upload`, `/profile`, `/watch`, `/discover` rotalarının tamamı `200` döndü; her ekranda `navCount=1`; console error/warning yoktu; yatay taşma yoktu.
+
+### Sıradaki en küçük güvenli iş
+
+Kalan büyük iş artık genel tasarım sistemi standardı: profile/claim/trial gibi daha az görünür yüzeylerde `Card`/radius standardını yaymak veya `Button` varyantlarını elle stillenen CTA'lara taşımak. En güvenli sonraki paket: profile kartlarını ortak `Card` primitive'ine kademeli taşımak ve aynı smoke kapısını korumak.
+
+---
+
+## 15. Devam notu — profile Card/radius ve dil seçici çakışması
+
+Bu devam turunda önceki öneri küçük kapsamla uygulandı. Amaç profile sayfasını baştan tasarlamak değil; ana kart yüzeylerini daha önce standardize edilen `Card` primitive çizgisine yaklaştırmaktı.
+
+### Uygulanan mikro-fix
+
+1. **Profile ana kartları ortak primitive'e taşındı.** Wallet bağlı değil paneli, üç hesap kartı ve beş rol özeti kartı `Card` bileşenini kullanıyor. Liste satırları ve modal içi seçim yüzeyleri bu pakete alınmadı.
+
+2. **Dil seçici içerik üstünden kaldırıldı.** Authenticated profile smoke'ta sabit `LanguageSwitcher` hem mobilde hem desktop'ta içerik kartlarının üstüne binebiliyordu. Konum üst nav bandına taşındı ve buton yüksekliği `min-h-11` ile 44px çizgisine getirildi.
+
+### Bu turdaki doğrulama durumu
+
+`npm run lint` temiz geçti. `npm test -- --run __tests__/unit/gift-service.test.ts` geçti (33 test). `npm run build` geçti; eski Sentry/Prisma/OpenTelemetry dynamic dependency uyarısı devam ediyor ve bu değişiklikle ilişkili görünmüyor.
+
+Build sonrası `npm run start -- --hostname 127.0.0.1 --port 3001` ile production smoke yapıldı. Playwright ile desktop `1280x900` ve mobile `390x844` viewport'larında `/`, `/upload`, `/profile`, `/watch`, `/discover` rotalarının tamamı `200` döndü; her ekranda `navCount=1`; console error/warning yoktu; yatay taşma yoktu.
+
+Ek olarak gerçek wallet bağlamadan, geçici sahte trial hesabı ve mocked `/api/near-rpc` yanıtlarıyla authenticated `/profile` görsel smoke'u yapıldı. Account kartları, wallet balance, profile kartı ve rol özeti kartları desktop/mobile render oldu; console temiz kaldı, yatay taşma çıkmadı. Screenshot çıktıları: `/private/tmp/youtick-ui-smoke-2026-05-18-profile-card/`.
+
+### Sıradaki en küçük güvenli iş
+
+Kalan güvenli sonraki paket: claim/trial yüzeylerinde `Card`/radius standardını küçük parça halinde yaymak. Alternatif küçük paket: elle stillenen CTA'larda `Button` varyant kullanımını artırmak.
+
+---
+
+## 16. Devam notu — claim/trial Card/radius
+
+Bu devam turunda önceki önerinin ilk yarısı uygulandı. Kapsam bilerek dar tutuldu: claim/trial akış mantığı, input validasyonu ve CTA varyantları bu pakete alınmadı.
+
+### Uygulanan mikro-fix
+
+1. **Claim dış kartları ortak primitive'e taşındı.** `claim/page.tsx` içinde loading, preview, claim-options, claiming, success, error ve Suspense fallback dış kabukları `Card` bileşenini kullanıyor.
+
+2. **Trial success paneli ortak primitive'e taşındı.** `trial/page.tsx` managed-account başarı paneli `Card` bileşenine geçti. `TrialOnboarding` zaten `Card` kullandığı için tekrar dokunulmadı.
+
+3. **Kapsam dışı bırakılanlar.** Claim içindeki guest/wallet seçenek kutuları, form input'u ve yeşil CTA buton sınıfları aynen kaldı. Bunlar sonraki küçük `Button`/input varyant cleanup paketi için daha uygun.
+
+### Bu turdaki doğrulama durumu
+
+`npm run lint` temiz geçti. `npm test -- --run __tests__/unit/gift-service.test.ts` geçti (33 test). `npm run build` geçti; eski Sentry/Prisma/OpenTelemetry dynamic dependency uyarısı devam ediyor ve bu değişiklikle ilişkili görünmüyor.
+
+Build sonrası `npm run start -- --hostname 127.0.0.1 --port 3001` ile production smoke yapıldı. Playwright ile desktop `1280x900` ve mobile `390x844` viewport'larında `/claim`, `/trial`, `/`, `/discover` rotaları `200` döndü; her ekranda `navCount=1`; console error/warning yoktu; yatay taşma yoktu.
+
+Ek olarak gerçek chain çağrısı yapmadan mocked `/api/near-rpc` ile gift preview + claim-options ekranları ve managed trial success paneli desktop/mobile render edildi. Console temiz kaldı, yatay taşma çıkmadı. Screenshot çıktıları: `/private/tmp/youtick-ui-smoke-2026-05-18-claim-trial-card/`.
+
+### Sıradaki en küçük güvenli iş
+
+Kalan en küçük güvenli paket artık `Button` varyant cleanup'ı: claim preview/options/success içindeki elle yazılmış yeşil CTA sınıflarını mevcut `variant="near"` çizgisine taşımak. Bu, akış mantığına dokunmadan CTA tutarlılığını artırır.
+
+---
+
+## 17. Devam notu — claim CTA Button varyant cleanup
+
+Bu devam turunda claim akışının ana CTA butonları, mevcut `Button` tasarım varyantına yaklaştırıldı. Amaç görsel davranışı değiştirmek değil, tekrar eden yeşil CTA sınıflarını tek primitive kararına bağlamaktı.
+
+### Uygulanan mikro-fix
+
+1. **Ana claim CTA'ları `variant="near"` kullanıyor.** Preview `Claim Ticket`, claim-options içindeki `Create Guest Account and Claim` ve `Transfer to Wallet`, success içindeki `Watch Now` butonları artık `variant="near"` ile render ediliyor.
+
+2. **Yerleşim korunuyor.** CTA'larda `w-full h-12 rounded-xl` bırakıldı; böylece önceki genişlik, 48px yükseklik ve köşe hissi korunuyor.
+
+3. **Kapsam dışı bırakılanlar.** Outline/ghost butonlar, input stili, claim seçenek kutuları ve akış mantığına dokunulmadı.
+
+### Bu turdaki doğrulama durumu
+
+`npm run lint` temiz geçti. `npm test -- --run __tests__/unit/gift-service.test.ts` geçti (33 test). `npm run build` geçti; eski Sentry/Prisma/OpenTelemetry dynamic dependency uyarısı devam ediyor ve bu değişiklikle ilişkili görünmüyor.
+
+Build sonrası `npm run start -- --hostname 127.0.0.1 --port 3001` ile production smoke yapıldı. Playwright ile desktop `1280x900` ve mobile `390x844` viewport'larında `/claim`, `/trial`, `/`, `/discover` rotaları `200` döndü; her ekranda `navCount=1`; console error/warning yoktu; yatay taşma yoktu.
+
+Ek olarak mocked gift link ile claim preview ve claim-options ekranları desktop/mobile render edildi. CTA butonları 48px yükseklikte kaldı, console temizdi, yatay taşma çıkmadı. Screenshot çıktıları: `/private/tmp/youtick-ui-smoke-2026-05-18-claim-button-variant/`.
+
+### Sıradaki en küçük güvenli iş
+
+Kalan küçük tasarım sistemi işi: claim içindeki `Input` ve outline/ghost buton stillerini ortak primitive kararlarına yaklaştırmak. Alternatif olarak upload/watch içindeki elle yazılmış CTA'lar için aynı `Button` varyant taraması yapılabilir.
+
+---
+
+## 18. Devam notu — claim input/secondary primitive cleanup
+
+Bu devam turunda claim içindeki kalan küçük primitive override'ları azaltıldı. Kapsam yine sadece claim sayfasıydı; global `Input` veya `Button` varyantları değiştirilmedi.
+
+### Uygulanan mikro-fix
+
+1. **Existing wallet input'u sadeleşti.** Input artık primitive'in `border-input`, metin rengi, placeholder ve focus kararlarını kullanıyor. Local class sadece `h-12 rounded-xl bg-zinc-800/50` olarak kaldı.
+
+2. **Outline buton override'ları azaltıldı.** Success ekranındaki ikincil CTA ve error ekranındaki `Try Again` butonu `variant="outline"` varsayılan renk/hover kararlarına yaslanıyor. Local class sadece ölçü/köşe için kaldı.
+
+3. **Kapsam dışı bırakılanlar.** Back ghost butonu, claim iç seçenek kutuları ve akış mantığına dokunulmadı.
+
+### Bu turdaki doğrulama durumu
+
+`npm run lint` temiz geçti. `npm test -- --run __tests__/unit/gift-service.test.ts` geçti (33 test). `npm run build` geçti; eski Sentry/Prisma/OpenTelemetry dynamic dependency uyarısı devam ediyor ve bu değişiklikle ilişkili görünmüyor.
+
+Build sonrası `npm run start -- --hostname 127.0.0.1 --port 3001` ile production smoke yapıldı. Playwright ile desktop `1280x900` ve mobile `390x844` viewport'larında `/claim`, `/trial`, `/`, `/discover` rotaları `200` döndü; her ekranda `navCount=1`; console error/warning yoktu; yatay taşma yoktu.
+
+Ek olarak mocked gift link ile claim-options ekranı desktop/mobile render edildi. Input 48px yükseklikte kaldı; CTA/secondary buton ölçüleri korundu; console temizdi, yatay taşma çıkmadı. Screenshot çıktıları: `/private/tmp/youtick-ui-smoke-2026-05-18-claim-secondary-input/`.
+
+### Sıradaki en küçük güvenli iş
+
+Kalan güvenli tasarım sistemi işi claim'den çıkıp başka yüzeye geçmek: upload/watch içindeki elle yazılmış CTA'ları `Button` varyantları açısından taramak. Alternatif olarak claim içindeki seçenek kutularını `Card`/radius standardına çekmek yapılabilir, ama bu daha fazla görsel değişim riski taşır.
+
+---
+
+## 19. Devam notu — upload/watch CTA Button varyant taraması
+
+Bu devam turunda claim dışındaki en küçük CTA standardizasyonu yapıldı. Kapsam watch boş/hata CTA'ları ve upload başarı panelindeki ana CTA ile sınırlı tutuldu.
+
+### Uygulanan mikro-fix
+
+1. **Watch boş/hata CTA'ları sadeleşti.** `/watch` içinde `cid` yokken ve event bulunamazken görünen `Browse Screenings` butonları artık `variant="outline"` dışında beyaz border/hover override'ı taşımıyor.
+
+2. **Upload başarı ana CTA'sı `variant="near"` kullanıyor.** Publish başarı panelindeki `Watch` butonu artık elle `bg-near-green text-near-black hover:bg-near-green/90` yazmak yerine `variant="near"` kullanıyor.
+
+3. **Kapsam dışı bırakılanlar.** Upload başarı panelindeki ikincil `Discover` ve `Copy` butonları near-green aksanlı semantik link gibi davranıyor; bu turda değiştirilmedi. Upload başarı paneli gerçek publish sonrası göründüğü için bu parça runtime görsel smoke'ta render edilmedi.
+
+### Bu turdaki doğrulama durumu
+
+`npm run lint` temiz geçti. `npm test -- --run __tests__/unit/gift-service.test.ts` geçti (33 test). `npm run build` geçti; eski Sentry/Prisma/OpenTelemetry dynamic dependency uyarısı devam ediyor ve bu değişiklikle ilişkili görünmüyor.
+
+Build sonrası `npm run start -- --hostname 127.0.0.1 --port 3001` ile production smoke yapıldı. Playwright ile desktop `1280x900` ve mobile `390x844` viewport'larında `/upload`, `/watch`, `/watch?cid=missing-smoke`, `/discover` rotaları `200` döndü; her ekranda `navCount=1`; console error/warning yoktu; yatay taşma yoktu. Watch boş/hata CTA'ları görsel olarak kontrol edildi. Upload başarı CTA'sı statik kod + build ile doğrulandı; gerçek publish sonrası ayrı görsel smoke gerektirir. Screenshot çıktıları: `/private/tmp/youtick-ui-smoke-2026-05-18-upload-watch-button-variant/`.
+
+### Sıradaki en küçük güvenli iş
+
+Kalan güvenli iş upload tarafında: başarı panelini gerçek publish/mock state ile görsel smoke etmek veya upload formundaki küçük prompt chip butonlarının 44px dokunma hedefi eksiklerini ele almak.
+
+---
+
+## 20. Devam notu — upload prompt chip dokunma hedefleri
+
+Bu devam turunda upload formundaki açıklama hint chip'leri ele alındı. Önceki smoke çıktısında bazı chip'ler yaklaşık 26px yükseklikteydi; hedef 44px dokunma alanına yaklaşmaktı.
+
+### Uygulanan mikro-fix
+
+1. **Açıklama hint chip'leri büyütüldü.** `UploadForm` içindeki dört açıklama hint butonu `min-h-11`, daha rahat padding ve `text-xs` kullanıyor.
+
+2. **Uzun metinler taşmadan kalıyor.** Chip'lerde `max-w-full`, `text-left` ve `leading-snug` kullanıldı; mobilde uzun iki chip iki satıra taşarak 51px yüksekliğe çıktı.
+
+3. **Kapsam dışı bırakılanlar.** Upload formunun ana publish butonu, seçenek kartları ve gerçek publish başarı paneli bu turda değiştirilmedi.
+
+### Bu turdaki doğrulama durumu
+
+`npm run lint` temiz geçti. `npm test -- --run __tests__/unit/gift-service.test.ts` geçti (33 test). `npm run build` geçti; eski Sentry/Prisma/OpenTelemetry dynamic dependency uyarısı devam ediyor ve bu değişiklikle ilişkili görünmüyor.
+
+Build sonrası `npm run start -- --hostname 127.0.0.1 --port 3001` ile production smoke yapıldı. Playwright ile desktop `1280x900` ve mobile `390x844` viewport'larında `/upload` rotası `200` döndü; `navCount=1`; console error/warning yoktu; yatay taşma yoktu. Chip ölçüleri desktop'ta 44px; mobile'da 44px/51px olarak doğrulandı. Screenshot çıktıları: `/private/tmp/youtick-ui-smoke-2026-05-18-upload-prompt-chips/`.
+
+### Sıradaki en küçük güvenli iş
+
+Kalan güvenli iş upload başarı panelini gerçek publish/mock state ile görsel smoke etmek. Kod tarafında küçük aday olarak upload formundaki ana `Pay & Publish` butonunun 36px yüksekliğini 44px çizgisine yaklaştırmak değerlendirilebilir; bu daha görünür bir form ritmi değişimi olduğu için ayrı smoke ile yapılmalı.
+
+---
+
+## 21. Devam notu — upload Pay & Publish dokunma hedefi
+
+Bu devam turunda upload formundaki ana publish CTA'sı ele alındı. Önceki smoke ölçümünde `Pay & Publish` butonu 36px yükseklikteydi; hedef 44px dokunma alanına çıkarmaktı.
+
+### Uygulanan mikro-fix
+
+1. **Ana publish butonu 44px oldu.** `UploadForm` içindeki `Pay & Publish`/publish CTA'sı `h-11 w-full` kullanıyor.
+
+2. **Davranış değişmedi.** Disabled koşulları, upload handler, loading içeriği ve metinler aynen kaldı.
+
+3. **Kapsam dışı bırakılanlar.** Upload başarı paneli gerçek publish sonrası göründüğü için bu turda ayrıca mock edilmedi.
+
+### Bu turdaki doğrulama durumu
+
+`npm run lint` temiz geçti. `npm test -- --run __tests__/unit/gift-service.test.ts` geçti (33 test). `npm run build` geçti; eski Sentry/Prisma/OpenTelemetry dynamic dependency uyarısı devam ediyor ve bu değişiklikle ilişkili görünmüyor.
+
+Build sonrası `npm run start -- --hostname 127.0.0.1 --port 3001` ile production smoke yapıldı. Playwright ile desktop `1280x900` ve mobile `390x844` viewport'larında `/upload` rotası `200` döndü; `navCount=1`; console error/warning yoktu; yatay taşma yoktu. `Pay & Publish` butonu desktop ve mobile'da 44px ölçüldü. Screenshot çıktıları: `/private/tmp/youtick-ui-smoke-2026-05-18-upload-pay-publish-button/`.
+
+### Sıradaki en küçük güvenli iş
+
+Upload başarı panelini gerçek publish/mock state ile görsel smoke etmek hâlâ en net kalan doğrulama işi. Kod tarafında ise daha fazla upload form değişimi artık daha görünür olur; bir sonraki turda önce mock/smoke yaklaşımı seçilmeli.
+
+---
+
+## 22. Devam notu — çeviri toggle/logo çakışması
+
+Kullanıcı kontrolünde çeviri toggle'ının logo alanına yakın durduğu ve nav içinde kalabalık yarattığı görüldü. İlk nav-band denemesi görsel olarak yeterli olmadı; bu turda toggle sağ alt köşeye taşındı.
+
+### Uygulanan mikro-fix
+
+1. **Toggle nav dışına taşındı.** `LanguageSwitcher` artık sağ alt köşede sabit duruyor; logo ve ana nav linkleriyle yarışmıyor.
+
+2. **Boyut ve davranış değişmedi.** Dil değiştirme metni, buton yüksekliği ve click davranışı aynen kaldı.
+
+### Bu turdaki doğrulama durumu
+
+Local `http://127.0.0.1:3000` üzerinde Playwright ölçümü yapıldı. `/`, `/discover`, `/upload` rotalarında `280`, `320`, `390`, `768`, `1280` px genişliklerinde logo-toggle ve toggle-menü çakışması yok; yatay taşma yok. `/discover` için mevcut LCP image uyarısı görülüyor, bu konum düzeltmesiyle ilişkili değil.
+
+---
+
+## 23. Kapatma notu — publish sonrası kullanıcı kontrolü
+
+Kullanıcı canlı publish akışını kontrol etti ve publish sonrası başarı yüzeyinin iyi göründüğünü bildirdi. Bu nedenle önceki "upload başarı paneli gerçek publish/mock state ile görsel smoke edilmeli" maddesi kapatma kontrolü olarak tamamlandı.
+
+### Kapanış durumu
+
+1. **Publish başarı paneli görsel olarak kabul edildi.** Gerçek publish kontrolünde panelin kötü duran veya bloke eden bir problemi raporlanmadı.
+
+2. **Ana UI/UX hızlı kazanım paketi kapatıldı.** Kalan işler artık publish'i bloke eden ana değişiklik değil; sonraki faz tasarım sistemi sıkılaştırması olarak ele alınabilir.
+
+3. **Son kalite kapısı temiz geçti.** Kapatma için `npm run lint`, `npm test -- --run __tests__/unit/gift-service.test.ts`, `npm run build` ve `git diff --check` son kez çalıştırıldı. Build'de eski Prisma/OpenTelemetry dynamic dependency uyarısı devam ediyor; paket değişikliğiyle ilişkili görünmüyor.
+
+---
+
+*Hazırlayan: Claude Code — statik kod incelemesi. Güncel durum: ana UI/UX hızlı kazanım paketi kapatıldı.*

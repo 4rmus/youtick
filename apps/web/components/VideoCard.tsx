@@ -5,6 +5,7 @@ import { Play, Ticket } from 'lucide-react';
 import { IPFSThumbnail } from '@/components/IPFSThumbnail';
 import { CreatorAvatar } from '@/components/CreatorAvatar';
 import { useLanguage } from '@/components/providers/LanguageContext';
+import { Card } from '@/components/ui/card';
 import { getContentTypeLabel } from '@/lib/content-types';
 
 export interface VideoCardToken {
@@ -66,7 +67,7 @@ export function VideoCard({
 
     return (
         <Link href={defaultLink} className="group">
-            <div className="relative overflow-hidden rounded-lg border border-white/10 bg-zinc-950 shadow-xl shadow-black/30 transition-all duration-300 hover:-translate-y-1 hover:border-near-green/35">
+            <Card className="relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-near-green/35">
                 {/* Thumbnail */}
                 <div className="aspect-video relative overflow-hidden">
                     {token.metadata?.media ? (
@@ -178,7 +179,7 @@ export function VideoCard({
 
                 {/* Bottom Shine Effect */}
                 <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-            </div>
+            </Card>
         </Link>
     );
 }

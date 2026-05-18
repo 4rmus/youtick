@@ -9,6 +9,7 @@ import { usePathname } from 'next/navigation';
 import { Menu, X, User, LogOut } from 'lucide-react';
 
 import { Branding } from '@/components/landing/Branding';
+import { Navigation as MarketingNavigation } from '@/components/landing/Navigation';
 
 export function Navbar() {
     const { connect, accountId, signOut } = useWallet();
@@ -38,8 +39,20 @@ export function Navbar() {
 
     if (!mounted) return null;
 
-    // Do not render Navbar on landing page for guests
-    if (pathname === '/' && !accountId) return null;
+    if (pathname === '/' && !accountId) {
+        return <MarketingNavigation variant="landing" />;
+    }
+
+    if (pathname === '/discover' && !accountId) {
+        return (
+            <MarketingNavigation
+                variant="discover"
+                onDiscoverClick={() => {
+                    window.location.href = '/';
+                }}
+            />
+        );
+    }
 
     const navLinks = [
         { href: '/discover', label: t.nav.discover },
@@ -75,7 +88,7 @@ export function Navbar() {
                             <Button
                                 aria-label={t.nav.disconnect}
                                 onClick={handleSignOut}
-                                className="h-8 w-8 ml-1 p-0 rounded-full bg-transparent hover:bg-near-red/10 text-zinc-500 hover:text-near-red flex items-center justify-center transition-colors focus-visible:ring-near-red"
+                                className="h-11 w-11 ml-1 p-0 rounded-full bg-transparent hover:bg-near-red/10 text-zinc-500 hover:text-near-red flex items-center justify-center transition-colors focus-visible:ring-near-red"
                             >
                                 <LogOut className="w-3 h-3" />
                             </Button>
@@ -84,7 +97,7 @@ export function Navbar() {
                         <button
                             type="button"
                             onClick={handleSignIn}
-                            className="px-4 py-2 text-sm font-semibold text-near-black bg-near-green rounded-full hover:bg-near-green/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
+                            className="min-h-11 px-5 py-2 text-sm font-semibold text-near-black bg-near-green rounded-full hover:bg-near-green/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                         >
                             {t.nav.connect}
                         </button>
@@ -96,7 +109,7 @@ export function Navbar() {
                     type="button"
                     aria-label={isMenuOpen ? 'Close menu' : 'Open menu'}
                     aria-expanded={isMenuOpen}
-                    className="md:hidden p-2 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
+                    className="md:hidden flex h-11 w-11 items-center justify-center rounded-md text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                     onClick={() => setIsMenuOpen(!isMenuOpen)}
                 >
                     {isMenuOpen ? <X /> : <Menu />}
@@ -123,9 +136,9 @@ export function Navbar() {
                     </div>
                     <div className="h-px bg-white/10 my-2" />
                     {accountId ? (
-                        <button type="button" onClick={handleSignOut} className="rounded-md text-left text-near-red font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-red">{t.nav.disconnect}</button>
+                        <button type="button" onClick={handleSignOut} className="min-h-11 rounded-md text-left text-near-red font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-red">{t.nav.disconnect}</button>
                     ) : (
-                        <button type="button" onClick={handleSignIn} className="rounded-md text-left font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green">{t.nav.connect}</button>
+                        <button type="button" onClick={handleSignIn} className="min-h-11 rounded-md text-left font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green">{t.nav.connect}</button>
                     )}
                 </div>
             )}

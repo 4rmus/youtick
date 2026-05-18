@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Loader2, Ticket, AlertCircle, Play, ChevronDown, ChevronUp, Check, Wallet } from "lucide-react";
 import { actions, yoctoToNear } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
@@ -708,7 +709,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
     }
 
     return (
-        <div className={`relative group overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 border border-white/10 shadow-2xl shadow-black/50 max-w-sm mx-auto ${className}`}>
+        <Card className={`relative group overflow-hidden bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 max-w-sm mx-auto ${className}`}>
             {/* Decorative Corner Glow */}
             <div className="absolute -top-20 -right-20 w-40 h-40 bg-near-green/10 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
             <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-near-purple/10 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
@@ -1010,6 +1011,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     </Button>
                 )}
             </div>
-        </div>
+        </Card>
     );
 }

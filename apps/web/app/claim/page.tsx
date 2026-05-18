@@ -3,6 +3,7 @@
 import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Loader2, CheckCircle2, AlertCircle, Ticket, ExternalLink, Wallet, Play, Sparkles } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageContext";
@@ -205,10 +206,10 @@ function ClaimContent() {
     if (step === "loading") {
         return (
             <div className="w-full max-w-md mx-auto">
-                <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-8 text-center">
+                <Card className="p-8 text-center bg-zinc-900/90 backdrop-blur-xl">
                     <Loader2 className="w-10 h-10 animate-spin text-zinc-400 mx-auto" />
                     <p className="text-zinc-300 mt-4 text-sm">{t.claim_page?.loading_gift || "Loading gift info..."}</p>
-                </div>
+                </Card>
             </div>
         );
     }
@@ -217,7 +218,7 @@ function ClaimContent() {
     if (step === "preview") {
         return (
             <div className="w-full max-w-md mx-auto">
-                <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl overflow-hidden">
+                <Card className="overflow-hidden bg-zinc-900/90 backdrop-blur-xl">
                     {/* Ticket Image/Thumbnail */}
                     <div className="relative aspect-video w-full overflow-hidden">
                         <IPFSThumbnail
@@ -273,13 +274,14 @@ function ClaimContent() {
                         {/* CTA Button */}
                         <Button
                             onClick={() => setStep("claim-options")}
-                            className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
+                            variant="near"
+                            className="w-full h-12 rounded-xl"
                         >
                             <Ticket className="w-5 h-5 mr-2" />
                             {t.claim_page?.claim_gift_button || "Claim Ticket"}
                         </Button>
                     </div>
-                </div>
+                </Card>
             </div>
         );
     }
@@ -288,7 +290,7 @@ function ClaimContent() {
     if (step === "claim-options") {
         return (
             <div className="w-full max-w-md mx-auto">
-                <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl overflow-hidden">
+                <Card className="overflow-hidden bg-zinc-900/90 backdrop-blur-xl">
                     {/* Mini Preview Header */}
                     <div className="flex gap-3 p-4 bg-zinc-800/50 border-b border-zinc-700/50">
                         <div className="w-16 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-700">
@@ -314,7 +316,8 @@ function ClaimContent() {
                             </div>
                             <Button
                                 onClick={handleClaimAsGuest}
-                                className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
+                                variant="near"
+                                className="w-full h-12 rounded-xl"
                             >
                                 <Sparkles className="w-4 h-4 mr-2" />
                                 {t.claim_page?.create_and_claim_button || "Create Guest Account and Claim"}
@@ -331,12 +334,13 @@ function ClaimContent() {
                                 value={existingAccountId}
                                 onChange={(e) => setExistingAccountId(e.target.value)}
                                 placeholder={t.claim_page?.existing_placeholder || "account.near"}
-                                className="bg-zinc-800/50 border-zinc-700 text-white rounded-xl h-12"
+                                className="h-12 rounded-xl bg-zinc-800/50"
                             />
                             <Button
                                 onClick={handleClaimToExisting}
                                 disabled={!existingAccountId.trim()}
-                                className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 disabled:opacity-50 font-semibold rounded-xl"
+                                variant="near"
+                                className="w-full h-12 rounded-xl"
                             >
                                 <Wallet className="w-4 h-4 mr-2" />
                                 {t.claim_page?.transfer_to_wallet || "Transfer to Wallet"}
@@ -351,7 +355,7 @@ function ClaimContent() {
                             {t.claim_page?.back_button || "Back"}
                         </Button>
                     </div>
-                </div>
+                </Card>
             </div>
         );
     }
@@ -360,7 +364,7 @@ function ClaimContent() {
     if (step === "claiming") {
         return (
             <div className="w-full max-w-md mx-auto">
-                <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-8 text-center space-y-4">
+                <Card className="p-8 text-center space-y-4 bg-zinc-900/90 backdrop-blur-xl">
                     <Loader2 className="w-10 h-10 animate-spin text-near-green mx-auto" />
                     <p className="text-white text-lg font-medium">
                         {claimMode === "guest"
@@ -371,7 +375,7 @@ function ClaimContent() {
                     <p className="text-xs text-near-green flex items-center justify-center gap-1">
                         <CheckCircle2 className="w-3 h-3" /> {t.claim_page?.processing_on_blockchain || "Processing ticket transfer"}
                     </p>
-                </div>
+                </Card>
             </div>
         );
     }
@@ -384,7 +388,7 @@ function ClaimContent() {
 
         return (
             <div className="w-full max-w-md mx-auto">
-                <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl overflow-hidden">
+                <Card className="overflow-hidden bg-zinc-900/90 backdrop-blur-xl">
                     {/* Success Header */}
                     <div className="relative aspect-video w-full overflow-hidden">
                         <IPFSThumbnail
@@ -428,7 +432,8 @@ function ClaimContent() {
                                     </p>
                                     <Button
                                         onClick={() => window.location.href = `/watch?cid=${giftInfo?.eventCid}`}
-                                        className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
+                                        variant="near"
+                                        className="w-full h-12 rounded-xl"
                                     >
                                         <Play className="w-4 h-4 mr-2" />
                                         {t.claim_page?.watch_now || "Watch Now"}
@@ -438,7 +443,8 @@ function ClaimContent() {
                             ) : (
                                 <Button
                                     onClick={() => window.location.href = `/watch?cid=${giftInfo?.eventCid}`}
-                                    className="w-full h-12 bg-near-green text-near-black hover:bg-near-green/80 font-semibold rounded-xl"
+                                    variant="near"
+                                    className="w-full h-12 rounded-xl"
                                 >
                                     <Play className="w-4 h-4 mr-2" />
                                     {t.claim_page?.watch_now || "Watch Now"}
@@ -448,7 +454,7 @@ function ClaimContent() {
                             <Button
                                 onClick={() => window.location.href = claimMode === "guest" ? "/trial" : "/discover"}
                                 variant="outline"
-                                className="w-full h-12 border-zinc-700 text-zinc-300 hover:bg-zinc-800 rounded-xl"
+                                className="w-full h-12 rounded-xl"
                             >
                                 {claimMode === "guest"
                                     ? (t.claim_page?.go_to_guest_account || "Go to Guest Account")
@@ -457,7 +463,7 @@ function ClaimContent() {
 
                         </div>
                     </div>
-                </div>
+                </Card>
             </div>
         );
     }
@@ -466,7 +472,7 @@ function ClaimContent() {
     if (step === "error") {
         return (
             <div className="w-full max-w-md mx-auto">
-                <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-8 text-center space-y-4">
+                <Card className="p-8 text-center space-y-4 bg-zinc-900/90 backdrop-blur-xl">
                     <div className="w-16 h-16 bg-near-red/10 border border-near-red/30 rounded-full flex items-center justify-center mx-auto">
                         <AlertCircle className="w-8 h-8 text-near-red" />
                     </div>
@@ -478,11 +484,11 @@ function ClaimContent() {
                             setStep("preview");
                         }}
                         variant="outline"
-                        className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 rounded-xl"
+                        className="rounded-xl"
                     >
                         {t.claim_page?.try_again || "Try Again"}
                     </Button>
-                </div>
+                </Card>
             </div>
         );
     }
@@ -495,9 +501,9 @@ export default function ClaimPage() {
         <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
             <Suspense fallback={
                 <div className="w-full max-w-md mx-auto">
-                    <div className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-8 text-center">
+                    <Card className="p-8 text-center bg-zinc-900/90 backdrop-blur-xl">
                         <Loader2 className="w-10 h-10 animate-spin text-near-green mx-auto" />
-                    </div>
+                    </Card>
                 </div>
             }>
                 <ClaimContent />

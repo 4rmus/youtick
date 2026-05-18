@@ -432,7 +432,7 @@ export function UploadForm() {
                                             key={hint}
                                             type="button"
                                             onClick={() => setDescription((prev) => prev ? prev + ' ' + hint : hint)}
-                                            className="text-[11px] text-zinc-500 bg-zinc-950/50 border border-white/10 px-2 py-1 rounded-full hover:text-zinc-300 hover:border-zinc-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
+                                            className="min-h-11 max-w-full rounded-full border border-white/10 bg-zinc-950/50 px-3 py-2 text-left text-xs leading-snug text-zinc-500 transition-colors hover:border-zinc-600 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                                         >
                                             {hint}
                                         </button>
@@ -587,8 +587,8 @@ export function UploadForm() {
                                             <Button
                                                 type="button"
                                                 size="sm"
+                                                variant="near"
                                                 onClick={() => { window.location.href = publishedWatchPath; }}
-                                                className="bg-near-green text-near-black hover:bg-near-green/90"
                                             >
                                                 <ExternalLink className="mr-2 h-4 w-4" />
                                                 {u.success_watch}
@@ -635,7 +635,7 @@ export function UploadForm() {
                         <Button
                             onClick={handleUpload}
                             disabled={uploading || !file || !title || !description || !accountId || !!fileSizeError}
-                            className="w-full"
+                            className="h-11 w-full"
                         >
                             {uploading ? (
                                 <>

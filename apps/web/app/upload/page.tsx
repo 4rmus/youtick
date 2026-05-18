@@ -1,11 +1,12 @@
 'use client';
 
 import { UploadForm } from '@/components/UploadForm';
+import { PageShell } from '@/components/PageShell';
 
 export default function UploadPage() {
     return (
-        <div className="container mx-auto px-4 py-20 min-h-screen">
+        <PageShell>
             <UploadForm />
-        </div>
+        </PageShell>
     );
 }

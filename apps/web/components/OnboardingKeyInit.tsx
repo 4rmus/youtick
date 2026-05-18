@@ -25,7 +25,15 @@ export function OnboardingKeyInit() {
             let turnstileToken: string | null = null;
 
             if (APP_CONFIG.turnstileSiteKey) {
+                if (isLocalBrowserHost()) {
+                    return;
+                }
+
                 turnstileToken = await getTurnstileToken(APP_CONFIG.turnstileSiteKey);
+                if (!turnstileToken) {
+                    setApiWarning(getUnsupportedApiMessage(systemCopy));
+                    return;
+                }
             }
 
             const url = turnstileToken
@@ -35,9 +43,6 @@ export function OnboardingKeyInit() {
             try {
                 const res = await fetch(url);
                 if (!res.ok) {
-                    if (process.env.NODE_ENV !== 'development') {
-                        console.warn('[ONBOARDING_KEY] Endpoint returned', res.status);
-                    }
                     setApiWarning(getUnsupportedApiMessage(systemCopy));
                     return;
                 }
@@ -87,6 +92,13 @@ function getUnsupportedApiMessage(copy: Record<string, string>): string {
         return copy.guest_api_static;
     }
     return copy.guest_api_unavailable;
+}
+
+function isLocalBrowserHost(): boolean {
+    if (typeof window === 'undefined') return false;
+
+    const host = window.location.hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
 }
 
 /** Dynamically load Turnstile script and render an invisible challenge */

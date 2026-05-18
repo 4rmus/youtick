@@ -10,6 +10,7 @@ import { useCreatorProfile } from '@/hooks/useCreatorStats';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { TicketPurchaseCard } from '@/components/TicketPurchaseCard';
 import { CreatorAvatar } from '@/components/CreatorAvatar';
+import { PageShell } from '@/components/PageShell';
 import { Button } from '@/components/ui/button';
 import { getProvider, viewContract } from '@/lib/near';
 import { NEAR_CONFIG } from '@/lib/constants';
@@ -135,46 +136,46 @@ function WatchContent() {
 
     if (!cid) {
         return (
-            <div className="container mx-auto px-4 py-24">
+            <PageShell>
                 <div className="max-w-xl mx-auto text-center">
                     <Video className="w-16 h-16 mx-auto mb-6 text-zinc-700" />
                     <h1 className="text-3xl font-bold mb-3">{t.watch_page.title}</h1>
                     <p className="text-zinc-400 mb-8">{t.watch_page.description}</p>
                     <Link href="/discover">
-                        <Button variant="outline" className="border-white/20 text-white hover:bg-white/10">
+                        <Button variant="outline">
                             {t.watch_page.browse_new}
                         </Button>
                     </Link>
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
     if (eventLoading) {
         return (
-            <div className="container mx-auto px-4 py-24">
+            <PageShell>
                 <div className="flex flex-col items-center justify-center">
                     <Loader2 className="h-10 w-10 animate-spin text-zinc-500 mb-4" />
                     <p className="text-zinc-400">{t.watch_page.loading}</p>
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
     if (!event) {
         return (
-            <div className="container mx-auto px-4 py-24">
+            <PageShell>
                 <div className="max-w-xl mx-auto text-center">
                     <Video className="w-16 h-16 mx-auto mb-6 text-zinc-700" />
                     <h1 className="text-2xl font-bold mb-3">{t.discover_page?.no_videos || 'No Releases Found'}</h1>
                     <p className="text-zinc-400 mb-8">{t.watch_page.select_video_desc}</p>
                     <Link href="/discover">
-                        <Button variant="outline" className="border-white/20 text-white hover:bg-white/10">
+                        <Button variant="outline">
                             {t.watch_page.browse_new}
                         </Button>
                     </Link>
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
@@ -184,7 +185,7 @@ function WatchContent() {
     const ctLabel = contentTypeLabel(event.content_type);
 
     return (
-        <div className="container mx-auto px-4 py-6 max-w-5xl">
+        <PageShell className="max-w-5xl">
             {/* Back button */}
             <div className="mb-4">
                 <Link href="/discover" className="inline-flex items-center gap-2 rounded-sm text-sm text-zinc-400 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green">
@@ -335,6 +336,6 @@ function WatchContent() {
                     </div>
                 </div>
             )}
-        </div>
+        </PageShell>
     );
 }
