@@ -304,6 +304,13 @@ export const translations = {
             protected_title: "Ticket Verified",
             protected_desc: "Your digital ticket is ready. Press play to watch.",
             play: "Play",
+            seek_label: "Seek video",
+            play_label: "Play video",
+            pause_label: "Pause video",
+            mute_label: "Mute video",
+            unmute_label: "Unmute video",
+            fullscreen_enter_label: "Enter fullscreen",
+            fullscreen_exit_label: "Exit fullscreen",
             thumbnail_alt: "Work cover"
         },
         profile_page: {
@@ -1053,6 +1060,13 @@ export const translations = {
             protected_title: "Bilet Doğrulandı",
             protected_desc: "Dijital biletin hazır. İzlemek için oynat.",
             play: "Oynat",
+            seek_label: "Videoda ilerle",
+            play_label: "Videoyu oynat",
+            pause_label: "Videoyu duraklat",
+            mute_label: "Videonun sesini kapat",
+            unmute_label: "Videonun sesini aç",
+            fullscreen_enter_label: "Tam ekrana geç",
+            fullscreen_exit_label: "Tam ekrandan çık",
             thumbnail_alt: "Eser kapağı"
         },
         profile_page: {

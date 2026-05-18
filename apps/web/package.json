@@ -30,6 +30,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.555.0",
+    "media-chrome": "^4.19.0",
     "mp4box": "^2.3.0",
     "near-api-js": "^7.0.3",
     "near-seed-phrase": "^0.2.1",
