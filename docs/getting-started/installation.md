@@ -64,7 +64,7 @@ Open `http://localhost:3000` in your browser.
 ```bash
 rustup target add wasm32-unknown-unknown
 cd contracts/nft-ticket
-cargo near build non-reproducible-wasm   # production build (matches mainnet R2 deploy)
+cargo near build non-reproducible-wasm   # production build; verify hash before deploy
 cargo test --lib
 cargo test --test sandbox
 ```

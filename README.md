@@ -108,11 +108,12 @@ this step can be deferred.
 
 ## Status
 
-Mainnet `youtick.near` is live (R2 module split, code hash
-`BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`). Public alpha — not
-production-ready. The locked plan (`docs/launch-plan-2026-05.md`) tracks
-the Day 23 soft-launch gate; full `upload → purchase → watch` smoke and the
-remaining operational checks must close before any "production" claim.
+Mainnet `youtick.near` is live (current code hash
+`HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF`, matching the current
+repository contract build artifact). Public alpha — not production-ready. The locked plan
+(`docs/launch-plan-2026-05.md`) tracks the Day 23 soft-launch gate; full
+`upload → purchase → watch` smoke and the remaining operational checks must
+close before any "production" claim.
 
 Current sources of truth:
 

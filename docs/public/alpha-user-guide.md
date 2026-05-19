@@ -73,7 +73,7 @@ Connect supports works — HOT, MyNear, Meteor, etc.
 
 | Area | Status |
 |---|---|
-| Mainnet contract `youtick.near` | Live (R2 module split, code hash `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`) |
+| Mainnet contract `youtick.near` | Live (current code hash `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF`; R2 deploy hash was `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`) |
 | Storage upload | Lighthouse primary write; Crust kept as compat / diagnostic |
 | Storage API auth | NEP-413 upload challenge required (`/uploads/intent` returns `Unauthorized` without it) |
 | Trial pool funding | Fixed `TRIAL_ACCOUNT_STORAGE_COST = 0.002 NEAR` per claim |

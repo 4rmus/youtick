@@ -105,7 +105,9 @@ flowchart LR
 
 ### Contracts
 
-Mainnet code hash (post-R2 module split): `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`.
+Mainnet code hash (current live): `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF`
+(matching the current repository contract build artifact). The historical R2 deploy hash was
+`BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`.
 
 - `contracts/nft-ticket/src/` — split across `lib.rs`, `nft.rs`, `market.rs`,
   `gift.rs`, `onboarding.rs`, `treasury.rs`, `views.rs`, `web4.rs`,

@@ -67,8 +67,10 @@ explicitly requires the migration-only `reset_v11` / `wipe_and_reinit` paths.
 Those paths can wipe state and must not be part of normal production deploys.
 
 Mainnet `youtick.near` currently ships code hash
-`BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F` (R2 module split). Verify
-hash before/after deploy with `near contract download-wasm youtick.near`.
+`HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF` (matching the current
+repository contract build artifact). The historical R2 deploy hash was
+`BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`. Verify hash before/after
+deploy with `near contract download-wasm youtick.near`.
 
 ---
 

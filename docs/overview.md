@@ -86,7 +86,9 @@ is the active upload session path; it is not deprecated.
 
 ## Mainnet Status
 
-- Single mainnet contract `youtick.near` (R2 module split, code hash
+- Single mainnet contract `youtick.near` (current code hash
+  `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF`, matching the current
+  repository contract build artifact; R2 deploy hash was
   `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`).
 - Access contract `access.youtick.near`, registry contract
   `registry.youtick.near`.

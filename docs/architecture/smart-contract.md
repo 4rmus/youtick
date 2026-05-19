@@ -3,7 +3,8 @@
 > Summary of the active logic across the `contracts/nft-ticket/` modules.
 
 **Mainnet:** `youtick.near`
-**Code hash (R2 module split):** `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`
+**Current code hash:** `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF` (matching the current repository contract build artifact)
+**Historical R2 deploy hash:** `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`
 
 ---
 

@@ -247,6 +247,12 @@ contracts/nft-ticket/src/
   `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`; migration skipped.
 - Mainnet view smoke PASS: `nft_metadata`, `get_owner`, `get_trial_pool_balance`,
   `get_events_count`, `get_onboarding_config`.
+- 2026-05-19 live reconciliation note: the R2 hash above is historical. A
+  later mainnet code-only deploy at block `198060926` changed `youtick.near`
+  hash to `7WB9gut5Y9bLF234fVHeqGnewTRL32Pc3dXfkDZEAmPr`, reproduced locally
+  from commit `415a2e2`. A subsequent code-only deploy at block `198989245`
+  changed the current live hash to
+  `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF`.
 - Kalan gate: full upload-buy-watch smoke.
 
 ### R3 — `lib/constants.ts` Split (Gün 11, 2h, opsiyonel)

@@ -3,7 +3,7 @@
 NEAR smart contract for events, NFT tickets, gifts, trials and upload-session
 based publishing.
 
-**Mainnet:** `youtick.near` (code hash `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F` — R2 module split).
+**Mainnet:** `youtick.near` (current code hash `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF`, matching the current repository contract build artifact; R2 deploy hash was `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`).
 
 ---
 
@@ -35,7 +35,7 @@ src/
 
 ```bash
 rustup target add wasm32-unknown-unknown
-cargo near build non-reproducible-wasm   # production build (matches mainnet R2)
+cargo near build non-reproducible-wasm   # production build; verify hash before deploy
 # or for plain dev:
 cargo build --target wasm32-unknown-unknown --release
 ```

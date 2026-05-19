@@ -22,6 +22,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Fresh testnet deploy: `r2-1778616242663.v1-0.utick.testnet`
   (same code hash). 48/48 lib + 31/31 sandbox tests PASS.
 
+#### Mainnet contract hotfix deploy (2026-05-12)
+- A later mainnet code-only deploy changed `youtick.near` code hash to
+  `7WB9gut5Y9bLF234fVHeqGnewTRL32Pc3dXfkDZEAmPr` at block `198060926`
+  (tx `6gg1BCt7xuFYh2DABibazAFouRR7CrSdFzgWRTGKxjpt`).
+- Local `cargo +1.86.0 near build non-reproducible-wasm` at commit `415a2e2`
+  reproduced that live hash.
+
+#### Mainnet contract build refresh (2026-05-19)
+- Latest mainnet code-only deploy changed current `youtick.near` code hash to
+  `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF` at block `198989245`
+  (tx `3iFMyZZszb1aHpvZfY1FM4V56SvhbpDxdy4s3aZ1EaMB`).
+- Current `contracts/nft-ticket/res/youtick_nft_opt.wasm` matches this live
+  hash.
+
 #### SB-1 — Storage API NEP-413 upload auth (2026-05-12)
 - `workers/storage-api` now requires `/uploads/auth/challenge` +
   `/uploads/auth/verify` before `/uploads/intent` and `/uploads/file`.

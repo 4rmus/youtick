@@ -196,8 +196,9 @@ keep Lighthouse API keys behind the dedicated Storage API Worker.
 
 ### 6. Pause Bypass in Prepaid Functions
 
-**Status:** Resolved in source AND deployed on mainnet (R2 module split,
-2026-05-12, code hash `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`)
+**Status:** Resolved in source AND deployed on mainnet (current code hash
+`HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF`; original R2 deploy hash
+`BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`)
 **Location:** `contracts/nft-ticket/src/market.rs`
 
 All state-mutating public functions call `self.assert_not_paused()`,

@@ -3,7 +3,7 @@
 > Live runtime contract surface for YouTick public alpha.
 
 **Contracts:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`
-**Mainnet `youtick.near` code hash:** `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F` (R2 module split).
+**Mainnet `youtick.near` code hash:** `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF` (current live hash, matching the current repository contract build artifact; R2 deploy hash was `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`).
 **Admin posture:** owner-only on `youtick.near`; timelock on `registry.youtick.near`; access timelock deferred for the current alpha (live build does not export `propose_action`/`get_timelock`).
 
 ---
