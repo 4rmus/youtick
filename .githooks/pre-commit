@@ -1,0 +1,14 @@
+#!/bin/sh
+# YouTick pre-commit hook.
+# Validates the LLM wiki whenever the wiki or its checker is part of the commit.
+# Enable once with: sh scripts/setup-hooks.sh
+set -e
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+
+if ! printf '%s\n' "$staged" | grep -Eq '^(docs/llm-wiki/|scripts/check-llm-wiki\.mjs$)'; then
+  exit 0
+fi
+
+echo "pre-commit: validating LLM wiki..."
+node scripts/check-llm-wiki.mjs
