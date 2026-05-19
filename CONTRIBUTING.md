@@ -5,6 +5,10 @@ Thanks for taking a look at YouTick.
 The main contribution guide lives in [`docs/contributing.md`](docs/contributing.md).
 Start there for setup, commands and code areas.
 
+First-time setup: run `sh scripts/setup-hooks.sh` once to enable the
+pre-commit hook (validates the `docs/llm-wiki` knowledge base on each commit
+that touches it).
+
 Before opening a PR:
 
 - run `npm run lint`, `npm test -- --run` and `npm run build` in `apps/web`
@@ -14,6 +18,7 @@ Before opening a PR:
 - run `npm test -- --run` and `npm run check` in `workers/media-delivery`
 - run `npm test -- --run` and `npm run check` in `workers/web4-proxy`
 - run `cargo test --lib` and `cargo test --test sandbox` when contract code changes
+- run `node scripts/check-llm-wiki.mjs` when `docs/llm-wiki` changes
 - update docs when behavior changes
 - never commit private keys, `.env.local`, `.near-credentials` or real operator configs
 

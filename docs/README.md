@@ -27,6 +27,7 @@ behind source code, so release decisions should use the locked launch plan
 - [Mainnet Deploy Runbook](operations/mainnet-deploy-runbook.md)
 - [Release Runbook](release-runbook.md)
 - [Public Alpha User Guide](public/alpha-user-guide.md)
+- [LLM Wiki](llm-wiki/index.md) — AI agent memory, router, and token-efficient source map
 
 ---
 
@@ -76,6 +77,12 @@ For a new engineer, the shortest path is:
 3. [Storage & Delivery](architecture/storage.md)
 4. [Smart Contract](architecture/smart-contract.md)
 5. [Contract Methods](api/contract-methods.md)
+
+For AI-assisted work, start with:
+
+1. [LLM Wiki](llm-wiki/index.md)
+2. [Agent Router](llm-wiki/agent-router.md)
+3. The matching module card under `llm-wiki/module-cards/`
 
 ---
 

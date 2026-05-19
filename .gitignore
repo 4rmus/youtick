@@ -75,5 +75,8 @@ docs/.vitepress/dist
 docs/.vitepress/cache
 docs/node_modules
 
+# Obsidian local vault settings
+docs/llm-wiki/.obsidian/
+
 # Debug artifacts
 console-log.md
