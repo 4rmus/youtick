@@ -4,12 +4,11 @@ import { getContentTypeLabel, normalizeContentTypeKey } from '@/lib/content-type
 
 const labels = {
     cinema: 'Film',
-    concert: 'Konser Kaydı',
-    documentary: 'Belgesel',
-    short_film: 'Kısa Film',
-    festival_selection: 'Festival Seçkisi',
-    exclusive: 'Özel İçerik',
-    live_event: 'Canlı Etkinlik',
+    concert: 'Concert Recording',
+    documentary: 'Documentary',
+    short_film: 'Short Film',
+    festival_selection: 'Festival Selection',
+    exclusive: 'Exclusive Content',
 };
 
 describe('content type labels', () => {
@@ -20,7 +19,7 @@ describe('content type labels', () => {
     });
 
     it('returns translated labels instead of raw technical values', () => {
-        expect(getContentTypeLabel(labels, 'Concert')).toBe('Konser Kaydı');
-        expect(getContentTypeLabel(labels, 'FestivalSelection')).toBe('Festival Seçkisi');
+        expect(getContentTypeLabel(labels, 'Concert')).toBe('Concert Recording');
+        expect(getContentTypeLabel(labels, 'FestivalSelection')).toBe('Festival Selection');
     });
 });

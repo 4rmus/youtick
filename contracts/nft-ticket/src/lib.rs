@@ -318,7 +318,10 @@ pub enum ContentType {
     Concert,
     Cinema,
     Exclusive,
-    LiveEvent,
+    /// Retired content category. Kept as a reserved slot to preserve the Borsh
+    /// discriminant order of tokens/events stored before it was removed. It is
+    /// never created or parsed; remove it fully only via a state migration.
+    Reserved,
     Documentary,
     ShortFilm,
     FestivalSelection,
@@ -330,7 +333,7 @@ impl std::fmt::Display for ContentType {
             ContentType::Concert => write!(f, "concert"),
             ContentType::Cinema => write!(f, "cinema"),
             ContentType::Exclusive => write!(f, "exclusive"),
-            ContentType::LiveEvent => write!(f, "live_event"),
+            ContentType::Reserved => write!(f, "exclusive"),
             ContentType::Documentary => write!(f, "documentary"),
             ContentType::ShortFilm => write!(f, "short_film"),
             ContentType::FestivalSelection => write!(f, "festival_selection"),
@@ -343,7 +346,6 @@ fn parse_content_type(ct: &str) -> Option<ContentType> {
         "concert" => Some(ContentType::Concert),
         "cinema" => Some(ContentType::Cinema),
         "exclusive" => Some(ContentType::Exclusive),
-        "live_event" => Some(ContentType::LiveEvent),
         "documentary" => Some(ContentType::Documentary),
         "short_film" => Some(ContentType::ShortFilm),
         "festival_selection" => Some(ContentType::FestivalSelection),

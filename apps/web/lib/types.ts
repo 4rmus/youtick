@@ -143,7 +143,7 @@ export interface TokenWithVideo extends NFTToken {
 /**
  * Event data from contract
  */
-export type ContentType = 'Concert' | 'Cinema' | 'Exclusive' | 'LiveEvent' | 'Documentary' | 'ShortFilm' | 'FestivalSelection';
+export type ContentType = 'Concert' | 'Cinema' | 'Exclusive' | 'Documentary' | 'ShortFilm' | 'FestivalSelection';
 
 export interface NFTEvent {
     encrypted_cid?: string;

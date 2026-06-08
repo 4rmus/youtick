@@ -36,5 +36,6 @@ features:
 - [Smart Contract](architecture/smart-contract.md) -- Contract surfaces and invariants
 - [Contract Methods](api/contract-methods.md) -- Contract API reference
 - [Security](security.md) -- Threat model and security notes
-- [Launch Plan 2026-05](launch-plan-2026-05.md) — locked single plan (alpha + pre-seed)
 - [Public Alpha User Guide](public/alpha-user-guide.md) — end-user onboarding/claim/wallet flows
+- [Transparency](public/transparency.md) — what is decentralized today vs. centralized
+- [Economics](public/economics.md) — creator payout, platform fee, payment rails

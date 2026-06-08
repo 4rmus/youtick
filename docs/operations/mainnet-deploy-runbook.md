@@ -4,7 +4,7 @@
 > **Last updated:** 2026-05-14
 > **Release posture:** public alpha (mainnet `youtick.near` live; R2 module
 > split deployed; SB-1 / SB-2 / SB-3 done — see launch plan)
-> **Locked plan:** [`../launch-plan-2026-05.md`](../launch-plan-2026-05.md)
+> **Locked plan:** `docs/launch-plan-2026-05.md` (internal founder/agent doc)
 
 ---
 
@@ -234,7 +234,7 @@ Run one live path before announcing anything beyond public alpha:
 After deploy:
 
 - update [`known-issues.md`](known-issues.md),
-- update [`../launch-plan-2026-05.md`](../launch-plan-2026-05.md) checkpoint
+- update `docs/launch-plan-2026-05.md` checkpoint
   table or open a new dated readiness report (per launch plan §Cadence
   "Once after launch"),
 - record commit SHA, deployed worker versions, code hash and smoke result.

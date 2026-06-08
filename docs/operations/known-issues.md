@@ -194,6 +194,31 @@ DAO/multisig governance are implemented and verified. During the storage
 provider rollout, keep Crust as an explicit compatibility/fallback path and
 keep Lighthouse API keys behind the dedicated Storage API Worker.
 
+### Content integrity is confidentiality-only (no authenticated encryption)
+
+**Status:** Accepted public-alpha limitation — disclosed 2026-06-08
+**Location:** `apps/web/lib/kms/encryption.ts`, `workers/media-delivery/src/index.ts`
+
+Media is encrypted with **AES-256-CTR**, which provides confidentiality and
+random-access seek but is **unauthenticated** (malleable). There is currently
+**no HMAC / AES-GCM / AEAD tag** on content, and `media-delivery` returns the
+first healthy gateway response without re-verifying the IPFS CID multihash.
+Integrity today rests on IPFS content-addressing (honest-gateway assumption)
+plus the KMS share VSS commitments that protect key reconstruction
+(`apps/web/lib/kms/shares.ts`).
+
+**Impact (bounded):** This is **not** a key-disclosure or purchase-bypass issue
+— keys stay Shamir-protected and access is on-chain gated. A malicious or
+compromised gateway could serve tampered ciphertext that decrypts to corrupted
+playback **undetected**; it cannot recover the plaintext key or grant access.
+
+**Action required:**
+- Do **not** describe content as integrity-protected / tamper-proof / HMAC-backed
+  anywhere. (Earlier internal notes that claimed "HMAC-SHA256 already
+  implemented" were incorrect; no HMAC exists in the codebase.)
+- Post-alpha roadmap: per-chunk AES-256-GCM **or** encrypt-then-HMAC, plus CID
+  multihash verification in `media-delivery` before returning bytes.
+
 ### 6. Pause Bypass in Prepaid Functions
 
 **Status:** Resolved in source AND deployed on mainnet (current code hash
@@ -237,7 +262,12 @@ Earlier hardening work treated every direct admin call as a timelock bypass.
 For V1 public alpha, the posture is split by contract:
 
 - `youtick.near` NFT market admin remains owner-only.
-- `access.youtick.near` and `registry.youtick.near` admin changes use timelock.
+- `registry.youtick.near` admin changes use timelock (live, verified).
+- `access.youtick.near` implements timelock **in source**, but the currently
+  deployed build does **not** export `propose_action`/`get_timelock`
+  (RPC-confirmed `MethodNotFound`, 2026-06-08). Access timelock is deferred for
+  the current alpha and must not be described as live governance until a build
+  with the export fix is deployed and verified on mainnet.
 
 **Resolution:**
 - `access-control` and `operator-registry` require `propose_action` →

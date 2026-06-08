@@ -7,8 +7,6 @@ confidence: medium
 sources:
   - docs/launch-plan-2026-05.md
   - docs/operations/known-issues.md
-  - docs/youtick-multi-angle-evaluation-2026-05-17.md
-  - docs/youtick-cok-acili-degerlendirme-2026-05-17.md
 ---
 
 # Open Audit Items

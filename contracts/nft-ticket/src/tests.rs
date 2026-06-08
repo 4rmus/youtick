@@ -1007,7 +1007,7 @@ fn get_events_filters_by_content_type() {
     contract.create_event(
         "concert-1".to_string(),
         "Concert".to_string(),
-        "Live concert".to_string(),
+        "Concert recording".to_string(),
         U128(NearToken::from_near(1).as_yoctonear()),
         None,
         None,

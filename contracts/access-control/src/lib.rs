@@ -879,7 +879,7 @@ mod tests {
             scope: SessionScope::Publish,
         });
 
-        let mut builder = context("owner.testnet", 2_000 + TIMELOCK_DELAY_NS / 1_000_000);
+        let builder = context("owner.testnet", 2_000 + TIMELOCK_DELAY_NS / 1_000_000);
         testing_env!(builder.build());
         contract.execute_action(id);
 
@@ -1045,7 +1045,7 @@ mod tests {
 
         let id = contract.propose_action(TimelockAction::PauseContract);
 
-        let mut builder = context("owner.testnet", 1_000 + TIMELOCK_DELAY_NS / 1_000_000);
+        let builder = context("owner.testnet", 1_000 + TIMELOCK_DELAY_NS / 1_000_000);
         testing_env!(builder.build());
         contract.execute_action(id);
 

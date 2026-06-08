@@ -14,10 +14,10 @@ export const LanguageSwitcher = () => {
         <div className="fixed bottom-4 right-4 z-50 sm:bottom-6 sm:right-6">
             <button
                 type="button"
-                aria-label={language === 'tr' ? 'Switch to English' : 'Turkceye gec'}
+                aria-label={language === 'tr' ? 'Switch to English' : 'Switch to Turkish'}
                 onClick={() => setLanguage(language === 'tr' ? 'en' : 'tr')}
                 className="flex min-h-11 items-center gap-2 px-3 py-2 bg-zinc-900/90 backdrop-blur-sm border border-zinc-800 rounded-lg hover:border-near-green/50 transition-all group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
-                title={language === 'tr' ? 'Switch to English' : 'Türkçe\'ye geç'}
+                title={language === 'tr' ? 'Switch to English' : 'Switch to Turkish'}
             >
                 <Globe className="w-4 h-4 text-zinc-500 group-hover:text-near-green transition-colors" />
                 <span className="text-xs font-bold text-near-green">

@@ -92,4 +92,5 @@ is the active upload session path; it is not deprecated.
   `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`).
 - Access contract `access.youtick.near`, registry contract
   `registry.youtick.near`.
-- Locked plan: [`launch-plan-2026-05.md`](launch-plan-2026-05.md).
+- Release posture is tracked internally in `docs/launch-plan-2026-05.md`
+  (founder/agent doc, not part of the published site).

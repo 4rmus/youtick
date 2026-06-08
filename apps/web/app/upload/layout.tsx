@@ -1,15 +1,15 @@
 import { Metadata } from 'next';
 
 export const metadata: Metadata = {
-    title: 'Eserini Yayına Al',
-    description: 'Eserini YouTick üzerinde yayına al ve dijital biletle doğrudan izleyicine sun.',
+    title: 'Publish Your Work',
+    description: 'Publish your work on YouTick and offer it directly to your audience with digital tickets.',
     openGraph: {
-        title: 'Eserini Yayına Al | YouTick',
-        description: 'Eserini YouTick üzerinde yayına al ve dijital biletle doğrudan izleyicine sun.',
+        title: 'Publish Your Work | YouTick',
+        description: 'Publish your work on YouTick and offer it directly to your audience with digital tickets.',
     },
     twitter: {
-        title: 'Eserini Yayına Al | YouTick',
-        description: 'Eserini YouTick üzerinde yayına al ve dijital biletle doğrudan izleyicine sun.',
+        title: 'Publish Your Work | YouTick',
+        description: 'Publish your work on YouTick and offer it directly to your audience with digital tickets.',
     },
 };
 

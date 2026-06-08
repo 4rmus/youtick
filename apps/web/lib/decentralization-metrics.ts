@@ -1,9 +1,20 @@
 /**
- * Decentralization Metrics Collection
+ * Operational Path-Health Metrics (formerly labeled "decentralization score")
  *
- * Structured metrics collection for YouTick's decentralization score.
- * Captures events from NEAR, KMS, and Crust layers to compute
- * a real-time decentralization health score.
+ * HONEST FRAMING: this module tracks how often runtime operations take their
+ * PRIMARY path versus a fallback (direct trial vs relayer, KMS direct vs proxy,
+ * storage order placed vs failed). It is an AVAILABILITY / operational-health
+ * signal — NOT a measure of trust decentralization.
+ *
+ * During public alpha, custody is centralized regardless of these counters:
+ * all 5 KMS operators run under a single Cloudflare account and Lighthouse is a
+ * single write provider. A high score here means "the primary path succeeded",
+ * not "the system is decentralized". Do NOT surface these numbers as a
+ * decentralization percentage. See docs/public/transparency.md.
+ *
+ * Only recordMetric() is currently consumed (telemetry). getMetrics() and the
+ * listener API are retained for a possible future health dashboard but are not
+ * rendered anywhere today.
  */
 
 export interface LayerScore {
@@ -93,9 +104,13 @@ export function recordMetric(event: MetricEvent): void {
  * Get current decentralization metrics snapshot
  */
 export function getMetrics(): DecentralizationMetrics {
-  const near = computeLayerScore(state.near, state.lastUpdated.near, 95);
-  const kms = computeLayerScore(state.kms, state.lastUpdated.kms, 92);
-  const storage = computeLayerScore(state.storage, state.lastUpdated.storage, 95);
+  // Base values are "primary-path availability" assumptions used before any op
+  // is recorded. They are NOT decentralization percentages — custody is
+  // centralized during alpha (single Cloudflare account, single write
+  // provider). See module header and docs/public/transparency.md.
+  const near = computeLayerScore(state.near, state.lastUpdated.near, 100);
+  const kms = computeLayerScore(state.kms, state.lastUpdated.kms, 100);
+  const storage = computeLayerScore(state.storage, state.lastUpdated.storage, 100);
 
   // Weighted composite: NEAR 35%, KMS 35%, Storage 30%
   const composite = Math.round(near.score * 0.35 + kms.score * 0.35 + storage.score * 0.30);

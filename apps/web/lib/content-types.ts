@@ -13,8 +13,6 @@ const CONTENT_TYPE_KEY_BY_VALUE: Record<string, string> = {
     festival_selection: 'festival_selection',
     Exclusive: 'exclusive',
     exclusive: 'exclusive',
-    LiveEvent: 'live_event',
-    live_event: 'live_event',
 };
 
 export function normalizeContentTypeKey(type?: string | null): string | null {

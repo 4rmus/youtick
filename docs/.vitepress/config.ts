@@ -11,8 +11,20 @@ export default withMermaid(
       ['link', { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
     ],
 
+    // Internal founder/agent docs stay in the repo but are NOT published to the
+    // public site (strategy, keys, tx hashes, audits, agent memory).
+    srcExclude: [
+      'README.md',
+      'launch-plan-2026-05.md',
+      'llm-wiki.md',
+      'llm-wiki/**',
+    ],
+
     ignoreDeadLinks: [
       /localhost/,
+      // Safety net: links from published pages into the excluded internal docs.
+      /launch-plan-2026-05/,
+      /llm-wiki/,
     ],
 
     themeConfig: {
@@ -31,7 +43,6 @@ export default withMermaid(
             { text: 'User Guide', link: '/public/alpha-user-guide' },
             { text: 'Architecture Overview', link: '/public/architecture-overview' },
             { text: 'Acceptable Use Policy', link: '/legal/acceptable-use-policy' },
-            { text: 'Launch Plan 2026-05', link: '/launch-plan-2026-05' },
           ],
         },
         {

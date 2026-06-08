@@ -267,7 +267,6 @@ export const translations = {
                 short_film: "Short Film",
                 festival_selection: "Festival Selection",
                 exclusive: "Special",
-                live_event: "Live Event",
             }
         },
         video_card: {
@@ -1023,7 +1022,6 @@ export const translations = {
                 short_film: "Kısa Film",
                 festival_selection: "Festival Seçkisi",
                 exclusive: "Özel Gösterim",
-                live_event: "Canlı Etkinlik",
             }
         },
         video_card: {

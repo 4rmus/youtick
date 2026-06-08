@@ -3,8 +3,9 @@
 > Short release checklist.
 > For mainnet contract/KMS activation, use
 > [`docs/operations/mainnet-deploy-runbook.md`](operations/mainnet-deploy-runbook.md).
-> Current release posture is tracked in
-> [`docs/launch-plan-2026-05.md`](launch-plan-2026-05.md) (single locked plan).
+> Current release posture is tracked internally in
+> `docs/launch-plan-2026-05.md` (single locked plan; founder/agent doc, not
+> published to the public site).
 
 ---
 

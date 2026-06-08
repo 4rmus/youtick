@@ -6,7 +6,6 @@ last_checked: 2026-05-19
 confidence: low
 sources:
   - docs/frontend.md
-  - docs/youtick-multi-angle-evaluation-2026-05-17.md
 ---
 
 # UI UX Audit
