@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Sparkles, Wallet, ArrowRight, CheckCircle2, AlertCircle, Gift } from "lucide-react";
+import { Loader2, Sparkles, ArrowRight, CheckCircle2, AlertCircle, Gift } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageContext";
 import { KeyPair, type KeyPairString } from "near-api-js";
 import { claimGiftWithImplicitAccount, claimTrialInviteWithImplicitAccount, validateGiftLink, validateTrialInviteLink, getGiftEventInfo } from "@/lib/gift-service";
@@ -11,12 +11,11 @@ import { bootstrapGuestAccount, getOrCreateGuestIdentity } from "@/lib/guest-acc
 
 interface TrialOnboardingProps {
     onAccountCreated?: (accountId: string, kind: 'guest' | 'trial') => void;
-    onConnectWallet?: () => void;
 }
 
 type OnboardingStep = "choice" | "creating" | "success" | "error" | "no-link";
 
-export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnboardingProps) {
+export function TrialOnboarding({ onAccountCreated }: TrialOnboardingProps) {
     const { t } = useLanguage();
     const trialPageCopy = t.trial_page as Record<string, string> | undefined;
     const [step, setStep] = useState<OnboardingStep>("choice");
@@ -30,11 +29,9 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
     const tr = {
         welcome_title: trialPageCopy?.welcome_title || "Start with a Guest Account",
         welcome_desc: trialPageCopy?.welcome_desc || "Discover films, concert recordings and special screenings with a digital ticket.",
-        connect_wallet: trialPageCopy?.connect_wallet || "Connect Wallet",
         create_guest_account: trialPageCopy?.create_guest_account || "Create Guest Account",
         create_trial: trialPageCopy?.create_trial || "Create Guest Account",
         start_trial: trialPageCopy?.start_trial || "Start Guest Access",
-        or: trialPageCopy?.or || "or",
         try_free: trialPageCopy?.try_free || "Claim Gift Ticket",
         no_wallet_required: trialPageCopy?.no_wallet_required || "No wallet required",
         free_content_access: trialPageCopy?.free_content_access || "Claim free-ticket releases",
@@ -55,12 +52,10 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
         welcome_success: trialPageCopy?.welcome_success || "Welcome!",
         account_ready: trialPageCopy?.account_ready || "Your account is ready:",
         trial_duration: trialPageCopy?.trial_duration || "Your guest access is ready.",
-        ticket_ready: trialPageCopy?.ticket_ready || "Your ticket is now accessible",
-        go_to_ticket: trialPageCopy?.go_to_ticket || "Go to Ticket",
         start_exploring: trialPageCopy?.start_exploring || "Start Exploring",
         error_title: trialPageCopy?.error_title || "Something went wrong",
         try_again: trialPageCopy?.try_again || "Try Again",
-        no_gift_link: trialPageCopy?.no_gift_link || "Start with a guest account or connect your wallet. Gift links also open here when someone shares one with you.",
+        no_gift_link: trialPageCopy?.no_gift_link || "Start with a guest account. Gift links also open here when someone shares one with you.",
         invite_required: trialPageCopy?.invite_required || "Guest account creation now requires an invite link.",
         gift_for: trialPageCopy?.gift_for || "Gift ticket for:",
         invalid_gift_link: trialPageCopy?.invalid_gift_link || "Invalid or expired gift link",
@@ -245,14 +240,6 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                         {tr.create_guest_account}
                     </Button>
 
-                    <Button
-                        onClick={onConnectWallet}
-                        variant="outline"
-                        className="w-full h-12 border-zinc-700 text-zinc-300 hover:bg-zinc-900"
-                    >
-                        <Wallet className="w-5 h-5 mr-2" />
-                        {tr.connect_wallet}
-                    </Button>
                     <div className="p-4 bg-zinc-800/60 border border-zinc-700 rounded-lg">
                         <p className="text-zinc-300 text-sm text-center">
                             {tr.test_account_required}
@@ -289,22 +276,6 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                     >
                         <Sparkles className="w-5 h-5 mr-2" />
                         {trialInviteInfo ? tr.start_trial : tr.try_free}
-                    </Button>
-
-                    <div className="flex items-center gap-4 text-zinc-500">
-                        <div className="flex-1 h-px bg-zinc-800" />
-                        <span className="text-sm">{tr.or}</span>
-                        <div className="flex-1 h-px bg-zinc-800" />
-                    </div>
-
-                    {/* Connect Wallet Option */}
-                    <Button
-                        onClick={onConnectWallet}
-                        variant="outline"
-                        className="w-full h-14 text-lg border-zinc-700 text-zinc-300 hover:bg-zinc-900"
-                    >
-                        <Wallet className="w-5 h-5 mr-2" />
-                        {tr.connect_wallet}
                     </Button>
 
                     <div className="pt-4 space-y-2 text-sm text-zinc-400">
@@ -360,13 +331,6 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                         >
                             {tr.try_again}
                         </Button>
-                        <Button
-                            onClick={onConnectWallet}
-                            variant="outline"
-                            className="w-full border-zinc-700 text-zinc-300 hover:bg-zinc-900"
-                        >
-                            {tr.connect_wallet}
-                        </Button>
                     </div>
                 </CardContent>
             </Card>
@@ -375,14 +339,6 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
 
     // Success Step
     if (step === "success") {
-        const getRedirectUrl = () => {
-            if (typeof window === "undefined") return null;
-            const urlParams = new URLSearchParams(window.location.search);
-            return urlParams.get("redirect");
-        };
-
-        const redirectUrl = getRedirectUrl();
-
         return (
             <Card className="w-full max-w-md mx-auto bg-zinc-950 border-zinc-800 text-white">
                 <CardContent className="py-12 text-center space-y-4">
@@ -394,24 +350,15 @@ export function TrialOnboarding({ onAccountCreated, onConnectWallet }: TrialOnbo
                         {tr.account_ready} <span className="text-near-green font-mono">{createdAccountId}</span>
                     </p>
                     <p className="text-sm text-zinc-500">
-                        {redirectUrl ? tr.ticket_ready : tr.trial_duration}
+                        {tr.trial_duration}
                     </p>
                     <Button
-                        onClick={() => window.location.href = redirectUrl || "/discover"}
+                        onClick={() => window.location.href = "/discover"}
                         variant="near"
                         className="w-full"
                     >
-                        {redirectUrl ? (
-                            <>
-                                {tr.go_to_ticket}
-                                <ArrowRight className="w-4 h-4 ml-2" />
-                            </>
-                        ) : (
-                            <>
-                                {tr.start_exploring}
-                                <ArrowRight className="w-4 h-4 ml-2" />
-                            </>
-                        )}
+                        {tr.start_exploring}
+                        <ArrowRight className="w-4 h-4 ml-2" />
                     </Button>
                 </CardContent>
             </Card>

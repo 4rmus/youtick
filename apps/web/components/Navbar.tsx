@@ -17,6 +17,7 @@ export function Navbar() {
     const [mounted, setMounted] = useState(false);
     const pathname = usePathname();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const showWalletActions = pathname !== '/trial';
 
     useEffect(() => {
         const timer = setTimeout(() => setMounted(true), 0);
@@ -80,29 +81,31 @@ export function Navbar() {
                     ))}
                 </div>
 
-                <div className="hidden md:flex items-center gap-3">
-                    {accountId ? (
-                        <div className="rounded-full bg-near-black border border-near-green/30 flex items-center pl-3 pr-1 py-1 gap-2">
-                            <User className="w-3 h-3 text-near-green" />
-                            <span className="text-xs font-mono text-zinc-400 truncate max-w-[100px]">{accountId}</span>
-                            <Button
-                                aria-label={t.nav.disconnect}
-                                onClick={handleSignOut}
-                                className="h-11 w-11 ml-1 p-0 rounded-full bg-transparent hover:bg-near-red/10 text-zinc-500 hover:text-near-red flex items-center justify-center transition-colors focus-visible:ring-near-red"
+                {showWalletActions && (
+                    <div className="hidden md:flex items-center gap-3">
+                        {accountId ? (
+                            <div className="rounded-full bg-near-black border border-near-green/30 flex items-center pl-3 pr-1 py-1 gap-2">
+                                <User className="w-3 h-3 text-near-green" />
+                                <span className="text-xs font-mono text-zinc-400 truncate max-w-[100px]">{accountId}</span>
+                                <Button
+                                    aria-label={t.nav.disconnect}
+                                    onClick={handleSignOut}
+                                    className="h-11 w-11 ml-1 p-0 rounded-full bg-transparent hover:bg-near-red/10 text-zinc-500 hover:text-near-red flex items-center justify-center transition-colors focus-visible:ring-near-red"
+                                >
+                                    <LogOut className="w-3 h-3" />
+                                </Button>
+                            </div>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={handleSignIn}
+                                className="min-h-11 px-5 py-2 text-sm font-semibold text-near-black bg-near-green rounded-full hover:bg-near-green/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                             >
-                                <LogOut className="w-3 h-3" />
-                            </Button>
-                        </div>
-                    ) : (
-                        <button
-                            type="button"
-                            onClick={handleSignIn}
-                            className="min-h-11 px-5 py-2 text-sm font-semibold text-near-black bg-near-green rounded-full hover:bg-near-green/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
-                        >
-                            {t.nav.connect}
-                        </button>
-                    )}
-                </div>
+                                {t.nav.connect}
+                            </button>
+                        )}
+                    </div>
+                )}
 
                 {/* Mobile Menu Button */}
                 <button
@@ -134,11 +137,15 @@ export function Navbar() {
                         <Link href="/terms" onClick={() => setIsMenuOpen(false)} className="text-zinc-500 hover:text-zinc-300 transition-colors">Terms</Link>
                         <Link href="/privacy" onClick={() => setIsMenuOpen(false)} className="text-zinc-500 hover:text-zinc-300 transition-colors">Privacy</Link>
                     </div>
-                    <div className="h-px bg-white/10 my-2" />
-                    {accountId ? (
-                        <button type="button" onClick={handleSignOut} className="min-h-11 rounded-md text-left text-near-red font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-red">{t.nav.disconnect}</button>
-                    ) : (
-                        <button type="button" onClick={handleSignIn} className="min-h-11 rounded-md text-left font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green">{t.nav.connect}</button>
+                    {showWalletActions && (
+                        <>
+                            <div className="h-px bg-white/10 my-2" />
+                            {accountId ? (
+                                <button type="button" onClick={handleSignOut} className="min-h-11 rounded-md text-left text-near-red font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-red">{t.nav.disconnect}</button>
+                            ) : (
+                                <button type="button" onClick={handleSignIn} className="min-h-11 rounded-md text-left font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green">{t.nav.connect}</button>
+                            )}
+                        </>
                     )}
                 </div>
             )}

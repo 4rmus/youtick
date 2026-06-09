@@ -1,28 +1,18 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { ArrowRight, CheckCircle2, Loader2, Wallet } from "lucide-react";
+import { Suspense, useState } from "react";
+import { ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useLanguage } from "@/components/providers/LanguageContext";
 import { useWallet } from "@/components/providers/WalletProvider";
 import { TrialOnboarding } from "@/components/TrialOnboarding";
-import { TrialUpgradeDialog } from "@/components/TrialUpgradeDialog";
 import { readManagedNearAccount, type ManagedNearAccount } from "@/lib/managed-near-account";
 
 function TrialContent() {
-    const searchParams = useSearchParams();
-    const redirect = searchParams.get("redirect");
     const { t } = useLanguage();
-    const { accountId, connect, setManagedAccount } = useWallet();
+    const { setManagedAccount } = useWallet();
     const [managedAccount, setManagedAccountState] = useState<ManagedNearAccount | null>(() => readManagedNearAccount());
-
-    useEffect(() => {
-        if (accountId && redirect) {
-            window.location.href = redirect;
-        }
-    }, [accountId, redirect]);
 
     const handleManagedAccountCreated = (nextAccountId: string, kind: "guest" | "trial") => {
         setManagedAccountState({ accountId: nextAccountId, kind });
@@ -47,23 +37,12 @@ function TrialContent() {
                     </p>
 
                     <div className="mt-6 space-y-3">
-                        <TrialUpgradeDialog accountId={managedAccount.accountId} />
-
                         <Button
-                            onClick={() => connect()}
-                            variant="outline"
-                            className="w-full border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-                        >
-                            <Wallet className="mr-2 h-4 w-4" />
-                            {t.trial_page?.connect_wallet || t.nav.connect}
-                        </Button>
-
-                        <Button
-                            onClick={() => window.location.href = redirect || "/discover"}
+                            onClick={() => window.location.href = "/discover"}
                             variant="near"
                             className="w-full"
                         >
-                            {redirect ? (t.trial_page?.go_to_ticket || "Go to Ticket") : (t.trial_page?.start_exploring || "Start Exploring")}
+                            {t.trial_page?.start_exploring || "Start Exploring"}
                             <ArrowRight className="ml-2 h-4 w-4" />
                         </Button>
                     </div>
@@ -76,7 +55,6 @@ function TrialContent() {
         <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
             <TrialOnboarding
                 onAccountCreated={handleManagedAccountCreated}
-                onConnectWallet={() => void connect()}
             />
         </main>
     );
