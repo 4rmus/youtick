@@ -178,9 +178,11 @@ export const Navigation = memo(({ onDiscoverClick, variant = 'landing' }: Naviga
 
         {/* Mobile Menu Button */}
         <button
-          className="lg:hidden p-2 text-white hover:text-zinc-300 transition-colors"
+          type="button"
+          className="lg:hidden flex h-11 w-11 items-center justify-center rounded-md text-white hover:text-zinc-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
           onClick={() => setIsMenuOpen(!isMenuOpen)}
-          aria-label="Toggle menu"
+          aria-label={isMenuOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={isMenuOpen}
         >
           {isMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
         </button>

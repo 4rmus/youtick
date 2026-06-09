@@ -66,7 +66,7 @@ export function VideoCard({
         : '/watch';
 
     return (
-        <Link href={defaultLink} className="group">
+        <Link href={defaultLink} className="group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green focus-visible:ring-offset-2 focus-visible:ring-offset-black">
             <Card className="relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-near-green/35">
                 {/* Thumbnail */}
                 <div className="aspect-video relative overflow-hidden">

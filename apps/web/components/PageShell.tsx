@@ -9,7 +9,7 @@ interface PageShellProps {
 
 export function PageShell({ children, className }: PageShellProps) {
     return (
-        <div className={cn('container mx-auto min-h-screen px-4 py-10 md:py-12', className)}>
+        <div className={cn('container mx-auto min-h-[calc(100vh-4rem)] px-4 py-8 sm:py-10 md:py-12', className)}>
             {children}
         </div>
     );

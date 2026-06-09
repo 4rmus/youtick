@@ -11,6 +11,7 @@ import { useLanguage } from '@/components/providers/LanguageContext';
 import { TicketPurchaseCard } from '@/components/TicketPurchaseCard';
 import { CreatorAvatar } from '@/components/CreatorAvatar';
 import { PageShell } from '@/components/PageShell';
+import { ScreenState } from '@/components/ScreenState';
 import { Button } from '@/components/ui/button';
 import { getProvider, viewContract } from '@/lib/near';
 import { NEAR_CONFIG } from '@/lib/constants';
@@ -136,26 +137,28 @@ function WatchContent() {
 
     if (!cid) {
         return (
-            <PageShell>
-                <div className="max-w-xl mx-auto text-center">
-                    <Video className="w-16 h-16 mx-auto mb-6 text-zinc-700" />
-                    <h1 className="text-3xl font-bold mb-3">{t.watch_page.title}</h1>
-                    <p className="text-zinc-400 mb-8">{t.watch_page.description}</p>
-                    <Link href="/discover">
-                        <Button variant="outline">
-                            {t.watch_page.browse_new}
-                        </Button>
-                    </Link>
-                </div>
+            <PageShell className="flex items-center justify-center">
+                <ScreenState
+                    icon={<Video className="h-8 w-8" />}
+                    title={t.watch_page.title}
+                    description={t.watch_page.description}
+                    actions={(
+                        <Link href="/discover">
+                            <Button variant="outline">
+                                {t.watch_page.browse_new}
+                            </Button>
+                        </Link>
+                    )}
+                />
             </PageShell>
         );
     }
 
     if (eventLoading) {
         return (
-            <PageShell>
-                <div className="flex flex-col items-center justify-center">
-                    <Loader2 className="h-10 w-10 animate-spin text-zinc-500 mb-4" />
+            <PageShell className="flex items-center justify-center">
+                <div role="status" aria-live="polite" className="flex flex-col items-center justify-center">
+                    <Loader2 className="mb-4 h-10 w-10 animate-spin text-near-green" />
                     <p className="text-zinc-400">{t.watch_page.loading}</p>
                 </div>
             </PageShell>
@@ -164,17 +167,19 @@ function WatchContent() {
 
     if (!event) {
         return (
-            <PageShell>
-                <div className="max-w-xl mx-auto text-center">
-                    <Video className="w-16 h-16 mx-auto mb-6 text-zinc-700" />
-                    <h1 className="text-2xl font-bold mb-3">{t.discover_page?.no_videos || 'No Releases Found'}</h1>
-                    <p className="text-zinc-400 mb-8">{t.watch_page.select_video_desc}</p>
+            <PageShell className="flex items-center justify-center">
+                <ScreenState
+                    icon={<Video className="h-8 w-8" />}
+                    title={t.discover_page?.no_videos || 'No Releases Found'}
+                    description={t.watch_page.select_video_desc}
+                    actions={(
                     <Link href="/discover">
                         <Button variant="outline">
                             {t.watch_page.browse_new}
                         </Button>
                     </Link>
-                </div>
+                    )}
+                />
             </PageShell>
         );
     }

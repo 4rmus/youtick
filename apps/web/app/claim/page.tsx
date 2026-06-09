@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { ScreenState } from "@/components/ScreenState";
 import { Loader2, CheckCircle2, AlertCircle, Ticket, ExternalLink, Wallet, Play, Sparkles } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageContext";
 import { parseTitleMetadata } from "@/lib/metadata-parser";
@@ -472,23 +473,42 @@ function ClaimContent() {
     if (step === "error") {
         return (
             <div className="w-full max-w-md mx-auto">
-                <Card className="p-8 text-center space-y-4 bg-zinc-900/90 backdrop-blur-xl">
-                    <div className="w-16 h-16 bg-near-red/10 border border-near-red/30 rounded-full flex items-center justify-center mx-auto">
-                        <AlertCircle className="w-8 h-8 text-near-red" />
-                    </div>
-                    <h3 className="text-xl text-white font-semibold">{t.claim_page?.error_title || "An Error Occurred"}</h3>
-                    <p className="text-zinc-400">{error}</p>
-                    <Button
-                        onClick={() => {
-                            setError(null);
-                            setStep("preview");
-                        }}
-                        variant="outline"
-                        className="rounded-xl"
-                    >
-                        {t.claim_page?.try_again || "Try Again"}
-                    </Button>
-                </Card>
+                <ScreenState
+                    tone="danger"
+                    className="bg-zinc-900/90 backdrop-blur-xl"
+                    icon={<AlertCircle className="h-8 w-8" />}
+                    title={t.claim_page?.error_title || "An Error Occurred"}
+                    description={error || undefined}
+                    actions={giftInfo ? (
+                        <Button
+                            onClick={() => {
+                                setError(null);
+                                setStep("preview");
+                            }}
+                            variant="outline"
+                            className="rounded-xl"
+                        >
+                            {t.claim_page?.try_again || "Try Again"}
+                        </Button>
+                    ) : (
+                        <>
+                            <Button
+                                onClick={() => { window.location.href = "/trial"; }}
+                                variant="near"
+                                className="rounded-xl"
+                            >
+                                {t.landing.nav_extra?.try_free || "Guest access"}
+                            </Button>
+                            <Button
+                                onClick={() => { window.location.href = "/discover"; }}
+                                variant="outline"
+                                className="rounded-xl"
+                            >
+                                {t.watch_page.browse_new}
+                            </Button>
+                        </>
+                    )}
+                />
             </div>
         );
     }
@@ -498,7 +518,7 @@ function ClaimContent() {
 
 export default function ClaimPage() {
     return (
-        <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
+        <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
             <Suspense fallback={
                 <div className="w-full max-w-md mx-auto">
                     <Card className="p-8 text-center bg-zinc-900/90 backdrop-blur-xl">

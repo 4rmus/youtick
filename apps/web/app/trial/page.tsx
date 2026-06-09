@@ -31,7 +31,7 @@ function TrialContent() {
 
     if (managedAccount) {
         return (
-            <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
+            <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
                 <Card className="w-full max-w-md bg-zinc-900/80 p-8 text-center">
                     <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-near-green/10 text-near-green">
                         <CheckCircle2 className="h-7 w-7" />
@@ -73,7 +73,7 @@ function TrialContent() {
     }
 
     return (
-        <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
+        <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
             <TrialOnboarding
                 onAccountCreated={handleManagedAccountCreated}
                 onConnectWallet={() => void connect()}
@@ -85,7 +85,7 @@ function TrialContent() {
 export default function TrialPage() {
     return (
         <Suspense fallback={
-            <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
+            <main className="min-h-[calc(100vh-4rem)] bg-gradient-to-b from-zinc-950 via-zinc-900 to-black flex items-center justify-center p-4">
                 <Loader2 className="h-8 w-8 animate-spin text-near-green" />
             </main>
         }>

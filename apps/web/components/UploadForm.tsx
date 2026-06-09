@@ -343,7 +343,7 @@ export function UploadForm() {
     };
 
     return (
-        <div className="w-full max-w-7xl mx-auto p-4 space-y-5">
+        <div className="w-full max-w-7xl mx-auto space-y-5">
             {/* Header Row: Same grid as content for alignment */}
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                 {/* Title - Same width as form (3/5) */}
@@ -372,7 +372,7 @@ export function UploadForm() {
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-stretch">
 
                 {/* LEFT COLUMN: FORM INPUTS */}
-                <Card className="lg:col-span-3 order-2 lg:order-1 rounded-lg">
+                <Card className="order-1 rounded-lg lg:col-span-3">
                     <CardHeader>
                         <CardTitle>{u.publication_info_title}</CardTitle>
                         <CardDescription>{u.publication_info_desc}</CardDescription>
@@ -656,7 +656,7 @@ export function UploadForm() {
                 </Card>
 
                 {/* RIGHT COLUMN: TICKET PREVIEW + UPLOAD STEPS (Vertical) */}
-                <div className="lg:col-span-2 space-y-4 order-1 lg:order-2">
+                <div className="order-2 space-y-4 lg:col-span-2">
                     {/* Modern Ticket Preview Card */}
                     <div className="sticky top-20">
                         <div className="relative group overflow-hidden rounded-lg bg-zinc-950 border border-white/10 shadow-xl shadow-black/40 transition-all duration-300 hover:border-white/20">

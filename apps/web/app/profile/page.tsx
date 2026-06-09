@@ -22,6 +22,7 @@ import { useCreatorStats, useCreatorPurchaseLogs, useCreatorProfile } from '@/ho
 import { CreatorProfileForm } from '@/components/CreatorProfileForm';
 import { getLatestEventsQuery } from '@/lib/event-query';
 import { PageShell } from '@/components/PageShell';
+import { ScreenState } from '@/components/ScreenState';
 
 interface CreatedEvent extends NFTEvent {
     cid: string;
@@ -31,7 +32,7 @@ interface CreatedEvent extends NFTEvent {
 
 export default function ProfilePage() {
     const { t } = useLanguage();
-    const { accountId } = useWallet();
+    const { accountId, connect } = useWallet();
     const { yoctoToUsd, nearToUsdStr } = useNearPrice();
     const { tokens, loading: tokensLoading } = useOwnedTokens();
     const { data: creatorStats } = useCreatorStats(accountId ?? undefined);
@@ -113,17 +114,23 @@ export default function ProfilePage() {
 
     if (!accountId) {
         return (
-            <PageShell>
-                <div className="max-w-2xl mx-auto text-center">
-                    <Card className="p-8 bg-zinc-900/50">
-                        <User className="w-16 h-16 mx-auto mb-4 text-zinc-600" />
-                        <h2 className="text-2xl font-bold mb-2">{t.profile_page.wallet_not_connected}</h2>
-                        <p className="text-zinc-400 mb-6">{t.profile_page.connect_prompt}</p>
-                        <Link href="/">
-                            <Button variant="outline">{t.profile_page.go_home}</Button>
-                        </Link>
-                    </Card>
-                </div>
+            <PageShell className="flex items-center justify-center">
+                <ScreenState
+                    icon={<User className="h-8 w-8" />}
+                    title={t.profile_page.wallet_not_connected}
+                    description={t.profile_page.connect_prompt}
+                    actions={(
+                        <>
+                            <Button type="button" variant="near" onClick={() => connect()}>
+                                <Wallet className="h-4 w-4" />
+                                {t.nav.connect}
+                            </Button>
+                            <Link href="/discover">
+                                <Button variant="outline">{t.profile_page.browse}</Button>
+                            </Link>
+                        </>
+                    )}
+                />
             </PageShell>
         );
     }

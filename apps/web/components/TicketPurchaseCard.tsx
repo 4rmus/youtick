@@ -710,10 +710,6 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
 
     return (
         <Card className={`relative group overflow-hidden bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 max-w-sm mx-auto ${className}`}>
-            {/* Decorative Corner Glow */}
-            <div className="absolute -top-20 -right-20 w-40 h-40 bg-near-green/10 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
-            <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-near-purple/10 rounded-full blur-3xl opacity-50 group-hover:opacity-80 transition-opacity duration-700" />
-
             {/* Image Container */}
             <div className="aspect-video relative overflow-hidden bg-zinc-800">
                 <IPFSThumbnail
