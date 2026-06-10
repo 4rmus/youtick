@@ -1,4 +1,4 @@
-import { fetchFromGateways } from './ipfs';
+import { fetchFromGateways, rawSha256CidFromRef, verifyRawCidContent } from './ipfs';
 import { decodeCounter, importAESKey } from './kms';
 import {
     DELIVERY_BUFFER_AHEAD_MS,
@@ -467,7 +467,15 @@ export function createDeliveryPlaybackSession(
             throw new Error(`Segment payload resolved to a directory page for ${cid}`);
         }
 
-        return await response.arrayBuffer();
+        const payload = await response.arrayBuffer();
+        // Only raw-sha256 CIDs are content-address verifiable; skip otherwise so
+        // dag-pb / sub-path refs keep their existing fetch behavior untouched.
+        const verifiableCid = rawSha256CidFromRef(cid);
+        if (verifiableCid && !(await verifyRawCidContent(verifiableCid, payload))) {
+            throw new Error(`Segment payload failed content-address verification for ${cid}`);
+        }
+
+        return payload;
     };
 
     const loadSegment = async (segment: DeliverySegment, generation: number) => {

@@ -9,6 +9,10 @@ const { fetchFromGateways } = vi.hoisted(() => ({
 
 vi.mock('@/lib/ipfs', () => ({
   fetchFromGateways,
+  // Test fixtures use CIDv0 / dag-pb refs which are not content-address
+  // verifiable; integrity logic itself is covered by ipfs-integrity.test.ts.
+  rawSha256CidFromRef: () => null,
+  verifyRawCidContent: async () => true,
 }));
 
 vi.mock('@/lib/kms', () => ({

@@ -88,7 +88,7 @@ retaining them in the project directory is an unacceptable risk.
 
 ### 4. Onboarding Key Leaked in Client Bundle (Resolved Live)
 
-**Status:** Resolved live — rotated 2026-05-12
+**Status:** Resolved live — rotated 2026-05-12; leaked key removed on-chain 2026-06-10
 **Location:** `apps/web/.env.example`, `OnboardingKeyInit.tsx`
 
 `NEXT_PUBLIC_ONBOARDING_KEY` was embedded into the Next.js client JS bundle
@@ -117,6 +117,24 @@ trial pool or DoS the daily limit.
 - Keep the new private key backed up outside the repo.
 - Periodically run `node scripts/list-onboarding-keys.mjs`; expected current
   state is one limited onboarding key.
+
+> **⚠️ Correction — verified on-chain 2026-06-10:** the **first** old key
+> `ed25519:d7DFgYQX6gPwj63PnE7cPSmtpsFFP7ykkUaHivCdZsX` is **still live** on
+> `youtick.near` (`is_onboarding_key` → `true`, and present in
+> `view_access_key_list` with method names
+> `create_sponsored_trial_direct / claim_free_ticket_direct /
+> sponsor_implicit_guest_direct`). The removal claimed above did **not** take
+> effect for this key — only `8oxP5fEc...` was actually removed. Because this
+> key leaked in an old client bundle, anyone holding it could still drain the
+> trial pool (currently ~0.728 NEAR) and exhaust the 100/day onboarding limit
+> (no key disclosure or content access).
+
+> **✅ Resolved — removed on-chain 2026-06-10:** `remove_onboarding_key`
+> executed via the owner signing path, tx
+> `6AMKGJSuT9j6yzDJ1bgo3YCeiUuQZsyHYyuExwNv88jf`. Verified after removal:
+> `is_onboarding_key(d7DFgYQX...)` → `false`, and
+> `scripts/list-onboarding-keys.mjs` shows exactly one limited onboarding key
+> (`ed25519:9orHyMRrgbG7VcabT1KEMaKSgj7PqZh5QqPU1F1zuZDs`).
 
 > **Deploy Runbook (Faz 0):**
 > 1. List current onboarding keys and identify the old key:
@@ -216,8 +234,23 @@ playback **undetected**; it cannot recover the plaintext key or grant access.
 - Do **not** describe content as integrity-protected / tamper-proof / HMAC-backed
   anywhere. (Earlier internal notes that claimed "HMAC-SHA256 already
   implemented" were incorrect; no HMAC exists in the codebase.)
-- Post-alpha roadmap: per-chunk AES-256-GCM **or** encrypt-then-HMAC, plus CID
-  multihash verification in `media-delivery` before returning bytes.
+- Post-alpha roadmap: per-chunk AES-256-GCM **or** encrypt-then-HMAC (authenticated
+  encryption is still the real fix; CID verification below does not authenticate
+  the ciphertext against the *key*, only against the content address).
+
+**Partial mitigation shipped (2026-06-10):** CID multihash verification for
+single-block raw-codec CIDv1 ("bafkrei...") content. Encrypted segments are
+stored as raw CIDs whose address *is* the sha2-256 of the ciphertext bytes, so a
+gateway that substitutes different bytes is now detected and rejected:
+- Client (default read path, even with the media-delivery worker disabled):
+  `apps/web/lib/ipfs/integrity.ts`, enforced in
+  `apps/web/lib/video-delivery-player.ts` before a segment is decrypted.
+- Edge worker: `workers/media-delivery/src/index.ts` re-verifies single-segment
+  raw-CID full GETs (escape hatch `VERIFY_CID_INTEGRITY=false`).
+Scope/limits: only raw-sha256 CIDs on full (non-Range) requests; CIDv0, dag-pb
+roots and directory sub-paths pass through unverified. This is content-address
+integrity, **not** AEAD — it does not detect a gateway that returns valid bytes
+for a *wrong* CID, nor does it replace authenticated encryption.
 
 ### 6. Pause Bypass in Prepaid Functions
 

@@ -12,3 +12,8 @@ export {
   markGatewayUnhealthyByUrl,
   getBestGateway,
 } from './gateway';
+
+export {
+  rawSha256CidFromRef,
+  verifyRawCidContent,
+} from './integrity';
