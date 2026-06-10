@@ -176,6 +176,46 @@ describe('access-grants', () => {
         expect(wallet.signAndSendTransaction).toHaveBeenCalledTimes(1);
     });
 
+    it('drops the provisioned key when the wallet rejects the batched approval', async () => {
+        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';
+
+        const wallet = {
+            signAndSendTransaction: vi.fn(async () => ({})),
+            signAndSendTransactions: vi.fn(async () => {
+                throw new Error('User rejected the request');
+            }),
+        };
+
+        const { ensureSessionGrant } = await import('@/lib/access-grants');
+        await expect(ensureSessionGrant({
+            accountId: 'alice.testnet',
+            scope: 'Play',
+            resourceId: 'video-1',
+            wallet: wallet as never,
+        })).rejects.toThrow('User rejected the request');
+
+        // The key never landed on-chain, so the local secret must not survive.
+        const { getSignlessAccessKey } = await import('@/lib/signless-access-key');
+        expect(await getSignlessAccessKey('alice.testnet')).toBeNull();
+    });
+
+    it('keeps the signless key out of the default near-api-js keystore namespace', async () => {
+        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
+
+        const { KeyPair } = await import('near-api-js');
+        const { persistSignlessAccessKey, getSignlessAccessKey } = await import('@/lib/signless-access-key');
+        const { BrowserKeyStore } = await import('@/lib/keystore-v7');
+
+        await persistSignlessAccessKey('alice.testnet', KeyPair.fromRandom('ed25519'));
+
+        expect(await getSignlessAccessKey('alice.testnet')).not.toBeNull();
+        // Trial/guest full-access keys and legacy session-key readers (w3auth,
+        // KMS local signing) use the default store; the signless key must not
+        // be visible there, and clearing it must not touch their slot.
+        expect(await new BrowserKeyStore().getKey('testnet', 'alice.testnet')).toBeNull();
+    });
+
     it('skips signless provisioning for managed wallets', async () => {
         process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
         process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';

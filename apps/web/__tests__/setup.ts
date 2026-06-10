@@ -191,24 +191,34 @@ vi.mock('near-api-js', () => ({
 
 const mockKeyStore = new Map<string, MockKeyPair>();
 
+// Mirrors the production prefix behavior: stores constructed with different
+// prefixes (e.g. the signless keystore) must not see each other's keys.
+const DEFAULT_MOCK_KEYSTORE_PREFIX = 'near-api-js:keystore:';
+
 class MockBrowserKeyStore {
+  private prefix: string;
+
+  constructor(prefix: string = DEFAULT_MOCK_KEYSTORE_PREFIX) {
+    this.prefix = prefix;
+  }
+
   getKey = vi.fn(async (networkId: string, accountId: string) => {
-    const key = `${accountId}:${networkId}`;
+    const key = `${this.prefix}${accountId}:${networkId}`;
     return mockKeyStore.get(key) || null;
   });
 
   setKey = vi.fn(async (networkId: string, accountId: string, keyPair: MockKeyPair) => {
-    const key = `${accountId}:${networkId}`;
+    const key = `${this.prefix}${accountId}:${networkId}`;
     mockKeyStore.set(key, keyPair);
   });
 
   removeKey = vi.fn(async (networkId: string, accountId: string) => {
-    const key = `${accountId}:${networkId}`;
+    const key = `${this.prefix}${accountId}:${networkId}`;
     mockKeyStore.delete(key);
   });
 
   getSigner = vi.fn(async (networkId: string, accountId: string) => {
-    const keyPair = mockKeyStore.get(`${accountId}:${networkId}`);
+    const keyPair = mockKeyStore.get(`${this.prefix}${accountId}:${networkId}`);
     if (!keyPair) return null;
     return { keyPair, sign: (msg: Uint8Array) => keyPair.sign(msg) };
   });
@@ -218,8 +228,8 @@ class MockBrowserKeyStore {
   getAccounts = vi.fn(async (networkId: string) => {
     const accounts: string[] = [];
     for (const key of mockKeyStore.keys()) {
-      if (key.endsWith(`:${networkId}`)) {
-        accounts.push(key.replace(`:${networkId}`, ''));
+      if (key.startsWith(this.prefix) && key.endsWith(`:${networkId}`)) {
+        accounts.push(key.slice(this.prefix.length, key.length - `:${networkId}`.length));
       }
     }
     return accounts;
@@ -392,7 +402,7 @@ process.env.NEXT_PUBLIC_NFT_CONTRACT_ID = 'test-contract.testnet';
 
 export function setupMockSessionKey(accountId: string, networkId: string = 'testnet'): MockKeyPair {
   const keyPair = new MockKeyPair();
-  mockKeyStore.set(`${accountId}:${networkId}`, keyPair);
+  mockKeyStore.set(`${DEFAULT_MOCK_KEYSTORE_PREFIX}${accountId}:${networkId}`, keyPair);
   return keyPair;
 }
 

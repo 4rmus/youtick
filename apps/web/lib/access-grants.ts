@@ -348,10 +348,17 @@ async function tryWalletGrantWithSignlessProvision(
         return false;
     }
 
-    await wallet.signAndSendTransactions({
-        transactions: [transaction, provision.transaction],
-    });
+    // Persist before sending: redirect wallets navigate away without resolving,
+    // and the secret must survive that round-trip for the on-chain key to be usable.
     await provision.commit();
+    try {
+        await wallet.signAndSendTransactions({
+            transactions: [transaction, provision.transaction],
+        });
+    } catch (error) {
+        await provision.rollback().catch(() => {});
+        throw error;
+    }
     return true;
 }
 

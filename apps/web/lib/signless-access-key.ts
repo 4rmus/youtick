@@ -10,7 +10,10 @@ const SIGNLESS_ACCESS_KEY_ALLOWANCE_YOCTO = nearAmountToYocto(GAS_CONSTANTS.sess
 // Below this remaining allowance a grant call may no longer fit; reprovision.
 const SIGNLESS_ACCESS_KEY_MIN_ALLOWANCE_YOCTO = nearAmountToYocto(0.01);
 
-const signlessKeyStore = new BrowserKeyStore();
+// Dedicated namespace: the default `near-api-js:keystore:` prefix is shared by
+// trial/guest full-access keys and legacy session-key readers (w3auth, KMS
+// local signing). The signless FC key must never shadow or get deleted with those.
+const signlessKeyStore = new BrowserKeyStore('youtick:signless-keystore:');
 
 export function createSignlessAccessKey(): KeyPair {
     return KeyPair.fromRandom('ed25519');
@@ -45,7 +48,13 @@ export function buildSignlessAccessKeyRequest(keyPair: KeyPair) {
 
 export interface SignlessKeyProvision {
     transaction: { receiverId: string; actions: unknown[] };
+    /** Persist the key locally. Call BEFORE sending: redirect wallets navigate
+     * away and never resolve, which would otherwise lose the secret while the
+     * AddKey lands on-chain. */
     commit(): Promise<void>;
+    /** Drop the persisted key after a failed send so the next signless attempt
+     * does not run against a key that never landed on-chain. */
+    rollback(): Promise<void>;
 }
 
 type OnChainKeyState = 'usable' | 'missing' | 'unknown';
@@ -137,9 +146,16 @@ export async function prepareSignlessKeyProvision(accountId: string): Promise<Si
     }
 
     const keyPair = createSignlessAccessKey();
+    const publicKey = keyPair.getPublicKey().toString();
     return {
         transaction: buildAddSignlessKeyTransaction(accountId, keyPair),
         commit: () => persistSignlessAccessKey(accountId, keyPair),
+        rollback: async () => {
+            const current = await getSignlessAccessKey(accountId);
+            if (current && current.getPublicKey().toString() === publicKey) {
+                await clearSignlessAccessKey(accountId);
+            }
+        },
     };
 }
 
@@ -163,11 +179,15 @@ export async function signAndSendWithSignlessProvision(
     }
 
     if (provision) {
-        const result = await wallet.signAndSendTransactions({
-            transactions: [...transactions, provision.transaction],
-        });
         await provision.commit();
-        return result;
+        try {
+            return await wallet.signAndSendTransactions({
+                transactions: [...transactions, provision.transaction],
+            });
+        } catch (error) {
+            await provision.rollback().catch(() => {});
+            throw error;
+        }
     }
 
     if (transactions.length === 1) {
