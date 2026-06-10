@@ -2,7 +2,7 @@ import { Account, actions, KeyPair, KeyPairSigner, type KeyPairString } from 'ne
 import { GAS_CONSTANTS, NEAR_CONFIG } from './constants';
 import { getProvider, viewContract } from './near';
 import { getCurrentRpcUrl } from './rpc-failover';
-import { getSignlessAccessKey } from './signless-access-key';
+import { getSignlessAccessKey, prepareSignlessKeyProvision, type SignlessKeyProvision } from './signless-access-key';
 import type { WalletInstance } from './types';
 
 const ACCESS_GRANT_CACHE_PREFIX = 'youtick:access-grant:';
@@ -303,7 +303,14 @@ export async function ensureSessionGrant(params: {
             prepared.transaction,
         );
         if (!issuedWithSignlessKey) {
-            await params.wallet.signAndSendTransaction(prepared.transaction);
+            const healed = await tryWalletGrantWithSignlessProvision(
+                params.accountId,
+                params.wallet,
+                prepared.transaction,
+            );
+            if (!healed) {
+                await params.wallet.signAndSendTransaction(prepared.transaction);
+            }
         }
 
         persistSessionGrant(prepared.grant);
@@ -314,6 +321,45 @@ export async function ensureSessionGrant(params: {
 
     pendingGrantPromises.set(cacheStorageKey, grantPromise);
     return grantPromise;
+}
+
+/**
+ * Wallet-signed grant fallback: the wallet is about to open anyway, so when
+ * the account has no usable signless key, piggyback an AddKey action into the
+ * same approval. One prompt issues this grant AND provisions the key, keeping
+ * every later grant signless.
+ */
+async function tryWalletGrantWithSignlessProvision(
+    accountId: string,
+    wallet: WalletInstance,
+    transaction: PreparedSessionGrant['transaction'],
+): Promise<boolean> {
+    if (wallet.managedAccountKind || typeof wallet.signAndSendTransactions !== 'function') {
+        return false;
+    }
+
+    let provision: SignlessKeyProvision | null = null;
+    try {
+        provision = await prepareSignlessKeyProvision(accountId);
+    } catch {
+        provision = null;
+    }
+    if (!provision) {
+        return false;
+    }
+
+    // Persist before sending: redirect wallets navigate away without resolving,
+    // and the secret must survive that round-trip for the on-chain key to be usable.
+    await provision.commit();
+    try {
+        await wallet.signAndSendTransactions({
+            transactions: [transaction, provision.transaction],
+        });
+    } catch (error) {
+        await provision.rollback().catch(() => {});
+        throw error;
+    }
+    return true;
 }
 
 async function tryIssueSessionGrantWithSignlessKey(

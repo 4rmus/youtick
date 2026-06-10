@@ -10,7 +10,7 @@ import { clearSessionGrantCache } from '@/lib/access-grants';
 import { clearW3AuthCache } from '@/lib/crust/w3auth';
 import { clearManagedNearAccount, migrateLegacyManagedNearAccount, writeManagedNearAccount, type ManagedNearAccountKind } from '@/lib/managed-near-account';
 import { TrialWallet } from '@/lib/trial-wallet';
-import { buildSignlessAccessKeyRequest, clearSignlessAccessKey, createSignlessAccessKey, persistSignlessAccessKey } from '@/lib/signless-access-key';
+import { buildSignlessAccessKeyRequest, clearSignlessAccessKey, createSignlessAccessKey, persistSignlessAccessKey, reconcileSignlessAccessKey } from '@/lib/signless-access-key';
 
 interface WalletContextValue {
     accountId: string | null;
@@ -309,6 +309,9 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             const connectedAccountId = accounts[0]?.accountId;
             if (signlessKeyPair && connectedAccountId) {
                 await persistSignlessAccessKey(connectedAccountId, signlessKeyPair);
+                // Some wallets ignore the addFunctionCallKey request; verify in the
+                // background and drop the local secret if the key never lands on-chain.
+                void reconcileSignlessAccessKey(connectedAccountId, signlessKeyPair).catch(() => {});
             }
             applyConnectedWallet(wallet, accounts);
             setInitError(null);

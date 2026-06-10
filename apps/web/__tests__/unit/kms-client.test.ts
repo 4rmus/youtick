@@ -243,7 +243,12 @@ describe('kms/client', () => {
       required_shares: 2,
     });
 
-    const localKey = setupMockSessionKey('alice.testnet');
+    // Seed through the signless module: it uses a dedicated keystore namespace,
+    // separate from the default store used by trial/guest full-access keys.
+    const { KeyPair } = await import('near-api-js');
+    const { persistSignlessAccessKey } = await import('@/lib/signless-access-key');
+    const localKey = KeyPair.fromRandom('ed25519');
+    await persistSignlessAccessKey('alice.testnet', localKey);
     const localPublicKey = localKey.getPublicKey().toString();
     Object.assign(window, {
       crypto: globalThis.crypto,

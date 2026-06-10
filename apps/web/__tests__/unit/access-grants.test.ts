@@ -20,6 +20,7 @@ describe('access-grants', () => {
     });
 
     afterEach(() => {
+        vi.restoreAllMocks();
         vi.resetModules();
         clearMockKeyStore();
         sessionStorage.clear();
@@ -109,6 +110,132 @@ describe('access-grants', () => {
         expect(accountSignSpy.mock.calls[0][0]).toMatchObject({
             receiverId: 'access-1773606802388.v2-0.utick.testnet',
         });
+    });
+
+    it('provisions a signless key alongside the wallet-signed grant when none exists', async () => {
+        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';
+
+        const wallet = {
+            signAndSendTransaction: vi.fn(async () => ({})),
+            signAndSendTransactions: vi.fn(async () => []),
+        };
+
+        const { ensureSessionGrant } = await import('@/lib/access-grants');
+        const grant = await ensureSessionGrant({
+            accountId: 'alice.testnet',
+            scope: 'Play',
+            resourceId: 'video-1',
+            wallet: wallet as never,
+        });
+
+        expect(grant).toMatchObject({ accountId: 'alice.testnet', scope: 'Play' });
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+        expect(wallet.signAndSendTransactions).toHaveBeenCalledTimes(1);
+
+        const { transactions } = (wallet.signAndSendTransactions as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+            transactions: Array<{ receiverId: string; actions: Array<{ type?: string; methodName?: string }> }>;
+        };
+        expect(transactions).toHaveLength(2);
+        expect(transactions[0].receiverId).toBe('access-1773606802388.v2-0.utick.testnet');
+        expect(transactions[0].actions[0]).toMatchObject({ methodName: 'issue_session_grant' });
+        expect(transactions[1].receiverId).toBe('alice.testnet');
+        expect(transactions[1].actions[0]).toMatchObject({ type: 'AddKey' });
+
+        // The provisioned key is persisted so the next grant is signless.
+        const { getSignlessAccessKey } = await import('@/lib/signless-access-key');
+        expect(await getSignlessAccessKey('alice.testnet')).not.toBeNull();
+    });
+
+    it('does not provision a second key when the stored key state is not confirmed missing', async () => {
+        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';
+
+        const { Account, KeyPair } = await import('near-api-js');
+        const { persistSignlessAccessKey } = await import('@/lib/signless-access-key');
+        // Stored key exists but the signless send fails (e.g. transient RPC error).
+        vi.spyOn(Account.prototype, 'signAndSendTransaction').mockRejectedValue(new Error('network down'));
+        await persistSignlessAccessKey('alice.testnet', KeyPair.fromRandom('ed25519'));
+
+        const wallet = {
+            signAndSendTransaction: vi.fn(async () => ({})),
+            signAndSendTransactions: vi.fn(async () => []),
+        };
+
+        const { ensureSessionGrant } = await import('@/lib/access-grants');
+        await ensureSessionGrant({
+            accountId: 'alice.testnet',
+            scope: 'Play',
+            resourceId: 'video-1',
+            wallet: wallet as never,
+        });
+
+        // On-chain state is "unknown" (mock provider), so no AddKey churn:
+        // fall back to the plain wallet-signed grant and keep the stored key.
+        expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops the provisioned key when the wallet rejects the batched approval', async () => {
+        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';
+
+        const wallet = {
+            signAndSendTransaction: vi.fn(async () => ({})),
+            signAndSendTransactions: vi.fn(async () => {
+                throw new Error('User rejected the request');
+            }),
+        };
+
+        const { ensureSessionGrant } = await import('@/lib/access-grants');
+        await expect(ensureSessionGrant({
+            accountId: 'alice.testnet',
+            scope: 'Play',
+            resourceId: 'video-1',
+            wallet: wallet as never,
+        })).rejects.toThrow('User rejected the request');
+
+        // The key never landed on-chain, so the local secret must not survive.
+        const { getSignlessAccessKey } = await import('@/lib/signless-access-key');
+        expect(await getSignlessAccessKey('alice.testnet')).toBeNull();
+    });
+
+    it('keeps the signless key out of the default near-api-js keystore namespace', async () => {
+        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
+
+        const { KeyPair } = await import('near-api-js');
+        const { persistSignlessAccessKey, getSignlessAccessKey } = await import('@/lib/signless-access-key');
+        const { BrowserKeyStore } = await import('@/lib/keystore-v7');
+
+        await persistSignlessAccessKey('alice.testnet', KeyPair.fromRandom('ed25519'));
+
+        expect(await getSignlessAccessKey('alice.testnet')).not.toBeNull();
+        // Trial/guest full-access keys and legacy session-key readers (w3auth,
+        // KMS local signing) use the default store; the signless key must not
+        // be visible there, and clearing it must not touch their slot.
+        expect(await new BrowserKeyStore().getKey('testnet', 'alice.testnet')).toBeNull();
+    });
+
+    it('skips signless provisioning for managed wallets', async () => {
+        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';
+
+        const wallet = {
+            managedAccountKind: 'guest',
+            signAndSendTransaction: vi.fn(async () => ({})),
+            signAndSendTransactions: vi.fn(async () => []),
+        };
+
+        const { ensureSessionGrant } = await import('@/lib/access-grants');
+        await ensureSessionGrant({
+            accountId: 'guest-1.testnet',
+            scope: 'Play',
+            resourceId: 'video-1',
+            wallet: wallet as never,
+        });
+
+        expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledTimes(1);
     });
 
     it('clears grants by account prefix', async () => {
