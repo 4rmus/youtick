@@ -22,6 +22,7 @@ import {
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { useEvmPayment } from '@/lib/evm/useEvmPayment';
 import { claimFreeTicketDirect, hasOnboardingKey } from '@/lib/gift-service';
+import { signAndSendWithSignlessProvision } from '@/lib/signless-access-key';
 import { resolvePreferredMediaUrl } from '@/lib/video-delivery';
 import { DEPOSIT_CONSTANTS } from '@/lib/constants';
 
@@ -278,7 +279,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     ),
                 ],
             };
-            await wallet.signAndSendTransaction(purchaseTx);
+            // Provision the signless playback key in the same wallet approval if missing.
+            await signAndSendWithSignlessProvision(wallet, accountId, [purchaseTx]);
 
             // KMS: Access control via on-chain ticket ownership — no group management needed
             await waitForTicketAccess(accountId);
@@ -324,7 +326,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                 ],
             };
 
-            await wallet.signAndSendTransaction(purchaseTx);
+            // Provision the signless playback key in the same wallet approval if missing.
+            await signAndSendWithSignlessProvision(wallet, accountId, [purchaseTx]);
 
             // KMS: Access control via on-chain ticket ownership — no group management needed
             await waitForTicketAccess(accountId);
@@ -361,12 +364,11 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
             });
 
             const wallet = await getWallet();
-            await wallet.signAndSendTransactions({
-                transactions: [
-                    ...swapTransactions,
-                    ticketPayment,
-                ],
-            });
+            // Provision the signless playback key in the same wallet approval if missing.
+            await signAndSendWithSignlessProvision(wallet, accountId, [
+                ...swapTransactions,
+                ticketPayment,
+            ]);
 
             await waitForTicketAccess(accountId);
             if (onPurchaseSuccess) onPurchaseSuccess();
@@ -606,7 +608,8 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     ),
                 ],
             };
-            await wallet.signAndSendTransaction(purchaseTx);
+            // Provision the signless playback key in the same wallet approval if missing.
+            await signAndSendWithSignlessProvision(wallet, accountId, [purchaseTx]);
 
             await waitForTicketAccess(accountId);
 

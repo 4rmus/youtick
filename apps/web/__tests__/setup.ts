@@ -171,6 +171,9 @@ vi.mock('near-api-js', () => ({
     addKey: vi.fn((publicKey, accessKey) => ({
       type: 'AddKey', publicKey, accessKey
     })),
+    addFunctionCallAccessKey: vi.fn((publicKey, receiverId, methodNames, allowance) => ({
+      type: 'AddKey', publicKey, receiverId, methodNames, allowance
+    })),
     deleteKey: vi.fn((publicKey) => ({
       type: 'DeleteKey', publicKey
     })),
