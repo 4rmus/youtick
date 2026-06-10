@@ -5,6 +5,7 @@ export interface Env {
     CACHE_TTL_SECONDS?: string;
     CACHE_VERSION?: string;
     UPSTREAM_TIMEOUT_MS?: string;
+    VERIFY_CID_INTEGRITY?: string;
 }
 
 type JsonBody = Record<string, unknown>;
@@ -21,6 +22,18 @@ const DEFAULT_IPFS_GATEWAY_BASES = [
 const DEFAULT_CACHE_TTL_SECONDS = 300;
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 4_000;
 const CID_PATTERN = /^(Qm[1-9A-HJ-NP-Za-km-z]{44,}|ba[a-z2-7]{57,})$/;
+
+// Content integrity: media is encrypted with AES-CTR (unauthenticated), so a
+// malicious gateway could serve tampered ciphertext. For CIDv1 raw-codec
+// blocks (sha2-256), the CID *is* the digest of the raw bytes, so we can
+// re-verify the gateway response against the content address. This only
+// applies to single-block raw CIDs ("bafkrei...") fetched as a full GET;
+// dag-pb/UnixFS roots, sub-paths and Range responses are passed through
+// unchanged because their bytes are not a flat hash of the request CID.
+const RAW_CODEC = 0x55;
+const SHA2_256_CODE = 0x12;
+const SHA2_256_LENGTH = 32;
+const BASE32_LOWER_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -84,7 +97,34 @@ async function handleIpfsRequest(request: Request, env: Env, ctx: ExecutionConte
         }, upstream.status === 404 ? 404 : 502);
     }
 
-    const response = withDeliveryHeaders(request, env, upstream.response, {
+    let upstreamResponse = upstream.response;
+
+    // Re-verify content addressing for single-block raw CIDs on full GETs so a
+    // compromised gateway cannot substitute tampered ciphertext undetected.
+    const canVerifyIntegrity = isCidIntegrityEnabled(env)
+        && request.method === 'GET'
+        && !rangeHeader
+        && parsedPath.singleSegment
+        && upstreamResponse.status === 200
+        && parseRawSha256CidDigest(parsedPath.cid) !== null;
+
+    if (canVerifyIntegrity) {
+        const verifiedBytes = await upstreamResponse.arrayBuffer();
+        if (!await matchesRawCidDigest(parsedPath.cid, new Uint8Array(verifiedBytes))) {
+            return jsonResponse(request, env, {
+                error: 'cid_integrity_mismatch',
+                cid: parsedPath.cid,
+                upstream: upstream.upstreamBase,
+            }, 502);
+        }
+        upstreamResponse = new Response(verifiedBytes, {
+            status: upstreamResponse.status,
+            statusText: upstreamResponse.statusText,
+            headers: upstreamResponse.headers,
+        });
+    }
+
+    const response = withDeliveryHeaders(request, env, upstreamResponse, {
         cacheState: cacheKey ? 'MISS' : 'BYPASS',
         upstreamBase: upstream.upstreamBase,
         cacheTtlSeconds: getCacheTtlSeconds(env),
@@ -163,7 +203,7 @@ async function fetchFromGateways(
     return { ok: false, status: lastStatus };
 }
 
-function parseIpfsPath(pathname: string): { ok: true; path: string } | { ok: false; error: string } {
+function parseIpfsPath(pathname: string): { ok: true; path: string; cid: string; singleSegment: boolean } | { ok: false; error: string } {
     const rawPath = pathname.slice('/ipfs/'.length);
     if (!rawPath) {
         return { ok: false, error: 'missing_cid' };
@@ -197,7 +237,100 @@ function parseIpfsPath(pathname: string): { ok: true; path: string } | { ok: fal
     return {
         ok: true,
         path: decodedSegments.map((segment) => encodeURIComponent(segment)).join('/'),
+        cid,
+        singleSegment: decodedSegments.length === 1,
     };
+}
+
+function isCidIntegrityEnabled(env: Env): boolean {
+    return (env.VERIFY_CID_INTEGRITY ?? 'true').trim().toLowerCase() !== 'false';
+}
+
+function decodeBase32Lower(input: string): Uint8Array | null {
+    let bits = 0;
+    let value = 0;
+    const output: number[] = [];
+    for (const char of input) {
+        const index = BASE32_LOWER_ALPHABET.indexOf(char);
+        if (index === -1) {
+            return null;
+        }
+        value = (value << 5) | index;
+        bits += 5;
+        if (bits >= 8) {
+            bits -= 8;
+            output.push((value >> bits) & 0xff);
+        }
+    }
+    return Uint8Array.from(output);
+}
+
+function readUvarint(bytes: Uint8Array, offset: number): { value: number; next: number } | null {
+    let result = 0;
+    let shift = 0;
+    let pos = offset;
+    while (pos < bytes.length) {
+        const byte = bytes[pos];
+        pos += 1;
+        result |= (byte & 0x7f) << shift;
+        if ((byte & 0x80) === 0) {
+            return { value: result >>> 0, next: pos };
+        }
+        shift += 7;
+        if (shift > 35) {
+            return null;
+        }
+    }
+    return null;
+}
+
+/**
+ * Return the 32-byte sha2-256 digest embedded in a CIDv1 raw-codec CID,
+ * or null when the CID is any other shape (CIDv0, dag-pb, other hashes).
+ */
+function parseRawSha256CidDigest(cid: string): Uint8Array | null {
+    if (!cid.startsWith('b')) {
+        return null;
+    }
+    const bytes = decodeBase32Lower(cid.slice(1));
+    if (!bytes) {
+        return null;
+    }
+    const version = readUvarint(bytes, 0);
+    if (!version || version.value !== 1) {
+        return null;
+    }
+    const codec = readUvarint(bytes, version.next);
+    if (!codec || codec.value !== RAW_CODEC) {
+        return null;
+    }
+    const hashCode = readUvarint(bytes, codec.next);
+    if (!hashCode || hashCode.value !== SHA2_256_CODE) {
+        return null;
+    }
+    const hashLength = readUvarint(bytes, hashCode.next);
+    if (!hashLength || hashLength.value !== SHA2_256_LENGTH) {
+        return null;
+    }
+    const digest = bytes.slice(hashLength.next, hashLength.next + SHA2_256_LENGTH);
+    return digest.length === SHA2_256_LENGTH ? digest : null;
+}
+
+async function matchesRawCidDigest(cid: string, bytes: Uint8Array): Promise<boolean> {
+    const expected = parseRawSha256CidDigest(cid);
+    if (!expected) {
+        // Not a verifiable shape — never block content we cannot address-check.
+        return true;
+    }
+    const actual = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+    if (actual.length !== expected.length) {
+        return false;
+    }
+    let diff = 0;
+    for (let i = 0; i < actual.length; i += 1) {
+        diff |= actual[i] ^ expected[i];
+    }
+    return diff === 0;
 }
 
 function buildCacheKey(request: Request, env: Env): Request {

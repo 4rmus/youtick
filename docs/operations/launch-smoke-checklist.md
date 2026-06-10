@@ -31,12 +31,27 @@ separately if/when exercised, rather than claiming an unproven 9/9.
 | Buy ticket | buyer (different account) | `buy_ticket` succeeds; `has_ticket` true | `__________` |
 | Watch | buyer | playback reconstructs key (≥3 shares) and video starts | screenshot / note |
 
-## USDC path (experimental — record if exercised)
+## USDC path — RECORDED GREEN (2026-06-10)
 
-| Step | Account | Expected | Tx hash |
+Verified end-to-end on mainnet: buyer `novilusio.near` acquired NEAR-native USDC
+via Rhea/Ref and purchased a ticket for event `f95dd20d-fa77-4c1d-8526-16b6271bafbe`
+(creator `aramustafa.near`, price 0.5 USDC), then issued a Play session grant and
+watched. Post-state confirmed by read-only view calls.
+
+| Step | Account | Expected | Tx hash / evidence |
 |---|---|---|---|
-| Buy ticket with USDC | buyer | `ft_transfer_call` → ticket minted | `__________` |
-| Watch | buyer | playback starts | note |
+| Wrap NEAR → wNEAR | buyer | `near_deposit` on `wrap.near` | `RBhND6jYjSbBQiNCdM3BhzqtJGh3DsGSzY95o3rmXZy` |
+| Swap wNEAR → USDC (Rhea/Ref) | buyer | `ft_transfer_call` → `v2.ref-finance.near` (pools 5470, 4179) | `3VMUhPU8dabXnAJxiFPHzXa5ncQxd7YFMJ6XHwrddigP` |
+| Buy ticket with USDC | buyer | `ft_transfer_call` USDC → `youtick.near` `buy_ticket` (amount 500000); `has_ticket` true | `4ktUNKqz49kCheDMaXAGbY8Ejz1bdHxj5vKiegiRehEY` |
+| Issue Play grant + watch | buyer | `issue_session_grant` (scope Play, resource = video) on `access.youtick.near`; grant recorded, not revoked | `7XF8ukHA2sJdZxpZYcvVW7gAgyfeHLKzKFseHnNb86PQ` |
+
+Read-only post-state (2026-06-10):
+- `has_ticket(novilusio.near, f95dd20d-…)` → `true`
+- `get_event(f95dd20d-…)` → exists, `price_usdc: "500000"`, creator `aramustafa.near`
+- `get_session_grant(ed25519:9HSBbRnxW874FLjJz1zr1yqmh3BPPiGrG9mbonU6TLTc)` → Play scope,
+  resource matches video, origin+device bound, `revoked:false`
+
+Watch URL: <https://youtick.net/watch?cid=f95dd20d-fa77-4c1d-8526-16b6271bafbe>
 
 ## USDT path (experimental — record if exercised)
 

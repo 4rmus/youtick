@@ -244,6 +244,94 @@ describe('media-delivery', () => {
         expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
+    it('verifies and serves a raw-CID block whose bytes match the content address', async () => {
+        // bafkrei... = CIDv1 raw sha2-256 of the exact bytes "hello-segment".
+        const rawCid = 'bafkreiarrg3lo7wwgsxigewmyxxl2k2nuxwfkiljttyfw5rlnyt2dpoykm';
+        const fetchMock = vi.fn(async () => new Response('hello-segment', {
+            status: 200,
+            headers: { 'Content-Type': 'application/octet-stream' },
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request(`https://media.youtick.net/ipfs/${rawCid}`),
+            createEnv(),
+            { waitUntil } as unknown as ExecutionContext,
+        );
+
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe('hello-segment');
+        expect(cache.put).toHaveBeenCalledOnce();
+    });
+
+    it('rejects a raw-CID block when the gateway returns tampered bytes', async () => {
+        const rawCid = 'bafkreiarrg3lo7wwgsxigewmyxxl2k2nuxwfkiljttyfw5rlnyt2dpoykm';
+        const fetchMock = vi.fn(async () => new Response('tampered-bytes', {
+            status: 200,
+            headers: { 'Content-Type': 'application/octet-stream' },
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request(`https://media.youtick.net/ipfs/${rawCid}`),
+            createEnv(),
+            { waitUntil } as unknown as ExecutionContext,
+        );
+
+        expect(response.status).toBe(502);
+        expect(await response.json()).toMatchObject({ error: 'cid_integrity_mismatch', cid: rawCid });
+        expect(cache.put).not.toHaveBeenCalled();
+    });
+
+    it('skips integrity verification for sub-path requests under a raw CID', async () => {
+        const rawCid = 'bafkreiarrg3lo7wwgsxigewmyxxl2k2nuxwfkiljttyfw5rlnyt2dpoykm';
+        const fetchMock = vi.fn(async () => new Response('child-block-bytes', { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request(`https://media.youtick.net/ipfs/${rawCid}/segments/0001.bin`),
+            createEnv(),
+            { waitUntil } as unknown as ExecutionContext,
+        );
+
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe('child-block-bytes');
+    });
+
+    it('passes through dag-pb CIDs without integrity verification', async () => {
+        const fetchMock = vi.fn(async () => new Response('dag-pb-bytes', { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request('https://media.youtick.net/ipfs/bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja'),
+            createEnv(),
+            { waitUntil } as unknown as ExecutionContext,
+        );
+
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe('dag-pb-bytes');
+    });
+
+    it('honours VERIFY_CID_INTEGRITY=false as an escape hatch', async () => {
+        const rawCid = 'bafkreiarrg3lo7wwgsxigewmyxxl2k2nuxwfkiljttyfw5rlnyt2dpoykm';
+        const fetchMock = vi.fn(async () => new Response('tampered-bytes', { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request(`https://media.youtick.net/ipfs/${rawCid}`),
+            createEnv({ VERIFY_CID_INTEGRITY: 'false' }),
+            { waitUntil } as unknown as ExecutionContext,
+        );
+
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe('tampered-bytes');
+    });
+
     it('rejects invalid CID paths before upstream fetch', async () => {
         const fetchMock = vi.fn();
         vi.stubGlobal('fetch', fetchMock);
