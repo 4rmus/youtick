@@ -17,9 +17,7 @@ import {
   setOnboardingKey,
   getTrialPoolBalance,
   validateGiftLink,
-  createSponsoredTrialDirect,
   claimFreeTicketDirect,
-  createSponsoredTrial,
   claimGiftWithImplicitAccount,
   generateImplicitTrialAccount
 } from '@/lib/gift-service';
@@ -230,39 +228,6 @@ describe('Gift Service', () => {
     });
   });
 
-  describe('createSponsoredTrialDirect', () => {
-    it('should fail when onboarding key is missing', async () => {
-      clearMockSessionStorage();
-
-      const result = await createSponsoredTrialDirect('testuser');
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Onboarding key unavailable');
-    });
-
-    it('should create trial account when onboarding key is valid', async () => {
-      const onboardingKey = generateKeyPairs(1)[0].secretKey;
-      setMockSessionStorage('onboarding_key:test-contract.testnet', onboardingKey);
-
-      const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          result: {
-            result: Array.from(Buffer.from('true'))
-          }
-        })
-      });
-
-      const result = await createSponsoredTrialDirect('newuser');
-
-      expect(result.success).toBe(true);
-      expect(result.accountId).toBe('newuser.test-contract.testnet');
-
-      global.fetch = originalFetch;
-    });
-  });
-
   describe('claimFreeTicketDirect', () => {
     it('should fail when onboarding key is missing', async () => {
       clearMockSessionStorage();
@@ -315,72 +280,6 @@ describe('Gift Service', () => {
         accountId: result.accountId,
         kind: 'guest',
       });
-    });
-  });
-
-  describe('createSponsoredTrial', () => {
-    it('should return failure when onboarding key is missing', async () => {
-      vi.mocked(sessionStorage.getItem).mockReturnValue(null);
-
-      const result = await createSponsoredTrial('user123');
-
-      expect(result.success).toBe(false);
-    });
-
-    it('should return secretKey on direct success', async () => {
-      const onboardingKey = generateKeyPairs(1)[0].secretKey;
-      setMockSessionStorage('onboarding_key:test-contract.testnet', onboardingKey);
-
-      const originalFetch = global.fetch;
-      // Onboarding key auth check, then signAndSendTransaction
-      global.fetch = vi
-        .fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            result: {
-              result: Array.from(Buffer.from('true'))
-            }
-          })
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            result: {}
-          })
-        });
-
-      const result = await createSponsoredTrial('newaccount');
-
-      expect(result.success).toBe(true);
-      expect(result.secretKey).toBeDefined();
-      expect(result.accountId).toBe('newaccount.test-contract.testnet');
-
-      global.fetch = originalFetch;
-    });
-
-    it('should return failure when direct path fails', async () => {
-      const onboardingKey = generateKeyPairs(1)[0].secretKey;
-      setMockSessionStorage('onboarding_key:test-contract.testnet', onboardingKey);
-
-      const originalFetch = global.fetch;
-      // Direct path will fail (onboarding key auth returns false)
-      global.fetch = vi
-        .fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            result: {
-              result: Array.from(Buffer.from('false'))
-            }
-          })
-        });
-
-      const result = await createSponsoredTrial('failuser');
-
-      expect(result.success).toBe(false);
-
-      global.fetch = originalFetch;
     });
   });
 

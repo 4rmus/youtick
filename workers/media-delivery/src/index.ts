@@ -1,6 +1,5 @@
 export interface Env {
     ALLOWED_ORIGINS?: string;
-    CRUST_READ_ENDPOINT?: string;
     IPFS_GATEWAY_BASES?: string;
     CACHE_TTL_SECONDS?: string;
     CACHE_VERSION?: string;
@@ -11,7 +10,6 @@ export interface Env {
 type JsonBody = Record<string, unknown>;
 
 const DEFAULT_ALLOWED_ORIGINS = 'https://youtick.net,https://www.youtick.net';
-const DEFAULT_CRUST_READ_ENDPOINT = '';
 const DEFAULT_IPFS_GATEWAY_BASES = [
     'https://gateway.lighthouse.storage/ipfs',
     'https://ipfs.io/ipfs',
@@ -143,28 +141,6 @@ async function fetchFromGateways(
     env: Env,
 ): Promise<{ ok: true; response: Response; upstreamBase: string } | { ok: false; status: number; upstreamBase?: string }> {
     let lastStatus = 502;
-    const crustReadEndpoint = getCrustReadEndpoint(env);
-
-    if (crustReadEndpoint && request.method === 'GET' && !request.headers.get('Range')) {
-        const abortable = createAbortableController(getUpstreamTimeoutMs(env));
-        try {
-            const response = await fetch(`${crustReadEndpoint}?arg=${encodeURIComponent(assetPath)}`, {
-                method: 'POST',
-                signal: abortable.controller.signal,
-            });
-
-            if (response.ok) {
-                abortable.cleanup();
-                return { ok: true, response, upstreamBase: crustReadEndpoint };
-            }
-
-            lastStatus = response.status;
-        } catch {
-            lastStatus = 502;
-        } finally {
-            abortable.cleanup();
-        }
-    }
 
     for (const gatewayBase of getGatewayBases(env)) {
         const upstreamUrl = `${gatewayBase}/${assetPath}`;
@@ -438,14 +414,6 @@ function getGatewayBases(env: Env): string[] {
         .split(',')
         .map((value) => value.trim().replace(/\/+$/, ''))
         .filter(Boolean);
-}
-
-function getCrustReadEndpoint(env: Env): string | null {
-    if (env.CRUST_READ_ENDPOINT === '') {
-        return null;
-    }
-
-    return (env.CRUST_READ_ENDPOINT || DEFAULT_CRUST_READ_ENDPOINT).trim().replace(/\/+$/, '') || null;
 }
 
 function getCacheTtlSeconds(env: Env): number {

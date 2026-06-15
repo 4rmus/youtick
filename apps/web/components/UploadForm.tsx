@@ -46,8 +46,8 @@ const getFriendlyStatus = (rawStatus: string, copy: UploadPageCopy): string => {
     if (status.includes('packaging') || status.includes('segment') || status.includes('manifest') || status.includes('delivery') || status.includes('uploading initialization') || status.includes('uploading delivery') || status.includes('uploading encrypted')) return copy.status_delivery;
     if (status.includes('encryption') || status.includes('encrypt') || status.includes('kms') || status.includes('key') || status.includes('storing encryption')) return copy.status_secure_access;
     if (status.includes('mint') || status.includes('blockchain') || status.includes('ticket') || status.includes('nft')) return copy.status_ticket;
-    if (status.includes('storage orders') || status.includes('persistent storage') || status.includes('verifying storage') || status.includes('verifying status')) return copy.status_storage;
-    if (status.includes('storage order failed')) return copy.status_storage_partial;
+    if (status.includes('storage persistence') || status.includes('persistent storage') || status.includes('verifying storage') || status.includes('verifying status')) return copy.status_storage;
+    if (status.includes('storage persistence failed')) return copy.status_storage_partial;
     if (status.includes('success') || status.includes('complete') || status.includes('uploaded')) return copy.status_success;
     if (status.includes('failed') || status.includes('error') || status.includes('cancel') || status.includes('upload failed')) return copy.status_failed;
 

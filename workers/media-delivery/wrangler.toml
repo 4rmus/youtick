@@ -5,7 +5,6 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
-CRUST_READ_ENDPOINT = ""
 IPFS_GATEWAY_BASES = "https://gateway.lighthouse.storage/ipfs,https://ipfs.io/ipfs,https://4everland.io/ipfs,https://w3s.link/ipfs,https://dweb.link/ipfs"
 CACHE_TTL_SECONDS = "300"
 UPSTREAM_TIMEOUT_MS = "4000"

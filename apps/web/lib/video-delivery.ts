@@ -1,6 +1,5 @@
 import { METADATA_SCHEMA } from './constants';
-import { CRUST_CONSTANTS } from './crust/config';
-import { fetchFromGateways } from './ipfs';
+import { fetchFromGateways, getGatewayUrls } from './ipfs';
 import type {
     DeliveryManifestV2,
     DeliverySegment,
@@ -265,15 +264,11 @@ export async function packageVideoForDelivery(file: File): Promise<PackagedDeliv
 export async function warmupGatewayCids(
     items: Array<{ cid: string; kind: 'image' | 'segment' }>,
 ): Promise<void> {
-    const warmupEndpoints = [CRUST_CONSTANTS.READ_ENDPOINT];
-
     await Promise.allSettled(
         items.map(async ({ cid }) => {
             await Promise.allSettled(
-                warmupEndpoints.map(async (endpoint) => {
-                    await fetch(`${endpoint}?arg=${encodeURIComponent(cid)}`, {
-                        method: 'POST',
-                    });
+                getGatewayUrls(cid).slice(0, DELIVERY_WARMUP_GATEWAYS).map(async (url) => {
+                    await fetch(url, { method: 'GET' });
                 }),
             );
         }),

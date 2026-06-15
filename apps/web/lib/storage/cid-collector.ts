@@ -1,9 +1,7 @@
 /**
  * CID Collector
  *
- * Accumulates CID + size pairs that need persistent storage orders.
- * New uploads store delivery assets under one IPFS directory root; legacy
- * callers may still collect individual manifest/segment/media assets.
+ * Accumulates CID + size pairs that need persistence status verification.
  */
 
 export type UploadedAssetType =

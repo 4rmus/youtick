@@ -2,14 +2,29 @@
  * IPFS Gateway Module
  *
  * Multi-gateway failover for IPFS content retrieval.
- *
- * Priority order:
- * 1. Crust API (/api/v0/cat) — fastest reliable path for fresh Crust-pinned content
- * 2. Public IPFS gateways — useful when a CDN-backed gateway becomes faster for this user
  */
 
-import { GatewayConfig, CrustError } from '../crust/types';
-import { IPFS_GATEWAYS, IPFS_CONSTANTS } from './config';
+import { IPFS_GATEWAYS, IPFS_CONSTANTS, type GatewayConfig } from './config';
+
+type IpfsGatewayErrorCode =
+  | 'GATEWAY_UNAVAILABLE'
+  | 'TIMEOUT';
+
+class IpfsGatewayError extends Error {
+  code: IpfsGatewayErrorCode;
+  cause?: Error;
+
+  constructor(code: IpfsGatewayErrorCode, message: string, cause?: Error) {
+    super(message);
+    this.code = code;
+    this.cause = cause;
+    this.name = 'IpfsGatewayError';
+
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, IpfsGatewayError);
+    }
+  }
+}
 
 interface GatewayRuntimeState extends GatewayConfig {
   avgLatencyMs: number | null;
@@ -42,7 +57,6 @@ interface ReadCandidate {
   key: string;
   name: string;
   url: string;
-  method: 'GET' | 'POST';
   gatewayName?: string;
 }
 
@@ -177,7 +191,7 @@ export async function resolveGatewayUrl(
       ? error.errors.map((entry) => entry instanceof Error ? entry.message : String(entry)).join('; ')
       : error instanceof Error ? error.message : String(error);
 
-    throw new CrustError(
+    throw new IpfsGatewayError(
       'GATEWAY_UNAVAILABLE',
       `Could not resolve a responsive gateway for CID ${cid}: ${[...errors, message].filter(Boolean).join('; ')}`,
     );
@@ -185,16 +199,15 @@ export async function resolveGatewayUrl(
 }
 
 /**
- * Fetch content from Crust API and public gateways using a hedged strategy.
+ * Fetch content from media delivery and public gateways using a hedged strategy.
  *
- * We keep Crust in the race because fresh uploads appear there first, but we
- * also remember when a public gateway is faster for the current user and reuse
- * that choice for a short time.
+ * We remember when a route is faster for the current user and reuse that choice
+ * for a short time.
  *
  * @param cid - IPFS CID
  * @param options - Optional fetch options
  * @returns Fetch Response
- * @throws CrustError if all sources fail
+ * @throws IpfsGatewayError if all sources fail
  */
 export async function fetchFromGateways(
   cid: string,
@@ -234,7 +247,7 @@ export async function fetchFromGateways(
   }
 
   if (candidates.length === 0) {
-    throw new CrustError(
+    throw new IpfsGatewayError(
       'GATEWAY_UNAVAILABLE',
       `No healthy IPFS gateways are available for CID ${cid}`,
     );
@@ -255,20 +268,8 @@ function buildReadCandidates(preferredKey?: string): ReadCandidate[] {
       key: `media-delivery:${mediaDeliveryBase}`,
       name: 'media-delivery',
       url: mediaDeliveryBase,
-      method: 'GET' as const,
     }
     : null;
-  const crustCandidates = [
-    { name: 'crust-api-primary', url: IPFS_CONSTANTS.READ_ENDPOINT },
-    { name: 'crust-api-fallback', url: IPFS_CONSTANTS.READ_ENDPOINT_FALLBACK },
-  ]
-    .filter((candidate) => candidate.url && candidate.url.startsWith('https://'))
-    .map<ReadCandidate>((candidate) => ({
-      key: `crust:${candidate.url}`,
-      name: candidate.name,
-      url: candidate.url,
-      method: 'POST',
-    }));
 
   const publicCandidates = getHealthyGateways()
     .slice(0, GATEWAY_PROBE_LIMIT)
@@ -276,15 +277,12 @@ function buildReadCandidates(preferredKey?: string): ReadCandidate[] {
       key: `gateway:${gateway.url}`,
       name: gateway.name,
       url: gateway.url,
-      method: 'GET',
       gatewayName: gateway.name,
     }));
 
   const ordered = [
     mediaDeliveryCandidate,
-    crustCandidates[0],
     publicCandidates[0],
-    crustCandidates[1],
     publicCandidates[1],
     publicCandidates[2],
   ].filter(Boolean) as ReadCandidate[];
@@ -361,9 +359,9 @@ async function hedgeReadCandidates(
         return;
       }
 
-      finishWithError(new CrustError(
+      finishWithError(new IpfsGatewayError(
         'GATEWAY_UNAVAILABLE',
-        `All gateways and Crust API failed for CID ${cid}: ${options.errors.join(', ')}`,
+        `All IPFS read routes failed for CID ${cid}: ${options.errors.join(', ')}`,
       ));
     };
 
@@ -433,12 +431,10 @@ async function fetchReadCandidate(
   cid: string,
   options: Pick<FetchGatewayOptions, 'signal'> & Required<Pick<FetchGatewayOptions, 'timeout'>>,
 ): Promise<Response> {
-  const requestUrl = candidate.method === 'POST'
-    ? `${candidate.url}?arg=${encodeIpfsApiArg(cid)}`
-    : `${candidate.url}/${encodeIpfsGatewayPath(cid)}`;
+  const requestUrl = `${candidate.url}/${encodeIpfsGatewayPath(cid)}`;
   const startedAt = now();
   const response = await fetch(requestUrl, {
-    method: candidate.method,
+    method: 'GET',
     signal: options.signal,
   });
 
@@ -692,8 +688,4 @@ function encodeIpfsGatewayPath(ref: string): string {
     .split('/')
     .map((segment) => encodeURIComponent(segment))
     .join('/');
-}
-
-function encodeIpfsApiArg(ref: string): string {
-  return encodeURIComponent(normalizeIpfsRef(ref));
 }

@@ -7,7 +7,6 @@ import { getRpcEndpoints } from '@/lib/rpc-failover';
 import type { WalletInstance } from '@/lib/types';
 import { clearKmsAuthCache } from '@/lib/kms/client';
 import { clearSessionGrantCache } from '@/lib/access-grants';
-import { clearW3AuthCache } from '@/lib/crust/w3auth';
 import { clearManagedNearAccount, migrateLegacyManagedNearAccount, writeManagedNearAccount, type ManagedNearAccountKind } from '@/lib/managed-near-account';
 import { TrialWallet } from '@/lib/trial-wallet';
 import { buildSignlessAccessKeyRequest, clearSignlessAccessKey, createSignlessAccessKey, persistSignlessAccessKey, reconcileSignlessAccessKey } from '@/lib/signless-access-key';
@@ -47,7 +46,6 @@ function getErrorMessage(error: unknown): string {
 async function clearWalletAuthCaches(accountId: string): Promise<void> {
     clearKmsAuthCache(accountId);
     clearSessionGrantCache(accountId);
-    clearW3AuthCache(accountId);
     await clearSignlessAccessKey(accountId);
 }
 

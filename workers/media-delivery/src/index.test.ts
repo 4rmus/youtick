@@ -23,7 +23,6 @@ async function importHandler(): Promise<TestHandler> {
 function createEnv(overrides?: Partial<Env>): Env {
     return {
         ALLOWED_ORIGINS: 'https://youtick.net,http://localhost:3000,http://localhost:3001',
-        CRUST_READ_ENDPOINT: '',
         IPFS_GATEWAY_BASES: 'https://gateway-a.example/ipfs,https://gateway-b.example/ipfs',
         CACHE_TTL_SECONDS: '120',
         CACHE_VERSION: 'v1',
@@ -100,7 +99,7 @@ describe('media-delivery', () => {
         const handler = await importHandler();
         const response = await handler.fetch(
             new Request('https://media.youtick.net/ipfs/bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja/manifest.json'),
-            createEnv({ CRUST_READ_ENDPOINT: undefined, IPFS_GATEWAY_BASES: undefined }),
+            createEnv({ IPFS_GATEWAY_BASES: undefined }),
             { waitUntil } as unknown as ExecutionContext,
         );
 
@@ -109,29 +108,6 @@ describe('media-delivery', () => {
             'https://gateway.lighthouse.storage/ipfs/bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja/manifest.json',
             expect.objectContaining({ method: 'GET' }),
         );
-    });
-
-    it('uses the Crust read API before public gateways when configured', async () => {
-        const fetchMock = vi.fn(async () => new Response('fresh-manifest', {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-        }));
-        vi.stubGlobal('fetch', fetchMock);
-
-        const handler = await importHandler();
-        const response = await handler.fetch(
-            new Request('https://media.youtick.net/ipfs/bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja/manifest.json'),
-            createEnv({ CRUST_READ_ENDPOINT: 'https://crust.example/api/v0/cat' }),
-            { waitUntil } as unknown as ExecutionContext,
-        );
-
-        expect(response.status).toBe(200);
-        expect(await response.text()).toBe('fresh-manifest');
-        expect(fetchMock).toHaveBeenCalledWith(
-            'https://crust.example/api/v0/cat?arg=bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja%2Fmanifest.json',
-            expect.objectContaining({ method: 'POST' }),
-        );
-        expect(response.headers.get('X-Media-Delivery-Upstream')).toBe('https://crust.example/api/v0/cat');
     });
 
     it('serves cached non-Range GET responses before calling upstream', async () => {

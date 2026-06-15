@@ -15,7 +15,6 @@ control.
 ## Env
 
 - `ALLOWED_ORIGINS`: list of origins the browser is allowed to use.
-- `CRUST_READ_ENDPOINT`: optional legacy Crust read API. If empty, the gateway list is the only read path.
 - `IPFS_GATEWAY_BASES`: comma-separated list of gateway base URLs. The Lighthouse gateway is kept first.
 - `CACHE_TTL_SECONDS`: edge cache lifetime for non-Range GET responses.
 - `CACHE_VERSION`: optional cache bust key.
