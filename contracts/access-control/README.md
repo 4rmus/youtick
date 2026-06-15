@@ -5,7 +5,7 @@ that decryption operators check before releasing key shares.
 
 **Mainnet:** `access.youtick.near`
 **Admin posture:** owner-only on the live build (timelock surface deferred
-for the current alpha — see launch plan §SB-3).
+for the current alpha).
 
 ---
 
@@ -33,8 +33,7 @@ for the current alpha — see launch plan §SB-3).
 - `set_scope_policy`, `set_market_contract`, `set_registry_contract`,
   `pause_scope`, `unpause_scope`, `pause_contract`, `unpause_contract` —
   direct calls; the timelock variants are present in source but **not
-  exported on the live mainnet build** (`#[near]` macro fix prepared as
-  hash `AC4NfQRakBFoCkcK6EqiKBwD93Pb61kPxVjWeHHa3QeC`, deferred for alpha)
+  exported on the live mainnet build** and are deferred for alpha
 - `propose_owner` / `accept_ownership` — two-step ownership transfer
 - `set_owner` — direct override (`#[deprecated]`); use the two-step path
 

@@ -3,15 +3,14 @@
 > Live runtime contract surface for YouTick public alpha.
 
 **Contracts:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`
-**Mainnet `youtick.near` code hash:** `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF` (current live hash, matching the current repository contract build artifact; R2 deploy hash was `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`).
 **Admin posture:** owner-only on `youtick.near`; timelock on `registry.youtick.near`; access timelock deferred for the current alpha (live build does not export `propose_action`/`get_timelock`).
 
 ---
 
 ## How to Read This Page
 
-Documents the source-level contract surface, not proof that each mainnet
-account runs the same WASM — verify with `near contract download-wasm`.
+Documents the source-level contract surface. Verify any live deploy claim with
+`near contract download-wasm` before relying on it operationally.
 
 After the R2 refactor, the `nft-ticket` source is split across:
 

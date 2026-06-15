@@ -35,8 +35,9 @@ short-lived session grants for off-chain authorization. The registry contract is
 the source of truth for active KMS operators.
 
 Encrypted media and manifests are stored on IPFS. Lighthouse is the primary
-write provider through the Storage API Worker. Crust remains a compatibility and
-diagnostic path during the rollout.
+write provider through the Storage API Worker. Playback uses the Media Delivery
+Worker and public IPFS gateway fallback; the legacy Crust runtime fallback has
+been removed.
 
 KMS is threshold-based. The current design targets five operators with three
 shares required for playback. A single operator should not be enough to recover

@@ -11,20 +11,13 @@ export default withMermaid(
       ['link', { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
     ],
 
-    // Internal founder/agent docs stay in the repo but are NOT published to the
-    // public site (strategy, keys, tx hashes, audits, agent memory).
+    // The docs index README is not published as a site page.
     srcExclude: [
       'README.md',
-      'launch-plan-2026-05.md',
-      'llm-wiki.md',
-      'llm-wiki/**',
     ],
 
     ignoreDeadLinks: [
       /localhost/,
-      // Safety net: links from published pages into the excluded internal docs.
-      /launch-plan-2026-05/,
-      /llm-wiki/,
     ],
 
     themeConfig: {
@@ -74,12 +67,10 @@ export default withMermaid(
         {
           text: 'Operations',
           items: [
-            { text: 'Known Issues', link: '/operations/known-issues' },
-            { text: 'Mainnet Deploy Runbook', link: '/operations/mainnet-deploy-runbook' },
             { text: 'Release Runbook', link: '/release-runbook' },
-            { text: 'Incident: KMS Operator Down', link: '/operations/incident-kms-operator-down' },
-            { text: 'Incident: Takedown', link: '/operations/incident-takedown' },
-            { text: 'KMS Key Rotation', link: '/kms-key-rotation' },
+            { text: 'Public Alpha Limits', link: '/operations/known-issues' },
+            { text: 'Smoke Checklist', link: '/operations/launch-smoke-checklist' },
+            { text: 'Open Source Release', link: '/open-source-release' },
           ],
         },
         {

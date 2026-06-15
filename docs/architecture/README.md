@@ -17,8 +17,8 @@ Today, YouTick runs through five active layers:
 | KMS operators | Store encrypted key shares and release them only after authorization checks |
 
 IPFS storage stores encrypted media assets and manifests. Lighthouse is the
-primary write provider through `workers/storage-api`; Crust remains for legacy
-compatibility and opt-in diagnostics during rollout. The browser is still the
+primary write provider through `workers/storage-api`; the legacy Crust runtime
+fallback has been removed. The browser is still the
 place where the final playback key is reconstructed and media is decrypted.
 
 This page describes the current public-alpha model. It is hybrid decentralized:
@@ -91,8 +91,7 @@ flowchart LR
 - `apps/web/lib/managed-near-account.ts`, `lib/guest-account.ts`, `lib/trial-wallet.ts`
 - `apps/web/lib/registry.ts`
 - `apps/web/lib/kms/*` (`client.ts`, `encryption.ts`, `shares.ts`)
-- `apps/web/lib/ipfs/*` — multi-gateway read failover (was `lib/crust/gateway.ts` before R1)
-- `apps/web/lib/crust/*` — write/compat surface only
+- `apps/web/lib/ipfs/*` — multi-gateway read failover
 - `apps/web/lib/storage/storage-api.ts`, `storage/provider.ts` — Lighthouse client
 - `apps/web/lib/upload-session-manager.ts`
 
@@ -105,9 +104,8 @@ flowchart LR
 
 ### Contracts
 
-Mainnet code hash (current live): `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF`
-(matching the current repository contract build artifact). The historical R2 deploy hash was
-`BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`.
+Verify live contract hashes against chain state before relying on any deploy
+claim operationally.
 
 - `contracts/nft-ticket/src/` — split across `lib.rs`, `nft.rs`, `market.rs`,
   `gift.rs`, `onboarding.rs`, `treasury.rs`, `views.rs`, `web4.rs`,

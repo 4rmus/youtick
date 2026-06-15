@@ -4,7 +4,7 @@
 Accepted (alpha-only). NFT market admin is owner-only; registry timelock is
 live; access timelock is **deferred** for the current alpha (live
 `access.youtick.near` build does not export `propose_action` /
-`get_timelock` — see launch plan §SB-3).
+`get_timelock`).
 
 V1 deliberately ships as an owner-controlled public alpha to reduce launch
 complexity. Full timelock-managed access governance is a later hardening

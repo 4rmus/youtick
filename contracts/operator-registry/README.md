@@ -32,9 +32,6 @@ authorized operators.
 - `propose_owner`, `accept_ownership`
 - `set_owner` — `#[deprecated]`; use the two-step path
 
-Pre-staged emergency proposals (launch plan §SB-3, IDs 7-12):
-`Pause` + `DeactivateDecryptionOperator` for `kms-{a..e}.youtick.near`.
-
 ### View methods
 
 - `get_decryption_operator`, `list_decryption_operators`

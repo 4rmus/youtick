@@ -1,7 +1,7 @@
 # YouTick Acceptable Use Policy
 
 > Version: 0.2 (draft — alpha)
-> Effective: from public alpha launch (locked plan: `docs/launch-plan-2026-05.md`, Day 23 soft-launch).
+> Effective: from public alpha launch.
 > Current authority model: temporary owner-only takedown — governance topology is selected in Q3 2026, after which authority is handed over to a multisig/DAO (exact date depends on the topology decision).
 > Technical reference: [`docs/adr/adr-009-emergency-takedown-and-dao-handover.md`](../adr/adr-009-emergency-takedown-and-dao-handover.md)
 > Contact: abuse reports to **abuse@youtick.net** (fallback: GitHub Security Advisory).

@@ -40,9 +40,7 @@ Without these the app cannot connect to the right contract set or network.
 | `NEXT_PUBLIC_SENTRY_ENABLED` | Master switch for Sentry (`true` / `false`) | When enabling Sentry in prod; the DSN alone is not enough |
 | `NEXT_PUBLIC_SENTRY_DSN` | Sentry error collection endpoint | Required together with `NEXT_PUBLIC_SENTRY_ENABLED=true` |
 | `NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE` | Enables Lighthouse status/persistence checks | Set `true` only when the Storage API Worker is ready |
-| `NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PRIMARY_UPLOAD` | Opens the Lighthouse primary upload path | On by default; set `false` only for local diagnosis |
-| `NEXT_PUBLIC_ENABLE_CRUST_UPLOAD_FALLBACK` | Falls back to Crust if Lighthouse upload fails | Off by default; set `true` only for emergency diagnosis |
-| `NEXT_PUBLIC_STORAGE_UPLOAD_PROVIDER` | Active upload provider selection | Default `lighthouse`; do not change for new uploads |
+| `NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PRIMARY_UPLOAD` | Enables the Lighthouse upload path | On by default; setting `false` disables uploads instead of selecting another provider |
 | `NEXT_PUBLIC_STORAGE_API_URL` | Storage API Worker URL | Required for Lighthouse pin/status piloting |
 | `NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER` | Opens the Media Delivery Worker read path | Set `true` only after worker deploy + smoke test |
 | `NEXT_PUBLIC_MEDIA_DELIVERY_URL` | Media Delivery Worker URL | Required for encrypted IPFS manifest/segment routing |
@@ -121,10 +119,11 @@ onboarding-key inventory can be read with `scripts/list-onboarding-keys.mjs`.
 ### Web4 proxy API behavior
 
 `https://youtick.net` in proxy-backed Web4 mode supports
-`/api/onboarding-key`, `/api/near-rpc` and `/api/crust/*`. A static
+`/api/onboarding-key` and `/api/near-rpc`. The retired `/api/crust/*` surface
+returns `410 Gone` instead of proxying storage calls. A static
 build served directly from `https://youtick.near.page` or a bare IPFS
 gateway does not run these APIs; flows that depend on the onboarding key
-or storage-order are not supported in that environment.
+or storage persistence checks are not supported in that environment.
 
 During `npm run build:web4`, a Next static-export warning that
 `headers()` rules are not applied is expected. Web4 CSP and security

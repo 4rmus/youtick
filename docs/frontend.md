@@ -31,8 +31,7 @@ apps/web/
 ├── hooks/                      # Route-level hooks
 ├── lib/
 │   ├── kms/                    # Multi-operator KMS client + AES-CTR encryption + share math
-│   ├── ipfs/                   # IPFS read-path (gateway list, media-ref helpers) — was lib/crust/gateway.ts pre-R1
-│   ├── crust/                  # Crust write/compat surface only
+│   ├── ipfs/                   # IPFS read-path (gateway list, media-ref helpers)
 │   ├── storage/                # Lighthouse client (storage-api.ts) + provider boundary
 │   ├── intents/                # 1Click cross-chain quotes
 │   ├── evm/                    # MetaMask + Arbitrum/Base helpers
@@ -123,8 +122,7 @@ reconnect.
   uses same-origin `/api/near-rpc` via `workers/web4-proxy`).
 - `lib/storage/storage-api.ts` — Lighthouse client (NEP-413 challenge +
   upload intent + file).
-- `lib/storage/provider.ts` — picks Lighthouse-primary upload or explicit
-  legacy fallback.
+- `lib/storage/provider.ts` — Lighthouse-primary upload provider boundary.
 - `lib/ipfs/gateway.ts` + `lib/ipfs/config.ts` — multi-gateway read failover.
 - `lib/upload-session-manager.ts` — upload session key lifecycle.
 - `lib/metadata-parser.ts` — title/CID/thumbnail metadata parsing.

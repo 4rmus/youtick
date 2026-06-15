@@ -1,6 +1,7 @@
 # YouTick — One-Pager (Pre-Seed)
 
-> Public-alpha, live on NEAR mainnet (`youtick.near`). Last verified 2026-06-08.
+> Public-alpha, live on NEAR mainnet. Current release posture is tracked in the
+> public docs and private smoke evidence.
 > This is an honest pre-seed brief: working system + thesis, early on traction.
 
 ## What it is
@@ -42,10 +43,9 @@ can buy and watch without knowing they're using a blockchain.
 
 ## Status & traction (honest)
 
-- **Live on mainnet**: `youtick.near`, `access.youtick.near`,
-  `registry.youtick.near`; 3-of-5 KMS threshold active (5/5 operators healthy,
-  verified 2026-06-08); upload → purchase → watch works on mainnet.
-- ~452 automated tests green across contracts, workers, and web.
+- **Public alpha**: the source supports encrypted upload, NFT-gated purchase,
+  KMS-backed playback and gift/trial flows.
+- Automated tests cover the web app, workers and contracts.
 - **Early on traction**: mint activity to date is dominated by founder testing;
   the public alpha has not yet broadly opened. We are not claiming user traction.
 - **Not** production-ready, not independently audited, hybrid-decentralized (see
