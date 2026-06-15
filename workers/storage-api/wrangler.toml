@@ -4,7 +4,7 @@ compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net,http://localhost:3000"
+ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
 STORAGE_PROVIDER = "lighthouse"
 LIGHTHOUSE_API_BASE = "https://api.lighthouse.storage"
 ENABLE_LIGHTHOUSE_UPLOADS = "true"
@@ -15,4 +15,4 @@ ENABLE_LIGHTHOUSE_UPLOADS = "true"
 #
 [[kv_namespaces]]
 binding = "UPLOAD_GUARD"
-id = "5bc6908007ab4f738ce1982303a0d303"
+id = "<replace-with-upload-guard-kv-namespace-id>"

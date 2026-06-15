@@ -5,12 +5,20 @@ configuration. Please do not open public issues for security reports.
 
 ## Reporting
 
-Use GitHub Security Advisories for private reports. Include:
+Report privately through
+[GitHub Security Advisories](https://github.com/4rmus/youtick/security/advisories/new).
+If you cannot use GitHub, email **security@youtick.net**.
+
+Include:
 
 - affected component
 - steps to reproduce
 - possible impact
 - suggested fix, if known
+
+We aim to acknowledge reports within **72 hours** and to provide a remediation
+plan or status update within **7 days**. Please give us a reasonable
+opportunity to address an issue before any public disclosure.
 
 ## Scope
 

@@ -51,6 +51,14 @@ claude.md
 PRD.md
 claudedocs/
 .skills/
+tmp/
+
+# Build tooling
+.turbo/
+
+# Internal-only working docs (kept in a private repo, never published)
+docs/marketing/
+docs/llm-wiki/
 
 # AI Assistants
 AGENTS.md
@@ -61,6 +69,7 @@ AGENTS.md
 !.agents/skills/**
 
 # Cloudflare Wrangler
+.wrangler/
 workers/**/.wrangler/
 workers/**/.dev.vars
 
@@ -74,9 +83,6 @@ workers/**/.dev.vars
 docs/.vitepress/dist
 docs/.vitepress/cache
 docs/node_modules
-
-# Obsidian local vault settings
-docs/llm-wiki/.obsidian/
 
 # Debug artifacts
 console-log.md
