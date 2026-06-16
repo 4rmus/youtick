@@ -68,7 +68,6 @@ hooks/                  # UI hooks
 lib/
   kms/                  # Multi-operator KMS client + AES-CTR + share math
   ipfs/                 # IPFS read path (gateway list + media-ref helpers)
-  crust/                # Crust write/compat surface only
   storage/              # Lighthouse client (storage-api.ts) + provider boundary
   intents/              # 1Click quote/swap helpers
   evm/                  # MetaMask and EVM helpers
@@ -106,7 +105,7 @@ point. `near-wallet-selector` is no longer a direct dependency.
 | Video encryption | Browser AES-CTR |
 | Key custody | Shamir 3-of-5 shares across KMS operator workers |
 | Playback auth | Signless access key → 10-min Play session grant + operator registry check |
-| IPFS read | `lib/ipfs/` multi-gateway failover (was `lib/crust/gateway.ts` pre-R1) |
+| IPFS read | `lib/ipfs/` multi-gateway failover |
 | IPFS upload | Lighthouse via Storage API (NEP-413 challenge required) |
 | Publish auth | Upload session (`create_upload_session` + scoped function-call key) |
 | Ticket purchase | On-chain `buy_ticket` (wallet-driven only; legacy implicit-swap removed) |

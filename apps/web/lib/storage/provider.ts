@@ -1,16 +1,8 @@
-import { uploadDirectoryToCrust } from '../crust/client';
-import type { UploadedAsset } from '../crust/cid-collector';
-import { APP_CONFIG, FEATURE_FLAGS } from '../constants';
+import { FEATURE_FLAGS } from '../constants';
+import type { UploadedAsset } from './cid-collector';
 import { getCidPinStatusFromStorageApi, uploadDirectoryWithStorageApi, type StorageApiAuthSigner } from './storage-api';
-import {
-  placeStorageOrders as placeCrustStorageOrders,
-  verifyStorageOrders as verifyCrustStorageOrders,
-  type StorageOrderBatchResult,
-  type StorageOrderVerifyResult,
-} from '../crust/storage-order';
-import type { CrustDirectoryUploadResult } from '../crust/types';
 
-export type StorageProviderId = 'crust' | 'lighthouse';
+export type StorageProviderId = 'lighthouse';
 
 export interface StorageUploadOptions {
   onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void;
@@ -18,8 +10,40 @@ export interface StorageUploadOptions {
   authSigner?: StorageApiAuthSigner;
 }
 
-export interface StorageDirectoryUploadResult extends CrustDirectoryUploadResult {
+export interface StorageDirectoryUploadEntry {
+  path: string;
+  cid: string;
+  size: number;
+}
+
+export interface StorageDirectoryUploadResult {
+  cid: string;
+  size: number;
+  entries: StorageDirectoryUploadEntry[];
   provider: StorageProviderId;
+}
+
+export interface StoragePinStatusResult {
+  requestId: string;
+  status: 'queued' | 'pinning' | 'pinned' | 'failed' | 'rate_limited';
+  cid: string;
+  createdAt: number;
+  retryAfterMs?: number;
+}
+
+/** Result of a batch persistence tracking operation. */
+export interface StorageOrderBatchResult {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: StoragePinStatusResult[];
+}
+
+/** Result of a batch persistence verification operation. */
+export interface StorageOrderVerifyResult {
+  verified: number;
+  pending: number;
+  failed: number;
 }
 
 export interface StorageProvider {
@@ -41,16 +65,6 @@ export interface StorageProvider {
   ): Promise<StorageOrderVerifyResult>;
 }
 
-const crustStorageProvider: StorageProvider = {
-  id: 'crust',
-  async uploadDirectory(files, accountId, options) {
-    const result = await uploadDirectoryToCrust(files, accountId, options);
-    return { ...result, provider: 'crust' };
-  },
-  placeStorageOrders: placeCrustStorageOrders,
-  verifyStorageOrders: verifyCrustStorageOrders,
-};
-
 const lighthouseStorageProvider: StorageProvider = {
   id: 'lighthouse',
   async uploadDirectory(files, _accountId, options) {
@@ -58,20 +72,8 @@ const lighthouseStorageProvider: StorageProvider = {
       throw new Error('Storage auth signer is required for Lighthouse storage uploads');
     }
 
-    try {
-      const result = await uploadDirectoryWithStorageApi(files, _accountId, options.authSigner, options);
-      return { ...result, provider: 'lighthouse' };
-    } catch (error) {
-      if (!FEATURE_FLAGS.enableCrustUploadFallback) {
-        throw error;
-      }
-
-      console.warn('[Storage] Lighthouse primary upload failed, falling back to Crust', {
-        reason: error instanceof Error ? error.message : String(error),
-      });
-      const result = await uploadDirectoryToCrust(files, _accountId, options);
-      return { ...result, provider: 'crust' };
-    }
+    const result = await uploadDirectoryWithStorageApi(files, _accountId, options.authSigner, options);
+    return { ...result, provider: 'lighthouse' };
   },
   async placeStorageOrders(assets) {
     const results = assets.map((asset) => ({
@@ -105,22 +107,11 @@ const lighthouseStorageProvider: StorageProvider = {
 };
 
 export function getActiveStorageProvider(): StorageProvider {
-  if (isLighthouseUploadProviderActive()) {
-    return lighthouseStorageProvider;
-  }
-
-  return crustStorageProvider;
+  return lighthouseStorageProvider;
 }
 
 export function isLighthouseUploadProviderActive(): boolean {
-  if (
-    APP_CONFIG.storageUploadProvider === 'lighthouse'
-    && FEATURE_FLAGS.enableLighthousePrimaryUpload
-  ) {
-    return true;
-  }
-
-  return false;
+  return FEATURE_FLAGS.enableLighthousePrimaryUpload;
 }
 
 export async function uploadDirectoryToStorage(

@@ -86,11 +86,7 @@ is the active upload session path; it is not deprecated.
 
 ## Mainnet Status
 
-- Single mainnet contract `youtick.near` (current code hash
-  `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF`, matching the current
-  repository contract build artifact; R2 deploy hash was
-  `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`).
+- Single mainnet contract `youtick.near`.
 - Access contract `access.youtick.near`, registry contract
   `registry.youtick.near`.
-- Release posture is tracked internally in `docs/launch-plan-2026-05.md`
-  (founder/agent doc, not part of the published site).
+- Release posture: public alpha, not production-ready.

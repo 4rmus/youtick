@@ -47,11 +47,11 @@ The upload can include:
 - thumbnail and poster assets
 
 These delivery assets are uploaded to IPFS through the active storage provider.
-Today the primary write path is Lighthouse behind `workers/storage-api`; Crust
-is kept for legacy compatibility and explicit fallback diagnostics. The event
-points at `rootCid/manifest.json` or a Lighthouse manifest CID, while the
-manifest refers to relative asset paths such as `init.mp4` and
-`segments/000000.m4s`. Playback reads through multiple gateway options.
+Today the write path is Lighthouse behind `workers/storage-api`; the legacy Crust
+runtime read fallback has been removed. The event points at
+`rootCid/manifest.json` or a Lighthouse manifest CID, while the manifest refers
+to relative asset paths such as `init.mp4` and `segments/000000.m4s`. Playback
+reads through multiple gateway options.
 
 ### 3. Key Share Storage
 
@@ -109,8 +109,7 @@ The latest implementation also stops waiting once the threshold is reached.
 Media delivery still does not depend on a single IPFS gateway:
 
 - new writes use Lighthouse through the Storage API Worker
-- Crust is kept as a write/compat surface only; the read path moved to
-  `apps/web/lib/ipfs/` in the R1 refactor
+- the legacy Crust runtime read fallback is removed
 - public IPFS gateways remain available as fallback
 - range requests are used when supported
 - full-download fallback still exists for degraded cases
@@ -173,8 +172,7 @@ Key material is handled off-chain by the operator layer, but entitlement remains
 - `apps/web/lib/kms/shares.ts`
 - `apps/web/lib/kms/client.ts`
 - `apps/web/lib/video-delivery*.ts`
-- `apps/web/lib/ipfs/*` — IPFS read-path (gateway list + media-ref helpers; was `lib/crust/gateway.ts` before R1)
-- `apps/web/lib/crust/*` — Crust write/compat surface only
+- `apps/web/lib/ipfs/*` — IPFS read-path (gateway list + media-ref helpers)
 - `apps/web/lib/storage/storage-api.ts`, `storage/provider.ts`
 - `workers/storage-api/src/index.ts`
 - `workers/media-delivery/src/index.ts`

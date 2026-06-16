@@ -1,35 +1,33 @@
 /**
  * IPFS read-path configuration.
- *
- * Gateway reads live here so Crust can remain focused on upload/write APIs.
  */
 
-import type { GatewayConfig } from '../crust/types';
-import { CRUST_CONSTANTS } from '../crust/config';
+export interface GatewayConfig {
+  name: string;
+  url: string;
+  priority: number;
+  healthy: boolean;
+  lastCheck: number;
+}
 
 export const IPFS_CONSTANTS = {
-  /** Crust IPFS read endpoint (POST only, supports CORS) */
-  READ_ENDPOINT: CRUST_CONSTANTS.READ_ENDPOINT,
-
-  /** Optional fallback Crust read endpoint (disabled until TLS issues are resolved) */
-  READ_ENDPOINT_FALLBACK: CRUST_CONSTANTS.READ_ENDPOINT_FALLBACK,
-
   /** Fetch timeout per gateway attempt (30 seconds) */
-  FETCH_TIMEOUT: CRUST_CONSTANTS.FETCH_TIMEOUT,
+  FETCH_TIMEOUT: 30 * 1000,
 
   /** Duration to mark a gateway as unhealthy (5 minutes) */
-  GATEWAY_UNHEALTHY_DURATION: CRUST_CONSTANTS.GATEWAY_UNHEALTHY_DURATION,
+  GATEWAY_UNHEALTHY_DURATION: 5 * 60 * 1000,
 
   /** Optional hot media delivery Worker for encrypted manifest/segment reads */
-  MEDIA_DELIVERY: CRUST_CONSTANTS.MEDIA_DELIVERY,
+  MEDIA_DELIVERY: {
+    ENABLED: process.env.NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER === 'true',
+    BASE_URL: (process.env.NEXT_PUBLIC_MEDIA_DELIVERY_URL || '').trim().replace(/\/+$/, ''),
+  },
 } as const;
 
 /**
  * IPFS gateway list (ordered by priority)
  *
  * All gateways support CORS (Access-Control-Allow-Origin: *).
- * Crust-operated /ipfs/ gateways are excluded — they return 403/410 and lack CORS.
- * For Crust-pinned content, use IPFS_CONSTANTS.READ_ENDPOINT (POST /api/v0/cat).
  *
  * @see https://ipfs.github.io/public-gateway-checker/ — live status
  */
@@ -41,5 +39,4 @@ export const IPFS_GATEWAYS: GatewayConfig[] = [
   { name: '4everland', url: 'https://4everland.io/ipfs', priority: 3, healthy: true, lastCheck: 0 },
   { name: 'w3s', url: 'https://w3s.link/ipfs', priority: 4, healthy: true, lastCheck: 0 },
   { name: 'dweb', url: 'https://dweb.link/ipfs', priority: 5, healthy: true, lastCheck: 0 },
-  // Crust-operated gateways are excluded as they have TLS/CORS issues currently.
 ];

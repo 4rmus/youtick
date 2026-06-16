@@ -2,7 +2,7 @@
 
 > Public-alpha, hybrid decentralized video platform on NEAR with browser-side encryption, KMS-backed key custody and IPFS delivery
 
-YouTick is an open-source VOD platform where creators upload encrypted videos to IPFS and sell access through NFT tickets. The active architecture is hybrid decentralized: NEAR stores ownership and access rules, the browser encrypts media, KMS workers custody threshold key shares on Cloudflare/KV, and Lighthouse is the primary write provider behind the Storage API Worker. Crust remains for legacy compatibility and opt-in diagnostics.
+YouTick is an open-source VOD platform where creators upload encrypted videos to IPFS and sell access through NFT tickets. The active architecture is hybrid decentralized: NEAR stores ownership and access rules, the browser encrypts media, KMS workers custody threshold key shares on Cloudflare/KV, and Lighthouse is the write provider behind the Storage API Worker. Playback uses the Media Delivery Worker and public IPFS gateway fallback; the legacy Crust runtime fallback has been removed.
 
 ![NEAR Protocol](https://img.shields.io/badge/Blockchain-NEAR%20Protocol-00C1DE?style=flat&logo=near&logoColor=white)
 ![Rust](https://img.shields.io/badge/Contract-Rust-DEA584?style=flat&logo=rust&logoColor=white)
@@ -101,21 +101,20 @@ this step can be deferred.
 - [Configuration](./docs/getting-started/configuration.md)
 - [Contract methods](./docs/api/contract-methods.md)
 - [Security](./docs/security.md)
-- [Known issues](./docs/operations/known-issues.md)
-- [Launch plan 2026-05 (locked)](./docs/launch-plan-2026-05.md)
+- [Public alpha limits](./docs/operations/known-issues.md)
+- [Open source release checklist](./docs/open-source-release.md)
 
 ---
 
 ## Status
 
-Mainnet `youtick.near` is live (current code hash
-`HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF`, matching the current
-repository contract build artifact). Public alpha — not production-ready. The locked plan
-(`docs/launch-plan-2026-05.md`) tracks the Day 23 soft-launch gate; full
-`upload → purchase → watch` smoke and the remaining operational checks must
-close before any "production" claim.
+YouTick is public-alpha software. The repository contains the web app, workers
+and contracts for encrypted upload, ticket purchase and playback, but it should
+not be described as production-ready, independently audited or fully
+decentralized.
 
-Current sources of truth:
+Current public sources of truth:
 
-- [Launch plan 2026-05](./docs/launch-plan-2026-05.md) — locked single plan
-- [Known Issues](./docs/operations/known-issues.md)
+- [Public Alpha Limits](./docs/operations/known-issues.md)
+- [Transparency](./docs/public/transparency.md)
+- [Release Runbook](./docs/release-runbook.md)

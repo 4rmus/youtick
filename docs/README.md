@@ -7,8 +7,8 @@
 YouTick's source code supports client-side media encryption, a market/access/registry
 contract split, and a multi-operator playback path. It is public alpha software,
 not production-ready and not fully decentralized today. Live mainnet can lag
-behind source code, so release decisions should use the locked launch plan
-([`launch-plan-2026-05.md`](launch-plan-2026-05.md)) first.
+behind source code, so verify on-chain state before relying on any release
+claim.
 
 **Mainnet:** `youtick.near`, `access.youtick.near`, `registry.youtick.near`
 **Playback path:** Browser AES-CTR + registry-enforced operator share reconstruction (3-of-5)
@@ -22,12 +22,10 @@ behind source code, so release decisions should use the locked launch plan
 - `EXPERIMENTAL`: surface gated by an env flag or operator decision; public-alpha trial
 ## Current Source of Truth
 
-- [Launch Plan 2026-05](launch-plan-2026-05.md) — locked single plan (alpha, pre-seed)
-- [Known Issues & Operational Risks](operations/known-issues.md)
-- [Mainnet Deploy Runbook](operations/mainnet-deploy-runbook.md)
-- [Release Runbook](release-runbook.md)
 - [Public Alpha User Guide](public/alpha-user-guide.md)
-- [LLM Wiki](llm-wiki/index.md) — AI agent memory, router, and token-efficient source map
+- [Public Alpha Limits](operations/known-issues.md)
+- [Release Runbook](release-runbook.md)
+- [Open Source Release Checklist](open-source-release.md)
 
 ---
 
@@ -46,15 +44,13 @@ behind source code, so release decisions should use the locked launch plan
 - [Smart Contract](architecture/smart-contract.md) `LIVE`
 - [Product Differentiators](architecture/innovations.md)
 
-## Practical topics
-
-> The old `docs/guides/` pages have been removed; operational topics now
-> live under `docs/operations/`. For behavior, refer to `apps/web/lib/*`
-> and the contract sources.
+## Practical Topics
 
 - [Storage & Delivery](architecture/storage.md) `LIVE`
 - [Contract Methods](api/contract-methods.md) `LIVE`
 - [Security](security.md)
+- [Testing](testing.md)
+- [Open Source Release Checklist](open-source-release.md)
 
 ## Reference
 
@@ -63,7 +59,6 @@ behind source code, so release decisions should use the locked launch plan
 - [Security](security.md)
 - [Testing](testing.md)
 - [Contributing](contributing.md)
-- [Launch Plan 2026-05](launch-plan-2026-05.md) — locked plan
 - [Overview](overview.md)
 
 ---
@@ -77,12 +72,6 @@ For a new engineer, the shortest path is:
 3. [Storage & Delivery](architecture/storage.md)
 4. [Smart Contract](architecture/smart-contract.md)
 5. [Contract Methods](api/contract-methods.md)
-
-For AI-assisted work, start with:
-
-1. [LLM Wiki](llm-wiki/index.md)
-2. [Agent Router](llm-wiki/agent-router.md)
-3. The matching module card under `llm-wiki/module-cards/`
 
 ---
 

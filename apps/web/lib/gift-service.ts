@@ -10,7 +10,6 @@ import { KeyPair, PublicKey, Account, KeyPairSigner, actions, type KeyPairString
 import type { WalletInstance } from "./types";
 
 import { APP_CONFIG, NEAR_CONFIG, GAS_CONSTANTS } from './constants';
-import { recordMetric } from './decentralization-metrics';
 import { nearAmountToYocto } from './near-amount';
 import { getCurrentRpcUrl } from './rpc-failover';
 import { persistManagedKeyPair, writeManagedNearAccount } from './managed-near-account';
@@ -268,81 +267,6 @@ export async function getTrialPoolBalance(): Promise<string> {
 }
 
 /**
- * Legacy named subaccount trial path.
- * New guest/trial onboarding uses sponsorImplicitGuestDirect or trial invites.
- *
- * @param username - Just the username prefix (e.g. "alice")
- * @returns The full account ID will be returned in the result (e.g. "alice.youtick.near")
- */
-export async function createSponsoredTrialDirect(
-    username: string
-): Promise<SponsoredTrialResult> {
-    try {
-        // Onboarding key is required for anti-abuse controls (authorized key + on-chain daily limit)
-        const onboardingKeyPair = await getValidatedOnboardingKeyPair();
-        if (!onboardingKeyPair) {
-            return {
-                success: false,
-                error: "Onboarding key unavailable or unauthorized. Trial account creation is temporarily disabled.",
-            };
-        }
-
-        // Generate keypair for the new account
-        const userKeyPair = KeyPair.fromRandom("ed25519");
-        const userPublicKey = userKeyPair.getPublicKey().toString();
-        const userSecretKey = userKeyPair.toString();
-
-        // v7: Create Account directly with signer
-        const signer = new KeyPairSigner(onboardingKeyPair);
-        const account = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), signer);
-
-        // Legacy named-account method retained for compatibility.
-        await account.signAndSendTransaction({
-            receiverId: NFT_CONTRACT_ID,
-            actions: [
-                actions.functionCall(
-                    "create_sponsored_trial_direct",
-                    { username, new_public_key: userPublicKey },
-                    GAS_CONSTANTS.highGas,
-                    BigInt(0) // No deposit
-                )
-            ]
-        });
-
-        // Determine new account ID
-        const accountId = `${username}.${NFT_CONTRACT_ID}`;
-
-        await persistManagedKeyPair(accountId, userSecretKey);
-        writeManagedNearAccount(accountId, 'trial');
-
-        return {
-            success: true,
-            accountId,
-            secretKey: userSecretKey,
-        };
-    } catch (error: unknown) {
-        console.error("Direct sponsored trial error:", error);
-        const errMsg = error instanceof Error ? error.message : '';
-
-        // Remove invalid key from cache so next flow can load a fresh one
-        if (errMsg.includes("Unauthorized") || errMsg.includes("onboarding key")) {
-            if (typeof window !== "undefined") {
-                sessionStorage.removeItem(onboardingStorageKey());
-            }
-            return {
-                success: false,
-                error: "Unauthorized onboarding key. Please rotate onboarding key and try again.",
-            };
-        }
-
-        return {
-            success: false,
-            error: errMsg || "Failed to create trial account",
-        };
-    }
-}
-
-/**
  * Sponsor an implicit guest account using the onboarding key.
  * Creates a funded implicit account without needing a relayer.
  */
@@ -403,23 +327,6 @@ export async function sponsorImplicitGuestDirect(
             error: errMsg || "Failed to sponsor guest account",
         };
     }
-}
-
-/**
- * Legacy named subaccount trial helper.
- * Use implicit guest onboarding for new product flows.
- *
- * @param username - Just the username prefix (e.g. "alice")
- * @returns The full account ID and result
- */
-export async function createSponsoredTrial(
-    username: string
-): Promise<SponsoredTrialResult> {
-    const result = await createSponsoredTrialDirect(username);
-    if (result.success) {
-        recordMetric('trial_direct_success');
-    }
-    return result;
 }
 
 /**

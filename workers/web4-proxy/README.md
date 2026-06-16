@@ -16,10 +16,11 @@ In proxy-backed mode, `youtick.net` supports these API surfaces:
 
 - `/api/onboarding-key`
 - `/api/near-rpc`
-- `/api/crust/*`
+
+The retired `/api/crust/*` storage proxy surface returns `410 Gone`.
 
 `youtick.near.page` or bare IPFS gateways run static-only. In those
-environments, flows that depend on the onboarding key or storage-order
+environments, flows that depend on the onboarding key or storage persistence
 are not supported.
 
 `/api/near-rpc` is the browser RPC call surface. The browser does not

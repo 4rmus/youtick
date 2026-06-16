@@ -369,21 +369,8 @@ describe('web4-proxy', () => {
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it('proxies Crust API requests and preserves CORS headers', async () => {
-        const fetchMock = vi.fn(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-            const url = typeof input === 'string'
-                ? input
-                : input instanceof URL
-                    ? input.toString()
-                    : input.url;
-            expect(url).toBe('https://pin.crustcode.com/psa/pins?limit=1');
-            expect(init?.method).toBe('POST');
-            expect((init?.headers as Headers).get('authorization')).toBe('Bearer token');
-            return new Response(JSON.stringify({ requestid: 'req-1' }), {
-                status: 202,
-                headers: { 'Content-Type': 'application/json' },
-            });
-        });
+    it('returns gone for retired storage proxy requests without calling upstream', async () => {
+        const fetchMock = vi.fn();
         globalThis.fetch = fetchMock as unknown as typeof fetch;
 
         const request = new Request('https://youtick.net/api/crust/psa/pins?limit=1', {
@@ -398,8 +385,12 @@ describe('web4-proxy', () => {
             waitUntil: vi.fn(),
         } as unknown as ExecutionContext);
 
-        expect(response.status).toBe(202);
+        expect(response.status).toBe(410);
         expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
-        expect(await response.json()).toEqual({ requestid: 'req-1' });
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(await response.json()).toEqual({
+            error: 'storage_proxy_removed',
+            message: 'This storage proxy surface has been retired. Use the Storage API and IPFS gateway read paths.',
+        });
     });
 });

@@ -125,8 +125,8 @@ cargo test --test sandbox
 
 ### Web4 API issues
 
-- `youtick.net` uses the Web4 proxy and supports `/api/onboarding-key` plus `/api/crust/*`.
-- Direct `youtick.near.page` or raw IPFS gateway URLs are static-only and do not support onboarding/storage-order API calls.
+- `youtick.net` uses the Web4 proxy and supports `/api/onboarding-key` plus `/api/near-rpc`; retired `/api/crust/*` calls return `410 Gone`.
+- Direct `youtick.near.page` or raw IPFS gateway URLs are static-only and do not support onboarding or storage persistence API calls.
 
 ---
 

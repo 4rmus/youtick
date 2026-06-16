@@ -3,8 +3,6 @@
 > Summary of the active logic across the `contracts/nft-ticket/` modules.
 
 **Mainnet:** `youtick.near`
-**Current code hash:** `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF` (matching the current repository contract build artifact)
-**Historical R2 deploy hash:** `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`
 
 ---
 
@@ -115,7 +113,7 @@ V1 public alpha runs owner-controlled:
 
 The registry and access contracts have a different admin model: the
 registry is timelocked, while the access timelock is deferred for the
-current alpha (see launch plan §SB-3).
+current alpha.
 
 ---
 

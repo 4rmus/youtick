@@ -11,8 +11,8 @@ const SIGNLESS_ACCESS_KEY_ALLOWANCE_YOCTO = nearAmountToYocto(GAS_CONSTANTS.sess
 const SIGNLESS_ACCESS_KEY_MIN_ALLOWANCE_YOCTO = nearAmountToYocto(0.01);
 
 // Dedicated namespace: the default `near-api-js:keystore:` prefix is shared by
-// trial/guest full-access keys and legacy session-key readers (w3auth, KMS
-// local signing). The signless FC key must never shadow or get deleted with those.
+// trial/guest full-access keys and KMS local signing. The signless FC key must
+// never shadow or get deleted with those.
 const signlessKeyStore = new BrowserKeyStore('youtick:signless-keystore:');
 
 export function createSignlessAccessKey(): KeyPair {

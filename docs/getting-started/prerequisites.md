@@ -96,7 +96,7 @@ near contract call-function as-read-only youtick.near nft_metadata json-args '{}
 
 | Network | Contract ID | RPC Endpoint |
 |---------|-------------|-------------|
-| **Mainnet** | `youtick.near` (current hash `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF`; R2 deploy hash was `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`) | Browser: `/api/near-rpc`; ops scripts: set `NEAR_RPC_URL` when needed |
+| **Mainnet** | `youtick.near` | Browser: `/api/near-rpc`; ops scripts: set `NEAR_RPC_URL` when needed |
 | **Testnet** | Deploy your own market/access/registry set; the previous shared dev account is no longer canonical (most recent R2 fresh deploy: `r2-1778616242663.v1-0.utick.testnet`) | Browser: `/api/near-rpc`; ops scripts: set `NEAR_RPC_URL` when needed |
 
 The live browser app uses the same-origin Web4 proxy for RPC so wallet and

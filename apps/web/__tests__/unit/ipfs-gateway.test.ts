@@ -4,8 +4,6 @@ vi.mock('@/lib/ipfs/config', () => ({
   IPFS_CONSTANTS: {
     FETCH_TIMEOUT: 3_000,
     GATEWAY_UNHEALTHY_DURATION: 60_000,
-    READ_ENDPOINT: 'https://crust-primary/api/v0/cat',
-    READ_ENDPOINT_FALLBACK: 'https://crust-fallback/api/v0/cat',
     MEDIA_DELIVERY: { ENABLED: false, BASE_URL: '' },
   },
   IPFS_GATEWAYS: [
@@ -103,7 +101,7 @@ describe('ipfs gateway probing', () => {
     global.fetch = vi.fn((input: string | URL | Request) => {
       const url = String(input);
 
-      if (url.includes('crust-primary')) {
+      if (url.includes('ipfs.io')) {
         return new Promise<Response>((resolve) => {
           setTimeout(() => resolve(new Response('slow', { status: 200 })), 700);
         });
@@ -179,7 +177,7 @@ describe('ipfs gateway probing', () => {
     );
   });
 
-  it('encodes Crust read API args for IPFS path references', async () => {
+  it('encodes public gateway paths for IPFS path references', async () => {
     global.fetch = vi.fn(async () => new Response('ok', { status: 200 })) as unknown as typeof fetch;
 
     const { fetchFromGateways } = await import('@/lib/ipfs/gateway');
@@ -190,8 +188,9 @@ describe('ipfs gateway probing', () => {
 
     expect(await response.text()).toBe('ok');
     expect(vi.mocked(global.fetch).mock.calls[0][0]).toBe(
-      'https://crust-primary/api/v0/cat?arg=bafyroot%2Fsegments%2F000000.m4s',
+      'https://ipfs.io/ipfs/bafyroot/segments/000000.m4s',
     );
+    expect(vi.mocked(global.fetch).mock.calls[0][1]).toEqual(expect.objectContaining({ method: 'GET' }));
   });
 
   it('uses the media delivery worker first when it is explicitly configured', async () => {
@@ -199,8 +198,6 @@ describe('ipfs gateway probing', () => {
       IPFS_CONSTANTS: {
         FETCH_TIMEOUT: 3_000,
         GATEWAY_UNHEALTHY_DURATION: 60_000,
-        READ_ENDPOINT: 'https://crust-primary/api/v0/cat',
-        READ_ENDPOINT_FALLBACK: 'https://crust-fallback/api/v0/cat',
         MEDIA_DELIVERY: { ENABLED: true, BASE_URL: 'https://media.youtick.net' },
       },
       IPFS_GATEWAYS: [
@@ -226,8 +223,6 @@ describe('ipfs gateway probing', () => {
       IPFS_CONSTANTS: {
         FETCH_TIMEOUT: 3_000,
         GATEWAY_UNHEALTHY_DURATION: 60_000,
-        READ_ENDPOINT: 'https://crust-primary/api/v0/cat',
-        READ_ENDPOINT_FALLBACK: '',
         MEDIA_DELIVERY: { ENABLED: false, BASE_URL: '' },
       },
       IPFS_GATEWAYS: [
@@ -262,8 +257,6 @@ describe('ipfs gateway probing', () => {
       IPFS_CONSTANTS: {
         FETCH_TIMEOUT: 3_000,
         GATEWAY_UNHEALTHY_DURATION: 60_000,
-        READ_ENDPOINT: 'https://crust-primary/api/v0/cat',
-        READ_ENDPOINT_FALLBACK: '',
         MEDIA_DELIVERY: { ENABLED: false, BASE_URL: '' },
       },
       IPFS_GATEWAYS: [

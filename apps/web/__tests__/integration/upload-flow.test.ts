@@ -19,7 +19,7 @@ vi.mock('@/lib/constants', () => ({
   NFT_CONTRACT_ID: 'test-contract.testnet',
   NETWORK_ID: 'testnet',
   IPFS_CONFIG: {
-    gatewayUrl: 'https://crustipfs.xyz/ipfs',
+    gatewayUrl: 'https://ipfs.io/ipfs',
     placeholderImage: '/placeholder.svg'
   },
   METADATA_SCHEMA: {

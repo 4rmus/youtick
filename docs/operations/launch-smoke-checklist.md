@@ -1,74 +1,58 @@
-# Launch Smoke Checklist (Gate item: upload → buy → watch)
+# Public Alpha Smoke Checklist
 
-> Records the live evidence for the GO/NO-GO gate. The full automated matrix
-> can't be run by one person on mainnet (real wallet signing + `ft_transfer_call`
-> from a deployed token), so this is a **recorded manual checklist**. Owner
-> action required — fill in tx hashes as you go.
->
-> Smoke definition source: `docs/release-runbook.md:156-167`.
+> High-level release gate for public documentation. Do not record real wallet
+> names, transaction hashes, private endpoints, session public keys or watch URLs
+> in this public file. Store detailed evidence in private operations notes.
 
-## Scope decision (per the orchestrated eval)
+## Scope
 
-USDT is implemented at the FT layer but shares `price_usdc`, has **no contract
-tests**, and is unproven end-to-end. **Recommended honest gate: NEAR 3/3
-(upload → buy → watch).** Mark USDC/USDT "experimental" and record them
-separately if/when exercised, rather than claiming an unproven 9/9.
+The minimum public-alpha release gate is one successful primary path:
 
-## Pre-flight (already green)
+1. creator connects wallet,
+2. creator uploads a short encrypted video,
+3. KMS stores enough key shares,
+4. buyer purchases access,
+5. buyer starts playback and reconstructs the key through the KMS threshold.
 
-- [ ] `docs/release-runbook.md` Pre-Flight commands pass (web + workers + contracts)
-- [ ] `registry.youtick.near get_threshold_config` → `5 / 3`
-- [ ] 5 KMS `/health` → `ok:true`
-- [ ] Monitoring live (`docs/operations/monitoring-setup.md`)
+NEAR-native purchase is the primary path. Stablecoin and cross-chain purchase
+paths remain experimental until separately verified for the release.
 
-## NEAR path (required for GO)
+## Pre-Flight
 
-| Step | Account | Expected | Tx hash / evidence |
-|---|---|---|---|
-| Connect wallet | creator | wallet connected | — |
-| Create event + upload short video | creator | `create_event_prepaid` / `nft_mint_prepaid` succeed; `encrypted_cid` recorded | `__________` |
-| KMS shares stored | creator | store + read-back verify pass (no mint without it) | `__________` |
-| Buy ticket | buyer (different account) | `buy_ticket` succeeds; `has_ticket` true | `__________` |
-| Watch | buyer | playback reconstructs key (≥3 shares) and video starts | screenshot / note |
+- [ ] Web lint, tests and production build pass.
+- [ ] Worker type checks and tests pass.
+- [ ] Contract tests pass for any changed contract.
+- [ ] Registry lists enough active KMS operators for the configured threshold.
+- [ ] Storage API Worker is configured with server-side provider secrets.
+- [ ] Onboarding keys are server-only and not exposed in the client bundle.
+- [ ] Real operator configs and endpoint inventories are outside git.
 
-## USDC path — RECORDED GREEN (2026-06-10)
+## Primary Smoke
 
-Verified end-to-end on mainnet: buyer `novilusio.near` acquired NEAR-native USDC
-via Rhea/Ref and purchased a ticket for event `f95dd20d-fa77-4c1d-8526-16b6271bafbe`
-(creator `aramustafa.near`, price 0.5 USDC), then issued a Play session grant and
-watched. Post-state confirmed by read-only view calls.
+| Step | Expected |
+|---|---|
+| Load app | Landing/discover page renders without console-breaking errors |
+| Connect wallet | Creator wallet connects |
+| Upload | Short encrypted video uploads through the Storage API Worker |
+| Store shares | KMS stores enough shares for the configured threshold |
+| Buy ticket | Buyer purchase succeeds and `has_ticket` becomes true |
+| Watch | Playback reconstructs the key and starts video |
+| Observe | Worker errors and app telemetry show no release spike |
 
-| Step | Account | Expected | Tx hash / evidence |
-|---|---|---|---|
-| Wrap NEAR → wNEAR | buyer | `near_deposit` on `wrap.near` | `RBhND6jYjSbBQiNCdM3BhzqtJGh3DsGSzY95o3rmXZy` |
-| Swap wNEAR → USDC (Rhea/Ref) | buyer | `ft_transfer_call` → `v2.ref-finance.near` (pools 5470, 4179) | `3VMUhPU8dabXnAJxiFPHzXa5ncQxd7YFMJ6XHwrddigP` |
-| Buy ticket with USDC | buyer | `ft_transfer_call` USDC → `youtick.near` `buy_ticket` (amount 500000); `has_ticket` true | `4ktUNKqz49kCheDMaXAGbY8Ejz1bdHxj5vKiegiRehEY` |
-| Issue Play grant + watch | buyer | `issue_session_grant` (scope Play, resource = video) on `access.youtick.near`; grant recorded, not revoked | `7XF8ukHA2sJdZxpZYcvVW7gAgyfeHLKzKFseHnNb86PQ` |
+## Experimental Rails
 
-Read-only post-state (2026-06-10):
-- `has_ticket(novilusio.near, f95dd20d-…)` → `true`
-- `get_event(f95dd20d-…)` → exists, `price_usdc: "500000"`, creator `aramustafa.near`
-- `get_session_grant(ed25519:9HSBbRnxW874FLjJz1zr1yqmh3BPPiGrG9mbonU6TLTc)` → Play scope,
-  resource matches video, origin+device bound, `revoked:false`
+Run these only when the release claims support for them:
 
-Watch URL: <https://youtick.net/watch?cid=f95dd20d-fa77-4c1d-8526-16b6271bafbe>
+- [ ] NEAR-native USDC purchase.
+- [ ] NEAR-native USDT purchase.
+- [ ] Cross-chain checkout through 1Click.
 
-## USDT path (experimental — record if exercised)
-
-| Step | Account | Expected | Tx hash |
-|---|---|---|---|
-| Buy ticket with USDT | buyer | `ft_transfer_call` → ticket minted | `__________` |
-| Watch | buyer | playback starts | note |
+Record detailed evidence privately and summarize only the pass/fail outcome in
+public release notes.
 
 ## Result
 
-- [ ] NEAR 3/3 PASS → gate item GREEN (with USDC/USDT marked experimental), or
-- [ ] Full 9/9 recorded → gate item GREEN (full matrix)
-
-Record the `encrypted_cid`, the watching account, date, and a one-line outcome in
-the release evidence. Watch/playback is off-chain — capture it with a note or
-screen recording, since it won't appear in tx history.
-
-> Tip: a fresh testnet creator+buyer pair (testnet USDC/USDT token ids already in
-> `contracts/nft-ticket/src/lib.rs`) lets you exercise USDC/USDT without mainnet
-> token risk; record those tx hashes as the experimental-rail evidence.
+- [ ] Primary path passed.
+- [ ] Experimental rails, if claimed, passed.
+- [ ] Known public-alpha limitations were updated.
+- [ ] Release notes avoid private endpoint, key, transaction and account details.

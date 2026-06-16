@@ -1,7 +1,6 @@
 # YouTick Public Alpha — User Guide
 
-> What you can do at **youtick.net** during the 30-day public alpha (opens
-> Day 23 of the internal launch plan; mainnet `youtick.near`). Owner-controlled,
+> What you can do at **youtick.net** during the public alpha. Owner-controlled,
 > hybrid-decentralized — treat as preview, not final product.
 
 ## Three Ways In
@@ -73,12 +72,12 @@ Connect supports works — HOT, MyNear, Meteor, etc.
 
 | Area | Status |
 |---|---|
-| Mainnet contract `youtick.near` | Live (current code hash `HA3i8Se8Mrsd14Ye2qYvwehRgP9Phrd76psgyy9Y1bCF`; R2 deploy hash was `BXbiiT86A8mjVNwvZhNLhUDqvmTVUe7anHotTpQPXg2F`) |
-| Storage upload | Lighthouse primary write; Crust kept as compat / diagnostic |
+| Mainnet contract `youtick.near` | Live public-alpha contract |
+| Storage upload | Lighthouse write path; public IPFS gateway fallback for reads |
 | Storage API auth | NEP-413 upload challenge required (`/uploads/intent` returns `Unauthorized` without it) |
 | Trial pool funding | Fixed `TRIAL_ACCOUNT_STORAGE_COST = 0.002 NEAR` per claim |
 | Cross-chain payments | Off by default in production; flag-gated |
-| Access-control timelock | Deferred for current alpha scope; registry `Pause` / `DeactivateDecryptionOperator` proposals are pre-staged |
+| Access-control timelock | Deferred for current alpha scope; emergency registry changes require the reviewed operator process |
 | Takedown | Owner-controlled `takedown_event`; see [`incident-takedown.md`](../operations/incident-takedown.md) |
 
 Live known-issues tracker: [`docs/operations/known-issues.md`](../operations/known-issues.md).
@@ -99,4 +98,3 @@ Live known-issues tracker: [`docs/operations/known-issues.md`](../operations/kno
 | [Architecture Overview](./architecture-overview.md) | Trust model, KMS, IPFS layer |
 | [Acceptable Use Policy](../legal/acceptable-use-policy.md) | What is and isn't allowed |
 | [Quick Start](../quick-start.md) | Running the app locally |
-| Launch plan (`docs/launch-plan-2026-05.md`) | Day-by-day readiness, GO/NO-GO gate |

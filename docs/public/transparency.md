@@ -2,7 +2,7 @@
 
 > What is centralized and what is on-chain during public alpha. We publish this
 > because "hybrid decentralized" only means something if the centralized parts
-> are named. Verified against live mainnet state on 2026-06-08.
+> are named.
 
 ## Centralized vs On-Chain (today)
 
@@ -33,19 +33,19 @@ accounts/providers.
 ## Content integrity
 
 Media is encrypted with AES-256-CTR (confidentiality + seek). It is **not**
-authenticated encryption — there is no HMAC/GCM tag, and the delivery worker
-does not re-verify the IPFS CID. Tampered ciphertext from a malicious gateway
-would corrupt playback but cannot disclose keys or bypass access. Authenticated
-content integrity (per-chunk GCM/HMAC + CID verification) is on the post-alpha
-roadmap. See `docs/operations/known-issues.md`.
+authenticated encryption — there is no HMAC/GCM tag. Supported raw CID payloads
+are checked against their content address in the client and Media Delivery
+Worker, but this is not a replacement for authenticated encryption. Tampered
+ciphertext from an unsupported or unchecked path could corrupt playback, but it
+cannot disclose keys or bypass access. Authenticated content integrity
+(per-chunk GCM or encrypt-then-MAC) is on the production hardening roadmap.
 
 ## Owner-account hygiene (in progress)
 
-The protocol-owner account `youtick.near` currently carries a large number of
-access keys, including multiple FullAccess keys and several broad function-call
-keys. Reducing FullAccess keys to a single hardware-wallet key (and moving to
-multisig) is a pre-/early-launch hardening item tracked in the launch plan.
-Audit with `scripts/audit-access-keys.mjs`.
+Public-alpha owner-account hardening is still in progress. Detailed access-key
+inventories and rotation records are kept in private operations notes. Public
+claims should stay at "owner-controlled public alpha" until multisig or DAO
+governance is live and verified.
 
 ## Governance plan
 

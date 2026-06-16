@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { isLighthouseUploadProviderActive, uploadDirectoryToStorage } from '@/lib/storage/provider';
 import { getCidPinStatusFromStorageApi, isLighthousePersistencePilotEnabled, pinCidWithStorageApi, uploadFileWithStorageApi } from '@/lib/storage/storage-api';
-import { CidCollector } from '@/lib/crust/cid-collector';
+import { CidCollector } from '@/lib/storage/cid-collector';
 import {
     encryptBufferWithCounter,
     generateAESKey,
@@ -648,7 +648,7 @@ export function useUpload() {
             let storagePersistenceStatus: 'success' | 'partial' | 'failed' = 'success';
             if (collectedAssets.length > 0) {
                 updateStep('storage', 'loading');
-                setStatus('Placing persistent storage orders...');
+                setStatus('Checking persistent storage status...');
                 try {
                     const { placeStorageOrders, verifyStorageOrders } = await import('@/lib/storage/provider');
                     const batchResult = await placeStorageOrders(collectedAssets, accountId);
@@ -657,12 +657,12 @@ export function useUpload() {
                         updateStep('storage', 'error');
                         dispatch({ type: 'SET_STORAGE_ORDER_STATUS', payload: 'failed' });
                         storagePersistenceStatus = 'failed';
-                        setStatus('Storage orders failed — video is accessible but long-term persistence is not guaranteed.');
+                        setStatus('Storage persistence failed — video is accessible but long-term persistence is not guaranteed.');
                     } else if (batchResult.failed > 0) {
                         updateStep('storage', 'complete');
                         dispatch({ type: 'SET_STORAGE_ORDER_STATUS', payload: 'partial' });
                         storagePersistenceStatus = 'partial';
-                        setStatus(`Storage orders: ${batchResult.succeeded}/${batchResult.total} placed.`);
+                        setStatus(`Storage persistence: ${batchResult.succeeded}/${batchResult.total} assets tracked.`);
                     } else {
                         updateStep('storage', 'complete');
                         dispatch({ type: 'SET_STORAGE_ORDER_STATUS', payload: 'success' });
@@ -695,7 +695,7 @@ export function useUpload() {
                     updateStep('verify', 'complete');
                     dispatch({ type: 'SET_STORAGE_ORDER_STATUS', payload: 'failed' });
                     storagePersistenceStatus = 'failed';
-                    setStatus('Storage order failed — video is accessible but long-term persistence is not guaranteed.');
+                    setStatus('Storage persistence failed — video is accessible but long-term persistence is not guaranteed.');
                 }
             } else {
                 updateStep('storage', 'complete');

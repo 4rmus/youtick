@@ -120,45 +120,21 @@ export default {
             return handleNearRpc(request, ctx);
         }
 
-        // --- Crust IPFS proxy (CORS workaround for PSA/API calls) ---
+        // --- Retired storage proxy surface ---
         if (url.pathname.startsWith('/api/crust/')) {
-            const targetPath = url.pathname.replace('/api/crust', '');
-            const isPsa = targetPath.startsWith('/psa/');
-            const upstreamOrigin = isPsa
-                ? 'https://pin.crustcode.com'
-                : 'https://crustipfs.xyz';
-            const targetUrl = `${upstreamOrigin}${targetPath}${url.search}`;
-
-            // Forward relevant headers
-            const fwdHeaders = new Headers();
-            const forwardNames = ['authorization', 'content-type', 'accept', 'content-length'];
-            for (const name of forwardNames) {
-                const value = request.headers.get(name);
-                if (value) fwdHeaders.set(name, value);
-            }
-
-            // Read body as text (Works because this handler runs before body is consumed)
-            const textBody = request.body
-                ? await request.text()
-                : undefined;
-
-            const resp = await fetch(targetUrl, {
-                method: request.method,
-                headers: fwdHeaders,
-                body: textBody,
-            });
-
-            // Return with CORS headers so browser can read the response
-            const respHeaders = new Headers(resp.headers);
-            respHeaders.set('Access-Control-Allow-Origin', '*');
-            respHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-            respHeaders.set('Access-Control-Allow-Headers', '*');
-
-            return new Response(resp.body, {
-                status: resp.status,
-                statusText: resp.statusText,
-                headers: respHeaders,
-            });
+            return jsonResponse(
+                {
+                    error: 'storage_proxy_removed',
+                    message: 'This storage proxy surface has been retired. Use the Storage API and IPFS gateway read paths.',
+                },
+                410,
+                {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                    'Access-Control-Allow-Headers': '*',
+                    'Cache-Control': 'no-store',
+                },
+            );
         }
 
         // --- Build origin chain for failover ---

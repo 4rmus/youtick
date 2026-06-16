@@ -73,8 +73,6 @@ export const FEATURE_FLAGS = {
     enableLighthousePersistence: process.env.NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PERSISTENCE === 'true',
     /** Lighthouse is the default storage upload path through the Storage API Worker. */
     enableLighthousePrimaryUpload: process.env.NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PRIMARY_UPLOAD !== 'false',
-    /** Crust upload fallback is opt-in only; new uploads should stay Lighthouse-only. */
-    enableCrustUploadFallback: process.env.NEXT_PUBLIC_ENABLE_CRUST_UPLOAD_FALLBACK === 'true',
     /** Optional hot media delivery Worker. Direct gateway fallback remains available. */
     enableMediaDeliveryWorker: process.env.NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER === 'true',
 } as const;
@@ -82,7 +80,6 @@ export const FEATURE_FLAGS = {
 export const APP_CONFIG = {
     publicAppUrl: configuredAppUrl,
     turnstileSiteKey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '',
-    storageUploadProvider: process.env.NEXT_PUBLIC_STORAGE_UPLOAD_PROVIDER || 'lighthouse',
     storageApiUrl: process.env.NEXT_PUBLIC_STORAGE_API_URL || '',
     mediaDeliveryUrl: process.env.NEXT_PUBLIC_MEDIA_DELIVERY_URL || '',
 } as const;

@@ -210,9 +210,9 @@ describe('access-grants', () => {
         await persistSignlessAccessKey('alice.testnet', KeyPair.fromRandom('ed25519'));
 
         expect(await getSignlessAccessKey('alice.testnet')).not.toBeNull();
-        // Trial/guest full-access keys and legacy session-key readers (w3auth,
-        // KMS local signing) use the default store; the signless key must not
-        // be visible there, and clearing it must not touch their slot.
+        // Trial/guest full-access keys and KMS local signing use the default
+        // store; the signless key must not be visible there, and clearing it
+        // must not touch their slot.
         expect(await new BrowserKeyStore().getKey('testnet', 'alice.testnet')).toBeNull();
     });
 

@@ -3,9 +3,8 @@
 ## Status
 
 Accepted (alpha-only). Owner authority for emergency takedown is
-**transitional**. Multisig/DAO handover is a stated direction; the locked
-launch plan (`docs/launch-plan-2026-05.md`, decision #4) defers DAO design
-to **Q3 2026** with scope discussion through Q3-Q4. The end-of-Q4-2026
+**transitional**. Multisig/DAO handover is a stated direction; DAO design
+is deferred to **Q3 2026** with scope discussion through Q3-Q4. The end-of-Q4-2026
 date previously written here is treated as a target, not a hard contract
 commitment, until the governance topology is selected.
 
@@ -78,8 +77,8 @@ takedown is issued the owner MUST:
 ### 4. DAO handover (target, not hard deadline)
 
 The owner-key authority is acceptable only as a temporary alpha measure.
-The locked launch plan defers DAO design to **Q3 2026** with topology
-selection (multisig vs. DAO; signer set; quorum) ahead of any
+DAO design is targeted for **Q3 2026**, with topology selection
+(multisig vs. DAO; signer set; quorum) ahead of any
 `propose_owner` to a new governance address. End-of-Q4-2026 is the
 indicative target window; the actual handover date is conditional on
 topology selection and traction.

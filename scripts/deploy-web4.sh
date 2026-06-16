@@ -11,7 +11,7 @@
 # Prerequisites:
 #   - Node.js 18+
 #   - near-cli-rs or near-cli installed
-#   - IPFS upload tool (w3 CLI, pinata-cli, or crust-pin)
+#   - IPFS upload tool (w3 CLI, Pinata, or web3.storage)
 #
 # The script:
 #   1. Builds the Next.js static export (out/ directory)
@@ -87,7 +87,7 @@ else
   # Try to compute CID locally for reference
   if command -v npx &>/dev/null; then
     echo "  Computing local CID for reference (not uploading)..."
-    echo "  You can upload $OUT_DIR to Pinata, Crust, or web3.storage"
+    echo "  You can upload $OUT_DIR to Pinata or web3.storage"
     echo "  Then propose a timelocked URL update:"
     echo "    near call $CONTRACT_ID propose_action '{\"action\":{\"SetWeb4StaticUrl\":{\"url\":\"ipfs://YOUR_CID\"}}}' --accountId OWNER --gas 30000000000000"
   fi

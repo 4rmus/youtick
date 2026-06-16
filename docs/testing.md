@@ -21,15 +21,15 @@
 ```text
 apps/web/__tests__/
 ├── integration/                # cross-module flows
-└── unit/                       # ~30 unit tests, including:
+└── unit/                       # current unit tests, including:
     ├── access-grants.test.ts
     ├── constants.test.ts
     ├── content-types.test.ts
-    ├── crust-client.test.ts, crust-gateway.test.ts
     ├── evm-config.test.ts
     ├── event-query.test.ts
     ├── gift-service.test.ts
     ├── hooks.test.ts
+    ├── ipfs-gateway.test.ts, ipfs-integrity.test.ts
     ├── ipfs-media.test.ts
     ├── kms-client.test.ts, kms-shares.test.ts
     ├── metadata-parser.test.ts
@@ -40,7 +40,7 @@ apps/web/__tests__/
     ├── registry.test.ts
     ├── rhea-client.test.ts
     ├── rpc-failover.test.ts
-    ├── storage-api.test.ts, storage-order.test.ts, storage-provider.test.ts
+    ├── storage-api.test.ts, storage-provider.test.ts
     ├── upload-session-manager.test.ts, use-upload.test.ts
     ├── video-delivery*.test.ts (x4)
     └── video-utils.test.ts
