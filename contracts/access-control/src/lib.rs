@@ -62,18 +62,36 @@ enum StorageKey {
 }
 
 pub const TIMELOCK_DELAY_NS: u64 = 86_400_000_000_000; // 24 hours
+const MAX_SESSION_GRANTS_PER_OWNER: usize = 20;
+const MAX_SESSION_KEY_BYTES: usize = 128;
+const MAX_RESOURCE_ID_BYTES: usize = 256;
+const MAX_BINDING_HASH_BYTES: usize = 128;
+const MAX_SESSION_PROOF_BYTES: usize = 256;
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
 pub enum TimelockAction {
-    SetScopePolicy { scope: SessionScope, policy: ScopePolicy },
-    SetMarketContract { market_contract_id: AccountId },
-    SetRegistryContract { registry_contract_id: AccountId },
-    PauseScope { scope: SessionScope },
-    UnpauseScope { scope: SessionScope },
+    SetScopePolicy {
+        scope: SessionScope,
+        policy: ScopePolicy,
+    },
+    SetMarketContract {
+        market_contract_id: AccountId,
+    },
+    SetRegistryContract {
+        registry_contract_id: AccountId,
+    },
+    PauseScope {
+        scope: SessionScope,
+    },
+    UnpauseScope {
+        scope: SessionScope,
+    },
     PauseContract,
     UnpauseContract,
-    ProposeOwner { proposed_owner_id: AccountId },
+    ProposeOwner {
+        proposed_owner_id: AccountId,
+    },
 }
 
 #[near(serializers = [borsh, json])]
@@ -188,6 +206,32 @@ impl AccessControlContract {
         session_pok: String,
     ) -> SessionGrant {
         self.assert_not_paused();
+        require!(
+            !session_pk.is_empty() && session_pk.len() <= MAX_SESSION_KEY_BYTES,
+            "Invalid session key length"
+        );
+        if let Some(resource_id) = resource_id.as_deref() {
+            require!(
+                resource_id.len() <= MAX_RESOURCE_ID_BYTES,
+                "Resource ID too long"
+            );
+        }
+        if let Some(origin_hash) = origin_hash.as_deref() {
+            require!(
+                origin_hash.len() <= MAX_BINDING_HASH_BYTES,
+                "Origin hash too long"
+            );
+        }
+        if let Some(device_hash) = device_hash.as_deref() {
+            require!(
+                device_hash.len() <= MAX_BINDING_HASH_BYTES,
+                "Device hash too long"
+            );
+        }
+        require!(
+            !session_pok.is_empty() && session_pok.len() <= MAX_SESSION_PROOF_BYTES,
+            "Invalid session proof length"
+        );
 
         // Users can issue their own grants. Admin contracts can issue on behalf of
         // a user, but every path must prove control of the ephemeral session key.
@@ -248,9 +292,30 @@ impl AccessControlContract {
             revoked: false,
         };
 
+        let owner_grants = self.grants_by_owner.get(&owner_id).unwrap_or_default();
+        let mut active_grants = Vec::with_capacity(owner_grants.len());
+        for key in owner_grants {
+            match self.grants.get(&key) {
+                Some(existing)
+                    if !existing.revoked && current_time_ms() <= existing.expires_at_ms =>
+                {
+                    active_grants.push(key);
+                }
+                Some(_) => {
+                    self.grants.remove(&key);
+                }
+                None => {}
+            }
+        }
+        require!(
+            active_grants.contains(&session_pk)
+                || active_grants.len() < MAX_SESSION_GRANTS_PER_OWNER,
+            "Too many active session grants"
+        );
+
         self.grants.insert(&session_pk, &grant);
 
-        let mut owner_grants = self.grants_by_owner.get(&owner_id).unwrap_or_default();
+        let mut owner_grants = active_grants;
         if !owner_grants.contains(&session_pk) {
             owner_grants.push(session_pk);
             self.grants_by_owner.insert(&owner_id, &owner_grants);
@@ -405,6 +470,14 @@ impl AccessControlContract {
         origin_hash: Option<String>,
         device_hash: Option<String>,
     ) -> SessionGrantVerification {
+        if self.is_paused() {
+            return SessionGrantVerification {
+                valid: false,
+                owner_id: None,
+                reason: Some("Contract is paused".to_string()),
+            };
+        }
+
         let Some(grant) = self.grants.get(&session_pk) else {
             return SessionGrantVerification {
                 valid: false,
@@ -474,6 +547,10 @@ impl AccessControlContract {
         scope: SessionScope,
         resource_id: Option<String>,
     ) -> bool {
+        if self.is_paused() {
+            return false;
+        }
+
         self.list_session_grants(owner_id).into_iter().any(|grant| {
             !grant.revoked
                 && current_time_ms() <= grant.expires_at_ms
@@ -541,7 +618,9 @@ impl AccessControlContract {
             TimelockAction::SetMarketContract { market_contract_id } => {
                 self.set_market_contract_timelocked(market_contract_id);
             }
-            TimelockAction::SetRegistryContract { registry_contract_id } => {
+            TimelockAction::SetRegistryContract {
+                registry_contract_id,
+            } => {
                 self.set_registry_contract_timelocked(registry_contract_id);
             }
             TimelockAction::PauseScope { scope } => {
@@ -1043,6 +1122,29 @@ mod tests {
             account("registry.testnet"),
         );
 
+        testing_env!(context("alice.testnet", 1_000).build());
+        let (active_session_pk, active_session_pok) = session_key_and_proof(
+            "active-before-pause",
+            "alice.testnet",
+            "alice.testnet",
+            SessionScope::ClaimGift,
+            None,
+            60_000,
+            None,
+            None,
+        );
+        contract.issue_session_grant(
+            account("alice.testnet"),
+            active_session_pk.clone(),
+            SessionScope::ClaimGift,
+            None,
+            60_000,
+            None,
+            None,
+            active_session_pok,
+        );
+
+        testing_env!(context("owner.testnet", 1_000).build());
         let id = contract.propose_action(TimelockAction::PauseContract);
 
         let builder = context("owner.testnet", 1_000 + TIMELOCK_DELAY_NS / 1_000_000);
@@ -1050,6 +1152,12 @@ mod tests {
         contract.execute_action(id);
 
         assert!(contract.is_paused());
+        assert!(!contract.can_claim_gift(account("alice.testnet"), None));
+        assert!(
+            !contract
+                .verify_session_grant(active_session_pk, SessionScope::ClaimGift, None, None, None,)
+                .valid
+        );
 
         testing_env!(context("alice.testnet", 2_000).build());
         let (session_pk, session_pok) = session_key_and_proof(
@@ -1068,6 +1176,64 @@ mod tests {
                 account("alice.testnet"),
                 session_pk,
                 SessionScope::Play,
+                None,
+                60_000,
+                None,
+                None,
+                session_pok,
+            );
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn caps_active_session_grants_per_owner() {
+        testing_env!(context("alice.testnet", 1_000).build());
+        let mut contract = AccessControlContract::new(
+            account("owner.testnet"),
+            account("market.testnet"),
+            account("registry.testnet"),
+        );
+
+        for index in 0..MAX_SESSION_GRANTS_PER_OWNER {
+            let seed = format!("grant-{index}");
+            let (session_pk, session_pok) = session_key_and_proof(
+                &seed,
+                "alice.testnet",
+                "alice.testnet",
+                SessionScope::ClaimGift,
+                None,
+                60_000,
+                None,
+                None,
+            );
+            contract.issue_session_grant(
+                account("alice.testnet"),
+                session_pk,
+                SessionScope::ClaimGift,
+                None,
+                60_000,
+                None,
+                None,
+                session_pok,
+            );
+        }
+
+        let (session_pk, session_pok) = session_key_and_proof(
+            "one-too-many",
+            "alice.testnet",
+            "alice.testnet",
+            SessionScope::ClaimGift,
+            None,
+            60_000,
+            None,
+            None,
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.issue_session_grant(
+                account("alice.testnet"),
+                session_pk,
+                SessionScope::ClaimGift,
                 None,
                 60_000,
                 None,

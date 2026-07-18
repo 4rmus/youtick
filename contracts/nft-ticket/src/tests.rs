@@ -713,7 +713,7 @@ fn stablecoin_purchase_mints_once_and_records_creator_balance() {
     .to_string();
 
     let result = contract.ft_on_transfer(buyer_id.clone(), U128(price_usdc + 50_000), msg);
-    assert!(matches!(result, PromiseOrValue::Value(U128(0))));
+    assert!(matches!(result, PromiseOrValue::Value(U128(50_000))));
     assert_eq!(contract.tokens.nft_supply_for_owner(&buyer_id).0, 1);
     assert_eq!(
         contract.get_creator_stablecoin_balance(usdc_id.clone(), creator_id),
@@ -935,6 +935,57 @@ fn failed_creator_stablecoin_withdraw_restores_balance() {
 }
 
 #[test]
+fn failed_usdc_pool_withdrawals_restore_balances() {
+    let contract_id = account("contract.testnet");
+    let mut contract = Contract::new(account("owner.testnet"));
+    contract.commission_pool_usdc = 25;
+    contract.trial_pool_usdc = 40;
+
+    testing_env!(
+        context(contract_id.as_str(), contract_id.as_str()).build(),
+        near_sdk::test_vm_config(),
+        near_sdk::RuntimeFeesConfig::test(),
+        Default::default(),
+        vec![PromiseResult::Failed],
+    );
+
+    contract.commission_pool_usdc -= 10;
+    assert!(!contract.on_commission_usdc_withdraw_complete(U128(10)));
+    contract.trial_pool_usdc -= 15;
+    assert!(!contract.on_trial_pool_usdc_withdraw_complete(U128(15)));
+    assert_eq!(contract.get_usdc_pools(), (U128(40), U128(25)));
+}
+
+#[test]
+fn failed_token_commission_withdraw_restores_balance() {
+    let owner_id = account("owner.testnet");
+    let contract_id = account("contract.testnet");
+    let token_id = account("wrap.testnet");
+    let mut contract = Contract::new(owner_id.clone());
+    contract.add_stablecoin_commission_balance(&token_id, 100);
+
+    testing_env!(context(owner_id.as_str(), contract_id.as_str()).build());
+    let _ = contract.withdraw_token_commission_timelocked(token_id.clone(), U128(40));
+    assert_eq!(
+        contract.get_stablecoin_commission_balance(token_id.clone()),
+        U128(60)
+    );
+
+    testing_env!(
+        context(contract_id.as_str(), contract_id.as_str()).build(),
+        near_sdk::test_vm_config(),
+        near_sdk::RuntimeFeesConfig::test(),
+        Default::default(),
+        vec![PromiseResult::Failed],
+    );
+    assert!(!contract.on_token_commission_withdraw_complete(token_id.clone(), U128(40)));
+    assert_eq!(
+        contract.get_stablecoin_commission_balance(token_id),
+        U128(100)
+    );
+}
+
+#[test]
 #[should_panic(expected = "Only contract owner can call this method")]
 fn direct_create_trial_invite_drop_rejects_non_owner() {
     let owner_id = account("owner.testnet");
@@ -1093,7 +1144,46 @@ fn get_creator_stats_sums_purchases() {
 }
 
 #[test]
-fn purchase_log_views_return_empty_after_runtime_hotfix() {
+fn ticket_mint_indexes_stay_within_per_transaction_budgets_as_state_grows() {
+    let owner_id = account("owner.testnet");
+    let mut contract = Contract::new(owner_id.clone());
+
+    testing_env!(VMContextBuilder::new()
+        .predecessor_account_id(owner_id)
+        .attached_deposit(STORAGE_COST_ACCOUNT)
+        .build());
+    contract.create_event(
+        "scale-event".to_string(),
+        "Scale Event".to_string(),
+        "Scale test".to_string(),
+        U128(NearToken::from_near(1).as_yoctonear()),
+        None,
+        None,
+        None,
+        None,
+    );
+
+    for index in 0..100 {
+        let buyer = account(&format!("buyer-{index}.testnet"));
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(buyer.clone())
+            .attached_deposit(NearToken::from_near(2))
+            .build());
+        contract.buy_ticket(buyer, "scale-event".to_string());
+        assert!(near_sdk::env::used_gas().as_gas() < 100_000_000_000_000);
+    }
+
+    assert_eq!(
+        contract
+            .get_creator_stats(account("owner.testnet"))
+            .total_sales,
+        100
+    );
+    assert_eq!(contract.nft_total_supply().0, 100);
+}
+
+#[test]
+fn purchase_log_views_return_recorded_purchases() {
     let owner1 = account("owner1.testnet");
     let owner2 = account("owner2.testnet");
     let buyer = account("buyer.testnet");
@@ -1124,7 +1214,8 @@ fn purchase_log_views_return_empty_after_runtime_hotfix() {
     contract.buy_ticket(buyer.clone(), "event-1".to_string());
 
     let owner1_logs = contract.get_purchase_logs_by_creator(owner1.clone(), None, None);
-    assert!(owner1_logs.is_empty());
+    assert_eq!(owner1_logs.len(), 1);
+    assert_eq!(owner1_logs[0].1.buyer_id, buyer);
 
     let owner2_logs = contract.get_purchase_logs_by_creator(owner2.clone(), None, None);
     assert!(owner2_logs.is_empty());
@@ -1139,7 +1230,11 @@ fn set_and_get_creator_profile() {
     let creator_id = account("creator.testnet");
     let mut contract = Contract::new(account("owner.testnet"));
 
-    testing_env!(context(creator_id.as_str(), "contract.testnet").build());
+    testing_env!(VMContextBuilder::new()
+        .predecessor_account_id(creator_id.clone())
+        .current_account_id(account("contract.testnet"))
+        .attached_deposit(NearToken::from_millinear(30))
+        .build());
     contract.set_creator_profile(
         Some("Creative Studio".to_string()),
         Some("Independent film and concert recording collective.".to_string()),
@@ -1171,7 +1266,11 @@ fn update_creator_profile_overwrites_previous() {
     let creator_id = account("creator.testnet");
     let mut contract = Contract::new(account("owner.testnet"));
 
-    testing_env!(context(creator_id.as_str(), "contract.testnet").build());
+    testing_env!(VMContextBuilder::new()
+        .predecessor_account_id(creator_id.clone())
+        .current_account_id(account("contract.testnet"))
+        .attached_deposit(NearToken::from_millinear(30))
+        .build());
     contract.set_creator_profile(Some("Old Name".to_string()), None, None, None, None, None);
 
     contract.set_creator_profile(
@@ -1193,4 +1292,111 @@ fn get_creator_profile_returns_none_for_unknown() {
     let contract = Contract::new(account("owner.testnet"));
     let profile = contract.get_creator_profile(account("unknown.testnet"));
     assert!(profile.is_none());
+}
+
+#[test]
+fn oversized_event_and_profile_inputs_are_rejected_before_storage_growth() {
+    for size in [100 * 1024, 1024 * 1024, 4 * 1024 * 1024] {
+        let mut contract = Contract::new(account("owner.testnet"));
+        testing_env!(VMContextBuilder::new()
+            .predecessor_account_id(account("creator.testnet"))
+            .attached_deposit(NearToken::from_near(1))
+            .build());
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.create_event(
+                "bounded-cid".to_string(),
+                "Title".to_string(),
+                "x".repeat(size),
+                U128(0),
+                None,
+                None,
+                None,
+                None,
+            );
+        }));
+        assert!(result.is_err());
+        assert_eq!(contract.get_events_count(), 0);
+    }
+
+    let mut contract = Contract::new(account("owner.testnet"));
+    testing_env!(context("creator.testnet", "contract.testnet").build());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        contract.set_creator_profile(Some("x".repeat(101)), None, None, None, None, None);
+    }));
+    assert!(result.is_err());
+}
+
+#[test]
+#[should_panic(expected = "Attached deposit does not cover profile storage")]
+fn new_creator_profile_requires_storage_deposit() {
+    let mut contract = Contract::new(account("owner.testnet"));
+    testing_env!(context("creator.testnet", "contract.testnet").build());
+    contract.set_creator_profile(Some("Creator".to_string()), None, None, None, None, None);
+}
+
+#[test]
+fn failed_legacy_wnear_unwrap_returns_tokens_to_resolver() {
+    let contract_id = account("contract.testnet");
+    let mut contract = Contract::new(account("owner.testnet"));
+    testing_env!(
+        context(contract_id.as_str(), contract_id.as_str()).build(),
+        near_sdk::test_vm_config(),
+        near_sdk::RuntimeFeesConfig::test(),
+        Default::default(),
+        vec![PromiseResult::Failed],
+    );
+
+    assert_eq!(
+        contract.on_wnear_unwrap_for_purchase(
+            account("buyer.testnet"),
+            "event".to_string(),
+            U128(123),
+        ),
+        U128(123)
+    );
+}
+
+#[test]
+fn wnear_purchase_is_synchronous_and_returns_excess_to_resolver() {
+    let creator_id = account("creator.testnet");
+    let buyer_id = account("buyer.testnet");
+    let contract_id = account("contract.testnet");
+    let wrap_id = account("wrap.testnet");
+    let mut contract = Contract::new(creator_id.clone());
+    let cid = "wnear-event".to_string();
+    let price = NearToken::from_near(1).as_yoctonear();
+    contract.events.insert(
+        &cid,
+        &Event {
+            title: "wNEAR Event".to_string(),
+            description: "Paid in wNEAR".to_string(),
+            price: U128(price),
+            price_usdc: None,
+            price_near: Some(U128(price)),
+            creator_id: creator_id.clone(),
+            created_at: 1,
+            content_type: ContentType::Exclusive,
+        },
+    );
+
+    let excess = NearToken::from_millinear(5).as_yoctonear();
+    let amount = price
+        .saturating_add(PURCHASE_STORAGE_BUDGET.as_yoctonear())
+        .saturating_add(excess);
+    testing_env!(context(wrap_id.as_str(), contract_id.as_str()).build());
+    let msg = near_sdk::serde_json::json!({
+        "action": "buy_ticket",
+        "buyer_id": buyer_id,
+        "encrypted_cid": cid,
+    })
+    .to_string();
+
+    let result = contract.ft_on_transfer(buyer_id.clone(), U128(amount), msg);
+
+    assert!(matches!(result, PromiseOrValue::Value(U128(value)) if value == excess));
+    assert_eq!(contract.tokens.nft_supply_for_owner(&buyer_id).0, 1);
+    assert_eq!(
+        contract.get_creator_stablecoin_balance(wrap_id, creator_id),
+        U128(price * 98 / 100),
+    );
 }

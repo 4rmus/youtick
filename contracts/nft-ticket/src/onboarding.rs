@@ -66,8 +66,8 @@ impl Contract {
     ) {
         let num_keys = public_keys.len() as u32;
         require!(
-            num_keys > 0 && num_keys <= 50,
-            "Must create 1-50 trial invites"
+            num_keys > 0 && num_keys <= 10,
+            "Must create 1-10 trial invites"
         );
 
         let invite_storage_cost = STORAGE_COST_INVITE;

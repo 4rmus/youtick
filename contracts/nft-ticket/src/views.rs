@@ -45,8 +45,7 @@ impl Contract {
 
     /// View: Get a single purchase log entry by ID
     pub fn get_purchase_log(&self, purchase_id: u64) -> Option<PurchaseLog> {
-        let _ = purchase_id;
-        None
+        self.purchase_logs.get(&purchase_id)
     }
 
     /// View: Get purchase logs with pagination
@@ -55,9 +54,13 @@ impl Contract {
         from_index: Option<u64>,
         limit: Option<u64>,
     ) -> Vec<(u64, PurchaseLog)> {
-        let _ = from_index;
-        let _ = limit;
-        Vec::new()
+        let start = from_index.unwrap_or(0);
+        let end = start
+            .saturating_add(limit.unwrap_or(50).min(100))
+            .min(self.next_purchase_id);
+        (start..end)
+            .filter_map(|id| self.purchase_logs.get(&id).map(|log| (id, log)))
+            .collect()
     }
 
     /// View: Get total number of purchase log entries
@@ -72,47 +75,39 @@ impl Contract {
         from_index: Option<u64>,
         limit: Option<u64>,
     ) -> Vec<(u64, PurchaseLog)> {
-        let _ = creator_id;
-        let _ = from_index;
-        let _ = limit;
-        Vec::new()
+        require!(
+            self.purchase_index_ready(),
+            "Purchase index migration is not complete"
+        );
+        let start = from_index.unwrap_or(0);
+        let max_results = limit.unwrap_or(50).min(100);
+        let count = self
+            .lazy_creator_purchase_counts()
+            .get(&creator_id)
+            .unwrap_or(0);
+        let slots = self.lazy_creator_purchase_slots();
+        (start..start.saturating_add(max_results).min(count))
+            .filter_map(|index| slots.get(&Self::indexed_slot_key(creator_id.as_bytes(), index)))
+            .filter_map(|id| self.purchase_logs.get(&id).map(|log| (id, log)))
+            .collect()
     }
 
     /// View: Get creator stats (total sales, total revenue)
     pub fn get_creator_stats(&self, creator_id: AccountId) -> CreatorStats {
-        let mut total_sales = 0u64;
-        let mut total_revenue_yocto = 0u128;
-
-        for (cid, event) in self.events.iter() {
-            if event.creator_id != creator_id {
-                continue;
-            }
-
-            let sale_count = self
-                .lazy_cid_to_tokens()
-                .get(&cid)
-                .unwrap_or_default()
-                .len() as u64;
-            if sale_count == 0 {
-                continue;
-            }
-
-            total_sales += sale_count;
-            let price_yocto = Self::event_near_price(&event).0;
-            if price_yocto > 0 {
-                let commission = price_yocto * COMMISSION_RATE_PERCENT / COMMISSION_DENOMINATOR;
-                let creator_amount = price_yocto - commission;
-                total_revenue_yocto += creator_amount.saturating_mul(sale_count as u128);
-            }
-        }
-
-        CreatorStats {
-            total_sales,
-            total_revenue_yocto: U128(total_revenue_yocto),
-        }
+        require!(
+            self.purchase_index_ready(),
+            "Purchase index migration is not complete"
+        );
+        self.lazy_creator_stats()
+            .get(&creator_id)
+            .unwrap_or(CreatorStats {
+                total_sales: 0,
+                total_revenue_yocto: U128(0),
+            })
     }
 
     /// Set creator profile (only callable by the profile owner)
+    #[payable]
     pub fn set_creator_profile(
         &mut self,
         display_name: Option<String>,
@@ -122,7 +117,20 @@ impl Contract {
         instagram: Option<String>,
         avatar_url: Option<String>,
     ) {
+        Self::assert_optional_len(
+            "display_name",
+            display_name.as_deref(),
+            MAX_PROFILE_NAME_BYTES,
+        );
+        Self::assert_optional_len("bio", bio.as_deref(), MAX_PROFILE_BIO_BYTES);
+        Self::assert_optional_len("website", website.as_deref(), MAX_URL_BYTES);
+        Self::assert_optional_len("twitter", twitter.as_deref(), MAX_SOCIAL_HANDLE_BYTES);
+        Self::assert_optional_len("instagram", instagram.as_deref(), MAX_SOCIAL_HANDLE_BYTES);
+        Self::assert_optional_len("avatar_url", avatar_url.as_deref(), MAX_URL_BYTES);
+
         let caller = env::predecessor_account_id();
+        let deposit = env::attached_deposit();
+        let storage_before = env::storage_usage();
         let profile = CreatorProfile {
             display_name,
             bio,
@@ -132,6 +140,16 @@ impl Contract {
             avatar_url,
         };
         self.creator_profiles.insert(&caller, &profile);
+        let storage_cost = Self::storage_cost_since(storage_before);
+        require!(
+            deposit >= storage_cost,
+            "Attached deposit does not cover profile storage"
+        );
+        if deposit > storage_cost {
+            Promise::new(caller)
+                .transfer(deposit.saturating_sub(storage_cost))
+                .as_return();
+        }
     }
 
     /// View: Get creator profile

@@ -170,6 +170,12 @@ impl Contract {
             } => {
                 self.nft_mint_timelocked(receiver_id, token_metadata, video_metadata);
             }
+            TimelockAction::WithdrawTokenCommission {
+                token_contract,
+                amount,
+            } => {
+                let _ = self.withdraw_token_commission_timelocked(token_contract, amount);
+            }
         }
         env::log_str(&format!("Timelock proposal {} executed", id));
     }
@@ -261,13 +267,14 @@ impl Contract {
             self.events.remove(cid);
             self.lazy_banned_events().remove(cid);
             self.lazy_event_price_usd().remove(cid);
+            self.events_price_usdc.remove(cid);
             self.lazy_event_access_modes().remove(&cid.to_string());
 
             // Find and remove associated video_metadata entries via reverse index
-            let token_ids_to_remove: Vec<TokenId> =
-                self.lazy_cid_to_tokens().get(cid).unwrap_or_default();
+            let token_ids_to_remove = self.ticket_ids_for_cid(cid);
 
             for token_id in &token_ids_to_remove {
+                self.remove_ticket_entitlement(token_id, cid);
                 self.video_metadata.remove(token_id);
             }
             self.remove_cid_index(cid);
@@ -285,29 +292,113 @@ impl Contract {
         }
     }
 
-    /// Admin: Rebuild the CID → token_ids reverse index from video_metadata.
-    /// Call once after deploying the reverse-index change to backfill existing tokens.
+    /// Compatibility wrapper for empty/small launch states. Large states must
+    /// use `backfill_ticket_indexes` in bounded chunks.
     pub fn rebuild_cid_to_tokens(&mut self) {
         self.assert_owner();
-        self.rebuild_cid_to_tokens_timelocked()
+        require!(
+            self.next_token_id <= 200,
+            "Use bounded ticket index backfill for more than 200 token IDs"
+        );
+        self.set_ticket_index_ready(false);
+        let mut cursor = LazyOption::new(StorageKey::TICKET_BACKFILL_CURSOR, None);
+        cursor.set(&0u64);
+        self.backfill_ticket_indexes_internal(0, self.next_token_id.max(1));
+        self.finish_ticket_index_backfill_internal();
     }
 
     pub(crate) fn rebuild_cid_to_tokens_timelocked(&mut self) {
-        let mut count = 0u64;
-        for (token_id, meta) in self.video_metadata.iter() {
-            let mut ids = self
-                .lazy_cid_to_tokens()
-                .get(&meta.encrypted_cid)
-                .unwrap_or_default();
-            if !ids.contains(&token_id) {
-                ids.push(token_id.clone());
-                count += 1;
+        self.rebuild_cid_to_tokens()
+    }
+
+    /// Backfill owner, entitlement and CID indexes without an unbounded state
+    /// scan. Chunks must be contiguous so finalization can prove coverage.
+    pub fn backfill_ticket_indexes(&mut self, from_token_id: u64, limit: u64) -> u64 {
+        self.assert_owner();
+        self.backfill_ticket_indexes_internal(from_token_id, limit)
+    }
+
+    fn backfill_ticket_indexes_internal(&mut self, from_token_id: u64, limit: u64) -> u64 {
+        require!(limit > 0 && limit <= 200, "Backfill limit must be 1-200");
+        let mut cursor = LazyOption::new(StorageKey::TICKET_BACKFILL_CURSOR, None);
+        let expected = cursor.get().unwrap_or(0u64);
+        require!(
+            from_token_id == expected,
+            "Ticket backfill chunk is not contiguous"
+        );
+        self.set_ticket_index_ready(false);
+
+        let end = from_token_id.saturating_add(limit).min(self.next_token_id);
+        for numeric_id in from_token_id..end {
+            let token_id = numeric_id.to_string();
+            let Some(owner_id) = self.tokens.owner_by_id.get(&token_id) else {
+                continue;
+            };
+            if let Some(metadata) = self.video_metadata.get(&token_id) {
+                self.index_ticket(&token_id, &owner_id, &metadata.encrypted_cid);
+            } else {
+                self.index_ticket_without_metadata(&token_id, &owner_id);
             }
-            self.lazy_cid_to_tokens().insert(&meta.encrypted_cid, &ids);
         }
-        env::log_str(&format!(
-            "Rebuilt cid_to_tokens index for {} token entries",
-            count
-        ));
+        cursor.set(&end);
+        end
+    }
+
+    pub fn finish_ticket_index_backfill(&mut self) {
+        self.assert_owner();
+        self.finish_ticket_index_backfill_internal();
+    }
+
+    fn finish_ticket_index_backfill_internal(&mut self) {
+        let cursor = LazyOption::new(StorageKey::TICKET_BACKFILL_CURSOR, None)
+            .get()
+            .unwrap_or(0u64);
+        let indexed = LazyOption::new(StorageKey::TICKET_INDEXED_COUNT, None)
+            .get()
+            .unwrap_or(0u64);
+        require!(
+            cursor == self.next_token_id,
+            "Ticket backfill has remaining IDs"
+        );
+        require!(
+            indexed == self.tokens.total_supply,
+            "Ticket backfill count does not match total supply"
+        );
+        self.set_ticket_index_ready(true);
+    }
+
+    pub fn backfill_purchase_indexes(&mut self, from_purchase_id: u64, limit: u64) -> u64 {
+        self.assert_owner();
+        require!(limit > 0 && limit <= 200, "Backfill limit must be 1-200");
+        let mut cursor = LazyOption::new(StorageKey::PURCHASE_BACKFILL_CURSOR, None);
+        let expected = cursor.get().unwrap_or(0u64);
+        require!(
+            from_purchase_id == expected,
+            "Purchase backfill chunk is not contiguous"
+        );
+        self.set_purchase_index_ready(false);
+
+        let end = from_purchase_id
+            .saturating_add(limit)
+            .min(self.next_purchase_id);
+        for purchase_id in from_purchase_id..end {
+            if let Some(log) = self.purchase_logs.get(&purchase_id) {
+                self.add_purchase_to_indexes(purchase_id, &log);
+            }
+        }
+        cursor.set(&end);
+        end
+    }
+
+    pub fn finish_purchase_index_backfill(&mut self) {
+        self.assert_owner();
+        let cursor = LazyOption::new(StorageKey::PURCHASE_BACKFILL_CURSOR, None)
+            .get()
+            .unwrap_or(0u64);
+        require!(
+            cursor == self.next_purchase_id,
+            "Purchase backfill has remaining IDs"
+        );
+        self.set_purchase_index_ready(true);
     }
 }

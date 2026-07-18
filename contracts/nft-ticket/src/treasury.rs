@@ -448,18 +448,24 @@ impl Contract {
         );
         self.commission_pool_usdc = self.commission_pool_usdc.saturating_sub(amount.0);
 
-        Promise::new(usdc_contract_id()).function_call(
-            "ft_transfer".to_string(),
-            near_sdk::serde_json::json!({
-                "receiver_id": env::predecessor_account_id(),
-                "amount": amount.0.to_string(),
-                "memo": "Youtick commission withdrawal"
-            })
-            .to_string()
-            .into_bytes(),
-            NearToken::from_yoctonear(1),
-            near_sdk::Gas::from_tgas(10),
-        )
+        Promise::new(usdc_contract_id())
+            .function_call(
+                "ft_transfer".to_string(),
+                near_sdk::serde_json::json!({
+                    "receiver_id": env::predecessor_account_id(),
+                    "amount": amount.0.to_string(),
+                    "memo": "Youtick commission withdrawal"
+                })
+                .to_string()
+                .into_bytes(),
+                NearToken::from_yoctonear(1),
+                near_sdk::Gas::from_tgas(10),
+            )
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(5))
+                    .on_commission_usdc_withdraw_complete(amount),
+            )
     }
 
     /// Withdraw trial_pool_usdc (owner only, requires 24h timelock).
@@ -477,18 +483,50 @@ impl Contract {
         );
         self.trial_pool_usdc = self.trial_pool_usdc.saturating_sub(amount.0);
 
-        Promise::new(usdc_contract_id()).function_call(
-            "ft_transfer".to_string(),
-            near_sdk::serde_json::json!({
-                "receiver_id": env::predecessor_account_id(),
-                "amount": amount.0.to_string(),
-                "memo": "Youtick trial pool withdrawal"
-            })
-            .to_string()
-            .into_bytes(),
-            NearToken::from_yoctonear(1),
-            near_sdk::Gas::from_tgas(10),
-        )
+        Promise::new(usdc_contract_id())
+            .function_call(
+                "ft_transfer".to_string(),
+                near_sdk::serde_json::json!({
+                    "receiver_id": env::predecessor_account_id(),
+                    "amount": amount.0.to_string(),
+                    "memo": "Youtick trial pool withdrawal"
+                })
+                .to_string()
+                .into_bytes(),
+                NearToken::from_yoctonear(1),
+                near_sdk::Gas::from_tgas(10),
+            )
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(5))
+                    .on_trial_pool_usdc_withdraw_complete(amount),
+            )
+    }
+
+    #[private]
+    pub fn on_commission_usdc_withdraw_complete(&mut self, amount: U128) -> bool {
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+        if !succeeded {
+            self.commission_pool_usdc = self.commission_pool_usdc.saturating_add(amount.0);
+        }
+        succeeded
+    }
+
+    #[private]
+    pub fn on_trial_pool_usdc_withdraw_complete(&mut self, amount: U128) -> bool {
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+        if !succeeded {
+            self.trial_pool_usdc = self.trial_pool_usdc.saturating_add(amount.0);
+        }
+        succeeded
     }
 
     /// View method: get USDC pool balances
@@ -502,7 +540,7 @@ impl Contract {
         creator_id: AccountId,
     ) -> U128 {
         require!(
-            token_contract == usdc_contract_id() || token_contract == usdt_contract_id(),
+            Self::is_supported_payout_token(&token_contract),
             "Unsupported stablecoin"
         );
         let key = Self::stablecoin_balance_key(&token_contract, &creator_id);
@@ -515,7 +553,7 @@ impl Contract {
 
     pub fn get_stablecoin_commission_balance(&self, token_contract: AccountId) -> U128 {
         require!(
-            token_contract == usdc_contract_id() || token_contract == usdt_contract_id(),
+            Self::is_supported_payout_token(&token_contract),
             "Unsupported stablecoin"
         );
         if token_contract == usdc_contract_id() {
@@ -531,6 +569,84 @@ impl Contract {
         )
     }
 
+    pub fn withdraw_token_commission(&mut self, token_contract: AccountId, amount: U128) -> u64 {
+        self.assert_owner();
+        require!(
+            Self::is_supported_payout_token(&token_contract),
+            "Unsupported payout token"
+        );
+        require!(
+            token_contract != usdc_contract_id(),
+            "Use the USDC pool withdrawal methods"
+        );
+        self.propose_action(TimelockAction::WithdrawTokenCommission {
+            token_contract,
+            amount,
+        })
+    }
+
+    pub(crate) fn withdraw_token_commission_timelocked(
+        &mut self,
+        token_contract: AccountId,
+        amount: U128,
+    ) -> Promise {
+        self.assert_not_paused();
+        require!(
+            Self::is_supported_payout_token(&token_contract)
+                && token_contract != usdc_contract_id(),
+            "Unsupported payout token"
+        );
+        let key = token_contract.to_string();
+        let mut balances = self.lazy_stablecoin_commission_balances();
+        let available = balances.get(&key).unwrap_or(0);
+        require!(
+            available >= amount.0 && amount.0 > 0,
+            "Insufficient commission balance"
+        );
+        let remaining = available - amount.0;
+        if remaining == 0 {
+            balances.remove(&key);
+        } else {
+            balances.insert(&key, &remaining);
+        }
+
+        Promise::new(token_contract.clone())
+            .function_call(
+                "ft_transfer".to_string(),
+                near_sdk::serde_json::json!({
+                    "receiver_id": env::predecessor_account_id(),
+                    "amount": amount.0.to_string(),
+                    "memo": "Youtick token commission withdrawal"
+                })
+                .to_string()
+                .into_bytes(),
+                NearToken::from_yoctonear(1),
+                near_sdk::Gas::from_tgas(10),
+            )
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(near_sdk::Gas::from_tgas(5))
+                    .on_token_commission_withdraw_complete(token_contract, amount),
+            )
+    }
+
+    #[private]
+    pub fn on_token_commission_withdraw_complete(
+        &mut self,
+        token_contract: AccountId,
+        amount: U128,
+    ) -> bool {
+        #[allow(deprecated)]
+        let succeeded = matches!(
+            env::promise_result(0),
+            near_sdk::PromiseResult::Successful(_)
+        );
+        if !succeeded {
+            self.add_stablecoin_commission_balance(&token_contract, amount.0);
+        }
+        succeeded
+    }
+
     pub fn is_stablecoin_payment_settled(
         &self,
         token_contract: AccountId,
@@ -538,7 +654,7 @@ impl Contract {
         payment_id: String,
     ) -> bool {
         require!(
-            token_contract == usdc_contract_id() || token_contract == usdt_contract_id(),
+            Self::is_supported_payout_token(&token_contract),
             "Unsupported stablecoin"
         );
         self.lazy_settled_stablecoin_payments()
@@ -552,7 +668,7 @@ impl Contract {
     ) -> Promise {
         self.assert_not_paused();
         require!(
-            token_contract == usdc_contract_id() || token_contract == usdt_contract_id(),
+            Self::is_supported_payout_token(&token_contract),
             "Unsupported stablecoin"
         );
         let creator_id = env::predecessor_account_id();

@@ -100,8 +100,8 @@ impl OperatorRegistryContract {
             owner_id,
             pending_owner_id: None,
             threshold_config: ThresholdConfig {
-                total_operators: 5,
-                required_shares: 3,
+                total_operators: 0,
+                required_shares: 0,
             },
             decryption_operators: LookupMap::new(StorageKey::DecryptionOperators),
             decryption_operator_ids: UnorderedSet::new(StorageKey::DecryptionOperatorIds),
@@ -138,6 +138,11 @@ impl OperatorRegistryContract {
         };
         self.decryption_operators.insert(&account_id, &record);
         self.decryption_operator_ids.insert(&account_id);
+        let active_count = self.active_decryption_operator_count();
+        self.threshold_config.total_operators = active_count;
+        if self.threshold_config.required_shares == 0 {
+            self.threshold_config.required_shares = 1;
+        }
     }
 
     pub fn deactivate_decryption_operator(&mut self, account_id: AccountId) {
@@ -150,8 +155,15 @@ impl OperatorRegistryContract {
             .decryption_operators
             .get(&account_id)
             .expect("Decryption operator not found");
+        require!(record.active, "Decryption operator is already inactive");
+        let remaining_active = self.active_decryption_operator_count().saturating_sub(1);
+        require!(
+            remaining_active >= self.threshold_config.required_shares,
+            "Cannot deactivate operator below required shares",
+        );
         record.active = false;
         self.decryption_operators.insert(&account_id, &record);
+        self.threshold_config.total_operators = remaining_active;
     }
 
     pub fn upsert_relayer(
@@ -198,14 +210,20 @@ impl OperatorRegistryContract {
     }
 
     fn set_threshold_config_timelocked(&mut self, total_operators: u8, required_shares: u8) {
-        require!(total_operators > 0, "Total operators must be greater than zero");
-        require!(required_shares > 0, "Required shares must be greater than zero");
+        require!(
+            total_operators > 0,
+            "Total operators must be greater than zero"
+        );
+        require!(
+            required_shares > 0,
+            "Required shares must be greater than zero"
+        );
         require!(
             required_shares <= total_operators,
             "Required shares cannot exceed total operators",
         );
         // OR-1 fix: Validate total_operators matches actual registered operator count
-        let actual_operator_count = self.decryption_operator_ids.len() as u8;
+        let actual_operator_count = self.active_decryption_operator_count();
         require!(
             total_operators == actual_operator_count,
             "total_operators must match actual registered operator count",
@@ -294,7 +312,11 @@ impl OperatorRegistryContract {
                 endpoint,
                 transport_public_key,
             } => {
-                self.upsert_decryption_operator_timelocked(account_id, endpoint, transport_public_key);
+                self.upsert_decryption_operator_timelocked(
+                    account_id,
+                    endpoint,
+                    transport_public_key,
+                );
             }
             TimelockAction::DeactivateDecryptionOperator { account_id } => {
                 self.deactivate_decryption_operator_timelocked(account_id);
@@ -348,10 +370,17 @@ impl OperatorRegistryContract {
     }
 
     pub fn get_decryption_operator(&self, account_id: AccountId) -> Option<OperatorRecord> {
+        if self.is_paused() {
+            return None;
+        }
         self.decryption_operators.get(&account_id)
     }
 
     pub fn list_decryption_operators(&self) -> Vec<OperatorRecord> {
+        if self.is_paused() {
+            return Vec::new();
+        }
+
         self.decryption_operator_ids
             .iter()
             .filter_map(|account_id| self.decryption_operators.get(&account_id))
@@ -359,10 +388,16 @@ impl OperatorRegistryContract {
     }
 
     pub fn get_relayer(&self, account_id: AccountId) -> Option<OperatorRecord> {
+        if self.is_paused() {
+            return None;
+        }
         self.relayers.get(&account_id)
     }
 
     pub fn list_relayers(&self) -> Vec<OperatorRecord> {
+        if self.is_paused() {
+            return Vec::new();
+        }
         self.relayer_ids
             .iter()
             .filter_map(|account_id| self.relayers.get(&account_id))
@@ -374,6 +409,10 @@ impl OperatorRegistryContract {
     }
 
     pub fn is_active_decryption_operator(&self, account_id: AccountId) -> bool {
+        if self.is_paused() {
+            return false;
+        }
+
         self.decryption_operators
             .get(&account_id)
             .map(|record| record.active)
@@ -381,10 +420,26 @@ impl OperatorRegistryContract {
     }
 
     pub fn is_active_relayer(&self, account_id: AccountId) -> bool {
+        if self.is_paused() {
+            return false;
+        }
+
         self.relayers
             .get(&account_id)
             .map(|record| record.active)
             .unwrap_or(false)
+    }
+
+    fn active_decryption_operator_count(&self) -> u8 {
+        self.decryption_operator_ids
+            .iter()
+            .filter(|account_id| {
+                self.decryption_operators
+                    .get(account_id)
+                    .map(|record| record.active)
+                    .unwrap_or(false)
+            })
+            .count() as u8
     }
 }
 
@@ -441,6 +496,15 @@ mod tests {
         contract.execute_action(id);
         assert!(contract.is_active_decryption_operator(account("operator-1.testnet")));
 
+        let id = contract.propose_action(TimelockAction::UpsertDecryptionOperator {
+            account_id: account("operator-2.testnet"),
+            endpoint: "https://operator-2.example".to_string(),
+            transport_public_key: "ed25519:operator-key-2".to_string(),
+        });
+        ts += TIMELOCK_DELAY_NS;
+        testing_env!(context("owner.testnet", ts).build());
+        contract.execute_action(id);
+
         let id = contract.propose_action(TimelockAction::DeactivateDecryptionOperator {
             account_id: account("operator-1.testnet"),
         });
@@ -449,6 +513,9 @@ mod tests {
         testing_env!(context("owner.testnet", ts).build());
         contract.execute_action(id);
         assert!(!contract.is_active_decryption_operator(account("operator-1.testnet")));
+        let config = contract.get_threshold_config();
+        assert_eq!(config.total_operators, 1);
+        assert_eq!(config.required_shares, 1);
     }
 
     #[test]
@@ -507,6 +574,43 @@ mod tests {
         let config = contract.get_threshold_config();
         assert_eq!(config.total_operators, 3);
         assert_eq!(config.required_shares, 2);
+    }
+
+    #[test]
+    fn pause_hides_operator_and_relayer_authorization_views() {
+        let mut ts = 1_000u64;
+        testing_env!(context("owner.testnet", ts).build());
+        let mut contract = OperatorRegistryContract::new(account("owner.testnet"));
+        let operator_id = account("operator.testnet");
+        let relayer_id = account("relayer.testnet");
+
+        for action in [
+            TimelockAction::UpsertDecryptionOperator {
+                account_id: operator_id.clone(),
+                endpoint: "https://operator.example".to_string(),
+                transport_public_key: "ed25519:operator".to_string(),
+            },
+            TimelockAction::UpsertRelayer {
+                account_id: relayer_id.clone(),
+                endpoint: "https://relayer.example".to_string(),
+                transport_public_key: "ed25519:relayer".to_string(),
+            },
+            TimelockAction::Pause,
+        ] {
+            let id = contract.propose_action(action);
+            ts += TIMELOCK_DELAY_NS;
+            testing_env!(context("owner.testnet", ts).build());
+            contract.execute_action(id);
+        }
+
+        assert!(contract
+            .get_decryption_operator(operator_id.clone())
+            .is_none());
+        assert!(contract.get_relayer(relayer_id.clone()).is_none());
+        assert!(contract.list_decryption_operators().is_empty());
+        assert!(contract.list_relayers().is_empty());
+        assert!(!contract.is_active_decryption_operator(operator_id));
+        assert!(!contract.is_active_relayer(relayer_id));
     }
 
     #[test]

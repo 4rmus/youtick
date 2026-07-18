@@ -17,7 +17,7 @@ async fn load_contract_wasm() -> anyhow::Result<&'static Vec<u8>> {
 async fn init() -> anyhow::Result<(Contract, Account, Account)> {
     let worker = near_workspaces::sandbox().await?;
     let wasm = load_contract_wasm().await?;
-    let contract = worker.dev_deploy(&wasm).await?;
+    let contract = worker.dev_deploy(wasm).await?;
 
     // Initialize contract with owner
     let owner = worker.dev_create_account().await?;
@@ -117,7 +117,7 @@ async fn test_create_event_insufficient_deposit() -> anyhow::Result<()> {
             "description": "Description",
             "price": "1000000000000000000000000"
         }))
-        .deposit(NearToken::from_millinear(50)) // Only 0.05 NEAR (need 0.1)
+        .deposit(NearToken::from_yoctonear(1)) // Below measured storage cost
         .transact()
         .await?;
 
@@ -155,7 +155,7 @@ async fn test_buy_ticket() -> anyhow::Result<()> {
             "receiver_id": buyer.id(),
             "encrypted_cid": "QmVideoCid"
         }))
-        .deposit(NearToken::from_millinear(1010)) // 1.01 NEAR (price + storage)
+        .deposit(NearToken::from_millinear(1030)) // 1 NEAR price + 0.03 NEAR storage
         .gas(near_workspaces::types::Gas::from_tgas(300))
         .transact()
         .await?
@@ -321,7 +321,7 @@ async fn test_buy_free_ticket() -> anyhow::Result<()> {
             "receiver_id": buyer.id(),
             "encrypted_cid": "QmFreeVideo"
         }))
-        .deposit(NearToken::from_millinear(10)) // Just storage
+        .deposit(NearToken::from_millinear(30)) // Just storage
         .gas(near_workspaces::types::Gas::from_tgas(300))
         .transact()
         .await?
@@ -465,7 +465,7 @@ async fn test_gift_ticket() -> anyhow::Result<()> {
             "receiver_id": buyer.id(),
             "encrypted_cid": "QmGiftTest"
         }))
-        .deposit(NearToken::from_millinear(10)) // Just storage
+        .deposit(NearToken::from_millinear(30)) // Just storage
         .gas(near_workspaces::types::Gas::from_tgas(300))
         .transact()
         .await?
@@ -509,7 +509,7 @@ async fn test_gift_ticket_only_creator() -> anyhow::Result<()> {
             "receiver_id": buyer.id(),
             "encrypted_cid": "QmCreatorOnlyTest"
         }))
-        .deposit(NearToken::from_millinear(10))
+        .deposit(NearToken::from_millinear(30))
         .gas(near_workspaces::types::Gas::from_tgas(300))
         .transact()
         .await?;
@@ -606,7 +606,7 @@ async fn test_verify_ownership() -> anyhow::Result<()> {
             "receiver_id": buyer.id(),
             "encrypted_cid": "QmOwnershipTest"
         }))
-        .deposit(NearToken::from_millinear(110))
+        .deposit(NearToken::from_millinear(130))
         .gas(near_workspaces::types::Gas::from_tgas(300))
         .transact()
         .await?
@@ -664,13 +664,26 @@ async fn test_has_ticket_with_access_pass() -> anyhow::Result<()> {
             "receiver_id": buyer.id(),
             "encrypted_cid": "ACCESS_PASS"
         }))
-        .deposit(NearToken::from_millinear(110))
+        .deposit(NearToken::from_millinear(130))
         .gas(near_workspaces::types::Gas::from_tgas(300))
         .transact()
         .await?
         .into_result()?;
 
-    // ACCESS_PASS should authorize access to any encrypted_cid
+    owner
+        .call(contract.id(), "create_event")
+        .args_json(json!({
+            "encrypted_cid": "QmSomeOtherVideo",
+            "title": "Target video",
+            "description": "Existing target required for global access",
+            "price": "100000000000000000000000"
+        }))
+        .deposit(NearToken::from_millinear(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    // ACCESS_PASS authorizes another existing, non-banned event.
     let has_global_access: bool = contract
         .view("has_ticket")
         .args_json(json!({
@@ -1009,21 +1022,19 @@ async fn test_purchase_log_on_buy_ticket() -> anyhow::Result<()> {
             "receiver_id": buyer.id(),
             "encrypted_cid": "QmLogTest"
         }))
-        .deposit(NearToken::from_millinear(1010))
+        .deposit(NearToken::from_millinear(1030))
         .gas(near_workspaces::types::Gas::from_tgas(300))
         .transact()
         .await?
         .into_result()?;
 
-    // Runtime hotfix: purchase-log map writes are disabled so a broken legacy
-    // log index cannot roll back a valid ticket purchase.
     let log: Option<serde_json::Value> = contract
         .view("get_purchase_log")
         .args_json(json!({"purchase_id": 0}))
         .await?
         .json()?;
 
-    assert!(log.is_none());
+    assert!(log.is_some());
 
     println!("✅ Purchase log hotfix on buy_ticket test passed");
     Ok(())
@@ -1096,20 +1107,19 @@ async fn test_purchase_log_free_ticket() -> anyhow::Result<()> {
             "receiver_id": buyer.id(),
             "encrypted_cid": "QmFreeLogTest"
         }))
-        .deposit(NearToken::from_millinear(10))
+        .deposit(NearToken::from_millinear(30))
         .gas(near_workspaces::types::Gas::from_tgas(300))
         .transact()
         .await?
         .into_result()?;
 
-    // Runtime hotfix: free claims also avoid the legacy purchase-log map.
     let log: Option<serde_json::Value> = contract
         .view("get_purchase_log")
         .args_json(json!({"purchase_id": 0}))
         .await?
         .json()?;
 
-    assert!(log.is_none());
+    assert!(log.is_some());
 
     println!("✅ Purchase log hotfix free ticket test passed");
     Ok(())
@@ -1141,7 +1151,7 @@ async fn test_purchase_log_pagination() -> anyhow::Result<()> {
                 "receiver_id": buyer.id(),
                 "encrypted_cid": "QmPaginationTest"
             }))
-            .deposit(NearToken::from_millinear(110))
+            .deposit(NearToken::from_millinear(130))
             .gas(near_workspaces::types::Gas::from_tgas(300))
             .transact()
             .await?
@@ -1155,10 +1165,7 @@ async fn test_purchase_log_pagination() -> anyhow::Result<()> {
         .await?
         .json()?;
 
-    assert!(
-        all_logs.is_empty(),
-        "Legacy purchase log views are disabled"
-    );
+    assert_eq!(all_logs.len(), 3);
 
     // Get with limit=2
     let limited_logs: Vec<serde_json::Value> = contract
@@ -1167,7 +1174,7 @@ async fn test_purchase_log_pagination() -> anyhow::Result<()> {
         .await?
         .json()?;
 
-    assert!(limited_logs.is_empty());
+    assert_eq!(limited_logs.len(), 2);
 
     // Get with from_index=2
     let offset_logs: Vec<serde_json::Value> = contract
@@ -1176,7 +1183,7 @@ async fn test_purchase_log_pagination() -> anyhow::Result<()> {
         .await?
         .json()?;
 
-    assert!(offset_logs.is_empty());
+    assert_eq!(offset_logs.len(), 1);
 
     println!("✅ Purchase log pagination hotfix test passed");
     Ok(())
@@ -1217,7 +1224,7 @@ async fn test_purchase_count() -> anyhow::Result<()> {
                 "receiver_id": buyer.id(),
                 "encrypted_cid": "QmCountTest"
             }))
-            .deposit(NearToken::from_millinear(110))
+            .deposit(NearToken::from_millinear(130))
             .gas(near_workspaces::types::Gas::from_tgas(300))
             .transact()
             .await?

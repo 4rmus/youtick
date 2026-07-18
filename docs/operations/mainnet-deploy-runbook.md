@@ -55,11 +55,31 @@ Do not deploy from a failing check set.
   belongs in dev/test environments.
 - KMS discovery stays registry-driven and fail-closed.
 
+Do not rebuild the NFT WASM on the deploy machine. Download the immutable
+`nft-ticket-<commit SHA>` artifact produced by the green CI run. It contains
+`youtick_nft.wasm`, `youtick_nft_abi.json` and `manifest.json`; the deploy script
+rejects a missing or mismatched WASM/ABI SHA-256 manifest.
+
 ## Contract Build Notes
 
 Use the local contract README files and Cargo configs for exact build commands.
 Only enable migration features when a reviewed migration explicitly requires
 them. Normal deploy builds must not expose reset or wipe paths.
+
+Record the current RPC code hash immediately before deployment. Deploy requires
+that exact old hash and verifies the deployed bytecode against the manifest:
+
+```bash
+export NFT_NETWORK_ID=mainnet
+export NFT_CONTRACT_ID=youtick.near
+export NFT_ARTIFACT_MANIFEST=/absolute/path/to/nft-ticket-<commit>/manifest.json
+export NFT_EXPECTED_OLD_HASH=<current-rpc-code-hash>
+export NFT_DEPLOY_CONFIRM="DEPLOY:youtick.near:mainnet:<manifest-wasmSha256>"
+node scripts/deploy-nft-mainnet.mjs
+```
+
+Set `RUN_MIGRATION=1` only for a separately reviewed migration build. Any
+migration error is fatal; it must never be reported as a successful deploy.
 
 ## Smoke Gate
 

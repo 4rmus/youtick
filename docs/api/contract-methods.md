@@ -137,25 +137,20 @@ This contract is the market, content, and entitlement source of truth.
 | `get_creator_profile` / `get_creator_stats` (`views.rs`) | Creator profile + aggregate stats |
 | `get_purchase_logs_by_creator` (`views.rs`) | Purchase logs filtered by creator |
 
-### NFT Standard Surface
+### Non-transferable Ticket Surface
 
-The contract implements NEP-171 via `NonFungibleToken`:
-
-V1 intentionally disables ticket transfer at runtime. `nft_transfer` returns
-`Ticket transfers disabled for v1`; resale and marketplace flows are not part
-of V1 public alpha.
+V1 uses a YouTick-specific, non-transferable on-chain access credential. It is
+not advertised as full NEP-171/NEP-178 compatibility. The familiar `nft_*`
+read methods are retained for wallet and indexer discoverability, while
+transfer and approval capabilities are intentionally absent. `nft_transfer`
+fails with `Ticket transfers disabled for v1`.
 
 - `nft_token`
 - `nft_transfer`
-- `nft_transfer_call`
 - `nft_total_supply`
 - `nft_tokens`
 - `nft_supply_for_owner`
 - `nft_tokens_for_owner`
-- `nft_approve`
-- `nft_revoke`
-- `nft_revoke_all`
-- `nft_is_approved`
 
 ---
 

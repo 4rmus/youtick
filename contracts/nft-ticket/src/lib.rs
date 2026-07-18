@@ -1,5 +1,7 @@
 // contracts/nft-ticket/src/lib.rs
 
+#![allow(clippy::too_many_arguments)]
+
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
     collections::{LazyOption, LookupMap, LookupSet, UnorderedMap},
@@ -30,7 +32,7 @@ pub(crate) use nft::YtNft;
 
 pub type TokenId = String;
 
-pub const NFT_METADATA_SPEC: &str = "nft-1.0.0";
+pub const NFT_METADATA_SPEC: &str = "youtick-ticket-1.0.0";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[near(serializers = [borsh, json])]
@@ -78,6 +80,7 @@ pub const TIMELOCK_DELAY_NS: u64 = 86_400_000_000_000; // 24 hours
 const PENDING_OWNER_STORAGE_KEY: &[u8] = b"v2:po";
 
 #[near(serializers = [borsh, json])]
+#[allow(clippy::large_enum_variant)]
 pub enum TimelockAction {
     WithdrawTrialPool {
         amount: U128,
@@ -132,6 +135,10 @@ pub enum TimelockAction {
     },
     Pause,
     Unpause,
+    WithdrawTokenCommission {
+        token_contract: AccountId,
+        amount: U128,
+    },
 }
 
 #[near(serializers = [borsh, json])]
@@ -184,10 +191,28 @@ impl StorageKey {
     pub const STABLECOIN_CREATOR_BALANCES: Self = Self(b"v2:scb");
     pub const STABLECOIN_COMMISSION_BALANCES: Self = Self(b"v2:scm");
     pub const SETTLED_STABLECOIN_PAYMENTS: Self = Self(b"v2:ssp");
+    pub const OWNER_TOKEN_COUNTS: Self = Self(b"idx3:owner-count");
+    pub const OWNER_TOKEN_SLOTS: Self = Self(b"idx3:owner-slot");
+    pub const OWNER_TOKEN_INDEXED: Self = Self(b"idx3:owner-seen");
+    pub const TICKET_INDEX_READY: Self = Self(b"idx3:ticket-ready");
+    pub const TICKET_INDEXED_COUNT: Self = Self(b"idx3:ticket-count");
+    pub const TICKET_BACKFILL_CURSOR: Self = Self(b"idx3:ticket-cursor");
+    pub const TICKET_ENTITLEMENTS: Self = Self(b"idx3:ticket-seen");
+    pub const TICKET_CID_COUNTS: Self = Self(b"idx3:cid-count");
+    pub const TICKET_CID_SLOTS: Self = Self(b"idx3:cid-slot");
+    pub const TICKET_ENTITLEMENT_COUNTS: Self = Self(b"idx3:entitlement");
+    pub const CREATOR_STATS: Self = Self(b"idx3:creator-stats");
+    pub const CREATOR_PURCHASE_COUNTS: Self = Self(b"idx3:purchase-count");
+    pub const CREATOR_PURCHASE_SLOTS: Self = Self(b"idx3:purchase-slot");
+    pub const PURCHASE_INDEXED: Self = Self(b"idx3:purchase-seen");
+    pub const PURCHASE_INDEX_READY: Self = Self(b"idx3:purchase-ready");
+    pub const PURCHASE_INDEXED_COUNT: Self = Self(b"idx3:purchase-indexed");
+    pub const PURCHASE_BACKFILL_CURSOR: Self = Self(b"idx3:purchase-cursor");
 }
 
 /// Storage cost constants to avoid repeated allocations
-const STORAGE_COST_NFT: NearToken = NearToken::from_millinear(10); // 0.01 NEAR
+const STORAGE_COST_NFT: NearToken = NearToken::from_millinear(30); // 0.03 NEAR measured upper bound
+const PURCHASE_STORAGE_BUDGET: NearToken = NearToken::from_millinear(30); // NFT + payment ledgers + audit log
 const STORAGE_COST_ACCOUNT: NearToken = NearToken::from_millinear(100); // 0.1 NEAR
 /// Storage cost for sponsored trial / guest account creation.
 /// NEAR protocol minimum for an account + one access key is ~0.00182 NEAR;
@@ -217,6 +242,14 @@ const COMMISSION_SPLIT_DENOMINATOR: u128 = 2;
 
 /// Storage cost for an onboarding invite record (0.01 NEAR).
 const STORAGE_COST_INVITE: NearToken = NearToken::from_millinear(10);
+const MAX_CID_BYTES: usize = 256;
+const MAX_TITLE_BYTES: usize = 200;
+const MAX_DESCRIPTION_BYTES: usize = 2_000;
+const MAX_PAYMENT_ID_BYTES: usize = 128;
+const MAX_URL_BYTES: usize = 512;
+const MAX_PROFILE_NAME_BYTES: usize = 100;
+const MAX_PROFILE_BIO_BYTES: usize = 1_000;
+const MAX_SOCIAL_HANDLE_BYTES: usize = 100;
 
 /// Deposit required per gift-claim link (0.15 NEAR).
 /// Covers account creation + NFT storage + buffer.
@@ -448,11 +481,20 @@ pub struct CreatorProfile {
     pub avatar_url: Option<String>,
 }
 
-#[near(serializers = [json])]
+#[near(serializers = [borsh, json])]
 #[derive(Clone)]
 pub struct CreatorStats {
     pub total_sales: u64,
     pub total_revenue_yocto: U128,
+}
+
+#[near(serializers = [json])]
+pub struct PlaybackAccessDecision {
+    pub event_exists: bool,
+    pub banned: bool,
+    pub has_ticket: bool,
+    pub is_creator: bool,
+    pub allowed: bool,
 }
 
 #[near(serializers = [borsh, json])]
@@ -566,7 +608,7 @@ impl Contract {
             reference_hash: None,
         };
 
-        Self {
+        let contract = Self {
             tokens: YtNft::new(owner_id),
             metadata: LazyOption::new(StorageKey::CONTRACT_METADATA, Some(&metadata)),
             video_metadata: UnorderedMap::new(StorageKey::VIDEO_METADATA),
@@ -589,7 +631,10 @@ impl Contract {
             commission_pool_usdc: 0,
             ft_transfer_lock: false,
             next_swap_nonce: 0,
-        }
+        };
+        contract.set_ticket_index_ready(true);
+        contract.set_purchase_index_ready(true);
+        contract
     }
 
     #[init]
@@ -679,6 +724,192 @@ impl Contract {
         LookupSet::new(StorageKey::SETTLED_STABLECOIN_PAYMENTS)
     }
 
+    fn composite_key(left: &[u8], right: &[u8]) -> Vec<u8> {
+        let mut key = Vec::with_capacity(4 + left.len() + right.len());
+        key.extend_from_slice(&(left.len() as u32).to_le_bytes());
+        key.extend_from_slice(left);
+        key.extend_from_slice(right);
+        key
+    }
+
+    fn indexed_slot_key(value: &[u8], index: u64) -> Vec<u8> {
+        Self::composite_key(value, &index.to_le_bytes())
+    }
+
+    pub(crate) fn entitlement_key(account_id: &AccountId, cid: &str) -> Vec<u8> {
+        Self::composite_key(account_id.as_bytes(), cid.as_bytes())
+    }
+
+    pub(crate) fn lazy_ticket_entitlement_counts(&self) -> LookupMap<Vec<u8>, u64> {
+        LookupMap::new(StorageKey::TICKET_ENTITLEMENT_COUNTS)
+    }
+
+    pub(crate) fn lazy_ticket_cid_counts(&self) -> LookupMap<String, u64> {
+        LookupMap::new(StorageKey::TICKET_CID_COUNTS)
+    }
+
+    pub(crate) fn lazy_ticket_cid_slots(&self) -> LookupMap<Vec<u8>, TokenId> {
+        LookupMap::new(StorageKey::TICKET_CID_SLOTS)
+    }
+
+    pub(crate) fn lazy_ticket_indexed(&self) -> LookupSet<TokenId> {
+        LookupSet::new(StorageKey::TICKET_ENTITLEMENTS)
+    }
+
+    pub(crate) fn ticket_index_ready(&self) -> bool {
+        LazyOption::new(StorageKey::TICKET_INDEX_READY, None)
+            .get()
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn set_ticket_index_ready(&self, ready: bool) {
+        let mut value = LazyOption::new(StorageKey::TICKET_INDEX_READY, None);
+        value.set(&ready);
+    }
+
+    pub(crate) fn assert_ticket_index_ready(&self) {
+        require!(
+            self.ticket_index_ready(),
+            "Ticket index migration must finish before minting"
+        );
+    }
+
+    pub(crate) fn purchase_index_ready(&self) -> bool {
+        LazyOption::new(StorageKey::PURCHASE_INDEX_READY, None)
+            .get()
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn set_purchase_index_ready(&self, ready: bool) {
+        let mut value = LazyOption::new(StorageKey::PURCHASE_INDEX_READY, None);
+        value.set(&ready);
+    }
+
+    pub(crate) fn lazy_creator_stats(&self) -> LookupMap<AccountId, CreatorStats> {
+        LookupMap::new(StorageKey::CREATOR_STATS)
+    }
+
+    pub(crate) fn lazy_creator_purchase_counts(&self) -> LookupMap<AccountId, u64> {
+        LookupMap::new(StorageKey::CREATOR_PURCHASE_COUNTS)
+    }
+
+    pub(crate) fn lazy_creator_purchase_slots(&self) -> LookupMap<Vec<u8>, u64> {
+        LookupMap::new(StorageKey::CREATOR_PURCHASE_SLOTS)
+    }
+
+    pub(crate) fn lazy_purchase_indexed(&self) -> LookupSet<u64> {
+        LookupSet::new(StorageKey::PURCHASE_INDEXED)
+    }
+
+    pub(crate) fn add_purchase_to_indexes(&mut self, purchase_id: u64, log: &PurchaseLog) {
+        let mut indexed = self.lazy_purchase_indexed();
+        if indexed.contains(&purchase_id) {
+            return;
+        }
+
+        let mut counts = self.lazy_creator_purchase_counts();
+        let creator_index = counts.get(&log.creator_id).unwrap_or(0);
+        self.lazy_creator_purchase_slots().insert(
+            &Self::indexed_slot_key(log.creator_id.as_bytes(), creator_index),
+            &purchase_id,
+        );
+        counts.insert(&log.creator_id, &creator_index.saturating_add(1));
+
+        let mut stats_map = self.lazy_creator_stats();
+        let mut stats = stats_map.get(&log.creator_id).unwrap_or(CreatorStats {
+            total_sales: 0,
+            total_revenue_yocto: U128(0),
+        });
+        stats.total_sales = stats.total_sales.saturating_add(1);
+        stats.total_revenue_yocto = U128(
+            stats
+                .total_revenue_yocto
+                .0
+                .saturating_add(log.creator_amount.0),
+        );
+        stats_map.insert(&log.creator_id, &stats);
+        indexed.insert(&purchase_id);
+
+        let mut indexed_count = LazyOption::new(StorageKey::PURCHASE_INDEXED_COUNT, None);
+        let next = indexed_count.get().unwrap_or(0u64).saturating_add(1);
+        indexed_count.set(&next);
+    }
+
+    pub(crate) fn index_ticket(&mut self, token_id: &TokenId, owner_id: &AccountId, cid: &str) {
+        self.tokens.index_owner_token(token_id, owner_id);
+
+        let mut indexed = self.lazy_ticket_indexed();
+        if indexed.contains(token_id) {
+            return;
+        }
+
+        let mut cid_counts = self.lazy_ticket_cid_counts();
+        let cid_index = cid_counts.get(&cid.to_string()).unwrap_or(0);
+        self.lazy_ticket_cid_slots()
+            .insert(&Self::indexed_slot_key(cid.as_bytes(), cid_index), token_id);
+        cid_counts.insert(&cid.to_string(), &cid_index.saturating_add(1));
+
+        let entitlement_key = Self::entitlement_key(owner_id, cid);
+        let mut entitlements = self.lazy_ticket_entitlement_counts();
+        let count = entitlements.get(&entitlement_key).unwrap_or(0);
+        entitlements.insert(&entitlement_key, &count.saturating_add(1));
+
+        indexed.insert(token_id);
+        let mut indexed_count = LazyOption::new(StorageKey::TICKET_INDEXED_COUNT, None);
+        let next = indexed_count.get().unwrap_or(0u64).saturating_add(1);
+        indexed_count.set(&next);
+    }
+
+    pub(crate) fn index_ticket_without_metadata(
+        &mut self,
+        token_id: &TokenId,
+        owner_id: &AccountId,
+    ) {
+        self.tokens.index_owner_token(token_id, owner_id);
+        let mut indexed = self.lazy_ticket_indexed();
+        if indexed.contains(token_id) {
+            return;
+        }
+        indexed.insert(token_id);
+        let mut indexed_count = LazyOption::new(StorageKey::TICKET_INDEXED_COUNT, None);
+        let next = indexed_count.get().unwrap_or(0u64).saturating_add(1);
+        indexed_count.set(&next);
+    }
+
+    pub(crate) fn ticket_ids_for_cid(&self, cid: &str) -> Vec<TokenId> {
+        if !self.ticket_index_ready() {
+            return self
+                .lazy_cid_to_tokens()
+                .get(&cid.to_string())
+                .unwrap_or_default();
+        }
+
+        let count = self
+            .lazy_ticket_cid_counts()
+            .get(&cid.to_string())
+            .unwrap_or(0);
+        let slots = self.lazy_ticket_cid_slots();
+        (0..count)
+            .filter_map(|index| slots.get(&Self::indexed_slot_key(cid.as_bytes(), index)))
+            .collect()
+    }
+
+    pub(crate) fn remove_ticket_entitlement(&mut self, token_id: &TokenId, cid: &str) {
+        let Some(owner_id) = self.tokens.owner_by_id.get(token_id) else {
+            return;
+        };
+        let key = Self::entitlement_key(&owner_id, cid);
+        let mut entitlements = self.lazy_ticket_entitlement_counts();
+        match entitlements.get(&key).unwrap_or(0) {
+            0 | 1 => {
+                entitlements.remove(&key);
+            }
+            count => {
+                entitlements.insert(&key, &count.saturating_sub(1));
+            }
+        }
+    }
+
     pub(crate) fn lazy_paused_state(&self) -> LazyOption<bool> {
         LazyOption::new(StorageKey::PAUSED_STATE, Some(&false))
     }
@@ -712,7 +943,7 @@ impl Contract {
     }
 
     pub(crate) fn event_near_price_option(event: &Event) -> Option<U128> {
-        event.price_near.or_else(|| {
+        event.price_near.or({
             if event.price.0 > 0 {
                 Some(event.price)
             } else {
@@ -819,10 +1050,77 @@ impl Contract {
         id
     }
 
-    pub(crate) fn add_token_to_cid_index(&mut self, cid: &String, token_id: &TokenId) {
-        let mut ids = self.lazy_cid_to_tokens().get(cid).unwrap_or_default();
-        ids.push(token_id.clone());
-        self.lazy_cid_to_tokens().insert(cid, &ids);
+    pub(crate) fn assert_event_input(encrypted_cid: &str, title: &str, description: &str) {
+        require!(!encrypted_cid.is_empty(), "CID is required");
+        require!(
+            encrypted_cid.len() <= MAX_CID_BYTES,
+            "CID exceeds 256 bytes"
+        );
+        require!(!title.is_empty(), "Title is required");
+        require!(title.len() <= MAX_TITLE_BYTES, "Title exceeds 200 bytes");
+        require!(
+            description.len() <= MAX_DESCRIPTION_BYTES,
+            "Description exceeds 2000 bytes"
+        );
+    }
+
+    pub(crate) fn assert_payment_id(payment_id: &str) {
+        require!(!payment_id.is_empty(), "payment_id is required");
+        require!(
+            payment_id.len() <= MAX_PAYMENT_ID_BYTES,
+            "payment_id exceeds 128 bytes"
+        );
+    }
+
+    pub(crate) fn is_supported_payout_token(token_contract: &AccountId) -> bool {
+        token_contract == &usdc_contract_id()
+            || token_contract == &usdt_contract_id()
+            || token_contract == &wrap_near_account_id()
+    }
+
+    pub(crate) fn storage_cost_since(initial_usage: u64) -> NearToken {
+        let added_bytes = env::storage_usage().saturating_sub(initial_usage) as u128;
+        NearToken::from_yoctonear(
+            added_bytes.saturating_mul(env::storage_byte_cost().as_yoctonear()),
+        )
+    }
+
+    pub(crate) fn assert_optional_len(label: &str, value: Option<&str>, max_bytes: usize) {
+        if let Some(value) = value {
+            require!(
+                value.len() <= max_bytes,
+                &format!("{} exceeds {} bytes", label, max_bytes)
+            );
+        }
+    }
+
+    pub(crate) fn assert_token_input(metadata: &TokenMetadata, video: &VideoMetadata) {
+        Self::assert_optional_len("token title", metadata.title.as_deref(), MAX_TITLE_BYTES);
+        Self::assert_optional_len(
+            "token description",
+            metadata.description.as_deref(),
+            MAX_DESCRIPTION_BYTES,
+        );
+        Self::assert_optional_len("token media", metadata.media.as_deref(), MAX_URL_BYTES);
+        Self::assert_optional_len(
+            "token extra",
+            metadata.extra.as_deref(),
+            MAX_DESCRIPTION_BYTES,
+        );
+        Self::assert_optional_len(
+            "token reference",
+            metadata.reference.as_deref(),
+            MAX_URL_BYTES,
+        );
+        require!(
+            video.encrypted_cid.len() <= MAX_CID_BYTES,
+            "CID exceeds 256 bytes"
+        );
+        Self::assert_optional_len(
+            "nova_group_id",
+            video.nova_group_id.as_deref(),
+            MAX_CID_BYTES,
+        );
     }
 
     pub(crate) fn remove_cid_index(&mut self, cid: &String) {
@@ -1089,18 +1387,13 @@ impl Contract {
     /// Get all videos for an account (any storage type)
     /// Returns vector of (token_id, video_metadata) pairs
     pub fn get_videos(&self, account_id: AccountId) -> Vec<(TokenId, VideoMetadata)> {
-        let token_ids = self
-            .tokens
-            .tokens_per_owner
-            .get(&account_id)
-            .unwrap_or_default();
-
-        token_ids
-            .iter()
-            .filter_map(|token_id| {
+        self.tokens
+            .nft_tokens_for_owner(&account_id, None, Some(100))
+            .into_iter()
+            .filter_map(|token| {
                 self.video_metadata
-                    .get(token_id)
-                    .map(|metadata| (token_id.clone(), metadata))
+                    .get(&token.token_id)
+                    .map(|metadata| (token.token_id, metadata))
             })
             .collect()
     }
@@ -1108,6 +1401,23 @@ impl Contract {
     /// Check if an account has a ticket for a specific video (identified by encrypted_cid)
     /// Used by KMS Worker for access authorization
     pub fn has_ticket(&self, account_id: AccountId, encrypted_cid: String) -> bool {
+        if self.ticket_index_ready() {
+            if self.events.get(&encrypted_cid).is_none()
+                || self.lazy_banned_events().get(&encrypted_cid).is_some()
+            {
+                return false;
+            }
+            let entitlements = self.lazy_ticket_entitlement_counts();
+            return entitlements
+                .get(&Self::entitlement_key(&account_id, &encrypted_cid))
+                .unwrap_or(0)
+                > 0
+                || entitlements
+                    .get(&Self::entitlement_key(&account_id, "ACCESS_PASS"))
+                    .unwrap_or(0)
+                    > 0;
+        }
+
         let token_ids = self
             .tokens
             .tokens_per_owner
@@ -1115,10 +1425,38 @@ impl Contract {
             .unwrap_or_default();
 
         token_ids.iter().any(|token_id| {
-            self.video_metadata.get(token_id).map_or(false, |metadata| {
+            self.video_metadata.get(token_id).is_some_and(|metadata| {
                 metadata.encrypted_cid == encrypted_cid || metadata.encrypted_cid == "ACCESS_PASS"
             })
         })
+    }
+
+    /// KMS hot-path decision from one contract snapshot. This replaces three
+    /// independent RPC views whose results could come from different blocks.
+    pub fn get_playback_access_decision(
+        &self,
+        account_id: AccountId,
+        encrypted_cid: String,
+    ) -> PlaybackAccessDecision {
+        let event = self.events.get(&encrypted_cid);
+        let event_exists = event.is_some();
+        let banned = self.lazy_banned_events().get(&encrypted_cid).is_some();
+        let is_creator = event
+            .as_ref()
+            .is_some_and(|value| value.creator_id == account_id);
+        let has_ticket = if event_exists && !banned {
+            self.has_ticket(account_id, encrypted_cid)
+        } else {
+            false
+        };
+
+        PlaybackAccessDecision {
+            event_exists,
+            banned,
+            has_ticket,
+            is_creator,
+            allowed: !banned && (has_ticket || is_creator),
+        }
     }
 }
 

@@ -13,6 +13,10 @@ impl Contract {
         commission_amount: u128,
         purchase_type: PurchaseType,
     ) {
+        require!(
+            self.purchase_index_ready(),
+            "Purchase index migration must finish before sales"
+        );
         let log = PurchaseLog {
             buyer_id,
             creator_id,
@@ -27,6 +31,8 @@ impl Contract {
 
         let purchase_id = self.next_purchase_id;
         self.next_purchase_id += 1;
+        self.purchase_logs.insert(&purchase_id, &log);
+        self.add_purchase_to_indexes(purchase_id, &log);
 
         env::log_str(&format!(
             "PurchaseLog #{}: buyer={}, creator={}, event={}, token={}, price={}, creator_share={}, commission={}",
@@ -51,6 +57,7 @@ impl Contract {
         content_type: Option<String>,
     ) {
         self.assert_not_paused();
+        Self::assert_event_input(&encrypted_cid, &title, &description);
         let price_usdc = price_usdc.filter(|value| value.0 > 0);
 
         // Minimum price check (free events allowed, but paid events must be >= 0.001 NEAR)
@@ -72,10 +79,6 @@ impl Contract {
         }
 
         let deposit = env::attached_deposit();
-        require!(
-            deposit >= STORAGE_COST_ACCOUNT,
-            "Requires at least 0.1 NEAR deposit to create an event"
-        );
 
         // SECURITY: Prevent overwriting existing events
         require!(
@@ -102,6 +105,8 @@ impl Contract {
             Some("FestivalSelection") => ContentType::FestivalSelection,
             _ => ContentType::Exclusive,
         };
+
+        let storage_before = env::storage_usage();
 
         let event = Event {
             title,
@@ -139,6 +144,17 @@ impl Contract {
             price_near.map(|p| p.0.to_string()),
             None, // max_tickets: not yet implemented in Event struct
         );
+
+        let storage_cost = Self::storage_cost_since(storage_before);
+        require!(
+            deposit >= storage_cost,
+            "Attached deposit does not cover event storage"
+        );
+        if deposit > storage_cost {
+            Promise::new(env::predecessor_account_id())
+                .transfer(deposit.saturating_sub(storage_cost))
+                .as_return();
+        }
     }
 
     pub fn get_events(
@@ -149,8 +165,15 @@ impl Contract {
     ) -> Vec<(String, EventResponse)> {
         let banned = self.lazy_banned_events();
         let type_filter = content_type.as_ref().and_then(|ct| parse_content_type(ct));
-        self.events
-            .iter()
+        let keys = self.events.keys_as_vector();
+        let start = from_index.map(|value| value.0 as u64).unwrap_or(0);
+        let end = start
+            .saturating_add(limit.unwrap_or(50).min(100))
+            .min(keys.len());
+
+        (start..end)
+            .filter_map(|index| keys.get(index))
+            .filter_map(|cid| self.events.get(&cid).map(|event| (cid, event)))
             .filter(|(cid, event)| {
                 if banned.get(cid).is_some() {
                     return false;
@@ -162,11 +185,9 @@ impl Contract {
                 }
                 true
             })
-            .skip(from_index.map(|v| v.0 as usize).unwrap_or(0))
-            .take(limit.unwrap_or(50) as usize)
             .map(|(cid, event)| {
                 let resp = self.build_event_response(&cid, &event);
-                (cid.clone(), resp)
+                (cid, resp)
             })
             .collect()
     }
@@ -259,6 +280,13 @@ impl Contract {
         self.active_event_count
     }
 
+    /// Number of physical event slots used by index-based pagination. Unlike
+    /// active count, this includes banned entries so callers can advance by
+    /// storage index without scanning from the beginning.
+    pub fn get_event_slots_count(&self) -> u64 {
+        self.events.len()
+    }
+
     pub fn get_event(&self, encrypted_cid: String) -> Option<EventResponse> {
         self.events
             .get(&encrypted_cid)
@@ -278,6 +306,7 @@ impl Contract {
         content_type: Option<String>,
     ) {
         self.assert_not_paused();
+        Self::assert_event_input(&encrypted_cid, &title, &description);
         let price_usdc = price_usdc.filter(|value| value.0 > 0);
 
         // Minimum price check (free events allowed, but paid events must be >= 0.001 NEAR)
@@ -315,12 +344,6 @@ impl Contract {
         let normalized_access_mode = self.normalize_access_mode(access_mode, has_paid_price);
 
         let account_id = env::predecessor_account_id();
-        let session_public_key = self.use_upload_session(
-            UploadSessionStatus::AwaitingEvent,
-            UploadSessionStatus::Completed,
-            STORAGE_COST_ACCOUNT,
-        );
-
         let parsed_content_type = match content_type.as_deref() {
             Some("Concert") => ContentType::Concert,
             Some("Cinema") => ContentType::Cinema,
@@ -330,6 +353,8 @@ impl Contract {
             Some("FestivalSelection") => ContentType::FestivalSelection,
             _ => ContentType::Exclusive,
         };
+
+        let storage_before = env::storage_usage();
 
         // Execute creation
         let event = Event {
@@ -358,6 +383,13 @@ impl Contract {
         if let Some(usdc) = price_usdc {
             self.events_price_usdc.insert(&encrypted_cid, &usdc);
         }
+
+        let storage_cost = Self::storage_cost_since(storage_before);
+        let session_public_key = self.use_upload_session(
+            UploadSessionStatus::AwaitingEvent,
+            UploadSessionStatus::Completed,
+            storage_cost,
+        );
 
         self.close_upload_session(&session_public_key, UploadSessionStatus::Completed);
     }
@@ -440,53 +472,27 @@ impl Contract {
         let required_price = NearToken::from_yoctonear(Self::event_near_price(&event).0);
         let is_free = required_price.as_yoctonear() == 0;
 
-        // Storage cost for NFT (safe upper bound)
-        let storage_cost = STORAGE_COST_NFT;
+        if !is_free {
+            require!(
+                deposit >= required_price,
+                "Insufficient deposit for ticket price"
+            );
+        }
 
         // Track amounts for purchase log
         let mut creator_amount: u128 = 0;
         let mut commission: u128 = 0;
 
-        if !is_free {
-            let min_deposit = required_price.saturating_add(storage_cost);
-            require!(
-                deposit >= min_deposit,
-                &format!(
-                    "Insufficient deposit. Required: {} yoctoNEAR (price) + {} (storage)",
-                    required_price.as_yoctonear(),
-                    storage_cost.as_yoctonear()
-                )
-            );
+        let storage_before = env::storage_usage();
+        let token =
+            self.internal_mint_ticket(receiver_id.clone(), &event, encrypted_cid.clone(), false);
 
+        if !is_free {
             // Calculate and apply commission (2% platform, 98% creator)
             let (ca, cm) = self.apply_commission(required_price);
             creator_amount = ca;
             commission = cm;
-
-            // Transfer 98% to creator
-            // Note: The rest (storage + any excess) stays in contract
-            if creator_amount > 0 {
-                Promise::new(event.creator_id.clone())
-                    .transfer(NearToken::from_yoctonear(creator_amount))
-                    .as_return();
-            }
-
-            // Refund excess deposit to buyer
-            let total_used = required_price.saturating_add(storage_cost);
-            if deposit > total_used {
-                let refund = deposit.saturating_sub(total_used);
-                Promise::new(env::predecessor_account_id())
-                    .transfer(refund)
-                    .as_return();
-            }
-        } else {
-            // Free ticket - just require minimal storage (or contract pays)
-            require!(deposit >= storage_cost, "Insufficient deposit for storage");
         }
-
-        // Mint the NFT using helper
-        let token =
-            self.internal_mint_ticket(receiver_id.clone(), &event, encrypted_cid.clone(), false);
 
         // Log purchase for audit trail
         let purchase_type = if is_free {
@@ -504,6 +510,33 @@ impl Contract {
             commission,
             purchase_type,
         );
+
+        // Charge every persistent write made by the purchase, including its audit log.
+        let storage_cost = Self::storage_cost_since(storage_before);
+        require!(
+            storage_cost <= PURCHASE_STORAGE_BUDGET,
+            "Ticket storage exceeds reserved budget"
+        );
+        let total_used = required_price.saturating_add(storage_cost);
+        require!(
+            deposit >= total_used,
+            &format!(
+                "Insufficient deposit. Required: {} yoctoNEAR (price) + {} (storage)",
+                required_price.as_yoctonear(),
+                storage_cost.as_yoctonear()
+            )
+        );
+
+        if creator_amount > 0 {
+            Promise::new(event.creator_id.clone())
+                .transfer(NearToken::from_yoctonear(creator_amount))
+                .as_return();
+        }
+        if deposit > total_used {
+            Promise::new(env::predecessor_account_id())
+                .transfer(deposit.saturating_sub(total_used))
+                .as_return();
+        }
 
         events::emit_nft_purchased(
             token.token_id.clone(),
@@ -600,8 +633,9 @@ impl Contract {
         receiver_id: AccountId,
         event: &Event,
         event_cid: String,
-        is_gift: bool,
+        _is_gift: bool,
     ) -> Token {
+        self.assert_ticket_index_ready();
         let token_id = self.next_token_id.to_string();
         self.next_token_id += 1;
 
@@ -614,17 +648,10 @@ impl Contract {
             storage_type: StorageType::Kms,
         };
         self.video_metadata.insert(&token_id, &video_metadata);
-        self.add_token_to_cid_index(&event_cid, &token_id);
-
-        let description = if is_gift {
-            format!("Gift ticket: {}", event.description)
-        } else {
-            event.description.clone()
-        };
 
         let token_metadata = TokenMetadata {
             title: Some(event.title.clone()),
-            description: Some(description),
+            description: None,
             media: None,
             media_hash: None,
             copies: Some(1),
@@ -637,8 +664,11 @@ impl Contract {
             reference_hash: None,
         };
 
-        self.tokens
-            .internal_mint(token_id.clone(), receiver_id, Some(token_metadata))
+        let token =
+            self.tokens
+                .internal_mint(token_id.clone(), receiver_id.clone(), Some(token_metadata));
+        self.index_ticket(&token_id, &receiver_id, &event_cid);
+        token
     }
 
     /// Mint a new video NFT ticket
@@ -661,6 +691,8 @@ impl Contract {
         video_metadata: VideoMetadata,
     ) -> Token {
         self.assert_not_paused();
+        self.assert_ticket_index_ready();
+        Self::assert_token_input(&token_metadata, &video_metadata);
 
         // SECURITY: Require minimum deposit
         require!(
@@ -673,8 +705,12 @@ impl Contract {
 
         self.video_metadata.insert(&token_id, &video_metadata);
 
-        self.tokens
-            .internal_mint(token_id.clone(), receiver_id, Some(token_metadata))
+        let event_cid = video_metadata.encrypted_cid.clone();
+        let token =
+            self.tokens
+                .internal_mint(token_id.clone(), receiver_id.clone(), Some(token_metadata));
+        self.index_ticket(&token_id, &receiver_id, &event_cid);
+        token
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -735,6 +771,7 @@ impl Contract {
         msg: String,
         _nonce: u64,
     ) -> PromiseOrValue<U128> {
+        require!(msg.len() <= 2_048, "Transfer message exceeds 2048 bytes");
         // Parse the message
         let parsed: near_sdk::serde_json::Value = near_sdk::serde_json::from_str(&msg).unwrap_or_else(|_| {
             env::panic_str("Invalid JSON message. Expected: {\"action\":\"buy_ticket\",\"buyer_id\":\"...\",\"encrypted_cid\":\"...\"}");
@@ -758,6 +795,10 @@ impl Contract {
             .and_then(|v| v.as_str())
             .unwrap_or_else(|| env::panic_str("Missing encrypted_cid"))
             .to_string();
+        require!(
+            encrypted_cid.len() <= MAX_CID_BYTES,
+            "CID exceeds 256 bytes"
+        );
 
         // SECURITY: sender_id must match buyer_id (prevent buying for others without consent)
         require!(sender_id == buyer_id, "sender_id must match buyer_id");
@@ -771,7 +812,7 @@ impl Contract {
         self.assert_near_purchase_available(&encrypted_cid, &event);
 
         let required_price = NearToken::from_yoctonear(Self::event_near_price(&event).0);
-        let storage_cost = STORAGE_COST_NFT;
+        let storage_cost = PURCHASE_STORAGE_BUDGET;
         let is_free = required_price.as_yoctonear() == 0;
 
         if is_free {
@@ -794,23 +835,41 @@ impl Contract {
             )
         );
 
-        // Unwrap ALL received wNEAR to native NEAR, then process purchase in callback.
-        PromiseOrValue::Promise(
-            Promise::new(wrap_near_account_id())
-                .function_call(
-                    "near_withdraw".to_string(),
-                    near_sdk::serde_json::json!({ "amount": amount.0.to_string() })
-                        .to_string()
-                        .into_bytes(),
-                    NearToken::from_yoctonear(1),
-                    near_sdk::Gas::from_tgas(10),
-                )
-                .then(
-                    Self::ext(env::current_account_id())
-                        .with_static_gas(near_sdk::Gas::from_tgas(100))
-                        .on_wnear_unwrap_for_purchase(buyer_id, encrypted_cid, amount),
-                ),
-        )
+        let storage_before = env::storage_usage();
+        let token =
+            self.internal_mint_ticket(buyer_id.clone(), &event, encrypted_cid.clone(), false);
+        let (creator_amount, commission) =
+            self.apply_commission_usdc(required_price.as_yoctonear());
+        let wrap_account = wrap_near_account_id();
+        self.add_stablecoin_creator_balance(&wrap_account, &event.creator_id, creator_amount);
+        self.add_stablecoin_commission_balance(
+            &wrap_account,
+            commission.saturating_add(storage_cost.as_yoctonear()),
+        );
+
+        self.log_purchase(
+            buyer_id.clone(),
+            event.creator_id.clone(),
+            encrypted_cid.clone(),
+            token.token_id.clone(),
+            required_price.as_yoctonear(),
+            creator_amount,
+            commission,
+            PurchaseType::Direct,
+        );
+        require!(
+            Self::storage_cost_since(storage_before) <= storage_cost,
+            "Ticket storage exceeds reserved budget"
+        );
+        events::emit_nft_purchased(
+            token.token_id,
+            buyer_id,
+            Some(encrypted_cid),
+            Some(required_price.as_yoctonear().to_string()),
+            None,
+        );
+
+        PromiseOrValue::Value(U128(amount.0.saturating_sub(total_cost.as_yoctonear())))
     }
 
     /// Handle USDC/USDT transfers (new USDC-native path)
@@ -822,6 +881,7 @@ impl Contract {
         token_contract: &AccountId,
         nonce: u64,
     ) -> PromiseOrValue<U128> {
+        require!(msg.len() <= 2_048, "Transfer message exceeds 2048 bytes");
         let parsed: near_sdk::serde_json::Value = near_sdk::serde_json::from_str(&msg).unwrap_or_else(|_| {
             env::panic_str("Invalid JSON message. Expected: {\"action\":\"buy_ticket\",\"buyer_id\":\"...\",\"encrypted_cid\":\"...\"}");
         });
@@ -844,6 +904,10 @@ impl Contract {
             .and_then(|v| v.as_str())
             .unwrap_or_else(|| env::panic_str("Missing encrypted_cid"))
             .to_string();
+        require!(
+            encrypted_cid.len() <= MAX_CID_BYTES,
+            "CID exceeds 256 bytes"
+        );
         let payment_id = parsed
             .get("payment_id")
             .and_then(|v| v.as_str())
@@ -882,7 +946,9 @@ impl Contract {
                 amount.0
             )
         );
+        let storage_before = env::storage_usage();
         let payment_id = payment_id.unwrap_or_else(|| env::panic_str("payment_id is required"));
+        Self::assert_payment_id(&payment_id);
         let payment_key = format!("{}:{}:{}", token_contract, sender_id, payment_id);
         let mut settled_payments = self.lazy_settled_stablecoin_payments();
         require!(
@@ -926,29 +992,20 @@ impl Contract {
             commission,
             PurchaseType::Direct,
         );
+        require!(
+            Self::storage_cost_since(storage_before) <= PURCHASE_STORAGE_BUDGET,
+            "Stablecoin purchase storage exceeds reserved budget"
+        );
 
-        // Refund excess if any
+        // Return unused tokens to NEP-141 resolver; no fallible refund XCC is needed.
         let refund = amount.0.saturating_sub(required_price);
-        if refund > 0 {
-            Promise::new(token_contract.clone()).function_call(
-                "ft_transfer".to_string(),
-                near_sdk::serde_json::json!({
-                    "receiver_id": sender_id,
-                    "amount": refund.to_string()
-                })
-                .to_string()
-                .into_bytes(),
-                NearToken::from_yoctonear(1),
-                near_sdk::Gas::from_tgas(10),
-            );
-        }
 
         env::log_str(&format!(
             "stablecoin_purchase_complete nonce={} buyer={} event={} token={} amount={} refund={}",
             nonce, sender_id, encrypted_cid, token_contract, amount.0, refund
         ));
 
-        PromiseOrValue::Value(U128(0))
+        PromiseOrValue::Value(U128(refund))
     }
 
     /// Callback after wNEAR unwrap completes.
@@ -969,22 +1026,40 @@ impl Contract {
         );
 
         if !succeeded {
-            // Unwrap failed — the wNEAR was NOT burned, so wrap.near will handle
-            // the refund via ft_resolve_transfer (returns the full amount).
-            env::panic_str("wNEAR unwrap failed — tokens will be refunded by wrap.near");
+            // The wNEAR was not burned; let NEP-141 resolution return it.
+            return wnear_amount;
         }
 
-        // Native NEAR is now in the contract's balance.
-        // Mint first so funds do not leave the contract before entitlement exists.
-        let event = self
-            .events
-            .get(&encrypted_cid)
-            .unwrap_or_else(|| env::panic_str("Event not found"));
-        self.assert_event_not_banned(&encrypted_cid);
-        self.assert_near_purchase_available(&encrypted_cid, &event);
+        // Compatibility path for already-scheduled callbacks from older code.
+        // Once unwrap succeeded, expected state changes must refund native NEAR
+        // instead of panicking and trapping the user's funds.
+        let event = self.events.get(&encrypted_cid);
+        let unavailable = self.is_paused()
+            || event.is_none()
+            || self.lazy_banned_events().get(&encrypted_cid).is_some();
+        if unavailable {
+            Promise::new(buyer_id).transfer(NearToken::from_yoctonear(wnear_amount.0));
+            return U128(0);
+        }
+        let event = event.unwrap();
+        let near_price = Self::event_near_price(&event).0;
+        let usdc_price = self
+            .event_usdc_price(&encrypted_cid, &event)
+            .map(|price| price.0)
+            .unwrap_or(0);
+        if near_price == 0 && usdc_price > 0 {
+            Promise::new(buyer_id).transfer(NearToken::from_yoctonear(wnear_amount.0));
+            return U128(0);
+        }
 
         let required_price = NearToken::from_yoctonear(Self::event_near_price(&event).0);
-        let storage_cost = STORAGE_COST_NFT;
+        let storage_cost = PURCHASE_STORAGE_BUDGET;
+        let total_used = required_price.saturating_add(storage_cost);
+        if NearToken::from_yoctonear(wnear_amount.0) < total_used {
+            Promise::new(buyer_id).transfer(NearToken::from_yoctonear(wnear_amount.0));
+            return U128(0);
+        }
+        let storage_before = env::storage_usage();
         let token =
             self.internal_mint_ticket(buyer_id.clone(), &event, encrypted_cid.clone(), false);
 
@@ -999,7 +1074,6 @@ impl Contract {
         }
 
         // Refund excess to buyer (unwrapped NEAR minus total cost)
-        let total_used = required_price.saturating_add(storage_cost);
         let received = NearToken::from_yoctonear(wnear_amount.0);
         if received > total_used {
             let refund = received.saturating_sub(total_used);
@@ -1018,6 +1092,10 @@ impl Contract {
             commission,
             PurchaseType::Direct,
         );
+        require!(
+            Self::storage_cost_since(storage_before) <= storage_cost,
+            "Ticket storage exceeds reserved budget"
+        );
 
         // Return "0" to ft_resolve_transfer → all wNEAR was used (no refund needed)
         U128(0)
@@ -1035,6 +1113,7 @@ impl Contract {
         video_metadata: VideoMetadata,
     ) -> Promise {
         self.assert_not_paused();
+        Self::assert_token_input(&token_metadata, &video_metadata);
         let account_id = env::predecessor_account_id();
         let session_public_key = self.use_upload_session(
             UploadSessionStatus::AwaitingMint,
@@ -1069,14 +1148,18 @@ impl Contract {
         token_metadata: TokenMetadata,
         video_metadata: VideoMetadata,
     ) -> Token {
+        self.assert_ticket_index_ready();
+        Self::assert_token_input(&token_metadata, &video_metadata);
         let token_id = self.next_token_id.to_string();
         self.next_token_id += 1;
 
         self.video_metadata.insert(&token_id, &video_metadata);
-        self.add_token_to_cid_index(&video_metadata.encrypted_cid, &token_id);
-
-        self.tokens
-            .internal_mint(token_id, receiver_id, Some(token_metadata))
+        let event_cid = video_metadata.encrypted_cid.clone();
+        let token =
+            self.tokens
+                .internal_mint(token_id.clone(), receiver_id.clone(), Some(token_metadata));
+        self.index_ticket(&token_id, &receiver_id, &event_cid);
+        token
     }
 
     /// Callback after nft_mint_prepaid XCC completes.

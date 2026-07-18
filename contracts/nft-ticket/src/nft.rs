@@ -43,10 +43,9 @@ impl YtNft {
             self.token_metadata_by_id.insert(&token_id, meta);
         }
 
-        // Update per-owner index
-        let mut owner_tokens = self.tokens_per_owner.get(&owner_id).unwrap_or_default();
-        owner_tokens.push(token_id.clone());
-        self.tokens_per_owner.insert(&owner_id, &owner_tokens);
+        // The active owner index uses one storage key per slot. Appending no
+        // longer rewrites an ever-growing Vec on every mint.
+        self.index_owner_token(&token_id, &owner_id);
 
         // Initialize empty approvals
         self.approvals_by_id.insert(&token_id, &HashMap::new());
@@ -76,12 +75,16 @@ impl YtNft {
     }
 
     pub fn nft_supply_for_owner(&self, account_id: &AccountId) -> U128 {
-        let count = self
-            .tokens_per_owner
-            .get(account_id)
-            .map(|v| v.len() as u128)
-            .unwrap_or(0);
-        U128(count)
+        if self.owner_index_ready() {
+            return U128(self.owner_token_counts().get(account_id).unwrap_or(0) as u128);
+        }
+
+        U128(
+            self.tokens_per_owner
+                .get(account_id)
+                .map(|tokens| tokens.len() as u128)
+                .unwrap_or(0),
+        )
     }
 
     pub fn nft_tokens_for_owner(
@@ -90,16 +93,24 @@ impl YtNft {
         from_index: Option<U128>,
         limit: Option<u64>,
     ) -> Vec<Token> {
-        let token_ids = self.tokens_per_owner.get(account_id).unwrap_or_default();
-        let start: u128 = from_index.map(|x| x.0).unwrap_or(0);
-        let limit = limit.unwrap_or(token_ids.len() as u64) as usize;
-        let start = start as usize;
+        let start = from_index.map(|x| x.0).unwrap_or(0) as u64;
+        let limit = limit.unwrap_or(50).min(100);
 
-        token_ids
-            .iter()
-            .skip(start)
-            .take(limit)
-            .filter_map(|tid| self.nft_token(tid))
+        if !self.owner_index_ready() {
+            let token_ids = self.tokens_per_owner.get(account_id).unwrap_or_default();
+            return token_ids
+                .iter()
+                .skip(start as usize)
+                .take(limit as usize)
+                .filter_map(|token_id| self.nft_token(token_id))
+                .collect();
+        }
+
+        let count = self.owner_token_counts().get(account_id).unwrap_or(0);
+        let slots = self.owner_token_slots();
+        (start..start.saturating_add(limit).min(count))
+            .filter_map(|index| slots.get(&Self::owner_slot_key(account_id, index)))
+            .filter_map(|token_id| self.nft_token(&token_id))
             .collect()
     }
 
@@ -111,6 +122,47 @@ impl YtNft {
             .take(limit)
             .filter_map(|id| self.nft_token(&id.to_string()))
             .collect()
+    }
+
+    fn owner_slot_key(account_id: &AccountId, index: u64) -> Vec<u8> {
+        let account = account_id.as_bytes();
+        let mut key = Vec::with_capacity(4 + account.len() + 8);
+        key.extend_from_slice(&(account.len() as u32).to_le_bytes());
+        key.extend_from_slice(account);
+        key.extend_from_slice(&index.to_le_bytes());
+        key
+    }
+
+    fn owner_token_counts(&self) -> LookupMap<AccountId, u64> {
+        LookupMap::new(StorageKey::OWNER_TOKEN_COUNTS)
+    }
+
+    fn owner_token_slots(&self) -> LookupMap<Vec<u8>, TokenId> {
+        LookupMap::new(StorageKey::OWNER_TOKEN_SLOTS)
+    }
+
+    fn indexed_owner_tokens(&self) -> LookupSet<TokenId> {
+        LookupSet::new(StorageKey::OWNER_TOKEN_INDEXED)
+    }
+
+    fn owner_index_ready(&self) -> bool {
+        LazyOption::new(StorageKey::TICKET_INDEX_READY, None)
+            .get()
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn index_owner_token(&mut self, token_id: &TokenId, owner_id: &AccountId) {
+        let mut indexed = self.indexed_owner_tokens();
+        if indexed.contains(token_id) {
+            return;
+        }
+
+        let mut counts = self.owner_token_counts();
+        let index = counts.get(owner_id).unwrap_or(0);
+        self.owner_token_slots()
+            .insert(&Self::owner_slot_key(owner_id, index), token_id);
+        counts.insert(owner_id, &index.saturating_add(1));
+        indexed.insert(token_id);
     }
 
     #[allow(dead_code)]
@@ -214,40 +266,6 @@ impl YtNft {
             }
         }
     }
-
-    pub fn nft_approve(
-        &mut self,
-        token_id: &TokenId,
-        account_id: &AccountId,
-        _msg: Option<String>,
-    ) {
-        let owner_id = self.owner_by_id.get(token_id).expect("Token not found");
-        let predecessor = env::predecessor_account_id();
-        require!(predecessor == owner_id, "Only owner can approve");
-        let mut approvals = self.approvals_by_id.get(token_id).unwrap_or_default();
-        approvals.insert(account_id.clone(), env::block_timestamp());
-        self.approvals_by_id.insert(token_id, &approvals);
-    }
-
-    pub fn nft_revoke(&mut self, token_id: &TokenId, account_id: &AccountId) {
-        let owner_id = self.owner_by_id.get(token_id).expect("Token not found");
-        require!(
-            env::predecessor_account_id() == owner_id,
-            "Only owner can revoke"
-        );
-        let mut approvals = self.approvals_by_id.get(token_id).unwrap_or_default();
-        approvals.remove(account_id);
-        self.approvals_by_id.insert(token_id, &approvals);
-    }
-
-    pub fn nft_revoke_all(&mut self, token_id: &TokenId) {
-        let owner_id = self.owner_by_id.get(token_id).expect("Token not found");
-        require!(
-            env::predecessor_account_id() == owner_id,
-            "Only owner can revoke all"
-        );
-        self.approvals_by_id.insert(token_id, &HashMap::new());
-    }
 }
 
 #[near]
@@ -298,31 +316,5 @@ impl Contract {
 
     pub fn nft_tokens(&self, from_index: Option<U128>, limit: Option<u64>) -> Vec<Token> {
         self.tokens.nft_tokens(from_index, limit)
-    }
-
-    #[payable]
-    pub fn nft_approve(&mut self, token_id: TokenId, account_id: AccountId, msg: Option<String>) {
-        self.tokens.nft_approve(&token_id, &account_id, msg)
-    }
-
-    pub fn nft_revoke(&mut self, token_id: TokenId, account_id: AccountId) {
-        self.tokens.nft_revoke(&token_id, &account_id);
-    }
-
-    pub fn nft_revoke_all(&mut self, token_id: TokenId) {
-        self.tokens.nft_revoke_all(&token_id);
-    }
-
-    pub fn nft_is_approved(
-        &self,
-        token_id: TokenId,
-        approved_account_id: AccountId,
-        _approval_id: Option<u64>,
-    ) -> bool {
-        self.tokens
-            .approvals_by_id
-            .get(&token_id)
-            .map(|approvals| approvals.contains_key(&approved_account_id))
-            .unwrap_or(false)
     }
 }

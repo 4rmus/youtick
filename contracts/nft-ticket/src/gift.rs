@@ -8,6 +8,11 @@ impl Contract {
     #[payable]
     pub fn gift_ticket(&mut self, receiver_id: AccountId, encrypted_cid: String) -> Token {
         self.assert_not_paused();
+        self.assert_ticket_index_ready();
+        require!(
+            encrypted_cid.len() <= MAX_CID_BYTES,
+            "CID exceeds 256 bytes"
+        );
         let maybe_event = self.events.get(&encrypted_cid);
         require!(maybe_event.is_some(), "Event not found");
 
@@ -24,12 +29,8 @@ impl Contract {
             "Only event creator can gift tickets"
         );
 
-        // Require storage deposit
-        let storage_cost = STORAGE_COST_NFT;
-        require!(
-            env::attached_deposit() >= storage_cost,
-            "Requires at least 0.01 NEAR for storage"
-        );
+        let deposit = env::attached_deposit();
+        let storage_before = env::storage_usage();
 
         // Mint the NFT (no commission)
         let token_id = self.next_token_id.to_string();
@@ -45,7 +46,6 @@ impl Contract {
         };
 
         self.video_metadata.insert(&token_id, &video_metadata);
-        self.add_token_to_cid_index(&encrypted_cid, &token_id);
 
         let token_metadata = TokenMetadata {
             title: Some(event.title.clone()),
@@ -62,8 +62,25 @@ impl Contract {
             reference_hash: None,
         };
 
-        self.tokens
-            .internal_mint(token_id.clone(), receiver_id, Some(token_metadata))
+        let token =
+            self.tokens
+                .internal_mint(token_id.clone(), receiver_id.clone(), Some(token_metadata));
+        self.index_ticket(&token_id, &receiver_id, &encrypted_cid);
+        let storage_cost = Self::storage_cost_since(storage_before);
+        require!(
+            storage_cost <= STORAGE_COST_NFT,
+            "Ticket storage exceeds reserved budget"
+        );
+        require!(
+            deposit >= storage_cost,
+            "Attached deposit does not cover ticket storage"
+        );
+        if deposit > storage_cost {
+            Promise::new(env::predecessor_account_id())
+                .transfer(deposit.saturating_sub(storage_cost))
+                .as_return();
+        }
+        token
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -77,7 +94,7 @@ impl Contract {
     pub fn create_gift_drop(&mut self, event_cid: String, public_keys: Vec<near_sdk::PublicKey>) {
         self.assert_not_paused();
         let num_keys = public_keys.len() as u32;
-        require!(num_keys > 0 && num_keys <= 50, "Must create 1-50 keys");
+        require!(num_keys > 0 && num_keys <= 10, "Must create 1-10 keys");
 
         // Verify event exists
         let maybe_event = self.events.get(&event_cid);

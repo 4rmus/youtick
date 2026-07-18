@@ -15,7 +15,7 @@ After R2, the previously single-file `lib.rs` was split into 12 modules
 ```
 src/
   lib.rs        # entry, struct, sabitler
-  nft.rs        # NEP-171 NFT impl
+  nft.rs        # YouTick non-transferable ticket credential
   market.rs     # buy_ticket, ft_on_transfer, upload session
   gift.rs       # create_gift_drop, claim_gift*, upgrade_trial_account
   onboarding.rs # add/remove_onboarding_key, daily limit
