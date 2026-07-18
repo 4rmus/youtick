@@ -3,6 +3,14 @@ main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
+[[durable_objects.bindings]]
+name = "ATOMIC_STATE"
+class_name = "AtomicState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AtomicState"]
+
 [vars]
 # Primary origin. See README.md for origin/fallback and CSP responsibilities.
 WEB4_ORIGIN = "https://ee5c3c44.youtick-static.pages.dev"
@@ -12,6 +20,9 @@ ALLOWED_DOMAINS = "youtick.net,www.youtick.net"
 
 CACHE_TTL = "300"
 CACHE_VERSION = "v30"
+NEAR_RPC_ALLOWED_CONTRACTS = "youtick.near,access.youtick.near,registry.youtick.near,pyth-oracle.near"
+NEAR_CONTRACT_ID = "youtick.near"
+NEAR_RPC_URL = "https://free.rpc.fastnear.com"
 
 # Set via wrangler secret in production.
 # ONBOARDING_KEYS = "ed25519:..."

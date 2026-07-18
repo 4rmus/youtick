@@ -3,6 +3,14 @@ main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
+[[durable_objects.bindings]]
+name = "ATOMIC_STATE"
+class_name = "AtomicState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AtomicState"]
+
 [vars]
 ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
 STORAGE_PROVIDER = "lighthouse"

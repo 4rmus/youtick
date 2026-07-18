@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from '../src/index';
+import { createAtomicNamespace } from '../../shared/test/atomic-namespace';
 
 class MemoryKV {
     private readonly values = new Map<string, string>();
@@ -60,6 +61,7 @@ function makeEnv(): Env {
         VIDEO_KEYS: new MemoryKV() as unknown as Env['VIDEO_KEYS'],
         RATE_LIMIT: new MemoryKV() as unknown as Env['RATE_LIMIT'],
         ACCESS_CACHE: new MemoryKV() as unknown as Env['ACCESS_CACHE'],
+        ATOMIC_STATE: createAtomicNamespace(),
         ALLOWED_ORIGINS: 'https://kms.test',
         NEAR_CONTRACT_ID: 'youtick.testnet',
         NEAR_ACCESS_CONTRACT_ID: 'access.youtick.testnet',
@@ -114,8 +116,14 @@ describe('KMS retrieve', () => {
             };
             const methodName = body.params?.method_name;
             let value: unknown = null;
-            if (methodName === 'has_ticket' || methodName === 'is_event_banned') {
-                value = false;
+            if (methodName === 'get_playback_access_decision') {
+                value = {
+                    event_exists: false,
+                    banned: false,
+                    has_ticket: false,
+                    is_creator: false,
+                    allowed: false,
+                };
             }
 
             return new Response(JSON.stringify({
@@ -248,10 +256,14 @@ describe('KMS retrieve', () => {
             };
             const methodName = body.params?.method_name;
             let value: unknown = null;
-            if (methodName === 'is_event_banned') {
-                value = true;
-            } else if (methodName === 'has_ticket') {
-                value = false;
+            if (methodName === 'get_playback_access_decision') {
+                value = {
+                    event_exists: true,
+                    banned: true,
+                    has_ticket: false,
+                    is_creator: true,
+                    allowed: false,
+                };
             }
 
             return new Response(JSON.stringify({
@@ -319,10 +331,15 @@ describe('KMS retrieve', () => {
                     kind: 'DecryptionOperator',
                     active: true,
                 };
-            } else if (methodName === 'has_ticket') {
-                value = rpcUrl.includes('rpc.mainnet.fastnear.com') ? false : true;
-            } else if (methodName === 'is_event_banned') {
-                value = false;
+            } else if (methodName === 'get_playback_access_decision') {
+                const allowed = !rpcUrl.includes('rpc.mainnet.fastnear.com');
+                value = {
+                    event_exists: true,
+                    banned: false,
+                    has_ticket: allowed,
+                    is_creator: true,
+                    allowed,
+                };
             }
 
             return new Response(JSON.stringify({
@@ -391,10 +408,14 @@ describe('KMS retrieve', () => {
                     kind: 'DecryptionOperator',
                     active: true,
                 };
-            } else if (methodName === 'has_ticket') {
-                value = true;
-            } else if (methodName === 'is_event_banned') {
-                value = false;
+            } else if (methodName === 'get_playback_access_decision') {
+                value = {
+                    event_exists: true,
+                    banned: false,
+                    has_ticket: true,
+                    is_creator: true,
+                    allowed: true,
+                };
             }
 
             return new Response(JSON.stringify({

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from './index';
+import { createAtomicNamespace } from '../../shared/test/atomic-namespace';
 
 type TestHandler = {
     fetch(request: Request, env: Env): Promise<Response>;
@@ -15,6 +16,7 @@ function createEnv(overrides?: Partial<Env>): Env {
         ALLOWED_ORIGINS: 'https://youtick.net,http://localhost:3000,http://localhost:3001',
         STORAGE_PROVIDER: 'lighthouse',
         LIGHTHOUSE_API_BASE: 'https://api.lighthouse.storage',
+        ATOMIC_STATE: createAtomicNamespace(),
         ...overrides,
     };
 }
@@ -223,7 +225,7 @@ describe('storage-api', () => {
             uploadsEnabled: false,
             uploadGuardReady: false,
             uploadBase: 'https://upload.lighthouse.storage',
-            maxUploadBytes: 104857600,
+            maxUploadBytes: 8388608,
         });
     });
 
@@ -791,7 +793,7 @@ describe('storage-api', () => {
         const response = await handler.fetch(
             new Request('https://storage.youtick.net/uploads/directory', {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
+                headers: { Authorization: `Bearer ${token}`, 'Content-Length': '1024' },
                 body: formData,
             }),
             env,
@@ -854,7 +856,7 @@ describe('storage-api', () => {
         const response = await handler.fetch(
             new Request('https://storage.youtick.net/uploads/file', {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
+                headers: { Authorization: `Bearer ${token}`, 'Content-Length': '1024' },
                 body: formData,
             }),
             env,
@@ -951,7 +953,7 @@ describe('storage-api', () => {
             return handler.fetch(
                 new Request('https://storage.youtick.net/uploads/file', {
                     method: 'POST',
-                    headers: { Authorization: `Bearer ${token}` },
+                    headers: { Authorization: `Bearer ${token}`, 'Content-Length': '1024' },
                     body: formData,
                 }),
                 env,
@@ -1048,7 +1050,7 @@ describe('storage-api', () => {
         const response = await handler.fetch(
             new Request('https://storage.youtick.net/uploads/directory', {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
+                headers: { Authorization: `Bearer ${token}`, 'Content-Length': '1024' },
                 body: formData,
             }),
             env,
@@ -1127,7 +1129,7 @@ describe('storage-api', () => {
         expect(response.status).toBe(404);
         expect(await response.json()).toEqual({
             error: 'not_found',
-            endpoints: ['/__health', '/provider-health', '/pins', '/pins/:cid/status', '/uploads/auth/challenge', '/uploads/auth/verify', '/uploads/intent', '/uploads/file', '/uploads/directory'],
+            endpoints: ['/live', '/ready', '/deep', '/__health', '/provider-health', '/pins', '/pins/:cid/status', '/uploads/auth/challenge', '/uploads/auth/verify', '/uploads/intent', '/uploads/file', '/uploads/directory'],
         });
     });
 });

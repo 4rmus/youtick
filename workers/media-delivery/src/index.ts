@@ -19,6 +19,7 @@ const DEFAULT_IPFS_GATEWAY_BASES = [
 ].join(',');
 const DEFAULT_CACHE_TTL_SECONDS = 300;
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 4_000;
+const MAX_INTEGRITY_BODY_BYTES = 8 * 1024 * 1024;
 const CID_PATTERN = /^(Qm[1-9A-HJ-NP-Za-km-z]{44,}|ba[a-z2-7]{57,})$/;
 
 // Content integrity: media is encrypted with AES-CTR (unauthenticated), so a
@@ -86,43 +87,24 @@ async function handleIpfsRequest(request: Request, env: Env, ctx: ExecutionConte
         }
     }
 
-    const upstream = await fetchFromGateways(parsedPath.path, request, env);
+    const verifyCid = isCidIntegrityEnabled(env)
+        && request.method === 'GET'
+        && !rangeHeader
+        && parsedPath.singleSegment
+        && parseRawSha256CidDigest(parsedPath.cid) !== null
+        ? parsedPath.cid
+        : null;
+    const upstream = await fetchFromGateways(parsedPath.path, request, env, verifyCid);
     if (!upstream.ok) {
         return jsonResponse(request, env, {
-            error: 'gateway_fetch_failed',
+            error: upstream.integrityMismatch ? 'cid_integrity_mismatch' : 'gateway_fetch_failed',
+            cid: upstream.integrityMismatch ? parsedPath.cid : undefined,
             status: upstream.status,
             upstream: upstream.upstreamBase,
         }, upstream.status === 404 ? 404 : 502);
     }
 
-    let upstreamResponse = upstream.response;
-
-    // Re-verify content addressing for single-block raw CIDs on full GETs so a
-    // compromised gateway cannot substitute tampered ciphertext undetected.
-    const canVerifyIntegrity = isCidIntegrityEnabled(env)
-        && request.method === 'GET'
-        && !rangeHeader
-        && parsedPath.singleSegment
-        && upstreamResponse.status === 200
-        && parseRawSha256CidDigest(parsedPath.cid) !== null;
-
-    if (canVerifyIntegrity) {
-        const verifiedBytes = await upstreamResponse.arrayBuffer();
-        if (!await matchesRawCidDigest(parsedPath.cid, new Uint8Array(verifiedBytes))) {
-            return jsonResponse(request, env, {
-                error: 'cid_integrity_mismatch',
-                cid: parsedPath.cid,
-                upstream: upstream.upstreamBase,
-            }, 502);
-        }
-        upstreamResponse = new Response(verifiedBytes, {
-            status: upstreamResponse.status,
-            statusText: upstreamResponse.statusText,
-            headers: upstreamResponse.headers,
-        });
-    }
-
-    const response = withDeliveryHeaders(request, env, upstreamResponse, {
+    const response = withDeliveryHeaders(request, env, upstream.response, {
         cacheState: cacheKey ? 'MISS' : 'BYPASS',
         upstreamBase: upstream.upstreamBase,
         cacheTtlSeconds: getCacheTtlSeconds(env),
@@ -139,8 +121,10 @@ async function fetchFromGateways(
     assetPath: string,
     request: Request,
     env: Env,
-): Promise<{ ok: true; response: Response; upstreamBase: string } | { ok: false; status: number; upstreamBase?: string }> {
+    verifyCid: string | null,
+): Promise<{ ok: true; response: Response; upstreamBase: string } | { ok: false; status: number; upstreamBase?: string; integrityMismatch?: boolean }> {
     let lastStatus = 502;
+    let integrityMismatch = false;
 
     for (const gatewayBase of getGatewayBases(env)) {
         const upstreamUrl = `${gatewayBase}/${assetPath}`;
@@ -164,8 +148,13 @@ async function fetchFromGateways(
             });
 
             if (response.ok || response.status === 206) {
-                abortable.cleanup();
-                return { ok: true, response, upstreamBase: gatewayBase };
+                const verified = await verifyGatewayResponse(response, verifyCid);
+                if (verified) {
+                    return { ok: true, response: verified, upstreamBase: gatewayBase };
+                }
+                integrityMismatch = true;
+                lastStatus = 502;
+                continue;
             }
 
             lastStatus = response.status;
@@ -176,7 +165,23 @@ async function fetchFromGateways(
         }
     }
 
-    return { ok: false, status: lastStatus };
+    return { ok: false, status: lastStatus, integrityMismatch };
+}
+
+async function verifyGatewayResponse(response: Response, cid: string | null): Promise<Response | null> {
+    if (!cid || response.status !== 200) return response;
+    const contentLength = Number.parseInt(response.headers.get('content-length') || '0', 10);
+    if (contentLength > MAX_INTEGRITY_BODY_BYTES) return null;
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength > MAX_INTEGRITY_BODY_BYTES
+        || !await matchesRawCidDigest(cid, new Uint8Array(bytes))) {
+        return null;
+    }
+    return new Response(bytes, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+    });
 }
 
 function parseIpfsPath(pathname: string): { ok: true; path: string; cid: string; singleSegment: boolean } | { ok: false; error: string } {
@@ -311,6 +316,7 @@ async function matchesRawCidDigest(cid: string, bytes: Uint8Array): Promise<bool
 
 function buildCacheKey(request: Request, env: Env): Request {
     const cacheUrl = new URL(request.url);
+    cacheUrl.search = '';
     if (env.CACHE_VERSION?.trim()) {
         cacheUrl.searchParams.set('__cv', env.CACHE_VERSION.trim());
     }

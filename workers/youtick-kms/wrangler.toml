@@ -3,6 +3,14 @@ main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
+[[durable_objects.bindings]]
+name = "ATOMIC_STATE"
+class_name = "AtomicState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AtomicState"]
+
 # Production (mainnet) default environment. See README.md for KV, secret and
 # operator deploy procedure.
 [vars]
@@ -33,6 +41,10 @@ id = "<replace-with-your-local-dev-access-cache-namespace-id>"
 [env.operator_a]
 name = "youtick-kms-a"
 
+[[env.operator_a.durable_objects.bindings]]
+name = "ATOMIC_STATE"
+class_name = "AtomicState"
+
 [env.operator_a.vars]
 CACHE_KEY_PREFIX = "v2:"
 ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net"
@@ -56,6 +68,10 @@ id = "<replace-with-operator-a-access-cache-kv-namespace-id>"
 
 [env.operator_b]
 name = "youtick-kms-b"
+
+[[env.operator_b.durable_objects.bindings]]
+name = "ATOMIC_STATE"
+class_name = "AtomicState"
 
 [env.operator_b.vars]
 CACHE_KEY_PREFIX = "v2:"
@@ -81,6 +97,10 @@ id = "<replace-with-operator-b-access-cache-kv-namespace-id>"
 [env.operator_c]
 name = "youtick-kms-c"
 
+[[env.operator_c.durable_objects.bindings]]
+name = "ATOMIC_STATE"
+class_name = "AtomicState"
+
 [env.operator_c.vars]
 CACHE_KEY_PREFIX = "v2:"
 ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net"
@@ -104,6 +124,10 @@ id = "<replace-with-operator-c-access-cache-kv-namespace-id>"
 
 [env.operator_d]
 name = "youtick-kms-d"
+
+[[env.operator_d.durable_objects.bindings]]
+name = "ATOMIC_STATE"
+class_name = "AtomicState"
 
 [env.operator_d.vars]
 CACHE_KEY_PREFIX = "v2:"
@@ -129,6 +153,10 @@ id = "<replace-with-operator-d-access-cache-kv-namespace-id>"
 [env.operator_e]
 name = "youtick-kms-e"
 
+[[env.operator_e.durable_objects.bindings]]
+name = "ATOMIC_STATE"
+class_name = "AtomicState"
+
 [env.operator_e.vars]
 CACHE_KEY_PREFIX = "v2:"
 ALLOWED_ORIGINS = "https://youtick.near.page,https://youtick.net,https://www.youtick.net"
@@ -153,6 +181,10 @@ id = "<replace-with-operator-e-access-cache-kv-namespace-id>"
 # Testnet environment — local development only
 [env.testnet]
 name = "youtick-kms-testnet"
+
+[[env.testnet.durable_objects.bindings]]
+name = "ATOMIC_STATE"
+class_name = "AtomicState"
 
 [env.testnet.vars]
 ALLOWED_ORIGINS = "http://localhost:3000"

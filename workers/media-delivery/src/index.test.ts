@@ -135,6 +135,25 @@ describe('media-delivery', () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it('uses one cache entry for query variants of the same IPFS path', async () => {
+        const cached = new Response('cached-segment');
+        await cache.put(
+            new Request('https://media.youtick.net/ipfs/bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja/segments/0001.bin?__cv=v1'),
+            cached,
+        );
+        vi.stubGlobal('fetch', vi.fn());
+
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request('https://media.youtick.net/ipfs/bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja/segments/0001.bin?cacheBust=random'),
+            createEnv(),
+            { waitUntil } as unknown as ExecutionContext,
+        );
+
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe('cached-segment');
+    });
+
     it('forwards Range requests and bypasses cache writes', async () => {
         const fetchMock = vi.fn(async () => new Response('partial', {
             status: 206,
@@ -259,6 +278,25 @@ describe('media-delivery', () => {
         expect(response.status).toBe(502);
         expect(await response.json()).toMatchObject({ error: 'cid_integrity_mismatch', cid: rawCid });
         expect(cache.put).not.toHaveBeenCalled();
+    });
+
+    it('tries the next gateway after an integrity mismatch', async () => {
+        const rawCid = 'bafkreiarrg3lo7wwgsxigewmyxxl2k2nuxwfkiljttyfw5rlnyt2dpoykm';
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(new Response('tampered-bytes', { status: 200 }))
+            .mockResolvedValueOnce(new Response('hello-segment', { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request(`https://media.youtick.net/ipfs/${rawCid}`),
+            createEnv(),
+            { waitUntil } as unknown as ExecutionContext,
+        );
+
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe('hello-segment');
+        expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
     it('skips integrity verification for sub-path requests under a raw CID', async () => {

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Account, KeyPair } from 'near-api-js';
 import type { Env } from './index';
+import { createAtomicNamespace } from '../../shared/test/atomic-namespace';
 
 // Mock Cloudflare Workers globals
 const createMockCache = () => {
@@ -95,7 +97,7 @@ describe('web4-proxy', () => {
 
     it('sets security headers on proxied responses', async () => {
         globalThis.fetch = vi.fn(async () => {
-            return new Response('<html></html>', {
+            return new Response('<html><script>self.__next_f = []</script></html>', {
                 status: 200,
                 headers: { 'Content-Type': 'text/html' },
             });
@@ -114,12 +116,15 @@ describe('web4-proxy', () => {
         expect(response.headers.get('X-Frame-Options')).toBe('DENY');
         expect(response.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin');
         expect(response.headers.get('Content-Security-Policy')).toContain("default-src 'self'");
+        expect(response.headers.get('Content-Security-Policy')).not.toContain("script-src 'self' 'unsafe-inline'");
+        expect(response.headers.get('Content-Security-Policy')).not.toMatch(/connect-src[^;]*\shttps:(?:\s|;)/);
         expect(response.headers.get('Content-Security-Policy')).toContain('https://challenges.cloudflare.com');
         expect(response.headers.get('Content-Security-Policy')).toContain('frame-src https://challenges.cloudflare.com');
         expect(response.headers.get('Content-Security-Policy')).toContain('https://static.cloudflareinsights.com');
         expect(response.headers.get('Content-Security-Policy')).toContain('https://rsms.me');
         expect(response.headers.get('Content-Security-Policy')).toContain('https://fonts.cdnfonts.com');
         expect(response.headers.get('Content-Security-Policy')).toContain('font-src \'self\' data:');
+        expect(response.headers.get('Content-Security-Policy')).toMatch(/'nonce-[a-f0-9]+'/);
     });
 
     it('sets long cache headers for static hashed assets', async () => {
@@ -182,34 +187,92 @@ describe('web4-proxy', () => {
         expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
-    it('serves onboarding keys from the proxy API without hitting Web4 origin', async () => {
+    it('never distributes onboarding private keys', async () => {
         globalThis.fetch = vi.fn();
-        const request = new Request('https://youtick.net/api/onboarding-key', {
-            headers: { 'CF-Connecting-IP': '203.0.113.10' },
-        });
-        const env = {
-            ...createEnv(),
-            ONBOARDING_KEYS: 'ed25519:test-key',
-        };
+        const response = await handler.fetch(
+            new Request('https://youtick.net/api/onboarding-key'),
+            { ...createEnv(), ONBOARDING_KEYS: KeyPair.fromRandom('ed25519').toString() },
+            {} as ExecutionContext,
+        );
 
-        const response = await handler.fetch(request, env, {
-            waitUntil: vi.fn(),
-        } as unknown as ExecutionContext);
+        expect(response.status).toBe(410);
+        expect(await response.text()).not.toContain('ed25519:');
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
 
-        expect(response.status).toBe(200);
-        expect(response.headers.get('Cache-Control')).toContain('no-store');
-        expect(await response.json()).toEqual({ key: 'ed25519:test-key' });
+    it('fails closed when Turnstile is not configured', async () => {
+        globalThis.fetch = vi.fn();
+        const response = await handler.fetch(
+            new Request('https://youtick.net/api/onboarding-key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'claim_free_ticket_direct',
+                    args: { receiver_id: 'alice.near', encrypted_cid: 'bafy-test' },
+                    turnstileToken: 'verified',
+                }),
+            }),
+            { ...createEnv(), ONBOARDING_KEYS: 'ed25519:test-key' },
+            { waitUntil: vi.fn() } as unknown as ExecutionContext,
+        );
+
+        expect(response.status).toBe(503);
         expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
     it('returns a clear onboarding error when no key is configured', async () => {
-        const request = new Request('https://youtick.net/api/onboarding-key');
+        const request = new Request('https://youtick.net/api/onboarding-key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'claim_free_ticket_direct',
+                args: { receiver_id: 'alice.near', encrypted_cid: 'bafy-test' },
+                turnstileToken: 'verified',
+            }),
+        });
         const response = await handler.fetch(request, createEnv(), {
             waitUntil: vi.fn(),
         } as unknown as ExecutionContext);
 
         expect(response.status).toBe(503);
         expect(await response.json()).toEqual({ error: 'Onboarding key not configured' });
+    });
+
+    it('relays an allowlisted onboarding action without exposing the signer', async () => {
+        const signerKey = KeyPair.fromRandom('ed25519').toString();
+        const sign = vi.spyOn(Account.prototype, 'signAndSendTransaction').mockResolvedValue({
+            transaction: { hash: 'relay-tx-hash' },
+        } as Awaited<ReturnType<Account['signAndSendTransaction']>>);
+        globalThis.fetch = vi.fn(async () => Response.json({ success: true }));
+
+        const response = await handler.fetch(
+            new Request('https://youtick.net/api/onboarding-key', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'CF-Connecting-IP': '203.0.113.10',
+                },
+                body: JSON.stringify({
+                    action: 'claim_free_ticket_direct',
+                    args: { receiver_id: 'alice.near', encrypted_cid: 'bafy-test' },
+                    turnstileToken: 'verified',
+                }),
+            }),
+            {
+                ...createEnv(),
+                ONBOARDING_KEYS: signerKey,
+                TURNSTILE_SECRET_KEY: 'turnstile-secret',
+                ATOMIC_STATE: createAtomicNamespace(),
+            },
+            {} as ExecutionContext,
+        );
+
+        expect(response.status).toBe(200);
+        const payload = await response.text();
+        expect(JSON.parse(payload)).toEqual({ ok: true, transactionHash: 'relay-tx-hash' });
+        expect(payload).not.toContain(signerKey);
+        expect(sign).toHaveBeenCalledOnce();
+        sign.mockRestore();
     });
 
     it('handles NEAR RPC preflight without hitting the origin', async () => {
@@ -367,6 +430,79 @@ describe('web4-proxy', () => {
         expect(first.headers.get('X-Near-Rpc-Cache')).toBe('MISS');
         expect(second.headers.get('X-Near-Rpc-Cache')).toBe('HIT');
         expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects non-view RPC methods and unknown contracts', async () => {
+        const fetchMock = vi.fn();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        const ctx = { waitUntil: vi.fn() } as unknown as ExecutionContext;
+
+        for (const body of [
+            { jsonrpc: '2.0', id: '1', method: 'broadcast_tx_commit', params: [] },
+            {
+                jsonrpc: '2.0', id: '2', method: 'query',
+                params: { request_type: 'call_function', account_id: 'attacker.near', method_name: 'get_event' },
+            },
+        ]) {
+            const response = await handler.fetch(new Request('https://youtick.net/api/near-rpc', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(body),
+            }), createEnv(), ctx);
+            expect(response.status).toBe(403);
+        }
+
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('allows the bounded account queries and signed transaction methods used by managed wallets', async () => {
+        const fetchMock = vi.fn(async () => new Response(JSON.stringify({ result: {} }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        const ctx = { waitUntil: vi.fn() } as unknown as ExecutionContext;
+
+        for (const body of [
+            {
+                jsonrpc: '2.0', id: '1', method: 'query',
+                params: {
+                    request_type: 'view_access_key', finality: 'optimistic',
+                    account_id: 'alice.near', public_key: `ed25519:${'a'.repeat(44)}`,
+                },
+            },
+            {
+                jsonrpc: '2.0', id: '2', method: 'query',
+                params: { request_type: 'view_account', finality: 'final', account_id: 'alice.near' },
+            },
+            {
+                jsonrpc: '2.0', id: '3', method: 'send_tx',
+                params: { signed_tx_base64: 'dHJhbnNhY3Rpb24=', wait_until: 'EXECUTED_OPTIMISTIC' },
+            },
+        ]) {
+            const response = await handler.fetch(new Request('https://youtick.net/api/near-rpc', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(body),
+            }), createEnv(), ctx);
+            expect(response.status).toBe(200);
+            expect(response.headers.get('X-Near-Rpc-Cache')).toBe('BYPASS');
+        }
+
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('rejects oversized relay bodies before upstream fetch', async () => {
+        const fetchMock = vi.fn();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        const response = await handler.fetch(new Request('https://youtick.net/api/near-rpc', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: 'x'.repeat(64 * 1024 + 1),
+        }), createEnv(), { waitUntil: vi.fn() } as unknown as ExecutionContext);
+
+        expect(response.status).toBe(413);
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('returns gone for retired storage proxy requests without calling upstream', async () => {

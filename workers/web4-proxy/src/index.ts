@@ -7,6 +7,19 @@
  *
  * Flow: youtick.net → Cloudflare Workers → youtick.near.page → web4_get() → IPFS
  */
+import {
+    Account,
+    KeyPair,
+    KeyPairSigner,
+    actions,
+    type KeyPairString,
+} from 'near-api-js';
+import {
+    claimOnce,
+    incrementWithinLimit,
+    releaseClaim,
+} from '../../shared/src/atomic-state';
+export { AtomicState } from '../../shared/src/atomic-state';
 
 export interface Env {
     WEB4_ORIGIN: string;
@@ -16,6 +29,10 @@ export interface Env {
     CACHE_VERSION?: string;
     ONBOARDING_KEYS?: string;
     TURNSTILE_SECRET_KEY?: string;
+    NEAR_RPC_ALLOWED_CONTRACTS?: string;
+    NEAR_CONTRACT_ID?: string;
+    NEAR_RPC_URL?: string;
+    ATOMIC_STATE?: DurableObjectNamespace;
 }
 
 /** Content types that should be cached aggressively */
@@ -30,10 +47,13 @@ const NEAR_RPC_UPSTREAMS = [
     'https://near.drpc.org/',
 ];
 const NEAR_RPC_CACHE_TTL_SECONDS = 5;
+const MAX_RELAY_BODY_BYTES = 64 * 1024;
+const DEFAULT_NEAR_RPC_ALLOWED_CONTRACTS = 'youtick.near,access.youtick.near,registry.youtick.near,pyth-oracle.near';
 const NEAR_RPC_CACHEABLE_VIEW_METHODS = new Set([
     'get_event',
     'get_events',
     'get_events_count',
+    'get_event_slots_count',
     'get_all_events',
     'get_trial_pool_balance',
     'get_daily_trial_count',
@@ -41,6 +61,14 @@ const NEAR_RPC_CACHEABLE_VIEW_METHODS = new Set([
     'get_gift_info_full',
     'get_trial_invite_info',
     'is_onboarding_key',
+    'has_ticket',
+    'get_playback_access_decision',
+    'verify_session_grant',
+    'get_tokens_with_video',
+    'get_creator_stats',
+    'get_creator_profile',
+    'get_purchase_logs_by_creator',
+    'get_price',
     'list_decryption_operators',
     'get_threshold_config',
 ]);
@@ -51,19 +79,46 @@ const STRIPPED_UPSTREAM_BODY_HEADERS = [
     'transfer-encoding',
 ] as const;
 
-const WEB4_CSP_VALUE = [
+function web4CspValue(nonce?: string): string {
+    return [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://challenges.cloudflare.com https://static.cloudflareinsights.com",
+    `script-src 'self'${nonce ? ` 'nonce-${nonce}'` : ''} https://www.googletagmanager.com https://challenges.cloudflare.com https://static.cloudflareinsights.com`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://rsms.me https://fonts.cdnfonts.com",
-    "img-src 'self' data: blob: https:",
+    "img-src 'self' data: blob: https://ipfs.io https://cloudflare-ipfs.com https://*.ipfs.dweb.link https://*.lighthouse.storage https://*.crustipfs.xyz",
     "font-src 'self' data: https://fonts.gstatic.com https://rsms.me https://fonts.cdnfonts.com",
-    "connect-src 'self' https:",
-    "media-src 'self' blob: https:",
+    "connect-src 'self' https://*.near.org https://*.fastnear.com https://near.lava.build https://near.drpc.org https://*.workers.dev https://*.sentry.io https://*.lighthouse.storage https://*.crustipfs.xyz https://ipfs.io https://cloudflare-ipfs.com https://*.ipfs.dweb.link https://challenges.cloudflare.com https://*.walletconnect.com wss://*.walletconnect.com https://*.reown.com",
+    "media-src 'self' blob: https://ipfs.io https://cloudflare-ipfs.com https://*.ipfs.dweb.link https://*.lighthouse.storage https://*.crustipfs.xyz https://*.workers.dev",
     "frame-src https://challenges.cloudflare.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
-].join('; ');
+    ].join('; ');
+}
+
+const WEB4_CSP_VALUE = web4CspValue();
+
+function secureHtmlResponse(response: Response): Response {
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().includes('text/html')) return response;
+
+    const nonce = crypto.randomUUID().replaceAll('-', '');
+    const headers = new Headers(response.headers);
+    headers.set('Content-Security-Policy', web4CspValue(nonce));
+    if (typeof HTMLRewriter === 'undefined') {
+        return new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers,
+        });
+    }
+    return new HTMLRewriter()
+        .on('script', { element(element) { element.setAttribute('nonce', nonce); } })
+        .transform(new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers,
+        }));
+}
 
 /** Check if a path points to a static asset */
 function isStaticAsset(pathname: string): boolean {
@@ -110,14 +165,19 @@ export default {
             });
         }
 
-        // --- Onboarding key endpoint (replaces Next.js API route in static export) ---
-        if (url.pathname === '/api/onboarding-key' && request.method === 'GET') {
-            return handleOnboardingKey(request, env, ctx);
+        // --- Server-side onboarding transaction relay ---
+        if (url.pathname === '/api/onboarding-key') {
+            if (request.method === 'GET') {
+                return jsonResponse({ error: 'Private onboarding keys are not distributed. Use POST relay.' }, 410);
+            }
+            if (request.method === 'POST') {
+                return handleOnboardingRelay(request, env);
+            }
         }
 
         // --- NEAR RPC proxy (same-origin CORS workaround for wallet/RPC calls) ---
         if (url.pathname === '/api/near-rpc' || url.pathname === '/api/near-rpc/') {
-            return handleNearRpc(request, ctx);
+            return handleNearRpc(request, env, ctx);
         }
 
         // --- Retired storage proxy surface ---
@@ -161,11 +221,11 @@ export default {
                     'HIT',
                     parseInt(env.CACHE_TTL || '300', 10),
                 );
-                return new Response(cached.body, {
+                return secureHtmlResponse(new Response(cached.body, {
                     status: cached.status,
                     statusText: cached.statusText,
                     headers: cachedHeaders,
-                });
+                }));
             }
         }
 
@@ -203,7 +263,7 @@ export default {
                     ctx.waitUntil(cache.put(cacheKey, proxiedResponse.clone()));
                 }
 
-                return proxiedResponse;
+                return secureHtmlResponse(proxiedResponse);
             } catch (error) {
                 lastError = error;
                 console.warn(`Web4 proxy: origin ${origin} failed, trying next...`, error);
@@ -254,12 +314,10 @@ function nearRpcCorsHeaders(): HeadersInit {
 
 type NearRpcPayload = {
     method?: string;
-    params?: {
-        request_type?: string;
-        finality?: string;
-        method_name?: string;
-    };
+    params?: Record<string, unknown>;
 };
+
+type AllowedNearRpcRequest = { scope: string; cacheable: boolean };
 
 function withNearRpcHeaders(response: Response, cacheState: 'BYPASS' | 'HIT' | 'MISS', upstream?: string): Response {
     const headers = new Headers(response.headers);
@@ -282,32 +340,72 @@ function withNearRpcHeaders(response: Response, cacheState: 'BYPASS' | 'HIT' | '
     });
 }
 
-function getCacheableRpcScope(payload: unknown): string | null {
+function getAllowedNearRpcContracts(env: Env): Set<string> {
+    return new Set((env.NEAR_RPC_ALLOWED_CONTRACTS || DEFAULT_NEAR_RPC_ALLOWED_CONTRACTS)
+        .split(',')
+        .map((accountId) => accountId.trim())
+        .filter(Boolean));
+}
+
+function getAllowedNearRpcRequest(
+    payload: unknown,
+    allowedContracts: Set<string>,
+): AllowedNearRpcRequest | null {
     if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
         return null;
     }
 
     const rpcPayload = payload as NearRpcPayload;
     if (rpcPayload.method === 'status') {
-        return 'status';
+        return { scope: 'status', cacheable: true };
+    }
+
+    const params = rpcPayload.params;
+    if (!params) {
+        return null;
+    }
+
+    if (rpcPayload.method === 'send_tx') {
+        const signedTransaction = params.signed_tx_base64;
+        const waitUntil = params.wait_until;
+        if (typeof signedTransaction !== 'string' || signedTransaction.length > 48 * 1024
+            || !['NONE', 'INCLUDED', 'EXECUTED_OPTIMISTIC', 'INCLUDED_FINAL', 'EXECUTED', 'FINAL'].includes(String(waitUntil))) {
+            return null;
+        }
+        return { scope: 'send_tx', cacheable: false };
+    }
+
+    if (rpcPayload.method === 'tx' || rpcPayload.method === 'EXPERIMENTAL_tx_status') {
+        if (typeof params.tx_hash !== 'string' || params.tx_hash.length > 64
+            || typeof params.sender_account_id !== 'string' || params.sender_account_id.length > 64) {
+            return null;
+        }
+        return { scope: 'tx', cacheable: false };
     }
 
     if (rpcPayload.method !== 'query') {
         return null;
     }
 
-    const params = rpcPayload.params;
-    if (!params || params.request_type !== 'call_function') {
-        return null;
+    const requestType = params.request_type;
+    const finality = params.finality;
+    if (finality && finality !== 'final' && finality !== 'optimistic') return null;
+
+    if (requestType === 'view_account' || requestType === 'view_access_key') {
+        if (typeof params.account_id !== 'string' || params.account_id.length > 64) return null;
+        if (requestType === 'view_access_key'
+            && (typeof params.public_key !== 'string' || params.public_key.length > 100)) return null;
+        return { scope: requestType, cacheable: false };
     }
 
-    if (params.finality && params.finality !== 'final') {
+    if (requestType !== 'call_function' || (finality && finality !== 'final')) return null;
+    const accountId = params.account_id;
+    const methodName = params.method_name;
+    if (typeof accountId !== 'string' || !allowedContracts.has(accountId)
+        || typeof methodName !== 'string' || !NEAR_RPC_CACHEABLE_VIEW_METHODS.has(methodName)) {
         return null;
     }
-
-    return params.method_name && NEAR_RPC_CACHEABLE_VIEW_METHODS.has(params.method_name)
-        ? params.method_name
-        : null;
+    return { scope: methodName, cacheable: true };
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -355,7 +453,7 @@ async function fetchNearRpcFromUpstream(body: string, contentType: string): Prom
     return jsonResponse({ error: 'NEAR RPC unavailable' }, 502, nearRpcCorsHeaders());
 }
 
-async function handleNearRpc(request: Request, ctx: ExecutionContext): Promise<Response> {
+async function handleNearRpc(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const corsHeaders = nearRpcCorsHeaders();
 
     if (request.method === 'OPTIONS') {
@@ -366,7 +464,15 @@ async function handleNearRpc(request: Request, ctx: ExecutionContext): Promise<R
         return jsonResponse({ error: 'Method not allowed' }, 405, corsHeaders);
     }
 
+    const declaredLength = Number(request.headers.get('content-length') || '0');
+    if (declaredLength > MAX_RELAY_BODY_BYTES) {
+        return jsonResponse({ error: 'Request body too large' }, 413, corsHeaders);
+    }
+
     const body = await request.text();
+    if (new TextEncoder().encode(body).byteLength > MAX_RELAY_BODY_BYTES) {
+        return jsonResponse({ error: 'Request body too large' }, 413, corsHeaders);
+    }
     let payload: unknown;
     try {
         payload = JSON.parse(body);
@@ -374,10 +480,13 @@ async function handleNearRpc(request: Request, ctx: ExecutionContext): Promise<R
         return jsonResponse({ error: 'Invalid JSON-RPC payload' }, 400, corsHeaders);
     }
 
-    const cacheScope = getCacheableRpcScope(payload);
+    const allowedRequest = getAllowedNearRpcRequest(payload, getAllowedNearRpcContracts(env));
+    if (!allowedRequest) {
+        return jsonResponse({ error: 'JSON-RPC method not allowed' }, 403, corsHeaders);
+    }
     const contentType = request.headers.get('content-type') || 'application/json';
-    const cacheKey = cacheScope
-        ? await buildNearRpcCacheKey(request, body, cacheScope)
+    const cacheKey = allowedRequest.cacheable
+        ? await buildNearRpcCacheKey(request, body, allowedRequest.scope)
         : null;
 
     if (cacheKey) {
@@ -481,45 +590,19 @@ function applyProxyHeaders(
 }
 
 // ============================================================================
-// Onboarding Key Endpoint
+// Onboarding Transaction Relay
 // ============================================================================
 
-/**
- * Rate limiter using the Cache API (per-IP, 5 requests per hour).
- */
-async function checkOnboardingRateLimit(ip: string, ctx: ExecutionContext): Promise<boolean> {
-    const cache = caches.default;
-    const key = `https://ratelimit/onboarding-key/${ip}`;
-    const cacheReq = new Request(key);
-    const cached = await cache.match(cacheReq);
-    const now = Date.now();
+type OnboardingRelayAction =
+    | 'create_sponsored_trial_direct'
+    | 'sponsor_implicit_guest_direct'
+    | 'claim_free_ticket_direct';
 
-    if (!cached) {
-        const res = new Response(JSON.stringify({ count: 1, window: now }), {
-            headers: { 'Cache-Control': 'max-age=3600' },
-        });
-        ctx.waitUntil(cache.put(cacheReq, res));
-        return true; // allowed
-    }
-
-    const data = await cached.json<{ count: number; window: number }>();
-    if (now - data.window > 3_600_000) {
-        // New window
-        const res = new Response(JSON.stringify({ count: 1, window: now }), {
-            headers: { 'Cache-Control': 'max-age=3600' },
-        });
-        ctx.waitUntil(cache.put(cacheReq, res));
-        return true;
-    }
-
-    if (data.count >= 5) return false; // rate limited
-
-    const res = new Response(JSON.stringify({ count: data.count + 1, window: data.window }), {
-        headers: { 'Cache-Control': 'max-age=3600' },
-    });
-    ctx.waitUntil(cache.put(cacheReq, res));
-    return true;
-}
+type OnboardingRelayBody = {
+    action?: OnboardingRelayAction;
+    args?: Record<string, unknown>;
+    turnstileToken?: string;
+};
 
 async function verifyTurnstile(token: string, secret: string): Promise<boolean> {
     try {
@@ -539,7 +622,32 @@ function getClientIp(request: Request): string {
     return request.headers.get('CF-Connecting-IP') || 'unknown';
 }
 
-async function handleOnboardingKey(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+function validateOnboardingRelayBody(
+    body: OnboardingRelayBody,
+): body is OnboardingRelayBody & { action: OnboardingRelayAction; args: Record<string, unknown> } {
+    if (!body.action || !body.args || typeof body.args !== 'object') return false;
+    const publicKey = body.args.new_public_key;
+    const receiverId = body.args.receiver_id;
+    const cid = body.args.encrypted_cid;
+    const username = body.args.username;
+    if (body.action === 'sponsor_implicit_guest_direct') {
+        return typeof publicKey === 'string' && /^ed25519:[1-9A-HJ-NP-Za-km-z]{40,50}$/.test(publicKey);
+    }
+    if (body.action === 'create_sponsored_trial_direct') {
+        return typeof username === 'string'
+            && /^[a-z0-9_-]{2,32}$/.test(username)
+            && typeof publicKey === 'string'
+            && /^ed25519:[1-9A-HJ-NP-Za-km-z]{40,50}$/.test(publicKey);
+    }
+    return body.action === 'claim_free_ticket_direct'
+        && typeof receiverId === 'string'
+        && /^[a-z0-9._-]{2,64}$/.test(receiverId)
+        && typeof cid === 'string'
+        && cid.length > 0
+        && cid.length <= 256;
+}
+
+async function handleOnboardingRelay(request: Request, env: Env): Promise<Response> {
     const keysEnv = env.ONBOARDING_KEYS;
     if (!keysEnv || keysEnv.trim().length === 0) {
         return new Response(JSON.stringify({ error: 'Onboarding key not configured' }), {
@@ -547,33 +655,51 @@ async function handleOnboardingKey(request: Request, env: Env, ctx: ExecutionCon
             headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
         });
     }
+    if (!env.TURNSTILE_SECRET_KEY) {
+        return new Response(JSON.stringify({ error: 'Challenge verification is not configured.' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
+    }
+    if (!env.ATOMIC_STATE) {
+        return jsonResponse({ error: 'Atomic relay state is not configured.' }, 503);
+    }
+
+    const declaredLength = Number(request.headers.get('content-length') || '0');
+    if (declaredLength > 8 * 1024) {
+        return jsonResponse({ error: 'Request body too large.' }, 413);
+    }
+    const body = await request.json().catch(() => null) as OnboardingRelayBody | null;
+    if (!body || !validateOnboardingRelayBody(body)) {
+        return jsonResponse({ error: 'Invalid onboarding action.' }, 400);
+    }
 
     const ip = getClientIp(request);
-
-    // Rate limit: 5 req/hour per IP
-    if (!(await checkOnboardingRateLimit(ip, ctx))) {
+    const rate = await incrementWithinLimit(
+        env.ATOMIC_STATE,
+        `onboarding-rate:${ip}`,
+        10,
+        60 * 60 * 1000,
+    );
+    if (!rate.ok) {
         return new Response(JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }), {
             status: 429,
             headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
         });
     }
 
-    // Turnstile verification (when configured)
-    const url = new URL(request.url);
-    const turnstileToken = url.searchParams.get('turnstileToken');
-    if (env.TURNSTILE_SECRET_KEY) {
-        if (!turnstileToken) {
-            return new Response(JSON.stringify({ error: 'Challenge token required.' }), {
-                status: 403,
-                headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-            });
-        }
-        if (!(await verifyTurnstile(turnstileToken, env.TURNSTILE_SECRET_KEY))) {
-            return new Response(JSON.stringify({ error: 'Challenge verification failed.' }), {
-                status: 403,
-                headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-            });
-        }
+    const turnstileToken = body.turnstileToken;
+    if (!turnstileToken) {
+        return new Response(JSON.stringify({ error: 'Challenge token required.' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
+    }
+    if (!(await verifyTurnstile(turnstileToken, env.TURNSTILE_SECRET_KEY))) {
+        return new Response(JSON.stringify({ error: 'Challenge verification failed.' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
     }
 
     const keys = keysEnv
@@ -588,14 +714,40 @@ async function handleOnboardingKey(request: Request, env: Env, ctx: ExecutionCon
         });
     }
 
-    const key = keys[Math.floor(Math.random() * keys.length)];
+    const signerLockKey = 'onboarding-signer-lock';
+    const lock = await claimOnce(env.ATOMIC_STATE, signerLockKey, 30_000);
+    if (!lock.ok) {
+        return jsonResponse({ error: 'Onboarding signer is busy. Retry shortly.' }, 409);
+    }
 
-    return new Response(JSON.stringify({ key }), {
-        headers: {
-            'Content-Type': 'application/json',
-            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0',
-        },
-    });
+    try {
+        const keyPair = KeyPair.fromString(
+            keys[Math.floor(Math.random() * keys.length)] as KeyPairString,
+        );
+        const contractId = env.NEAR_CONTRACT_ID || 'youtick.near';
+        const rpcUrl = env.NEAR_RPC_URL || NEAR_RPC_UPSTREAMS[0];
+        const account = new Account(contractId, rpcUrl, new KeyPairSigner(keyPair));
+        const outcome = await account.signAndSendTransaction({
+            receiverId: contractId,
+            actions: [
+                actions.functionCall(
+                    body.action,
+                    body.args,
+                    BigInt('100000000000000'),
+                    0n,
+                ),
+            ],
+        });
+        return new Response(JSON.stringify({
+            ok: true,
+            transactionHash: outcome.transaction.hash,
+        }), {
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        });
+    } catch (error) {
+        console.error('[ONBOARDING_RELAY] transaction failed', error);
+        return jsonResponse({ error: 'Onboarding transaction failed.' }, 502);
+    } finally {
+        await releaseClaim(env.ATOMIC_STATE, signerLockKey);
+    }
 }

@@ -14,7 +14,7 @@ deliver.
 
 In proxy-backed mode, `youtick.net` supports these API surfaces:
 
-- `/api/onboarding-key`
+- `/api/onboarding-key` — POST-only allowlisted onboarding transaction relay; private signer keys never leave the Worker
 - `/api/near-rpc`
 
 The retired `/api/crust/*` storage proxy surface returns `410 Gone`.
@@ -27,7 +27,9 @@ are not supported.
 talk to public RPC origins directly; the proxy fails over between
 FastNear, the official NEAR RPC and dRPC upstreams. Only responses to
 allowlisted read-only view calls are placed in a short-lived edge
-cache; transaction/broadcast responses are not cached.
+cache; bounded account/access-key queries and signed `send_tx` calls
+needed by managed wallets are proxied without caching. Configure the
+contract surface with `NEAR_RPC_ALLOWED_CONTRACTS`.
 
 ## Headers and CSP
 
@@ -46,8 +48,8 @@ npx wrangler secret put TURNSTILE_SECRET_KEY
 ```
 
 `ONBOARDING_KEYS` can be a comma-separated pool of `ed25519:`-prefixed
-keys. When `TURNSTILE_SECRET_KEY` is set, `/api/onboarding-key` will
-not hand out a key without a challenge token.
+keys. When onboarding keys are configured, `TURNSTILE_SECRET_KEY` is
+mandatory; a missing secret fails closed and no key is returned.
 
 For onboarding-key rotation, use `scripts/add-onboarding-key.mjs` first
 and then `scripts/remove-onboarding-key.mjs` once the new deploy is

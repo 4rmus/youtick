@@ -27,7 +27,7 @@ Worker's responsibility.
 - `LIGHTHOUSE_UPLOAD_BASE`: Lighthouse upload base URL. Default: `https://upload.lighthouse.storage`.
 - `LIGHTHOUSE_API_KEY`: provided as a Wrangler secret.
 - `ENABLE_LIGHTHOUSE_UPLOADS`: when `true`, opens `/uploads/file` and `/uploads/directory`. Off by default.
-- `MAX_UPLOAD_BYTES`: total upload size accepted through the Worker. Default 100 MiB.
+- `MAX_UPLOAD_BYTES`: total upload size accepted through the Worker. Default 8 MiB; larger files must use bounded parts or direct provider upload.
 - `UPLOAD_INTENT_SECRET`: Wrangler secret used to sign upload intent tokens.
 - `UPLOAD_GUARD`: KV binding for upload-intent rate limit and idempotency cache.
 - `UPLOAD_RATE_LIMIT_MAX`: per-account/IP intent quota. Default 1000.

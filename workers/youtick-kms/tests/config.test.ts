@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import worker, { getAllowedOrigins, getWorkerReadiness, type Env } from '../src/index';
+import { createAtomicNamespace } from '../../shared/test/atomic-namespace';
 
 type TestEnv = Partial<Env>;
 
@@ -8,6 +9,7 @@ function baseEnv(overrides: TestEnv = {}): Env {
         VIDEO_KEYS: {} as Env['VIDEO_KEYS'],
         RATE_LIMIT: {} as Env['RATE_LIMIT'],
         ACCESS_CACHE: {} as Env['ACCESS_CACHE'],
+        ATOMIC_STATE: createAtomicNamespace(),
         ALLOWED_ORIGINS: '',
         NEAR_CONTRACT_ID: 'youtick.near',
         NEAR_NETWORK: 'testnet',

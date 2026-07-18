@@ -21,6 +21,8 @@
  */
 
 import { z } from 'zod';
+import { claimOnce, incrementWithinLimit } from '../../shared/src/atomic-state';
+export { AtomicState } from '../../shared/src/atomic-state';
 
 // ============================================================================
 // Types
@@ -30,6 +32,7 @@ export interface Env {
     VIDEO_KEYS: KVNamespace;
     RATE_LIMIT: KVNamespace;
     ACCESS_CACHE: KVNamespace;
+    ATOMIC_STATE: DurableObjectNamespace;
     ALLOWED_ORIGINS: string;
     NEAR_NETWORK: string;
     NEAR_CONTRACT_ID: string;
@@ -67,7 +70,7 @@ interface StoreRequest {
     requiredShares?: number;
     scheme?: 'shamir-v1';
     shareCommitments?: ShareIntegrityCommitment[];
-    nonce?: string;
+    nonce: string;
 }
 
 interface RetrieveRequest {
@@ -79,7 +82,7 @@ interface RetrieveRequest {
     publicKey: string;
     originHash?: string | null;
     deviceHash?: string | null;
-    nonce?: string;
+    nonce: string;
 }
 
 interface AuthChallengeRequest {
@@ -143,6 +146,14 @@ interface UploadSessionView {
     owner_id: string;
     expires_at_ms: number;
     status?: string | { [key: string]: unknown } | null;
+}
+
+interface PlaybackAccessDecision {
+    event_exists: boolean;
+    banned: boolean;
+    has_ticket: boolean;
+    is_creator: boolean;
+    allowed: boolean;
 }
 
 export interface ShareMetadataRecord {
@@ -227,7 +238,6 @@ const RATE_LIMIT_MAX_RETRIEVE = 120;
 /** Access cache TTLs: keep auth caches short so revokes and transfers take effect quickly */
 const KEY_BINDING_CACHE_TTL_S = 120;
 const TICKET_ACCESS_CACHE_TTL_S = 60;
-const EVENT_CREATOR_CACHE_TTL_S = 1800;
 const REGISTRY_CACHE_TTL_S = 120;
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const AUTH_TOKEN_TTL_MS = 10 * 60 * 1000;
@@ -254,6 +264,10 @@ export function getAllowedOrigins(env: Env): Set<string> {
 
 export function getWorkerReadiness(env: Env): WorkerReadiness {
     const errors: string[] = [];
+
+    if (!env.ATOMIC_STATE) {
+        errors.push('ATOMIC_STATE Durable Object binding is required');
+    }
 
     if (env.NEAR_NETWORK === 'mainnet') {
         if (!env.NEAR_REGISTRY_CONTRACT_ID) {
@@ -367,9 +381,8 @@ async function fetchWithTimeout(
 }
 
 /**
- * Call a NEAR view function via RPC with parallel failover.
- * All RPC endpoints are queried concurrently; the first successful
- * response wins and the remaining requests are aborted.
+ * Call a NEAR view function via staggered RPC hedging.
+ * The preferred endpoint starts immediately; backups launch only if needed.
  */
 async function nearViewCall<T>(
     env: Env,
@@ -399,6 +412,9 @@ async function nearViewCall<T>(
     const promises = rpcPool.map(async (rpcUrl, index) => {
         try {
             const controller = abortControllers[index];
+            if (index > 0) {
+                await new Promise((resolve) => setTimeout(resolve, index * 250));
+            }
             const response = await fetchWithTimeout(rpcUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -447,75 +463,6 @@ async function nearViewCall<T>(
         console.error('[KMS] nearViewCall: all RPC endpoints failed:', [...errors.entries()]);
         throw lastError || new Error('All RPC endpoints failed');
     }
-}
-
-async function nearViewAnyTrue(
-    env: Env,
-    contractId: string,
-    methodName: string,
-    args: Record<string, unknown> = {},
-): Promise<boolean> {
-    const rpcPool = getOrderedRpcPool(env);
-    const argsBase64 = btoa(JSON.stringify(args));
-
-    const body = JSON.stringify({
-        jsonrpc: '2.0',
-        id: 'dontcare',
-        method: 'query',
-        params: {
-            request_type: 'call_function',
-            finality: 'final',
-            account_id: contractId,
-            method_name: methodName,
-            args_base64: argsBase64,
-        },
-    });
-
-    const results = await Promise.allSettled(
-        rpcPool.map(async (rpcUrl) => {
-            const response = await fetchWithTimeout(rpcUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body,
-            }, RPC_REQUEST_TIMEOUT_MS);
-
-            if (!response.ok) {
-                throw new Error(`RPC ${rpcUrl} returned ${response.status}`);
-            }
-
-            const json = (await response.json()) as {
-                result?: { result: number[] };
-                error?: { message: string };
-            };
-
-            if (json.error) {
-                throw new Error(`RPC error: ${json.error.message}`);
-            }
-
-            if (!json.result?.result) {
-                throw new Error(`RPC ${rpcUrl}: no result`);
-            }
-
-            const resultStr = String.fromCharCode(...json.result.result);
-            const value = JSON.parse(resultStr) as unknown;
-            if (typeof value !== 'boolean') {
-                throw new Error(`RPC ${rpcUrl}: expected boolean result`);
-            }
-
-            return { rpcUrl, value };
-        }),
-    );
-
-    if (results.some((result) => result.status === 'fulfilled' && result.value.value)) {
-        return true;
-    }
-
-    if (results.some((result) => result.status === 'fulfilled')) {
-        return false;
-    }
-
-    console.error('[KMS] nearViewAnyTrue: all RPC endpoints failed:', results);
-    throw new Error('All RPC endpoints failed');
 }
 
 /**
@@ -663,93 +610,44 @@ async function verifyFullAccessKeyBinding(
  * Uses `has_ticket(account_id, encrypted_cid)` for NFT-backed access.
  * Free videos also require a real NFT mint via `claim_free_ticket_direct`.
  */
-async function verifyTicketAccess(
+async function getPlaybackAccessDecision(
     env: Env,
     accountId: string,
     videoId: string,
-): Promise<boolean> {
+): Promise<PlaybackAccessDecision | null> {
     // Check access cache first
     const cacheKey = `${env.CACHE_KEY_PREFIX || ''}access:${accountId}:${videoId}`;
     const cached = await env.ACCESS_CACHE.get(cacheKey);
-    if (cached === 'true') {
-        return true;
+    if (cached) {
+        try {
+            return JSON.parse(cached) as PlaybackAccessDecision;
+        } catch {
+            await env.ACCESS_CACHE.delete(cacheKey);
+        }
     }
 
     try {
-        const hasTicket = await nearViewAnyTrue(
+        const decision = await nearViewCall<PlaybackAccessDecision>(
             env,
             env.NEAR_CONTRACT_ID,
-            'has_ticket',
+            'get_playback_access_decision',
             { account_id: accountId, encrypted_cid: videoId },
         );
 
-        if (hasTicket) {
+        if (decision.allowed) {
             try {
-                await env.ACCESS_CACHE.put(cacheKey, 'true', { expirationTtl: TICKET_ACCESS_CACHE_TTL_S });
+                await env.ACCESS_CACHE.put(
+                    cacheKey,
+                    JSON.stringify(decision),
+                    { expirationTtl: TICKET_ACCESS_CACHE_TTL_S },
+                );
             } catch (cacheError) {
-                console.warn('[KMS] verifyTicketAccess cache write failed:', cacheError);
+                console.warn('[KMS] playback decision cache write failed:', cacheError);
             }
-            return true;
         }
-
-        // Do not cache misses; a ticket purchase can complete moments after a denied playback attempt.
-        return false;
+        return decision;
     } catch (error) {
-        console.error('[KMS] verifyTicketAccess failed:', error);
-        // On RPC failure, deny access (fail-closed for security)
-        return false;
-    }
-}
-
-async function isEventBanned(
-    env: Env,
-    encryptedCid: string,
-): Promise<boolean> {
-    try {
-        return await nearViewAnyTrue(
-            env,
-            env.NEAR_CONTRACT_ID,
-            'is_event_banned',
-            { encrypted_cid: encryptedCid },
-        );
-    } catch (error) {
-        console.error('[KMS] isEventBanned failed:', error);
-        return true;
-    }
-}
-
-/**
- * Fetch event creator by encrypted CID (video UUID).
- * Returns null if event does not exist or RPC fails.
- */
-async function getEventCreatorId(
-    env: Env,
-    encryptedCid: string,
-): Promise<string | null> {
-    const cacheKey = `${env.CACHE_KEY_PREFIX || ''}eventcreator:${encryptedCid}`;
-    const cached = await env.ACCESS_CACHE.get(cacheKey);
-    if (cached) {
-        return cached === '__null__' ? null : cached;
-    }
-
-    try {
-        const event = await nearViewCall<{ creator_id: string } | null>(
-            env,
-            env.NEAR_CONTRACT_ID,
-            'get_event',
-            { encrypted_cid: encryptedCid },
-        );
-        const creatorId = event?.creator_id ?? null;
-        if (creatorId) {
-            await env.ACCESS_CACHE.put(
-                cacheKey,
-                creatorId,
-                { expirationTtl: EVENT_CREATOR_CACHE_TTL_S },
-            );
-        }
-        return creatorId;
-    } catch (error) {
-        console.error('[KMS] getEventCreatorId failed:', error);
+        console.error('[KMS] getPlaybackAccessDecision failed:', error);
         return null;
     }
 }
@@ -893,16 +791,13 @@ async function checkRateLimit(
 ): Promise<boolean> {
     const key = `${env.CACHE_KEY_PREFIX || ''}rl:${action}:${ip}`;
     const max = action === 'store' ? RATE_LIMIT_MAX_STORE : RATE_LIMIT_MAX_RETRIEVE;
-
-    const current = parseInt((await env.RATE_LIMIT.get(key)) || '0', 10);
-    if (current >= max) {
-        return false;
-    }
-
-    await env.RATE_LIMIT.put(key, String(current + 1), {
-        expirationTtl: RATE_LIMIT_WINDOW_S,
-    });
-    return true;
+    const result = await incrementWithinLimit(
+        env.ATOMIC_STATE,
+        key,
+        max,
+        RATE_LIMIT_WINDOW_S * 1000,
+    );
+    return result.ok;
 }
 
 // ============================================================================
@@ -1442,6 +1337,15 @@ async function handleAuthVerify(
         return jsonResponse({ ok: false, error: 'Invalid NEP-413 signature' }, 401, request, env);
     }
 
+    const challengeClaim = await claimOnce(
+        env.ATOMIC_STATE,
+        `${cp(env)}auth-challenge:${body.challengeId}`,
+        AUTH_CHALLENGE_TTL_MS,
+    );
+    if (!challengeClaim.ok) {
+        return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
+    }
+
     await env.ACCESS_CACHE.delete(`${cp(env)}auth:challenge:${body.challengeId}`);
 
     const token = randomToken(32);
@@ -1545,7 +1449,7 @@ async function handleStore(
         }
         accountId = auth.claims.accountId;
     } else {
-        if (!body.timestamp || !body.signature || !body.publicKey) {
+        if (!body.timestamp || !body.signature || !body.publicKey || !body.nonce) {
             return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
         }
 
@@ -1556,13 +1460,7 @@ async function handleStore(
         }
 
         // Nonce-based replay protection
-        if (body.nonce) {
-            const nonceKey = `${cp(env)}used_nonce:${body.nonce}`;
-            const nonceUsed = await env.ACCESS_CACHE.get(nonceKey);
-            if (nonceUsed) {
-                return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
-            }
-        }
+        const nonceKey = `${cp(env)}used_nonce:${body.nonce}`;
 
         // Legacy key-bound requests sign { action, videoId, accountId, timestamp, nonce }.
         // Session-grant requests sign { action, videoId, timestamp, originHash, deviceHash, nonce }.
@@ -1588,10 +1486,13 @@ async function handleStore(
             return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
         }
 
-        // Store nonce after successful signature verification
-        if (body.nonce) {
-            const nonceKey = `${cp(env)}used_nonce:${body.nonce}`;
-            await env.ACCESS_CACHE.put(nonceKey, 'true', { expirationTtl: TIMESTAMP_WINDOW_MS * 2 / 1000 });
+        const nonceClaim = await claimOnce(
+            env.ATOMIC_STATE,
+            nonceKey,
+            TIMESTAMP_WINDOW_MS * 2,
+        );
+        if (!nonceClaim.ok) {
+            return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
         }
 
         if (body.accountId) {
@@ -1646,13 +1547,17 @@ async function handleStore(
         ? shareRecordKey(body.videoId, env.REGISTRY_OPERATOR_ACCOUNT_ID)
         : null;
 
-    const [recordedOwner, eventCreatorId, existingShare] = await Promise.all([
+    const [recordedOwner, playbackDecision, existingShare] = await Promise.all([
         env.VIDEO_KEYS.get(ownerIdKey),
-        getEventCreatorId(env, body.videoId),
+        getPlaybackAccessDecision(env, accountId, body.videoId),
         existingShareKey ? env.VIDEO_KEYS.get(existingShareKey) : Promise.resolve(null),
     ]);
 
-    if (eventCreatorId && eventCreatorId !== accountId) {
+    if (!playbackDecision) {
+        return jsonResponse({ ok: false, error: 'Authorization unavailable' }, 503, request, env);
+    }
+
+    if (playbackDecision.event_exists && !playbackDecision.is_creator) {
         return jsonResponse({ ok: false, error: 'Unauthorized' }, 403, request, env);
     }
 
@@ -1660,7 +1565,7 @@ async function handleStore(
         return jsonResponse({ ok: false, error: 'Unauthorized' }, 403, request, env);
     }
 
-    if (existingShare && !recordedOwner && !eventCreatorId) {
+    if (existingShare && !recordedOwner && !playbackDecision.event_exists) {
         return jsonResponse(
             { ok: false, error: 'Unauthorized' },
             403,
@@ -1756,7 +1661,7 @@ async function handleRetrieve(
         }
         accountId = auth.claims.accountId;
     } else {
-        if (!body.timestamp || !body.signature || !body.publicKey) {
+        if (!body.timestamp || !body.signature || !body.publicKey || !body.nonce) {
             return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
         }
 
@@ -1767,13 +1672,7 @@ async function handleRetrieve(
         }
 
         // Nonce-based replay protection
-        if (body.nonce) {
-            const nonceKey = `${cp(env)}used_nonce:${body.nonce}`;
-            const nonceUsed = await env.ACCESS_CACHE.get(nonceKey);
-            if (nonceUsed) {
-                return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
-            }
-        }
+        const nonceKey = `${cp(env)}used_nonce:${body.nonce}`;
 
         // Legacy key-bound requests sign { action, videoId, accountId, timestamp, nonce }.
         // Session-grant requests sign { action, videoId, timestamp, originHash, deviceHash, nonce }.
@@ -1799,10 +1698,13 @@ async function handleRetrieve(
             return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
         }
 
-        // Store nonce after successful signature verification
-        if (body.nonce) {
-            const nonceKey = `${cp(env)}used_nonce:${body.nonce}`;
-            await env.ACCESS_CACHE.put(nonceKey, 'true', { expirationTtl: TIMESTAMP_WINDOW_MS * 2 / 1000 });
+        const nonceClaim = await claimOnce(
+            env.ATOMIC_STATE,
+            nonceKey,
+            TIMESTAMP_WINDOW_MS * 2,
+        );
+        if (!nonceClaim.ok) {
+            return jsonResponse({ ok: false, error: 'Unauthorized' }, 401, request, env);
         }
 
         if (body.accountId) {
@@ -1835,20 +1737,14 @@ async function handleRetrieve(
         }
     }
 
-    if (await isEventBanned(env, body.videoId)) {
+    const playbackDecision = await getPlaybackAccessDecision(env, accountId, body.videoId);
+    if (!playbackDecision || playbackDecision.banned) {
         return jsonResponse({ ok: false, error: 'Not found or unauthorized' }, 404, request, env);
     }
 
-    let hasAccess = await verifyTicketAccess(env, accountId, body.videoId);
+    let hasAccess = playbackDecision.allowed;
 
-    if (!hasAccess) {
-        const eventCreatorId = await getEventCreatorId(env, body.videoId);
-        if (eventCreatorId && eventCreatorId === accountId) {
-            hasAccess = true;
-        }
-    }
-
-    if (!hasAccess) {
+    if (!hasAccess && !playbackDecision.event_exists) {
         const recordedOwner = await env.VIDEO_KEYS.get(`owner:${body.videoId}`);
         if (recordedOwner && recordedOwner === accountId) {
             hasAccess = true;
@@ -1891,7 +1787,14 @@ async function handleRetrieve(
     }
 }
 
-async function handleHealth(
+function handleLiveness(request: Request, env: Env): Response {
+    return jsonResponse({
+        ok: true,
+        data: { service: 'youtick-kms', version: '1.0.0', live: true },
+    }, 200, request, env);
+}
+
+async function handleReadiness(
     request: Request,
     env: Env,
 ): Promise<Response> {
@@ -1976,8 +1879,11 @@ export default {
         const path = url.pathname;
 
         // Health check
-        if (path === '/health' && request.method === 'GET') {
-            return handleHealth(request, env);
+        if ((path === '/live') && request.method === 'GET') {
+            return handleLiveness(request, env);
+        }
+        if ((path === '/health' || path === '/ready' || path === '/deep') && request.method === 'GET') {
+            return handleReadiness(request, env);
         }
 
         // EH-1 fix: Global try-catch ensures unhandled exceptions return proper CORS headers

@@ -1,4 +1,10 @@
 import { base58Decode } from '../../shared/src/base58';
+import {
+    claimOnce,
+    incrementWithinLimit,
+    releaseClaim,
+} from '../../shared/src/atomic-state';
+export { AtomicState } from '../../shared/src/atomic-state';
 
 export interface Env {
     ALLOWED_ORIGINS?: string;
@@ -15,6 +21,7 @@ export interface Env {
     NEAR_NETWORK?: string;
     UPLOAD_SESSION_CONTRACT_ID?: string;
     UPLOAD_GUARD?: KVNamespace;
+    ATOMIC_STATE?: DurableObjectNamespace;
 }
 
 type JsonBody = Record<string, unknown>;
@@ -74,7 +81,8 @@ const DEFAULT_ALLOWED_ORIGINS = 'https://youtick.net,https://www.youtick.net';
 const DEFAULT_STORAGE_PROVIDER = 'lighthouse';
 const DEFAULT_LIGHTHOUSE_API_BASE = 'https://api.lighthouse.storage';
 const DEFAULT_LIGHTHOUSE_UPLOAD_BASE = 'https://upload.lighthouse.storage';
-const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+const DEFAULT_MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+const MULTIPART_OVERHEAD_BYTES = 64 * 1024;
 const DEFAULT_UPLOAD_INTENT_TTL_SECONDS = 15 * 60;
 const DEFAULT_UPLOAD_RATE_LIMIT_MAX = 1000;
 const DEFAULT_UPLOAD_RATE_LIMIT_WINDOW_SECONDS = 60 * 60;
@@ -104,13 +112,22 @@ export default {
             return handleOptions(request, env);
         }
 
-        if (request.method === 'GET' && url.pathname === '/__health') {
+        if (request.method === 'GET' && (url.pathname === '/__health' || url.pathname === '/live')) {
             return jsonResponse(request, env, {
                 status: 'ok',
                 service: 'storage-api',
                 provider: getStorageProvider(env),
                 timestamp: new Date().toISOString(),
             });
+        }
+
+        if (request.method === 'GET' && url.pathname === '/ready') {
+            const health = getProviderHealth(env);
+            return jsonResponse(request, env, health, health.ready === true ? 200 : 503);
+        }
+
+        if (request.method === 'GET' && url.pathname === '/deep') {
+            return handleProviderDeepHealth(request, env);
         }
 
         if (request.method === 'GET' && url.pathname === '/provider-health') {
@@ -151,7 +168,7 @@ export default {
             env,
             {
                 error: 'not_found',
-                endpoints: ['/__health', '/provider-health', '/pins', '/pins/:cid/status', '/uploads/auth/challenge', '/uploads/auth/verify', '/uploads/intent', '/uploads/file', '/uploads/directory'],
+                endpoints: ['/live', '/ready', '/deep', '/__health', '/provider-health', '/pins', '/pins/:cid/status', '/uploads/auth/challenge', '/uploads/auth/verify', '/uploads/intent', '/uploads/file', '/uploads/directory'],
             },
             404,
         );
@@ -201,6 +218,28 @@ function getProviderHealth(env: Env): JsonBody {
     };
 }
 
+async function handleProviderDeepHealth(request: Request, env: Env): Promise<Response> {
+    const health = getProviderHealth(env);
+    if (health.ready !== true) {
+        return jsonResponse(request, env, health, 503);
+    }
+    try {
+        const response = await fetch(`${getLighthouseApiBase(env)}/api/user/user_data_usage`, {
+            headers: { Authorization: `Bearer ${getLighthouseApiKey(env)}` },
+            signal: AbortSignal.timeout(3_000),
+        });
+        return jsonResponse(request, env, {
+            provider: getStorageProvider(env),
+            deep: response.ok,
+        }, response.ok ? 200 : 503);
+    } catch {
+        return jsonResponse(request, env, {
+            provider: getStorageProvider(env),
+            deep: false,
+        }, 503);
+    }
+}
+
 async function handlePinRequest(request: Request, env: Env): Promise<Response> {
     const apiKey = getLighthouseApiKey(env);
     if (!apiKey) {
@@ -235,7 +274,13 @@ async function handlePinRequest(request: Request, env: Env): Promise<Response> {
         return jsonResponse(request, env, cached);
     }
 
-    const upstream = await fetch(`${getLighthouseApiBase(env)}/api/lighthouse/pin`, {
+    if (!await claimUploadExecution(env, intent.value)) {
+        return jsonResponse(request, env, { error: 'upload_in_progress' }, 409);
+    }
+    let completed = false;
+    try {
+
+        const upstream = await fetch(`${getLighthouseApiBase(env)}/api/lighthouse/pin`, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${apiKey}`,
@@ -248,25 +293,31 @@ async function handlePinRequest(request: Request, env: Env): Promise<Response> {
         }),
     });
 
-    const upstreamBody = await readUpstreamJson(upstream);
-    if (!upstream.ok) {
-        return jsonResponse(request, env, {
-            error: 'provider_pin_failed',
+        const upstreamBody = await readUpstreamJson(upstream);
+        if (!upstream.ok) {
+            return jsonResponse(request, env, {
+                error: 'provider_pin_failed',
+                provider: 'lighthouse',
+                status: upstream.status,
+                details: upstreamBody,
+            }, 502);
+        }
+
+        const responseBody = {
             provider: 'lighthouse',
-            status: upstream.status,
-            details: upstreamBody,
-        }, 502);
+            cid,
+            pinned: true,
+            upstream: upstreamBody,
+        };
+        await cacheUploadResult(env, intent.value, responseBody);
+        completed = true;
+
+        return jsonResponse(request, env, responseBody);
+    } finally {
+        if (!completed) {
+            await releaseUploadExecution(env, intent.value);
+        }
     }
-
-    const responseBody = {
-        provider: 'lighthouse',
-        cid,
-        pinned: true,
-        upstream: upstreamBody,
-    };
-    await cacheUploadResult(env, intent.value, responseBody);
-
-    return jsonResponse(request, env, responseBody);
 }
 
 async function handleUploadIntentRequest(request: Request, env: Env): Promise<Response> {
@@ -346,10 +397,10 @@ async function handleUploadIntentRequest(request: Request, env: Env): Promise<Re
 }
 
 async function handleUploadAuthChallengeRequest(request: Request, env: Env): Promise<Response> {
-    if (!env.UPLOAD_GUARD) {
+    if (!env.UPLOAD_GUARD || !env.ATOMIC_STATE) {
         return jsonResponse(request, env, {
             error: 'upload_guard_not_configured',
-            reason: 'upload_guard_kv_missing',
+            reason: getUploadGuardMissingReason(env),
         }, 503);
     }
 
@@ -393,10 +444,10 @@ async function handleUploadAuthChallengeRequest(request: Request, env: Env): Pro
 }
 
 async function handleUploadAuthVerifyRequest(request: Request, env: Env): Promise<Response> {
-    if (!env.UPLOAD_GUARD) {
+    if (!env.UPLOAD_GUARD || !env.ATOMIC_STATE) {
         return jsonResponse(request, env, {
             error: 'upload_guard_not_configured',
-            reason: 'upload_guard_kv_missing',
+            reason: getUploadGuardMissingReason(env),
         }, 503);
     }
 
@@ -440,6 +491,15 @@ async function handleUploadAuthVerifyRequest(request: Request, env: Env): Promis
     );
     if (!signatureValid) {
         return jsonResponse(request, env, { error: 'Invalid NEP-413 signature' }, 401);
+    }
+
+    const challengeClaim = await claimOnce(
+        env.ATOMIC_STATE,
+        `upload-auth-challenge:${challengeId}`,
+        UPLOAD_AUTH_CHALLENGE_TTL_MS,
+    );
+    if (!challengeClaim.ok) {
+        return jsonResponse(request, env, { error: 'Unauthorized' }, 401);
     }
 
     await env.UPLOAD_GUARD.delete(challengeKey);
@@ -490,6 +550,11 @@ async function handleFileUploadRequest(request: Request, env: Env): Promise<Resp
         return jsonResponse(request, env, intent.body, intent.status);
     }
 
+    const sizeError = validateUploadBodySize(request, env, intent.value.sizeBytes);
+    if (sizeError) {
+        return jsonResponse(request, env, sizeError.body, sizeError.status);
+    }
+
     const incoming = await request.formData();
     const value = incoming.get('file');
     if (!isUploadableFile(value)) {
@@ -517,10 +582,16 @@ async function handleFileUploadRequest(request: Request, env: Env): Promise<Resp
         return jsonResponse(request, env, cached);
     }
 
-    const upstreamForm = new FormData();
-    upstreamForm.append('file', value, getUploadFileName(path));
+    if (!await claimUploadExecution(env, intent.value)) {
+        return jsonResponse(request, env, { error: 'upload_in_progress' }, 409);
+    }
+    let completed = false;
+    try {
 
-    const upstream = await fetch(`${getLighthouseUploadBase(env)}/api/v0/add?cid-version=1`, {
+        const upstreamForm = new FormData();
+        upstreamForm.append('file', value, getUploadFileName(path));
+
+        const upstream = await fetch(`${getLighthouseUploadBase(env)}/api/v0/add?cid-version=1`, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${apiKey}`,
@@ -528,37 +599,43 @@ async function handleFileUploadRequest(request: Request, env: Env): Promise<Resp
         },
         body: upstreamForm,
     });
-    const upstreamBody = await readUpstreamJson(upstream);
+        const upstreamBody = await readUpstreamJson(upstream);
 
-    if (!upstream.ok) {
-        return jsonResponse(request, env, {
-            error: 'provider_upload_failed',
+        if (!upstream.ok) {
+            return jsonResponse(request, env, {
+                error: 'provider_upload_failed',
+                provider: 'lighthouse',
+                status: upstream.status,
+                details: upstreamBody,
+            }, 502);
+        }
+
+        const uploadEntry = parseUploadEntries(upstreamBody)[0] || getUploadData(upstreamBody);
+        const cid = uploadEntry?.Hash || uploadEntry?.cid;
+        if (!cid || !isValidIpfsCid(cid)) {
+            return jsonResponse(request, env, {
+                error: 'provider_upload_missing_cid',
+                provider: 'lighthouse',
+                details: upstreamBody,
+            }, 502);
+        }
+
+        const responseBody = {
             provider: 'lighthouse',
-            status: upstream.status,
-            details: upstreamBody,
-        }, 502);
+            cid,
+            path,
+            size: value.size,
+            upstream: upstreamBody,
+        };
+        await cacheUploadResult(env, intent.value, responseBody);
+        completed = true;
+
+        return jsonResponse(request, env, responseBody);
+    } finally {
+        if (!completed) {
+            await releaseUploadExecution(env, intent.value);
+        }
     }
-
-    const uploadEntry = parseUploadEntries(upstreamBody)[0] || getUploadData(upstreamBody);
-    const cid = uploadEntry?.Hash || uploadEntry?.cid;
-    if (!cid || !isValidIpfsCid(cid)) {
-        return jsonResponse(request, env, {
-            error: 'provider_upload_missing_cid',
-            provider: 'lighthouse',
-            details: upstreamBody,
-        }, 502);
-    }
-
-    const responseBody = {
-        provider: 'lighthouse',
-        cid,
-        path,
-        size: value.size,
-        upstream: upstreamBody,
-    };
-    await cacheUploadResult(env, intent.value, responseBody);
-
-    return jsonResponse(request, env, responseBody);
 }
 
 async function handleDirectoryUploadRequest(request: Request, env: Env): Promise<Response> {
@@ -585,6 +662,11 @@ async function handleDirectoryUploadRequest(request: Request, env: Env): Promise
     const intent = await requireUploadIntent(request, env, 'directory');
     if (!intent.ok) {
         return jsonResponse(request, env, intent.body, intent.status);
+    }
+
+    const sizeError = validateUploadBodySize(request, env, intent.value.sizeBytes);
+    if (sizeError) {
+        return jsonResponse(request, env, sizeError.body, sizeError.status);
     }
 
     const incoming = await request.formData();
@@ -627,7 +709,13 @@ async function handleDirectoryUploadRequest(request: Request, env: Env): Promise
         return jsonResponse(request, env, cached);
     }
 
-    const upstream = await fetch(`${getLighthouseUploadBase(env)}/api/v0/add?wrap-with-directory=true&cid-version=1`, {
+    if (!await claimUploadExecution(env, intent.value)) {
+        return jsonResponse(request, env, { error: 'upload_in_progress' }, 409);
+    }
+    let completed = false;
+    try {
+
+        const upstream = await fetch(`${getLighthouseUploadBase(env)}/api/v0/add?wrap-with-directory=true&cid-version=1`, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${apiKey}`,
@@ -635,44 +723,50 @@ async function handleDirectoryUploadRequest(request: Request, env: Env): Promise
         },
         body: upstreamForm,
     });
-    const upstreamBody = await readUpstreamJson(upstream);
+        const upstreamBody = await readUpstreamJson(upstream);
 
-    if (!upstream.ok) {
-        return jsonResponse(request, env, {
-            error: 'provider_upload_failed',
+        if (!upstream.ok) {
+            return jsonResponse(request, env, {
+                error: 'provider_upload_failed',
+                provider: 'lighthouse',
+                status: upstream.status,
+                details: upstreamBody,
+            }, 502);
+        }
+
+        const uploadEntries = parseUploadEntries(upstreamBody);
+        const rootEntry = findRootEntry(uploadEntries);
+        const uploadData = getUploadData(upstreamBody);
+        const rootCid = rootEntry?.Hash || uploadData?.Hash || uploadData?.cid;
+
+        if (!rootCid || !isValidIpfsCid(rootCid)) {
+            return jsonResponse(request, env, {
+                error: 'provider_upload_missing_root_cid',
+                provider: 'lighthouse',
+                details: upstreamBody,
+            }, 502);
+        }
+
+        const responseBody = {
             provider: 'lighthouse',
-            status: upstream.status,
-            details: upstreamBody,
-        }, 502);
+            cid: rootCid,
+            size: totalSize,
+            entries: uploadEntries.map((entry) => ({
+                path: entry.Name || '',
+                cid: entry.Hash,
+                size: Number(entry.Size) || 0,
+            })),
+            upstream: upstreamBody,
+        };
+        await cacheUploadResult(env, intent.value, responseBody);
+        completed = true;
+
+        return jsonResponse(request, env, responseBody);
+    } finally {
+        if (!completed) {
+            await releaseUploadExecution(env, intent.value);
+        }
     }
-
-    const uploadEntries = parseUploadEntries(upstreamBody);
-    const rootEntry = findRootEntry(uploadEntries);
-    const uploadData = getUploadData(upstreamBody);
-    const rootCid = rootEntry?.Hash || uploadData?.Hash || uploadData?.cid;
-
-    if (!rootCid || !isValidIpfsCid(rootCid)) {
-        return jsonResponse(request, env, {
-            error: 'provider_upload_missing_root_cid',
-            provider: 'lighthouse',
-            details: upstreamBody,
-        }, 502);
-    }
-
-    const responseBody = {
-        provider: 'lighthouse',
-        cid: rootCid,
-        size: totalSize,
-        entries: uploadEntries.map((entry) => ({
-            path: entry.Name || '',
-            cid: entry.Hash,
-            size: Number(entry.Size) || 0,
-        })),
-        upstream: upstreamBody,
-    };
-    await cacheUploadResult(env, intent.value, responseBody);
-
-    return jsonResponse(request, env, responseBody);
 }
 
 async function handlePinStatusRequest(request: Request, env: Env, rawCid: string): Promise<Response> {
@@ -794,7 +888,7 @@ function areLighthouseUploadsEnabled(env: Env): boolean {
 }
 
 function isUploadGuardReady(env: Env): boolean {
-    return Boolean(getUploadIntentSecret(env) && env.UPLOAD_GUARD);
+    return Boolean(getUploadIntentSecret(env) && env.UPLOAD_GUARD && env.ATOMIC_STATE);
 }
 
 function getUploadGuardMissingReason(env: Env): string {
@@ -804,6 +898,10 @@ function getUploadGuardMissingReason(env: Env): string {
 
     if (!env.UPLOAD_GUARD) {
         return 'upload_guard_kv_missing';
+    }
+
+    if (!env.ATOMIC_STATE) {
+        return 'atomic_state_binding_missing';
     }
 
     return 'upload_guard_ready';
@@ -821,6 +919,22 @@ function getUploadIntentSecret(env: Env): string | null {
 function getMaxUploadBytes(env: Env): number {
     const parsed = Number.parseInt(env.MAX_UPLOAD_BYTES || '', 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_UPLOAD_BYTES;
+}
+
+function validateUploadBodySize(
+    request: Request,
+    env: Env,
+    intendedBytes: number,
+): { status: number; body: JsonBody } | null {
+    const maxUploadBytes = getMaxUploadBytes(env);
+    const contentLength = Number.parseInt(request.headers.get('content-length') || '', 10);
+    if (!Number.isFinite(contentLength)) {
+        return { status: 411, body: { error: 'content_length_required' } };
+    }
+    if (intendedBytes > maxUploadBytes || contentLength > maxUploadBytes + MULTIPART_OVERHEAD_BYTES) {
+        return { status: 413, body: { error: 'upload_too_large', maxUploadBytes } };
+    }
+    return null;
 }
 
 function getUploadIntentTtlSeconds(env: Env): number {
@@ -950,7 +1064,7 @@ async function requireUploadIntent(
     | { ok: false; status: number; body: JsonBody }
 > {
     const secret = getUploadIntentSecret(env);
-    if (!secret || !env.UPLOAD_GUARD) {
+    if (!secret || !env.UPLOAD_GUARD || !env.ATOMIC_STATE) {
         return {
             ok: false,
             status: 503,
@@ -1037,8 +1151,7 @@ async function checkUploadIntentRateLimit(
     env: Env,
     accountId: string,
 ): Promise<{ ok: true } | { ok: false; retryAfterSeconds: number }> {
-    const kv = env.UPLOAD_GUARD;
-    if (!kv) {
+    if (!env.ATOMIC_STATE) {
         return { ok: false, retryAfterSeconds: getUploadRateLimitWindowSeconds(env) };
     }
 
@@ -1046,13 +1159,16 @@ async function checkUploadIntentRateLimit(
     const bucket = Math.floor(Date.now() / 1000 / windowSeconds);
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
     const key = `rate:${accountId}:${ip}:${bucket}`;
-    const current = Number.parseInt(await kv.get(key) || '0', 10) || 0;
     const max = getUploadRateLimitMax(env);
-    if (current >= max) {
+    const result = await incrementWithinLimit(
+        env.ATOMIC_STATE,
+        key,
+        max,
+        windowSeconds * 1000,
+    );
+    if (!result.ok) {
         return { ok: false, retryAfterSeconds: windowSeconds };
     }
-
-    await kv.put(key, String(current + 1), { expirationTtl: windowSeconds * 2 });
     return { ok: true };
 }
 
@@ -1372,6 +1488,28 @@ async function cacheUploadResult(env: Env, intent: SignedUploadIntent, body: Jso
 
 function getUploadResultCacheKey(intent: SignedUploadIntent): string {
     return `upload-result:${intent.idempotencyKey}`;
+}
+
+function getUploadExecutionKey(intent: SignedUploadIntent): string {
+    return `upload-execution:${intent.idempotencyKey}`;
+}
+
+async function claimUploadExecution(env: Env, intent: SignedUploadIntent): Promise<boolean> {
+    if (!env.ATOMIC_STATE) {
+        return false;
+    }
+    const result = await claimOnce(
+        env.ATOMIC_STATE,
+        getUploadExecutionKey(intent),
+        24 * 60 * 60 * 1000,
+    );
+    return result.ok;
+}
+
+async function releaseUploadExecution(env: Env, intent: SignedUploadIntent): Promise<void> {
+    if (env.ATOMIC_STATE) {
+        await releaseClaim(env.ATOMIC_STATE, getUploadExecutionKey(intent));
+    }
 }
 
 async function signText(value: string, secret: string): Promise<string> {
