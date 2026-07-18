@@ -26,13 +26,12 @@ moves to multisig or DAO control.
 
 ### Content Integrity
 
-Media is encrypted in the browser with AES-CTR for confidentiality and seekable
-playback. AES-CTR is not authenticated encryption. The app and Media Delivery
-Worker include CID-based integrity checks for supported raw CID payloads, but
-this is not a replacement for per-chunk AEAD or encrypt-then-MAC.
+New browser uploads use per-segment AES-GCM and record the algorithm in the
+delivery manifest. Legacy AES-CTR manifests remain readable for compatibility.
+The app and Media Delivery Worker also verify supported raw CID payloads.
 
-Do not claim that encrypted media is tamper-proof or HMAC/GCM protected until an
-authenticated content format is implemented and verified.
+Do not claim that every historical asset is authenticated until the AES-GCM
+rollout and legacy-format retirement are verified in the deployed system.
 
 ### Operator Availability
 
@@ -49,9 +48,10 @@ flagged in UI and docs unless a release validates them end to end.
 
 ### Guest And Trial Flows
 
-Guest/trial onboarding uses server-side onboarding keys with optional Turnstile
-protection. These keys must remain server-only and must not be exposed through
-`NEXT_PUBLIC_` variables or committed config.
+Guest/trial onboarding uses a POST-only, action-allowlisted server-side relay;
+the browser never receives the onboarding signer. Turnstile and rate limits
+protect the public path. Keys must remain server-only and must not be exposed
+through `NEXT_PUBLIC_` variables or committed config.
 
 ## Public Release Rules
 
@@ -70,7 +70,7 @@ Before using production-ready language, complete and verify:
 - independent KMS operator hosting,
 - multisig or DAO governance for admin actions,
 - redundant persistence strategy,
-- authenticated media integrity,
+- verified AES-GCM rollout and legacy media retirement,
 - external security review,
 - repeatable upload -> purchase -> watch smoke tests for each supported payment
   rail.

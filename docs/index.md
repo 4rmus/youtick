@@ -39,3 +39,4 @@ features:
 - [Public Alpha User Guide](public/alpha-user-guide.md) — end-user onboarding/claim/wallet flows
 - [Transparency](public/transparency.md) — what is decentralized today vs. centralized
 - [Economics](public/economics.md) — creator payout, platform fee, payment rails
+- [Stripe Connect Pre-Approval](payments/stripe-connect-preapproval.md) — planned card-payment architecture, compliance gates, and submission draft

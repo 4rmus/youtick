@@ -15,6 +15,23 @@ permissions:
   contents: read
 
 jobs:
+  security-policy:
+    name: Security and dependency policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Dependency policy
+        run: node scripts/check-dependency-policy.mjs
+
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
@@ -90,7 +107,7 @@ jobs:
             media=true
           fi
 
-          if grep -Eq '^contracts/' /tmp/changed-files; then
+          if grep -Eq '^(contracts/|scripts/deploy-nft-mainnet\.mjs$|docs/operations/mainnet-deploy-runbook\.md$)' /tmp/changed-files; then
             contracts=true
           fi
 
@@ -138,6 +155,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit production dependencies (critical)
+        run: npm audit --omit=dev --audit-level=critical
+
       - name: Lint
         run: npm run lint
 
@@ -146,6 +166,18 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Build Web4 export
+        run: npm run build:web4
+
+      - name: Enforce Web bundle budget
+        run: node ../../scripts/check-web-bundle-budget.mjs
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright smoke
+        run: npm run test:smoke
 
   docs:
     name: Docs
@@ -168,6 +200,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Audit production dependencies (critical)
+        run: npm audit --omit=dev --audit-level=critical
 
       - name: Build docs
         run: npm run build
@@ -193,6 +228,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Audit production dependencies (critical)
+        run: npm audit --omit=dev --audit-level=critical
 
       - name: Test
         run: npm test -- --run
@@ -222,6 +260,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit production dependencies (critical)
+        run: npm audit --omit=dev --audit-level=critical
+
       - name: Test
         run: npm test -- --run
 
@@ -249,6 +290,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Audit production dependencies (critical)
+        run: npm audit --omit=dev --audit-level=critical
 
       - name: Test
         run: npm test -- --run
@@ -278,6 +322,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit production dependencies (critical)
+        run: npm audit --omit=dev --audit-level=critical
+
       - name: Test
         run: npm test -- --run
 
@@ -298,6 +345,17 @@ jobs:
 
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
+
+      - name: Install cargo-near
+        run: cargo install cargo-near --version 0.18.0 --locked
+
+      - name: Format check
+        run: cargo fmt --all --check
+        working-directory: contracts/nft-ticket
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: contracts/nft-ticket
 
       - name: Restore Cargo cache
         uses: actions/cache@v5
@@ -322,8 +380,31 @@ jobs:
         working-directory: contracts/nft-ticket
 
       - name: Build nft-ticket wasm
-        run: cargo build --target wasm32-unknown-unknown --release
+        run: cargo near build non-reproducible-wasm
         working-directory: contracts/nft-ticket
+
+      - name: Enforce WASM size budget
+        run: node scripts/check-wasm-budget.mjs
+
+      - name: Create canonical NFT artifact manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/nft-ticket
+          cp contracts/nft-ticket/target/near/youtick_nft.wasm artifacts/nft-ticket/youtick_nft.wasm
+          cp contracts/nft-ticket/target/near/youtick_nft_abi.json artifacts/nft-ticket/youtick_nft_abi.json
+          wasm_sha="$(sha256sum artifacts/nft-ticket/youtick_nft.wasm | cut -d ' ' -f 1)"
+          abi_sha="$(sha256sum artifacts/nft-ticket/youtick_nft_abi.json | cut -d ' ' -f 1)"
+          rustc_version="$(rustc --version)"
+          node -e 'const fs=require("node:fs"); fs.writeFileSync("artifacts/nft-ticket/manifest.json", JSON.stringify({commitSha:process.env.GITHUB_SHA,rustc:process.argv[1],wasmFile:"youtick_nft.wasm",wasmSha256:process.argv[2],abiFile:"youtick_nft_abi.json",abiSha256:process.argv[3]}, null, 2)+"\n")' "${rustc_version}" "${wasm_sha}" "${abi_sha}"
+
+      - name: Upload canonical NFT artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: nft-ticket-${{ github.sha }}
+          path: artifacts/nft-ticket
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Test access-control
         run: cargo test
@@ -338,6 +419,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - changes
+      - security-policy
       - web
       - kms-worker
       - web4-proxy-worker
@@ -351,6 +433,7 @@ jobs:
         shell: bash
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
+          SECURITY_POLICY_RESULT: ${{ needs.security-policy.result }}
           WEB_RESULT: ${{ needs.web.result }}
           KMS_RESULT: ${{ needs.kms-worker.result }}
           WEB4_RESULT: ${{ needs.web4-proxy-worker.result }}
@@ -361,7 +444,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          for result in "${CHANGES_RESULT}" "${WEB_RESULT}" "${KMS_RESULT}" "${WEB4_RESULT}" "${STORAGE_RESULT}" "${MEDIA_RESULT}" "${CONTRACTS_RESULT}" "${DOCS_RESULT}"; do
+          for result in "${CHANGES_RESULT}" "${SECURITY_POLICY_RESULT}" "${WEB_RESULT}" "${KMS_RESULT}" "${WEB4_RESULT}" "${STORAGE_RESULT}" "${MEDIA_RESULT}" "${CONTRACTS_RESULT}" "${DOCS_RESULT}"; do
             case "${result}" in
               success|skipped)
                 ;;
