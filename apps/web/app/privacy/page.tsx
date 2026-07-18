@@ -10,15 +10,16 @@ export default function PrivacyPage() {
     <main className="min-h-screen bg-zinc-950 text-zinc-200">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <h1 className="text-4xl font-bold text-white mb-2">Privacy Policy</h1>
-        <p className="text-zinc-400 mb-12">Last Updated: May 11, 2026</p>
+        <p className="text-zinc-400 mb-12">Last Updated: July 17, 2026</p>
 
         <div className="space-y-10 text-zinc-300 leading-relaxed">
           {/* 1. INTRODUCTION */}
           <section>
             <h2 className="text-2xl font-semibold text-white mb-4">1. Introduction</h2>
             <p>
-              YouTick (&quot;Platform&quot;, &quot;we&quot;, &quot;us&quot;, &quot;our&quot;) is a
-              digital ticketed release platform built on the NEAR Protocol blockchain. This
+              YOUTICK LTD, a company incorporated in the United Kingdom under company number
+              17290900, operates YouTick (&quot;Platform&quot;, &quot;we&quot;, &quot;us&quot;,
+              &quot;our&quot;), a digital ticketed release platform built on the NEAR Protocol blockchain. This
               Privacy Policy explains how we collect, use, store, and protect information when you
               use our Platform.
             </p>
@@ -116,11 +117,21 @@ export default function PrivacyPage() {
               not link Google Analytics data to your NEAR account or blockchain identity.
             </p>
 
-            <h3 className="text-lg font-medium text-white mt-6 mb-3">2.5 Information We Do NOT Collect</h3>
-            <p>YouTick explicitly does <strong className="text-white">not</strong> collect:</p>
+            <h3 className="text-lg font-medium text-white mt-6 mb-3">2.5 Planned Stripe Card Payments</h3>
+            <p>
+              Card payments are not currently enabled. If Stripe provides written approval and card
+              payments launch, Stripe will collect creator identity and payout information during
+              hosted onboarding and customer payment information during Checkout. YouTick will not
+              receive or store full card numbers, CVC values, identity documents, or creator bank
+              credentials. YouTick will receive limited payment records such as Stripe account and
+              transaction identifiers, amount, currency, status, refund or dispute state, and the
+              associated YouTick account and release identifiers.
+            </p>
+
+            <h3 className="text-lg font-medium text-white mt-6 mb-3">2.6 Information We Do NOT Directly Collect</h3>
+            <p>YouTick explicitly does <strong className="text-white">not</strong> directly collect:</p>
             <ul className="list-disc list-inside mt-2 space-y-1 ml-4">
-              <li>Email addresses, phone numbers, or physical addresses</li>
-              <li>Real names or government-issued identification</li>
+              <li>Creator identity documents or payout bank credentials</li>
               <li>Payment card or bank account information</li>
               <li>Social media profiles or contacts</li>
               <li>Biometric data</li>
@@ -142,7 +153,8 @@ export default function PrivacyPage() {
                   <li>Facilitating smart contract interactions (ticket purchases, content uploads)</li>
                   <li>Verifying NFT ownership for content access</li>
                   <li>Managing KMS group memberships for encryption/decryption</li>
-                  <li>Processing payments and distributing paid ticket revenue (98% creator share / 2% platform fee)</li>
+                  <li>Processing crypto ticket payments and applying the on-chain 98% creator / 2% platform split</li>
+                  <li>If approved and launched, recording Stripe payment status and a 2% application fee without holding creators&apos; gross card proceeds</li>
                 </ul>
               </div>
 
@@ -208,6 +220,11 @@ export default function PrivacyPage() {
                     <td className="py-3 px-4 font-medium text-white">Google Analytics</td>
                     <td className="py-3 px-4">Usage analytics</td>
                     <td className="py-3 px-4">Page views, device info, approximate location</td>
+                  </tr>
+                  <tr>
+                    <td className="py-3 px-4 font-medium text-white">Stripe (planned; not enabled)</td>
+                    <td className="py-3 px-4">Connected-account onboarding, card Checkout, payouts, refunds, and disputes</td>
+                    <td className="py-3 px-4">Account and transaction references, amount, currency, status, and linked YouTick account/release identifiers</td>
                   </tr>
                   <tr>
                     <td className="py-3 px-4 font-medium text-white">Wallet Providers</td>
@@ -450,6 +467,10 @@ export default function PrivacyPage() {
               Google&apos;s data processing practices are governed by their own privacy policy and data
               processing agreements.
             </p>
+            <p className="mt-3">
+              If approved card payments launch, Stripe may process onboarding and transaction data in
+              accordance with Stripe&apos;s own privacy notice and applicable data-transfer safeguards.
+            </p>
           </section>
 
           {/* 12. KMS */}
@@ -491,8 +512,10 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-2xl font-semibold text-white mb-4">14. Contact Information</h2>
             <p>
-              For privacy-related questions, concerns, or requests, please contact us through our
-              official channels or via the NEAR Protocol ecosystem.
+              YOUTICK LTD (Company No. 17290900) is responsible for this Privacy Policy. For
+              privacy-related questions, concerns, or requests, use the official contact channels
+              published at youtick.net. Prohibited-content and abuse reports may be sent to
+              abuse@youtick.net.
             </p>
             <p className="mt-3">
               For Google Analytics opt-out options, please visit
@@ -507,9 +530,9 @@ export default function PrivacyPage() {
               <div>
                 <h4 className="text-near-green font-medium mb-2">What We Don&apos;t Collect</h4>
                 <ul className="space-y-1 text-zinc-400">
-                  <li>- No email or phone numbers</li>
-                  <li>- No real names or identity documents</li>
-                  <li>- No payment card information</li>
+                  <li>- No creator identity documents</li>
+                  <li>- No payout bank credentials</li>
+                  <li>- No full payment card information</li>
                   <li>- No viewing history or watch time</li>
                   <li>- No private keys or seed phrases</li>
                   <li>- No traditional cookies</li>
@@ -531,7 +554,7 @@ export default function PrivacyPage() {
 
           <div className="border-t border-zinc-800 pt-8 mt-12">
             <p className="text-zinc-500 text-sm">
-              This Privacy Policy was last updated on May 11, 2026. By using YouTick, you
+              This Privacy Policy was last updated on July 17, 2026. By using YouTick, you
               acknowledge that you have read and understood this Privacy Policy.
             </p>
           </div>

@@ -109,7 +109,7 @@ async function fetchEventsPage(cursor: string | null, contentType: string | null
             await viewContract<number>(
                 provider,
                 NFT_CONTRACT_ID,
-                'get_events_count',
+                'get_event_slots_count',
                 {},
             ),
         )

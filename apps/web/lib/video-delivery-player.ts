@@ -159,8 +159,13 @@ export function createDeliveryPlaybackSession(
     };
 
     const getBufferedRanges = () => {
-        if (sourceBuffer?.buffered && sourceBuffer.buffered.length > 0) {
-            return sourceBuffer.buffered;
+        try {
+            const ranges = sourceBuffer?.buffered;
+            if (ranges && ranges.length > 0) {
+                return ranges;
+            }
+        } catch {
+            // SourceBuffer may already be detached during playback teardown.
         }
 
         return video?.buffered;
@@ -405,6 +410,7 @@ export function createDeliveryPlaybackSession(
 
     const fetchPayloadBuffer = async (
         ref: { cid: string; chunks?: DeliveryPayloadChunk[] },
+        ivB64?: string,
         counterB64?: string,
         signal?: AbortSignal,
         fallbackRefFactory?: (index: number) => string | null,
@@ -420,7 +426,7 @@ export function createDeliveryPlaybackSession(
                 ))
                 : await fetchPayloadPart(ref.cid, signal, fallbackRefFactory?.(0)),
         );
-        if (!manifest.encrypted || !counterB64) {
+        if (!manifest.encrypted) {
             return encrypted.buffer.slice(encrypted.byteOffset, encrypted.byteOffset + encrypted.byteLength) as ArrayBuffer;
         }
 
@@ -428,6 +434,19 @@ export function createDeliveryPlaybackSession(
             throw new Error('Encrypted delivery manifest requires an AES key');
         }
 
+        const keyBytes = decodeCounter(options.aesKeyB64 as string);
+        if (manifest.encryptionAlgorithm === 'AES-GCM') {
+            if (!ivB64) throw new Error('AES-GCM delivery payload is missing its IV');
+            const gcmKey = await crypto.subtle.importKey(
+                'raw', keyBytes as BufferSource, { name: 'AES-GCM' }, false, ['decrypt'],
+            );
+            return await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: decodeCounter(ivB64) as BufferSource, tagLength: 128 },
+                gcmKey,
+                encrypted as BufferSource,
+            );
+        }
+        if (!counterB64) throw new Error('Legacy AES-CTR delivery payload is missing its counter');
         const cryptoKey = await importedAesKeyPromise;
         const decrypted = await crypto.subtle.decrypt(
             { name: 'AES-CTR', counter: decodeCounter(counterB64) as BufferSource, length: 64 },
@@ -509,6 +528,7 @@ export function createDeliveryPlaybackSession(
                     })
                     .map(async (payload) => await fetchPayloadBuffer(
                         payload,
+                        payload.ivB64,
                         payload.counterB64,
                         controller.signal,
                         (index) => getLighthouseSingleFileFallbackRef(segment.seq, index, payload.cid, payload.chunks),
@@ -622,6 +642,7 @@ export function createDeliveryPlaybackSession(
         try {
             const initBuffer = await fetchPayloadBuffer(
                 manifest.initSegment,
+                manifest.initSegment.ivB64,
                 manifest.initSegment.counterB64,
             );
             if (!initSegmentCounted) {

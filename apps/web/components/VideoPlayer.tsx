@@ -3,12 +3,14 @@
 import React from 'react';
 import { IpfsPlayer } from './IpfsPlayer';
 import { useLanguage } from '@/components/providers/LanguageContext';
+import type { NFTEvent } from '@/lib/types';
 
 interface VideoPlayerProps {
     // IPFS data
     cid?: string;
     thumbnailUrl?: string;
     initialDurationSeconds?: number;
+    event?: NFTEvent;
 
     // Player settings
     className?: string;
@@ -21,6 +23,7 @@ export function VideoPlayer({
     cid,
     thumbnailUrl,
     initialDurationSeconds,
+    event,
     className = '',
 }: VideoPlayerProps) {
     const { t } = useLanguage();
@@ -32,6 +35,7 @@ export function VideoPlayer({
                     cid={cid}
                     thumbnailUrl={thumbnailUrl}
                     initialDurationSeconds={initialDurationSeconds}
+                    event={event}
                 />
                 <p className="text-xs text-zinc-500 mt-2 text-center">
                     {t.video_player.secure_delivery_note}

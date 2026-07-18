@@ -9,6 +9,7 @@ import {
 
 const DELIVERY_MANIFEST_VERSION = 2 as const;
 const DELIVERY_SEGMENT_DURATION_MS = 4_000;
+const MAX_BROWSER_PACKAGE_BYTES = 64 * 1024 * 1024;
 
 interface PackagedSegmentPayload {
     trackId: number;
@@ -93,6 +94,9 @@ workerScope.onmessage = async (event) => {
 };
 
 async function packageFile(file: File): Promise<PackagedDeliveryAsset> {
+    if (file.size > MAX_BROWSER_PACKAGE_BYTES) {
+        throw new Error('Browser video packaging is limited to 64 MB');
+    }
     const mp4boxFile = createFile(true);
     const sourceBuffer = (await file.arrayBuffer()) as MP4BoxBuffer;
     sourceBuffer.fileStart = 0;

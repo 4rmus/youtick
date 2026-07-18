@@ -68,15 +68,13 @@ describe('Price Utils', () => {
       expect(calledUrls.some((url) => url.includes('coingecko'))).toBe(true);
     });
 
-    it('should return fallback price on API error', async () => {
+    it('should fail closed on API error', async () => {
       global.fetch = vi.fn().mockRejectedValue(new Error('API unavailable'));
 
-      const price = await getNearPrice();
-
-      expect(price).toBe(5.00); // Fallback price
+      await expect(getNearPrice()).rejects.toThrow('NEAR price unavailable');
     });
 
-    it('should return fallback for invalid response', async () => {
+    it('should reject invalid response', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({
@@ -84,12 +82,10 @@ describe('Price Utils', () => {
         })
       });
 
-      const price = await getNearPrice();
-
-      expect(price).toBe(5.00);
+      await expect(getNearPrice()).rejects.toThrow('NEAR price unavailable');
     });
 
-    it('should return fallback for negative price', async () => {
+    it('should reject negative price', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({
@@ -97,12 +93,10 @@ describe('Price Utils', () => {
         })
       });
 
-      const price = await getNearPrice();
-
-      expect(price).toBe(5.00);
+      await expect(getNearPrice()).rejects.toThrow('NEAR price unavailable');
     });
 
-    it('should return fallback for zero price', async () => {
+    it('should reject zero price', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({
@@ -110,20 +104,16 @@ describe('Price Utils', () => {
         })
       });
 
-      const price = await getNearPrice();
-
-      expect(price).toBe(5.00);
+      await expect(getNearPrice()).rejects.toThrow('NEAR price unavailable');
     });
 
-    it('should return fallback for missing data', async () => {
+    it('should reject missing data', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({})
       });
 
-      const price = await getNearPrice();
-
-      expect(price).toBe(5.00);
+      await expect(getNearPrice()).rejects.toThrow('NEAR price unavailable');
     });
   });
 
@@ -184,9 +174,11 @@ describe('Price Utils', () => {
       const testPrices = [1.00, 2.50, 5.00, 10.00, 100.00];
 
       for (const price of testPrices) {
-        global.fetch = vi.fn().mockResolvedValue({
-          ok: true,
-          json: async () => ({ near: { usd: price } })
+        nearMocks.viewContract.mockResolvedValueOnce({
+          price: String(price * 100_000_000),
+          conf: '1',
+          expo: -8,
+          publish_time: Math.floor(Date.now() / 1000),
         });
 
         const result = await getNearPrice();
@@ -195,9 +187,11 @@ describe('Price Utils', () => {
     });
 
     it('should handle decimal prices correctly', async () => {
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ near: { usd: 3.14159 } })
+      nearMocks.viewContract.mockResolvedValueOnce({
+        price: '314159000',
+        conf: '1',
+        expo: -8,
+        publish_time: Math.floor(Date.now() / 1000),
       });
 
       const price = await getNearPrice();

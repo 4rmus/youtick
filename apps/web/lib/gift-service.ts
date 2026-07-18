@@ -48,15 +48,6 @@ export interface TrialInviteInfo {
     expiresAtMs?: number | null;
 }
 
-function onboardingStorageKey(): string {
-    return `onboarding_key:${NFT_CONTRACT_ID}`;
-}
-
-function readOnboardingKey(): string | null {
-    if (typeof window === "undefined") return null;
-    return sessionStorage.getItem(onboardingStorageKey());
-}
-
 function isLocalBrowserHost(): boolean {
     if (typeof window === "undefined") return false;
 
@@ -129,108 +120,37 @@ async function getTurnstileToken(siteKey: string): Promise<string | null> {
 }
 
 export async function ensureOnboardingKey(): Promise<{ ok: boolean; error?: string }> {
-    if (readOnboardingKey()) {
-        return { ok: true };
-    }
-
     if (typeof window === "undefined") {
-        return { ok: false, error: "Onboarding key is unavailable in this context." };
+        return { ok: false, error: "Onboarding relay is unavailable in this context." };
     }
+    return { ok: true };
+}
 
+type OnboardingRelayAction =
+    | 'create_sponsored_trial_direct'
+    | 'sponsor_implicit_guest_direct'
+    | 'claim_free_ticket_direct';
+
+async function relayOnboardingAction(
+    action: OnboardingRelayAction,
+    args: Record<string, string>,
+): Promise<void> {
     let turnstileToken: string | null = null;
-    if (APP_CONFIG.turnstileSiteKey) {
-        if (isLocalBrowserHost()) {
-            return { ok: false, error: "Guest account creation is temporarily unavailable." };
-        }
-
+    if (APP_CONFIG.turnstileSiteKey && !isLocalBrowserHost()) {
         turnstileToken = await getTurnstileToken(APP_CONFIG.turnstileSiteKey);
         if (!turnstileToken) {
-            return { ok: false, error: "Guest account creation is temporarily unavailable." };
+            throw new Error('Guest verification failed. Please try again.');
         }
     }
 
-    const url = turnstileToken
-        ? `/api/onboarding-key?turnstileToken=${encodeURIComponent(turnstileToken)}`
-        : '/api/onboarding-key';
-
-    try {
-        const response = await fetch(url);
-        const data = await response.json().catch(() => null) as { key?: string; error?: string } | null;
-        if (!response.ok) {
-            return { ok: false, error: data?.error || "Guest account creation is temporarily unavailable." };
-        }
-
-        if (!data?.key) {
-            return { ok: false, error: "Onboarding key was not returned by the server." };
-        }
-
-        sessionStorage.setItem(onboardingStorageKey(), data.key);
-        return { ok: true };
-    } catch (error: unknown) {
-        return {
-            ok: false,
-            error: error instanceof Error ? error.message : "Failed to fetch onboarding key.",
-        };
-    }
-}
-
-async function isOnboardingKeyAuthorized(publicKey: string): Promise<boolean> {
-    try {
-        const response = await fetch(getCurrentRpcUrl(), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                jsonrpc: "2.0",
-                id: "onboarding-auth-check",
-                method: "query",
-                params: {
-                    request_type: "call_function",
-                    finality: "final",
-                    account_id: NFT_CONTRACT_ID,
-                    method_name: "is_onboarding_key",
-                    args_base64: btoa(JSON.stringify({ public_key: publicKey })),
-                },
-            }),
-        });
-
-        const data = await response.json();
-        if (data.error || !data.result?.result) return false;
-
-        const result = JSON.parse(String.fromCharCode(...data.result.result));
-        return Boolean(result);
-    } catch {
-        return false;
-    }
-}
-
-async function getValidatedOnboardingKeyPair(retryDelayMs: number = 0): Promise<KeyPair | null> {
-    let onboardingKeyStr = readOnboardingKey();
-
-    if (!onboardingKeyStr && retryDelayMs > 0) {
-        // Key may still be loading from OnboardingKeyInit on first app load
-        await new Promise(r => setTimeout(r, retryDelayMs));
-        onboardingKeyStr = readOnboardingKey();
-    }
-
-    if (!onboardingKeyStr) return null;
-
-    try {
-        const keyPair = KeyPair.fromString(onboardingKeyStr as KeyPairString);
-        const isAuthorized = await isOnboardingKeyAuthorized(keyPair.getPublicKey().toString());
-
-        if (!isAuthorized) {
-            if (typeof window !== "undefined") {
-                sessionStorage.removeItem(onboardingStorageKey());
-            }
-            return null;
-        }
-
-        return keyPair;
-    } catch {
-        if (typeof window !== "undefined") {
-            sessionStorage.removeItem(onboardingStorageKey());
-        }
-        return null;
+    const response = await fetch('/api/onboarding-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, args, turnstileToken }),
+    });
+    const result = await response.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+    if (!response.ok || !result?.ok) {
+        throw new Error(result?.error || 'Onboarding transaction failed.');
     }
 }
 
@@ -274,27 +194,8 @@ export async function sponsorImplicitGuestDirect(
     newPublicKey: string
 ): Promise<{ success: boolean; accountId?: string; error?: string }> {
     try {
-        const onboardingKeyPair = await getValidatedOnboardingKeyPair();
-        if (!onboardingKeyPair) {
-            return {
-                success: false,
-                error: "Onboarding key unavailable or unauthorized. Guest account creation is temporarily disabled.",
-            };
-        }
-
-        const signer = new KeyPairSigner(onboardingKeyPair);
-        const account = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), signer);
-
-        await account.signAndSendTransaction({
-            receiverId: NFT_CONTRACT_ID,
-            actions: [
-                actions.functionCall(
-                    "sponsor_implicit_guest_direct",
-                    { new_public_key: newPublicKey },
-                    GAS_CONSTANTS.mediumGas,
-                    BigInt(0)
-                )
-            ]
+        await relayOnboardingAction('sponsor_implicit_guest_direct', {
+            new_public_key: newPublicKey,
         });
 
         // Derive implicit account ID from the public key (same logic as publicKeyToImplicitAccountId)
@@ -312,16 +213,6 @@ export async function sponsorImplicitGuestDirect(
         console.error("Sponsor implicit guest direct error:", error);
         const errMsg = error instanceof Error ? error.message : '';
 
-        if (errMsg.includes("Unauthorized") || errMsg.includes("onboarding key")) {
-            if (typeof window !== "undefined") {
-                sessionStorage.removeItem(onboardingStorageKey());
-            }
-            return {
-                success: false,
-                error: "Unauthorized onboarding key. Please rotate onboarding key and try again.",
-            };
-        }
-
         return {
             success: false,
             error: errMsg || "Failed to sponsor guest account",
@@ -337,27 +228,9 @@ export async function claimFreeTicketDirect(
     encryptedCid: string
 ): Promise<{ success: boolean; error?: string }> {
     try {
-        const onboardingKeyPair = await getValidatedOnboardingKeyPair(0);
-        if (!onboardingKeyPair) {
-            return {
-                success: false,
-                error: "Onboarding key unavailable or unauthorized. Free ticket claim is temporarily disabled.",
-            };
-        }
-
-        const signer = new KeyPairSigner(onboardingKeyPair);
-        const account = new Account(NFT_CONTRACT_ID, getCurrentRpcUrl(), signer);
-
-        await account.signAndSendTransaction({
-            receiverId: NFT_CONTRACT_ID,
-            actions: [
-                actions.functionCall(
-                    "claim_free_ticket_direct",
-                    { receiver_id: receiverId, encrypted_cid: encryptedCid },
-                    GAS_CONSTANTS.mediumGas,
-                    BigInt(0)
-                )
-            ]
+        await relayOnboardingAction('claim_free_ticket_direct', {
+            receiver_id: receiverId,
+            encrypted_cid: encryptedCid,
         });
 
         return { success: true };
@@ -365,44 +238,8 @@ export async function claimFreeTicketDirect(
         console.error("Direct free ticket claim error:", error);
         const errMsg = error instanceof Error ? error.message : "Failed to claim free ticket";
 
-        if (errMsg.includes("Unauthorized") || errMsg.includes("onboarding key")) {
-            if (typeof window !== "undefined") {
-                sessionStorage.removeItem(onboardingStorageKey());
-            }
-            return {
-                success: false,
-                error: "Unauthorized onboarding key. Please rotate onboarding key and try again.",
-            };
-        }
-
         return { success: false, error: errMsg };
     }
-}
-
-
-/**
- * Store an onboarding key for manual recovery or controlled local testing.
- */
-export function setOnboardingKey(secretKey: string): void {
-    if (typeof window !== "undefined") {
-        sessionStorage.setItem(onboardingStorageKey(), secretKey);
-    }
-}
-
-/**
- * Check if a locally provisioned onboarding key is available
- */
-export function hasOnboardingKey(): boolean {
-    if (typeof window === "undefined") return false;
-    return !!sessionStorage.getItem(onboardingStorageKey());
-}
-
-/**
- * Get the onboarding key from sessionStorage
- */
-export function getOnboardingKey(): string | null {
-    if (typeof window === "undefined") return null;
-    return sessionStorage.getItem(onboardingStorageKey());
 }
 
 /**
@@ -513,8 +350,8 @@ export async function createTrialInviteLinks(
     wallet: WalletInstance,
     ttlMs?: number,
 ): Promise<GiftLinkResult[]> {
-    if (numLinks < 1 || numLinks > 50) {
-        throw new Error("Must create 1-50 trial invites");
+    if (numLinks < 1 || numLinks > 10) {
+        throw new Error("Must create 1-10 trial invites");
     }
 
     const keyPairs = generateKeyPairs(numLinks);
@@ -556,8 +393,8 @@ export async function createGiftLinks(
     numLinks: number,
     wallet: WalletInstance
 ): Promise<GiftLinkResult[]> {
-    if (numLinks < 1 || numLinks > 50) {
-        throw new Error("Must create 1-50 links");
+    if (numLinks < 1 || numLinks > 10) {
+        throw new Error("Must create 1-10 links");
     }
 
     // Generate key pairs
@@ -852,8 +689,11 @@ export async function claimGiftToExisting(
 export function parseGiftLink(url: string): { secretKey: string; publicKey: string } | null {
     try {
         const urlObj = new URL(url);
-        const secretKey = urlObj.searchParams.get("key");
-        const publicKey = urlObj.searchParams.get("pk");
+        if (urlObj.protocol !== "https:" && urlObj.protocol !== "http:") return null;
+
+        const fragment = new URLSearchParams(urlObj.hash.slice(1));
+        const secretKey = fragment.get("key");
+        const publicKey = fragment.get("pk");
 
         if (!secretKey) return null;
 

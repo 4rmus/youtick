@@ -9,7 +9,6 @@ import { LanguageProvider } from "@/components/providers/LanguageContext";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { GoogleAnalytics } from "@next/third-parties/google";
-import { OnboardingKeyInit } from "@/components/OnboardingKeyInit";
 
 const geistSans = Geist({
     subsets: ["latin"],
@@ -108,34 +107,7 @@ export default function RootLayout({
                 <link rel="dns-prefetch" href="https://dweb.link" />
                 <link rel="dns-prefetch" href="https://4everland.io" />
                 <link rel="dns-prefetch" href="https://gateway.lighthouse.storage" />
-                <link rel="preconnect" href="https://ipfs.io" crossOrigin="" />
-                <link rel="preconnect" href="https://dweb.link" crossOrigin="" />
-                <link rel="preconnect" href="https://4everland.io" crossOrigin="" />
                 <link rel="preconnect" href="https://gateway.lighthouse.storage" crossOrigin="" />
-                {/* ChunkLoadError recovery: reload page on failed dynamic imports (IPFS gateway blips) */}
-                <script dangerouslySetInnerHTML={{
-                    __html: `
-                    (function(){
-                        var retries = 0;
-                        var MAX_RETRIES = 3;
-                        var KEY = '__ytk_chunk_retry';
-                        try { retries = parseInt(sessionStorage.getItem(KEY) || '0', 10); } catch(e) {}
-                        window.addEventListener('error', function(e) {
-                            if (e.message && e.message.indexOf('ChunkLoadError') !== -1 && retries < MAX_RETRIES) {
-                                try { sessionStorage.setItem(KEY, String(retries + 1)); } catch(e) {}
-                                window.location.reload();
-                            }
-                        });
-                        window.addEventListener('unhandledrejection', function(e) {
-                            var msg = e.reason && (e.reason.message || String(e.reason));
-                            if (msg && msg.indexOf('ChunkLoadError') !== -1 && retries < MAX_RETRIES) {
-                                try { sessionStorage.setItem(KEY, String(retries + 1)); } catch(e) {}
-                                window.location.reload();
-                            }
-                        });
-                        if (retries > 0) { setTimeout(function(){ try { sessionStorage.removeItem(KEY); } catch(e) {} }, 30000); }
-                    })();
-                `}} />
             </head>
             <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
                 <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} forcedTheme="dark">
@@ -143,7 +115,6 @@ export default function RootLayout({
                         <OptionalEvmProvider>
                             <LanguageProvider>
                                 <WalletProvider>
-                                    <OnboardingKeyInit />
                                     <div className="min-h-screen bg-background text-foreground">
                                         <Navbar />
                                         <main className="flex-grow">

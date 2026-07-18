@@ -25,8 +25,10 @@ import { useUpload } from '@/hooks/useUpload';
 type UploadPageCopy = ReturnType<typeof useLanguage>['t']['upload_page'];
 
 // File size limits (KMS-based flow)
-const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB for paid
-const MAX_FREE_FILE_SIZE = 100 * 1024 * 1024; // 100MB for free
+// Browser packaging currently materializes both source and CMAF output. Keep the
+// supported limit bounded until a server-side/presigned transcoding path exists.
+const MAX_FILE_SIZE = 64 * 1024 * 1024;
+const MAX_FREE_FILE_SIZE = 64 * 1024 * 1024;
 const MIN_PAID_PRICE_USD = 0.5;
 
 const getFriendlyStatus = (rawStatus: string, copy: UploadPageCopy): string => {
@@ -74,6 +76,7 @@ export function UploadForm() {
     const [description, setDescription] = useState('');
     const [priceUsd, setPriceUsd] = useState(''); // USD amount (e.g. "5.00"), empty = free
     const [nearPrice, setNearPrice] = useState<number>(0); // NEAR/USD rate
+    const [nearPriceError, setNearPriceError] = useState(false);
     const [fileSizeError, setFileSizeError] = useState<string | null>(null);
     const [contentType, setContentType] = useState('Exclusive');
     const [linkCopied, setLinkCopied] = useState(false);
@@ -87,7 +90,15 @@ export function UploadForm() {
 
     // Fetch NEAR/USD price on mount
     React.useEffect(() => {
-        getNearPrice().then(setNearPrice);
+        getNearPrice()
+            .then((value) => {
+                setNearPrice(value);
+                setNearPriceError(false);
+            })
+            .catch(() => {
+                setNearPrice(0);
+                setNearPriceError(true);
+            });
     }, []);
 
     // Dynamic file size validation — re-checks when file or price changes
@@ -531,6 +542,9 @@ export function UploadForm() {
                                 {priceUsdNum > 0 && priceUsdNum < MIN_PAID_PRICE_USD && (
                                     <p className="text-xs text-near-red">{u.status_price_min}</p>
                                 )}
+                                {priceUsdNum > 0 && nearPriceError && (
+                                    <p className="text-xs text-near-red">Live NEAR price is unavailable. Paid publishing is temporarily disabled.</p>
+                                )}
                             </div>
                         </section>
 
@@ -634,7 +648,7 @@ export function UploadForm() {
                     <CardFooter>
                         <Button
                             onClick={handleUpload}
-                            disabled={uploading || !file || !title || !description || !accountId || !!fileSizeError}
+                            disabled={uploading || !file || !title || !description || !accountId || !!fileSizeError || (priceUsdNum > 0 && nearPrice <= 0)}
                             className="h-11 w-full"
                         >
                             {uploading ? (

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,27 +30,20 @@ interface GiftInfo {
 function ClaimContent() {
     const { t } = useLanguage();
     const { setManagedAccount } = useWallet();
-    const searchParams = useSearchParams();
-    // Read key from hash fragment (secure) or query params (backward compat)
+    // Gift secrets must stay in the fragment so they are never sent in HTTP URLs.
     const [secretKey, setSecretKey] = useState<string | null>(null);
 
     useEffect(() => {
-        // Priority 1: Hash fragment (new secure format)
         const hash = window.location.hash.substring(1); // remove #
         const hashParams = new URLSearchParams(hash);
-        const hashKey = hashParams.get("key");
-
-        // Priority 2: Query params (legacy links)
-        const queryKey = searchParams.get("secret") || searchParams.get("key");
-
-        const key = hashKey || queryKey;
+        const key = hashParams.get("key");
         setSecretKey(key);
 
         // Clear sensitive data from URL
         if (key) {
             window.history.replaceState(null, "", window.location.pathname);
         }
-    }, [searchParams]);
+    }, []);
 
     const [step, setStep] = useState<"loading" | "preview" | "claim-options" | "claiming" | "success" | "error">("loading");
     const [giftInfo, setGiftInfo] = useState<GiftInfo | null>(null);

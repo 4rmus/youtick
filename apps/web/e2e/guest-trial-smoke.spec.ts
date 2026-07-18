@@ -89,7 +89,7 @@ async function installGuestSession(page: Page) {
     await page.addInitScript(({ accountId, key }) => {
         localStorage.setItem('language', 'en');
         localStorage.setItem('managedNearAccount', JSON.stringify({ accountId, kind: 'guest' }));
-        localStorage.setItem(`near-api-js:keystore:${accountId}:mainnet`, key);
+        sessionStorage.setItem(`near-api-js:keystore:${accountId}:mainnet`, key);
     }, {
         accountId: GUEST_ACCOUNT_ID,
         key: secretKey,
@@ -263,8 +263,8 @@ test.describe('guest/trial watch smoke', () => {
 
         await page.getByRole('button', { name: 'Play' }).click();
 
-        await expect.poll(mocks.getRetrieveCount).toBeGreaterThanOrEqual(2);
         await expect(page.locator('video')).toBeVisible();
+        await expect.poll(mocks.getRetrieveCount).toBeGreaterThanOrEqual(2);
     });
 
     test('guest account sees a wallet CTA instead of a paid checkout attempt', async ({ page }) => {

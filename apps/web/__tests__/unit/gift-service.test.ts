@@ -6,15 +6,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { setMockSessionStorage, clearMockSessionStorage, getMockLocalStorage } from '../setup';
+import { clearMockSessionStorage, getMockLocalStorage } from '../setup';
 
 // Import the functions to test
 import {
   generateKeyPairs,
   parseGiftLink,
-  hasOnboardingKey,
-  getOnboardingKey,
-  setOnboardingKey,
   getTrialPoolBalance,
   validateGiftLink,
   claimFreeTicketDirect,
@@ -67,7 +64,7 @@ describe('Gift Service', () => {
     it('should parse valid URL with key and pk', () => {
       const secretKey = 'ed25519:abc123secretkey';
       const publicKey = 'ed25519:xyz789publickey';
-      const url = `https://app.example.com/claim?key=${encodeURIComponent(secretKey)}&pk=${encodeURIComponent(publicKey)}`;
+      const url = `https://app.example.com/claim#key=${encodeURIComponent(secretKey)}&pk=${encodeURIComponent(publicKey)}`;
 
       const result = parseGiftLink(url);
 
@@ -80,7 +77,7 @@ describe('Gift Service', () => {
       // Generate a real keypair for this test
       const pairs = generateKeyPairs(1);
       const secretKey = pairs[0].secretKey;
-      const url = `https://app.example.com/claim?key=${encodeURIComponent(secretKey)}`;
+      const url = `https://app.example.com/claim#key=${encodeURIComponent(secretKey)}`;
 
       const result = parseGiftLink(url);
 
@@ -102,66 +99,10 @@ describe('Gift Service', () => {
 
     it('should handle URL with only key param', () => {
       const pairs = generateKeyPairs(1);
-      const url = `https://example.com/claim?key=${encodeURIComponent(pairs[0].secretKey)}`;
+      const url = `https://example.com/claim#key=${encodeURIComponent(pairs[0].secretKey)}`;
 
       const result = parseGiftLink(url);
       expect(result).not.toBeNull();
-    });
-  });
-
-  describe('Onboarding Key Management', () => {
-    describe('hasOnboardingKey', () => {
-      it('should return false when no key stored', () => {
-        // Clear any existing data
-        vi.mocked(sessionStorage.getItem).mockReturnValue(null);
-        const result = hasOnboardingKey();
-        expect(result).toBe(false);
-      });
-
-      it('should return true when key is stored', () => {
-        // Mock sessionStorage.getItem to return a key
-        vi.mocked(sessionStorage.getItem).mockImplementation((key: string) => {
-          if (key === 'onboarding_key:test-contract.testnet') {
-            return 'ed25519:secretkey';
-          }
-          return null;
-        });
-        const result = hasOnboardingKey();
-        expect(result).toBe(true);
-      });
-    });
-
-    describe('getOnboardingKey', () => {
-      it('should return null when no key stored', () => {
-        vi.mocked(sessionStorage.getItem).mockReturnValue(null);
-        const result = getOnboardingKey();
-        expect(result).toBeNull();
-      });
-
-      it('should return stored key', () => {
-        const secretKey = 'ed25519:testsecretkey123';
-        vi.mocked(sessionStorage.getItem).mockImplementation((key: string) => {
-          if (key === 'onboarding_key:test-contract.testnet') {
-            return secretKey;
-          }
-          return null;
-        });
-
-        const result = getOnboardingKey();
-        expect(result).toBe(secretKey);
-      });
-    });
-
-    describe('setOnboardingKey', () => {
-      it('should call sessionStorage.setItem with correct key', () => {
-        const secretKey = 'ed25519:newsecretkey456';
-        setOnboardingKey(secretKey);
-
-        expect(sessionStorage.setItem).toHaveBeenCalledWith(
-          'onboarding_key:test-contract.testnet',
-          secretKey
-        );
-      });
     });
   });
 
@@ -229,25 +170,11 @@ describe('Gift Service', () => {
   });
 
   describe('claimFreeTicketDirect', () => {
-    it('should fail when onboarding key is missing', async () => {
-      clearMockSessionStorage();
-      const result = await claimFreeTicketDirect('alice.testnet', 'cid-123');
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Onboarding key unavailable');
-    });
-
-    it('should claim free ticket when onboarding key is valid', async () => {
-      const onboardingKey = generateKeyPairs(1)[0].secretKey;
-      setMockSessionStorage('onboarding_key:test-contract.testnet', onboardingKey);
-
+    it('should claim free ticket through the server-side relay', async () => {
       const originalFetch = global.fetch;
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({
-          result: {
-            result: Array.from(Buffer.from('true'))
-          }
-        })
+        json: async () => ({ ok: true, transactionHash: 'tx-2' })
       });
 
       const result = await claimFreeTicketDirect('alice.testnet', 'cid-123');
@@ -290,7 +217,7 @@ describe('Gift Service', () => {
 
       // Simulate link generation (from createGiftLinks)
       const APP_URL = 'http://localhost:3000';
-      const link = `${APP_URL}/claim?key=${encodeURIComponent(pair.secretKey)}&pk=${encodeURIComponent(pair.publicKey)}`;
+      const link = `${APP_URL}/claim#key=${encodeURIComponent(pair.secretKey)}&pk=${encodeURIComponent(pair.publicKey)}`;
 
       // Parse it back
       const parsed = parseGiftLink(link);
@@ -304,7 +231,7 @@ describe('Gift Service', () => {
       // Keys may contain + and / characters from base64
       const secretKey = 'ed25519:AAAA+BBB/CCC==';
       const publicKey = 'ed25519:XXXX+YYY/ZZZ==';
-      const url = `https://example.com/claim?key=${encodeURIComponent(secretKey)}&pk=${encodeURIComponent(publicKey)}`;
+      const url = `https://example.com/claim#key=${encodeURIComponent(secretKey)}&pk=${encodeURIComponent(publicKey)}`;
 
       const parsed = parseGiftLink(url);
 

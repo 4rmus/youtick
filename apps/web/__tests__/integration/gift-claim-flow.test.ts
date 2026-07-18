@@ -24,7 +24,7 @@ vi.mock('@/lib/constants', () => ({
     networkId: 'testnet',
   },
   GIFT_LINK_CONFIG: {
-    maxLinks: 50,
+    maxLinks: 10,
     depositPerLink: '150000000000000000000000' // 0.15 NEAR
   }
 }));
@@ -41,14 +41,14 @@ describe('Gift Claim Flow Integration', () => {
       const APP_URL = 'https://app.youtick.io';
 
       const links = pairs.map(pair => ({
-        url: `${APP_URL}/claim?key=${encodeURIComponent(pair.secretKey)}&pk=${encodeURIComponent(pair.publicKey)}`,
+        url: `${APP_URL}/claim#key=${encodeURIComponent(pair.secretKey)}&pk=${encodeURIComponent(pair.publicKey)}`,
         publicKey: pair.publicKey,
         secretKey: pair.secretKey
       }));
 
       expect(links).toHaveLength(3);
       links.forEach(link => {
-        expect(link.url).toContain('/claim?key=');
+        expect(link.url).toContain('/claim#key=');
         expect(link.url).toContain('&pk=');
         expect(link.publicKey).toMatch(/^ed25519:/);
         expect(link.secretKey).toMatch(/^ed25519:/);
@@ -66,15 +66,15 @@ describe('Gift Claim Flow Integration', () => {
     });
 
     it('should enforce maximum links limit', () => {
-      const MAX_LINKS = 50;
+      const MAX_LINKS = 10;
 
       const validateLinkCount = (count: number): boolean => {
         return count >= 1 && count <= MAX_LINKS;
       };
 
       expect(validateLinkCount(1)).toBe(true);
-      expect(validateLinkCount(50)).toBe(true);
-      expect(validateLinkCount(51)).toBe(false);
+      expect(validateLinkCount(10)).toBe(true);
+      expect(validateLinkCount(11)).toBe(false);
       expect(validateLinkCount(0)).toBe(false);
     });
   });
@@ -82,7 +82,7 @@ describe('Gift Claim Flow Integration', () => {
   describe('Gift Link Parsing', () => {
     it('should parse gift link from URL with all parameters', () => {
       const pairs = generateKeyPairs(1);
-      const url = `https://app.youtick.io/claim?key=${encodeURIComponent(pairs[0].secretKey)}&pk=${encodeURIComponent(pairs[0].publicKey)}`;
+      const url = `https://app.youtick.io/claim#key=${encodeURIComponent(pairs[0].secretKey)}&pk=${encodeURIComponent(pairs[0].publicKey)}`;
 
       const parsed = parseGiftLink(url);
 
@@ -94,7 +94,7 @@ describe('Gift Claim Flow Integration', () => {
     it('should handle URL-encoded special characters', () => {
       // Simulate a key with special characters that would be encoded
       const pairs = generateKeyPairs(1);
-      const url = `https://example.com/claim?key=${encodeURIComponent(pairs[0].secretKey)}`;
+      const url = `https://example.com/claim#key=${encodeURIComponent(pairs[0].secretKey)}`;
 
       const parsed = parseGiftLink(url);
 
@@ -116,14 +116,10 @@ describe('Gift Claim Flow Integration', () => {
       });
     });
 
-    it('should accept any URL with valid key parameter', () => {
-      // parseGiftLink accepts any URL with a key parameter
+    it('should reject query-string secrets and non-http links', () => {
       const pairs = generateKeyPairs(1);
-      const url = `ftp://example.com/claim?key=${encodeURIComponent(pairs[0].secretKey)}`;
-
-      const result = parseGiftLink(url);
-      // This actually succeeds because the function just looks for key param
-      expect(result).not.toBeNull();
+      expect(parseGiftLink(`https://example.com/claim?key=${encodeURIComponent(pairs[0].secretKey)}`)).toBeNull();
+      expect(parseGiftLink(`ftp://example.com/claim#key=${encodeURIComponent(pairs[0].secretKey)}`)).toBeNull();
     });
   });
 

@@ -41,8 +41,8 @@ interface PythPrice {
 }
 
 /**
- * Fetch NEAR/USD price from Pyth oracle (primary), with CEX fallback chain.
- * Tries: Pyth on-chain → Binance → CoinGecko → CryptoCompare → cached price → hardcoded fallback.
+ * Fetch NEAR/USD price from Pyth oracle, a recent cache, or parallel fallbacks.
+ * Throws when no verified price is available; paid flows must fail closed.
  */
 export async function getNearPrice(): Promise<number> {
     // Source 1: Pyth on-chain oracle (most trustworthy, on-chain attestable)
@@ -69,64 +69,35 @@ export async function getNearPrice(): Promise<number> {
         console.warn('[Price] Pyth oracle failed:', e);
     }
 
-    // Source 2: Binance (no API key needed, generous rate limits)
-    try {
-        const res = await fetch(
-            'https://api.binance.com/api/v3/ticker/price?symbol=NEARUSDT',
-            { signal: AbortSignal.timeout(5000) },
-        );
-        if (res.ok) {
-            const data = await res.json();
-            const price = parseFloat(data?.price);
-            if (price > 0) {
-                setCachedPrice(price);
-                return price;
-            }
-        }
-    } catch { /* try next source */ }
-
-    // Source 2: CoinGecko (free tier, often rate-limited)
-    try {
-        const res = await fetch(
-            'https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd',
-            { signal: AbortSignal.timeout(5000) },
-        );
-        if (res.ok) {
-            const data = await res.json();
-            const price = data?.near?.usd;
-            if (typeof price === 'number' && price > 0) {
-                setCachedPrice(price);
-                return price;
-            }
-        }
-    } catch { /* try next source */ }
-
-    // Source 3: CryptoCompare (no API key needed)
-    try {
-        const res = await fetch(
-            'https://min-api.cryptocompare.com/data/price?fsym=NEAR&tsyms=USD',
-            { signal: AbortSignal.timeout(5000) },
-        );
-        if (res.ok) {
-            const data = await res.json();
-            const price = data?.USD;
-            if (typeof price === 'number' && price > 0) {
-                setCachedPrice(price);
-                return price;
-            }
-        }
-    } catch { /* try cache */ }
-
-    // Source 4: localStorage cache (last known good price)
     const cached = getCachedPrice();
     if (cached) {
-        console.warn('[Price] All APIs failed, using cached price:', cached);
+        console.warn('[Price] Pyth unavailable, using recent cached price:', cached);
         return cached;
     }
 
-    // Last resort: hardcoded fallback
-    console.warn('[Price] All APIs failed and no cache, using fallback $5.00');
-    return 5.00;
+    const fetchPrice = async (url: string, select: (data: Record<string, unknown>) => unknown) => {
+        const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+        if (!res.ok) throw new Error(`Price provider returned ${res.status}`);
+        const value = select(await res.json());
+        const price = typeof value === 'number' ? value : Number.parseFloat(String(value));
+        if (!Number.isFinite(price) || price <= 0) throw new Error('Invalid provider price');
+        return price;
+    };
+
+    try {
+        const price = await Promise.any([
+            fetchPrice('https://api.binance.com/api/v3/ticker/price?symbol=NEARUSDT', (data) => data.price),
+            fetchPrice(
+                'https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd',
+                (data) => (data.near as Record<string, unknown> | undefined)?.usd,
+            ),
+            fetchPrice('https://min-api.cryptocompare.com/data/price?fsym=NEAR&tsyms=USD', (data) => data.USD),
+        ]);
+        setCachedPrice(price);
+        return price;
+    } catch {
+        throw new Error('NEAR price unavailable; retry before creating a paid listing');
+    }
 }
 
 // IPFS storage is free for pinning via W3Auth

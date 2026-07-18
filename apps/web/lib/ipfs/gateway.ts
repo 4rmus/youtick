@@ -270,6 +270,10 @@ function buildReadCandidates(preferredKey?: string): ReadCandidate[] {
       url: mediaDeliveryBase,
     }
     : null;
+  if (mediaDeliveryCandidate) {
+    // The Worker owns gateway failover; browser hedging here would duplicate egress.
+    return [mediaDeliveryCandidate];
+  }
 
   const publicCandidates = getHealthyGateways()
     .slice(0, GATEWAY_PROBE_LIMIT)

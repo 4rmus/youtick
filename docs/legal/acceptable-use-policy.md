@@ -1,6 +1,7 @@
 # YouTick Acceptable Use Policy
 
-> Version: 0.2 (draft — alpha)
+> Version: 0.3 (draft — alpha)
+> Last updated: 2026-07-17
 > Effective: from public alpha launch.
 > Current authority model: temporary owner-only takedown — governance topology is selected in Q3 2026, after which authority is handed over to a multisig/DAO (exact date depends on the topology decision).
 > Technical reference: [`docs/adr/adr-009-emergency-takedown-and-dao-handover.md`](../adr/adr-009-emergency-takedown-and-dao-handover.md)
@@ -26,10 +27,15 @@ The following categories may not be published on YouTick:
 5. **Illegal drug, weapon or human-trafficking sales.**
 6. **Copyright infringement** — when a valid takedown request is received.
 7. **Malware or phishing material that directly harms the user.**
-
-YouTick does not ban adult content outright; however, adult content must
-be **consent-verifiable**, **not age-ambiguous**, and legal in the
-applicable jurisdiction.
+8. **Adult or sexually explicit content or services** — including pornography
+   or material primarily intended for sexual gratification, regardless of
+   whether it is otherwise lawful or consensual.
+9. **Fraudulent financial content or prohibited financial activity** — including
+   gambling or betting, investment or speculative products, crowdfunding,
+   crypto exchange or brokerage, peer-to-peer money transmission, wallet
+   funding, or stored fiat balances.
+10. **Secondary NFT sales or transferable ticket listings.** YouTick tickets
+    are access credentials and may not be marketed for resale or appreciation.
 
 ---
 
@@ -41,8 +47,8 @@ The platform uses two distinct contract methods:
 
 | Track | Function | Latency | Use case |
 |---|---|---|---|
-| Emergency | `takedown_event` | Immediate | §1.1, §1.2, §1.3, §1.4 — illegal content |
-| Planned | `ban_event` | Reviewed owner action | §1.6 copyright, ToS violations |
+| Emergency | `takedown_event` | Immediate | §1.1–§1.5 — illegal content or imminent harm |
+| Planned | `ban_event` | Reviewed owner action | §1.6–§1.10 — copyright, content, financial-use, or ticket-policy violations |
 
 Both are called by the contract owner. The emergency track is observable
 on-chain through the `event_takedown` NEP-297 log, so abuse is publicly
@@ -112,6 +118,29 @@ A creator declares that the content they upload:
 In case of a violation, the event is removed; repeated violations may
 result in the creator account being banned.
 
+### 5.1 Card-enabled pilot review
+
+Card payments are not currently enabled. If Stripe grants written approval,
+the first card-enabled pilot will be curated:
+
+1. YouTick reviews and approves each creator before exposing Stripe onboarding.
+2. An authorized moderation account receives temporary ticketed access and
+   reviews each card-enabled release in the browser before card sales start.
+3. The review records the reviewer, date, release ID, decision, and policy
+   version without publishing private evidence on-chain.
+4. Materially changed content must be reviewed again.
+5. A failed review or repeated violation disables card-sales eligibility.
+
+Stripe identity verification supplements this review; it does not replace
+YouTick's content-policy enforcement.
+
+### 5.2 Payment and marketplace restrictions
+
+Creators and users must not use YouTick to transmit money between people,
+fund wallets, hold fiat balances, exchange cryptocurrency, run crowdfunding,
+offer gambling, sell investment products, or create a secondary ticket market.
+The platform does not support cash-out or ticket resale.
+
 ---
 
 ## 6. Limitations
@@ -120,8 +149,12 @@ result in the creator account being banned.
   may still serve them after takedown until pins drop. The platform
   commits to removing its own pins; it cannot guarantee global IPFS
   unpinning.
-- A contract takedown removes the entitlement; refund rules for ticket
-  holders will be addressed in a separate policy document.
+- A contract takedown removes playback entitlement but cannot erase public
+  blockchain history or guarantee global IPFS deletion.
+- Blockchain payments are technically irreversible. If card payments are later
+  approved and launched, refunds and lost disputes will also revoke playback
+  entitlement, and YouTick's application fee will be refunded proportionally.
+- Statutory consumer rights are not limited by blockchain immutability.
 
 ---
 

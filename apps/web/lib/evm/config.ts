@@ -1,6 +1,6 @@
 import { http, createConfig } from 'wagmi';
 import { arbitrum, base } from 'wagmi/chains';
-import { injected } from 'wagmi/connectors';
+import { injected } from '@wagmi/core';
 
 /**
  * Find the real MetaMask provider among multiple injected wallets.

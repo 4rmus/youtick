@@ -93,7 +93,7 @@ export interface TransactionOutcome {
 // ============================================================================
 
 /**
- * NFT Token metadata (NEP-171)
+ * YouTick non-transferable ticket metadata
  */
 export interface NFTMetadata {
     title?: string;
@@ -227,6 +227,7 @@ export interface DeliverySegmentPayload {
     byteLength: number;
     startMs: number;
     endMs: number;
+    ivB64?: string;
     counterB64?: string;
 }
 
@@ -246,6 +247,7 @@ export interface DeliveryManifestV2 {
     version: 2;
     packaging: 'cmaf';
     encrypted: boolean;
+    encryptionAlgorithm?: 'AES-GCM' | 'AES-CTR';
     codec: string;
     contentType: 'video/mp4';
     durationMs: number;
@@ -256,6 +258,7 @@ export interface DeliveryManifestV2 {
         cid: string;
         chunks?: DeliveryPayloadChunk[];
         byteLength: number;
+        ivB64?: string;
         counterB64?: string;
     };
     tracks: DeliveryTrackInfo[];

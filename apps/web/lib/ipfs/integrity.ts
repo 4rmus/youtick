@@ -1,7 +1,7 @@
 /**
  * IPFS content-address integrity verification.
  *
- * Media is encrypted with AES-CTR, which is unauthenticated: a malicious or
+ * Legacy media may be encrypted with unauthenticated AES-CTR: a malicious or
  * compromised gateway could return tampered ciphertext that decrypts to
  * corrupted playback without detection. For CIDv1 raw-codec blocks
  * ("bafkrei..."), the CID *is* the sha2-256 digest of the raw bytes, so we can

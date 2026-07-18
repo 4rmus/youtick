@@ -1181,15 +1181,11 @@ describe('kms/client', () => {
     const retrieveCalls: string[] = [];
     let resolveB!: (value: Response) => void;
     let resolveC!: (value: Response) => void;
-    let resolveD!: (value: Response) => void;
     const pendingB = new Promise<Response>((resolve) => {
       resolveB = resolve;
     });
     const pendingC = new Promise<Response>((resolve) => {
       resolveC = resolve;
-    });
-    const pendingD = new Promise<Response>((resolve) => {
-      resolveD = resolve;
     });
 
     global.fetch = vi.fn((input: string | URL | Request) => {
@@ -1216,11 +1212,6 @@ describe('kms/client', () => {
       if (url === 'https://kms-c.example.workers.dev/retrieve') {
         retrieveCalls.push('kms-c');
         return pendingC;
-      }
-
-      if (url === 'https://kms-d.example.workers.dev/retrieve') {
-        retrieveCalls.push('kms-d');
-        return pendingD;
       }
 
       if (url.endsWith('/retrieve')) {
@@ -1251,7 +1242,7 @@ describe('kms/client', () => {
     );
 
     await waitForAssertion(() => {
-      expect(retrieveCalls).toEqual(['kms-b', 'kms-c', 'kms-d']);
+      expect(retrieveCalls).toEqual(['kms-b', 'kms-c']);
     });
 
     const makeShareResponse = (shareIndex: number) => new Response(JSON.stringify({
@@ -1271,7 +1262,6 @@ describe('kms/client', () => {
 
     resolveB(makeShareResponse(1));
     resolveC(makeShareResponse(2));
-    resolveD(makeShareResponse(3));
 
     await expect(retrievePromise).resolves.toBe(secretB64);
     expect(retrieveCalls).not.toContain('https://kms-a.example.workers.dev/retrieve');

@@ -7,7 +7,7 @@ import { isLighthouseUploadProviderActive, uploadDirectoryToStorage } from '@/li
 import { getCidPinStatusFromStorageApi, isLighthousePersistencePilotEnabled, pinCidWithStorageApi, uploadFileWithStorageApi } from '@/lib/storage/storage-api';
 import { CidCollector } from '@/lib/storage/cid-collector';
 import {
-    encryptBufferWithCounter,
+    encryptBufferAuthenticated,
     generateAESKey,
 } from '@/lib/kms/encryption';
 import { retrieveEncryptionKey, storeEncryptionKey } from '@/lib/kms/client';
@@ -222,13 +222,13 @@ export function useUpload() {
 
         setStatus('Preparing initialization segment...');
         const initBytes = new Uint8Array(packagedAsset.initSegment);
-        let initCounterB64: string | undefined;
+        let initIvB64: string | undefined;
         let initUploadBlob: Blob;
         const initPath = 'init.mp4';
 
         if (encrypted) {
-            const encryptedInit = await encryptBufferWithCounter(initBytes, encryptionKey as string);
-            initCounterB64 = encryptedInit.counterB64;
+            const encryptedInit = await encryptBufferAuthenticated(initBytes, encryptionKey as string);
+            initIvB64 = encryptedInit.ivB64;
             initUploadBlob = new Blob([toBlobPart(encryptedInit.ciphertext)], { type: 'application/octet-stream' });
         } else {
             initUploadBlob = new Blob([initBytes], { type: 'video/mp4' });
@@ -243,12 +243,12 @@ export function useUpload() {
             async (segment) => {
                 const payload = combinePackagedSegmentPayloads(segment.payloads);
                 const payloadBytes = new Uint8Array(payload.buffer);
-                let payloadCounterB64: string | undefined;
+                let payloadIvB64: string | undefined;
                 let payloadBlob: Blob;
 
                 if (encrypted) {
-                    const encryptedPayload = await encryptBufferWithCounter(payloadBytes, encryptionKey as string);
-                    payloadCounterB64 = encryptedPayload.counterB64;
+                    const encryptedPayload = await encryptBufferAuthenticated(payloadBytes, encryptionKey as string);
+                    payloadIvB64 = encryptedPayload.ivB64;
                     payloadBlob = new Blob([toBlobPart(encryptedPayload.ciphertext)], { type: 'application/octet-stream' });
                 } else {
                     payloadBlob = new Blob([payloadBytes], { type: 'video/mp4' });
@@ -262,7 +262,7 @@ export function useUpload() {
                     byteLength: payload.byteLength,
                     startMs: payload.startMs,
                     endMs: payload.endMs,
-                    counterB64: payloadCounterB64,
+                    ivB64: payloadIvB64,
                 }];
 
                 preparedSegmentCount += 1;
@@ -381,8 +381,9 @@ export function useUpload() {
                 lighthouseSegments,
                 {
                     encrypted,
+                    encryptionAlgorithm: encrypted ? 'AES-GCM' : undefined,
                     posterCid: posterCid ?? undefined,
-                    initSegmentCounterB64: initCounterB64,
+                    initSegmentIvB64: initIvB64,
                     initSegmentChunks: initUpload.chunks,
                 },
             );
@@ -414,8 +415,9 @@ export function useUpload() {
             uploadedSegments,
             {
                 encrypted,
+                encryptionAlgorithm: encrypted ? 'AES-GCM' : undefined,
                 posterCid: posterPath,
-                initSegmentCounterB64: initCounterB64,
+                initSegmentIvB64: initIvB64,
             },
         );
 

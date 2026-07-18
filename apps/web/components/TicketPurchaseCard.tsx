@@ -21,15 +21,16 @@ import {
 } from '@/lib/rhea/client';
 import { useNearPrice } from '@/hooks/useNearPrice';
 import { useEvmPayment } from '@/lib/evm/useEvmPayment';
-import { claimFreeTicketDirect, hasOnboardingKey } from '@/lib/gift-service';
+import { claimFreeTicketDirect } from '@/lib/gift-service';
 import { signAndSendWithSignlessProvision } from '@/lib/signless-access-key';
 import { resolvePreferredMediaUrl } from '@/lib/video-delivery';
-import { DEPOSIT_CONSTANTS } from '@/lib/constants';
+import type { NFTEvent } from '@/lib/types';
 
 interface TicketPurchaseCardProps {
     cid: string;
     onPurchaseSuccess?: () => void;
     className?: string;
+    event?: NFTEvent;
 }
 
 interface EventDetails {
@@ -51,7 +52,7 @@ type PaymentSelection = {
     rheaQuoteError: string | null;
 };
 
-const STORAGE_DEPOSIT_NEAR = 0.01;
+const STORAGE_DEPOSIT_NEAR = 0.03;
 const GAS_BUFFER_NEAR = 0.01;
 const NEAR_USDC_CONTRACT_ID = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
 const NEAR_USDT_CONTRACT_ID = 'usdt.tether-token.near';
@@ -78,7 +79,7 @@ function wait(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: TicketPurchaseCardProps) {
+export function TicketPurchaseCard({ cid, onPurchaseSuccess, className, event }: TicketPurchaseCardProps) {
     const { accountId, getWallet, connect, managedAccountKind } = useWallet();
     const { t } = useLanguage();
     const tp = t.ticket_purchase;
@@ -164,10 +165,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         const init = async () => {
             setLoading(true);
             try {
-                const contractId = NEAR_CONFIG.contractId;
-                const provider = getProvider();
-
-                const event = await viewContract<{
+                const resolvedEvent = event ?? await viewContract<{
                     title: string;
                     price: string;
                     creator_id: string;
@@ -175,27 +173,29 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                     price_usdc?: string | null;
                     access_mode?: 'paid' | 'free_collectible';
                     banned?: boolean;
-                }>(provider, contractId, 'get_event', { encrypted_cid: cid });
+                }>(getProvider(), NEAR_CONFIG.contractId, 'get_event', { encrypted_cid: cid });
 
-                if (event?.banned) {
+                if (resolvedEvent?.banned) {
                     setError(tp.error_banned);
                     setLoading(false);
                     return;
                 }
 
-                if (event) {
-                    const parsed = parseTitleMetadata(event.title, tp.release_fallback);
+                if (resolvedEvent) {
+                    const parsed = parseTitleMetadata(resolvedEvent.title, tp.release_fallback);
                     const media = parsed.thumbnailUrl
                         ?? await resolvePreferredMediaUrl(null, parsed.manifestCid);
 
                     setEventDetails({
-                        price: yoctoToNear(BigInt(event.price)),
-                        priceUsdCents: event.price_usd ?? null,
-                        priceUsdc: event.price_usdc ? parseInt(event.price_usdc, 10) : null,
-                        accessMode: event.access_mode ?? (event.price === '0' ? 'free_collectible' : 'paid'),
+                        price: yoctoToNear(BigInt(resolvedEvent.price)),
+                        priceUsdCents: resolvedEvent.price_usd ?? null,
+                        priceUsdc: resolvedEvent.price_usdc ? parseInt(resolvedEvent.price_usdc, 10) : null,
+                        accessMode: resolvedEvent.access_mode === 'free_collectible' || resolvedEvent.price === '0'
+                            ? 'free_collectible'
+                            : 'paid',
                         title: parsed.title,
                         media: media ?? parsed.thumbnailUrl,
-                        uploader: event.creator_id
+                        uploader: resolvedEvent.creator_id
                     });
                 }
 
@@ -208,7 +208,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         };
 
         init();
-    }, [cid, tp.error_banned, tp.error_load_ticket, tp.release_fallback]);
+    }, [cid, event, tp.error_banned, tp.error_load_ticket, tp.release_fallback]);
 
     const handleSelectionChange = useCallback((selection: PaymentSelection) => {
         setPaymentSelection(selection);
@@ -253,17 +253,15 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
         setActionLoading(true);
         setError(null);
         try {
-            // Preferred path: sponsored NFT mint via onboarding key (signless + no user deposit).
+            // Preferred path: sponsored NFT mint through the server-side relay.
             // Mints a real NFT into the user's collection for content access.
-            if (hasOnboardingKey()) {
-                const result = await claimFreeTicketDirect(accountId, cid);
-                if (!result.success) {
-                    console.warn("[FreeClaim] Direct NFT claim unavailable, falling back to wallet/session path:", result.error);
-                } else {
-                    await waitForTicketAccess(accountId);
-                    if (onPurchaseSuccess) onPurchaseSuccess();
-                    return;
-                }
+            const result = await claimFreeTicketDirect(accountId, cid);
+            if (!result.success) {
+                console.warn("[FreeClaim] Sponsored claim unavailable, falling back to wallet/session path:", result.error);
+            } else {
+                await waitForTicketAccess(accountId);
+                if (onPurchaseSuccess) onPurchaseSuccess();
+                return;
             }
 
             const contractId = NEAR_CONFIG.contractId;
@@ -275,7 +273,7 @@ export function TicketPurchaseCard({ cid, onPurchaseSuccess, className }: Ticket
                         'buy_ticket',
                         { receiver_id: accountId, encrypted_cid: cid },
                         GAS_CONSTANTS.mediumGas,
-                        DEPOSIT_CONSTANTS.smallStorageDeposit
+                        nearAmountToYocto(STORAGE_DEPOSIT_NEAR)
                     ),
                 ],
             };

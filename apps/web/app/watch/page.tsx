@@ -76,7 +76,7 @@ function WatchContent() {
             const totalCount = Number(await viewContract<number>(
                 provider,
                 NEAR_CONFIG.contractId,
-                'get_events_count',
+                'get_event_slots_count',
                 {},
             ));
             const query = getLatestEventsQuery(totalCount);
@@ -248,6 +248,7 @@ function WatchContent() {
                     <div className="rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-800 shadow-2xl">
                         <VideoPlayer
                             cid={cid}
+                            event={event}
                             thumbnailUrl={parsedTitle.thumbnailCid ? parsedTitle.thumbnailUrl : undefined}
                         />
                     </div>
@@ -276,6 +277,7 @@ function WatchContent() {
                         <div className="lg:col-span-2">
                             <TicketPurchaseCard
                                 cid={cid}
+                                event={event}
                                 onPurchaseSuccess={handlePurchaseSuccess}
                                 className="h-full"
                             />

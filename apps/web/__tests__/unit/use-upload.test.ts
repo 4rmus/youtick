@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
     createSession: vi.fn(),
     clearSession: vi.fn(),
     dispatch: vi.fn(),
-    encryptBufferWithCounter: vi.fn(),
+    encryptBufferAuthenticated: vi.fn(),
     fetchDeliveryManifest: vi.fn(),
     getWallet: vi.fn(),
     invalidateQueries: vi.fn(),
@@ -52,7 +52,7 @@ vi.mock('@/lib/storage/storage-api', () => ({
 }));
 
 vi.mock('@/lib/kms/encryption', () => ({
-    encryptBufferWithCounter: mocks.encryptBufferWithCounter,
+    encryptBufferAuthenticated: mocks.encryptBufferAuthenticated,
     generateAESKey: vi.fn(async () => 'test-key'),
 }));
 
@@ -106,9 +106,9 @@ describe('useUpload', () => {
 
         mocks.batchUploadActionsSignless.mockRejectedValue(new Error('contract failed'));
         mocks.createSession.mockResolvedValue(undefined);
-        mocks.encryptBufferWithCounter.mockImplementation(async (bytes: Uint8Array) => ({
+        mocks.encryptBufferAuthenticated.mockImplementation(async (bytes: Uint8Array) => ({
             ciphertext: bytes,
-            counterB64: 'counter',
+            ivB64: 'iv',
         }));
         mocks.fetchDeliveryManifest.mockResolvedValue({ version: 2 });
         mocks.getWallet.mockResolvedValue({ wallet: true });

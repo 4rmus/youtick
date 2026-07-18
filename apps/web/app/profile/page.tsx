@@ -72,7 +72,7 @@ export default function ProfilePage() {
             const totalCount = Number(await viewContract<number>(
                 provider,
                 NEAR_CONFIG.contractId,
-                'get_events_count',
+                'get_event_slots_count',
                 {},
             ));
             const query = getLatestEventsQuery(totalCount);

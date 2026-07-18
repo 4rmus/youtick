@@ -43,11 +43,13 @@ import {
     resolveIpfsMediaUrl,
 } from '@/lib/ipfs-media';
 import { hasRecentTicketPurchase, markRecentTicketPurchase } from '@/lib/ticket-access-cache';
+import type { NFTEvent } from '@/lib/types';
 
 interface IpfsPlayerProps {
     cid: string;
     thumbnailUrl?: string;
     initialDurationSeconds?: number;
+    event?: NFTEvent;
 }
 
 type EventAccessMode = 'paid' | 'free_collectible';
@@ -114,7 +116,7 @@ async function playVideoSafely(video: HTMLVideoElement): Promise<boolean> {
     }
 }
 
-export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPlayerProps) {
+export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds, event }: IpfsPlayerProps) {
     const { accountId, getWallet } = useWallet();
     const { t } = useLanguage();
     const playerCopy = t.video_player;
@@ -246,6 +248,17 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                 return;
             }
 
+            if (event) {
+                if (event.banned) {
+                    setPlayerState({ type: 'banned' });
+                    return;
+                }
+                setEventAccessMode(event.access_mode === 'free_collectible' || event.price === '0'
+                    ? 'free_collectible'
+                    : 'paid');
+                return;
+            }
+
             try {
                 const event = await viewContract<{
                     price: string;
@@ -280,7 +293,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
         return () => {
             cancelled = true;
         };
-    }, [cid]);
+    }, [cid, event]);
 
     useEffect(() => {
         let cancelled = false;
@@ -613,27 +626,26 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
             if (isUuid) {
                 setPlayerState({ type: 'decrypting', message: playerCopy.resolving_metadata });
                 try {
-                    const contractId = NEAR_CONFIG.contractId;
-                    const provider = getProvider();
-
-                    // Get event to extract CID from title (direct RPC, no server proxy)
-                    const event = await viewContract<{
+                    // Standalone players fetch metadata; watch passes the canonical query snapshot.
+                    const resolvedEvent = event ?? await viewContract<{
                         title: string;
                         price: string;
                         creator_id: string;
                         access_mode?: EventAccessMode;
                         banned?: boolean;
-                    }>(provider, contractId, 'get_event', { encrypted_cid: cid });
+                    }>(getProvider(), NEAR_CONFIG.contractId, 'get_event', { encrypted_cid: cid });
 
-                    if (event?.banned) {
+                    if (resolvedEvent?.banned) {
                         setPlayerState({ type: 'banned' });
                         return;
                     }
 
-                    resolvedAccessMode = event?.access_mode ?? (event?.price === '0' ? 'free_collectible' : 'paid');
+                    resolvedAccessMode = resolvedEvent?.access_mode === 'free_collectible' || resolvedEvent?.price === '0'
+                        ? 'free_collectible'
+                        : 'paid';
                     setEventAccessMode(resolvedAccessMode);
 
-                    const parsed = parseTitleMetadata(event?.title, t.watch_page.untitled);
+                    const parsed = parseTitleMetadata(resolvedEvent?.title, t.watch_page.untitled);
                     manifestCid = parsed.manifestCid || undefined;
 
                     if (parsed.thumbnailCid && parsed.thumbnailUrl) {
@@ -738,7 +750,7 @@ export function IpfsPlayer({ cid, thumbnailUrl, initialDurationSeconds }: IpfsPl
                     : playerCopy.load_failed;
             setPlayerState({ type: 'error', message });
         }
-    }, [accountId, cid, cleanupPlaybackArtifacts, eventAccessMode, getWallet, playerCopy, resolvedThumbnailUrl, t.watch_page.untitled]);
+    }, [accountId, cid, cleanupPlaybackArtifacts, event, eventAccessMode, getWallet, playerCopy, resolvedThumbnailUrl, t.watch_page.untitled]);
 
     const handlePlay = () => playVideo(false);
 

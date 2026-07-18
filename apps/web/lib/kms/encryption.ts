@@ -1,7 +1,8 @@
 /**
- * Youtick AES-CTR Encryption Module
+ * YouTick media encryption helpers
  *
- * Handles video encryption and decryption using AES-CTR mode.
+ * New segmented uploads use AES-GCM. AES-CTR helpers remain for legacy
+ * manifest playback and migration compatibility.
  * CTR mode enables random-access decryption (seek support),
  * unlike AES-GCM which requires processing the entire file.
  *
@@ -123,6 +124,28 @@ export async function encryptBufferWithCounter(
         ciphertext: new Uint8Array(ciphertext),
         counterB64: encodeCounter(counter),
     };
+}
+
+/** Encrypt one independently fetchable media payload with authenticated encryption. */
+export async function encryptBufferAuthenticated(
+    plaintext: Uint8Array,
+    keyB64: string,
+): Promise<{ ciphertext: Uint8Array; ivB64: string }> {
+    const keyBytes = base64Decode(keyB64);
+    const key = await crypto.subtle.importKey(
+        'raw',
+        keyBytes as BufferSource,
+        { name: 'AES-GCM', length: AES_KEY_BITS },
+        false,
+        ['encrypt'],
+    );
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: iv as BufferSource, tagLength: 128 },
+        key,
+        plaintext as BufferSource,
+    );
+    return { ciphertext: new Uint8Array(ciphertext), ivB64: encodeCounter(iv) };
 }
 
 /**
@@ -287,4 +310,3 @@ function offsetCounter(baseCounter: Uint8Array, blockOffset: number): Uint8Array
 
     return counter;
 }
-

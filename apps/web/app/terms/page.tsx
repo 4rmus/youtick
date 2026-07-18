@@ -10,7 +10,7 @@ export default function TermsPage() {
     <main className="min-h-screen bg-zinc-950 text-zinc-200">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <h1 className="text-4xl font-bold text-white mb-2">Terms of Service</h1>
-        <p className="text-zinc-400 mb-12">Last Updated: May 11, 2026</p>
+        <p className="text-zinc-400 mb-12">Last Updated: July 17, 2026</p>
 
         <div className="space-y-10 text-zinc-300 leading-relaxed">
           {/* 1. ACCEPTANCE */}
@@ -24,7 +24,9 @@ export default function TermsPage() {
             </p>
             <p className="mt-3">
               These Terms constitute a legally binding agreement between you (&quot;User&quot;,
-              &quot;you&quot;, &quot;your&quot;) and YouTick (&quot;we&quot;, &quot;us&quot;, &quot;our&quot;).
+              &quot;you&quot;, &quot;your&quot;) and YOUTICK LTD, a company incorporated in the United
+              Kingdom under company number 17290900, operating the YouTick platform
+              (&quot;we&quot;, &quot;us&quot;, &quot;our&quot;).
               By connecting a blockchain wallet, creating a trial account, uploading content, purchasing
               tickets, or otherwise interacting with the Platform, you acknowledge that you have read,
               understood, and agree to these Terms.
@@ -53,8 +55,8 @@ export default function TermsPage() {
                 for encrypted release files
               </li>
               <li>
-                <strong className="text-white">NFT Tickets (NEP-171)</strong>: Non-fungible token standard
-                for video access rights and ownership verification
+                <strong className="text-white">On-chain Tickets</strong>: YouTick-specific,
+                non-transferable access credentials for ownership verification
               </li>
             </ul>
             <p className="mt-3">
@@ -157,6 +159,8 @@ export default function TermsPage() {
             <ul className="list-disc list-inside mt-2 space-y-1 ml-4">
               <li>Content that infringes intellectual property rights</li>
               <li>Sexually exploitative content involving minors</li>
+              <li>Adult or sexually explicit content or services, including pornography or material primarily intended for sexual gratification</li>
+              <li>Non-consensual sexual content or sexual deepfakes</li>
               <li>Content promoting terrorism, violence, or hate speech</li>
               <li>Malware, phishing, or other harmful software</li>
               <li>Content that violates applicable laws or regulations</li>
@@ -164,10 +168,10 @@ export default function TermsPage() {
               <li>Content that violates the privacy or publicity rights of others</li>
             </ul>
             <p className="mt-3">
-              Due to the decentralized nature of the Platform, content moderation is limited. However,
-              YouTick reserves the right to restrict access to content through the Platform&apos;s
-              frontend interface. Content stored on IPFS and the blockchain may remain accessible
-              through other means.
+              YouTick may block purchases and playback through the Platform&apos;s contract, KMS,
+              storage, and frontend controls. Content stored on IPFS and public blockchain records may
+              remain accessible through third-party infrastructure even after YouTick removes its pins
+              and access permissions. Reports may be sent to abuse@youtick.net.
             </p>
           </section>
 
@@ -182,7 +186,7 @@ export default function TermsPage() {
             </p>
             <ul className="list-disc list-inside mt-2 space-y-1 ml-4">
               <li>Prices are set by content creators and denominated in NEAR tokens</li>
-              <li>All transactions are final and non-refundable once confirmed on the blockchain</li>
+              <li>Blockchain settlement is technically irreversible once confirmed; applicable statutory rights remain unaffected</li>
               <li>A 2% platform commission is deducted from paid ticket price; the remaining 98% is paid or credited to the creator</li>
               <li>Additional storage deposits (approximately 0.01 NEAR) may apply for NFT minting and are separate from the ticket-price split</li>
               <li>Transaction fees (gas) are borne by the purchaser</li>
@@ -196,6 +200,11 @@ export default function TermsPage() {
               <li><strong className="text-white">EVM Stablecoins</strong>: USDC and USDT payments via Defuse Protocol (cross-chain swap)</li>
               <li><strong className="text-white">Gift Links</strong>: Pre-purchased access distributed via shareable links</li>
             </ul>
+            <p className="mt-3">
+              Credit and debit card payments are not currently enabled. They will remain disabled
+              unless Stripe gives written approval for YouTick&apos;s content-platform and NEAR access-ticket
+              model and YouTick publishes the applicable card-payment terms.
+            </p>
 
             <h3 className="text-lg font-medium text-white mt-6 mb-3">6.3 Stablecoin Payments</h3>
             <p>
@@ -224,12 +233,14 @@ export default function TermsPage() {
               unauthorized sharing or use of gift links.
             </p>
 
-            <h3 className="text-lg font-medium text-white mt-6 mb-3">6.6 No Refunds</h3>
+            <h3 className="text-lg font-medium text-white mt-6 mb-3">6.6 Refunds and Payment Finality</h3>
             <p>
-              All blockchain transactions are final and irreversible. YouTick cannot reverse, cancel,
-              or refund any completed transaction. This is an inherent characteristic of blockchain
-              technology and not a policy choice. You are responsible for verifying all transaction
-              details before confirmation.
+              Completed blockchain transactions are technically final and cannot be reversed on-chain.
+              This does not limit any statutory consumer right that applies to you. Card payments are
+              not currently enabled. If approved and launched, an approved card refund or lost dispute
+              will also revoke the corresponding playback entitlement, and YouTick&apos;s application fee
+              will be refunded in full or proportionally. A blockchain receipt may remain visible after
+              access is revoked.
             </p>
           </section>
 
@@ -237,8 +248,8 @@ export default function TermsPage() {
           <section>
             <h2 className="text-2xl font-semibold text-white mb-4">7. NFT Ownership and Access Rights</h2>
             <p>
-              Each purchased ticket is represented as a Non-Fungible Token (NFT) compliant with the
-              NEP-171 standard on the NEAR Protocol. NFT ownership grants you:
+              Each purchased ticket is represented by a YouTick-specific, non-transferable on-chain
+              access credential on the NEAR Protocol. Ticket ownership grants you:
             </p>
             <ul className="list-disc list-inside mt-3 space-y-2 ml-4">
               <li>The right to access and view the associated encrypted video content</li>
@@ -254,6 +265,10 @@ export default function TermsPage() {
               <li>Any ownership stake in the Platform or its operations</li>
               <li>Guaranteed future value or appreciation of the NFT</li>
             </ul>
+            <p className="mt-3">
+              Tickets are non-transferable access credentials in the V1 Platform. You may not list,
+              market, resell, or use them as an investment, payment instrument, or stored-value product.
+            </p>
           </section>
 
           {/* 8. DECENTRALIZATION DISCLAIMERS */}
@@ -268,7 +283,7 @@ export default function TermsPage() {
             </p>
             <ul className="list-disc list-inside mt-2 space-y-1 ml-4">
               <li>Purchase history and transaction records</li>
-              <li>NFT ownership transfers</li>
+              <li>NFT ownership records</li>
               <li>Event creation metadata (title, price, CID references)</li>
               <li>Smart contract interactions and logs</li>
             </ul>
@@ -325,6 +340,9 @@ export default function TermsPage() {
               <li>Attempt to circumvent encryption, access control, or payment mechanisms</li>
               <li>Exploit smart contract vulnerabilities for unauthorized gain</li>
               <li>Use the Platform for money laundering, fraud, or illegal activities</li>
+              <li>Use the Platform for peer-to-peer money transmission, wallet funding, stored fiat balances, crypto exchange or brokerage, or crowdfunding</li>
+              <li>Offer gambling, betting, securities, investment products, or promised financial returns</li>
+              <li>List, market, transfer, or resell an NFT ticket through a secondary market</li>
               <li>Abuse trial account creation mechanisms (e.g., creating multiple accounts to bypass rate limits)</li>
               <li>Interfere with or disrupt the Platform&apos;s infrastructure or other users&apos; experience</li>
               <li>Scrape, crawl, or harvest data from the Platform without permission</li>
@@ -447,14 +465,15 @@ export default function TermsPage() {
           <section>
             <h2 className="text-2xl font-semibold text-white mb-4">18. Contact Information</h2>
             <p>
-              For questions or concerns regarding these Terms, please contact us through our official
-              channels or via the NEAR Protocol ecosystem.
+              YOUTICK LTD (Company No. 17290900) operates the Platform. Report prohibited content or
+              abuse to abuse@youtick.net. For other questions regarding these Terms, use the official
+              contact channels published at youtick.net.
             </p>
           </section>
 
           <div className="border-t border-zinc-800 pt-8 mt-12">
             <p className="text-zinc-500 text-sm">
-              These Terms of Service were last updated on May 11, 2026. By using YouTick, you
+              These Terms of Service were last updated on July 17, 2026. By using YouTick, you
               acknowledge that you have read, understood, and agree to be bound by these Terms.
             </p>
           </div>

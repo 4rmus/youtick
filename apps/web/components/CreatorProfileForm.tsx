@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Loader2, User, Globe, AtSign, Camera, Save } from 'lucide-react';
 import { actions } from 'near-api-js';
 import { NEAR_CONFIG, GAS_CONSTANTS } from '@/lib/constants';
+import { nearAmountToYocto } from '@/lib/near-amount';
 import { useQueryClient } from '@tanstack/react-query';
 
 interface CreatorProfileFormProps {
@@ -68,7 +69,7 @@ export function CreatorProfileForm({ onSuccess, className }: CreatorProfileFormP
                             avatar_url: avatarUrl.trim() || null,
                         },
                         GAS_CONSTANTS.mediumGas,
-                        BigInt(0)
+                        nearAmountToYocto(0.03)
                     ),
                 ],
             });

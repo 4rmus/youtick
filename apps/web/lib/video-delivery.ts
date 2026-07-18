@@ -282,7 +282,9 @@ export function toDeliveryManifestV2(
     segments: DeliverySegment[],
     options?: {
         encrypted?: boolean;
+        encryptionAlgorithm?: 'AES-GCM' | 'AES-CTR';
         posterCid?: string;
+        initSegmentIvB64?: string;
         initSegmentCounterB64?: string;
         initSegmentChunks?: Array<{ cid: string; byteLength: number }>;
     },
@@ -291,6 +293,7 @@ export function toDeliveryManifestV2(
         version: DELIVERY_MANIFEST_VERSION,
         packaging: 'cmaf',
         encrypted: options?.encrypted ?? asset.encrypted,
+        encryptionAlgorithm: options?.encryptionAlgorithm,
         codec: asset.codec,
         contentType: 'video/mp4',
         durationMs: asset.durationMs,
@@ -299,6 +302,7 @@ export function toDeliveryManifestV2(
             cid: initSegmentCid,
             chunks: options?.initSegmentChunks,
             byteLength: asset.initSegment.byteLength,
+            ivB64: options?.initSegmentIvB64,
             counterB64: options?.initSegmentCounterB64,
         },
         tracks,

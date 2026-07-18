@@ -1,11 +1,12 @@
 // lib/keystore-v7.ts
-// v7 compatible keystore wrapper for browser localStorage
+// v7 compatible session-scoped browser keystore
 import { KeyPair, KeyPairSigner, type KeyPairString } from 'near-api-js';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'near-api-js:keystore:';
 
 /**
- * Browser localStorage-based key store compatible with near-api-js v7
+ * Browser sessionStorage-based key store compatible with near-api-js v7.
+ * Full-access managed-account keys intentionally do not survive a browser session.
  * Replaces the removed keyStores.BrowserLocalStorageKeyStore
  */
 export class BrowserKeyStore {
@@ -24,12 +25,13 @@ export class BrowserKeyStore {
      */
     async setKey(networkId: string, accountId: string, keyPair: KeyPair): Promise<void> {
         if (typeof window === 'undefined') {
-            console.warn('BrowserKeyStore: localStorage not available (server-side)');
+            console.warn('BrowserKeyStore: sessionStorage not available (server-side)');
             return;
         }
         const key = this.storageKeyForSecretKey(networkId, accountId);
         // KeyPair.toString() returns the secret key string (ed25519:...)
-        localStorage.setItem(key, keyPair.toString());
+        sessionStorage.setItem(key, keyPair.toString());
+        localStorage.removeItem(key);
     }
 
     /**
@@ -40,7 +42,9 @@ export class BrowserKeyStore {
             return null;
         }
         const key = this.storageKeyForSecretKey(networkId, accountId);
-        const value = localStorage.getItem(key);
+        // Delete legacy persistent plaintext keys instead of silently extending their lifetime.
+        localStorage.removeItem(key);
+        const value = sessionStorage.getItem(key);
         if (!value) {
             return null;
         }
@@ -66,6 +70,7 @@ export class BrowserKeyStore {
             return;
         }
         const key = this.storageKeyForSecretKey(networkId, accountId);
+        sessionStorage.removeItem(key);
         localStorage.removeItem(key);
     }
 
@@ -77,13 +82,16 @@ export class BrowserKeyStore {
             return;
         }
         const keysToRemove: string[] = [];
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
+        for (let i = 0; i < sessionStorage.length; i++) {
+            const key = sessionStorage.key(i);
             if (key && key.startsWith(this.prefix)) {
                 keysToRemove.push(key);
             }
         }
-        keysToRemove.forEach(key => localStorage.removeItem(key));
+        keysToRemove.forEach(key => {
+            sessionStorage.removeItem(key);
+            localStorage.removeItem(key);
+        });
     }
 
     /**
@@ -95,8 +103,8 @@ export class BrowserKeyStore {
         }
         const accounts: string[] = [];
         const suffix = `:${networkId}`;
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
+        for (let i = 0; i < sessionStorage.length; i++) {
+            const key = sessionStorage.key(i);
             if (key && key.startsWith(this.prefix) && key.endsWith(suffix)) {
                 const accountId = key.substring(
                     this.prefix.length,

@@ -15,7 +15,7 @@ export {
     type KMSRetrieveResult,
 } from './client';
 
-// AES-CTR Encryption/Decryption
+// Authenticated AES-GCM upload and legacy AES-CTR compatibility helpers
 export {
     generateAESKey,
     importAESKey,

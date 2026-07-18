@@ -52,7 +52,8 @@ ONBOARDING_KEYS=...
 
 The primary path for trial creation is the browser-side onboarding key
 flow. The server-side relayer flow has been removed (returns 410 Gone).
-The onboarding key is fetched from the `/api/onboarding-key` endpoint
+Onboarding actions are submitted to the `/api/onboarding-key` server-side transaction relay;
+the private function-call key is never returned to or stored by the browser.
 and held briefly in `sessionStorage`. This key is not the user's
 private key; it is a narrowly-scoped onboarding authority. In
 production, keep the rate limit and `TURNSTILE_SECRET_KEY` challenge on,
@@ -66,7 +67,7 @@ components/             # Upload, player, ticket, gift, trial, provider componen
 e2e/                    # Playwright smoke tests
 hooks/                  # UI hooks
 lib/
-  kms/                  # Multi-operator KMS client + AES-CTR + share math
+  kms/                  # Multi-operator KMS client + AES-GCM/legacy CTR + share math
   ipfs/                 # IPFS read path (gateway list + media-ref helpers)
   storage/              # Lighthouse client (storage-api.ts) + provider boundary
   intents/              # 1Click quote/swap helpers
@@ -94,7 +95,6 @@ point. `near-wallet-selector` is no longer a direct dependency.
 | `IpfsPlayer` | KMS + IPFS playback (signless access key + 10-min Play grant) |
 | `TicketPurchaseCard` | NEAR `buy_ticket` + optional cross-chain checkout (with a connected wallet) |
 | `GiftLinkGenerator` | Gift link generation |
-| `OnboardingKeyInit` | Trial pool health and fallback onboarding-key check |
 | `TrialOnboarding` | Implicit account creation + Turnstile challenge |
 | `TrialUpgradeDialog` | Attach a real wallet to a managed account |
 
@@ -102,7 +102,7 @@ point. `near-wallet-selector` is no longer a direct dependency.
 
 | Operation | Active path |
 |-----------|-------------|
-| Video encryption | Browser AES-CTR |
+| Video encryption | Per-segment browser AES-256-GCM; legacy AES-CTR playback only |
 | Key custody | Shamir 3-of-5 shares across KMS operator workers |
 | Playback auth | Signless access key → 10-min Play session grant + operator registry check |
 | IPFS read | `lib/ipfs/` multi-gateway failover |

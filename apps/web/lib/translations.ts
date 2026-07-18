@@ -182,8 +182,8 @@ export const translations = {
                 revenue_split_note: "This is the publishing cost. Paid ticket sales use a separate split: 98% to the creator, 2% platform fee."
             },
             progress_title: "Publishing Progress",
-            file_too_large_free: "File exceeds the 100 MB limit for free-ticket screenings. Set a price to upload up to 500 MB.",
-            file_too_large_paid: "File exceeds the 500 MB upload limit.",
+            file_too_large_free: "File exceeds the 64 MB browser upload limit.",
+            file_too_large_paid: "File exceeds the 64 MB browser upload limit.",
             steps: {
                 session: "Wallet & Balance",
                 thumbnail: "Cover Image",
@@ -937,8 +937,8 @@ export const translations = {
                 revenue_split_note: "Bu gösterim açma maliyetidir. Ücretli bilet satışında ayrı paylaşım uygulanır: %98 üretici payı, %2 platform ücreti."
             },
             progress_title: "Gösterim Durumu",
-            file_too_large_free: "Dosya ücretsiz biletli gösterimler için 100 MB sınırını aşıyor. 500 MB'ye kadar yüklemek için bir fiyat belirle.",
-            file_too_large_paid: "Dosya 500 MB yükleme sınırını aşıyor.",
+            file_too_large_free: "Dosya 64 MB tarayıcı yükleme sınırını aşıyor.",
+            file_too_large_paid: "Dosya 64 MB tarayıcı yükleme sınırını aşıyor.",
             steps: {
                 session: "Cüzdan & Bakiye",
                 thumbnail: "Kapak Fotoğrafı",
