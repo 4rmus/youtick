@@ -4,6 +4,15 @@
 
 ---
 
+## Target Architecture
+
+- [Mevcut YouTick için merkeziyetsiz storage ve streaming nihai mimari planı](./decentralized-storage-streaming-architecture-evaluation-2026-07-21.md) `TARGET`
+
+The target plan extends the current YouTick application; it is not a clean-core
+or `core-youtick` rewrite. The remainder of this page documents the current
+public-alpha runtime and must not be read as evidence that the target plan is
+implemented or deployed.
+
 ## Summary
 
 Today, YouTick runs through five active layers:

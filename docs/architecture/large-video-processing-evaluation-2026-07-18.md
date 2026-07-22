@@ -1,8 +1,14 @@
 # YouTick büyük video yükleme ve güvenli dönüştürme değerlendirmesi
 
+> **SUPERSEDED — 22 Temmuz 2026:** Bu belgedeki R2/Livepeer ağırlıklı hedef
+> mimari artık aktif karar değildir. Kanonik hedef mimari için
+> [mevcut YouTick merkeziyetsiz storage ve streaming nihai mimari planına](./decentralized-storage-streaming-architecture-evaluation-2026-07-21.md)
+> bakın. Bu belgedeki mevcut repo sınırlamaları tarihsel araştırma kanıtı olarak
+> korunmuştur.
+
 **Tarih:** 18 Temmuz 2026<br>
 **Kapsam:** Konser, film ve uzun video master dosyalarının yüklenmesi, dönüştürülmesi, şifrelenmesi, kalıcı saklanması ve oynatılması<br>
-**Karar durumu:** Mimari öneri; kod, deploy ve canlı ortam değişikliği yapılmadı
+**Karar durumu:** `SUPERSEDED`; kod, deploy ve canlı ortam değişikliği yapılmadı
 
 ## Yönetici özeti
 
