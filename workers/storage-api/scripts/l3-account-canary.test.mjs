@@ -88,13 +88,23 @@ function fakeProvider({
   ambiguousInitialPut = false,
   wrongLengthStatus = null,
   postDeleteReplayStatus = null,
+  expiredReplayStatus = 403,
+  expiredReplayNoResponse = false,
+  expiryInitialPutStatus = 200,
+  ambiguousExpiryInitialPut = false,
+  failExpiryCleanupAuth = false,
+  lateExpiryCleanupCommit = false,
 } = {}) {
   const requests = [];
   const stored = new Map();
   let positivePutCount = 0;
+  let expiryPutCount = 0;
   let positiveGetCount = 0;
   let deleteCount = 0;
   let latePositivePath = null;
+  let expiryReplayObserved = false;
+  let expiryCleanupDeleteSeen = false;
+  let expiryCleanupHeadCount = 0;
   const fetch = async (input, init) => {
     const url = new URL(input);
     const method = init.method;
@@ -105,6 +115,8 @@ function fakeProvider({
       path,
       headers: Object.fromEntries(requestHeaders),
       bodyByteLength: init.body?.byteLength ?? null,
+      expires: url.searchParams.get('X-Amz-Expires'),
+      amzDate: url.searchParams.get('X-Amz-Date'),
     });
 
     if (url.hostname === 'gateway.example') {
@@ -116,8 +128,22 @@ function fakeProvider({
         },
       });
     }
-    const ordinal = path.includes('/objects/1-') ? 1 : 0;
+    const ordinal = path.includes('/objects/1-')
+      ? 1
+      : path.includes('/objects/2-') ? 2 : 0;
+    if (ordinal === 2
+      && expiryReplayObserved
+      && failExpiryCleanupAuth
+      && ['HEAD', 'GET', 'DELETE'].includes(method)) {
+      return new Response(null, { status: 403 });
+    }
     if (method === 'HEAD') {
+      if (ordinal === 2 && expiryCleanupDeleteSeen) {
+        expiryCleanupHeadCount += 1;
+        if (lateExpiryCleanupCommit && expiryCleanupHeadCount === 2) {
+          stored.set(path, BODY);
+        }
+      }
       return stored.has(path)
         ? new Response(null, { status: 200, headers: objectHeaders(ordinal, cid) })
         : new Response(null, { status: 404 });
@@ -138,12 +164,34 @@ function fakeProvider({
     if (method === 'DELETE') {
       deleteCount += 1;
       stored.delete(path);
+      if (ordinal === 2 && expiryReplayObserved) {
+        expiryCleanupDeleteSeen = true;
+      }
       return new Response(null, { status: 204 });
     }
     if (method === 'PUT' && ordinal === 1) {
       const status = wrongLengthStatus ?? (acceptWrongLength ? 200 : 403);
       if (isSuccessful(status)) stored.set(path, BODY.subarray(0, -1));
       return new Response(null, { status });
+    }
+    if (method === 'PUT' && ordinal === 2) {
+      expiryPutCount += 1;
+      if (expiryPutCount > 1) {
+        expiryReplayObserved = true;
+        if (expiredReplayNoResponse) {
+          throw new Error('synthetic expired replay transport failure');
+        }
+        if (isSuccessful(expiredReplayStatus)) stored.set(path, BODY);
+        return new Response(null, { status: expiredReplayStatus });
+      }
+      if (isSuccessful(expiryInitialPutStatus)) stored.set(path, BODY);
+      if (ambiguousExpiryInitialPut) {
+        throw new Error('synthetic ambiguous expiry PUT');
+      }
+      return new Response(null, {
+        status: expiryInitialPutStatus,
+        headers: objectHeaders(2, cid),
+      });
     }
     if (method === 'PUT') {
       positivePutCount += 1;
@@ -166,6 +214,7 @@ function fakeProvider({
     fetch,
     requests,
     positivePutCount: () => positivePutCount,
+    expiryPutCount: () => expiryPutCount,
     deleteCount: () => deleteCount,
     storedCount: () => stored.size,
     commitLatePositivePut: () => {
@@ -174,11 +223,29 @@ function fakeProvider({
   };
 }
 
+function fakeClock(
+  onWait = async () => {},
+  wallAdvanceImpl = (milliseconds) => milliseconds,
+  monotonicAdvanceImpl = wallAdvanceImpl,
+) {
+  let wallMs = Date.parse('2026-07-23T12:00:00.000Z');
+  let monotonicMs = 0;
+  return {
+    wallNowImpl: () => new Date(wallMs),
+    monotonicNowImpl: () => monotonicMs,
+    waitImpl: async (milliseconds) => {
+      wallMs += wallAdvanceImpl(milliseconds);
+      monotonicMs += monotonicAdvanceImpl(milliseconds);
+      await onWait(milliseconds);
+    },
+  };
+}
+
 test('requires explicit isolated-bucket and persistent-ciphertext confirmations', () => {
   assert.throws(() => readConfig({}), /L3_CANARY_ACK/);
   assert.throws(
     () => readConfig({
-      L3_CANARY_ACK: 'write-two-small-immutable-l3-canary-objects',
+      L3_CANARY_ACK: 'write-three-small-immutable-l3-canary-objects',
       L3_CANARY_ENVIRONMENT: 'DEDICATED_NONPRODUCTION',
       CONFIRM_L3_CANARY_PERSISTENT_CIPHERTEXT: 'YES',
     }),
@@ -212,18 +279,26 @@ test('captures readback, replay and cleanup evidence without serializing credent
     input: INPUT,
     provenance: PROVENANCE,
     fetchImpl: provider.fetch,
-    waitImpl: async () => {},
+    ...fakeClock(),
   });
 
   assert.equal(evidence.verdict, 'EVIDENCE_MISSING');
   assert.equal(evidence.technicalResult, 'PASS');
   assert.equal(Object.values(evidence.checks).every(Boolean), true);
   assert.equal(provider.positivePutCount(), 4);
+  assert.equal(provider.expiryPutCount(), 2);
   assert.equal(evidence.cleanup.keyReadsAbsent, true);
   assert.equal(evidence.cleanup.contentErased, false);
   assert.equal(evidence.cleanup.cidMayRemainReachable, true);
   assert.equal(evidence.cleanup.oldPutUrlRecreatedMapping, true);
   assert.equal(evidence.cleanup.safetyScans, 6);
+  assert.equal(evidence.cleanup.expirySafetyScans, 6);
+  assert.equal(evidence.checks.expiryWindowElapsed, true);
+  assert.equal(evidence.checks.expiredPutRejected, true);
+  assert.equal(
+    evidence.limitations.includes('PRESIGNED_URL_EXPIRY_NOT_VERIFIED'),
+    false,
+  );
   assert.equal(evidence.observedCid, CID);
   assert.equal(evidence.observations.put.headerNames.includes('location'), true);
   assert.equal(Object.hasOwn(evidence.observations.put, 'headers'), false);
@@ -263,6 +338,34 @@ test('captures readback, replay and cleanup evidence without serializing credent
   assert.equal(verifyEvidenceDocument(inconsistent, SCHEMA_SHA256), false);
   assert.equal(checkL3AccountCanaryEvidence(inconsistent), false);
 
+  const tamperedExpiryTiming = structuredClone(evidence);
+  tamperedExpiryTiming.observations.expiryMonotonicElapsedMs = 0;
+  tamperedExpiryTiming.evidencePayloadSha256 =
+    computeEvidencePayloadSha256(tamperedExpiryTiming);
+  assert.equal(validateSchema(tamperedExpiryTiming), true);
+  assert.equal(
+    verifyEvidenceDocument(tamperedExpiryTiming, SCHEMA_SHA256),
+    false,
+  );
+
+  const tamperedExpiryPolicy = structuredClone(evidence);
+  tamperedExpiryPolicy.requestPolicy.expiryPutTtlSeconds = 1;
+  tamperedExpiryPolicy.evidencePayloadSha256 =
+    computeEvidencePayloadSha256(tamperedExpiryPolicy);
+  assert.equal(
+    verifyEvidenceDocument(tamperedExpiryPolicy, SCHEMA_SHA256),
+    false,
+  );
+
+  const tamperedExpiryRepairCount = structuredClone(evidence);
+  tamperedExpiryRepairCount.cleanup.expiryRepairDeleteAttempts = 1;
+  tamperedExpiryRepairCount.evidencePayloadSha256 =
+    computeEvidencePayloadSha256(tamperedExpiryRepairCount);
+  assert.equal(
+    verifyEvidenceDocument(tamperedExpiryRepairCount, SCHEMA_SHA256),
+    false,
+  );
+
   const inconsistentAttempts = structuredClone(evidence);
   inconsistentAttempts.requestPolicy.positivePutAttempts = 0;
   inconsistentAttempts.requestPolicy.postDeleteReplayPutAttempts = 0;
@@ -280,6 +383,15 @@ test('captures readback, replay and cleanup evidence without serializing credent
   assert.equal(evidence.vector.wrongLengthSignedByteLength, BODY.byteLength);
   assert.equal(evidence.vector.wrongLengthSentByteLength, BODY.byteLength - 1);
   assert.equal(evidence.vector.wrongLengthDelta, -1);
+  const expiryPutRequest = provider.requests.find(
+    (request) => request.method === 'PUT'
+      && request.path.includes('/objects/2-'),
+  );
+  assert.equal(expiryPutRequest.expires, '60');
+  assert.equal(
+    expiryPutRequest.amzDate,
+    evidence.observations.expirySignedAt.replace(/[:-]|\.\d{3}/g, ''),
+  );
 
   const serialized = JSON.stringify(evidence);
   assert.equal(serialized.includes(ACCESS_KEY), false);
@@ -298,7 +410,7 @@ test('uses the raw Lighthouse provider CID for gateway readback', async () => {
     input: INPUT,
     provenance: PROVENANCE,
     fetchImpl: provider.fetch,
-    waitImpl: async () => {},
+    ...fakeClock(),
   });
 
   assert.equal(evidence.technicalResult, 'PASS');
@@ -326,7 +438,7 @@ test('fails closed if the provider accepts the one-byte-short upload', async () 
     input: INPUT,
     provenance: PROVENANCE,
     fetchImpl: provider.fetch,
-    waitImpl: async () => {},
+    ...fakeClock(),
   });
 
   assert.equal(evidence.verdict, 'NO_GO');
@@ -341,7 +453,7 @@ test('fails closed when replay requests receive no provider response', async () 
     input: INPUT,
     provenance: PROVENANCE,
     fetchImpl: provider.fetch,
-    waitImpl: async () => {},
+    ...fakeClock(),
   });
 
   assert.equal(evidence.technicalResult, 'NO_GO');
@@ -356,19 +468,19 @@ test('fails closed when replay requests receive no provider response', async () 
   assert.equal(evidence.cleanup.keyReadsAbsent, true);
 });
 
-test('always attempts both mapping deletes after a body-read exception', async () => {
+test('cleans every attempted mapping after a body-read exception', async () => {
   const provider = fakeProvider({ throwDuringFirstGetBody: true });
   const evidence = await runL3AccountCanary({
     config: CONFIG,
     input: INPUT,
     provenance: PROVENANCE,
     fetchImpl: provider.fetch,
-    waitImpl: async () => {},
+    ...fakeClock(),
   });
 
   assert.equal(evidence.technicalResult, 'NO_GO');
   assert.equal(evidence.checks.executionCompleted, false);
-  assert.equal(provider.deleteCount(), 3);
+  assert.equal(provider.deleteCount(), 2);
   assert.equal(provider.storedCount(), 0);
   assert.equal(evidence.cleanup.keyReadsAbsent, true);
 });
@@ -380,7 +492,7 @@ test('does not treat a transient 503 as wrong-length rejection evidence', async 
     input: INPUT,
     provenance: PROVENANCE,
     fetchImpl: provider.fetch,
-    waitImpl: async () => {},
+    ...fakeClock(),
   });
 
   assert.equal(evidence.technicalResult, 'NO_GO');
@@ -395,7 +507,7 @@ test('does not treat a transient 503 as a measured post-delete replay', async ()
     input: INPUT,
     provenance: PROVENANCE,
     fetchImpl: provider.fetch,
-    waitImpl: async () => {},
+    ...fakeClock(),
   });
 
   assert.equal(evidence.technicalResult, 'NO_GO');
@@ -411,13 +523,177 @@ test('does not treat a redirect as a measured post-delete replay', async () => {
     input: INPUT,
     provenance: PROVENANCE,
     fetchImpl: provider.fetch,
-    waitImpl: async () => {},
+    ...fakeClock(),
   });
 
   assert.equal(evidence.technicalResult, 'NO_GO');
   assert.equal(evidence.observations.postDeleteReplay.status, 307);
   assert.equal(evidence.checks.postDeleteReplayMeasured, false);
   assert.equal(evidence.cleanup.keyReadsAbsent, true);
+});
+
+for (const status of [200, 307, 400, 404, 429, 503]) {
+  test(`does not treat post-expiry ${status} as expiry rejection`, async () => {
+    const provider = fakeProvider({ expiredReplayStatus: status });
+    const evidence = await runL3AccountCanary({
+      config: CONFIG,
+      input: INPUT,
+      provenance: PROVENANCE,
+      fetchImpl: provider.fetch,
+      ...fakeClock(),
+    });
+
+    assert.equal(evidence.technicalResult, 'NO_GO');
+    assert.equal(evidence.observations.expiredReplay.status, status);
+    assert.equal(evidence.checks.expiredPutRejected, false);
+    assert.equal(evidence.cleanup.keyReadsAbsent, true);
+    assert.equal(
+      evidence.limitations.includes('PRESIGNED_URL_EXPIRY_NOT_VERIFIED'),
+      true,
+    );
+  });
+}
+
+test('does not treat a post-expiry transport failure as rejection', async () => {
+  const provider = fakeProvider({ expiredReplayNoResponse: true });
+  const evidence = await runL3AccountCanary({
+    config: CONFIG,
+    input: INPUT,
+    provenance: PROVENANCE,
+    fetchImpl: provider.fetch,
+    ...fakeClock(),
+  });
+
+  assert.equal(evidence.technicalResult, 'NO_GO');
+  assert.equal(evidence.observations.expiredReplay.providerOutcome, 'NO_RESPONSE');
+  assert.equal(evidence.checks.expiredPutRejected, false);
+  assert.equal(evidence.cleanup.keyReadsAbsent, true);
+});
+
+test('rejects an expiry 403 observed before both clocks cross the gate', async () => {
+  const provider = fakeProvider();
+  const evidence = await runL3AccountCanary({
+    config: CONFIG,
+    input: INPUT,
+    provenance: PROVENANCE,
+    fetchImpl: provider.fetch,
+    ...fakeClock(
+      async () => {},
+      (milliseconds) => (milliseconds > 60_000 ? milliseconds - 1_000 : milliseconds),
+    ),
+  });
+
+  assert.equal(evidence.observations.expiredReplay.status, 403);
+  assert.equal(evidence.checks.expiredPutRejected, true);
+  assert.equal(evidence.checks.expiryWindowElapsed, false);
+  assert.equal(evidence.technicalResult, 'NO_GO');
+});
+
+test('rejects expiry when only the wall clock crosses the gate', async () => {
+  const provider = fakeProvider();
+  const evidence = await runL3AccountCanary({
+    config: CONFIG,
+    input: INPUT,
+    provenance: PROVENANCE,
+    fetchImpl: provider.fetch,
+    ...fakeClock(
+      async () => {},
+      (milliseconds) => milliseconds,
+      (milliseconds) => (milliseconds > 60_000 ? milliseconds - 1_000 : milliseconds),
+    ),
+  });
+
+  assert.equal(evidence.observations.expiredReplay.status, 403);
+  assert.equal(evidence.checks.expiryWindowElapsed, false);
+  assert.equal(evidence.technicalResult, 'NO_GO');
+});
+
+test('rejects expiry when only the monotonic clock crosses the gate', async () => {
+  const provider = fakeProvider();
+  const evidence = await runL3AccountCanary({
+    config: CONFIG,
+    input: INPUT,
+    provenance: PROVENANCE,
+    fetchImpl: provider.fetch,
+    ...fakeClock(
+      async () => {},
+      (milliseconds) => (milliseconds > 60_000 ? milliseconds - 1_000 : milliseconds),
+      (milliseconds) => milliseconds,
+    ),
+  });
+
+  assert.equal(evidence.observations.expiredReplay.status, 403);
+  assert.equal(evidence.checks.expiryWindowElapsed, false);
+  assert.equal(evidence.technicalResult, 'NO_GO');
+});
+
+test('fails closed if the first short-TTL PUT is rejected', async () => {
+  const provider = fakeProvider({ expiryInitialPutStatus: 403 });
+  const evidence = await runL3AccountCanary({
+    config: CONFIG,
+    input: INPUT,
+    provenance: PROVENANCE,
+    fetchImpl: provider.fetch,
+    ...fakeClock(),
+  });
+
+  assert.equal(evidence.observations.expiryPut.status, 403);
+  assert.equal(evidence.checks.expiryObjectVerified, false);
+  assert.equal(evidence.technicalResult, 'NO_GO');
+  assert.equal(evidence.cleanup.keyReadsAbsent, true);
+});
+
+test('repairs an ambiguous first expiry PUT during final cleanup', async () => {
+  const provider = fakeProvider({ ambiguousExpiryInitialPut: true });
+  const evidence = await runL3AccountCanary({
+    config: CONFIG,
+    input: INPUT,
+    provenance: PROVENANCE,
+    fetchImpl: provider.fetch,
+    ...fakeClock(),
+  });
+
+  assert.equal(evidence.observations.expiryPut.providerOutcome, 'NO_RESPONSE');
+  assert.equal(evidence.checks.expiryObjectVerified, false);
+  assert.equal(evidence.technicalResult, 'NO_GO');
+  assert.equal(evidence.cleanup.keyReadsAbsent, true);
+  assert.equal(provider.storedCount(), 0);
+});
+
+test('records a late expiry mapping repair as fail-closed evidence', async () => {
+  const provider = fakeProvider({ lateExpiryCleanupCommit: true });
+  const evidence = await runL3AccountCanary({
+    config: CONFIG,
+    input: INPUT,
+    provenance: PROVENANCE,
+    fetchImpl: provider.fetch,
+    ...fakeClock(),
+  });
+
+  assert.equal(evidence.cleanup.expiryRepairDeleteAttempts, 1);
+  assert.equal(evidence.requestPolicy.expiryCleanupDeleteAttempts, 2);
+  assert.equal(evidence.checks.expiryCleanupConverged, false);
+  assert.equal(evidence.technicalResult, 'NO_GO');
+  assert.equal(evidence.cleanup.keyReadsAbsent, true);
+  assert.equal(verifyEvidenceDocument(evidence, SCHEMA_SHA256), true);
+  assert.equal(provider.storedCount(), 0);
+});
+
+test('fails closed when fresh expiry cleanup signatures are rejected', async () => {
+  const provider = fakeProvider({ failExpiryCleanupAuth: true });
+  const evidence = await runL3AccountCanary({
+    config: CONFIG,
+    input: INPUT,
+    provenance: PROVENANCE,
+    fetchImpl: provider.fetch,
+    ...fakeClock(),
+  });
+
+  assert.equal(evidence.observations.expiredReplay.status, 403);
+  assert.equal(evidence.observations.finalExpiryHead.status, 403);
+  assert.equal(evidence.checks.expiryCleanupConverged, false);
+  assert.equal(evidence.technicalResult, 'NO_GO');
+  assert.equal(evidence.cleanup.keyReadsAbsent, false);
 });
 
 test('repairs an ambiguous PUT that commits inside the cleanup safety window', async () => {
@@ -428,10 +704,10 @@ test('repairs an ambiguous PUT that commits inside the cleanup safety window', a
     input: INPUT,
     provenance: PROVENANCE,
     fetchImpl: provider.fetch,
-    waitImpl: async () => {
+    ...fakeClock(async () => {
       waits += 1;
       if (waits === 4) provider.commitLatePositivePut();
-    },
+    }),
   });
 
   assert.equal(evidence.technicalResult, 'NO_GO');
@@ -504,6 +780,7 @@ test('writes recovery locators to a new operator-only file', async () => {
     assert.deepEqual(record.providerKeys, [
       INPUT.positiveProviderKey,
       INPUT.wrongLengthProviderKey,
+      INPUT.expiryProviderKey,
     ]);
     await assert.rejects(
       writeRecoveryRecord({ ...CONFIG, recoveryPath }, INPUT),

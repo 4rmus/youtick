@@ -9,12 +9,14 @@ import { promisify } from 'node:util';
 import { AwsV4Signer } from 'aws4fetch';
 
 const execFileAsync = promisify(execFile);
-const ACK = 'write-two-small-immutable-l3-canary-objects';
+const ACK = 'write-three-small-immutable-l3-canary-objects';
 const ENVIRONMENT = 'DEDICATED_NONPRODUCTION';
 const ENDPOINT = 'https://s3.lighthouse.storage';
 const REGION = 'auto';
 const BODY_BYTES = 4 * 1024;
 const PRESIGN_TTL_SECONDS = 10 * 60;
+const EXPIRY_PRESIGN_TTL_SECONDS = 60;
+const EXPIRY_SAFETY_MARGIN_MS = 15 * 1000;
 const REQUEST_TIMEOUT_MS = 30 * 1000;
 const HEAD_RETRY_MS = [0, 250, 1_000, 3_000];
 const CLEANUP_RETRY_MS = [0, 250, 1_000, 3_000, 5_000];
@@ -100,6 +102,7 @@ export function createCanaryInput({
     positiveProviderKey: `jobs/${jobId}/objects/0-${ciphertextSha256}`,
     wrongLengthProviderKey:
       `jobs/${jobId}/objects/1-${wrongLengthCiphertextSha256}`,
+    expiryProviderKey: `jobs/${jobId}/objects/2-${ciphertextSha256}`,
   };
 }
 
@@ -136,7 +139,11 @@ export function buildRecoveryRecord(config, input) {
     schema: 'youtick.l3-account-canary-recovery.v1',
     runId: input.runId,
     bucket: config.bucket,
-    providerKeys: [input.positiveProviderKey, input.wrongLengthProviderKey],
+    providerKeys: [
+      input.positiveProviderKey,
+      input.wrongLengthProviderKey,
+      input.expiryProviderKey,
+    ],
     contentErasedByDelete: false,
   };
 }
@@ -155,6 +162,8 @@ export async function runL3AccountCanary({
   provenance,
   fetchImpl = fetch,
   waitImpl = wait,
+  wallNowImpl = () => new Date(),
+  monotonicNowImpl = () => performance.now(),
 }) {
   const startedAt = new Date().toISOString();
   const credentials = {
@@ -168,6 +177,7 @@ export async function runL3AccountCanary({
   };
   const positiveMetadata = expectedMetadata(input, 0);
   const negativeMetadata = expectedMetadata(input, 1);
+  const expiryMetadata = expectedMetadata(input, 2);
   const grants = await createGrants({
     config,
     input,
@@ -187,11 +197,35 @@ export async function runL3AccountCanary({
     await request(grants.negativeHead, { method: 'HEAD' }),
     negativeMetadata,
   );
+  const preflightExpiry = summarizeResponse(
+    await request(grants.expiryHead, { method: 'HEAD' }),
+    expiryMetadata,
+  );
   const preflightAbsent = preflightPositive.status === 404
-    && preflightNegative.status === 404;
+    && preflightNegative.status === 404
+    && preflightExpiry.status === 404;
 
   let wrongLength = emptyResponse();
   let wrongLengthHead = emptyResponse();
+  let expiryPut = emptyResponse();
+  let expiryHead = emptyResponse();
+  let expiryGet = emptyResponse();
+  let expiryGetBody = emptyBody();
+  let expiryDelete = emptyResponse();
+  let expiredReplay = emptyResponse();
+  let postExpiryFreshHead = emptyResponse();
+  let postExpiryFreshGet = emptyResponse();
+  let expiryCleanupDelete = emptyResponse();
+  let finalExpiryHead = emptyResponse();
+  let finalExpiryGet = emptyResponse();
+  let expiryCleanupSafetyScans = 0;
+  let expiryCleanupRepairDeleteAttempts = 0;
+  let expirySignedAt = null;
+  let expiryReplayedAt = null;
+  let expiryMonotonicElapsedMs = null;
+  let expiryPutGrant = null;
+  let expiryMonotonicStartedAtMs = null;
+  let expiryCidDetails = null;
   let put = emptyResponse();
   let head = emptyResponse();
   let get = emptyResponse();
@@ -223,6 +257,9 @@ export async function runL3AccountCanary({
   let sharedCidDetails = null;
   let positiveMutationAttempted = false;
   let negativeMutationAttempted = false;
+  let expiryMutationAttempted = false;
+  let expiredReplayAttempted = false;
+  let expiryCleanupDeleteAttempts = 0;
   let postDeleteReplayAttempted = false;
   let executionCompleted = true;
 
@@ -242,6 +279,53 @@ export async function runL3AccountCanary({
       wrongLengthHead = summarizeResponse(
         await request(grants.negativeHead, { method: 'HEAD' }),
         negativeMetadata,
+      );
+
+      const expirySignedAtDate = validNow(wallNowImpl());
+      expirySignedAt = expirySignedAtDate.toISOString();
+      expiryMonotonicStartedAtMs = validMonotonicNow(monotonicNowImpl());
+      expiryPutGrant = await presignL3CanaryPut({
+        bucket: config.bucket,
+        providerKey: input.expiryProviderKey,
+        jobId: input.jobId,
+        ordinal: 2,
+        ciphertextSha256: input.ciphertextSha256,
+        byteLength: input.body.byteLength,
+        credentials,
+        now: expirySignedAtDate,
+        expiresInSeconds: EXPIRY_PRESIGN_TTL_SECONDS,
+      });
+      expiryMutationAttempted = true;
+      expiryPut = summarizeResponse(
+        await request(expiryPutGrant.url, {
+          method: 'PUT',
+          headers: expiryPutGrant.headers,
+          body: input.body,
+        }),
+        expiryMetadata,
+      );
+      expiryHead = await pollHead({
+        request,
+        url: grants.expiryHead,
+        expectedMetadata: expiryMetadata,
+        waitImpl,
+      });
+      if (expiryHead.status === 200) {
+        const expiryGetResult = await request(grants.expiryGet, { method: 'GET' });
+        expiryGet = summarizeResponse(expiryGetResult, expiryMetadata);
+        expiryGetBody = await readBoundedBody(
+          expiryGetResult.response,
+          input.body.byteLength + 1,
+        );
+        expiryCidDetails = commonCid(
+          input.ciphertextSha256,
+          expiryPut.cidCandidates,
+          expiryHead.cidCandidates,
+          expiryGet.cidCandidates,
+        );
+      }
+      expiryDelete = summarizeResponse(
+        await request(grants.expiryDelete, { method: 'DELETE' }),
       );
 
       positiveMutationAttempted = true;
@@ -420,6 +504,72 @@ export async function runL3AccountCanary({
           executionCompleted = false;
         }
       }
+      if (expiryMutationAttempted && expiryPutGrant !== null) {
+        try {
+          const requiredElapsedMs = (
+            EXPIRY_PRESIGN_TTL_SECONDS * 1000
+          ) + EXPIRY_SAFETY_MARGIN_MS;
+          const beforeWaitWall = validNow(wallNowImpl());
+          const beforeWaitMonotonic = validMonotonicNow(monotonicNowImpl());
+          const wallRemainingMs = new Date(expirySignedAt).getTime()
+            + requiredElapsedMs
+            - beforeWaitWall.getTime();
+          const monotonicRemainingMs = expiryMonotonicStartedAtMs
+            + requiredElapsedMs
+            - beforeWaitMonotonic;
+          const waitMs = Math.max(0, wallRemainingMs, monotonicRemainingMs);
+          if (waitMs > 0) await waitImpl(Math.ceil(waitMs) + 25);
+
+          const replayedAtDate = validNow(wallNowImpl());
+          expiryReplayedAt = replayedAtDate.toISOString();
+          expiryMonotonicElapsedMs = Math.floor(
+            validMonotonicNow(monotonicNowImpl())
+              - expiryMonotonicStartedAtMs,
+          );
+          const freshExpiryGrants = await createExpiryCleanupGrants({
+            config,
+            input,
+            credentials,
+            now: replayedAtDate,
+          });
+          expiredReplayAttempted = true;
+          expiredReplay = summarizeResponse(
+            await request(expiryPutGrant.url, {
+              method: 'PUT',
+              headers: expiryPutGrant.headers,
+              body: input.body,
+            }),
+            expiryMetadata,
+          );
+          postExpiryFreshHead = summarizeResponse(
+            await request(freshExpiryGrants.head, { method: 'HEAD' }),
+            expiryMetadata,
+          );
+          postExpiryFreshGet = summarizeResponse(
+            await request(freshExpiryGrants.get, { method: 'GET' }),
+            expiryMetadata,
+          );
+          expiryCleanupDeleteAttempts += 1;
+          expiryCleanupDelete = summarizeResponse(
+            await request(freshExpiryGrants.delete, { method: 'DELETE' }),
+          );
+          const expiryCleanupResult = await convergeExpiryKeyAbsent({
+            request,
+            grants: freshExpiryGrants,
+            expectedMetadata: expiryMetadata,
+            waitImpl,
+          });
+          finalExpiryHead = expiryCleanupResult.head;
+          finalExpiryGet = expiryCleanupResult.get;
+          expiryCleanupSafetyScans = expiryCleanupResult.scanCount;
+          expiryCleanupRepairDeleteAttempts =
+            expiryCleanupResult.repairDeleteAttempts;
+          expiryCleanupDeleteAttempts +=
+            expiryCleanupResult.repairDeleteAttempts;
+        } catch {
+          executionCompleted = false;
+        }
+      }
       if (sharedCid) {
         try {
           const cidAfterDeleteResult = await request(
@@ -438,6 +588,9 @@ export async function runL3AccountCanary({
     }
   }
 
+  const expiryRequiredElapsedMs = (
+    EXPIRY_PRESIGN_TTL_SECONDS * 1000
+  ) + EXPIRY_SAFETY_MARGIN_MS;
   const checks = {
     executionCompleted,
     preflightAbsent,
@@ -482,10 +635,46 @@ export async function runL3AccountCanary({
     finalKeyReadsAbsent: finalPositiveHead.status === 404
       && finalPositiveGet.status === 404
       && finalNegativeHead.status === 404,
+    expiryObjectVerified: expiryPut.status === 200
+      && !expiryPut.redirected
+      && responseMatchesObject(expiryHead, expected)
+      && responseMatchesObject(expiryGet, expected)
+      && bodyMatches(expiryGetBody, input)
+      && expiryCidDetails !== null
+      && expiryDelete.status === 204,
+    expiryWindowElapsed: expiryTimingSatisfied({
+      signedAt: expirySignedAt,
+      replayedAt: expiryReplayedAt,
+      monotonicElapsedMs: expiryMonotonicElapsedMs,
+      requiredElapsedMs: expiryRequiredElapsedMs,
+    }),
+    expiredPutRejected: expiredReplay.providerOutcome === 'RESPONSE'
+      && !expiredReplay.redirected
+      && expiredReplay.status === 403,
+    expiryMappingAbsent: postExpiryFreshHead.status === 404
+      && postExpiryFreshGet.status === 404,
+    expiryCleanupConverged: expiryCleanupDelete.status === 204
+      && finalExpiryHead.status === 404
+      && finalExpiryGet.status === 404
+      && expiryCleanupSafetyScans === CLEANUP_RETRY_MS.length + 1
+      && expiryCleanupRepairDeleteAttempts === 0,
     cidPersistsAfterDelete: responseMatchesBody(cidAfterDelete, expected)
       && bodyMatches(cidAfterDeleteBody, input),
   };
   const technicalPass = Object.values(checks).every(Boolean);
+  const cleanupKeyReadsAbsent = (
+    positiveMutationAttempted
+      ? finalPositiveHead.status === 404 && finalPositiveGet.status === 404
+      : preflightPositive.status === 404
+  ) && (
+    negativeMutationAttempted
+      ? finalNegativeHead.status === 404
+      : preflightNegative.status === 404
+  ) && (
+    expiryMutationAttempted
+      ? finalExpiryHead.status === 404 && finalExpiryGet.status === 404
+      : preflightExpiry.status === 404
+  );
   const completedAt = new Date().toISOString();
   const evidence = {
     schema: 'youtick.l3-real-account-canary-evidence.v1',
@@ -521,6 +710,9 @@ export async function runL3AccountCanary({
       wrongLengthProviderKeySha256: sha256(
         new TextEncoder().encode(input.wrongLengthProviderKey),
       ),
+      expiryProviderKeySha256: sha256(
+        new TextEncoder().encode(input.expiryProviderKey),
+      ),
       wrongLengthBodySha256: input.wrongLengthCiphertextSha256,
       wrongLengthSignedByteLength: input.body.byteLength,
       wrongLengthSentByteLength: input.body.byteLength - 1,
@@ -532,14 +724,34 @@ export async function runL3AccountCanary({
       timeoutMs: REQUEST_TIMEOUT_MS,
       headRetryMs: HEAD_RETRY_MS,
       cleanupRetryMs: CLEANUP_RETRY_MS,
+      expiryPutTtlSeconds: EXPIRY_PRESIGN_TTL_SECONDS,
+      expirySafetyMarginMs: EXPIRY_SAFETY_MARGIN_MS,
       positivePutAttempts: positiveMutationAttempted ? 1 : 0,
       postDeleteReplayPutAttempts: postDeleteReplayAttempted ? 1 : 0,
+      expiryPutAttempts: expiryMutationAttempted ? 1 : 0,
+      expiredReplayPutAttempts: expiredReplayAttempted ? 1 : 0,
+      expiryCleanupDeleteAttempts,
     },
     observations: {
       preflightPositive,
       preflightNegative,
+      preflightExpiry,
       wrongLength,
       wrongLengthHead,
+      expiryPut,
+      expiryHead,
+      expiryGet,
+      expiryGetBody,
+      expiryDelete,
+      expirySignedAt,
+      expiryReplayedAt,
+      expiryMonotonicElapsedMs,
+      expiredReplay,
+      postExpiryFreshHead,
+      postExpiryFreshGet,
+      expiryCleanupDelete,
+      finalExpiryHead,
+      finalExpiryGet,
       put,
       head,
       get,
@@ -570,7 +782,7 @@ export async function runL3AccountCanary({
     observedCid: sharedCid,
     observedCidDetails: sharedCidDetails,
     cleanup: {
-      keyReadsAbsent: checks.finalKeyReadsAbsent,
+      keyReadsAbsent: cleanupKeyReadsAbsent,
       contentErased: false,
       cidMayRemainReachable: checks.cidPersistsAfterDelete,
       oldPutUrlRecreatedMapping:
@@ -578,6 +790,8 @@ export async function runL3AccountCanary({
         && responseMatchesObject(postDeleteReplayHead, expected),
       safetyScans: cleanupSafetyScans,
       repairDeleteAttempts: cleanupRepairDeleteAttempts,
+      expirySafetyScans: expiryCleanupSafetyScans,
+      expiryRepairDeleteAttempts: expiryCleanupRepairDeleteAttempts,
     },
     redaction: {
       mode: 'ALLOWLIST_V1',
@@ -589,7 +803,7 @@ export async function runL3AccountCanary({
     },
     limitations: [
       'REPLAY_BILLING_AND_QUOTA_DELTA_UNOBSERVABLE',
-      'PRESIGNED_URL_EXPIRY_NOT_TESTED',
+      ...(technicalPass ? [] : ['PRESIGNED_URL_EXPIRY_NOT_VERIFIED']),
       'AWS_CHUNKED_NOT_TESTED',
       'KEY_ROTATION_NOT_TESTED',
       'EXACT_20GB_RESUME_NOT_TESTED',
@@ -645,6 +859,12 @@ export function verifyEvidenceSemantics(evidence) {
       body: { byteLength: vector.byteLength },
       ciphertextSha256: vector.ciphertextSha256,
     };
+    if (evidence.requestPolicy.expiryPutTtlSeconds
+        !== EXPIRY_PRESIGN_TTL_SECONDS
+      || evidence.requestPolicy.expirySafetyMarginMs
+        !== EXPIRY_SAFETY_MARGIN_MS) {
+      return false;
+    }
     const parsedCid = parseCanonicalCid(
       evidence.observedCid,
       vector.ciphertextSha256,
@@ -654,10 +874,20 @@ export function verifyEvidenceSemantics(evidence) {
     const cidAppearsEverywhere = parsedCid !== null
       && [observations.put, observations.head, observations.get]
         .every((response) => response.cidCandidates.includes(parsedCid.cid));
+    const expiryCidDetails = commonCid(
+      vector.ciphertextSha256,
+      observations.expiryPut.cidCandidates,
+      observations.expiryHead.cidCandidates,
+      observations.expiryGet.cidCandidates,
+    );
+    const expiryRequiredElapsedMs = (
+      evidence.requestPolicy.expiryPutTtlSeconds * 1000
+    ) + evidence.requestPolicy.expirySafetyMarginMs;
     const expectedChecks = {
       executionCompleted: checks.executionCompleted === true,
       preflightAbsent: observations.preflightPositive.status === 404
-        && observations.preflightNegative.status === 404,
+        && observations.preflightNegative.status === 404
+        && observations.preflightExpiry.status === 404,
       wrongLengthRejected:
         observations.wrongLength.providerOutcome === 'RESPONSE'
         && !observations.wrongLength.redirected
@@ -711,6 +941,32 @@ export function verifyEvidenceSemantics(evidence) {
       finalKeyReadsAbsent: observations.finalPositiveHead.status === 404
         && observations.finalPositiveGet.status === 404
         && observations.finalNegativeHead.status === 404,
+      expiryObjectVerified: observations.expiryPut.status === 200
+        && !observations.expiryPut.redirected
+        && responseMatchesObject(observations.expiryHead, expected)
+        && responseMatchesObject(observations.expiryGet, expected)
+        && bodyMatches(observations.expiryGetBody, input)
+        && expiryCidDetails !== null
+        && observations.expiryDelete.status === 204,
+      expiryWindowElapsed: expiryTimingSatisfied({
+        signedAt: observations.expirySignedAt,
+        replayedAt: observations.expiryReplayedAt,
+        monotonicElapsedMs: observations.expiryMonotonicElapsedMs,
+        requiredElapsedMs: expiryRequiredElapsedMs,
+      }),
+      expiredPutRejected:
+        observations.expiredReplay.providerOutcome === 'RESPONSE'
+        && !observations.expiredReplay.redirected
+        && observations.expiredReplay.status === 403,
+      expiryMappingAbsent: observations.postExpiryFreshHead.status === 404
+        && observations.postExpiryFreshGet.status === 404,
+      expiryCleanupConverged:
+        observations.expiryCleanupDelete.status === 204
+        && observations.finalExpiryHead.status === 404
+        && observations.finalExpiryGet.status === 404
+        && evidence.cleanup.expirySafetyScans
+          === evidence.requestPolicy.cleanupRetryMs.length + 1
+        && evidence.cleanup.expiryRepairDeleteAttempts === 0,
       cidPersistsAfterDelete: responseMatchesBody(
         observations.cidAfterDelete,
         expected,
@@ -728,10 +984,34 @@ export function verifyEvidenceSemantics(evidence) {
     }
     if (technicalPass
       && (evidence.requestPolicy.positivePutAttempts !== 1
-        || evidence.requestPolicy.postDeleteReplayPutAttempts !== 1)) {
+        || evidence.requestPolicy.postDeleteReplayPutAttempts !== 1
+        || evidence.requestPolicy.expiryPutAttempts !== 1
+        || evidence.requestPolicy.expiredReplayPutAttempts !== 1
+        || evidence.requestPolicy.expiryCleanupDeleteAttempts !== 1)) {
       return false;
     }
-    if (evidence.cleanup.keyReadsAbsent !== checks.finalKeyReadsAbsent
+    if (evidence.requestPolicy.expiryCleanupDeleteAttempts !== (
+      evidence.requestPolicy.expiredReplayPutAttempts
+        + evidence.cleanup.expiryRepairDeleteAttempts
+    )) {
+      return false;
+    }
+    const cleanupKeyReadsAbsent = (
+      evidence.requestPolicy.positivePutAttempts > 0
+        ? observations.finalPositiveHead.status === 404
+          && observations.finalPositiveGet.status === 404
+        : observations.preflightPositive.status === 404
+    ) && (
+      checks.preflightAbsent
+        ? observations.finalNegativeHead.status === 404
+        : observations.preflightNegative.status === 404
+    ) && (
+      evidence.requestPolicy.expiryPutAttempts > 0
+        ? observations.finalExpiryHead.status === 404
+          && observations.finalExpiryGet.status === 404
+        : observations.preflightExpiry.status === 404
+    );
+    if (evidence.cleanup.keyReadsAbsent !== cleanupKeyReadsAbsent
       || evidence.cleanup.cidMayRemainReachable
         !== checks.cidPersistsAfterDelete
       || evidence.cleanup.contentErased !== false
@@ -741,11 +1021,25 @@ export function verifyEvidenceSemantics(evidence) {
       )) {
       return false;
     }
+    const expiryLimitation =
+      evidence.limitations.includes('PRESIGNED_URL_EXPIRY_NOT_VERIFIED');
+    if (expiryLimitation === technicalPass) return false;
     const responses = [
       observations.preflightPositive,
       observations.preflightNegative,
+      observations.preflightExpiry,
       observations.wrongLength,
       observations.wrongLengthHead,
+      observations.expiryPut,
+      observations.expiryHead,
+      observations.expiryGet,
+      observations.expiryDelete,
+      observations.expiredReplay,
+      observations.postExpiryFreshHead,
+      observations.postExpiryFreshGet,
+      observations.expiryCleanupDelete,
+      observations.finalExpiryHead,
+      observations.finalExpiryGet,
       observations.put,
       observations.head,
       observations.get,
@@ -789,7 +1083,8 @@ async function createGrants({ config, input, credentials }) {
     now: input.now,
   };
   const [positivePut, wrongLengthPut, positiveHead, negativeHead,
-    positiveGet, positiveDelete, negativeDelete] = await Promise.all([
+    expiryHead, positiveGet, expiryGet, positiveDelete, negativeDelete,
+    expiryDelete] = await Promise.all([
     presignL3CanaryPut({
       ...common,
       ordinal: 0,
@@ -816,9 +1111,23 @@ async function createGrants({ config, input, credentials }) {
       now: input.now,
     }),
     presignRequest({
+      method: 'HEAD',
+      bucket: config.bucket,
+      providerKey: input.expiryProviderKey,
+      credentials,
+      now: input.now,
+    }),
+    presignRequest({
       method: 'GET',
       bucket: config.bucket,
       providerKey: input.positiveProviderKey,
+      credentials,
+      now: input.now,
+    }),
+    presignRequest({
+      method: 'GET',
+      bucket: config.bucket,
+      providerKey: input.expiryProviderKey,
       credentials,
       now: input.now,
     }),
@@ -836,15 +1145,25 @@ async function createGrants({ config, input, credentials }) {
       credentials,
       now: input.now,
     }),
+    presignRequest({
+      method: 'DELETE',
+      bucket: config.bucket,
+      providerKey: input.expiryProviderKey,
+      credentials,
+      now: input.now,
+    }),
   ]);
   return {
     positivePut,
     wrongLengthPut,
     positiveHead,
     negativeHead,
+    expiryHead,
     positiveGet,
+    expiryGet,
     positiveDelete,
     negativeDelete,
+    expiryDelete,
   };
 }
 
@@ -857,7 +1176,9 @@ export async function presignL3CanaryPut({
   byteLength,
   credentials,
   now,
+  expiresInSeconds = PRESIGN_TTL_SECONDS,
 }) {
+  validatePresignTtl(expiresInSeconds);
   const headers = {
     'content-length': String(byteLength),
     'content-type': 'application/octet-stream',
@@ -866,7 +1187,7 @@ export async function presignL3CanaryPut({
     'x-amz-meta-youtick-object-ordinal': String(ordinal),
   };
   const url = objectUrl(bucket, providerKey);
-  url.searchParams.set('X-Amz-Expires', String(PRESIGN_TTL_SECONDS));
+  url.searchParams.set('X-Amz-Expires', String(expiresInSeconds));
   const signed = await new AwsV4Signer({
     method: 'PUT',
     url: url.toString(),
@@ -893,9 +1214,17 @@ export async function presignL3CanaryPut({
   };
 }
 
-async function presignRequest({ method, bucket, providerKey, credentials, now }) {
+async function presignRequest({
+  method,
+  bucket,
+  providerKey,
+  credentials,
+  now,
+  expiresInSeconds = PRESIGN_TTL_SECONDS,
+}) {
+  validatePresignTtl(expiresInSeconds);
   const url = objectUrl(bucket, providerKey);
-  url.searchParams.set('X-Amz-Expires', String(PRESIGN_TTL_SECONDS));
+  url.searchParams.set('X-Amz-Expires', String(expiresInSeconds));
   const signed = await new AwsV4Signer({
     method,
     url: url.toString(),
@@ -908,6 +1237,26 @@ async function presignRequest({ method, bucket, providerKey, credentials, now })
     allHeaders: true,
   }).sign();
   return signed.url.toString();
+}
+
+async function createExpiryCleanupGrants({
+  config,
+  input,
+  credentials,
+  now,
+}) {
+  const common = {
+    bucket: config.bucket,
+    providerKey: input.expiryProviderKey,
+    credentials,
+    now,
+  };
+  const [head, get, deleteGrant] = await Promise.all([
+    presignRequest({ ...common, method: 'HEAD' }),
+    presignRequest({ ...common, method: 'GET' }),
+    presignRequest({ ...common, method: 'DELETE' }),
+  ]);
+  return { head, get, delete: deleteGrant };
 }
 
 async function pollHead({ request, url, expectedMetadata, waitImpl }) {
@@ -983,6 +1332,44 @@ async function convergeKeyMappingsAbsent({
     scanCount,
     repairDeleteAttempts,
   };
+}
+
+async function convergeExpiryKeyAbsent({
+  request,
+  grants,
+  expectedMetadata,
+  waitImpl,
+}) {
+  let head = emptyResponse();
+  let get = emptyResponse();
+  let scanCount = 0;
+  let repairDeleteAttempts = 0;
+
+  for (const delay of CLEANUP_RETRY_MS) {
+    if (delay > 0) await waitImpl(delay);
+    head = summarizeResponse(
+      await request(grants.head, { method: 'HEAD' }),
+      expectedMetadata,
+    );
+    get = summarizeResponse(
+      await request(grants.get, { method: 'GET' }),
+      expectedMetadata,
+    );
+    scanCount += 1;
+    if (head.status === 404 && get.status === 404) continue;
+    await request(grants.delete, { method: 'DELETE' });
+    repairDeleteAttempts += 1;
+  }
+  head = summarizeResponse(
+    await request(grants.head, { method: 'HEAD' }),
+    expectedMetadata,
+  );
+  get = summarizeResponse(
+    await request(grants.get, { method: 'GET' }),
+    expectedMetadata,
+  );
+  scanCount += 1;
+  return { head, get, scanCount, repairDeleteAttempts };
 }
 
 async function safeFetch(fetchImpl, url, init) {
@@ -1083,11 +1470,28 @@ function bodyMatches(body, input) {
     && body.overflow === false;
 }
 
+function expiryTimingSatisfied({
+  signedAt,
+  replayedAt,
+  monotonicElapsedMs,
+  requiredElapsedMs,
+}) {
+  const signedAtMs = Date.parse(signedAt);
+  const replayedAtMs = Date.parse(replayedAt);
+  return Number.isFinite(signedAtMs)
+    && Number.isFinite(replayedAtMs)
+    && Number.isSafeInteger(monotonicElapsedMs)
+    && Number.isSafeInteger(requiredElapsedMs)
+    && requiredElapsedMs > 0
+    && replayedAtMs - signedAtMs >= requiredElapsedMs
+    && monotonicElapsedMs >= requiredElapsedMs;
+}
+
 function expectedMetadata(input, ordinal) {
   return {
-    'x-amz-meta-youtick-ciphertext-sha256': ordinal === 0
-      ? input.ciphertextSha256
-      : input.wrongLengthCiphertextSha256,
+    'x-amz-meta-youtick-ciphertext-sha256': ordinal === 1
+      ? input.wrongLengthCiphertextSha256
+      : input.ciphertextSha256,
     'x-amz-meta-youtick-job-id': input.jobId,
     'x-amz-meta-youtick-object-ordinal': String(ordinal),
   };
@@ -1198,6 +1602,26 @@ function parseContentLength(value) {
   if (!value || !/^\d+$/.test(value)) return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function validNow(value) {
+  if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
+    throw new Error('Invalid wall clock');
+  }
+  return value;
+}
+
+function validMonotonicNow(value) {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error('Invalid monotonic clock');
+  }
+  return value;
+}
+
+function validatePresignTtl(value) {
+  if (!Number.isInteger(value) || value < 1 || value > 7 * 24 * 60 * 60) {
+    throw new Error('Invalid presign TTL');
+  }
 }
 
 function validateGatewayBase(value) {

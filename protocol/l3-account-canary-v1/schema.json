@@ -139,6 +139,7 @@
         "ciphertextSha256",
         "positiveProviderKeySha256",
         "wrongLengthProviderKeySha256",
+        "expiryProviderKeySha256",
         "wrongLengthBodySha256",
         "wrongLengthSignedByteLength",
         "wrongLengthSentByteLength",
@@ -159,6 +160,9 @@
           "$ref": "#/$defs/sha256"
         },
         "wrongLengthProviderKeySha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "expiryProviderKeySha256": {
           "$ref": "#/$defs/sha256"
         },
         "wrongLengthBodySha256": {
@@ -199,8 +203,13 @@
         "timeoutMs",
         "headRetryMs",
         "cleanupRetryMs",
+        "expiryPutTtlSeconds",
+        "expirySafetyMarginMs",
         "positivePutAttempts",
-        "postDeleteReplayPutAttempts"
+        "postDeleteReplayPutAttempts",
+        "expiryPutAttempts",
+        "expiredReplayPutAttempts",
+        "expiryCleanupDeleteAttempts"
       ],
       "properties": {
         "presignTtlSeconds": {
@@ -226,6 +235,12 @@
             5000
           ]
         },
+        "expiryPutTtlSeconds": {
+          "const": 60
+        },
+        "expirySafetyMarginMs": {
+          "const": 15000
+        },
         "positivePutAttempts": {
           "type": "integer",
           "minimum": 0,
@@ -235,6 +250,21 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 1
+        },
+        "expiryPutAttempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "expiredReplayPutAttempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "expiryCleanupDeleteAttempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
         }
       }
     },
@@ -244,8 +274,23 @@
       "required": [
         "preflightPositive",
         "preflightNegative",
+        "preflightExpiry",
         "wrongLength",
         "wrongLengthHead",
+        "expiryPut",
+        "expiryHead",
+        "expiryGet",
+        "expiryGetBody",
+        "expiryDelete",
+        "expirySignedAt",
+        "expiryReplayedAt",
+        "expiryMonotonicElapsedMs",
+        "expiredReplay",
+        "postExpiryFreshHead",
+        "postExpiryFreshGet",
+        "expiryCleanupDelete",
+        "finalExpiryHead",
+        "finalExpiryGet",
         "put",
         "head",
         "get",
@@ -279,10 +324,75 @@
         "preflightNegative": {
           "$ref": "#/$defs/response"
         },
+        "preflightExpiry": {
+          "$ref": "#/$defs/response"
+        },
         "wrongLength": {
           "$ref": "#/$defs/response"
         },
         "wrongLengthHead": {
+          "$ref": "#/$defs/response"
+        },
+        "expiryPut": {
+          "$ref": "#/$defs/response"
+        },
+        "expiryHead": {
+          "$ref": "#/$defs/response"
+        },
+        "expiryGet": {
+          "$ref": "#/$defs/response"
+        },
+        "expiryGetBody": {
+          "$ref": "#/$defs/body"
+        },
+        "expiryDelete": {
+          "$ref": "#/$defs/response"
+        },
+        "expirySignedAt": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expiryReplayedAt": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expiryMonotonicElapsedMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "expiredReplay": {
+          "$ref": "#/$defs/response"
+        },
+        "postExpiryFreshHead": {
+          "$ref": "#/$defs/response"
+        },
+        "postExpiryFreshGet": {
+          "$ref": "#/$defs/response"
+        },
+        "expiryCleanupDelete": {
+          "$ref": "#/$defs/response"
+        },
+        "finalExpiryHead": {
+          "$ref": "#/$defs/response"
+        },
+        "finalExpiryGet": {
           "$ref": "#/$defs/response"
         },
         "put": {
@@ -386,6 +496,11 @@
         "postDeleteReplayMeasured",
         "finalDeleteAccepted",
         "finalKeyReadsAbsent",
+        "expiryObjectVerified",
+        "expiryWindowElapsed",
+        "expiredPutRejected",
+        "expiryMappingAbsent",
+        "expiryCleanupConverged",
         "cidPersistsAfterDelete"
       ],
       "properties": {
@@ -434,6 +549,21 @@
         "finalKeyReadsAbsent": {
           "type": "boolean"
         },
+        "expiryObjectVerified": {
+          "type": "boolean"
+        },
+        "expiryWindowElapsed": {
+          "type": "boolean"
+        },
+        "expiredPutRejected": {
+          "type": "boolean"
+        },
+        "expiryMappingAbsent": {
+          "type": "boolean"
+        },
+        "expiryCleanupConverged": {
+          "type": "boolean"
+        },
         "cidPersistsAfterDelete": {
           "type": "boolean"
         }
@@ -468,7 +598,9 @@
         "cidMayRemainReachable",
         "oldPutUrlRecreatedMapping",
         "safetyScans",
-        "repairDeleteAttempts"
+        "repairDeleteAttempts",
+        "expirySafetyScans",
+        "expiryRepairDeleteAttempts"
       ],
       "properties": {
         "keyReadsAbsent": {
@@ -492,6 +624,16 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 10
+        },
+        "expirySafetyScans": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "expiryRepairDeleteAttempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
         }
       }
     },
@@ -529,13 +671,13 @@
     },
     "limitations": {
       "type": "array",
-      "minItems": 7,
+      "minItems": 6,
       "maxItems": 7,
       "uniqueItems": true,
       "items": {
         "enum": [
           "REPLAY_BILLING_AND_QUOTA_DELTA_UNOBSERVABLE",
-          "PRESIGNED_URL_EXPIRY_NOT_TESTED",
+          "PRESIGNED_URL_EXPIRY_NOT_VERIFIED",
           "AWS_CHUNKED_NOT_TESTED",
           "KEY_ROTATION_NOT_TESTED",
           "EXACT_20GB_RESUME_NOT_TESTED",
@@ -590,6 +732,15 @@
               },
               "postDeleteReplayPutAttempts": {
                 "const": 1
+              },
+              "expiryPutAttempts": {
+                "const": 1
+              },
+              "expiredReplayPutAttempts": {
+                "const": 1
+              },
+              "expiryCleanupDeleteAttempts": {
+                "const": 1
               }
             }
           },
@@ -641,6 +792,21 @@
               "finalKeyReadsAbsent": {
                 "const": true
               },
+              "expiryObjectVerified": {
+                "const": true
+              },
+              "expiryWindowElapsed": {
+                "const": true
+              },
+              "expiredPutRejected": {
+                "const": true
+              },
+              "expiryMappingAbsent": {
+                "const": true
+              },
+              "expiryCleanupConverged": {
+                "const": true
+              },
               "cidPersistsAfterDelete": {
                 "const": true
               }
@@ -657,6 +823,12 @@
               },
               "safetyScans": {
                 "const": 6
+              },
+              "expirySafetyScans": {
+                "const": 6
+              },
+              "expiryRepairDeleteAttempts": {
+                "const": 0
               }
             }
           }
