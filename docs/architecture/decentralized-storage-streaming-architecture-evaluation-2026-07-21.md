@@ -14,7 +14,9 @@ en fazla `64 MiB` immutable ciphertext object'lerinin tekil presigned `PutObject
 ile doğrudan yüklenmesi, object-level resume ve bütün envanteri bağlayan canonical
 JSON manifest CID'sidir. 2026-07-23 Lite gerçek-hesap küçük canary'si exact
 PUT/HEAD/GET, full readback, signed length reddi, replay ve cleanup davranışını
-teknik olarak geçmiştir; bu sonuç 20 GB, fatura/quota, expiry, dedicated gateway,
+teknik olarak geçmiştir. Ayrı 60 saniyelik PUT grant'i, iki yerel saat ve 15 saniye
+emniyet payı sonrasında `403` ile reddedilmiş; taze HEAD/GET `404` ve bounded
+cleanup sonucu doğrulanmıştır. Bu sonuç 20 GB, fatura/quota, dedicated gateway,
 Filecoin veya production kanıtı değildir. Dedicated Lighthouse gateway CDN origin adayı, Bunny CDN
 Volume tek primary viewer-delivery katmanıdır; NEAR runtime referansı nearcore
 `2.13.1` ve mainnet Protocol `86`dır.
@@ -1428,7 +1430,8 @@ Paid production öncesi gateway + Volume kapısı:
    bypass, yanlış key ve süresi geçmiş URL reddediliyor. Aynı URL replay/overwrite
    quota/fatura deltası ölçülüyor; kontrol dışı tekrar maliyeti varsa direct mode
    açılmıyor. Lite küçük canary exact key/length, full readback ve replay teknik
-   kısmını geçti; expiry, `aws-chunked` ve provider telemetry deltası açık kaldı.
+   kısmıyla birlikte 60 saniyelik grant expiry reddini geçti; `aws-chunked` ve
+   provider telemetry deltası açık kaldı.
    Yanlış byte her durumda full readback ile finalize öncesi reddediliyor.
 2. Exact `20.000.000.000` byte source fixture; app/OS kill, ağ kesintisi, URL
    yenileme, L3/API kesintisi, `503 SlowDown` ve object-level resume testlerini
@@ -2448,16 +2451,19 @@ Worker veya queue'dan geçmemelidir.
 Bu gerçek-hesap kapısının ilk opt-in aracı repo içinde
 `workers/storage-api/scripts/l3-account-canary.mjs` olarak eklenmiştir.
 Canary yalnız açık mutasyon onayı verilmiş dedicated non-production bucket'ta
-iki benzersiz `4 KiB` sentetik object yazar. Exact PUT, HEAD, L3 full GET,
+üç benzersiz-key `4 KiB` sentetik object yazar. Exact PUT, HEAD, L3 full GET,
 CID-gateway full GET, bir byte kısa signed-length negatif PUT, iki aynı-URL
-replay ve replay sonrası ikinci bounded full GET ölçülür. Ardından iki mapping
+replay ve replay sonrası ikinci bounded full GET ölçülür. Ardından ilk iki mapping
 DELETE edilir; signed HEAD+GET `404` görüldükten sonra süresi dolmamış eski PUT
 URL bir kez daha çağrılır, mapping yeniden oluşursa exact full readback yapılır
 ve ikinci DELETE uygulanır. Son HEAD+GET `404` sonucu 9.25 saniyelik bounded
-`HEAD/GET -> gerekirse DELETE` safety window içinde tekrar doğrulanır. Recovery
-dosyası başarılı koşuda da korunur; bu pencere grant expiry veya gelecekteki
-replay'i kanıtlamaz. CID'nin mapping silindikten sonra kalıcı okunabilirliği de
-ölçülür. Yalnız
+`HEAD/GET -> gerekirse DELETE` safety window içinde tekrar doğrulanır. Üçüncü
+key'in 60 saniyelik PUT grant'i önce `200` ile çalışır, HEAD/GET/full body/CID
+ile doğrulanır ve silinir. Duvar saati ile monotonik saat imza anından itibaren
+75 saniyeyi geçtikten sonra aynı URL'nin yalnız yönlendirmesiz provider `403`
+sonucu expiry kanıtı sayılır; taze imzalı HEAD+GET `404` ve ayrı bounded cleanup
+zorunludur. Recovery dosyası başarılı koşuda da korunur. CID'nin mapping
+silindikten sonra kalıcı okunabilirliği de ölçülür. Yalnız
 `x-amz-meta-cid` kabul edilir; değer canonical CIDv0/base58btc dag-pb veya
 lowercase CIDv1/base32 `raw|dag-pb` ve `sha2-256/32-byte` olarak parse edilir;
 raw CIDv1 digest'i ciphertext SHA-256 ile eşleşmek zorundadır. Mutation öncesinde operatorün
@@ -2466,27 +2472,28 @@ oluşturulur. Presigned URL/query, credential, ham header map, ham response body
 veya ham hata evidence'e girmez; çıktı
 `protocol/l3-account-canary-v1/schema.json` ile fail-closed doğrulanır.
 `technicalResult=PASS` dahi production GO değildir ve üst verdict replay
-fatura/quota etkisi ile presigned URL expiry ölçülmediği için
-`EVIDENCE_MISSING` kalır. Evidence RFC 8785 canonical JSON ile hashlenir;
+fatura/quota, `aws-chunked`, key rotation, exact 20 GB, Filecoin, CDN ve playback
+kanıtları eksik olduğu için `EVIDENCE_MISSING` kalır. Evidence RFC 8785 canonical JSON ile hashlenir;
 schema, payload hash ve gözlem/check ilişkileri ayrı machine checker tarafından
 yeniden doğrulanır.
 
-2026-07-23 Lite gerçek-hesap koşusunda `technicalResult=PASS`,
-`verdict=EVIDENCE_MISSING` ve bütün 16 teknik check `true` olmuştur. Exact PUT,
+2026-07-23 Lite gerçek-hesap expiry koşusunda `technicalResult=PASS`,
+`verdict=EVIDENCE_MISSING` ve bütün 21 teknik check `true` olmuştur. Exact PUT,
 HEAD, L3 full GET, CIDv0 public-gateway full GET, iki replay, replay sonrası
 readback, signed-length negatif PUT, post-delete eski URL ile mapping'in yeniden
-oluşması ve final mapping cleanup ölçülmüştür. Bucket koşu sonunda `0` object
-göstermiş; CID mapping silinse de sentetik içerik gateway'de okunabilir kalmıştır.
+oluşması, 60 saniyelik grant'in 15 saniye emniyet payı sonrasında `403` reddi,
+taze HEAD/GET `404` ve üç key'in final cleanup sonucu ölçülmüştür. CID mapping
+silinse de sentetik içerik gateway'de okunabilir kalmıştır.
 Machine evidence payload SHA-256
-`d6af8771c7005279579de6085a169b6d05c7bca7aa03dc3ed65addbb01fc7cbf`dır.
+`924cfaac0c1fe18c36275999badef32deb755d91c2b0cf3a28094aabc98f8b52`dır.
 Koşu exact source commit
-`269fc4dd93e470f52d710eb8d54547fd5ec4d883` üzerinde `sourceDirty=false`
-olarak tekrarlanmıştır; önceki dirty gözlem bu temiz provenance kanıtıyla
+`7891187abc72c3dd36929ddfd75eff146545feec` üzerinde `sourceDirty=false`
+olarak tekrarlanmıştır; önceki 16-check gözlemi bu temiz expiry kanıtıyla
 supersede edilmiştir.
 Machine evidence'e dahil olmayan ayrı exploratory probe'larda body digest
 `x-amz-content-sha256` presigned varyantı `SignatureDoesNotMatch` vermiş,
 `x-amz-checksum-sha256` ise aynı uzunluktaki bozuk body'yi de `200` kabul etmiştir.
-Replay fatura/quota deltası, presigned URL expiry, `aws-chunked`, key rotation,
+Replay fatura/quota deltası, `aws-chunked`, key rotation,
 exact 20 GB resume, Filecoin, CDN ve playback kapıları açıktır.
 
 Ardından aynı protokol küçük bir CLI canary ile gerçek L3 hesabında tek-key
