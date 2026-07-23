@@ -1,0 +1,979 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://youtick.net/schemas/l3-account-canary-v1.json",
+  "title": "YouTick Lighthouse L3 real-account canary evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "payloadCanonicalization",
+    "verdict",
+    "technicalResult",
+    "run",
+    "provenance",
+    "target",
+    "vector",
+    "requestPolicy",
+    "observations",
+    "checks",
+    "observedCid",
+    "observedCidDetails",
+    "cleanup",
+    "redaction",
+    "limitations",
+    "evidencePayloadSha256"
+  ],
+  "properties": {
+    "schema": {
+      "const": "youtick.l3-real-account-canary-evidence.v1"
+    },
+    "payloadCanonicalization": {
+      "const": "RFC8785_JCS"
+    },
+    "verdict": {
+      "enum": [
+        "NO_GO",
+        "EVIDENCE_MISSING"
+      ]
+    },
+    "technicalResult": {
+      "enum": [
+        "PASS",
+        "NO_GO"
+      ]
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId",
+        "environment",
+        "startedAt",
+        "completedAt"
+      ],
+      "properties": {
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "environment": {
+          "const": "DEDICATED_NONPRODUCTION"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceCommit",
+        "sourceDirty",
+        "scriptSha256",
+        "productionSignerSha256",
+        "evidenceSchemaSha256",
+        "lockfileSha256",
+        "runtimeVersion"
+      ],
+      "properties": {
+        "sourceCommit": {
+          "$ref": "#/$defs/sha1"
+        },
+        "sourceDirty": {
+          "type": "boolean"
+        },
+        "scriptSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "productionSignerSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "evidenceSchemaSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "lockfileSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "runtimeVersion": {
+          "type": "string",
+          "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endpointOrigin",
+        "region",
+        "bucketSha256",
+        "cidGatewayBaseSha256"
+      ],
+      "properties": {
+        "endpointOrigin": {
+          "const": "https://s3.lighthouse.storage"
+        },
+        "region": {
+          "const": "auto"
+        },
+        "bucketSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "cidGatewayBaseSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "vector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vectorId",
+        "byteLength",
+        "ciphertextSha256",
+        "positiveProviderKeySha256",
+        "wrongLengthProviderKeySha256",
+        "wrongLengthBodySha256",
+        "wrongLengthSignedByteLength",
+        "wrongLengthSentByteLength",
+        "wrongLengthDelta",
+        "signedHeaderNames"
+      ],
+      "properties": {
+        "vectorId": {
+          "$ref": "#/$defs/sha256"
+        },
+        "byteLength": {
+          "const": 4096
+        },
+        "ciphertextSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "positiveProviderKeySha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "wrongLengthProviderKeySha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "wrongLengthBodySha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "wrongLengthSignedByteLength": {
+          "const": 4096
+        },
+        "wrongLengthSentByteLength": {
+          "const": 4095
+        },
+        "wrongLengthDelta": {
+          "const": -1
+        },
+        "signedHeaderNames": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "content-length",
+              "content-type",
+              "host",
+              "x-amz-meta-youtick-ciphertext-sha256",
+              "x-amz-meta-youtick-job-id",
+              "x-amz-meta-youtick-object-ordinal"
+            ]
+          }
+        }
+      }
+    },
+    "requestPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "presignTtlSeconds",
+        "timeoutMs",
+        "headRetryMs",
+        "cleanupRetryMs",
+        "positivePutAttempts",
+        "postDeleteReplayPutAttempts"
+      ],
+      "properties": {
+        "presignTtlSeconds": {
+          "const": 600
+        },
+        "timeoutMs": {
+          "const": 30000
+        },
+        "headRetryMs": {
+          "const": [
+            0,
+            250,
+            1000,
+            3000
+          ]
+        },
+        "cleanupRetryMs": {
+          "const": [
+            0,
+            250,
+            1000,
+            3000,
+            5000
+          ]
+        },
+        "positivePutAttempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "postDeleteReplayPutAttempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "preflightPositive",
+        "preflightNegative",
+        "wrongLength",
+        "wrongLengthHead",
+        "put",
+        "head",
+        "get",
+        "getBody",
+        "cidGet",
+        "cidGetBody",
+        "replays",
+        "headAfterReplay",
+        "getAfterReplay",
+        "getAfterReplayBody",
+        "deletePositive",
+        "deleteNegative",
+        "postDeletePositiveHead",
+        "postDeletePositiveGet",
+        "postDeleteNegativeHead",
+        "postDeleteReplay",
+        "postDeleteReplayHead",
+        "postDeleteReplayGet",
+        "postDeleteReplayGetBody",
+        "finalDeletePositive",
+        "finalPositiveHead",
+        "finalPositiveGet",
+        "finalNegativeHead",
+        "cidAfterDelete",
+        "cidAfterDeleteBody"
+      ],
+      "properties": {
+        "preflightPositive": {
+          "$ref": "#/$defs/response"
+        },
+        "preflightNegative": {
+          "$ref": "#/$defs/response"
+        },
+        "wrongLength": {
+          "$ref": "#/$defs/response"
+        },
+        "wrongLengthHead": {
+          "$ref": "#/$defs/response"
+        },
+        "put": {
+          "$ref": "#/$defs/response"
+        },
+        "head": {
+          "$ref": "#/$defs/response"
+        },
+        "get": {
+          "$ref": "#/$defs/response"
+        },
+        "getBody": {
+          "$ref": "#/$defs/body"
+        },
+        "cidGet": {
+          "$ref": "#/$defs/response"
+        },
+        "cidGetBody": {
+          "$ref": "#/$defs/body"
+        },
+        "replays": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/response"
+          }
+        },
+        "headAfterReplay": {
+          "$ref": "#/$defs/response"
+        },
+        "getAfterReplay": {
+          "$ref": "#/$defs/response"
+        },
+        "getAfterReplayBody": {
+          "$ref": "#/$defs/body"
+        },
+        "deletePositive": {
+          "$ref": "#/$defs/response"
+        },
+        "deleteNegative": {
+          "$ref": "#/$defs/response"
+        },
+        "postDeletePositiveHead": {
+          "$ref": "#/$defs/response"
+        },
+        "postDeletePositiveGet": {
+          "$ref": "#/$defs/response"
+        },
+        "postDeleteNegativeHead": {
+          "$ref": "#/$defs/response"
+        },
+        "postDeleteReplay": {
+          "$ref": "#/$defs/response"
+        },
+        "postDeleteReplayHead": {
+          "$ref": "#/$defs/response"
+        },
+        "postDeleteReplayGet": {
+          "$ref": "#/$defs/response"
+        },
+        "postDeleteReplayGetBody": {
+          "$ref": "#/$defs/body"
+        },
+        "finalDeletePositive": {
+          "$ref": "#/$defs/response"
+        },
+        "finalPositiveHead": {
+          "$ref": "#/$defs/response"
+        },
+        "finalPositiveGet": {
+          "$ref": "#/$defs/response"
+        },
+        "finalNegativeHead": {
+          "$ref": "#/$defs/response"
+        },
+        "cidAfterDelete": {
+          "$ref": "#/$defs/response"
+        },
+        "cidAfterDeleteBody": {
+          "$ref": "#/$defs/body"
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executionCompleted",
+        "preflightAbsent",
+        "wrongLengthRejected",
+        "putAccepted",
+        "headExact",
+        "getExact",
+        "cidConsistent",
+        "cidGetExact",
+        "replayMeasured",
+        "replayStable",
+        "deleteAccepted",
+        "initialKeyReadsAbsent",
+        "postDeleteReplayMeasured",
+        "finalDeleteAccepted",
+        "finalKeyReadsAbsent",
+        "cidPersistsAfterDelete"
+      ],
+      "properties": {
+        "executionCompleted": {
+          "type": "boolean"
+        },
+        "preflightAbsent": {
+          "type": "boolean"
+        },
+        "wrongLengthRejected": {
+          "type": "boolean"
+        },
+        "putAccepted": {
+          "type": "boolean"
+        },
+        "headExact": {
+          "type": "boolean"
+        },
+        "getExact": {
+          "type": "boolean"
+        },
+        "cidConsistent": {
+          "type": "boolean"
+        },
+        "cidGetExact": {
+          "type": "boolean"
+        },
+        "replayMeasured": {
+          "type": "boolean"
+        },
+        "replayStable": {
+          "type": "boolean"
+        },
+        "deleteAccepted": {
+          "type": "boolean"
+        },
+        "initialKeyReadsAbsent": {
+          "type": "boolean"
+        },
+        "postDeleteReplayMeasured": {
+          "type": "boolean"
+        },
+        "finalDeleteAccepted": {
+          "type": "boolean"
+        },
+        "finalKeyReadsAbsent": {
+          "type": "boolean"
+        },
+        "cidPersistsAfterDelete": {
+          "type": "boolean"
+        }
+      }
+    },
+    "observedCid": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/cid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observedCidDetails": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/cidDetails"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keyReadsAbsent",
+        "contentErased",
+        "cidMayRemainReachable",
+        "oldPutUrlRecreatedMapping",
+        "safetyScans",
+        "repairDeleteAttempts"
+      ],
+      "properties": {
+        "keyReadsAbsent": {
+          "type": "boolean"
+        },
+        "contentErased": {
+          "const": false
+        },
+        "cidMayRemainReachable": {
+          "type": "boolean"
+        },
+        "oldPutUrlRecreatedMapping": {
+          "type": "boolean"
+        },
+        "safetyScans": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "repairDeleteAttempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "rawUrlPresent",
+        "queryValuePresent",
+        "rawHeaderMapPresent",
+        "rawErrorMessagePresent",
+        "forbiddenSubstringMatches"
+      ],
+      "properties": {
+        "mode": {
+          "const": "ALLOWLIST_V1"
+        },
+        "rawUrlPresent": {
+          "const": false
+        },
+        "queryValuePresent": {
+          "const": false
+        },
+        "rawHeaderMapPresent": {
+          "const": false
+        },
+        "rawErrorMessagePresent": {
+          "const": false
+        },
+        "forbiddenSubstringMatches": {
+          "const": 0
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "REPLAY_BILLING_AND_QUOTA_DELTA_UNOBSERVABLE",
+          "PRESIGNED_URL_EXPIRY_NOT_TESTED",
+          "AWS_CHUNKED_NOT_TESTED",
+          "KEY_ROTATION_NOT_TESTED",
+          "EXACT_20GB_RESUME_NOT_TESTED",
+          "FILECOIN_DEAL_NOT_VERIFIED",
+          "CDN_AND_PLAYBACK_NOT_VERIFIED"
+        ]
+      }
+    },
+    "evidencePayloadSha256": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "technicalResult": {
+            "const": "PASS"
+          }
+        },
+        "required": [
+          "technicalResult"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "const": "EVIDENCE_MISSING"
+          },
+          "observedCid": {
+            "$ref": "#/$defs/cid"
+          },
+          "observedCidDetails": {
+            "$ref": "#/$defs/cidDetails"
+          },
+          "observations": {
+            "type": "object",
+            "properties": {
+              "replays": {
+                "type": "array",
+                "minItems": 2
+              }
+            }
+          },
+          "requestPolicy": {
+            "type": "object",
+            "properties": {
+              "positivePutAttempts": {
+                "const": 1
+              },
+              "postDeleteReplayPutAttempts": {
+                "const": 1
+              }
+            }
+          },
+          "checks": {
+            "type": "object",
+            "properties": {
+              "executionCompleted": {
+                "const": true
+              },
+              "preflightAbsent": {
+                "const": true
+              },
+              "wrongLengthRejected": {
+                "const": true
+              },
+              "putAccepted": {
+                "const": true
+              },
+              "headExact": {
+                "const": true
+              },
+              "getExact": {
+                "const": true
+              },
+              "cidConsistent": {
+                "const": true
+              },
+              "cidGetExact": {
+                "const": true
+              },
+              "replayMeasured": {
+                "const": true
+              },
+              "replayStable": {
+                "const": true
+              },
+              "deleteAccepted": {
+                "const": true
+              },
+              "initialKeyReadsAbsent": {
+                "const": true
+              },
+              "postDeleteReplayMeasured": {
+                "const": true
+              },
+              "finalDeleteAccepted": {
+                "const": true
+              },
+              "finalKeyReadsAbsent": {
+                "const": true
+              },
+              "cidPersistsAfterDelete": {
+                "const": true
+              }
+            }
+          },
+          "cleanup": {
+            "type": "object",
+            "properties": {
+              "keyReadsAbsent": {
+                "const": true
+              },
+              "cidMayRemainReachable": {
+                "const": true
+              },
+              "safetyScans": {
+                "const": 6
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "technicalResult": {
+            "const": "NO_GO"
+          }
+        },
+        "required": [
+          "technicalResult"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "const": "NO_GO"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "cid": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^Qm[1-9A-HJ-NP-Za-km-z]{44}$"
+        },
+        {
+          "type": "string",
+          "pattern": "^b[a-z2-7]{58}$"
+        }
+      ]
+    },
+    "cidDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cid",
+        "version",
+        "codec",
+        "multihash",
+        "rawDigestMatchesCiphertext"
+      ],
+      "properties": {
+        "cid": {
+          "$ref": "#/$defs/cid"
+        },
+        "version": {
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "codec": {
+          "enum": [
+            "raw",
+            "dag-pb"
+          ]
+        },
+        "multihash": {
+          "const": "sha2-256-32"
+        },
+        "rawDigestMatchesCiphertext": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "const": 0
+              }
+            },
+            "required": [
+              "version"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "codec": {
+                "const": "dag-pb"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "codec": {
+                "const": "raw"
+              }
+            },
+            "required": [
+              "codec"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "rawDigestMatchesCiphertext": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "codec": {
+                "const": "dag-pb"
+              }
+            },
+            "required": [
+              "codec"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "rawDigestMatchesCiphertext": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "byteLength",
+        "sha256",
+        "overflow"
+      ],
+      "properties": {
+        "byteLength": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "sha256": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "overflow": {
+          "type": "boolean"
+        }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerOutcome",
+        "status",
+        "redirected",
+        "headerNames",
+        "contentLength",
+        "contentRangePresent",
+        "contentEncodingPresent",
+        "metadataMatches",
+        "cidCandidates",
+        "etagPresent",
+        "etagSha256",
+        "requestIdPresent"
+      ],
+      "properties": {
+        "providerOutcome": {
+          "enum": [
+            "RESPONSE",
+            "NO_RESPONSE"
+          ]
+        },
+        "status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 100,
+          "maximum": 599
+        },
+        "redirected": {
+          "type": "boolean"
+        },
+        "headerNames": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+$"
+          }
+        },
+        "contentLength": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "contentRangePresent": {
+          "type": "boolean"
+        },
+        "contentEncodingPresent": {
+          "type": "boolean"
+        },
+        "metadataMatches": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "cidCandidates": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/cid"
+          }
+        },
+        "etagPresent": {
+          "type": "boolean"
+        },
+        "etagSha256": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requestIdPresent": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "providerOutcome": {
+                "const": "NO_RESPONSE"
+              }
+            },
+            "required": [
+              "providerOutcome"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "providerOutcome": {
+                "const": "RESPONSE"
+              }
+            },
+            "required": [
+              "providerOutcome"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

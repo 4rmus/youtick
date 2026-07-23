@@ -1,0 +1,309 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://youtick.net/protocol/storage-manifest-v1.schema.json",
+  "title": "YouTick StorageManifestV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "content_id",
+    "encryption_generation",
+    "media",
+    "network_id",
+    "nft_contract_id",
+    "objects",
+    "schema",
+    "version_id"
+  ],
+  "properties": {
+    "content_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "encryption_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "media": {
+      "$ref": "#/$defs/media"
+    },
+    "network_id": {
+      "enum": [
+        "mainnet",
+        "testnet"
+      ]
+    },
+    "nft_contract_id": {
+      "$ref": "#/$defs/nearAccountId"
+    },
+    "objects": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/object"
+      }
+    },
+    "schema": {
+      "const": "youtick.storage-manifest.v1"
+    },
+    "version_id": {
+      "$ref": "#/$defs/identifier"
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "positiveSafeInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "nearAccountId": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+([._-][a-z0-9]+)*$"
+    },
+    "nullableSafeInteger": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "nullablePositiveSafeInteger": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "media": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "content_type",
+        "duration_ms",
+        "packaging",
+        "tracks"
+      ],
+      "properties": {
+        "content_type": {
+          "const": "video/mp4"
+        },
+        "duration_ms": {
+          "$ref": "#/$defs/positiveSafeInteger"
+        },
+        "packaging": {
+          "const": "cmaf"
+        },
+        "tracks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/track"
+          }
+        }
+      }
+    },
+    "track": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bitrate",
+        "codec",
+        "kind",
+        "rendition",
+        "timescale",
+        "track_id"
+      ],
+      "properties": {
+        "bitrate": {
+          "$ref": "#/$defs/positiveSafeInteger"
+        },
+        "codec": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "enum": [
+            "audio",
+            "video"
+          ]
+        },
+        "rendition": {
+          "$ref": "#/$defs/identifier"
+        },
+        "timescale": {
+          "$ref": "#/$defs/positiveSafeInteger"
+        },
+        "track_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        }
+      }
+    },
+    "encryption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "aad_version",
+        "algorithm",
+        "format",
+        "nonce_b64"
+      ],
+      "properties": {
+        "aad_version": {
+          "const": "youtick.media-object-aad.v1"
+        },
+        "algorithm": {
+          "const": "AES-256-GCM"
+        },
+        "format": {
+          "const": "aes-gcm-tag-appended.v1"
+        },
+        "nonce_b64": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]{16}$"
+        }
+      }
+    },
+    "object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "byte_length",
+        "cid",
+        "ciphertext_sha256",
+        "duration_ms",
+        "encryption",
+        "ordinal",
+        "path",
+        "plaintext_length",
+        "role",
+        "sequence",
+        "start_ms",
+        "track_id"
+      ],
+      "properties": {
+        "byte_length": {
+          "type": "integer",
+          "minimum": 17,
+          "maximum": 67108864
+        },
+        "cid": {
+          "type": "string",
+          "pattern": "^b[a-z2-7]{58}$"
+        },
+        "ciphertext_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "duration_ms": {
+          "$ref": "#/$defs/nullablePositiveSafeInteger"
+        },
+        "encryption": {
+          "$ref": "#/$defs/encryption"
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9999
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*$"
+        },
+        "plaintext_length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 67108848
+        },
+        "role": {
+          "enum": [
+            "init",
+            "segment"
+          ]
+        },
+        "sequence": {
+          "$ref": "#/$defs/nullableSafeInteger"
+        },
+        "start_ms": {
+          "$ref": "#/$defs/nullableSafeInteger"
+        },
+        "track_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 4294967295
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "init"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "duration_ms": {
+                "const": null
+              },
+              "sequence": {
+                "const": null
+              },
+              "start_ms": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "segment"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "duration_ms": {
+                "$ref": "#/$defs/positiveSafeInteger"
+              },
+              "sequence": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "start_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "track_id": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4294967295
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

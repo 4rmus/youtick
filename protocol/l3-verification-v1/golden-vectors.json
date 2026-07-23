@@ -1,0 +1,23 @@
+{
+  "cidNormalization": {
+    "providerCid": "QmTbtSdEz8KW7yz39LDXV7zoL2KRDuryag67otC1bkzvAu",
+    "manifestCid": "bafybeicoggwmbzskyaucmpiwltskt2kpj2zankdpcerjjm3ris4xhyjbbi"
+  },
+  "identity": {
+    "authorityDigest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "jobId": "job-01hxyz",
+    "generation": 1,
+    "reservationId": "reservation-00000001",
+    "ordinal": 7,
+    "providerKey": "jobs/job-01hxyz/objects/7-abababababababababababababababababababababababababababababababab",
+    "ciphertextSha256": "abababababababababababababababababababababababababababababababab",
+    "byteLength": 1048593
+  },
+  "task": {
+    "schema": "youtick.l3-readback.verify.v1",
+    "verificationId": "32e51a67e1e58c7d4d8fea610e9e674751732f67d7acc354f589a06e628b3d9d",
+    "jobId": "job-01hxyz",
+    "generation": 1,
+    "ordinal": 7
+  }
+}

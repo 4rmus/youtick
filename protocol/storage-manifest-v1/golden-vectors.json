@@ -1,0 +1,290 @@
+{
+  "canonical_json": "{\"content_id\":\"content-42\",\"encryption_generation\":1,\"media\":{\"content_type\":\"video/mp4\",\"duration_ms\":4000,\"packaging\":\"cmaf\",\"tracks\":[{\"bitrate\":2500000,\"codec\":\"avc1.640028\",\"kind\":\"video\",\"rendition\":\"720p\",\"timescale\":90000,\"track_id\":1},{\"bitrate\":128000,\"codec\":\"mp4a.40.2\",\"kind\":\"audio\",\"rendition\":\"128k\",\"timescale\":48000,\"track_id\":2}]},\"network_id\":\"mainnet\",\"nft_contract_id\":\"youtick.near\",\"objects\":[{\"byte_length\":1048576,\"cid\":\"bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja\",\"ciphertext_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"duration_ms\":null,\"encryption\":{\"aad_version\":\"youtick.media-object-aad.v1\",\"algorithm\":\"AES-256-GCM\",\"format\":\"aes-gcm-tag-appended.v1\",\"nonce_b64\":\"AQEBAQEBAQEBAQEB\"},\"ordinal\":0,\"path\":\"video/720p/init.mp4\",\"plaintext_length\":1048560,\"role\":\"init\",\"sequence\":null,\"start_ms\":null,\"track_id\":null},{\"byte_length\":8388608,\"cid\":\"bafybeigdyrzt4h73yxq5f7v7xqvuvh4t2cwz4jlh43z4s6xbrb3wybr5rq\",\"ciphertext_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"duration_ms\":4000,\"encryption\":{\"aad_version\":\"youtick.media-object-aad.v1\",\"algorithm\":\"AES-256-GCM\",\"format\":\"aes-gcm-tag-appended.v1\",\"nonce_b64\":\"AgICAgICAgICAgIC\"},\"ordinal\":1,\"path\":\"video/720p/000000.m4s\",\"plaintext_length\":8388592,\"role\":\"segment\",\"sequence\":0,\"start_ms\":0,\"track_id\":1},{\"byte_length\":524288,\"cid\":\"bafybeibwzifm2xvqvnzd3d6g7x7prc6k3qj4k7xw2ed5z5w3v3fzx6zutu\",\"ciphertext_sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"duration_ms\":4000,\"encryption\":{\"aad_version\":\"youtick.media-object-aad.v1\",\"algorithm\":\"AES-256-GCM\",\"format\":\"aes-gcm-tag-appended.v1\",\"nonce_b64\":\"AwMDAwMDAwMDAwMD\"},\"ordinal\":2,\"path\":\"audio/128k/000000.m4s\",\"plaintext_length\":524272,\"role\":\"segment\",\"sequence\":0,\"start_ms\":0,\"track_id\":2}],\"schema\":\"youtick.storage-manifest.v1\",\"version_id\":\"version-1\"}",
+  "object_aad_json": [
+    "{\"aad_version\":\"youtick.media-object-aad.v1\",\"content_id\":\"content-42\",\"duration_ms\":null,\"encryption_generation\":1,\"network_id\":\"mainnet\",\"nft_contract_id\":\"youtick.near\",\"ordinal\":0,\"path\":\"video/720p/init.mp4\",\"plaintext_length\":1048560,\"rendition\":null,\"role\":\"init\",\"sequence\":null,\"start_ms\":null,\"track_id\":null,\"version_id\":\"version-1\"}",
+    "{\"aad_version\":\"youtick.media-object-aad.v1\",\"content_id\":\"content-42\",\"duration_ms\":4000,\"encryption_generation\":1,\"network_id\":\"mainnet\",\"nft_contract_id\":\"youtick.near\",\"ordinal\":1,\"path\":\"video/720p/000000.m4s\",\"plaintext_length\":8388592,\"rendition\":\"720p\",\"role\":\"segment\",\"sequence\":0,\"start_ms\":0,\"track_id\":1,\"version_id\":\"version-1\"}",
+    "{\"aad_version\":\"youtick.media-object-aad.v1\",\"content_id\":\"content-42\",\"duration_ms\":4000,\"encryption_generation\":1,\"network_id\":\"mainnet\",\"nft_contract_id\":\"youtick.near\",\"ordinal\":2,\"path\":\"audio/128k/000000.m4s\",\"plaintext_length\":524272,\"rendition\":\"128k\",\"role\":\"segment\",\"sequence\":0,\"start_ms\":0,\"track_id\":2,\"version_id\":\"version-1\"}"
+  ],
+  "inventory_root": "d3ad92a5685c90c44871f84ab7992f42c05a0cef3404e67538870e37c072887f",
+  "invalid_manifests": [
+    {
+      "name": "ordinal_must_match_array_index",
+      "manifest": {
+        "content_id": "content-42",
+        "encryption_generation": 1,
+        "media": {
+          "content_type": "video/mp4",
+          "duration_ms": 4000,
+          "packaging": "cmaf",
+          "tracks": [
+            {
+              "bitrate": 2500000,
+              "codec": "avc1.640028",
+              "kind": "video",
+              "rendition": "720p",
+              "timescale": 90000,
+              "track_id": 1
+            }
+          ]
+        },
+        "network_id": "mainnet",
+        "nft_contract_id": "youtick.near",
+        "objects": [
+          {
+            "byte_length": 1048576,
+            "cid": "bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja",
+            "ciphertext_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+            "duration_ms": null,
+            "encryption": {
+              "aad_version": "youtick.media-object-aad.v1",
+              "algorithm": "AES-256-GCM",
+              "format": "aes-gcm-tag-appended.v1",
+              "nonce_b64": "AQEBAQEBAQEBAQEB"
+            },
+            "ordinal": 1,
+            "path": "video/720p/init.mp4",
+            "plaintext_length": 1048560,
+            "role": "init",
+            "sequence": null,
+            "start_ms": null,
+            "track_id": 1
+          }
+        ],
+        "schema": "youtick.storage-manifest.v1",
+        "version_id": "version-1"
+      }
+    },
+    {
+      "name": "path_must_be_relative_and_normalized",
+      "manifest": {
+        "content_id": "content-42",
+        "encryption_generation": 1,
+        "media": {
+          "content_type": "video/mp4",
+          "duration_ms": 4000,
+          "packaging": "cmaf",
+          "tracks": [
+            {
+              "bitrate": 2500000,
+              "codec": "avc1.640028",
+              "kind": "video",
+              "rendition": "720p",
+              "timescale": 90000,
+              "track_id": 1
+            }
+          ]
+        },
+        "network_id": "mainnet",
+        "nft_contract_id": "youtick.near",
+        "objects": [
+          {
+            "byte_length": 1048576,
+            "cid": "bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja",
+            "ciphertext_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+            "duration_ms": null,
+            "encryption": {
+              "aad_version": "youtick.media-object-aad.v1",
+              "algorithm": "AES-256-GCM",
+              "format": "aes-gcm-tag-appended.v1",
+              "nonce_b64": "AQEBAQEBAQEBAQEB"
+            },
+            "ordinal": 0,
+            "path": "../video/init.mp4",
+            "plaintext_length": 1048560,
+            "role": "init",
+            "sequence": null,
+            "start_ms": null,
+            "track_id": 1
+          }
+        ],
+        "schema": "youtick.storage-manifest.v1",
+        "version_id": "version-1"
+      }
+    },
+    {
+      "name": "object_must_not_exceed_64_mib",
+      "manifest": {
+        "content_id": "content-42",
+        "encryption_generation": 1,
+        "media": {
+          "content_type": "video/mp4",
+          "duration_ms": 4000,
+          "packaging": "cmaf",
+          "tracks": [
+            {
+              "bitrate": 2500000,
+              "codec": "avc1.640028",
+              "kind": "video",
+              "rendition": "720p",
+              "timescale": 90000,
+              "track_id": 1
+            }
+          ]
+        },
+        "network_id": "mainnet",
+        "nft_contract_id": "youtick.near",
+        "objects": [
+          {
+            "byte_length": 67108865,
+            "cid": "bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja",
+            "ciphertext_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+            "duration_ms": null,
+            "encryption": {
+              "aad_version": "youtick.media-object-aad.v1",
+              "algorithm": "AES-256-GCM",
+              "format": "aes-gcm-tag-appended.v1",
+              "nonce_b64": "AQEBAQEBAQEBAQEB"
+            },
+            "ordinal": 0,
+            "path": "video/720p/init.mp4",
+            "plaintext_length": 67108849,
+            "role": "init",
+            "sequence": null,
+            "start_ms": null,
+            "track_id": 1
+          }
+        ],
+        "schema": "youtick.storage-manifest.v1",
+        "version_id": "version-1"
+      }
+    },
+    {
+      "name": "ciphertext_hash_must_be_lowercase_hex",
+      "manifest": {
+        "content_id": "content-42",
+        "encryption_generation": 1,
+        "media": {
+          "content_type": "video/mp4",
+          "duration_ms": 4000,
+          "packaging": "cmaf",
+          "tracks": [
+            {
+              "bitrate": 2500000,
+              "codec": "avc1.640028",
+              "kind": "video",
+              "rendition": "720p",
+              "timescale": 90000,
+              "track_id": 1
+            }
+          ]
+        },
+        "network_id": "mainnet",
+        "nft_contract_id": "youtick.near",
+        "objects": [
+          {
+            "byte_length": 1048576,
+            "cid": "bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja",
+            "ciphertext_sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "duration_ms": null,
+            "encryption": {
+              "aad_version": "youtick.media-object-aad.v1",
+              "algorithm": "AES-256-GCM",
+              "format": "aes-gcm-tag-appended.v1",
+              "nonce_b64": "AQEBAQEBAQEBAQEB"
+            },
+            "ordinal": 0,
+            "path": "video/720p/init.mp4",
+            "plaintext_length": 1048560,
+            "role": "init",
+            "sequence": null,
+            "start_ms": null,
+            "track_id": 1
+          }
+        ],
+        "schema": "youtick.storage-manifest.v1",
+        "version_id": "version-1"
+      }
+    }
+  ],
+  "manifest": {
+    "content_id": "content-42",
+    "encryption_generation": 1,
+    "media": {
+      "content_type": "video/mp4",
+      "duration_ms": 4000,
+      "packaging": "cmaf",
+      "tracks": [
+        {
+          "bitrate": 2500000,
+          "codec": "avc1.640028",
+          "kind": "video",
+          "rendition": "720p",
+          "timescale": 90000,
+          "track_id": 1
+        },
+        {
+          "bitrate": 128000,
+          "codec": "mp4a.40.2",
+          "kind": "audio",
+          "rendition": "128k",
+          "timescale": 48000,
+          "track_id": 2
+        }
+      ]
+    },
+    "network_id": "mainnet",
+    "nft_contract_id": "youtick.near",
+    "objects": [
+      {
+        "byte_length": 1048576,
+        "cid": "bafybeiewdtjpoddsgwauzzdczd6ccxtsyr65mcyo7si7u2uqiqnwj57eja",
+        "ciphertext_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "duration_ms": null,
+        "encryption": {
+          "aad_version": "youtick.media-object-aad.v1",
+          "algorithm": "AES-256-GCM",
+          "format": "aes-gcm-tag-appended.v1",
+          "nonce_b64": "AQEBAQEBAQEBAQEB"
+        },
+        "ordinal": 0,
+        "path": "video/720p/init.mp4",
+        "plaintext_length": 1048560,
+        "role": "init",
+        "sequence": null,
+        "start_ms": null,
+        "track_id": null
+      },
+      {
+        "byte_length": 8388608,
+        "cid": "bafybeigdyrzt4h73yxq5f7v7xqvuvh4t2cwz4jlh43z4s6xbrb3wybr5rq",
+        "ciphertext_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "duration_ms": 4000,
+        "encryption": {
+          "aad_version": "youtick.media-object-aad.v1",
+          "algorithm": "AES-256-GCM",
+          "format": "aes-gcm-tag-appended.v1",
+          "nonce_b64": "AgICAgICAgICAgIC"
+        },
+        "ordinal": 1,
+        "path": "video/720p/000000.m4s",
+        "plaintext_length": 8388592,
+        "role": "segment",
+        "sequence": 0,
+        "start_ms": 0,
+        "track_id": 1
+      },
+      {
+        "byte_length": 524288,
+        "cid": "bafybeibwzifm2xvqvnzd3d6g7x7prc6k3qj4k7xw2ed5z5w3v3fzx6zutu",
+        "ciphertext_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "duration_ms": 4000,
+        "encryption": {
+          "aad_version": "youtick.media-object-aad.v1",
+          "algorithm": "AES-256-GCM",
+          "format": "aes-gcm-tag-appended.v1",
+          "nonce_b64": "AwMDAwMDAwMDAwMD"
+        },
+        "ordinal": 2,
+        "path": "audio/128k/000000.m4s",
+        "plaintext_length": 524272,
+        "role": "segment",
+        "sequence": 0,
+        "start_ms": 0,
+        "track_id": 2
+      }
+    ],
+    "schema": "youtick.storage-manifest.v1",
+    "version_id": "version-1"
+  },
+  "manifest_root": "12db8ff331b28757f5c60ab842b3ad4c15af947aed81bb4b117962bbd6d059d4"
+}

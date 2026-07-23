@@ -1,28 +1,38 @@
 # YouTick mevcut uygulama için Desktop, 20 GB paid video, merkeziyetsiz storage ve yüksek ölçekli streaming nihai mimari planı
 
-**Tarih:** 2026-07-22
+**Tarih:** 2026-07-23
 
 **Durum:** Mevcut YouTick için nihai hedef mimari ve uygulama planı;
 uygulama, deploy veya production kanıtı değildir
 
 **Güncelleme:** Mevcut YouTick sistemi korunarak creator odaklı Desktop uygulaması
 tasarlanmış, paid kaynak video sınırı tam `20.000.000.000 byte` kabul edilmiş,
-web paid upload kaldırılmış; Lighthouse L3 doğrudan ciphertext ingress,
-dedicated Lighthouse gateway CDN origin'i ve Bunny CDN Volume tek primary
-viewer-delivery katmanı olarak seçilmiş; NEAR runtime referansı nearcore `2.13.1`
-ve mainnet Protocol `86` ile yeniden kontrol edilmiştir.
+web paid upload kaldırılmıştır. Lighthouse L3 hattı 2026-07-23 tarihli resmi
+dokümantasyon ve `lighthouse-web3/lighthouse-package` kaynak koduyla yeniden
+tasarlanmıştır: normal ürün yolu multipart/CAR veya Lighthouse encrypted SDK değil,
+en fazla `64 MiB` immutable ciphertext object'lerinin tekil presigned `PutObject`
+ile doğrudan yüklenmesi, object-level resume ve bütün envanteri bağlayan canonical
+JSON manifest CID'sidir. 2026-07-23 Lite gerçek-hesap küçük canary'si exact
+PUT/HEAD/GET, full readback, signed length reddi, replay ve cleanup davranışını
+teknik olarak geçmiştir; bu sonuç 20 GB, fatura/quota, expiry, dedicated gateway,
+Filecoin veya production kanıtı değildir. Dedicated Lighthouse gateway CDN origin adayı, Bunny CDN
+Volume tek primary viewer-delivery katmanıdır; NEAR runtime referansı nearcore
+`2.13.1` ve mainnet Protocol `86`dır.
 
 **İncelenen repo snapshot'ı:** `agent/performance-security-hardening` / `bce0c6cecef19bfcba2333f8d8ed7e13aebaca53`
 
 **NEAR referans çizgisi:** nearcore `2.13.1` (`9d05464`), mainnet Protocol
 `86`; 2026-07-22 tarihli resmi release ve canlı RPC kanıtı
 
-**Yöntem:** Yerel kod ve belge denetimi, paralel mimari/güvenlik incelemesi,
-2026-07-22 tarihli resmi sağlayıcı, Tauri ve nearcore kaynaklarının yeniden kontrolü
+**Yöntem:** Yerel kod ve belge denetimi, mimari/güvenlik incelemesi, 2026-07-23
+tarihli resmi sağlayıcı ve Tauri belgeleri, nearcore kaynakları ile
+`lighthouse-web3/lighthouse-package@9b35c67d7f1aa8a2f8827c40e6e68b8ece83bb79`
+kaynak kodunun yeniden kontrolü
 
-**Sınır:** Mainnet protocol/runtime config salt-okunur doğrulandı; GitHub CI,
-canlı Cloudflare deployment'ları, deploy edilmiş NEAR kontrat code hash'leri ve
-gerçek sağlayıcı hesapları bu çalışma içinde doğrulanmadı.
+**Sınır:** Mainnet protocol/runtime config salt-okunur doğrulandı; Lighthouse Lite
+hesabında yalnız sentetik `4 KiB` gerçek-hesap canary'si çalıştırıldı. GitHub CI,
+canlı Cloudflare deployment'ları, deploy edilmiş NEAR kontrat code hash'leri,
+dedicated gateway ve production sağlayıcı hesabı doğrulanmadı.
 
 ## 1. Yönetici kararı
 
@@ -79,7 +89,7 @@ Bu güncellemede kabul edilen ürün kararları:
 | Sahiplik, satış, entitlement | Mevcut NEAR kontratları; additive finalize/v3 alanları | CDN tokenı |
 | Paid erişim anahtarı | 5 bağımsız KMS operatörü | CDN tokenı yalnız abuse kontrolü; Bunny DRM kullanılmaz |
 | Transcode ve paketleme | Paid için mevcut sisteme bağlı Studio Desktop'ta yerel FFmpeg/CMAF | Free veya açık rızalı akışta Livepeer/Bunny/Cloudflare |
-| Desktop ciphertext ingress | Lighthouse L3 exact-object presigned PUT batch'i | Worker proxy veya client'a verilen master S3 key |
+| Desktop ciphertext ingress | Lighthouse L3'e object başına tekil, exact-key presigned `PutObject`; object `<=64 MiB` | Multipart normal yolu, Worker byte proxy veya client'a verilen master S3 key |
 | Yüksek hacimli dağıtım | Bunny CDN Volume Pull Zone + Origin Shield; dedicated Lighthouse gateway origin | Bağımsız replica gateway session-level standby |
 | Paid delivery bütçesi | Ticket değerinin `%1.6`sı; `$2` için `$0.032`; `all-in delivery cost <= reserve` | Sabit GB ve oran sınırlarını birbirinden bağımsız toplamak |
 | Creator upload bütçesi | `max($0.20 × source decimal GB, processing+output+persistence+retention quote)` | Source GB'yi storage veya playback tüketimi sanmak |
@@ -88,13 +98,18 @@ Bu güncellemede kabul edilen ürün kararları:
 Net seçim:
 
 1. **Bunny Stream, paid YouTick hattının omurgası olmamalı.** Upload, transcode, storage, player ve DRM'yi tek sağlayıcıda birleştirir; plaintext'in sağlayıcıya gitmesini ve anahtar otoritesinin kısmen Bunny'ye geçmesini gerektirir.
-2. **R2 ve explicit Bunny Storage hedef data-plane'den kaldırılır.** Studio küçük,
-   immutable ciphertext CMAF object'lerini doğrudan Lighthouse L3'e yükler; her
-   finalized object CID ile tanımlanır. Bunny yalnız Volume CDN/cache rolündedir.
+2. **R2 ve explicit Bunny Storage hedef data-plane'den kaldırılır.** Studio en
+   fazla `64 MiB` olan immutable ciphertext CMAF object'lerini doğrudan Lighthouse
+   L3'e tekil `PutObject` ile yükler; her finalized object CID ile tanımlanır.
+   SQLite ledger object düzeyinde devam ettirir. Multipart, CAR ve
+   `@lighthouse-web3/sdk` paid ürün yolunda yoktur. Bunny yalnız Volume CDN/cache
+   rolündedir.
 3. **Lighthouse/Filecoin kanonik ingress ve kalıcılık olarak korunmalı fakat tek
    provider sayılmamalı.** İkinci replica farklı idari ve gerçek storage-provider
-   hata alanında olmalı; dedicated Lighthouse gateway'in SLA/bandwidth kapısı
-   geçmeden bu yol paid production sayılmaz.
+   hata alanında olmalı. Lighthouse'ın public şartlarında imzalı Service Order
+   olmadan SLA yoktur; YouTick ekip cevabı veya yazılı SLA beklemez, dedicated
+   gateway kapasitesini gerçek hesap canary ve load testiyle ölçer. Cold-origin
+   SLO geçmezse paid production kapalı kalır.
 4. **Bunny Player kullanılmamalı; mevcut YouTick player korunmalı.** Bunny Player
    Bunny Stream `library_id/video_id` varlıklarına bağlıdır; harici Bunny Storage
    object'leri için YouTick'in AES-GCM çözme ve 5-KMS anahtar akışını sunmaz.
@@ -105,10 +120,15 @@ Net seçim:
    settle edip asset'i aynı transaction'da publish etmelidir. Geçici audit yolu
    normal viewer veya public origin erişimi açmamalıdır.
 7. **Lighthouse L3 + dedicated gateway + Bunny Volume hedefi `CONDITIONAL GO`dur.**
-   Exact-key presigned PUT/checksum, gerçek 20 GB job, restart/resume,
-   overwrite/replay, L3 rate-limit ve dedicated gateway SLA/bandwidth kapıları
-   geçmeden paid production açılmaz. Kapı geçmezse gizli R2/Bunny Storage fallback
-   eklenmez; özellik kapalı kalır ve ingress/origin ADR'si yeniden açılır.
+   Exact-key presigned `PutObject`, gerçek 20 GB job, object-level restart/resume,
+   overwrite/replay doğrulaması, L3 `503 SlowDown` davranışı ve ölçülmüş dedicated
+   gateway bandwidth/QoE kapıları geçmeden paid production açılmaz. Provider'ın
+   signed checksum veya conditional write uyguladığı varsayılmaz; doğruluk
+   provider sonrası full readback SHA-256 ile kurulur. Direct modun maliyet
+   güvenliği için signed `Content-Length`, chunked bypass ve aynı URL replay
+   davranışı gerçek hesapta ayrıca geçmelidir. Kapı geçmezse gizli
+   R2/Bunny Storage fallback eklenmez; özellik kapalı kalır ve ingress/origin
+   ADR'si yeniden açılır.
 8. **Bunny Volume Standard'a bütçesiz düşmez.** Volume'un 10-PoP ağı hedef
    bölgelerde QoE/load testini geçmelidir; Standard gerekirse yeni fiyat ve ürün
    onayı ister.
@@ -328,26 +348,31 @@ ve quota saldırısına açıktır. Hedef capability şu alanlara bağlı olmal�
 ```text
 job_id, creator, content_id, generation, operation,
 max_ingress_bytes, max_billable_logical_bytes, max_objects_total,
-max_parts_total, quote_id, charge_asset, max_charge_minor,
+max_object_bytes=67108864, quote_id, charge_asset, max_charge_minor,
 rate_version, persistence_policy_id, expires_at, idempotency_key
 ```
 
-Direct provider modunda Worker byte'ı görmediği için her part sonrası upstream'i
-kesemez. Control plane, object descriptor batch'i için byte/object/operation
-rezervini **grant vermeden önce** atomik ayırmalı ve yalnız exact object key'lerine
-kısa ömürlü presigned upload grant'ı üretmelidir. Provider completion sonrası
-server HEAD + full stream-hash ile kullanılan bütçeyi reconcile eder.
+Direct provider modunda Worker byte'ı görmediği için upload ortasında cumulative
+kotayı kesemez. Control plane, her object descriptor'ü için byte/object/operation
+rezervini **grant vermeden önce** atomik ayırmalı ve yalnız
+`jobs/{job_id}/objects/{ordinal}-{ciphertext_sha256}` biçimindeki exact key'e kısa
+ömürlü presigned `PutObject` üretmelidir. Studio bir object'i en fazla `64 MiB`
+tutar; tamamlanmış object resume sırasında tekrar gönderilmez. Provider completion
+sonrası server `HeadObject` ile CID/size/metadata alır, ardından object'i baştan sona
+stream ederek SHA-256 doğrular ve kullanılan bütçeyi reconcile eder.
 
-Lighthouse L3 presigned URL toplam cumulative byte/object/cost kotasını kendiliğinden
-uygulamaz. L3 ayrıca IAM/bucket policy, conditional write, aktif versioning ve
-object lock sunmaz. Bu yüzden production'da control plane önce exact object için rezerv ayırır;
-method, path, content length ve `x-amz-checksum-sha256` imzaya bağlanabilirse kısa
-ömürlü grant üretir. Aynı object'in TTL içinde yeniden yazdırma riski; immutable
-hash path, signed checksum, kısa TTL, device rate limit, anomaly alarmı, quarantine
-ve finalize öncesi full readback ile sınırlandırılır. Bu signed-header davranışı
-gerçek Lighthouse hesabında kanıtlanamazsa direct production upload açılmaz. Mutlak
-pre-upstream maliyet garantisi istenirse byte'ın geçtiği ayrı enforcing gateway
-gerekir; bu rapor o pahalı yolu varsaymaz.
+Lighthouse L3 presigned URL toplam cumulative byte/object/cost kotasını
+kendiliğinden uygulamaz. L3 ayrıca IAM/bucket policy, conditional write, aktif
+versioning ve object lock sunmaz. Resmi belgeler `Content-Length` veya
+`x-amz-checksum-sha256` değerinin presigned upload sırasında zorunlu
+enforcement'ını vaat etmez. İçerik doğruluğu bu başlıklara dayanmaz; full streaming
+readback yanlış byte'ı finalize öncesi reddeder. Fakat doğrudan upload maliyet
+güvenliği için real-account canary, `Content-Length` SignedHeaders içindeyken farklı
+uzunluk ve `aws-chunked` bypass'ını reddettiğini, aynı URL replay'inin quota/fatura
+etkisini kanıtlamalıdır. Exact method/key, en fazla iki açık object grant, kısa TTL,
+immutable hash key, device rate limit, on-chain maliyet rezervi ve account kill
+switch kalan blast radius'i sınırlar. Bu kapı geçmezse production direct upload
+açılmaz; byte-counting enforcing gateway ayrı ADR olur.
 
 ### P0-7 — Media Delivery keyfi CID için açık egress proxy'sidir
 
@@ -606,7 +631,7 @@ export ile sınırlıdır.
 | Tauri UI | Job görünümü ve kullanıcı kararı | Remote HTML yüklemez; secret/DEK almaz |
 | Rust job core | State machine, hash, crypto, upload, receipt doğrulama | Tek yetkili local media orchestrator |
 | FFprobe/FFmpeg sidecar | Probe ve ABR CMAF üretimi | Sabit binary/arg allowlist; network protokolleri kapalı |
-| SQLite WAL ledger | Job/object/part checkpoint ve idempotency | Raw DEK, wallet secret veya provider master key içermez |
+| SQLite WAL ledger | Job/object checkpoint ve idempotency | Raw DEK, wallet secret veya provider master key içermez |
 | OS secure store + Stronghold | Native keychain wrapping key; sarılmış per-job DEK/device secret | UI JavaScript'ine export edilmez |
 | System browser + deep link | Wallet approval dönüşü | URL yalnız opaque tek-kullanımlık code/state taşır |
 | Signed updater | Exact Desktop artifact dağıtımı | İmzalanmamış update kurulmaz |
@@ -642,7 +667,7 @@ flags, `ffmpeg -buildconf`, protocol allowlist, SBOM ve gerekli notice/source-of
 kanıtını taşır. [FFmpeg legal](https://ffmpeg.org/legal.html)
 
 Raw DEK, device private key, `media_job` capability, Lighthouse L3 presigned URL,
-L3 master S3 secret, private-beta final session secret, deep-link one-time code ve varsa
+L3 API/S3 secret, private-beta final session secret, deep-link one-time code ve varsa
 release download token hassastır. Bunlar WebView'e export edilmez; SQLite, normal
 log, crash dump/Sentry, support/evidence bundle, clipboard veya FFmpeg argv/env
 içinde bulunmaz. Sidecar'a gereken plaintext segment akışı ve job context yalnız
@@ -654,6 +679,42 @@ job onunla biter; artifact yoksa resume fail-closed olur ve kullanıcı onayıyl
 generation/DEK başlar. SQLite migration preflight+backup/rollback, updater downgrade
 ve replay red, ayrıca eski updater key'iyle imzalanmış bridge release üzerinden
 signing-key rotation test edilmelidir.
+
+#### Lighthouse istemci kararı: SDK değil dar S3 PUT
+
+`lighthouse-web3/lighthouse-package` v0.4.7 kaynak kodu paid Desktop yoluna uygun
+bir resumable veya streaming-encryption protokolü sunmaz:
+
+- Node file upload tek multipart/form-data isteğini
+  `upload.lighthouse.storage/api/v0/add` yüzeyine stream eder; bağlantı koptuğunda
+  object-level checkpoint yoktur ve bu L3 S3 yolu değildir.
+- CAR upload tek `.car` dosyasını `/api/v0/dag/import` yüzeyine yollar; resume
+  sağlamaz.
+- Node encrypted-file yolu `readFileSync` ile dosyanın tamamını belleğe alır,
+  Kavach share akışını kullanır ve böylece hem 20 GB bellek sınırıyla hem YouTick'in
+  5-KMS otoritesiyle çelişir.
+- Browser yolları Blob/FormData tabanlıdır; paid byte'ın web/Worker sınırına
+  girmemesi kararıyla uyumsuzdur.
+
+Bu nedenle Studio `@lighthouse-web3/sdk`, `uploadEncrypted` veya CAR import
+kullanmaz. Rust job core native HTTP client ile signer'ın verdiği tekil presigned
+`PutObject` URL'sine ciphertext dosyasını stream eder. Yeni AWS/Lighthouse runtime
+SDK dependency'si eklenmez; SigV4 imzalama yalnız control plane'de kalır. Bu karar
+public repo'nun `9b35c67d7f1aa8a2f8827c40e6e68b8ece83bb79` commit'ine pinlidir;
+L3 servisinin server implementasyonu bu public repoda bulunmadığı için servis
+semantiğinde resmi L3 belgeleri + gerçek hesap canary'si otoritedir.
+
+#### Lighthouse GitHub süreci ve evidence seviyesi
+
+| İncelenen yüzey | 2026-07-23 kanıtı | YouTick kararı |
+|---|---|---|
+| `lighthouse-web3/gitbook` | `e7dcb1cfd6c7ad9775514a597d3cbdb1297d4fe7` tree'sinde canlı L3 sayfalarının `docs-s3` kaynağı yok; canlı “Edit this page” bağlantısı bu eksik yola gidiyor | L3 davranışı gitbook commit'inden türetilmez; kullanılan canlı doküman URL'si, erişim tarihi ve içerik hash'i evidence lock'a girer |
+| `lighthouse-web3/lighthouse-package` | v0.4.7 / `9b35c67...`; normal API, CAR ve encrypted upload client'ları var; public L3 server kodu yok | Paket sürümü L3 servis sürümü veya production conformance kanıtı sayılmaz |
+| Paket CI | Node 20 üzerinde `npm install`, build ve test; testler canlı `TEST_API_KEY`, private/public key secret'ları ister; L3 S3 contract lane'i yok | Upstream CI yeşili olsa bile YouTick presign/readback/resume canary'sinin yerine geçmez |
+| [v0.4.7 PR #142](https://github.com/lighthouse-web3/lighthouse-package/pull/142) | `9b35c67...` merge commit'i; kayıtlı review yok ve bağlı Node CI check'i failure | Release etiketi tek başına upload güvenilirliği kanıtı değildir; kullanılan kod path'i kaynak incelemesi + YouTick testleriyle kabul edilir |
+
+[Gitbook pinned tree](https://github.com/lighthouse-web3/gitbook/tree/e7dcb1cfd6c7ad9775514a597d3cbdb1297d4fe7),
+[package CI workflow](https://github.com/lighthouse-web3/lighthouse-package/blob/9b35c67d7f1aa8a2f8827c40e6e68b8ece83bb79/.github/workflows/node.js.yml)
 
 #### 20 GB ürün ve enforcement sözleşmesi
 
@@ -680,7 +741,7 @@ Tek machine-readable policy kaynağı şu iki değeri decimal string olarak taş
   fingerprint'i checkpoint eder. Kaynak değişirse aynı generation'a devam etmez.
 - Source cihazdan çıkmadığı için server `source_bytes` beyanını bağımsız olarak
   kanıtlayamaz. Bu değer ürün/support sınırıdır; maliyet ve abuse güvenliği server'ın
-  ölçtüğü `max_ingress_bytes`, `max_billable_logical_bytes`, total object/part,
+  ölçtüğü `max_ingress_bytes`, `max_billable_logical_bytes`, total object,
   `max_charge_minor` ve aktif job kotasından gelir.
 - Boyut tek başına işlem maliyetini sınırlamaz. Duration, width/height, fps, track
   sayısı, decode pixel-frame, codec ve tahmini output için ayrı launch profili
@@ -691,10 +752,21 @@ Tek machine-readable policy kaynağı şu iki değeri decimal string olarak taş
 #### Studio / ingest
 
 - Paid kaynak dosya ve plaintext rendition yalnız creator cihazında bulunur.
-- Upload streaming ve resumable'dır; process belleği dosya boyutuyla büyümez.
+- Upload object bazında streaming ve resumable'dır; process belleği dosya boyutuyla
+  büyümez. Yarım kalmış tekil PUT tekrar başlar, daha önce doğrulanmış object tekrar
+  gitmez.
 - Job-scoped capability yalnız belirli content/generation/byte bütçesi için geçerlidir.
 - Kaynak dosya cloud'a gönderilmez. FFmpeg çıktısı mümkün olduğunca pipe üzerinden
   sealer'a gider; yalnız local encrypted spool restart için tutulur.
+- Sealer; manifest, init, segment ve recovery shard dahil her ciphertext object'i
+  `<= 67.108.864 byte` tutar. Normal dört saniyelik CMAF segmenti bu sınırdan çok
+  küçüktür; `64 MiB + 1` object localde reddedilir ve upload grant alamaz.
+- SQLite object durumu
+  `PLANNED -> SEALED -> GRANTED -> PUT_COMPLETE -> L3_VERIFIED ->
+  REPLICA_VERIFIED` ilerler. Resume yalnız son iki doğrulanmış durumdan devam eder;
+  client'ın ETag/CID beyanı `L3_VERIFIED` sayılmaz.
+- İlk profil aynı anda en fazla iki PUT çalıştırır. `503 SlowDown`, timeout ve 5xx
+  exponential backoff + jitter ile tekrar edilir; başarılı object tekrar edilmez.
 - Free disk preflight'i duration/ladder'dan tahmin edilen encrypted output, scratch,
   ledger ve en az `%20` emniyet payını kapsar. Source ikinci kez kopyalanmaz.
 - Bütün process tree için 20 GB PoC peak RSS hedefi `<= 2 GiB` ve source boyutundan
@@ -739,10 +811,9 @@ Studio local source preflight / FFprobe
 
 ```text
 job_id, creator, device_public_key, content_id, version_id,
-mode=PAID_ENCRYPTED, policy_version, generation, allowed_object_batch,
+mode=PAID_ENCRYPTED, policy_version, generation, allowed_object_descriptors,
 reported_source_bytes, max_source_bytes=20000000000,
 max_ingress_bytes, max_billable_logical_bytes, max_objects_total,
-max_parts_per_object, max_parts_total,
 quote_id, charge_asset, max_charge_minor, rate_version,
 payer, reservation_id, fee_state_version, fee_policy_version, cancel_charge_cap_minor,
 persistence_policy_id, persistence_term_end,
@@ -750,10 +821,10 @@ issued_at, expires_at, upload_deadline, device_counter, nonce, idempotency_key
 ```
 
 Exact-object upload grant kısa ömürlü ve yenilenebilir; job deadline ondan ayrıdır.
-Başlangıç beta değeri olarak 10–15 dakikalık grant batch'i ve en fazla 72 saatlik
+Başlangıç beta değeri olarak object başına 10 dakikalık grant ve en fazla 72 saatlik
 job deadline ölçülebilir; bunlar telemetry ve abuse sonucuna göre sıkılaştırılır.
-Yenileme aynı device key, job/object batch, accepted quote/policy ve kalan rezerve
-bütçeye bağlıdır; wallet popup gerektirmez.
+Yenileme aynı device key, job/object descriptor, accepted quote/policy ve kalan
+rezerve bütçeye bağlıdır; wallet popup gerektirmez.
 
 Creator job fee ledger'ı ticket satışından ayrıdır. Launch'taki on-chain payment
 rail'leri için rezervasyon ve publish aynı `nft-ticket` state'inde şu tek yönlü akışı
@@ -770,7 +841,7 @@ FUNDS_RESERVED -> CANCEL_REFUND_PENDING
 
 - Quote local FFprobe özetinden sonra üretilir; `reported_source_bytes` ticari ürün
   girdisidir, server'ın kanıtladığı güvenlik sınırı değildir. Server zararı
-  `max_ingress_bytes`, logical output, object/part ve `max_charge_minor` rezerviyle
+  `max_ingress_bytes`, logical output, object ve `max_charge_minor` rezerviyle
   sınırlar.
 - İlk provider grant'ından önce aktif on-chain payment rail'inde
   job/creator/quote/policy/amount/expiry ve monotonik `fee_state_version`a bağlı
@@ -837,10 +908,10 @@ Minimum control-plane API sözleşmesi:
 | `POST /studio/quotes` | Local probe özeti, policy ve bounded output/cost teklifi | Hayır |
 | `POST /studio/jobs` | İmzalı quote kabulü + finalized on-chain reservation receipt | Hayır |
 | `POST /studio/jobs/{id}/pair` | Wallet-bound device authorization | Hayır |
-| `POST /studio/jobs/{id}/seal` | Immutable manifest/inventory + exact object descriptors + generation lock | Hayır |
-| `POST /studio/jobs/{id}/upload-grants` | Rezerve bütçeye bağlı exact-key Lighthouse L3 PUT/part grant batch'i | Hayır |
-| `POST /studio/jobs/{id}/objects/commit` | Object hash/byte/provider result; full verify kuyruğu | Hayır |
+| `POST /studio/jobs/{id}/objects` | Tek object descriptor rezervi + exact-key L3 presigned `PutObject` | Hayır |
+| `POST /studio/jobs/{id}/objects/{ordinal}/complete` | Client sonucu; `HeadObject` + full-readback + replica kuyruğu | Hayır |
 | `GET /studio/jobs/{id}` | Resume state, receipts, remaining budget, repair state | Hayır |
+| `POST /studio/jobs/{id}/seal` | Doğrulanmış object envanterinden canonical `StorageManifestV1`; manifest CID generation lock olur | Hayır |
 | `POST /studio/jobs/{id}/finalize-intent` | Wallet'ta onaylanacak bounded final payload | Hayır |
 | `POST /studio/jobs/{id}/cancel` | Credential revoke ve orphan cleanup lease | Hayır |
 | `POST /studio/jobs/{id}/refund` | Wallet'ta onaylanacak bounded release/refund intent'i | Hayır |
@@ -848,54 +919,105 @@ Minimum control-plane API sözleşmesi:
 
 Bütün mutation'lar `idempotency_key` ister. Client'ın ETag/byte beyanı kanıt değildir;
 coordinator her object'i kopyalarken stream-hash eder, size + digest/CID'yi canonical
-inventory ile birebir doğrular ve CAR/DAG root'u yeniden hesaplar. Inventory'deki
-tek eksik/yanlış object finalize'ı kapatır. Seçilmiş readback yalnız publish sonrası
-sürekli sağlık denetimidir. Control plane hiçbir endpoint'te source/segment body
-kabul etmez.
+inventory ile birebir doğrular. Bütün media object'leri iki domain'de doğrulandıktan
+sonra Studio'nun önerdiği envanteri sıralar, canonical JSON byte'ını üretir ve
+manifesti de immutable object olarak iki domain'e yazar. Manifestin CID'si
+`asset_root_cid` olur; içindeki herhangi bir object CID/hash/size değişikliği yeni
+root üretir. Inventory'deki tek eksik/yanlış object finalize'ı kapatır. Seçilmiş
+readback yalnız publish sonrası sürekli sağlık denetimidir. Control plane hiçbir
+endpoint'te source/segment body kabul etmez.
 
 #### Persistence
 
 - Desktop büyük media byte'ını Worker/API üzerinden proxy etmez. İlk ve kanonik
   ingress, Lighthouse'ın `s3.lighthouse.storage` L3 yüzeyindeki yalnız rezerve
-  edilmiş exact key'lere bağlı encrypted object'lerdir. Control plane production
-  L3 signing secret'larını trusted signer'da tutar ve Desktop'a method/path/expiry/length/checksum
-  bağlanan kısa ömürlü presigned PUT/part URL verir; master key Desktop'a gitmez.
+  edilmiş exact key'lere bağlı encrypted object'lerdir. Storage Control Worker
+  API/S3 key'lerini secret store'da tutar, SigV4 presign yapar ve Desktop'a exact
+  method/key/expiry/metadata ile beklenen `Content-Length` signed header'ına bağlı
+  kısa ömürlü `PutObject` URL'si verir; master credential Desktop'a gitmez.
+  Presigned isteğe gerçek body digest'i olarak `x-amz-content-sha256` eklenmez:
+  ayrı Lite exploratory live probe bu varyantı `SignatureDoesNotMatch` ile
+  reddetmiştir. Beklenen
+  ciphertext SHA-256 imzalı metadata ve immutable key'de taşınır; içerik doğruluğu
+  yalnız provider sonrası full streaming readback ile kurulur.
+  Bu length enforcement gerçek hesap canary'sinden geçmeden production capability
+  değildir. Worker yalnız control-plane JSON taşır.
   [Lighthouse L3](https://docs.lighthouse.storage/s3/intro)
-- Normal encrypted CMAF segmentleri küçük immutable object'lerdir; tekil `PUT` ve
-  SQLite object ledger ile resume edilir. Böylece 20 GB kaynak tek object veya tek
-  multipart session olarak gönderilmez. L3'ün object tavanı `5 GiB`, multipart
-  tavanı 10.000 parttır; recovery/archive object'leri de bu sınırı aşmayacak şekilde
-  parçalanır. [L3 sınırları](https://docs.lighthouse.storage/s3/reference/limits)
-- L3 per-account rate limit uygular ve aşımda `503 SlowDown` döndürür; public sayısal
-  RPS/bandwidth kotası yayımlanmadığı için Studio per-job/global concurrency,
-  exponential backoff+jitter ve vendor-written quota kullanır. Viewer trafiği L3
-  S3 endpoint'ine değil Bunny CDN arkasındaki dedicated gateway'e gider.
+- Normal encrypted CMAF segmentleri ve bütün yardımcı object'ler `<=64 MiB`
+  immutable object'tir. Tekil `PUT` + SQLite object ledger resume sağlar; yarım
+  object baştan gider, `L3_VERIFIED` object tekrar gitmez. Böylece 20 GB kaynak
+  tek object veya multipart session yapılmaz. L3 `5 GiB` object ve 10.000 multipart
+  part desteklese de bu limitler ürün protokolüne taşınmaz; multipart yalnız
+  sağlayıcı uyumluluk canary'sinde izlenir. [L3 sınırları](https://docs.lighthouse.storage/s3/reference/limits)
+  `64 MiB`, sağlayıcı limiti değil YouTick policy'sidir: tek retry'nin maliyetini
+  sınırlar, mevcut free sınırıyla aynı primitive'i kullanır ve yalnız yeni
+  `policy_version` + load kanıtıyla değişir.
+- L3 per-account rate limit uygular ve aşımda `503 SlowDown` döndürür; public
+  sayısal RPS/bandwidth kotası yayımlanmadığı için Studio başlangıçta iki eşzamanlı
+  PUT, exponential backoff+jitter ve ölçülen account telemetry'si kullanır. Viewer
+  trafiği L3 S3 endpoint'ine değil Bunny CDN arkasındaki dedicated gateway'e gider.
 - L3'te IAM/bucket policy, aktif CORS/lifecycle/versioning/object-lock ve
   conditional write yoktur. Tauri/Rust browser CORS'una bağlı değildir; unique
-  generation/hash key, signed checksum, full readback ve application-owned orphan
-  sweeper zorunludur. Multipart ETag veya `x-amz-meta-cid` tek başına içerik
+  generation/hash key, full readback ve application-owned orphan sweeper
+  zorunludur. ETag, custom metadata veya `x-amz-meta-cid` tek başına içerik
   doğrulama kanıtı sayılmaz. [L3 desteklenen işlemler](https://docs.lighthouse.storage/s3/reference/supported-operations)
-- L3 tamamlanan her object için CID üretir. Finalize, mutable bucket/key adını değil
-  immutable CID + byte length + ciphertext digest'i canonical inventory'ye bağlar.
+- L3 tamamlanan her object için CID üretir. Lite canary `x-amz-meta-cid` içinde
+  canonical CIDv0/dag-pb döndürmüştür. Verifier provider CID'yi HEAD/GET boyunca
+  aynı değer olarak doğrular, gateway readback'te bu raw provider locator'ını
+  kullanır, gateway request CID'sini receipt'e bağlar ve manifest için
+  deterministic CIDv1/dag-pb'ye normalize eder.
+  Finalize, mutable bucket/key adını değil canonical CID + byte length +
+  ciphertext digest'i inventory'ye; raw provider CID'yi ise provider receipt/
+  delivery locator'ına bağlar.
   Persistence coordinator aynı byte'ı bağımsız ikinci replica'ya taşır; Lighthouse
   tek provider veya tek failure domain sayılmaz.
-- Ayrı object CID'leri kendiliğinden path-traversable bir asset directory oluşturmaz.
-  Coordinator normalized relative path, sabit codec/chunker/sharding ve deterministik
-  link sırasıyla canonical UnixFS/DAG-PB directory DAG'ını üretir. Root/link block'ları
-  CAR olarak her iki persistence domainine import+pin edilir; `asset_root_cid` bu
-  CAR'ın köküdür. Codec ve sharding profile'ı `manifest_schema_version` ile sabitlenir.
-- Publish öncesi her canonical relative path iki persistence domaininde de
-  `/ipfs/{asset_root_cid}/{relative_object_path}` üzerinden resolve edilir; dönen
-  byte length ve ciphertext digest inventory ile eşleşir. L3 object başarıları root
-  CAR import/pin ve path traversal receipt'i olmadan yeterli değildir.
+- Ayrı object CID'leri kendiliğinden path-traversable directory değildir. İlk
+  sürüm bu problemi UnixFS builder/CAR ile çözmez. RFC 8785 canonical JSON
+  `StorageManifestV1`; sıralı `objects[]` içinde relative path, role, track/rendition,
+  sequence/time, CID, ciphertext SHA-256, byte length ve encryption/AAD version
+  taşır. Bu küçük manifest de L3 + bağımsız replica'da full-readback doğrulanır;
+  manifest CID'si `asset_root_cid` ve inventory commitment'tır.
+  İlk protokol sözleşmesi
+  `protocol/storage-manifest-v1/schema.json` altında sabitlenmiştir. Root'a bağlı
+  `media` alanı CMAF content type/duration ile codec, bitrate, timescale ve
+  rendition taşıyan sıralı track envanterini içerir; böylece delivery manifesti
+  şifreli init segmentini control plane'de açmadan türetilebilir. Her encrypted
+  object 12-byte unique nonce, plaintext length ve
+  `ciphertext || 16-byte GCM tag` zarfını bağlar. `job_id`, quote/policy,
+  provider/bucket/key, ETag ve signed URL içerik kimliği değildir; job
+  ledger/receipt'te kalır.
+  `youtick.media-object-aad.v1`, content/version/generation + object
+  ordinal/path/role/track/rendition/timeline/plaintext-length alanlarının aynı
+  canonical JSON byte'ıdır. Nonce aynı encryption generation içinde tekrar
+  edemez. Private-beta V1 yalnız audio/video `init|segment` rolleri taşır; tek
+  global CMAF init veya her track için ayrı init seti ve her track için en az bir
+  monotonic/non-overlap segment zorunludur. Network vocabulary
+  `mainnet|testnet` olarak sabittir. Manifest CID'i yalnız parse edilmiş lowercase
+  CIDv1/base32, `raw|dag-pb` codec ve `sha2-256/32-byte` multihash ise kabul
+  edilir. L3 receipt sınırında canonical CIDv0/base58btc dag-pb de kabul edilir
+  ve manifest öncesi CIDv1'e çevrilir; canary provider çıktısını CIDv0/dag-pb
+  olarak pinlemiştir.
+  `inventory_root`, object canonical byte'larından
+  `leaf=SHA256(0x00 || object)` ve `node=SHA256(0x01 || left || right)` ile
+  RFC 9162 §2.1.1 ağacı olarak hesaplanır; tek yaprak kopyalanmaz.
+  TypeScript ve Rust uygulamaları aynı checked-in golden vector'a bağlıdır.
+  `StorageManifestV1` persistence protokolüdür; private beta
+  `DeliveryManifestV2` ve production `DeliveryManifestV3` bunun doğrulanmış
+  envanterinden türetilir. V2'nin mevcut şeması değişmiyorsa bu bağ control/indexer
+  mapping'inde tutulur; production V3 aynı `asset_root_cid`yi açıkça referanslar.
+- Publish öncesi manifestteki her object CID iki persistence domaininde doğrudan
+  `/ipfs/{object_cid}` üzerinden okunur; byte length ve ciphertext digest eşleşir.
+  L3 object başarıları manifest full readback'i ve bütün object receipt'leri
+  olmadan yeterli değildir.
 - Coordinator publish öncesinde canonical inventory'deki her object'i stream-hash
-  eder; her replica için size + digest/CID + root eşleşmesini tamamlar. `HEAD`,
-  multipart ETag veya sample tek başına integrity receipt değildir. Sample readback
+  eder; her replica için size + digest/CID + manifest-root eşleşmesini tamamlar.
+  `HEAD`, ETag veya sample tek başına integrity receipt değildir. Sample readback
   yalnız sonraki periyodik availability audit'inde kullanılır.
 - Lighthouse L3/API kesilirse Studio encrypted local spool'u korur ve exact object
   ledger'dan devam eder. Gateway kesintisi upload state'ini bozmaz; CDN'de olmayan
   object'ler bağımsız replica gateway fallback'ine gider.
-- CID, manifest ve inventory provider-bağımsız kanonik kimliktir.
+- Manifest CID'si, object CID'leri ve ciphertext hash envanteri provider-bağımsız
+  kanonik kimliktir.
 - Lighthouse/IPFS/Filecoin ana replica'dır.
 - İkinci replica farklı API adı taşımanın ötesinde farklı idari ve gerçek storage-provider hata alanı göstermelidir.
 - `file_info found` veya tek gateway GET durability sayılmaz.
@@ -931,18 +1053,22 @@ Filecoin doğrulanabilir storage ve açık provider pazarı sağlar; fakat stora
   PoP miss yükünü azaltır/birleştirir fakat tek origin isteği garantisi vermez.
   [Origin Shield](https://docs.bunny.net/cdn/performance/origin-shield)
 - `Cache-Control: public, max-age=31536000, immutable` yalnız generation'ı değişmeyen segment/init/manifest yollarına uygulanır.
-- Her finalized generation tek immutable `asset_root_cid` DAG'ı altında manifest,
-  init ve segment path'lerini taşır. Viewer URL'si
-  `/ipfs/{asset_root_cid}/{relative_object_path}` biçimindedir; böylece dedicated
-  IPFS gateway native olarak okuyabilir ve Bunny directory token yalnız
-  `/ipfs/{asset_root_cid}/` prefix'ine bağlanabilir. Canonical inventory her relative
-  path'i object CID + length + ciphertext digest ile eşler.
-- Advanced HMAC-SHA256 directory token yalnız hotlink ve bant genişliği kötüye kullanımını azaltır; entitlement değildir. [Bunny advanced token dokümanı](https://docs.bunny.net/cdn/security/token-authentication/advanced)
+- Her finalized generation bir immutable manifest CID'si (`asset_root_cid`) ve
+  ayrı immutable media object CID'leri taşır. `Media Delivery` control servisi
+  doğrulanmış manifestten playlist/descriptor üretir ve her media URL'sini exact
+  `/ipfs/{object_cid}` path'ine kısa ömürlü Bunny token ile bağlar. Manifest
+  endpoint'i control-plane'dir; media byte'ı taşımaz. Player ciphertext'i CDN'den
+  alır ve canonical envanterdeki length/hash ile doğrular.
+- Advanced HMAC-SHA256 exact-path token yalnız hotlink ve bant genişliği kötüye
+  kullanımını azaltır; entitlement değildir. Tek `/ipfs/` prefix tokenı arbitrary
+  CID egress proxy'si oluşturacağı için verilmez.
+  [Bunny advanced token dokümanı](https://docs.bunny.net/cdn/security/token-authentication/advanced)
 - Mevcut `workers/media-delivery` byte proxy olmaktan çıkarılıp control-only
-  descriptor/token issuer'a evrilir. Free asset'te finalized catalog state'ini,
-  paid asset'te KMS'in imzaladığı kısa session grant'ını doğrular; Bunny secret'ı
-  browser'a vermez. `DELIVERY_AUDIT_READY` tokenını ise yalnız kayıtlı auditor
-  capability'si için, aynı asset-root prefix'ine ve en fazla 10 dakikaya sınırlar.
+  descriptor/playlist + exact-object token issuer'a evrilir. Free asset'te
+  finalized catalog state'ini, paid asset'te KMS'in imzaladığı kısa session grant'ını
+  doğrular; Bunny secret'ı browser'a vermez. `DELIVERY_AUDIT_READY` tokenını ise
+  yalnız kayıtlı auditor capability'si için, seçili manifest/object CID'lerine ve
+  en fazla 10 dakikaya sınırlar.
 - Request coalescing yalnız herkes için aynı olan ciphertext yollarında açılır; kullanıcıya özel manifest/JSON üzerinde açılmaz. [Bunny request coalescing dokümanı](https://docs.bunny.net/cdn/request-coalescing)
 - Premiere öncesi manifest, init ve ilk oynatma penceresi kontrollü prewarm edilir;
   bütün kataloğu körlemesine kopyalamak veya iki CDN'e paralel istek atmak yoktur.
@@ -1073,6 +1199,11 @@ receipt_schema_version
 publish_state
 ```
 
+Burada `manifest_root`, RFC 8785 canonical manifest byte'ının SHA-256 digest'i;
+`inventory_root`, sıralı object yapraklarının Merkle kökü; `asset_root_cid` ise aynı
+canonical manifest byte'ının IPFS CID'sidir. Üçü aynı envanteri farklı doğrulama
+yüzeylerinde bağlar; hiçbiri directory/path root anlamına gelmez.
+
 Provider adı, CDN domain'i veya geçici signed URL zincire yazılmamalıdır. Katalog ve profil sorguları indexer/materialized read model üzerinden yapılmalıdır.
 
 ## 5. Publish ve playback durum makineleri
@@ -1090,10 +1221,12 @@ DRAFT
   -> FUNDS_RESERVED
   -> JOB_AUTHORIZED
   -> PROCESSING
-  -> SEALED
-  -> CIPHERTEXT_INGRESS
-  -> PERSISTENCE_COMMITTING
+  -> OBJECTS_UPLOADING
+  -> L3_VERIFYING
+  -> REPLICATING
   -> PERSISTENCE_VERIFIED
+  -> MANIFEST_SEALING
+  -> MANIFEST_VERIFIED
   -> DELIVERY_AUDIT_READY
   -> DELIVERY_VERIFIED
   -> KMS_STORING
@@ -1151,7 +1284,7 @@ Segment başına iki CDN'e paralel istek atılmamalıdır. Bu yöntem maliyeti v
 - Volume Pull Zone, video için optimize edilmiş düz global fiyat ve 10 PoP sunar;
   Standard'ın 119 PoP kapsaması bu paid media bütçesinin varsayılanı değildir.
 - Immutable şifreli segmentler edge cache için ideal payload'dır.
-- Advanced directory token HLS/DASH alt yollarını tek session tokenıyla korur.
+- Advanced token exact immutable object path'lerini session süresiyle sınırlar.
 - Request coalescing aynı popüler segmentte origin stampede'i azaltır.
 - Volume ilk 500 TB için `$0.005/GB`, 500 TB–1 PB için `$0.004/GB`'dır;
   Standard EU/NA `$0.01/GB` ve diğer bölgelerde daha pahalıdır.
@@ -1188,27 +1321,72 @@ Bunny Stream yalnız iki ayrı ürün yolunda düşünülebilir:
 
 ```text
 YouTick Studio
-  -> exact-key presigned Lighthouse L3 PUT
-  -> immutable CID + Lighthouse/IPFS/Filecoin primary
-  -> independent persistence replica
+  -> local FFmpeg/CMAF
+  -> local AES-256-GCM seal; each ciphertext object <=64 MiB
+  -> reserve exact jobs/{job_id}/objects/{ordinal}-{sha256}
+  -> one presigned Lighthouse L3 PutObject
+  -> HeadObject + full streaming SHA-256 readback
+  -> independent replica full verify
+  -> canonical StorageManifestV1 JSON
+  -> manifest CID = asset_root_cid
 
 media.youtick.net
-  -> Bunny Volume Pull Zone
-  -> Origin Shield
-  -> dedicated Lighthouse gateway /ipfs/{asset_root_cid}/{relative_path}
-  -> immutable encrypted CMAF objects
+  -> Media Delivery control: verified playlist + exact-object tokens
+  -> Bunny Volume Pull Zone + Origin Shield
+  -> dedicated Lighthouse gateway /ipfs/{object_cid}
   -> mevcut YouTick player: hash/GCM verify + KMS key + local decrypt
 ```
 
 Başlangıç ayarları:
 
 - Lighthouse L3 bucket/key yalnız ingest/resume kolaylığıdır; finalized playback
-  identity'si `CID + byte length + ciphertext digest`dir.
-- L3 ingress key'i `/v1/{content_id}/{generation}/{object_hash}` olabilir; bu mutable
-  provider adı playback kimliği değildir. Coordinator finalized inventory'yi tek
-  `asset_root_cid` DAG'ına bağlar. CDN delivery path'i
-  `media.youtick.net/ipfs/{asset_root_cid}/{relative_object_path}` olur ve Bunny
-  directory token aynı asset-root prefix'ine scope edilir.
+  identity'si manifest CID + her object için `canonical CIDv1 + byte length +
+  ciphertext SHA-256` üçlüsüdür. Lighthouse/Bunny origin locator'ı ayrıca
+  doğrulanmış raw provider CID'yi taşıyabilir; locator içerik kimliği değildir.
+- Production, staging ve testnet ayrı Lighthouse hesapları ve bucket'ları kullanır.
+  L3 IAM/bucket policy sunmadığı ve S3 key'leri aynı hesaptaki bucket'ları gördüğü
+  için yalnız bucket prefix'i çevre izolasyonu sayılmaz. Resmi belgelerde aktif
+  keypair sayısı `1` ve `10` olarak çelişir; tasarım tek aktif key ile çalışır ve
+  rotation davranışını gerçek hesap canary'siyle ölçer. Ekipten yazılı cevap
+  beklenmez. [L3 key yönetimi](https://docs.lighthouse.storage/s3/how-to/create-s3-keys)
+- Exact provider key'i
+  `jobs/{job_id}/objects/{ordinal}-{ciphertext_sha256}` biçimindedir. Aynı logical
+  path için yeni generation yeni key üretir; mutable `latest` veya overwrite
+  normal akış değildir.
+- Studio `@lighthouse-web3/sdk`, Lighthouse encrypted upload, browser
+  Blob/FormData, CAR import veya AWS SDK kullanmaz. Rust native HTTP client yalnız
+  exact presigned `PutObject` URL'sine local ciphertext dosyasını stream eder.
+- Bütün object'ler `<=64 MiB` ve tekil PUT'tur. Normal product yolunda multipart
+  yoktur; resume object ledger'dır. URL upload sırasında ölürse yalnız o object
+  yeni grant ile baştan gider. İlk concurrency `2`, `503 SlowDown`/5xx/timeout
+  backoff+jitter ile tekrar edilir.
+- L3 SigV4 istekleri 15 dakikadan büyük clock skew'da reddeder. Signer ve Studio
+  NTP/monotonic-clock preflight'i yapar; clock sağlıksızsa grant üretilmez.
+- Presign exact method/key/expiry, beklenen `Content-Length` ve custom metadata'yı
+  SignedHeaders'a bağlar. Gerçek hesap canary'si farklı length, eksik header ve
+  `aws-chunked` bypass'ını reddetmelidir; resmi belge tek başına enforcement kanıtı
+  değildir. Lite küçük canary farklı length'i `403` ile reddetmiştir; `aws-chunked`
+  hâlâ açık kapıdır. Machine-checked 16-check evidence dışında tutulan ayrı
+  exploratory `x-amz-checksum-sha256` tanı varyantında aynı uzunluktaki bozuk
+  body de `200` kabul edildiği için SHA-256 header enforcement'ı yok sayılır.
+  Client ETag, CID veya
+  metadata'sı yalnız gözlemdir; coordinator `HeadObject` sonrası bütün byte'ı
+  okuyup SHA-256 hesaplamadan object doğrulanmış sayılmaz.
+- L3'te conditional write/versioning/object lock yoktur. Overwrite yeni CID
+  üretir, eski CID kalır; delete yalnız bucket/key eşlemesini kaldırır ve IPFS/
+  Filecoin byte'ının silindiğini garanti etmez. Unique hash key + full readback
+  yanlış-byte/overwrite'i yakalar; identical replay ve quota/fatura etkisi yalnız
+  provider telemetry deltasıyla kanıtlanır ve bu kapı geçmeden direct mode açılmaz.
+  Takedown/cancel gerçeği mapping cleanup + KMS crypto-erasure'dır.
+- `StorageManifestV1` RFC 8785 canonical JSON'dur. Sıralı `objects[]` her relative
+  path, role, rendition/track, sequence/time, object CID, ciphertext SHA-256,
+  byte length ve encryption/AAD version'ını taşır. Manifest iki persistence
+  domaininde full-readback doğrulanır; CID'si `asset_root_cid` olur. İlk sürüm
+  UnixFS directory builder veya CAR üretmez.
+- Media Delivery control servisi verified manifestten playlist üretir ve her
+  segmenti `media.youtick.net/ipfs/{object_cid}` exact path tokenıyla verir. Tek
+  `/ipfs/` veya bucket prefix tokenı verilmez; control servisi media byte'ı proxy
+  etmez.
 - Manifest, init, ilk 60 saniye ve deterministik segment sample'ı publish sırasında
   `DELIVERY_AUDIT_READY` capability ile Bunny Volume URL'sinden readback edilir;
   full inventory Lighthouse ve bağımsız replica tarafında stream-hash edilir.
@@ -1218,23 +1396,13 @@ Başlangıç ayarları:
 - Cache purge normal versiyonlama aracı değil; yeni generation yeni immutable path üretir.
 - Takedown için exact URL purge + KMS deny + catalog block workflow'u test edilir;
   IPFS/Filecoin CID'nin üçüncü taraflardan tamamen silineceği söylenmez.
-- Aktif L3 keypair tavanı resmi belgelerde çelişkilidir: limits sayfası `1`, key
-  yönetimi sayfası `10` aktif key ve kesintisiz rotation söyler. Gerçek hesap ve
-  yazılı Lighthouse cevabı gelene kadar tasarım kapasite için `1` key varsayar,
-  rotation güvenliğini ayrıca test eder. Desktop exact method/path/length/checksum'a
-  bağlı kısa ömürlü presigned URL alır.
-  [L3 key yönetimi](https://docs.lighthouse.storage/s3/how-to/create-s3-keys)
-- Küçük CMAF object'leri tekil PUT'tur. Object-level SQLite checkpoint kayıp
-  bağlantıda resume sağlar. Multipart yalnız 100 MB üzeri recovery shard'larında
-  kullanılır; 20 GB source tek L3 object'i yapılmaz ve hiçbir object `5 GiB`yi aşmaz.
-- Per-account L3 rate limit için global token bucket; `503 SlowDown`/5xx için
-  exponential backoff+jitter uygulanır. Normal viewer delivery yalnız Volume Pull
-  Zone'dan gelir; independent gateway yalnız session-level emergency fallback'tir.
 - TUS resumable/presigned upload **Bunny Stream** ürününe aittir ve bu self-custody
-  yolunda kullanılmaz. L3 direct yolunun sözleşmesi S3 SigV4 presigned
-  PUT/UploadPart'tır. [L3 desteklenen işlemler](https://docs.lighthouse.storage/s3/reference/supported-operations)
-- L3'te aktif lifecycle/versioning/conditional request olmadığı için immutable key,
-  signed checksum, full readback ve application-owned orphan sweeper zorunludur.
+  yolunda kullanılmaz. L3 direct yolunun ürün sözleşmesi S3 SigV4 presigned
+  `PutObject`tır. [L3 desteklenen işlemler](https://docs.lighthouse.storage/s3/reference/supported-operations)
+- Cancel/expiry tekil presigned URL'yi anında geri çağırmaz; yeni grant kesilir,
+  eski URL kısa TTL sonunda ölür ve geç gelen completion quarantine edilir.
+  Application sweeper başarısız job prefix mapping'lerini siler, bağımsız replica
+  staging kayıtlarını temizler ve DEK/KMS share'leri crypto-erase eder.
 - Volume'un 10-PoP ağı hedef bölgelerde `<2.5 s` first-playable ve `<%1` rebuffer
   SLO'sunu geçmelidir. Geçmezse Standard'a sessiz geçilmez; fiyat/bütçe ADR'si açılır.
 
@@ -1242,8 +1410,8 @@ Başlangıç ayarları:
 
 | Karar | Sonuç | Şart |
 |---|---|---|
-| Lighthouse L3 → dedicated gateway → Bunny Volume | **CONDITIONAL GO; ana hedef** | L3 PoC + gateway Service Order/SLA + Volume load/QoE kapıları |
-| Bunny Volume + YouTick Player | **COMPONENT-FIT GO; production conditional** | Asset-root traversal, private-origin auth, load/QoE, bütçe ve KMS/NEAR kapıları geçmeli |
+| Lighthouse L3 → dedicated gateway → Bunny Volume | **CONDITIONAL GO; ana hedef** | L3 gerçek-hesap canary + measured gateway/load/QoE kapıları |
+| Bunny Volume + YouTick Player | **COMPONENT-FIT GO; production conditional** | Exact-object delivery, private-origin auth, load/QoE, bütçe ve KMS/NEAR kapıları geçmeli |
 | Bunny Storage hot mirror / Perma-Cache | **Varsayılan kapalı** | Yalnız ölçülen long-tail QoE veya gateway maliyeti ayrı ADR ile gerekçelendirirse |
 | Player → public Lighthouse gateway | **Production primary için NO-GO** | Yalnız fallback, private beta veya bağımsız erişim smoke'u |
 | Bunny Stream + Bunny Player | **Paid self-custody için NO-GO** | Ancak açıkça ayrı managed DRM ürünü olabilir |
@@ -1255,18 +1423,25 @@ gibi gösterilemez.
 
 Paid production öncesi gateway + Volume kapısı:
 
-1. L3 presigned PUT/UploadPart method, exact path, content length ve SHA-256 header'ını
-   imzaya bağlıyor; farklı byte ile replay/overwrite başarısız oluyor.
-2. 20 GB exact source fixture; app/OS kill, ağ kesintisi, URL yenileme, primary
-   L3/API kesintisi, `503 SlowDown` ve object-level resume testlerini geçiyor.
-3. Resmi belgelerdeki `1`/`10` aktif keypair çelişkisi, per-account
-   request/bandwidth kotası, incident
-   escalation, dedicated gateway CDN-origin kullanım izni, fiyat ve SLA yazılı geliyor.
+1. L3 presigned `PutObject` exact method/key/expiry/`Content-Length` davranışı
+   gerçek hesapta doğrulanıyor; farklı length, eksik signed header, `aws-chunked`
+   bypass, yanlış key ve süresi geçmiş URL reddediliyor. Aynı URL replay/overwrite
+   quota/fatura deltası ölçülüyor; kontrol dışı tekrar maliyeti varsa direct mode
+   açılmıyor. Lite küçük canary exact key/length, full readback ve replay teknik
+   kısmını geçti; expiry, `aws-chunked` ve provider telemetry deltası açık kaldı.
+   Yanlış byte her durumda full readback ile finalize öncesi reddediliyor.
+2. Exact `20.000.000.000` byte source fixture; app/OS kill, ağ kesintisi, URL
+   yenileme, L3/API kesintisi, `503 SlowDown` ve object-level resume testlerini
+   geçiyor. Hiçbir ciphertext object `64 MiB`yi aşmıyor; `64 MiB + 1` local ve
+   server sınırında reddediliyor.
+3. Resmi belgelerdeki `1`/`10` aktif keypair çelişkisi tek-key rotation canary'siyle,
+   per-account request/bandwidth davranışı kademeli load testiyle ölçülüyor.
    Dedicated origin yalnız Pull Zone credential/mTLS/network policy ile erişiliyor;
-   doğrudan browser/public bypass isteği reddediliyor.
+   doğrudan browser/public bypass isteği reddediliyor. Lighthouse ekibinden yazılı
+   cevap veya SLA bu kapının girdisi değildir.
 4. Full Lighthouse readback hash'i ve bağımsız replica receipt'i eşleşmeden;
-   deterministic asset-root CAR iki tarafta import+pin ve bütün path traversal
-   doğrulanmadan; Bunny Volume delivery sample'ı geçmeden publish açılmıyor.
+   canonical manifest iki tarafta doğrulanıp CID'si object envanterini bağlamadan;
+   Bunny Volume exact-object delivery sample'ı geçmeden publish açılmıyor.
 5. 100 smoke ve 1.000 concurrent hot/long-tail testinde Volume regional QoE,
    Origin Shield, cold miss, cache purge ve gateway outage senaryoları bütçe/SLO'yu
    geçiyor.
@@ -1285,7 +1460,7 @@ Puan: 5 çok uygun, 1 uyumsuz. “Merkeziyetsiz kalıcılık” vendor pazarlama
 
 | Seçenek | Rol | Merkeziyetsiz kalıcılık | Yüksek delivery | Paid KMS uyumu | Portability | Karar |
 |---|---|---:|---:|---:|---:|---|
-| Lighthouse L3 + Filecoin | Encrypted ingress + kanonik persistence | 4 | 2 | 5 | 4 | Ana replica; L3 PoC, deal/readback ve dedicated gateway sözleşmesi şart |
+| Lighthouse L3 + Filecoin | Encrypted ingress + kanonik persistence | 4 | 2 | 5 | 4 | Ana replica; L3 gerçek-hesap canary, deal/readback ve measured gateway şart |
 | Bağımsız ikinci Filecoin/IPFS onramp | Replica/repair | 4 | 2 | 5 | 4 | Zorunlu; gerçek failure-domain bağımsızlığı kanıtlanmalı |
 | Lighthouse L3 + contracted gateway + Bunny Volume + YouTick Player | Ingress + persistence + edge | 4 | 5 | 5 | 4 | **Önerilen sade hedef**; provider/load/bütçe kapıları açık |
 | Bunny Storage + Bunny Volume | Opsiyonel hot mirror + edge | 1 | 5 | 5 | 4 | Ana hedef değil; yalnız ölçülmüş long-tail/gateway ihtiyacında ayrı ADR |
@@ -1302,14 +1477,27 @@ Puan: 5 çok uygun, 1 uyumsuz. “Merkeziyetsiz kalıcılık” vendor pazarlama
 - Lighthouse L3 SigV4, presigned URL, PUT/GET/HEAD, Range ve multipart sunar; her
   object response'unda CID taşır. Buna karşılık max object `5 GiB`, per-account
   rate limit, IAM/bucket policy ve conditional write yokluğu yayımlanır. Resmi
-  limits sayfası `1`, key yönetimi sayfası `10` aktif key söylediği için sayı yazılı
-  vendor confirmation kapısıdır. Master key client'a gömülmez; backend exact-object presign, quota,
-  cleanup ve full-readback uygular. [Lighthouse L3](https://docs.lighthouse.storage/s3/intro),
+  limits sayfası `1`, key yönetimi sayfası `10` aktif key söylediği için tasarım
+  tek key gerektirir ve rotation'ı gerçek hesapta ölçer; vendor cevabı beklemez.
+  Master key client'a gömülmez; backend exact-object presign, quota, cleanup ve
+  full-readback uygular. Normal ürün yolunda multipart kullanılmaz.
+  [Lighthouse L3](https://docs.lighthouse.storage/s3/intro),
   [L3 işlemleri](https://docs.lighthouse.storage/s3/reference/supported-operations),
   [L3 sınırları](https://docs.lighthouse.storage/s3/reference/limits),
   [L3 key yönetimi](https://docs.lighthouse.storage/s3/how-to/create-s3-keys)
+- `lighthouse-web3/lighthouse-package` v0.4.7 L3 server implementasyonu değildir.
+  Node file upload tek API POST stream'i, CAR upload tek import isteği,
+  encrypted-file yolu ise `readFileSync` + Kavach kullanır. Bu nedenle paid
+  Studio bu SDK'yı veya `uploadEncrypted` akışını kullanmaz; resmi L3 S3
+  semantiği ve gerçek hesap canary'si esas alınır.
+  [Node file upload](https://github.com/lighthouse-web3/lighthouse-package/blob/9b35c67d7f1aa8a2f8827c40e6e68b8ece83bb79/src/Lighthouse/upload/files/node.ts),
+  [Node CAR upload](https://github.com/lighthouse-web3/lighthouse-package/blob/9b35c67d7f1aa8a2f8827c40e6e68b8ece83bb79/src/Lighthouse/upload/car/node.ts),
+  [Node encrypted upload](https://github.com/lighthouse-web3/lighthouse-package/blob/9b35c67d7f1aa8a2f8827c40e6e68b8ece83bb79/src/Lighthouse/uploadEncrypted/encrypt/file/node.ts)
 - Storacha business SLA'sı upload/read için %99.9 söyler; fakat yalnız satın alıp açıkça etkinleştiren business customer'a uygulanır. TOS, Filecoin deal gecikmesini ve IPFS kopyalarının silme sonrası kalabileceğini belirtir. [Storacha SLA](https://docs.storacha.network/service-level-agreement/), [Storacha TOS](https://docs.storacha.network/terms/)
-- Filecoin Onchain Cloud Synapse bugün yaklaşık 1 GiB upload sınırı yayınlar; CMAF/CAR parçaları buna uyabilir, ancak object sayısı, ödeme, PDP ve repair operasyonu load test edilmeden primary yapılmamalıdır. [Synapse teknik sınırları](https://docs.filecoin.cloud/developer-guides/synapse/)
+- Filecoin Onchain Cloud Synapse bugün yaklaşık 1 GiB upload sınırı yayınlar;
+  küçük ciphertext CMAF object'leri buna uyabilir, ancak object sayısı, ödeme,
+  PDP ve repair operasyonu load test edilmeden primary yapılmamalıdır.
+  [Synapse teknik sınırları](https://docs.filecoin.cloud/developer-guides/synapse/)
 - Bunny Storage S3 public preview alternatif hot-mirror yüzeyidir; ana ingress veya
   production blocker değildir. Açılırsa backend presign + application quota/cleanup/
   full-readback ve yazılı production support yine zorunludur.
@@ -1588,7 +1776,8 @@ Kritik dürüstlük:
    NEAR entitlement ve registry/KMS uyumluluğu korunur; büyük media data-plane
    `apps/studio` companion ve additive contract/protocol yüzeyi olarak eklenir.
 2. **Tek `StorageProvider` arayüzünü üç role ayırın:** `IngressTarget`, `PersistenceReplica`, `DeliveryOrigin`.
-3. **Büyük byte için mega-worker kurmayın.** API yalnız job, capability, checksum, part ledger ve receipt taşır.
+3. **Büyük byte için mega-worker kurmayın.** API yalnız job, capability, object
+   descriptor/ledger ve receipt taşır.
 4. **Tek vendor-neutral manifest kullanın.** HLS/DASH türevleri aynı inventory'den üretilsin; provider ID zincire girmesin.
 5. **Free ve paid pipeline'ı ayırın.** Web yalnız free upload taşır; paid seçimi
    `Studio'da aç` handoff'udur. Paid local sealer kullanır; web paid API'si
@@ -1685,8 +1874,8 @@ Bu ayrım “deal active ama video açılmıyor” sınıfını görünür yapar
 
 Creator, provider hesabına bağımlı olmayan şifreli recovery bundle almalı:
 
-- manifest/inventory,
-- CAR/piece listesi,
+- canonical manifest byte'ı ve CID'si,
+- sıralı object CID/hash/size/path envanteri,
 - content/generation metadata,
 - KMS share commitment'ları ve operator epoch,
 - storage receipts,
@@ -1725,14 +1914,14 @@ aşarsa job otomatik ücretlendirilmez, yeniden açık onay ister.
 | Publish completeness | `%100` dual persistence + 5/5 KMS + delivery/player audit + settled job fee |
 | 20 GB product boundary | Official Studio'da exact decimal limit kabul; `+1` ve 20 GiB red; server maliyet sınırı değildir |
 | Web paid data plane | Paid seçiminde `0` media byte, storage intent ve KMS store |
-| Lighthouse L3 ingress | Her object `<=5 GiB`; `503 SlowDown` backpressure ve quota alarmı |
-| Asset-root traversal | Canonical relative path'lerin `%100`ü iki persistence domaininde aynı length/digest ile çözülür |
+| Lighthouse L3 ingress | Her product object `<=64 MiB`; tekil PUT; `503 SlowDown` backpressure ve quota alarmı |
+| Manifest commitment | Canonical manifest ve object'lerin `%100`ü iki persistence domaininde aynı CID/length/digest ile doğrulanır |
 | Paid media tier | Primary CDN segment byte'ının `%100`ü Bunny Volume; Standard `0`; emergency gateway ayrı ölçülür |
 | Ticket delivery bütçesi | `$2` launch profile hedefi `<=6.0 GB`; her asset'te ölçülen all-in maliyet kendi ticket rezervini aşmaz |
 | Minimum-ticket reserve | Primary spend `<= $0.030`, contingency `<= $0.002`, total `<= $0.032`; fatura uzlaşması tam |
 | Creator job fee | Her job tam olarak bir `FUNDS_SETTLED`, `FUNDS_RELEASED`, `REFUNDED` veya `CANCEL_COST_SETTLED` kapanış receipt'i taşır |
 | Studio process tree RSS | 20 GB fixture'da `<= 2 GiB`, source boyutuna göre büyümez |
-| Resume | Tamamlanmış object/partların `>= %99`u tekrar gitmez; en fazla in-flight iş tekrarlar |
+| Resume | Tamamlanmış ve doğrulanmış object'lerin `>= %99`u tekrar gitmez; en fazla in-flight object tekrarlar |
 | Source mutation | Size/mtime/fingerprint değişiminde aynı generation finalize olmaz |
 | Wallet/secret | Master ve temporary secrets WebView/log/DB/crash/argv-env'de yok; device revoke/direct wallet finalize kanıtlı |
 | Takedown | KMS deny + primary CDN purge için tanımlı ve ölçülmüş SLO |
@@ -1785,12 +1974,14 @@ Zorunlu adversarial testler:
 - web paid kartında file input/upload CTA bulunmaması; UI bypass, doğrudan hook/API
   paid denemesi ve handoff replay'inin sabit hata ile reddi; free 64 MiB regresyonu,
 - app/FFmpeg/OS kill, disk-full, power-loss, 10/100 Mbps network, offline/online;
-  crash sonrası en az `%99` tamamlanmış part reuse,
+  crash sonrası en az `%99` tamamlanmış object reuse,
 - Lighthouse L3 `503 SlowDown`/5xx/timeout ve gerçek-account rate backpressure;
-  `5 GiB + 1` object red, grant expiry/refresh, tek keypair rotation, key escape,
-  replay/overwrite, yanlış signed checksum,
+  product `64 MiB + 1` object red, grant expiry/refresh, 15 dakika clock-skew
+  sınırı, tek keypair rotation, key escape, signed `Content-Length` eksik/farklı,
+  `aws-chunked` bypass, aynı URL hızlı/ardışık replay ve quota/fatura deltası,
+  overwrite, yanlış metadata,
   uncommitted extra object, tiny-object storm ve cumulative ingress/billable/cost
-  quota aşımı; incomplete multipart LIST+Abort ve application orphan cleanup,
+  quota aşımı; application orphan mapping cleanup ve crypto-erasure,
 - accepted quote'un başka job/content/version/policy/rate/asset için replay'i ve
   paid job'ı free finalize etme denemesi,
 - çalınmış pair/grant, yanlış device signature, eski monotonic counter ve revoked
@@ -1801,10 +1992,10 @@ Zorunlu adversarial testler:
 - forged/duplicate/expired/stale-epoch signed receipt, aynı signer'ın iki replica
   veya operator yerine sayılması ve receipt-root replay'i,
 - segment bit flip, IV/AAD/sequence/rendition/generation swap ve manifest tamper,
-- inventory'deki tek eksik/yanlış object, multipart ETag'in digest sayılması ve
-  yanlış/non-deterministic CAR/DAG root, eksik root/link block veya traversal 404;
-  publish öncesi full inventory hash ve iki-domain path gate,
-- keyfi CID pin/proxy, abandoned upload, tiny-part storm ve egress amplification,
+- inventory'deki tek eksik/yanlış object, ETag/CID metadata'nın digest sayılması,
+  non-canonical manifest JSON, object sırası/path/sequence/CID/hash/size tamper'i;
+  publish öncesi canonical manifest CID + full object hash ve iki-domain gate,
+- keyfi CID pin/proxy, abandoned upload, tiny-object storm ve egress amplification,
 - sahte/replay deep link; old FC-key allowlist ile finalize red, direct wallet exact
   method/args/deposit ile başarı; private-beta key cleanup sonrası yeniden kullanım red,
 - sensitive value'ların WebView/SQLite/log/crash/evidence/clipboard/sidecar argv-env
@@ -1872,22 +2063,26 @@ Zorunlu adversarial testler:
   availability ve satışa devam için renewal gate'i ürün/hukuk/finance tarafından
   versioned policy olarak onaylanır.
 - Quorum 5/5 publish, 4/5 repair, 3/5 playback olarak ADR'ye bağlanır.
-- Lighthouse'tan yazılı L3 keypair/rate quota, Filecoin deal, dedicated gateway
-  CDN-origin kullanım izni, retrieval bandwidth/fiyat, SLA ve deletion cevapları alınır.
-- Lighthouse L3 gerçek hesabında exact-object presigned PUT/UploadPart, signed
-  method/path/length/checksum, reservation/reconciliation, replay/overwrite,
-  `5 GiB` object cap, 20 GB job resume, `503 SlowDown` backpressure ve incomplete
-  multipart/orphan cleanup PoC'si yapılır. Ayrıca canonical asset-root CAR
-  import+pin, iki persistence domaininde root reachability ve bütün relative path
-  traversal/hash readback'i geçer.
+- Lighthouse public L3 docs/terms ve
+  `lighthouse-package@9b35c67d7f1aa8a2f8827c40e6e68b8ece83bb79`
+  kaynak snapshot'ı evidence lock'a alınır. L3 keypair/rate/deletion çelişkileri
+  ekip sorusuyla değil fail-closed tek-key tasarım ve gerçek hesap canary'siyle
+  çözülür.
+- Lighthouse L3 gerçek hesabında exact-object presigned `PutObject`, exact
+  method/key/expiry/metadata/`Content-Length`, farklı length ve `aws-chunked`
+  bypass, reservation/reconciliation, aynı URL replay/overwrite ve quota deltası,
+  product `64 MiB` object cap, exact 20 GB source job resume, `503 SlowDown`,
+  clock-skew, key rotation ve orphan mapping cleanup PoC'si yapılır. Canonical
+  manifest + bütün object CID/hash/size envanteri iki persistence domaininde full
+  readback geçer.
 - Bunny Volume Pull Zone + Origin Shield PoC hesabı açılır; 10-PoP bölgesel QoE,
-  progressive fiyat, support/limit ve incident escalation yazılı doğrulanır.
+  progressive fiyat ve limitler gerçek trafik/fatura telemetry'siyle doğrulanır.
 - İkinci persistence provider'ın gerçek storage-provider bağımsızlığı doğrulanır.
 - 100 private-beta smoke, 1.000 paid-production ve 10.000 scale sınıfları ile aylık
   TB bütçesi ayrı ayrı ürün tarafından onaylanır.
 
 **Exit:** Ürün sınırı ve açık launch profile sabittir; sağlayıcı varsayımları
-sözleşmeli/ölçülmüş hale gelir; client'a master key gerektiren yol reddedilir.
+public-source-pinned ve ölçülmüş hale gelir; client'a master key gerektiren yol reddedilir.
 L3 exact ingress/20 GB/full-readback kapısı geçmediyse private beta yoktur.
 Dedicated gateway veya Volume kapısı geçmediyse yalnız testnet/non-sale private beta
 mümkündür; paid production yoktur. P85 AccountCostIncrease / mevcut P86
@@ -1929,8 +2124,9 @@ trial, gift, signless session ve private-beta upload session açılmaz.
   release manifesti.
 
 **Exit:** Küçük v2 fixture Rust Studio ve mevcut web'de aynı hash/CID/KMS sonucunu
-üretir; yanlış L3 object key/checksum reddedilir; paid web network trace sıfır
-media byte gösterir; hiçbir eksik receipt veya funds reservation publish açmaz.
+üretir; yanlış L3 object key grant alamaz, yanlış byte full readback'te finalize'ı
+kapatır; paid web network trace sıfır media byte gösterir; hiçbir eksik receipt
+veya funds reservation publish açmaz.
 Pinned `2.13.1` runtime lane'i ve hedef ağ wallet canary'si aynı ordinary
 FunctionCall sonucunu verir; current upload/gift/trial/signless allowance testleri
 ya geçer ya da ilgili feature kapalıdır.
@@ -1940,17 +2136,19 @@ ya geçer ya da ilgili feature kapalıdır.
 - Tauri/Rust Studio, FFprobe/FFmpeg tek-rendition v2-compatible CMAF.
 - Streaming AES-GCM sealer, wrapped per-job DEK ve secretsiz SQLite ledger.
 - Lighthouse L3 direct object-resumable ciphertext ingress; persistence coordinator
-  aynı immutable CID envanterini bağımsız replica'ya taşır ve deterministic
-  `asset_root_cid` CAR'ını iki tarafta import+pin eder.
+  aynı immutable CID envanterini bağımsız replica'ya taşır; canonical
+  `StorageManifestV1` byte'ı iki tarafta doğrulanır ve manifest CID'si
+  `asset_root_cid` olur.
 - Crash/restart/cancel/cleanup.
 - Just-in-time 15 dakikalık current upload session yalnız testnet/private beta final
   adımında kullanılır; iki-call publish production sale gate değildir.
 
 **Exit:** `20.000.000.000` byte gerçek fixture'da process-tree RSS `<=2 GiB`;
-`+1` ve 20 GiB red; plaintext cloud'da persist edilmez; completed part reuse
-`>= %99`; full readback ve bağımsız replica geçer; mevcut web player kontrollü
-testnet/non-sale asset'i `/ipfs/{asset_root_cid}/{relative_path}` üzerinden oynatır.
-L3/root-DAG kapısı geçmezse bu faz `NO-GO`dur.
+`+1` ve 20 GiB red; plaintext cloud'da persist edilmez; her ciphertext object
+`<=64 MiB`; completed object reuse `>= %99`; full readback ve bağımsız replica
+geçer; mevcut web player kontrollü testnet/non-sale asset'i manifestteki exact
+`/ipfs/{object_cid}` yollarından oynatır. L3/manifest kapısı geçmezse bu faz
+`NO-GO`dur.
 
 ### Phase 3 — Production media release candidate ve atomik publish
 
@@ -1964,8 +2162,9 @@ L3/root-DAG kapısı geçmezse bu faz `NO-GO`dur.
 - Receipt normalizer, readback auditor ve repair controller.
 - Private dedicated Lighthouse gateway + Bunny Volume Pull Zone + Origin Shield;
   direct-origin bypass testi.
-- `asset_root_cid` directory-token yolu; control-only Media Delivery descriptor/token
-  issuer; auditor-only `DELIVERY_AUDIT_READY` ve atomik `PUBLISHED` promotion.
+- Manifest CID + exact-object token yolları; control-only Media Delivery
+  descriptor/playlist/token issuer; auditor-only `DELIVERY_AUDIT_READY` ve atomik
+  `PUBLISHED` promotion.
 - Creator-bound kısa KMS audit grant'ıyla gerçek v3 player smoke; grant'in normal
   viewer/purchase entitlement'ına çevrilemediği adversarial test.
 - Signed `PlaybackDescriptor` ve bağımsız replica gateway emergency fallback.
@@ -2006,8 +2205,8 @@ exit'leri birlikte sağlandığında verilir.
   Method allowlist, düşük key bakiyesi, revoke/rotation ve ayrı threat model geçmeden
   production'a açılmaz; `finalize_desktop_publish`, ödeme ve KMS authority kapsam dışıdır.
 
-**Exit:** 10.000 hot/long-tail ölçülmüş SLO, vendor support/escalation, all-in
-maliyet alarmı ve chaos kanıtıyla ayrı **scale GO**.
+**Exit:** 10.000 hot/long-tail ölçülmüş SLO, incident runbook'u, all-in maliyet
+alarmı ve chaos kanıtıyla ayrı **scale GO**.
 
 ## 16. Go / no-go kapıları
 
@@ -2028,9 +2227,12 @@ maliyet alarmı ve chaos kanıtıyla ayrı **scale GO**.
 - Paid source yalnız Studio'da; web paid file/submit yüzeyi yok, hook/API bypass
   fail-closed ve network trace sıfır media byte. Web free 64 MiB akışı ile legacy
   playback yeşil.
-- Lighthouse L3 exact-key signed PUT/checksum ve 20 GB resume PoC'si geçmiş;
-  asset-root CAR iki persistence domaininde pinli/path-traversable; dedicated gateway
-  bandwidth/fiyat/SLA ve Bunny Volume limit/escalation yazılı.
+- Lighthouse L3 exact-key presigned `PutObject` ve exact 20 GB source resume
+  PoC'si geçmiş; bütün object'ler `<=64 MiB`, L3 + bağımsız replica full readback
+  doğrulanmış ve canonical manifest CID'si envanteri bağlıyor. Signed
+  `Content-Length`/chunked-bypass ve presigned replay quota/fatura testleri direct
+  modun maliyet sınırını doğruluyor. Dedicated gateway bandwidth/QoE ile Bunny
+  Volume limit/fatura davranışı gerçek trafikle ölçülmüş.
 - `%80 delivery / %20 trial` prospective komisyon politikası, `$2` stable-value
   floor ve dinamik asset minimumu bütün aktif payment rail'lerinde aynı sonucu veriyor.
 - Creator job fee her terminal akışta tam olarak bir `FUNDS_SETTLED`,
@@ -2077,8 +2279,8 @@ maliyet alarmı ve chaos kanıtıyla ayrı **scale GO**.
 ### Scale GO
 
 - 10.000 concurrent hot ve long-tail testleri hedef bölgelerde SLO'yu geçiyor.
-- Volume support/escalation ve gerçek fatura tier/billing-unit davranışı yazılı ve
-  ölçülmüş; all-in reserve invariant'ı korunuyor.
+- Gerçek fatura tier/billing-unit davranışı ölçülmüş; all-in reserve invariant'ı
+  korunuyor.
 - İkinci ticari CDN yalnız ölçülen ihtiyaç varsa ayrı ADR ve bütçeyle açılıyor;
   Phase 3 bağımsız gateway fallback'i bu karardan önce de hazırdır.
 
@@ -2102,11 +2304,15 @@ maliyet alarmı ve chaos kanıtıyla ayrı **scale GO**.
 - Worker üzerinden 20 GB proxy upload.
 - Lighthouse L3 master key veya Bunny credential'ını Desktop'a vermek.
 - L3 presigned URL'yi cumulative job kotası sanmak; exact-object reservation,
-  signed checksum ve full readback olmadan production'a açmak.
-- Ayrı object CID'lerini otomatik directory DAG sanmak; canonical root CAR'ı iki
-  persistence domainine import+pin edip path traversal doğrulamadan CDN yolunu açmak.
-- Public dokümanı dedicated gateway SLA/support kanıtı saymak veya provider gate'i
-  geçmediğinde sessizce R2/Bunny Storage fallback eklemek.
+  `<=64 MiB` object policy ve full readback olmadan production'a açmak.
+- Signed `Content-Length` ve aynı-URL replay quota testleri geçmeden direct L3
+  grant'ını maliyet-bounded saymak.
+- Lighthouse encrypted SDK'sını 20 GB streaming/resume çözümü sanmak; SDK'nın
+  `readFileSync` + Kavach yolunu paid Studio'ya taşımak.
+- Normal paid upload için multipart/CAR/UnixFS directory builder eklemek veya ayrı
+  object CID'lerini otomatik directory DAG sanmak.
+- Provider ekibinden cevap ya da yazılı SLA beklemek; gerçek-hesap canary/load
+  kapısı geçmediğinde sessizce R2/Bunny Storage fallback eklemek.
 - Paid segmentleri Standard tier'a bütçe/minimum-price yeniden onayı olmadan yönlendirmek.
 - Duration/bitrate envelope ve komisyon migration'ı olmadan “her `$2` ticket bir
   tam oynatmayı finanse eder” iddiasında bulunmak.
@@ -2138,12 +2344,14 @@ Bu tezi koruyan en sade 2026 mimarisi:
 ```text
 Current Web --one-time handoff--> Studio Tauri/Rust
 Studio local FFmpeg + AES-GCM --ciphertext only-->
-  Lighthouse L3 exact-object presigned ciphertext ingress
-  -> immutable object CIDs + canonical asset_root_cid DAG
+  <=64 MiB exact-object presigned L3 PutObject
+  -> immutable object CIDs
+  -> canonical StorageManifestV1 JSON CID = asset_root_cid
   -> Lighthouse/Filecoin primary
   -> independent persistence replica
   -> dedicated Lighthouse gateway
   -> Bunny CDN Volume + Origin Shield primary
+  -> exact /ipfs/{object_cid} tokenized playlists
   -> independent replica gateway standby when justified
   -> Web/TV local decrypt
 
@@ -2156,19 +2364,138 @@ Creator job fee = on-chain reserve; settle + publish same transaction
 Paid commission = %1.5 Volume + %0.1 contingency + %0.4 trial/growth
 ```
 
-İlk uygulanabilir dilim CDN entegrasyon kodu değildir. Önce P85
-AccountCostIncrease kuralını mevcut P86 runtime'da doğrulayan gas/account-cost
-canary'si çalıştırılmalı; mevcut upload/gift/trial/signless
-allowance ve minimum-balance sorunu kapatılmalı veya ilgili feature geçici olarak
-kapatılmalıdır. Bu hotfix, yeni gas-key mimarisine geçiş gerektirmez.
+İlk uygulanabilir Lighthouse dilimi CDN veya Tauri UI entegrasyonu değildir.
+`StorageManifestV1` şeması, exact AAD/envelope/Merkle kuralları ve ortak
+Rust/TypeScript golden vector'ları repo içinde başlatılmıştır. İkinci çekirdek
+dilim de repo içinde başlamıştır:
 
-Ardından exact byte policy ve v2 compatibility vector'ları sabitlenmeli; web paid
-yolu UI + hook + API katmanında kapatılmalıdır. Sonra `media_job` + Lighthouse L3
-exact-object ingress/dedicated gateway/Volume PoC'si, komisyon migration testi ve atomik
-`finalize_desktop_publish` contract testleri yazılmalıdır.
-Tauri shell bundan sonra aynı protokolü kullanır. 20 GB gerçek fixture, fail-closed
-durability/KMS ve mevcut web playback geçmeden kullanıcıya production paid upload
-açılmaz.
+- job başına ayrı `MediaJobState` Durable Object; exact object/byte rezervi,
+  idempotency request hash'i, monotonic device counter, iki açık grant ve
+  verified receipt reconciliation aynı transaction sınırındadır;
+- `aws4fetch` tabanlı SigV4 signer yalnız
+  `jobs/{job_id}/objects/{ordinal}-{ciphertext_sha256}` için en fazla 10 dakikalık
+  `PutObject` üretir; `Content-Length`, content type, ciphertext digest ve object
+  metadata'sı `allHeaders` ile imzalanır;
+- full GET doğrulama çekirdeği hem exact L3 key hem dönen `/ipfs/{cid}` için Rust
+  `Read` stream'inde incremental SHA-256 yapar; raw CID'de embedded digest de
+  ciphertext hash'e bağlanır. `200` dışı cevap, redirect,
+  `206`/`Content-Range`, content encoding, eksik/uyuşmayan CID-size-metadata ve
+  kısa/uzun/yanlış byte reddedilir. Media byte'ı Storage Control Worker'dan
+  geçmez.
+
+Bu çekirdekler production capability değildir. Public
+`POST /studio/jobs/{id}/objects` route'u bilerek mount edilmemiştir. Üçüncü
+çekirdek dilimde şu source-level temeller eklenmiştir:
+
+- `nft-ticket` root Borsh layout'unu değiştirmeyen versioned lazy sidecar
+  `MediaJobFeeReservationV1`; exact NEAR charge + ledger storage deposit,
+  creator-scoped idempotency, unique reservation, toplam NEAR liability,
+  billable provider kullanımı kapalıyken
+  `FUNDS_RESERVED -> CANCEL_PENDING -> FUNDS_RELEASED|CANCEL_FAILED` tam iptal
+  callback akışı, payer-only missing-callback acknowledgement ve fail-closed
+  accounting event'leri. İptal pause sırasında açıktır; yeni reserve kapalıdır.
+  FT rail'i, usage lock, ölçülmüş cancel-cost settlement ve settle/publish bu
+  dilimde yoktur.
+- Storage Control'de `wait_until=FINAL` transaction, exact
+  `reserve_media_job_fee_v1` method/args/deposit, başarılı aggregate status, en
+  az bir receipt ve bütün dönen receipt outcome'ları, beklenen chain + pinli
+  contract code hash ve ayrı `finality=final` state query'si uyuşmadan authority
+  üretmeyen normalizer.
+  Bu normalizer henüz public `POST /studio/jobs` route'una bağlanmamıştır.
+- Job `UNPAIRED` başlar. Pair challenge job, reservation, quote, policy/rate,
+  bütçe, deadline, fee version, authority digest ve device key'i NEP-413
+  mesajına bağlar. Challenge üretimi aynı creator'a ait geçerli wallet-auth
+  token'ı ve final state'te FullAccess key gerektirir. `/pair` imzayı RPC'den
+  önce doğrular ve yalnız final state'te bulunan FullAccess wallet key'i kabul
+  eder; legacy upload FunctionCall key'i pairing yetkisi değildir.
+- `L3_VERIFIED` geçişi shared verifier attestation secret olmadan kapalıdır ve
+  64-hex `verification_id` ile idempotent bağlanır.
+- `verification_id`, immutable authority/job/generation/reservation/object
+  tuple'ından yalnız Durable Object tarafından deterministic üretilir.
+  `RESERVED -> VERIFY_PENDING` ve outbox kaydı aynı transaction'da yazılır.
+  Queue mesajı yalnız `schema`, `verificationId`, `jobId`, `generation` ve
+  `ordinal` taşır; URL, CID, hash, boyut, object key, credential, secret veya
+  media byte taşımaz. Transaction sonrası Queue gönderimi başarısız olur veya
+  Worker kapanırsa Durable Object alarmı `PENDING` outbox kaydını otonom yeniden
+  gönderir; duplicate teslim deterministic ID ve lease ile güvenlidir. Başarılı
+  verifier claim'i aynı transaction'da outbox'ı `DISPATCHED` yapar; böylece
+  Queue teslimi ile producer dispatch-marker yazımı arasındaki crash penceresi
+  de kapanır.
+- Verifier claim'i `VERIFYING` durumuna beş dakikalık fenced lease ile geçer;
+  exact beklenen metadata ile altı dakikalık, yalnız ilgili key'e bağlı L3
+  `HEAD` ve `GET` grant'lerini döndürür. Eski lease success/fail yazamaz.
+  `L3_VERIFIED` ilk ve tek quota reconcile noktasıdır; kesin hata `FAILED`,
+  geçici hata `VERIFY_FAILED`, deneme tükenmesi `DLQ` olarak fail-closed kalır.
+- `crates/storage-manifest` aynı doğrulama çekirdeğini kullanan incremental
+  `CiphertextStreamVerifier` ve strict Rust queue şemasını içerir. TypeScript
+  ve Rust deterministic ID aynı repo golden vector'ıyla kilitlidir.
+
+Bu kaynak kod live capability değildir: 2026-07-23 mainnet denetiminde yeni
+reservation view ve `finalize_desktop_publish` canlı WASM'da yoktur. Public job
+creation için signed quote doğrulaması + trusted DO initialize köprüsü; ağ yapan
+ayrı Rust Queue consumer'ı ve consumer/DLQ binding'i hâlâ eksiktir. Durable
+Object alarmı otonom orphan recovery sağlar; control-only
+`/verification-reconcile` ayrıca operasyonel tekrar yüzeyi olarak kapalı trust
+boundary içinde kalır. Lighthouse'ın açık L3 dokümanı PUT/HEAD/GET sonucundaki
+CID alanını `x-amz-meta-cid` olarak tanımlar; fakat bu canlı sayfaların public
+GitHub kaynağında commit-pinned `docs-s3` ağacı ve L3 server implementasyonu
+yoktur. Gerçek L3 hesabındaki küçük canary bu header'ın PUT/HEAD/GET
+tutarlılığını ve CID full-readback sonucunu repo fixture'ına kilitlemelidir.
+Ayrıca provider grant açılmadan önce final on-chain usage lock ve ölçülmüş
+cancel-cost/refund state makinesi tamamlanmalıdır. Media byte Storage Control
+Worker veya queue'dan geçmemelidir.
+
+Bu gerçek-hesap kapısının ilk opt-in aracı repo içinde
+`workers/storage-api/scripts/l3-account-canary.mjs` olarak eklenmiştir.
+Canary yalnız açık mutasyon onayı verilmiş dedicated non-production bucket'ta
+iki benzersiz `4 KiB` sentetik object yazar. Exact PUT, HEAD, L3 full GET,
+CID-gateway full GET, bir byte kısa signed-length negatif PUT, iki aynı-URL
+replay ve replay sonrası ikinci bounded full GET ölçülür. Ardından iki mapping
+DELETE edilir; signed HEAD+GET `404` görüldükten sonra süresi dolmamış eski PUT
+URL bir kez daha çağrılır, mapping yeniden oluşursa exact full readback yapılır
+ve ikinci DELETE uygulanır. Son HEAD+GET `404` sonucu 9.25 saniyelik bounded
+`HEAD/GET -> gerekirse DELETE` safety window içinde tekrar doğrulanır. Recovery
+dosyası başarılı koşuda da korunur; bu pencere grant expiry veya gelecekteki
+replay'i kanıtlamaz. CID'nin mapping silindikten sonra kalıcı okunabilirliği de
+ölçülür. Yalnız
+`x-amz-meta-cid` kabul edilir; değer canonical CIDv0/base58btc dag-pb veya
+lowercase CIDv1/base32 `raw|dag-pb` ve `sha2-256/32-byte` olarak parse edilir;
+raw CIDv1 digest'i ciphertext SHA-256 ile eşleşmek zorundadır. Mutation öncesinde operatorün
+verdiği absolute path'te overwrite etmeyen mode `0600` recovery dosyası
+oluşturulur. Presigned URL/query, credential, ham header map, ham response body
+veya ham hata evidence'e girmez; çıktı
+`protocol/l3-account-canary-v1/schema.json` ile fail-closed doğrulanır.
+`technicalResult=PASS` dahi production GO değildir ve üst verdict replay
+fatura/quota etkisi ile presigned URL expiry ölçülmediği için
+`EVIDENCE_MISSING` kalır. Evidence RFC 8785 canonical JSON ile hashlenir;
+schema, payload hash ve gözlem/check ilişkileri ayrı machine checker tarafından
+yeniden doğrulanır.
+
+2026-07-23 Lite gerçek-hesap koşusunda `technicalResult=PASS`,
+`verdict=EVIDENCE_MISSING` ve bütün 16 teknik check `true` olmuştur. Exact PUT,
+HEAD, L3 full GET, CIDv0 public-gateway full GET, iki replay, replay sonrası
+readback, signed-length negatif PUT, post-delete eski URL ile mapping'in yeniden
+oluşması ve final mapping cleanup ölçülmüştür. Bucket koşu sonunda `0` object
+göstermiş; CID mapping silinse de sentetik içerik gateway'de okunabilir kalmıştır.
+Machine evidence payload SHA-256
+`d5b8c6dd8aabe6d83dfcbeeedf5fb18ca10172b1ea97a5f0f61832d49f5f19a9`dır.
+Koşu dirty source üzerinden alındığı için release provenance kanıtı değildir.
+Machine evidence'e dahil olmayan ayrı exploratory probe'larda body digest
+`x-amz-content-sha256` presigned varyantı `SignatureDoesNotMatch` vermiş,
+`x-amz-checksum-sha256` ise aynı uzunluktaki bozuk body'yi de `200` kabul etmiştir.
+Replay fatura/quota deltası, presigned URL expiry, `aws-chunked`, key rotation,
+exact 20 GB resume, Filecoin, CDN ve playback kapıları açıktır.
+
+Ardından aynı protokol küçük bir CLI canary ile gerçek L3 hesabında tek-key
+rotation, clock skew, `503 SlowDown`, signed `Content-Length`/chunked bypass,
+aynı URL replay quota etkisi, object-level restart ve yanlış-byte reddini
+geçmelidir. Sonra bağımsız replica copy/verify eklenir; en son Tauri job core bu
+kanıtlanmış protokolü çağırır.
+
+Web paid yolu UI + hook + API katmanında kapalı kalır; mevcut gift/trial yüzeyleri
+bu Lighthouse redesign kapsamında değiştirilmez. Exact `20.000.000.000` byte gerçek
+fixture, fail-closed durability/KMS ve mevcut web playback geçmeden kullanıcıya
+production paid upload açılmaz.
 
 ## 18. Resmi kaynaklar
 
@@ -2185,9 +2512,24 @@ açılmaz.
 - [Bunny CDN](https://docs.bunny.net/cdn)
 - [Bunny CDN fiyatları](https://docs.bunny.net/cdn/pricing)
 - [Lighthouse L3 introduction](https://docs.lighthouse.storage/s3/intro)
+- [Lighthouse L3 quick start](https://docs.lighthouse.storage/s3/quick-start)
+- [Lighthouse L3 upload](https://docs.lighthouse.storage/s3/how-to/upload/)
+- [Lighthouse L3 Node AWS SDK v3](https://docs.lighthouse.storage/s3/how-to/upload/aws-sdk-js)
+- [AWS S3 SigV4 presigned query kuralları ve resmi test vektörü](https://docs.aws.amazon.com/AmazonS3/latest/developerguide/sigv4-query-string-auth.html)
+- [aws4fetch `allHeaders` signer kaynağı](https://github.com/mhart/aws4fetch/blob/master/src/main.js)
+- [Lighthouse L3 download, Range, ETag ve CID](https://docs.lighthouse.storage/s3/how-to/download)
 - [Lighthouse L3 supported operations](https://docs.lighthouse.storage/s3/reference/supported-operations)
 - [Lighthouse L3 limits](https://docs.lighthouse.storage/s3/reference/limits)
+- [Lighthouse L3 S3/IPFS semantics](https://docs.lighthouse.storage/s3/reference/s3-and-ipfs)
 - [Lighthouse L3 key management](https://docs.lighthouse.storage/s3/how-to/create-s3-keys)
+- [Lighthouse package source, pinned commit](https://github.com/lighthouse-web3/lighthouse-package/tree/9b35c67d7f1aa8a2f8827c40e6e68b8ece83bb79)
+- [Lighthouse Gitbook pinned tree](https://github.com/lighthouse-web3/gitbook/tree/e7dcb1cfd6c7ad9775514a597d3cbdb1297d4fe7)
+- [Lighthouse package Node CI](https://github.com/lighthouse-web3/lighthouse-package/blob/9b35c67d7f1aa8a2f8827c40e6e68b8ece83bb79/.github/workflows/node.js.yml)
+- [Lighthouse package v0.4.7 PR #142](https://github.com/lighthouse-web3/lighthouse-package/pull/142)
+- [Lighthouse Node file upload source](https://github.com/lighthouse-web3/lighthouse-package/blob/9b35c67d7f1aa8a2f8827c40e6e68b8ece83bb79/src/Lighthouse/upload/files/node.ts)
+- [Lighthouse Node CAR upload source](https://github.com/lighthouse-web3/lighthouse-package/blob/9b35c67d7f1aa8a2f8827c40e6e68b8ece83bb79/src/Lighthouse/upload/car/node.ts)
+- [Lighthouse Node encrypted upload source](https://github.com/lighthouse-web3/lighthouse-package/blob/9b35c67d7f1aa8a2f8827c40e6e68b8ece83bb79/src/Lighthouse/uploadEncrypted/encrypt/file/node.ts)
+- [RFC 8785 JSON Canonicalization Scheme](https://www.rfc-editor.org/rfc/rfc8785)
 - [Bunny Storage fiyatları](https://docs.bunny.net/storage/pricing)
 - [Bunny Storage S3 public preview](https://docs.bunny.net/storage/s3)
 - [Bunny Request Coalescing](https://docs.bunny.net/cdn/request-coalescing)
@@ -2199,6 +2541,13 @@ açılmaz.
 - [Bunny Player control API](https://docs.bunny.net/stream/playback-api)
 - [Bunny MediaCage DRM](https://docs.bunny.net/stream/drm)
 - [Cloudflare Stream pricing](https://developers.cloudflare.com/stream/pricing/)
+- [Cloudflare Queues başlangıç ve binding modeli](https://developers.cloudflare.com/queues/get-started/)
+- [Cloudflare Queues at-least-once teslim modeli](https://developers.cloudflare.com/queues/reference/how-queues-works/)
+- [Cloudflare Queues retry ve DLQ ayarları](https://developers.cloudflare.com/queues/configuration/batching-retries/)
+- [Cloudflare Durable Object alarm ve at-least-once davranışı](https://developers.cloudflare.com/durable-objects/api/alarms/)
+- [Cloudflare Workers Rust desteği](https://developers.cloudflare.com/workers/languages/rust/)
+- [workers-rs Queue event örneği](https://github.com/cloudflare/workers-rs/blob/main/README.md)
+- [Wrangler Queue ve dış Worker binding ayarları](https://developers.cloudflare.com/workers/wrangler/configuration/)
 - [Livepeer pricing](https://livepeer.studio/pricing)
 - [Livepeer Transcode API](https://docs.livepeer.org/v1/api-reference/transcode/create)
 - [Filecoin and IPFS](https://docs.filecoin.io/basics/how-storage-works/filecoin-and-ipfs)

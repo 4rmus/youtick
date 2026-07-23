@@ -10,14 +10,21 @@
         "dev": "wrangler dev",
         "deploy": "wrangler deploy",
         "tail": "wrangler tail",
+        "canary:l3": "node scripts/l3-account-canary.mjs",
+        "check:canary-evidence": "node scripts/check-l3-account-canary-evidence.mjs",
+        "test:canary": "node --test scripts/l3-account-canary.test.mjs",
         "test": "vitest",
         "test:run": "vitest --run"
     },
     "devDependencies": {
         "@cloudflare/workers-types": "^4.20260423.1",
         "@vitest/ui": "^4.1.5",
+        "ajv": "^8.20.0",
         "typescript": "^5.9.3",
         "vitest": "^4.1.5",
         "wrangler": "^4.84.1"
+    },
+    "dependencies": {
+        "aws4fetch": "1.0.20"
     }
 }
