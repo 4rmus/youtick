@@ -2478,8 +2478,11 @@ readback, signed-length negatif PUT, post-delete eski URL ile mapping'in yeniden
 oluşması ve final mapping cleanup ölçülmüştür. Bucket koşu sonunda `0` object
 göstermiş; CID mapping silinse de sentetik içerik gateway'de okunabilir kalmıştır.
 Machine evidence payload SHA-256
-`d5b8c6dd8aabe6d83dfcbeeedf5fb18ca10172b1ea97a5f0f61832d49f5f19a9`dır.
-Koşu dirty source üzerinden alındığı için release provenance kanıtı değildir.
+`d6af8771c7005279579de6085a169b6d05c7bca7aa03dc3ed65addbb01fc7cbf`dır.
+Koşu exact source commit
+`269fc4dd93e470f52d710eb8d54547fd5ec4d883` üzerinde `sourceDirty=false`
+olarak tekrarlanmıştır; önceki dirty gözlem bu temiz provenance kanıtıyla
+supersede edilmiştir.
 Machine evidence'e dahil olmayan ayrı exploratory probe'larda body digest
 `x-amz-content-sha256` presigned varyantı `SignatureDoesNotMatch` vermiş,
 `x-amz-checksum-sha256` ise aynı uzunluktaki bozuk body'yi de `200` kabul etmiştir.
