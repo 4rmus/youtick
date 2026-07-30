@@ -4,6 +4,8 @@
 
 ---
 
+> Target, not deployed: [Paid Media v4 Implementation Plan](./decentralized-paid-media-v4-plan.md)
+
 ## Summary
 
 Today, YouTick runs through five active layers:
