@@ -1,6 +1,12 @@
 import { base58Decode } from '../../shared/src/base58';
+import {
+    getR2IngestReadiness,
+    matchR2IngestRoute,
+    type R2IngestEnv,
+} from './r2-ingest';
+export { R2IngestSession } from './r2-ingest';
 
-export interface Env {
+export interface Env extends R2IngestEnv {
     ALLOWED_ORIGINS?: string;
     STORAGE_PROVIDER?: string;
     LIGHTHOUSE_API_BASE?: string;
@@ -117,6 +123,15 @@ export default {
             return jsonResponse(request, env, getProviderHealth(env));
         }
 
+        if (request.method === 'GET' && url.pathname === '/media-jobs/ingest/probe') {
+            return jsonResponse(request, env, getR2IngestReadiness(env));
+        }
+
+        const r2IngestRoute = matchR2IngestRoute(url.pathname);
+        if (r2IngestRoute) {
+            return forwardR2IngestRequest(request, env, r2IngestRoute);
+        }
+
         if (request.method === 'POST' && url.pathname === '/pins') {
             return handlePinRequest(request, env);
         }
@@ -151,7 +166,7 @@ export default {
             env,
             {
                 error: 'not_found',
-                endpoints: ['/__health', '/provider-health', '/pins', '/pins/:cid/status', '/uploads/auth/challenge', '/uploads/auth/verify', '/uploads/intent', '/uploads/file', '/uploads/directory'],
+                endpoints: ['/__health', '/provider-health', '/media-jobs/ingest/probe', '/media-jobs/:job/generations/:generation/uploads', '/pins', '/pins/:cid/status', '/uploads/auth/challenge', '/uploads/auth/verify', '/uploads/intent', '/uploads/file', '/uploads/directory'],
             },
             404,
         );
@@ -739,6 +754,27 @@ function handleOptions(request: Request, env: Env): Response {
     });
 }
 
+async function forwardR2IngestRequest(
+    request: Request,
+    env: Env,
+    route: { jobId: string; generation: number },
+): Promise<Response> {
+    if (!env.R2_INGEST_SESSIONS) {
+        return jsonResponse(request, env, { error: 'r2_ingest_disabled' }, 503);
+    }
+    const id = env.R2_INGEST_SESSIONS.idFromName(`${route.jobId}:${route.generation}`);
+    const response = await env.R2_INGEST_SESSIONS.get(id).fetch(request);
+    const headers = new Headers(response.headers);
+    for (const [name, value] of Object.entries(corsHeaders(request, env))) {
+        headers.set(name, value);
+    }
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+    });
+}
+
 function jsonResponse(
     request: Request,
     env: Env,
@@ -759,8 +795,15 @@ function corsHeaders(request: Request, env: Env): Record<string, string> {
     const requestOrigin = request.headers.get('Origin');
     const allowedOrigins = getAllowedOrigins(env);
     const headers: Record<string, string> = {
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': [
+            'Content-Type',
+            'Authorization',
+            'X-Youtick-Public-Key',
+            'X-Youtick-Timestamp',
+            'X-Youtick-Nonce',
+            'X-Youtick-Signature',
+        ].join(', '),
         'Vary': 'Origin',
     };
 

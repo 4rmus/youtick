@@ -10,6 +10,7 @@ const TESTNET_USDC: &str = "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520
 const MAINNET_USDC: &str = "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
 const PROFILE: &str = "paid-media-v4";
 const KMS_OPERATOR_COUNT: usize = 5;
+const PAID_SOURCE_MAX_BYTES: u128 = 20_000_000_000;
 const FT_TRANSFER_GAS: Gas = Gas::from_tgas(20);
 const WITHDRAW_CALLBACK_GAS: Gas = Gas::from_tgas(10);
 
@@ -100,6 +101,8 @@ pub struct MediaJob {
     pub profile: String,
     pub title: String,
     pub price_usdc: U128,
+    pub source_bytes: U128,
+    pub ingest_public_key: String,
     pub generation: u64,
     pub status: MediaJobStatus,
     pub byte_integrity: Option<ByteIntegrityReceipt>,
@@ -210,9 +213,18 @@ impl Contract {
         }
     }
 
-    pub fn create_paid_job(&mut self, job_id: String, title: String, price_usdc: U128) -> MediaJob {
+    pub fn create_paid_job(
+        &mut self,
+        job_id: String,
+        title: String,
+        price_usdc: U128,
+        source_bytes: U128,
+        ingest_public_key: String,
+    ) -> MediaJob {
         assert_identifier("job_id", &job_id);
         assert_title(&title);
+        assert_source_bytes(source_bytes.0);
+        assert_ingest_public_key(&ingest_public_key);
         require!(
             price_usdc.0 >= 50 && price_usdc.0 % 50 == 0,
             "USDC price must split exactly into 98/2 shares"
@@ -228,6 +240,8 @@ impl Contract {
             profile: PROFILE.to_string(),
             title,
             price_usdc,
+            source_bytes,
+            ingest_public_key,
             generation: 1,
             status: MediaJobStatus::Authorized,
             byte_integrity: None,
@@ -240,7 +254,12 @@ impl Contract {
         job
     }
 
-    pub fn restart_paid_job(&mut self, job_id: String) -> MediaJob {
+    pub fn restart_paid_job(
+        &mut self,
+        job_id: String,
+        source_bytes: U128,
+        ingest_public_key: String,
+    ) -> MediaJob {
         let mut job = self.media_jobs.get(&job_id).expect("Media job not found");
         require!(
             env::predecessor_account_id() == job.creator_id,
@@ -254,8 +273,12 @@ impl Contract {
             job.source_delete.is_none(),
             "A media job cannot restart after source deletion"
         );
+        assert_source_bytes(source_bytes.0);
+        assert_ingest_public_key(&ingest_public_key);
 
         job.generation = job.generation.checked_add(1).expect("Generation overflow");
+        job.source_bytes = source_bytes;
+        job.ingest_public_key = ingest_public_key;
         job.status = MediaJobStatus::Authorized;
         job.byte_integrity = None;
         job.kms_receipts.clear();
@@ -716,6 +739,44 @@ fn assert_title(value: &str) {
         !value.trim().is_empty() && value.len() <= 200,
         "title must be 1-200 bytes"
     );
+}
+
+fn assert_source_bytes(value: u128) {
+    require!(
+        (1..=PAID_SOURCE_MAX_BYTES).contains(&value),
+        "source_bytes must be between 1 and 20,000,000,000"
+    );
+}
+
+fn assert_ingest_public_key(value: &str) {
+    let encoded = value.strip_prefix("ed25519:").unwrap_or("");
+    require!(
+        (43..=44).contains(&encoded.len()) && decoded_base58_len(encoded) == Some(32),
+        "ingest_public_key must be a canonical ed25519 public key"
+    );
+}
+
+fn decoded_base58_len(value: &str) -> Option<usize> {
+    const ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let mut bytes = vec![0u8];
+    for character in value.bytes() {
+        let mut carry = ALPHABET.iter().position(|byte| *byte == character)? as u32;
+        for byte in bytes.iter_mut().rev() {
+            let next = u32::from(*byte) * 58 + carry;
+            *byte = (next & 0xff) as u8;
+            carry = next >> 8;
+        }
+        while carry > 0 {
+            bytes.insert(0, (carry & 0xff) as u8);
+            carry >>= 8;
+        }
+    }
+    let leading_zeroes = value.bytes().take_while(|byte| *byte == b'1').count();
+    let significant = bytes
+        .iter()
+        .position(|byte| *byte != 0)
+        .unwrap_or(bytes.len());
+    Some(leading_zeroes + bytes.len() - significant)
 }
 
 fn assert_cid(value: &str) {

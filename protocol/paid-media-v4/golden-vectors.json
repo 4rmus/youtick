@@ -4,7 +4,9 @@
     "job_id": "job-1",
     "generation": 1,
     "creator_id": "creator.testnet",
-    "price_usdc": "2000000"
+    "price_usdc": "2000000",
+    "source_bytes": "20000000000",
+    "ingest_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF"
   },
   "byte_integrity": {
     "manifest_cid": "bafy-manifest",

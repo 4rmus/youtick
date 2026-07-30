@@ -1,0 +1,18 @@
+[
+  {
+    "AllowedOrigins": [
+      "https://youtick.net",
+      "https://www.youtick.net"
+    ],
+    "AllowedMethods": [
+      "PUT"
+    ],
+    "AllowedHeaders": [
+      "Content-Type"
+    ],
+    "ExposeHeaders": [
+      "ETag"
+    ],
+    "MaxAgeSeconds": 3600
+  }
+]

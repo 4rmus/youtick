@@ -8,6 +8,7 @@ public-alpha contract remains unchanged until a separately approved cutover.
 The contract supports:
 
 - creator-owned paid media jobs;
+- exact source byte length plus a generation-bound browser ingest key;
 - generation-bound full-byte Lighthouse verification;
 - five distinct KMS store/readback receipts;
 - raw R2 source delete/not-found evidence;
@@ -18,6 +19,11 @@ The contract supports:
 
 It does not expose gift, trial, free, onboarding, prepaid, Studio, upload-session
 or object-v1 launch methods or state.
+
+`create_paid_job` accepts the source length and browser-generated Ed25519 public
+key in the same wallet transaction that authorizes the paid job. The source is
+limited to `20_000_000_000` bytes. Restart rotates the key and increments the
+generation.
 
 Protocol details and exact bindings are in
 `protocol/paid-media-v4/README.md`.

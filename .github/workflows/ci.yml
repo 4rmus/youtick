@@ -99,6 +99,8 @@ jobs:
           fi
 
           if grep -Eq '^(protocol/paid-media-v4/|scripts/check-paid-media-v4-abi\.mjs$)' /tmp/changed-files; then
+            web=true
+            storage=true
             contracts=true
           fi
 

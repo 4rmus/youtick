@@ -1075,6 +1075,48 @@ describe('storage-api', () => {
         expect(response.status).toBe(204);
         expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:3000');
         expect(response.headers.get('Access-Control-Allow-Methods')).toContain('OPTIONS');
+        expect(response.headers.get('Access-Control-Allow-Methods')).toContain('DELETE');
+        expect(response.headers.get('Access-Control-Allow-Headers')).toContain('X-Youtick-Signature');
+    });
+
+    it('reports private R2 ingest as disabled until every dependency is configured', async () => {
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request('https://storage.youtick.net/media-jobs/ingest/probe', {
+                headers: { Origin: 'https://youtick.net' },
+            }),
+            createEnv(),
+        );
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+            schema: 'youtick.r2-ingest-readiness.v1',
+            ready: false,
+            stage: 'DISABLED',
+            maxSourceBytes: 20_000_000_000,
+            partBytes: 67_108_864,
+        });
+    });
+
+    it('routes persisted R2 control requests to one job-generation object', async () => {
+        const fetchStub = vi.fn(async () => Response.json({ state: 'UPLOADING' }));
+        const idFromName = vi.fn(() => ({ toString: () => 'object-id' }));
+        const get = vi.fn(() => ({ fetch: fetchStub }));
+        const handler = await importHandler();
+        const response = await handler.fetch(
+            new Request(
+                'https://storage.youtick.net/media-jobs/job-1/generations/2/uploads/parts',
+                { headers: { Origin: 'https://youtick.net' } },
+            ),
+            createEnv({
+                R2_INGEST_SESSIONS: { idFromName, get } as unknown as DurableObjectNamespace,
+            }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(idFromName).toHaveBeenCalledWith('job-1:2');
+        expect(fetchStub).toHaveBeenCalledOnce();
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://youtick.net');
     });
 
     it('allows the secondary local dev port used for parallel smoke tests', async () => {
@@ -1127,7 +1169,7 @@ describe('storage-api', () => {
         expect(response.status).toBe(404);
         expect(await response.json()).toEqual({
             error: 'not_found',
-            endpoints: ['/__health', '/provider-health', '/pins', '/pins/:cid/status', '/uploads/auth/challenge', '/uploads/auth/verify', '/uploads/intent', '/uploads/file', '/uploads/directory'],
+            endpoints: ['/__health', '/provider-health', '/media-jobs/ingest/probe', '/media-jobs/:job/generations/:generation/uploads', '/pins', '/pins/:cid/status', '/uploads/auth/challenge', '/uploads/auth/verify', '/uploads/intent', '/uploads/file', '/uploads/directory'],
         });
     });
 });
