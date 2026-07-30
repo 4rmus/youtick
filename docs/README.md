@@ -39,6 +39,7 @@ claim.
 ## Architecture
 
 - [System Architecture](architecture/README.md) `LIVE`
+- [Paid Media v4 Implementation Plan](architecture/decentralized-paid-media-v4-plan.md) `TARGET / NOT DEPLOYED`
 - [Storage & Delivery](architecture/storage.md) `LIVE`
 - [Session Keys & Upload Sessions](architecture/session-keys.md) `LIVE + LEGACY`
 - [Smart Contract](architecture/smart-contract.md) `LIVE`

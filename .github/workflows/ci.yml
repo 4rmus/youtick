@@ -90,6 +90,14 @@ jobs:
             media=true
           fi
 
+          if grep -Eq '^protocol/(storage-manifest-v2|pack-range-v3)/' /tmp/changed-files; then
+            web=true
+            kms=true
+            storage=true
+            media=true
+            contracts=true
+          fi
+
           if grep -Eq '^contracts/' /tmp/changed-files; then
             contracts=true
           fi
