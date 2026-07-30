@@ -312,7 +312,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install cargo-near
-        run: cargo install cargo-near --version 0.18.0 --locked
+        run: cargo install cargo-near --version 0.17.0 --locked
 
       - name: Restore Cargo cache
         uses: actions/cache@v5
