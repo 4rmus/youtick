@@ -1,146 +1,19 @@
-// contracts/nft-ticket/src/lib.rs
-
+use near_sdk::collections::{LookupMap, UnorderedSet};
+use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
-    collections::{LazyOption, LookupMap, LookupSet, UnorderedMap},
-    env,
-    json_types::{Base64VecU8, U128},
-    near, require, AccountId, NearToken, PanicOnDefault, Promise, PromiseOrValue, PublicKey,
+    env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseOrValue,
+    PromiseResult,
 };
-use std::collections::HashMap;
-use std::num::NonZeroU128;
 
-mod events;
-mod gift;
-mod market;
-mod migrate;
-mod moderation;
-mod nft;
-mod onboarding;
-mod timelock;
-mod treasury;
-mod views;
-mod web4;
+const TESTNET_USDC: &str = "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af";
+const MAINNET_USDC: &str = "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
+const PROFILE: &str = "paid-media-v4";
+const KMS_OPERATOR_COUNT: usize = 5;
+const FT_TRANSFER_GAS: Gas = Gas::from_tgas(20);
+const WITHDRAW_CALLBACK_GAS: Gas = Gas::from_tgas(10);
 
-pub(crate) use nft::YtNft;
-
-// ═══════════════════════════════════════════════════════════════
-// NFT TOKEN TYPES (replaces near-contract-standards)
-// ═══════════════════════════════════════════════════════════════
-
-pub type TokenId = String;
-
-pub const NFT_METADATA_SPEC: &str = "nft-1.0.0";
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[near(serializers = [borsh, json])]
-pub struct NFTContractMetadata {
-    pub spec: String,
-    pub name: String,
-    pub symbol: String,
-    pub icon: Option<String>,
-    pub base_uri: Option<String>,
-    pub reference: Option<String>,
-    pub reference_hash: Option<Base64VecU8>,
-}
-
-#[near(serializers = [borsh, json])]
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TokenMetadata {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub media: Option<String>,
-    pub media_hash: Option<Base64VecU8>,
-    pub copies: Option<u64>,
-    pub issued_at: Option<String>,
-    pub expires_at: Option<String>,
-    pub starts_at: Option<String>,
-    pub updated_at: Option<String>,
-    pub extra: Option<String>,
-    pub reference: Option<String>,
-    pub reference_hash: Option<Base64VecU8>,
-}
-
-#[near(serializers = [borsh, json])]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Token {
-    pub token_id: TokenId,
-    pub owner_id: AccountId,
-    pub metadata: Option<TokenMetadata>,
-    pub approved_account_ids: Option<HashMap<AccountId, u64>>,
-}
-
-// ═══════════════════════════════════════════════════════════════
-// TIMELOCK TYPES
-// ═══════════════════════════════════════════════════════════════
-
-pub const TIMELOCK_DELAY_NS: u64 = 86_400_000_000_000; // 24 hours
-const PENDING_OWNER_STORAGE_KEY: &[u8] = b"v2:po";
-
-#[near(serializers = [borsh, json])]
-pub enum TimelockAction {
-    WithdrawTrialPool {
-        amount: U128,
-    },
-    WithdrawCommission {
-        amount: U128,
-    },
-    WithdrawTrialPoolUsdc {
-        amount: U128,
-    },
-    WithdrawCommissionUsdc {
-        amount: U128,
-    },
-    AdminRemoveEvents {
-        encrypted_cids: Vec<String>,
-    },
-    BanEvent {
-        encrypted_cid: String,
-        reason: BanReason,
-    },
-    UnbanEvent {
-        encrypted_cid: String,
-    },
-    SetNextTokenId {
-        new_id: u64,
-    },
-    AddOnboardingKey {
-        public_key: String,
-    },
-    RemoveOnboardingKey {
-        public_key: String,
-    },
-    SetOnboardingConfig {
-        daily_limit: u32,
-        enabled: bool,
-    },
-    SetWeb4StaticUrl {
-        url: String,
-    },
-    ProposeOwner {
-        proposed_owner_id: AccountId,
-    },
-    RebuildCidToTokens,
-    CreateTrialInviteDrop {
-        public_keys: Vec<String>,
-        ttl_ms: Option<u64>,
-    },
-    NftMint {
-        receiver_id: AccountId,
-        token_metadata: TokenMetadata,
-        video_metadata: VideoMetadata,
-    },
-    Pause,
-    Unpause,
-}
-
-#[near(serializers = [borsh, json])]
-pub struct TimelockProposal {
-    pub action: TimelockAction,
-    pub proposer: AccountId,
-    pub proposed_at: u64,
-}
-
+#[derive(Clone, Copy)]
 pub struct StorageKey(pub &'static [u8]);
 
 impl near_sdk::IntoStorageKey for StorageKey {
@@ -150,977 +23,778 @@ impl near_sdk::IntoStorageKey for StorageKey {
 }
 
 impl StorageKey {
-    pub const NFT: Self = Self(b"v2:n");
-    pub const NFT_V2: Self = Self(b"v2:n2");
-    pub const TOKEN_METADATA: Self = Self(b"v2:m");
-    pub const TOKEN_METADATA_V2: Self = Self(b"v2:m2");
-    pub const ENUMERATION: Self = Self(b"v2:e");
-    pub const ENUMERATION_V2: Self = Self(b"v2:e2");
-    pub const APPROVAL: Self = Self(b"v2:a");
-    pub const APPROVAL_V2: Self = Self(b"v2:a2");
-    pub const CONTRACT_METADATA: Self = Self(b"v2:c");
-    pub const VIDEO_METADATA: Self = Self(b"v2:v");
-    pub const USER_DEPOSITS: Self = Self(b"v2:d");
-    pub const EVENTS: Self = Self(b"v2:x");
-    pub const GIFT_DROPS: Self = Self(b"v2:g");
-    pub const ONBOARDING_KEYS: Self = Self(b"v2:o");
-    pub const DAILY_TRIAL_COUNTS: Self = Self(b"v2:t");
-    pub const PURCHASE_LOGS: Self = Self(b"v2:p");
-    pub const EVENT_PRICE_USD: Self = Self(b"v2:pu");
-    pub const EVENT_ACCESS_MODES: Self = Self(b"v2:am");
-    pub const BANNED_EVENTS: Self = Self(b"v2:be");
-    pub const UPLOAD_SESSIONS: Self = Self(b"v2:us");
-    pub const TRIAL_INVITES: Self = Self(b"v2:ti");
-    pub const CID_TO_TOKENS: Self = Self(b"v2:ct");
-    pub const PAUSED_STATE: Self = Self(b"v2:ps");
-    pub const TIMELOCKS: Self = Self(b"v2:tl");
-    pub const TIMELOCK_COUNTER: Self = Self(b"v2:tc");
-    pub const CREATOR_PROFILES: Self = Self(b"v2:cp");
-    pub const EVENT_PRICE_USDC: Self = Self(b"v2:pu6");
-    pub const YT_NFT_OWNER_BY_ID: Self = Self(b"v2:y20");
-    pub const YT_NFT_METADATA: Self = Self(b"v2:y21");
-    pub const YT_NFT_TOKENS_PER_OWNER: Self = Self(b"v2:y22");
-    pub const YT_NFT_APPROVALS: Self = Self(b"v2:y23");
-    pub const STABLECOIN_CREATOR_BALANCES: Self = Self(b"v2:scb");
-    pub const STABLECOIN_COMMISSION_BALANCES: Self = Self(b"v2:scm");
-    pub const SETTLED_STABLECOIN_PAYMENTS: Self = Self(b"v2:ssp");
-}
-
-/// Storage cost constants to avoid repeated allocations
-const STORAGE_COST_NFT: NearToken = NearToken::from_millinear(10); // 0.01 NEAR
-const STORAGE_COST_ACCOUNT: NearToken = NearToken::from_millinear(100); // 0.1 NEAR
-/// Storage cost for sponsored trial / guest account creation.
-/// NEAR protocol minimum for an account + one access key is ~0.00182 NEAR;
-/// this constant leaves a small buffer above that floor so funded accounts can
-/// sign their own follow-up transactions before any upgrade path.
-const TRIAL_ACCOUNT_STORAGE_COST: NearToken = NearToken::from_millinear(2); // 0.002 NEAR
-const UPLOAD_SESSION_MAX_TTL_MS: u64 = 15 * 60 * 1000;
-const UPLOAD_SESSION_TOTAL_CALLS: u8 = 2;
-
-// ─── Commission constants ───────────────────────────────────────
-
-/// Platform commission rate: 2% of each paid sale goes to the platform
-const COMMISSION_RATE_PERCENT: u128 = 2;
-const COMMISSION_DENOMINATOR: u128 = 100;
-
-/// Basis-point representation of the commission rate (200 bps = 2%).
-/// Useful when composing with other BPS-based logic.
-#[allow(dead_code)]
-const COMMISSION_RATE_BPS: u128 = 200;
-#[allow(dead_code)]
-const BPS_DENOMINATOR: u128 = 10_000;
-
-/// Split ratio for commission proceeds: 50 % trial pool, 50 % commission pool.
-const COMMISSION_SPLIT_DENOMINATOR: u128 = 2;
-
-// ─── Storage / deposit constants ────────────────────────────────
-
-/// Storage cost for an onboarding invite record (0.01 NEAR).
-const STORAGE_COST_INVITE: NearToken = NearToken::from_millinear(10);
-
-/// Deposit required per gift-claim link (0.15 NEAR).
-/// Covers account creation + NFT storage + buffer.
-const GIFT_DEPOSIT_PER_LINK: NearToken = NearToken::from_millinear(150);
-
-/// Account creation + access-key storage cost (0.11 NEAR).
-const ACCOUNT_CREATION_COST: NearToken = NearToken::from_millinear(110);
-
-/// Gas fee allowance for a single claim/relay transaction (0.05 NEAR).
-const GAS_FEE_ALLOWANCE: NearToken = NearToken::from_millinear(50);
-
-fn wrap_near_account_id() -> AccountId {
-    let current = env::current_account_id();
-    if current.as_str().ends_with(".testnet") {
-        "wrap.testnet".parse().unwrap()
-    } else {
-        "wrap.near".parse().unwrap()
-    }
-}
-
-fn usdc_contract_id() -> AccountId {
-    "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1"
-        .parse()
-        .unwrap()
-}
-
-fn usdt_contract_id() -> AccountId {
-    let current = env::current_account_id();
-    if current.as_str().ends_with(".testnet") {
-        "usdt.tether-token.testnet".parse().unwrap()
-    } else {
-        "usdt.tether-token.near".parse().unwrap()
-    }
+    const KMS_OPERATORS: Self = Self(b"v4:kms");
+    const MEDIA_JOBS: Self = Self(b"v4:jobs");
+    const PUBLICATIONS: Self = Self(b"v4:publications");
+    const ENTITLEMENTS: Self = Self(b"v4:entitlements");
+    const CREATOR_BALANCES: Self = Self(b"v4:creator-balances");
+    const RECEIPT_BINDINGS: Self = Self(b"v4:receipt-bindings");
 }
 
 #[near(serializers = [borsh, json])]
-#[derive(Clone)]
-pub struct Event {
-    pub title: String,
-    pub description: String,
-    /// Legacy NEAR price (yoctoNEAR). Kept for backward compatibility.
-    pub price: U128,
-    /// USDC price (6 decimals). Primary price for new events.
-    pub price_usdc: Option<U128>,
-    /// NEAR price for explicit NEAR-denominated events.
-    pub price_near: Option<U128>,
-    pub creator_id: AccountId,
-    pub created_at: u64,
-    pub content_type: ContentType,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MediaJobStatus {
+    Authorized,
+    L3FullReadbackVerified,
+    Kms5Of5,
+    SourceDeleteConfirmed,
+    Published,
 }
 
-/// JSON-only response struct for get_events/get_event.
-/// Includes price_usd from separate LookupMap (not stored in Event borsh).
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ByteIntegrityReceipt {
+    pub manifest_cid: String,
+    pub manifest_sha256: String,
+    pub pack_root_sha256: String,
+    pub logical_bytes: U128,
+    pub pack_count: u32,
+    pub receipt_digest: String,
+}
+
 #[near(serializers = [json])]
-#[derive(Clone)]
-pub struct EventResponse {
-    pub title: String,
-    pub description: String,
-    /// Legacy NEAR price (yoctoNEAR)
-    pub price: U128,
-    /// Primary price in USDC (6 decimals). Fetched from separate map.
-    pub price_usdc: Option<U128>,
-    /// NEAR price for explicit NEAR-denominated events.
-    pub price_near: Option<U128>,
-    pub creator_id: AccountId,
-    pub created_at: u64,
-    /// USD cents display value (deprecated — use price_usdc)
-    pub price_usd: Option<u128>,
-    pub access_mode: String,
-    pub content_type: String,
-    pub banned: Option<bool>,
-    pub ban_reason: Option<String>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ByteIntegritySubmission {
+    pub job_id: String,
+    pub generation: u64,
+    pub manifest_cid: String,
+    pub manifest_sha256: String,
+    pub pack_root_sha256: String,
+    pub logical_bytes: U128,
+    pub pack_count: u32,
+    pub full_readback: bool,
+    pub receipt_digest: String,
 }
 
-/// Paginated response for get_events_paginated view method.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KmsStoreReceipt {
+    pub operator_id: AccountId,
+    pub receipt_digest: String,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceDeleteReceipt {
+    pub receipt_digest: String,
+}
+
 #[near(serializers = [json])]
-#[derive(Clone)]
-pub struct PaginatedEventsResponse {
-    pub events: Vec<(String, EventResponse)>,
-    pub next_cursor: Option<String>,
-    pub total_count: u64,
-}
-
-// Custom video metadata for token-gated content
-#[near(serializers = [borsh, json])]
-#[derive(Clone)]
-pub struct VideoMetadata {
-    pub encrypted_cid: String,
-    pub duration_seconds: u32,
-    pub event_date: Option<u64>,
-    pub content_type: ContentType,
-    pub nova_group_id: Option<String>, // Borsh placeholder — always None for new tokens
-    pub storage_type: StorageType,     // Borsh placeholder — always Kms for new tokens
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceDeleteSubmission {
+    pub job_id: String,
+    pub generation: u64,
+    pub manifest_sha256: String,
+    pub head_not_found: bool,
+    pub get_not_found: bool,
+    pub object_count: u32,
+    pub multipart_count: u32,
+    pub receipt_digest: String,
 }
 
 #[near(serializers = [borsh, json])]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ContentType {
-    Concert,
-    Cinema,
-    Exclusive,
-    /// Retired content category. Kept as a reserved slot to preserve the Borsh
-    /// discriminant order of tokens/events stored before it was removed. It is
-    /// never created or parsed; remove it fully only via a state migration.
-    Reserved,
-    Documentary,
-    ShortFilm,
-    FestivalSelection,
-}
-
-impl std::fmt::Display for ContentType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ContentType::Concert => write!(f, "concert"),
-            ContentType::Cinema => write!(f, "cinema"),
-            ContentType::Exclusive => write!(f, "exclusive"),
-            ContentType::Reserved => write!(f, "exclusive"),
-            ContentType::Documentary => write!(f, "documentary"),
-            ContentType::ShortFilm => write!(f, "short_film"),
-            ContentType::FestivalSelection => write!(f, "festival_selection"),
-        }
-    }
-}
-
-fn parse_content_type(ct: &str) -> Option<ContentType> {
-    match ct.to_lowercase().as_str() {
-        "concert" => Some(ContentType::Concert),
-        "cinema" => Some(ContentType::Cinema),
-        "exclusive" => Some(ContentType::Exclusive),
-        "documentary" => Some(ContentType::Documentary),
-        "short_film" => Some(ContentType::ShortFilm),
-        "festival_selection" => Some(ContentType::FestivalSelection),
-        _ => None,
-    }
-}
-
-#[near(serializers = [borsh, json])]
-#[derive(Clone, PartialEq)]
-pub enum StorageType {
-    Nova, // Borsh-compatible placeholder — new uploads always use Kms
-    Kms,
-}
-
-// NEW: Gift drop for trial account creation
-#[near(serializers = [borsh, json])]
-#[derive(Clone)]
-pub struct GiftDrop {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaJob {
+    pub job_id: String,
     pub creator_id: AccountId,
-    pub event_cid: String,
-    pub remaining_claims: u32,
-    pub deposit_per_claim: U128, // Amount reserved for each claim
-    pub created_at: u64,
-}
-
-#[near(serializers = [borsh, json])]
-#[derive(Clone)]
-pub struct TrialInvite {
-    pub sponsor_id: AccountId,
-    pub remaining_claims: u32,
+    pub profile: String,
+    pub title: String,
+    pub price_usdc: U128,
+    pub generation: u64,
+    pub status: MediaJobStatus,
+    pub byte_integrity: Option<ByteIntegrityReceipt>,
+    pub kms_receipts: Vec<KmsStoreReceipt>,
+    pub source_delete: Option<SourceDeleteReceipt>,
     pub created_at_ms: u64,
-    pub expires_at_ms: Option<u64>,
+    pub published_at_ms: Option<u64>,
 }
 
 #[near(serializers = [borsh, json])]
-#[derive(Clone)]
-pub enum BanReason {
-    SexualContent,
-    CopyrightViolation,
-    Other,
-}
-
-#[near(serializers = [borsh, json])]
-#[derive(Clone)]
-pub struct BanInfo {
-    pub reason: BanReason,
-    pub banned_at: u64,
-    pub banned_by: AccountId,
-}
-
-// Onboarding configuration
-#[near(serializers = [borsh, json])]
-#[derive(Clone)]
-pub struct OnboardingConfig {
-    pub daily_limit: u32, // Max trials per day (0 = unlimited)
-    pub enabled: bool,    // Master switch for relayer-less onboarding
-}
-
-impl Default for OnboardingConfig {
-    fn default() -> Self {
-        Self {
-            daily_limit: 100, // Default: 100 trials per day
-            enabled: true,
-        }
-    }
-}
-
-#[near(serializers = [borsh, json])]
-#[derive(Clone)]
-pub enum PurchaseType {
-    Direct,
-    Prepaid, // Borsh-compatible placeholder — never constructed in current code
-    Free,
-}
-
-// Purchase log entry for traceability
-#[near(serializers = [borsh, json])]
-#[derive(Clone)]
-pub struct PurchaseLog {
-    pub buyer_id: AccountId,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Publication {
+    pub publication_id: String,
     pub creator_id: AccountId,
-    pub event_cid: String,
-    pub token_id: String,
-    pub price: U128,
-    pub creator_amount: U128,
-    pub commission_amount: U128,
-    pub purchase_type: PurchaseType,
-    pub timestamp_ns: u64,
+    pub title: String,
+    pub price_usdc: U128,
+    pub generation: u64,
+    pub manifest_cid: String,
+    pub manifest_sha256: String,
+    pub published_at_ms: u64,
 }
 
-// V11: Creator profile for studio page
-#[near(serializers = [borsh, json])]
-#[derive(Clone)]
-pub struct CreatorProfile {
-    pub display_name: Option<String>,
-    pub bio: Option<String>,
-    pub website: Option<String>,
-    pub twitter: Option<String>,
-    pub instagram: Option<String>,
-    pub avatar_url: Option<String>,
-}
-
-#[near(serializers = [json])]
-#[derive(Clone)]
-pub struct CreatorStats {
-    pub total_sales: u64,
-    pub total_revenue_yocto: U128,
-}
-
-#[near(serializers = [borsh, json])]
-#[derive(Clone, PartialEq, Eq)]
-pub enum UploadSessionStatus {
-    AwaitingMint,
-    AwaitingEvent,
-    Completed,
-    Revoked,
-    Expired,
-}
-
-#[near(serializers = [borsh, json])]
-#[derive(Clone)]
-pub struct UploadSession {
-    pub owner_id: AccountId,
-    pub remaining_budget: U128,
-    pub remaining_calls: u8,
-    pub expires_at_ms: u64,
-    pub status: UploadSessionStatus,
-}
-
-// ═══════════════════════════════════════════════════════════════
-// WEB4 TYPES
-// ═══════════════════════════════════════════════════════════════
-
-#[derive(Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct Web4Request {
-    pub path: String,
-    #[serde(default)]
-    pub query: HashMap<String, Vec<String>>,
+struct PurchaseMessage {
+    publication_id: String,
 }
 
-#[derive(Serialize, schemars::JsonSchema)]
+#[derive(Serialize)]
 #[serde(crate = "near_sdk::serde")]
-#[serde(untagged)]
-pub enum Web4Response {
-    Body {
-        #[serde(rename = "contentType")]
-        content_type: String,
-        #[schemars(with = "String")]
-        body: Base64VecU8,
-    },
-    BodyUrl {
-        #[serde(rename = "contentType")]
-        content_type: String,
-        #[serde(rename = "bodyUrl")]
-        body_url: String,
-    },
+struct FtTransferArgs {
+    receiver_id: AccountId,
+    amount: U128,
+    memo: Option<String>,
 }
 
-/// Minimum ticket price to avoid commission rounding issues (0.001 NEAR).
-const MIN_TICKET_PRICE_YOCTO: u128 = 1_000_000_000_000_000_000_000;
-/// Minimum paid ticket price in USDC (6 decimals): $0.50 = 500_000
-const MIN_TICKET_PRICE_USDC: u128 = 500_000;
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+struct CreatorWithdrawCallbackArgs {
+    creator_id: AccountId,
+    amount: U128,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+struct PlatformWithdrawCallbackArgs {
+    amount: U128,
+}
 
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
-    tokens: YtNft,
-    metadata: LazyOption<NFTContractMetadata>,
-    video_metadata: UnorderedMap<TokenId, VideoMetadata>,
-    user_deposits: LookupMap<AccountId, NearToken>,
-    events: UnorderedMap<String, Event>, // Key: encrypted_cid (UUID)
-    next_token_id: u64,
-    /// Cached count of non-banned events to avoid O(N) iteration in get_events_count.
-    active_event_count: u64,
-    // Gift drop system
-    gift_drops: LookupMap<String, GiftDrop>, // Key: hash of secret key
-    // Sponsored trial pool - contract pays for trial account creation
-    trial_pool: NearToken,
-    // V4: RELAYER-LESS ONBOARDING SYSTEM
-    // Authorized Function Call Access Keys for trial creation
-    onboarding_keys: LookupSet<PublicKey>,
-    // Daily trial counts for rate limiting: day_timestamp -> count
-    daily_trial_counts: LookupMap<u64, u32>,
-    // Onboarding configuration
-    onboarding_config: OnboardingConfig,
-    // V5: Commission tracking pool (50% of 2% commission) in NEAR
-    commission_pool: NearToken,
-    // V12: USDC-native commission pools (6 decimals)
-    trial_pool_usdc: u128,
-    commission_pool_usdc: u128,
-    // V6: Purchase logs for audit trail and traceability
-    purchase_logs: UnorderedMap<u64, PurchaseLog>,
-    next_purchase_id: u64,
-    // V10: Nova fields removed via state migration (see migrate.rs)
-    pub web4_static_url: Option<String>,
-    // V11: Creator profiles for studio page
-    creator_profiles: LookupMap<AccountId, CreatorProfile>,
-    // V12: USDC price map for USDC-native payments (6 decimals)
-    events_price_usdc: LookupMap<String, U128>,
-    // Reentrancy lock for ft_on_transfer (USDC/USDT path)
-    ft_transfer_lock: bool,
-    // V12: Audit nonce for ft_on_transfer tracking
-    next_swap_nonce: u64,
+    platform_account_id: AccountId,
+    verifier_account_id: AccountId,
+    source_cleanup_account_id: AccountId,
+    // ponytail: PR-1 uses immutable NEAR caller identities; add registry-governed
+    // rotation with the PR-3 runtime before any deployment.
+    kms_operator_ids: UnorderedSet<AccountId>,
+    media_jobs: LookupMap<String, MediaJob>,
+    publications: LookupMap<String, Publication>,
+    entitlements: LookupMap<String, bool>,
+    creator_balances: LookupMap<AccountId, u128>,
+    receipt_bindings: LookupMap<String, String>,
+    platform_balance: u128,
 }
 
-// SECURITY: Use #[init] to prevent re-initialization attacks
 #[near]
 impl Contract {
-    fn fresh_v1_state(owner_id: AccountId, web4_static_url: Option<String>) -> Self {
-        let metadata = NFTContractMetadata {
-            spec: NFT_METADATA_SPEC.to_string(),
-            name: "YouTick Video Tickets".to_string(),
-            symbol: "YTICK".to_string(),
-            icon: None,
-            base_uri: None,
-            reference: None,
-            reference_hash: None,
-        };
+    #[init]
+    pub fn new(
+        platform_account_id: AccountId,
+        verifier_account_id: AccountId,
+        source_cleanup_account_id: AccountId,
+        kms_operator_ids: Vec<AccountId>,
+    ) -> Self {
+        require!(
+            kms_operator_ids.len() == KMS_OPERATOR_COUNT,
+            "Exactly five KMS operators are required"
+        );
+        require!(
+            verifier_account_id != source_cleanup_account_id,
+            "Verifier and source cleanup accounts must be independent"
+        );
+
+        let mut kms_operators = UnorderedSet::new(StorageKey::KMS_OPERATORS);
+        for operator_id in kms_operator_ids {
+            require!(
+                operator_id != verifier_account_id && operator_id != source_cleanup_account_id,
+                "Verifier and source cleanup accounts cannot be KMS operators"
+            );
+            require!(
+                kms_operators.insert(&operator_id),
+                "KMS operators must be unique"
+            );
+        }
 
         Self {
-            tokens: YtNft::new(owner_id),
-            metadata: LazyOption::new(StorageKey::CONTRACT_METADATA, Some(&metadata)),
-            video_metadata: UnorderedMap::new(StorageKey::VIDEO_METADATA),
-            user_deposits: LookupMap::new(StorageKey::USER_DEPOSITS),
-            events: UnorderedMap::new(StorageKey::EVENTS),
-            next_token_id: 0,
-            active_event_count: 0,
-            gift_drops: LookupMap::new(StorageKey::GIFT_DROPS),
-            trial_pool: NearToken::from_yoctonear(0),
-            onboarding_keys: LookupSet::new(StorageKey::ONBOARDING_KEYS),
-            daily_trial_counts: LookupMap::new(StorageKey::DAILY_TRIAL_COUNTS),
-            onboarding_config: OnboardingConfig::default(),
-            commission_pool: NearToken::from_yoctonear(0),
-            purchase_logs: UnorderedMap::new(StorageKey::PURCHASE_LOGS),
-            next_purchase_id: 0,
-            web4_static_url,
-            creator_profiles: LookupMap::new(StorageKey::CREATOR_PROFILES),
-            events_price_usdc: LookupMap::new(StorageKey::EVENT_PRICE_USDC),
-            trial_pool_usdc: 0,
-            commission_pool_usdc: 0,
-            ft_transfer_lock: false,
-            next_swap_nonce: 0,
+            platform_account_id,
+            verifier_account_id,
+            source_cleanup_account_id,
+            kms_operator_ids: kms_operators,
+            media_jobs: LookupMap::new(StorageKey::MEDIA_JOBS),
+            publications: LookupMap::new(StorageKey::PUBLICATIONS),
+            entitlements: LookupMap::new(StorageKey::ENTITLEMENTS),
+            creator_balances: LookupMap::new(StorageKey::CREATOR_BALANCES),
+            receipt_bindings: LookupMap::new(StorageKey::RECEIPT_BINDINGS),
+            platform_balance: 0,
         }
     }
 
-    #[init]
-    pub fn new(owner_id: AccountId) -> Self {
-        require!(!env::state_exists(), "Already initialized");
-        Self::fresh_v1_state(owner_id, None)
-    }
-
-    /// Complete migration reset. Disabled in normal production builds.
-    #[cfg(feature = "migration")]
-    #[init(ignore_state)]
-    pub fn reset_v11(owner_id: AccountId) -> Self {
+    pub fn create_paid_job(&mut self, job_id: String, title: String, price_usdc: U128) -> MediaJob {
+        assert_identifier("job_id", &job_id);
+        assert_title(&title);
         require!(
-            env::predecessor_account_id() == env::current_account_id(),
-            "Only owner can reset"
+            price_usdc.0 >= 50 && price_usdc.0 % 50 == 0,
+            "USDC price must split exactly into 98/2 shares"
         );
-        let _ = owner_id;
-        Self::fresh_v1_state(env::current_account_id(), None)
-    }
-
-    #[cfg(feature = "migration")]
-    #[init(ignore_state)]
-    pub fn reset_for_v1_launch(web4_static_url: Option<String>) -> Self {
         require!(
-            env::predecessor_account_id() == env::current_account_id(),
-            "Only contract account can reset for v1 launch"
+            self.media_jobs.get(&job_id).is_none(),
+            "Media job already exists"
         );
-        Self::fresh_v1_state(env::current_account_id(), web4_static_url)
+
+        let job = MediaJob {
+            job_id: job_id.clone(),
+            creator_id: env::predecessor_account_id(),
+            profile: PROFILE.to_string(),
+            title,
+            price_usdc,
+            generation: 1,
+            status: MediaJobStatus::Authorized,
+            byte_integrity: None,
+            kms_receipts: Vec::new(),
+            source_delete: None,
+            created_at_ms: env::block_timestamp_ms(),
+            published_at_ms: None,
+        };
+        self.media_jobs.insert(&job_id, &job);
+        job
     }
 
-    /// Migration-only reset is intentionally unavailable in normal production builds.
-    #[cfg(not(feature = "migration"))]
-    #[init(ignore_state)]
-    pub fn reset_v11(owner_id: AccountId) -> Self {
-        let _ = owner_id;
-        env::panic_str("reset_v11 is disabled outside migration builds")
-    }
-
-    #[cfg(not(feature = "migration"))]
-    #[init(ignore_state)]
-    pub fn reset_for_v1_launch(web4_static_url: Option<String>) -> Self {
-        let _ = web4_static_url;
-        env::panic_str("reset_for_v1_launch is disabled outside migration builds")
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // LAZY STORAGE HELPER (event_price_usd stored outside Contract borsh)
-    // ═══════════════════════════════════════════════════════════════
-
-    pub(crate) fn lazy_event_price_usd(&self) -> LookupMap<String, u128> {
-        LookupMap::new(StorageKey::EVENT_PRICE_USD)
-    }
-
-    pub(crate) fn lazy_event_access_modes(&self) -> LookupMap<String, String> {
-        LookupMap::new(StorageKey::EVENT_ACCESS_MODES)
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // LAZY STORAGE HELPER (banned_events stored outside Contract borsh)
-    // ═══════════════════════════════════════════════════════════════
-
-    pub(crate) fn lazy_banned_events(&self) -> LookupMap<String, BanInfo> {
-        LookupMap::new(StorageKey::BANNED_EVENTS)
-    }
-
-    pub(crate) fn lazy_upload_sessions(&self) -> LookupMap<PublicKey, UploadSession> {
-        LookupMap::new(StorageKey::UPLOAD_SESSIONS)
-    }
-
-    pub(crate) fn lazy_trial_invites(&self) -> LookupMap<String, TrialInvite> {
-        LookupMap::new(StorageKey::TRIAL_INVITES)
-    }
-
-    pub(crate) fn lazy_cid_to_tokens(&self) -> LookupMap<String, Vec<TokenId>> {
-        LookupMap::new(StorageKey::CID_TO_TOKENS)
-    }
-
-    pub(crate) fn lazy_stablecoin_creator_balances(&self) -> LookupMap<String, u128> {
-        LookupMap::new(StorageKey::STABLECOIN_CREATOR_BALANCES)
-    }
-
-    pub(crate) fn lazy_stablecoin_commission_balances(&self) -> LookupMap<String, u128> {
-        LookupMap::new(StorageKey::STABLECOIN_COMMISSION_BALANCES)
-    }
-
-    pub(crate) fn lazy_settled_stablecoin_payments(&self) -> LookupSet<String> {
-        LookupSet::new(StorageKey::SETTLED_STABLECOIN_PAYMENTS)
-    }
-
-    pub(crate) fn lazy_paused_state(&self) -> LazyOption<bool> {
-        LazyOption::new(StorageKey::PAUSED_STATE, Some(&false))
-    }
-
-    pub(crate) fn is_paused(&self) -> bool {
-        self.lazy_paused_state().get().unwrap_or(false)
-    }
-
-    pub(crate) fn assert_not_paused(&self) {
-        require!(!self.is_paused(), "Contract is paused");
-    }
-
-    pub(crate) fn assert_owner(&self) {
+    pub fn restart_paid_job(&mut self, job_id: String) -> MediaJob {
+        let mut job = self.media_jobs.get(&job_id).expect("Media job not found");
         require!(
-            env::predecessor_account_id() == self.tokens.owner_id,
-            "Only contract owner can call this method"
+            env::predecessor_account_id() == job.creator_id,
+            "Only the creator can restart a media job"
         );
-    }
-
-    pub(crate) fn assert_migration_build() {
         require!(
-            cfg!(feature = "migration"),
-            "Method disabled outside migration builds"
+            job.status != MediaJobStatus::Published,
+            "Published media jobs cannot restart"
         );
-    }
-
-    pub(crate) fn event_usdc_price(&self, cid: &str, event: &Event) -> Option<U128> {
-        event
-            .price_usdc
-            .or_else(|| self.events_price_usdc.get(&cid.to_string()))
-    }
-
-    pub(crate) fn event_near_price_option(event: &Event) -> Option<U128> {
-        event.price_near.or_else(|| {
-            if event.price.0 > 0 {
-                Some(event.price)
-            } else {
-                None
-            }
-        })
-    }
-
-    pub(crate) fn event_near_price(event: &Event) -> U128 {
-        Self::event_near_price_option(event).unwrap_or(U128(0))
-    }
-
-    pub(crate) fn event_has_paid_price(&self, cid: &str, event: &Event) -> bool {
-        Self::event_near_price(event).0 > 0
-            || self
-                .event_usdc_price(cid, event)
-                .map(|price| price.0 > 0)
-                .unwrap_or(false)
-    }
-
-    pub(crate) fn assert_event_not_banned(&self, encrypted_cid: &str) {
         require!(
-            self.lazy_banned_events()
-                .get(&encrypted_cid.to_string())
-                .is_none(),
-            "This event has been banned and tickets cannot be purchased"
+            job.source_delete.is_none(),
+            "A media job cannot restart after source deletion"
         );
+
+        job.generation = job.generation.checked_add(1).expect("Generation overflow");
+        job.status = MediaJobStatus::Authorized;
+        job.byte_integrity = None;
+        job.kms_receipts.clear();
+        job.source_delete = None;
+        self.media_jobs.insert(&job_id, &job);
+        job
     }
 
-    pub(crate) fn assert_near_purchase_available(&self, cid: &str, event: &Event) {
-        let near_price = Self::event_near_price(event).0;
-        let usdc_price = self
-            .event_usdc_price(cid, event)
-            .map(|price| price.0)
-            .unwrap_or(0);
-        require!(
-            near_price > 0 || usdc_price == 0,
-            "NEAR price is not configured for this event"
-        );
-    }
-
-    pub(crate) fn stablecoin_balance_key(
-        token_contract: &AccountId,
-        account_id: &AccountId,
-    ) -> String {
-        format!("{}:{}", token_contract, account_id)
-    }
-
-    pub(crate) fn add_stablecoin_creator_balance(
+    pub fn record_byte_integrity(
         &mut self,
-        token_contract: &AccountId,
-        creator_id: &AccountId,
-        amount: u128,
-    ) {
-        if amount == 0 {
-            return;
+        submission: ByteIntegritySubmission,
+    ) -> ByteIntegrityReceipt {
+        require!(
+            env::predecessor_account_id() == self.verifier_account_id,
+            "Only the independent verifier can record byte integrity"
+        );
+        require!(submission.full_readback, "Full byte readback is required");
+        assert_cid(&submission.manifest_cid);
+        assert_sha256("manifest_sha256", &submission.manifest_sha256);
+        assert_sha256("pack_root_sha256", &submission.pack_root_sha256);
+        assert_sha256("receipt_digest", &submission.receipt_digest);
+        require!(
+            submission.logical_bytes.0 > 0,
+            "logical_bytes must be positive"
+        );
+        require!(submission.pack_count > 0, "pack_count must be positive");
+
+        let mut job = self.job_for_generation(&submission.job_id, submission.generation);
+        require!(
+            job.status != MediaJobStatus::Published,
+            "Published media jobs cannot accept evidence"
+        );
+        self.bind_receipt_digest(
+            &submission.receipt_digest,
+            &format!(
+                "{PROFILE}:byte:{}:{}:{}:{}",
+                job.creator_id,
+                submission.job_id,
+                submission.generation,
+                submission.manifest_sha256
+            ),
+        );
+        let receipt = ByteIntegrityReceipt {
+            manifest_cid: submission.manifest_cid,
+            manifest_sha256: submission.manifest_sha256,
+            pack_root_sha256: submission.pack_root_sha256,
+            logical_bytes: submission.logical_bytes,
+            pack_count: submission.pack_count,
+            receipt_digest: submission.receipt_digest,
+        };
+
+        if let Some(existing) = &job.byte_integrity {
+            require!(existing == &receipt, "Conflicting byte-integrity receipt");
+            return existing.clone();
         }
-        let key = Self::stablecoin_balance_key(token_contract, creator_id);
-        let mut balances = self.lazy_stablecoin_creator_balances();
-        let current = balances.get(&key).unwrap_or(0);
-        balances.insert(&key, &current.saturating_add(amount));
+
+        job.byte_integrity = Some(receipt.clone());
+        job.status = MediaJobStatus::L3FullReadbackVerified;
+        self.media_jobs.insert(&submission.job_id, &job);
+        receipt
     }
 
-    pub(crate) fn add_stablecoin_commission_balance(
+    pub fn record_kms_store(
         &mut self,
-        token_contract: &AccountId,
-        amount: u128,
-    ) {
-        if amount == 0 {
-            return;
+        job_id: String,
+        generation: u64,
+        manifest_sha256: String,
+        stored_and_read_back: bool,
+        receipt_digest: String,
+    ) -> KmsStoreReceipt {
+        let operator_id = env::predecessor_account_id();
+        require!(
+            self.kms_operator_ids.contains(&operator_id),
+            "Caller is not a configured KMS operator"
+        );
+        require!(
+            stored_and_read_back,
+            "KMS durable store and readback are required"
+        );
+        assert_sha256("manifest_sha256", &manifest_sha256);
+        assert_sha256("receipt_digest", &receipt_digest);
+
+        let mut job = self.job_for_generation(&job_id, generation);
+        require!(
+            job.status != MediaJobStatus::Published,
+            "Published media jobs cannot accept evidence"
+        );
+        let integrity = job
+            .byte_integrity
+            .as_ref()
+            .expect("Byte-integrity receipt is required before KMS");
+        require!(
+            integrity.manifest_sha256 == manifest_sha256,
+            "Manifest root mismatch"
+        );
+        self.bind_receipt_digest(
+            &receipt_digest,
+            &format!(
+                "{PROFILE}:kms:{}:{job_id}:{generation}:{manifest_sha256}:{operator_id}",
+                job.creator_id
+            ),
+        );
+
+        let receipt = KmsStoreReceipt {
+            operator_id: operator_id.clone(),
+            receipt_digest,
+        };
+        if let Some(existing) = job
+            .kms_receipts
+            .iter()
+            .find(|existing| existing.operator_id == operator_id)
+        {
+            require!(existing == &receipt, "Conflicting KMS receipt");
+            return existing.clone();
         }
-        let key = token_contract.to_string();
-        let mut balances = self.lazy_stablecoin_commission_balances();
-        let current = balances.get(&key).unwrap_or(0);
-        balances.insert(&key, &current.saturating_add(amount));
-    }
 
-    pub(crate) fn pending_owner_id_internal() -> Option<AccountId> {
-        env::storage_read(PENDING_OWNER_STORAGE_KEY).map(|bytes| {
-            let value = String::from_utf8(bytes).expect("Invalid pending owner encoding");
-            value.parse().expect("Invalid pending owner account")
-        })
-    }
-
-    pub(crate) fn set_pending_owner_id(owner_id: Option<&AccountId>) {
-        if let Some(owner_id) = owner_id {
-            env::storage_write(PENDING_OWNER_STORAGE_KEY, owner_id.as_str().as_bytes());
-        } else {
-            env::storage_remove(PENDING_OWNER_STORAGE_KEY);
+        job.kms_receipts.push(receipt.clone());
+        if job.kms_receipts.len() == KMS_OPERATOR_COUNT {
+            job.status = MediaJobStatus::Kms5Of5;
         }
+        self.media_jobs.insert(&job_id, &job);
+        receipt
     }
 
-    pub(crate) fn lazy_timelocks(&self) -> LookupMap<u64, TimelockProposal> {
-        LookupMap::new(StorageKey::TIMELOCKS)
-    }
+    pub fn record_source_delete(
+        &mut self,
+        submission: SourceDeleteSubmission,
+    ) -> SourceDeleteReceipt {
+        require!(
+            env::predecessor_account_id() == self.source_cleanup_account_id,
+            "Only the source cleanup account can record deletion"
+        );
+        require!(
+            submission.head_not_found && submission.get_not_found,
+            "Fresh HEAD and GET not-found checks are required"
+        );
+        require!(
+            submission.object_count == 0 && submission.multipart_count == 0,
+            "Raw object and multipart inventories must be empty"
+        );
+        assert_sha256("manifest_sha256", &submission.manifest_sha256);
+        assert_sha256("receipt_digest", &submission.receipt_digest);
 
-    pub(crate) fn lazy_timelock_counter(&self) -> LazyOption<u64> {
-        LazyOption::new(StorageKey::TIMELOCK_COUNTER, Some(&0))
-    }
+        let mut job = self.job_for_generation(&submission.job_id, submission.generation);
+        require!(
+            job.status != MediaJobStatus::Published,
+            "Published media jobs cannot accept evidence"
+        );
+        let integrity = job
+            .byte_integrity
+            .as_ref()
+            .expect("Byte-integrity receipt is required before source deletion");
+        require!(
+            integrity.manifest_sha256 == submission.manifest_sha256,
+            "Manifest root mismatch"
+        );
+        require!(
+            job.kms_receipts.len() == KMS_OPERATOR_COUNT,
+            "Five KMS store/readback receipts are required before source deletion"
+        );
+        self.bind_receipt_digest(
+            &submission.receipt_digest,
+            &format!(
+                "{PROFILE}:delete:{}:{}:{}:{}",
+                job.creator_id,
+                submission.job_id,
+                submission.generation,
+                submission.manifest_sha256
+            ),
+        );
 
-    pub(crate) fn next_timelock_id(&mut self) -> u64 {
-        let id = self.lazy_timelock_counter().get().unwrap_or(0);
-        self.lazy_timelock_counter().set(&(id + 1));
-        id
-    }
-
-    pub(crate) fn add_token_to_cid_index(&mut self, cid: &String, token_id: &TokenId) {
-        let mut ids = self.lazy_cid_to_tokens().get(cid).unwrap_or_default();
-        ids.push(token_id.clone());
-        self.lazy_cid_to_tokens().insert(cid, &ids);
-    }
-
-    pub(crate) fn remove_cid_index(&mut self, cid: &String) {
-        self.lazy_cid_to_tokens().remove(cid);
-    }
-
-    pub(crate) fn normalize_access_mode(
-        &self,
-        access_mode: Option<String>,
-        has_paid_price: bool,
-    ) -> String {
-        let raw = access_mode.unwrap_or_else(|| {
-            if has_paid_price {
-                "paid".to_string()
-            } else {
-                "free_collectible".to_string()
-            }
-        });
-
-        let normalized = raw.trim().to_ascii_lowercase();
-        match normalized.as_str() {
-            "paid" => {
-                require!(
-                    has_paid_price,
-                    "Paid events must have a price greater than zero"
-                );
-                normalized
-            }
-            "free_collectible" => {
-                require!(!has_paid_price, "Free access modes require zero price");
-                normalized
-            }
-            _ => env::panic_str("Invalid access mode"),
+        let receipt = SourceDeleteReceipt {
+            receipt_digest: submission.receipt_digest,
+        };
+        if let Some(existing) = &job.source_delete {
+            require!(existing == &receipt, "Conflicting source-delete receipt");
+            return existing.clone();
         }
+
+        job.source_delete = Some(receipt.clone());
+        job.status = MediaJobStatus::SourceDeleteConfirmed;
+        self.media_jobs.insert(&submission.job_id, &job);
+        receipt
     }
 
-    pub(crate) fn resolve_event_access_mode(&self, cid: &str, has_paid_price: bool) -> String {
-        self.lazy_event_access_modes()
-            .get(&cid.to_string())
-            .unwrap_or_else(|| {
-                if has_paid_price {
-                    "paid".to_string()
-                } else {
-                    "free_collectible".to_string()
-                }
-            })
+    pub fn finalize_paid_publish(
+        &mut self,
+        job_id: String,
+        generation: u64,
+        manifest_sha256: String,
+    ) -> Publication {
+        assert_sha256("manifest_sha256", &manifest_sha256);
+        let mut job = self.job_for_generation(&job_id, generation);
+        let integrity = job
+            .byte_integrity
+            .as_ref()
+            .expect("Byte-integrity receipt is required");
+        require!(
+            integrity.manifest_sha256 == manifest_sha256,
+            "Manifest root mismatch"
+        );
+
+        if let Some(publication) = self.publications.get(&job_id) {
+            require!(
+                publication.generation == generation
+                    && publication.manifest_sha256 == manifest_sha256,
+                "Conflicting finalize request"
+            );
+            return publication;
+        }
+
+        require!(
+            job.kms_receipts.len() == KMS_OPERATOR_COUNT,
+            "Five KMS store/readback receipts are required"
+        );
+        require!(
+            job.source_delete.is_some(),
+            "Source delete receipt is required"
+        );
+
+        let published_at_ms = env::block_timestamp_ms();
+        let publication = Publication {
+            publication_id: job_id.clone(),
+            creator_id: job.creator_id.clone(),
+            title: job.title.clone(),
+            price_usdc: job.price_usdc,
+            generation,
+            manifest_cid: integrity.manifest_cid.clone(),
+            manifest_sha256,
+            published_at_ms,
+        };
+        job.status = MediaJobStatus::Published;
+        job.published_at_ms = Some(published_at_ms);
+        self.media_jobs.insert(&job_id, &job);
+        self.publications.insert(&job_id, &publication);
+        publication
     }
 
-    pub(crate) fn store_event_access_mode(&mut self, cid: &str, access_mode: String) {
-        self.lazy_event_access_modes()
-            .insert(&cid.to_string(), &access_mode);
+    pub fn ft_on_transfer(
+        &mut self,
+        sender_id: AccountId,
+        amount: U128,
+        msg: String,
+    ) -> PromiseOrValue<U128> {
+        require!(
+            env::predecessor_account_id() == self.usdc_contract_id(),
+            "Only Circle USDC is accepted"
+        );
+        let message: PurchaseMessage =
+            near_sdk::serde_json::from_str(&msg).expect("Invalid purchase message");
+        let publication = self
+            .publications
+            .get(&message.publication_id)
+            .expect("Publication not found");
+        let entitlement_key = entitlement_key(&sender_id, &message.publication_id);
+
+        if amount != publication.price_usdc || self.entitlements.get(&entitlement_key).is_some() {
+            return PromiseOrValue::Value(amount);
+        }
+
+        let platform_amount = amount.0 / 50;
+        let creator_amount = amount.0 - platform_amount;
+        let creator_balance = self
+            .creator_balances
+            .get(&publication.creator_id)
+            .unwrap_or(0)
+            .checked_add(creator_amount)
+            .expect("Creator balance overflow");
+        self.creator_balances
+            .insert(&publication.creator_id, &creator_balance);
+        self.platform_balance = self
+            .platform_balance
+            .checked_add(platform_amount)
+            .expect("Platform balance overflow");
+        self.entitlements.insert(&entitlement_key, &true);
+
+        PromiseOrValue::Value(U128(0))
     }
 
-    pub(crate) fn minimum_upload_session_budget() -> NearToken {
-        STORAGE_COST_ACCOUNT.saturating_add(STORAGE_COST_ACCOUNT)
+    pub fn withdraw_creator_balance(&mut self) -> Promise {
+        let creator_id = env::predecessor_account_id();
+        let amount = self.creator_balances.get(&creator_id).unwrap_or(0);
+        require!(amount > 0, "No creator balance");
+        self.creator_balances.insert(&creator_id, &0);
+
+        self.ft_transfer(creator_id.clone(), amount, "creator payout")
+            .then(
+                Promise::new(env::current_account_id()).function_call(
+                    "on_creator_withdraw".to_string(),
+                    near_sdk::serde_json::to_vec(&CreatorWithdrawCallbackArgs {
+                        creator_id,
+                        amount: U128(amount),
+                    })
+                    .expect("Failed to serialize callback"),
+                    NearToken::from_yoctonear(0),
+                    WITHDRAW_CALLBACK_GAS,
+                ),
+            )
     }
 
-    pub(crate) fn is_upload_session_terminal(status: &UploadSessionStatus) -> bool {
-        matches!(
-            status,
-            UploadSessionStatus::Completed
-                | UploadSessionStatus::Revoked
-                | UploadSessionStatus::Expired
+    pub fn withdraw_platform_balance(&mut self) -> Promise {
+        require!(
+            env::predecessor_account_id() == self.platform_account_id,
+            "Only the platform account can withdraw"
+        );
+        let amount = self.platform_balance;
+        require!(amount > 0, "No platform balance");
+        self.platform_balance = 0;
+
+        self.ft_transfer(
+            self.platform_account_id.clone(),
+            amount,
+            "platform commission",
+        )
+        .then(
+            Promise::new(env::current_account_id()).function_call(
+                "on_platform_withdraw".to_string(),
+                near_sdk::serde_json::to_vec(&PlatformWithdrawCallbackArgs {
+                    amount: U128(amount),
+                })
+                .expect("Failed to serialize callback"),
+                NearToken::from_yoctonear(0),
+                WITHDRAW_CALLBACK_GAS,
+            ),
         )
     }
 
-    pub(crate) fn current_time_ms() -> u64 {
-        env::block_timestamp_ms()
-    }
-
-    pub(crate) fn view_upload_session(&self, public_key: &PublicKey) -> Option<UploadSession> {
-        self.lazy_upload_sessions()
-            .get(public_key)
-            .map(|mut session| {
-                if !Self::is_upload_session_terminal(&session.status)
-                    && Self::current_time_ms() > session.expires_at_ms
-                {
-                    session.status = UploadSessionStatus::Expired;
-                }
-                session
-            })
-    }
-
-    pub(crate) fn use_upload_session(
-        &mut self,
-        expected_status: UploadSessionStatus,
-        next_status: UploadSessionStatus,
-        charge_amount: NearToken,
-    ) -> PublicKey {
-        let account_id = env::predecessor_account_id();
-        let signer_pk = env::signer_account_pk();
-        let mut sessions = self.lazy_upload_sessions();
-        let mut session = sessions.get(&signer_pk).expect("Upload session not found");
-
+    #[private]
+    pub fn on_creator_withdraw(&mut self, creator_id: AccountId, amount: U128) -> bool {
         require!(
-            session.owner_id == account_id,
-            "Upload session owner mismatch"
+            env::promise_results_count() == 1,
+            "Expected one withdrawal result"
         );
-
-        if !Self::is_upload_session_terminal(&session.status)
-            && Self::current_time_ms() > session.expires_at_ms
-        {
-            session.status = UploadSessionStatus::Expired;
-            sessions.insert(&signer_pk, &session);
-            env::panic_str("Upload session expired");
+        if matches!(env::promise_result(0), PromiseResult::Successful(_)) {
+            return true;
         }
 
+        let restored = self
+            .creator_balances
+            .get(&creator_id)
+            .unwrap_or(0)
+            .checked_add(amount.0)
+            .expect("Creator balance overflow");
+        self.creator_balances.insert(&creator_id, &restored);
+        false
+    }
+
+    #[private]
+    pub fn on_platform_withdraw(&mut self, amount: U128) -> bool {
         require!(
-            session.status == expected_status,
-            "Upload session out of sequence"
+            env::promise_results_count() == 1,
+            "Expected one withdrawal result"
         );
-        require!(session.remaining_calls > 0, "Upload session exhausted");
-        require!(
-            session.remaining_budget.0 >= charge_amount.as_yoctonear(),
-            "Upload session budget exhausted"
-        );
-
-        session.remaining_calls = session.remaining_calls.saturating_sub(1);
-        session.remaining_budget = U128(
-            session
-                .remaining_budget
-                .0
-                .saturating_sub(charge_amount.as_yoctonear()),
-        );
-        session.status = next_status;
-        sessions.insert(&signer_pk, &session);
-
-        signer_pk
-    }
-
-    pub(crate) fn refund_upload_session(
-        &self,
-        owner_id: &AccountId,
-        amount: NearToken,
-        reason: &str,
-    ) {
-        if amount.as_yoctonear() == 0 {
-            return;
+        if matches!(env::promise_result(0), PromiseResult::Successful(_)) {
+            return true;
         }
 
-        env::log_str(&format!(
-            "Upload session refund: {} yoctoNEAR to {} ({})",
-            amount.as_yoctonear(),
-            owner_id,
-            reason
-        ));
-
-        Promise::new(owner_id.clone()).transfer(amount).as_return();
+        self.platform_balance = self
+            .platform_balance
+            .checked_add(amount.0)
+            .expect("Platform balance overflow");
+        false
     }
 
-    pub(crate) fn close_upload_session(
-        &mut self,
-        public_key: &PublicKey,
-        final_status: UploadSessionStatus,
-    ) {
-        let mut sessions = self.lazy_upload_sessions();
-        if let Some(mut session) = sessions.remove(public_key) {
-            let refund_amount = NearToken::from_yoctonear(session.remaining_budget.0);
-            let owner_id = session.owner_id.clone();
-
-            session.remaining_budget = U128(0);
-            session.remaining_calls = 0;
-            session.status = final_status;
-
-            self.refund_upload_session(&owner_id, refund_amount, "session closed");
-        }
+    pub fn get_media_job(&self, job_id: String) -> Option<MediaJob> {
+        self.media_jobs.get(&job_id)
     }
 
-    pub(crate) fn restore_gift_drop_claim(&mut self, signer_public_key: &PublicKey) {
-        let signer_pk = String::from(signer_public_key);
-        if let Some(mut gift_drop) = self.gift_drops.get(&signer_pk) {
-            gift_drop.remaining_claims = 1;
-            self.gift_drops.insert(&signer_pk, &gift_drop);
-        }
+    pub fn get_publication(&self, publication_id: String) -> Option<Publication> {
+        self.publications.get(&publication_id)
     }
 
-    pub(crate) fn restore_trial_invite_claim(&mut self, signer_public_key: &PublicKey) {
-        let signer_pk = String::from(signer_public_key);
-        let mut trial_invites = self.lazy_trial_invites();
-        if let Some(mut trial_invite) = trial_invites.get(&signer_pk) {
-            trial_invite.remaining_claims = 1;
-            trial_invites.insert(&signer_pk, &trial_invite);
-        }
-    }
-
-    pub(crate) fn is_trial_invite_expired(invite: &TrialInvite) -> bool {
-        invite
-            .expires_at_ms
-            .map(|expires_at_ms| Self::current_time_ms() > expires_at_ms)
+    pub fn has_entitlement(&self, account_id: AccountId, publication_id: String) -> bool {
+        self.entitlements
+            .get(&entitlement_key(&account_id, &publication_id))
             .unwrap_or(false)
     }
 
-    pub(crate) fn implicit_account_id_from_public_key(public_key: &PublicKey) -> AccountId {
-        let public_key_str = String::from(public_key);
-        let encoded = public_key_str
-            .strip_prefix("ed25519:")
-            .unwrap_or_else(|| env::panic_str("Trial invites only support ed25519 keys"));
-        let decoded = bs58::decode(encoded)
-            .into_vec()
-            .unwrap_or_else(|_| env::panic_str("Invalid public key encoding"));
-
-        require!(
-            decoded.len() == 32,
-            "Trial invites only support ed25519 keys",
-        );
-
-        let implicit_id = decoded
-            .iter()
-            .map(|byte| format!("{:02x}", byte))
-            .collect::<String>();
-
-        implicit_id
-            .parse()
-            .unwrap_or_else(|_| env::panic_str("Invalid implicit account id"))
+    pub fn get_creator_balance(&self, creator_id: AccountId) -> U128 {
+        U128(self.creator_balances.get(&creator_id).unwrap_or(0))
     }
 
-    /// DRY helper: build EventResponse with ban status and price_usd
-    pub(crate) fn build_event_response(&self, cid: &str, event: &Event) -> EventResponse {
-        let cid_string = cid.to_string();
-        let price_usd = self.lazy_event_price_usd().get(&cid_string);
-        let price_usdc = self.event_usdc_price(cid, event);
-        let price_near = Self::event_near_price_option(event);
-        let ban_info = self.lazy_banned_events().get(&cid_string);
-        EventResponse {
-            title: event.title.clone(),
-            description: event.description.clone(),
-            price: event.price,
-            price_usdc,
-            price_near,
-            creator_id: event.creator_id.clone(),
-            created_at: event.created_at,
-            price_usd,
-            access_mode: self.resolve_event_access_mode(
-                &cid_string,
-                self.event_has_paid_price(&cid_string, event),
-            ),
-            content_type: event.content_type.to_string(),
-            banned: if ban_info.is_some() { Some(true) } else { None },
-            ban_reason: ban_info.map(|i| match i.reason {
-                BanReason::SexualContent => "sexual_content".to_string(),
-                BanReason::CopyrightViolation => "copyright_violation".to_string(),
-                BanReason::Other => "other".to_string(),
-            }),
-        }
+    pub fn get_platform_balance(&self) -> U128 {
+        U128(self.platform_balance)
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // WEB4 GATEWAY FUNCTIONS
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Web4 gateway entry point — serves static content from IPFS.
-    ///
-    /// Path resolution rules (Next.js static export with trailingSlash):
-    ///   "/"            → "/index.html"
-    ///   "/discover/"   → "/discover/index.html"
-    ///   "/discover"    → "/discover/index.html"  (no extension = route)
-    ///   "/file.js"     → "/file.js"              (has extension = static file)
-    pub fn get_storage_type(&self, token_id: TokenId) -> Option<StorageType> {
-        self.video_metadata
-            .get(&token_id)
-            .map(|metadata| metadata.storage_type.clone())
-    }
-
-    /// Get all videos for an account (any storage type)
-    /// Returns vector of (token_id, video_metadata) pairs
-    pub fn get_videos(&self, account_id: AccountId) -> Vec<(TokenId, VideoMetadata)> {
-        let token_ids = self
-            .tokens
-            .tokens_per_owner
-            .get(&account_id)
-            .unwrap_or_default();
-
-        token_ids
-            .iter()
-            .filter_map(|token_id| {
-                self.video_metadata
-                    .get(token_id)
-                    .map(|metadata| (token_id.clone(), metadata))
-            })
-            .collect()
-    }
-
-    /// Check if an account has a ticket for a specific video (identified by encrypted_cid)
-    /// Used by KMS Worker for access authorization
-    pub fn has_ticket(&self, account_id: AccountId, encrypted_cid: String) -> bool {
-        let token_ids = self
-            .tokens
-            .tokens_per_owner
-            .get(&account_id)
-            .unwrap_or_default();
-
-        token_ids.iter().any(|token_id| {
-            self.video_metadata.get(token_id).map_or(false, |metadata| {
-                metadata.encrypted_cid == encrypted_cid || metadata.encrypted_cid == "ACCESS_PASS"
-            })
-        })
+    pub fn get_usdc_contract_id(&self) -> AccountId {
+        self.usdc_contract_id()
     }
 }
 
+impl Contract {
+    fn job_for_generation(&self, job_id: &str, generation: u64) -> MediaJob {
+        let job = self
+            .media_jobs
+            .get(&job_id.to_string())
+            .expect("Media job not found");
+        require!(
+            job.generation == generation,
+            "Media job generation mismatch"
+        );
+        job
+    }
+
+    fn usdc_contract_id(&self) -> AccountId {
+        let current = env::current_account_id();
+        let value = if current.as_str().ends_with(".testnet") {
+            TESTNET_USDC
+        } else if current.as_str().ends_with(".near") {
+            MAINNET_USDC
+        } else {
+            env::panic_str("Unsupported NEAR network");
+        };
+        value.parse().expect("Invalid embedded USDC account")
+    }
+
+    fn ft_transfer(&self, receiver_id: AccountId, amount: u128, memo: &str) -> Promise {
+        let args = FtTransferArgs {
+            receiver_id,
+            amount: U128(amount),
+            memo: Some(memo.to_string()),
+        };
+        Promise::new(self.usdc_contract_id()).function_call(
+            "ft_transfer".to_string(),
+            near_sdk::serde_json::to_vec(&args).expect("Failed to serialize ft_transfer"),
+            NearToken::from_yoctonear(1),
+            FT_TRANSFER_GAS,
+        )
+    }
+
+    fn bind_receipt_digest(&mut self, digest: &str, binding: &str) {
+        if let Some(existing) = self.receipt_bindings.get(&digest.to_string()) {
+            require!(existing == binding, "Receipt digest is already bound");
+            return;
+        }
+        self.receipt_bindings
+            .insert(&digest.to_string(), &binding.to_string());
+    }
+}
+
+fn entitlement_key(account_id: &AccountId, publication_id: &str) -> String {
+    format!("{account_id}:{publication_id}")
+}
+
+fn assert_identifier(label: &str, value: &str) {
+    require!(
+        !value.is_empty()
+            && value.len() <= 128
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')),
+        format!("{label} must be 1-128 ASCII identifier characters")
+    );
+}
+
+fn assert_title(value: &str) {
+    require!(
+        !value.trim().is_empty() && value.len() <= 200,
+        "title must be 1-200 bytes"
+    );
+}
+
+fn assert_cid(value: &str) {
+    require!(
+        !value.is_empty()
+            && value.len() <= 200
+            && value.bytes().all(|byte| byte.is_ascii_graphic()),
+        "manifest_cid must be 1-200 visible ASCII characters"
+    );
+}
+
+fn assert_sha256(label: &str, value: &str) {
+    require!(
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+        format!("{label} must be lowercase SHA-256 hex")
+    );
+}
+
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use near_sdk::test_utils::VMContextBuilder;
+    use near_sdk::{testing_env, PromiseResult};
+
+    fn account(value: &str) -> AccountId {
+        value.parse().unwrap()
+    }
+
+    fn context(predecessor: &str) -> VMContextBuilder {
+        let mut builder = VMContextBuilder::new();
+        builder.current_account_id(account("market.testnet"));
+        builder.predecessor_account_id(account(predecessor));
+        builder
+    }
+
+    fn contract() -> Contract {
+        testing_env!(context("market.testnet").build());
+        Contract::new(
+            account("platform.testnet"),
+            account("verifier.testnet"),
+            account("cleaner.testnet"),
+            (1..=5)
+                .map(|index| account(&format!("kms-{index}.testnet")))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn selects_circle_usdc_from_network() {
+        let contract = contract();
+        assert_eq!(contract.get_usdc_contract_id(), account(TESTNET_USDC));
+
+        let mut builder = context("market.near");
+        builder.current_account_id(account("market.near"));
+        testing_env!(builder.build());
+        assert_eq!(contract.get_usdc_contract_id(), account(MAINNET_USDC));
+    }
+
+    #[test]
+    fn failed_creator_withdraw_restores_liability() {
+        let mut contract = contract();
+        let creator_id = account("creator.testnet");
+        contract.creator_balances.insert(&creator_id, &1_960_000);
+
+        testing_env!(context("creator.testnet").build());
+        contract.withdraw_creator_balance();
+        assert_eq!(contract.get_creator_balance(creator_id.clone()), U128(0));
+
+        testing_env!(
+            context("market.testnet").build(),
+            near_sdk::test_vm_config(),
+            near_sdk::RuntimeFeesConfig::test(),
+            Default::default(),
+            vec![PromiseResult::Failed],
+        );
+        assert!(!contract.on_creator_withdraw(creator_id.clone(), U128(1_960_000)));
+        assert_eq!(contract.get_creator_balance(creator_id), U128(1_960_000));
+    }
+}

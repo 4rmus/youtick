@@ -6,18 +6,12 @@ use near_sdk::{env, near, require, AccountId, BorshStorageKey, PanicOnDefault, P
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SessionScope {
     Play,
-    Publish,
-    ClaimGift,
-    ClaimTrial,
 }
 
 impl SessionScope {
     fn as_key(&self) -> &'static str {
         match self {
             Self::Play => "play",
-            Self::Publish => "publish",
-            Self::ClaimGift => "claim_gift",
-            Self::ClaimTrial => "claim_trial",
         }
     }
 }
@@ -130,31 +124,6 @@ impl AccessControlContract {
                 require_device: true,
             },
         );
-        contract.set_scope_policy_internal(
-            SessionScope::Publish,
-            ScopePolicy {
-                max_ttl_ms: 20 * 60 * 1000,
-                require_origin: true,
-                require_device: true,
-            },
-        );
-        contract.set_scope_policy_internal(
-            SessionScope::ClaimGift,
-            ScopePolicy {
-                max_ttl_ms: 15 * 60 * 1000,
-                require_origin: false,
-                require_device: false,
-            },
-        );
-        contract.set_scope_policy_internal(
-            SessionScope::ClaimTrial,
-            ScopePolicy {
-                max_ttl_ms: 15 * 60 * 1000,
-                require_origin: false,
-                require_device: false,
-            },
-        );
-
         contract
     }
 
@@ -372,14 +341,6 @@ impl AccessControlContract {
         self.owner_id = new_owner;
     }
 
-    /// Legacy: kept for backward compatibility, delegates to two-step flow
-    #[deprecated(note = "Use propose_owner + accept_ownership for safe transfers")]
-    pub fn set_owner(&mut self, owner_id: AccountId) {
-        self.assert_owner();
-        self.pending_owner_id = Some(owner_id);
-        env::log_str("WARNING: set_owner is deprecated. Use propose_owner + accept_ownership.");
-    }
-
     pub fn get_session_grant(&self, session_pk: String) -> Option<SessionGrant> {
         self.grants.get(&session_pk)
     }
@@ -484,18 +445,6 @@ impl AccessControlContract {
 
     pub fn can_play(&self, owner_id: AccountId, resource_id: Option<String>) -> bool {
         self.can_execute(owner_id, SessionScope::Play, resource_id)
-    }
-
-    pub fn can_publish(&self, owner_id: AccountId, resource_id: Option<String>) -> bool {
-        self.can_execute(owner_id, SessionScope::Publish, resource_id)
-    }
-
-    pub fn can_claim_gift(&self, owner_id: AccountId, resource_id: Option<String>) -> bool {
-        self.can_execute(owner_id, SessionScope::ClaimGift, resource_id)
-    }
-
-    pub fn can_claim_trial(&self, owner_id: AccountId, resource_id: Option<String>) -> bool {
-        self.can_execute(owner_id, SessionScope::ClaimTrial, resource_id)
     }
 }
 
@@ -876,14 +825,14 @@ mod tests {
 
         testing_env!(context("owner.testnet", 2_000).build());
         let id = contract.propose_action(TimelockAction::PauseScope {
-            scope: SessionScope::Publish,
+            scope: SessionScope::Play,
         });
 
         let builder = context("owner.testnet", 2_000 + TIMELOCK_DELAY_NS / 1_000_000);
         testing_env!(builder.build());
         contract.execute_action(id);
 
-        assert!(contract.get_scope_policy(SessionScope::Publish).is_some());
+        assert!(contract.get_scope_policy(SessionScope::Play).is_some());
     }
 
     #[test]

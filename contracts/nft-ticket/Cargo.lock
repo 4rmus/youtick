@@ -4347,10 +4347,8 @@ name = "youtick-nft"
 version = "1.0.0"
 dependencies = [
  "anyhow",
- "bs58 0.5.1",
  "near-sdk",
  "near-workspaces",
- "schemars 0.8.22",
  "serde",
  "serde_json",
  "tokio",

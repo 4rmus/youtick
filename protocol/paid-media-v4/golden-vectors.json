@@ -1,0 +1,37 @@
+{
+  "version": "youtick.paid-media-v4.contract.v1",
+  "job": {
+    "job_id": "job-1",
+    "generation": 1,
+    "creator_id": "creator.testnet",
+    "price_usdc": "2000000"
+  },
+  "byte_integrity": {
+    "manifest_cid": "bafy-manifest",
+    "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "pack_root_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "logical_bytes": "1000000",
+    "pack_count": 4,
+    "full_readback": true,
+    "receipt_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "kms": {
+    "required_distinct_operators": 5,
+    "stored_and_read_back": true
+  },
+  "source_delete": {
+    "head_not_found": true,
+    "get_not_found": true,
+    "object_count": 0,
+    "multipart_count": 0,
+    "receipt_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "purchase": {
+    "amount": "2000000",
+    "creator_amount": "1960000",
+    "platform_amount": "40000",
+    "message": {
+      "publication_id": "job-1"
+    }
+  }
+}

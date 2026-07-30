@@ -3,17 +3,11 @@ name = "youtick-nft"
 version = "1.0.0"
 edition = "2021"
 
-[features]
-default = []
-migration = []
-
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 near-sdk = { version = "=5.5.0", features = ["unit-testing", "legacy"] }
-schemars = { version = "0.8", features = ["derive"] }
-bs58 = "0.5"
 
 [dev-dependencies]
 near-sdk = { version = "=5.5.0", features = ["unit-testing", "legacy"] }

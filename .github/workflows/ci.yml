@@ -98,6 +98,10 @@ jobs:
             contracts=true
           fi
 
+          if grep -Eq '^(protocol/paid-media-v4/|scripts/check-paid-media-v4-abi\.mjs$)' /tmp/changed-files; then
+            contracts=true
+          fi
+
           if grep -Eq '^contracts/' /tmp/changed-files; then
             contracts=true
           fi
@@ -303,9 +307,14 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.86.0
+        with:
+          components: rustfmt, clippy
 
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
+
+      - name: Install cargo-near
+        run: cargo install cargo-near --version 0.17.0 --locked --no-default-features
 
       - name: Restore Cargo cache
         uses: actions/cache@v5
@@ -325,17 +334,31 @@ jobs:
         run: cargo test --lib
         working-directory: contracts/nft-ticket
 
+      - name: Test paid-media v4 contract
+        run: cargo test --test paid_media_v4
+        working-directory: contracts/nft-ticket
+
       - name: Test nft-ticket sandbox tests
         run: cargo test --test sandbox
         working-directory: contracts/nft-ticket
 
-      - name: Build nft-ticket wasm
-        run: cargo build --target wasm32-unknown-unknown --release
+      - name: Check nft-ticket format and lints
+        run: |
+          cargo fmt --all --check
+          cargo clippy --all-targets -- -D warnings
         working-directory: contracts/nft-ticket
 
       - name: Test access-control
         run: cargo test
         working-directory: contracts/access-control
+
+      - name: Build paid-only contract ABIs
+        run: |
+          (cd contracts/nft-ticket && cargo near build non-reproducible-wasm)
+          (cd contracts/access-control && cargo near build non-reproducible-wasm)
+
+      - name: Enforce paid-only ABI
+        run: node scripts/check-paid-media-v4-abi.mjs
 
       - name: Test operator-registry
         run: cargo test
