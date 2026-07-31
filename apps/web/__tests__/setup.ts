@@ -48,7 +48,7 @@ export class MockKeyPair {
     };
   }
 
-  async sign(message: Uint8Array): Promise<{ signature: Uint8Array }> {
+  sign(message: Uint8Array): { signature: Uint8Array } {
     const signature = nacl.sign.detached(message, this.keypair.secretKey);
     return { signature };
   }

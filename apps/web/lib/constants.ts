@@ -67,6 +67,8 @@ export const NEAR_CONFIG = {
 } as const;
 
 export const FEATURE_FLAGS = {
+    /** Paid-media v4 private R2 ingest. Keep false until provider canaries pass. */
+    enablePaidMediaV4Ingest: process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_V4_INGEST === 'true',
     /** Cross-chain checkout is experimental and must be explicitly enabled. */
     enableCrossChainCheckout: process.env.NEXT_PUBLIC_ENABLE_CROSS_CHAIN_CHECKOUT === 'true',
     /** Secondary Lighthouse persistence checks through the Storage API Worker. */
@@ -75,6 +77,11 @@ export const FEATURE_FLAGS = {
     enableLighthousePrimaryUpload: process.env.NEXT_PUBLIC_ENABLE_LIGHTHOUSE_PRIMARY_UPLOAD !== 'false',
     /** Optional hot media delivery Worker. Direct gateway fallback remains available. */
     enableMediaDeliveryWorker: process.env.NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER === 'true',
+} as const;
+
+export const MEDIA_UPLOAD_POLICY = {
+    paidSourceMaxBytes: 20_000_000_000,
+    r2PartBytes: 64 * 1024 * 1024,
 } as const;
 
 export const APP_CONFIG = {

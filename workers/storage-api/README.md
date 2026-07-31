@@ -5,6 +5,10 @@ provider secrets, provider status checks, and the flag-gated Lighthouse
 upload pilot. Large production uploads and media delivery are not this
 Worker's responsibility.
 
+Paid-media v4 adds a separate, disabled-by-default control plane for direct
+browser-to-private-R2 multipart ingest. Only JSON control requests reach this
+Worker; source bytes use scoped R2 URLs.
+
 ## Responsibilities
 
 - The Lighthouse API key is never exposed to the browser.
@@ -33,6 +37,12 @@ Worker's responsibility.
 - `UPLOAD_RATE_LIMIT_MAX`: per-account/IP intent quota. Default 1000.
 - `UPLOAD_RATE_LIMIT_WINDOW_SECONDS`: rate-limit window. Default 3600 seconds.
 - `NEAR_NETWORK`: RPC pool selection for full-access key checks. Default `mainnet`.
+- `R2_INGEST_ENABLED`: opens v4 routes only when every dependency is ready.
+- `R2_INGEST_SESSIONS`: serializes one job/generation in a Durable Object.
+- `RAW_MEDIA_BUCKET`: private raw-source R2 binding.
+- `R2_ACCOUNT_ID`, `R2_RAW_BUCKET_NAME`: exact R2 URL scope.
+- `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: secrets for short-lived part grants.
+- `NEAR_RPC_URL`, `MARKET_CONTRACT_ID`: final paid-job lookup.
 
 ```bash
 cd workers/storage-api
@@ -62,9 +72,20 @@ npx wrangler dev
 - `POST /uploads/intent`: Returns the safe path and chunk limits for a large upload.
 - `POST /uploads/file`: Uploads a single file or segment chunk to Lighthouse.
 - `POST /uploads/directory`: Uploads multipart `file` fields to Lighthouse as a directory.
+- `GET /media-jobs/ingest/probe`: Reports fail-closed v4 ingest readiness.
+- `POST /media-jobs/:job/generations/:generation/uploads`: Creates or resumes a persisted multipart upload.
+- `GET .../uploads/parts`: Reads provider `ListParts` truth.
+- `POST .../uploads/parts/:part/grant`: Issues one ten-minute job/part-scoped R2 URL.
+- `POST .../uploads/complete`: Completes only an exact provider inventory.
+- `DELETE .../uploads`: Aborts multipart state and removes the raw source.
 
 `/provider-health` does not return secret values. It only reports whether
 the provider is ready.
+
+The v4 device key is bound in `create_paid_job`, so these routes use signed
+device requests without wallet `signMessage`. A Durable Object alarm aborts an
+unfinished upload or deletes a completed raw source after 24 hours. The R2
+lifecycle policy in `protocol/paid-media-v4` is a second kill switch.
 
 `POST /pins` accepts only a small JSON body:
 

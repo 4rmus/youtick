@@ -8,6 +8,8 @@ const MANIFEST_ROOT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const PACK_ROOT: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const BYTE_RECEIPT: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const DELETE_RECEIPT: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+const INGEST_PUBLIC_KEY: &str = "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF";
+const NEXT_INGEST_PUBLIC_KEY: &str = "ed25519:5UWxaaTMzLfiKnwMb3hdxh4rkDua33VA3pMusrDYZExY";
 
 fn account(value: &str) -> AccountId {
     value.parse().unwrap()
@@ -42,6 +44,8 @@ fn create_job(contract: &mut Contract) {
         "job-1".to_string(),
         "Paid video".to_string(),
         U128(2_000_000),
+        U128(20_000_000_000),
+        INGEST_PUBLIC_KEY.to_string(),
     );
 }
 
@@ -54,9 +58,43 @@ fn rejects_price_that_cannot_split_exactly() {
             "job-invalid-price".to_string(),
             "Paid video".to_string(),
             U128(1_999_999),
+            U128(1),
+            INGEST_PUBLIC_KEY.to_string(),
         );
     }));
     assert!(invalid_price.is_err());
+}
+
+#[test]
+fn binds_device_key_and_rejects_more_than_twenty_gb() {
+    let mut contract = contract();
+    create_job(&mut contract);
+    let job = contract.get_media_job("job-1".to_string()).unwrap();
+    assert_eq!(job.source_bytes, U128(20_000_000_000));
+    assert_eq!(job.ingest_public_key, INGEST_PUBLIC_KEY);
+
+    testing_env!(context("creator.testnet").build());
+    let too_large = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        contract.create_paid_job(
+            "job-too-large".to_string(),
+            "Paid video".to_string(),
+            U128(2_000_000),
+            U128(20_000_000_001),
+            INGEST_PUBLIC_KEY.to_string(),
+        );
+    }));
+    assert!(too_large.is_err());
+
+    let invalid_key = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        contract.create_paid_job(
+            "job-invalid-key".to_string(),
+            "Paid video".to_string(),
+            U128(2_000_000),
+            U128(1),
+            "ed25519:11111111111111111111111111111111111111111111".to_string(),
+        );
+    }));
+    assert!(invalid_key.is_err());
 }
 
 fn record_integrity(contract: &mut Contract) {
@@ -170,8 +208,13 @@ fn mismatched_or_old_generation_evidence_cannot_publish() {
     assert!(wrong_root.is_err());
 
     testing_env!(context("creator.testnet").build());
-    let restarted = contract.restart_paid_job("job-1".to_string());
+    let restarted = contract.restart_paid_job(
+        "job-1".to_string(),
+        U128(1_000_000),
+        NEXT_INGEST_PUBLIC_KEY.to_string(),
+    );
     assert_eq!(restarted.generation, 2);
+    assert_eq!(restarted.ingest_public_key, NEXT_INGEST_PUBLIC_KEY);
 
     testing_env!(context("verifier.testnet").build());
     let old_generation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

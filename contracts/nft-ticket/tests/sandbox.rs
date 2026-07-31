@@ -57,6 +57,8 @@ async fn exact_evidence_publishes_once() -> anyhow::Result<()> {
             "job_id": "job-1",
             "title": "Paid video",
             "price_usdc": "2000000",
+            "source_bytes": "1000000",
+            "ingest_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
         }))
         .transact()
         .await?

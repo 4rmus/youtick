@@ -34,6 +34,30 @@ Every publication gate binds:
 Restart increments `generation` and clears all earlier evidence. Evidence from
 an older generation cannot publish.
 
+`create_paid_job` also binds the exact source byte length and a browser-generated
+Ed25519 ingest key. The key is used only for the private R2 control routes, so
+the wallet authorizes the job once and does not receive `signMessage` prompts.
+
+## Browser ingest control
+
+PR-2 adds persisted `Create`, `UploadPart grant`, provider `ListParts`,
+`Complete` and `Abort` routes. The browser stores its device key and file
+fingerprint in IndexedDB, re-queries provider inventory after reload/reselect,
+and uploads only missing fixed 64 MiB parts. The final part must equal the exact
+remaining byte length.
+
+Every control request binds method, route, timestamp, nonce and body digest to
+the on-chain device key. Origin, creator, job, generation, prefix and part scope
+fail closed. Media bytes are sent only to the signed private R2 URL.
+
+The active Durable Object alarm and the bucket lifecycle policy both enforce a
+24-hour raw-source limit. Apply `r2-cors.json` and `r2-lifecycle.json` to the
+private bucket before enabling the feature.
+
+Status remains `CODE_ONLY / FEATURE_DISABLED / NOT_DEPLOYED`. Real R2 tests for
+exact part behavior, 30%/70% browser interruption and the exact 20 GB device
+matrix remain release gates.
+
 ## Required publication facts
 
 `finalize_paid_publish` succeeds only after:
