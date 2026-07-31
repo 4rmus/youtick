@@ -9,6 +9,10 @@ Paid-media v4 adds a separate, disabled-by-default control plane for direct
 browser-to-private-R2 multipart ingest. Only JSON control requests reach this
 Worker; source bytes use scoped R2 URLs.
 
+The live `npm run canary:r2-browser-resume` check uses a deterministic 640 MiB
+fixture to reload and reselect at 3/10 and 7/10 provider parts. It is not the
+separate exact-20-GB release gate.
+
 ## Responsibilities
 
 - The Lighthouse API key is never exposed to the browser.
@@ -40,7 +44,7 @@ Worker; source bytes use scoped R2 URLs.
 - `R2_INGEST_ENABLED`: opens v4 routes only when every dependency is ready.
 - `R2_INGEST_SESSIONS`: serializes one job/generation in a Durable Object.
 - `RAW_MEDIA_BUCKET`: private raw-source R2 binding.
-- `R2_ACCOUNT_ID`, `R2_RAW_BUCKET_NAME`: exact R2 URL scope.
+- `R2_ACCOUNT_ID`, `R2_JURISDICTION`, `R2_RAW_BUCKET_NAME`: exact R2 URL scope.
 - `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: secrets for short-lived part grants.
 - `NEAR_RPC_URL`, `MARKET_CONTRACT_ID`: final paid-job lookup.
 

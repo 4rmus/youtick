@@ -7,11 +7,14 @@
     },
     "scripts": {
         "check": "tsc --noEmit -p tsconfig.json",
+        "canary:r2": "node scripts/r2-ingest-provider-canary.mjs",
+        "canary:r2-browser-resume": "node scripts/r2-ingest-browser-resume-canary.mjs",
         "dev": "wrangler dev",
         "deploy": "wrangler deploy",
         "tail": "wrangler tail",
         "test": "vitest",
-        "test:run": "vitest --run"
+        "test:run": "vitest --run",
+        "test:r2-canary": "node --test scripts/r2-ingest-provider-canary.test.mjs scripts/r2-ingest-browser-resume-canary.test.mjs"
     },
     "devDependencies": {
         "@cloudflare/workers-types": "^4.20260423.1",

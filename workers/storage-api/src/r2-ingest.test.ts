@@ -79,6 +79,7 @@ function createEnv(bucket: R2Bucket, overrides?: Partial<R2IngestEnv>): R2Ingest
         ALLOWED_ORIGINS: ORIGIN,
         R2_INGEST_ENABLED: 'true',
         R2_ACCOUNT_ID: 'a'.repeat(32),
+        R2_JURISDICTION: 'eu',
         R2_RAW_BUCKET_NAME: 'youtick-raw',
         R2_ACCESS_KEY_ID: 'access-key',
         R2_SECRET_ACCESS_KEY: 'secret-key',
@@ -259,9 +260,11 @@ describe('R2 ingest control', () => {
         };
         expect(grantBody.expectedBytes).toBe(7);
         const grantUrl = new URL(grantBody.url);
-        expect(grantUrl.hostname).toBe(`${'a'.repeat(32)}.r2.cloudflarestorage.com`);
+        expect(grantUrl.hostname).toBe(`${'a'.repeat(32)}.eu.r2.cloudflarestorage.com`);
         expect(grantUrl.pathname).toBe(`/youtick-raw/raw/jobs/${JOB_ID}/1/source`);
         expect(grantUrl.searchParams.get('partNumber')).toBe('2');
+        expect(grantUrl.searchParams.get('X-Amz-SignedHeaders'))
+            .toBe('content-length;content-type;host;origin');
         expect(JSON.stringify(grantBody)).not.toContain('secret-key');
 
         const wrongPart = await session.fetch(await signedRequest({
