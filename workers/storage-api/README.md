@@ -40,7 +40,7 @@ Worker; source bytes use scoped R2 URLs.
 - `R2_INGEST_ENABLED`: opens v4 routes only when every dependency is ready.
 - `R2_INGEST_SESSIONS`: serializes one job/generation in a Durable Object.
 - `RAW_MEDIA_BUCKET`: private raw-source R2 binding.
-- `R2_ACCOUNT_ID`, `R2_RAW_BUCKET_NAME`: exact R2 URL scope.
+- `R2_ACCOUNT_ID`, `R2_JURISDICTION`, `R2_RAW_BUCKET_NAME`: exact R2 URL scope.
 - `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: secrets for short-lived part grants.
 - `NEAR_RPC_URL`, `MARKET_CONTRACT_ID`: final paid-job lookup.
 

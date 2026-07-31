@@ -20,6 +20,7 @@ export interface R2IngestEnv {
     ALLOWED_ORIGINS?: string;
     R2_INGEST_ENABLED?: string;
     R2_ACCOUNT_ID?: string;
+    R2_JURISDICTION?: string;
     R2_RAW_BUCKET_NAME?: string;
     R2_ACCESS_KEY_ID?: string;
     R2_SECRET_ACCESS_KEY?: string;
@@ -71,6 +72,7 @@ export function getR2IngestReadiness(env: R2IngestEnv): Record<string, unknown> 
         bucketBinding: Boolean(env.RAW_MEDIA_BUCKET),
         sessionNamespace: Boolean(env.R2_INGEST_SESSIONS),
         accountId: R2_ACCOUNT_ID_PATTERN.test(env.R2_ACCOUNT_ID?.trim() || ''),
+        jurisdiction: !env.R2_JURISDICTION || env.R2_JURISDICTION === 'eu',
         bucketName: R2_BUCKET_PATTERN.test(env.R2_RAW_BUCKET_NAME?.trim() || '')
             && !env.R2_RAW_BUCKET_NAME?.startsWith('replace-with-'),
         presignCredentials: Boolean(
@@ -316,10 +318,15 @@ export class R2IngestSession {
         url.searchParams.set('partNumber', String(partNumber));
         url.searchParams.set('uploadId', session.uploadId);
         url.searchParams.set('X-Amz-Expires', String(R2_UPLOAD_GRANT_TTL_SECONDS));
+        const signedHeaders = {
+            'content-length': String(expectedBytes),
+            'content-type': 'application/octet-stream',
+            origin: session.origin,
+        };
         const signer = new AwsV4Signer({
             method: 'PUT',
             url: url.toString(),
-            headers: { 'content-type': 'application/octet-stream' },
+            headers: signedHeaders,
             accessKeyId: readSecret(this.env.R2_ACCESS_KEY_ID)!,
             secretAccessKey: readSecret(this.env.R2_SECRET_ACCESS_KEY)!,
             service: 's3',
@@ -549,8 +556,9 @@ async function listProviderParts(
 }
 
 function r2ObjectUrl(env: R2IngestEnv, session: R2IngestSessionV1): URL {
+    const jurisdiction = env.R2_JURISDICTION === 'eu' ? '.eu' : '';
     return new URL(
-        `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/`
+        `https://${env.R2_ACCOUNT_ID}${jurisdiction}.r2.cloudflarestorage.com/`
         + `${env.R2_RAW_BUCKET_NAME}/${session.providerKey}`,
     );
 }
