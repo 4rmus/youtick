@@ -1,6 +1,6 @@
 # YouTick Livepeer bridge Worker
 
-Status: `PR-3 CODE-ONLY / DISABLED / NOT DEPLOYED`
+Status: `PR-4 CODE-ONLY / DISABLED / NOT DEPLOYED`
 
 This Worker is the persisted upload-intent control plane for paid-media
 Livepeer v1. The implementation is complete enough for local and mocked tests,
@@ -19,8 +19,17 @@ but provider mutation and deployment remain disabled.
 - One SQLite-backed Durable Object class is used with named job and operator
   instances.
 - Final NEAR job reads happen before an atomic intent reservation.
-- Outbox records contain an idempotency key and payload hash, not signed
-  transaction bytes.
+- Job-side reservation outbox records contain only an idempotency key and
+  payload hash. The operator outbox adds signed transaction bytes only after
+  provider readiness is verified.
+- `POST /v1/livepeer-webhooks` verifies the exact raw request body, timestamp
+  and every `v1` HMAC candidate before parsing or Durable Object routing.
+- A ready event is digest-deduplicated, then the bridge re-fetches the asset
+  and playback objects and checks project, token name, JWT policy, playback
+  binding, exact source size and unauthenticated HLS/MP4/download denial.
+- The operator object persists nonce, recent block hash, signed transaction
+  bytes and transaction hash before broadcast. Retries query the same hash and
+  require the final `get_publication` view to match the submitted tuple.
 - Structured logs redact secrets, bearer upload URLs and signed transactions.
 
 ## Local checks
@@ -29,12 +38,16 @@ but provider mutation and deployment remain disabled.
 cd workers/livepeer-bridge
 npm test -- --run
 npm run check
+npx wrangler deploy --dry-run
 ```
 
 `GET /__health` reports process health and the disabled capability state.
 `POST /v1/upload-intents` remains unavailable while the runtime flag is false.
 `LIVEPEER_API_KEY` is a Worker secret and must never be placed in `wrangler.toml`
-or a browser environment variable.
+or a browser environment variable. `LIVEPEER_WEBHOOK_SECRET` and
+`NEAR_OPERATOR_PRIVATE_KEY` are also Worker secrets. The operator key must be a
+finite-allowance FunctionCall key for the exact market and approved methods;
+FullAccess is rejected.
 
 ## Provider canary
 

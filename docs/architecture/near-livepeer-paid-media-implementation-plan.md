@@ -15,7 +15,7 @@
 |---|---|
 | Livepeer component fit | `GO` |
 | Architecture direction | `CONDITIONAL_GO` |
-| Implementation progress | `PR_2_MERGED / PR_3_PROVIDER_CANARY_PARTIAL` |
+| Implementation progress | `PR_3_MERGED / PR_4_CODE_ONLY_COMPLETE` |
 | Testnet and staging | `NO_GO` |
 | Production | `NO_GO` |
 
@@ -523,6 +523,19 @@ Acceptance:
 Stop for review before PR-4.
 
 ### PR-4 - Webhook, verification and NEAR finalize
+
+Status: `CODE_ONLY_COMPLETE / HARD_DISABLED / NOT_DEPLOYED` on 2026-08-01.
+The Worker verifies the exact raw webhook body and timestamp, digest-deduplicates
+provider transitions, re-fetches asset and playback state, runs JWT-negative
+HLS/MP4/download probes, and fails closed on project, API token name, policy,
+playback and source-size drift. The named operator object persists nonce, recent
+block hash, signed transaction bytes and transaction hash before broadcast; a
+retry queries the same hash and accepts completion only when the final
+`get_publication` view matches the submitted tuple. Focused tests cover duplicate,
+unknown and out-of-order events, provider identity drift, crash-after-sign state,
+timeout-after-broadcast recovery, two parallel jobs and conflicting final chain
+state. The route and provider mutation remain disabled; no real webhook, NEAR
+finalize, deployment or activation is claimed.
 
 Add raw-body webhook verification, digest dedup, provider re-fetch, playback
 negative probes, operator outbox and final NEAR transaction recovery.
