@@ -1,6 +1,6 @@
 # Livepeer provider canary evidence - 2026-08-01
 
-Status: `PARTIAL / PROVIDER_S3_OFFSET_BUG_OPEN / SANDBOX CLEAN`
+Status: `PARTIAL / DEPLOYED_S3_OFFSET_BUG_CONFIRMED / SANDBOX CLEAN`
 
 This evidence belongs to PR-3. It is a bounded Sandbox and Chrome provider
 receipt, not testnet, staging or production proof.
@@ -76,9 +76,24 @@ proof. No raw asset ID, bearer TUS URL or API key is retained in this evidence.
 
 ## Root cause analysis
 
-Confidence: `HIGH`, pending confirmation of the deployed provider version.
+The public-source audit covered the current Livepeer documentation index,
+upload guide and OpenAPI; Studio, SDK/UI and Catalyst repositories; their TUS
+issue/PR history; and upstream tus releases and fixes. It found no duplicate
+Livepeer report or alternate deployed TUS implementation for this route. The
+current v2 narrative example calls the response field `tusUploadUrl`, while the
+[OpenAPI](https://github.com/livepeer/docs/blob/de6026f63e2ec1bf11bb91f82facf1a86dbf2e39/api/studio.yaml)
+and [SDK](https://github.com/livepeer/livepeer-js/blob/e604326098983cf25b9a6da023f2ed142c4be60b/src/sdk/asset.ts)
+use the canary-proven `tusEndpoint`. That documentation mismatch does not cause
+the offset failure, but it prevents the narrative page from defining a reliable
+client chunk contract by itself.
 
-Livepeer's current public Studio lockfile resolves
+Confidence: `CONFIRMED` for the deployed version and observed failure
+signature; provider remediation remains open.
+
+On 2026-08-01, Livepeer's public
+[`/api/version`](https://livepeer.studio/api/version) endpoint reported commit
+`72187ec428cdd41c81ff75556d77a609b2990695`. That exact Studio revision builds
+with `yarn install --frozen-lockfile` and resolves
 [`@tus/s3-store` to `1.0.0`](https://github.com/livepeer/studio/blob/72187ec428cdd41c81ff75556d77a609b2990695/yarn.lock#L7500-L7511).
 Its production TUS path uses the S3 store with an
 [8 MiB preferred part size](https://github.com/livepeer/studio/blob/72187ec428cdd41c81ff75556d77a609b2990695/packages/api/src/controllers/asset.ts#L1035-L1049),
@@ -89,7 +104,11 @@ In S3 store `1.0.0`, a PATCH below S3's 5 MiB multipart minimum is retained as
 an incomplete `.part` object, but the subsequent HEAD offset lookup reads the
 wrong key and reports zero. The upstream project fixed exactly this behavior in
 [PR #493](https://github.com/tus/tus-node-server/pull/493), released as
-`@tus/s3-store@1.0.1`. This explains both observed signatures:
+`@tus/s3-store@1.0.1`. The same patch release also added a regression test for
+sub-5 MiB client chunks in
+[PR #494](https://github.com/tus/tus-node-server/pull/494), and `1.0.1` keeps
+the same Node and `@tus/server ^1.0.0` compatibility declaration as `1.0.0`.
+This explains both observed signatures:
 
 - the 8,776-byte native PATCH reported 8,776, then HEAD returned zero;
 - Chrome's 1 MiB chunk was retained as incomplete, HEAD returned zero, and the
@@ -98,14 +117,19 @@ wrong key and reports zero. The upstream project fixed exactly this behavior in
 
 The redacted provider report is
 [Livepeer Studio issue #2352](https://github.com/livepeer/studio/issues/2352).
-Until Livepeer confirms the deployed version, chunks at or above 5 MiB are a
-candidate workaround, not an accepted product contract.
+The current
+[Livepeer upload documentation](https://docs.livepeer.org/v2/solutions/livepeer-studio/video-on-demand/upload-asset)
+recommends TUS but does not declare a minimum PATCH size. A historical
+[official client change](https://github.com/livepeer/ui-kit/pull/43) used 5 MiB
+chunks for stream inputs because of S3, but left browser `File` uploads
+unbounded. Chunks at or above 5 MiB are therefore a source-supported candidate
+workaround, not a current product contract.
 
 ## Next gate
 
 Do not enable the Worker route or create another asset. Wait for Livepeer to
-confirm the deployed S3-store version and supported mitigation. If a bounded
-workaround canary is approved, exact 30%/70% checkpoints can use sequential
-6 MiB, 8 MiB and 6 MiB PATCH bodies; each is at least 5 MiB. Any rerun requires
-a new explicit asset-budget approval. Edge, sleep/network loss, endpoint
-lifetime and exact 20 GB remain open.
+confirm remediation or the supported mitigation. If a bounded workaround
+canary is approved, exact 30%/70% checkpoints can use sequential 6 MiB, 8 MiB
+and 6 MiB PATCH bodies; each is at least 5 MiB. Any rerun requires a new
+explicit asset-budget approval. Edge, sleep/network loss, endpoint lifetime and
+exact 20 GB remain open.
