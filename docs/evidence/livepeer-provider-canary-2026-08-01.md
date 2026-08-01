@@ -1,6 +1,6 @@
 # Livepeer provider canary evidence - 2026-08-01
 
-Status: `PARTIAL / CHROME_TUS_P0_BLOCKED / SANDBOX CLEAN`
+Status: `PARTIAL / PROVIDER_S3_OFFSET_BUG_OPEN / SANDBOX CLEAN`
 
 This evidence belongs to PR-3. It is a bounded Sandbox and Chrome provider
 receipt, not testnet, staging or production proof.
@@ -25,7 +25,7 @@ No API key, raw asset ID, playback ID or bearer TUS URL is recorded here.
 | JWT upload-intent creation | `PASS` | Create HTTP 200; response policy `jwt`; TUS endpoint returned |
 | Empty-intent cleanup | `PASS` | Delete HTTP 204; immediate asset GET HTTP 404 |
 | Provider identity redaction | `PASS` | Only SHA-256 identities appear in the receipt |
-| 30% resume | `UNPROVEN / FAIL-CLOSED` | Native PATCH reported offset `8776`; eight HEAD reads reported `0`. Chrome's initial PATCH returned HTTP 409; three retry HEAD reads reported `0` |
+| 30% resume | `UNPROVEN / FAIL-CLOSED` | Native PATCH reported offset `8776`; eight HEAD reads reported `0`. Chrome accepted a sub-5 MiB incomplete part, then the next PATCH returned HTTP 409; three retry HEAD reads reported `0` |
 | 70% resume | `NOT_RUN` | 30% checkpoint failed first |
 | Orphan cleanup | `PASS` | Fourth asset delete HTTP 204, immediate GET HTTP 404; final project asset inventory count `0` |
 | Chrome CORS | `PASS / TRANSPORT ONLY` | Chrome completed cross-origin TUS creation and reached PATCH/HEAD provider responses; no browser CORS rejection occurred |
@@ -60,10 +60,10 @@ used 1 MiB chunks. The client configuration passed the returned
 and tus-js-client's
 [upload creation contract](https://github.com/tus/tus-js-client/blob/v4.3.1/docs/api.md).
 
-The TUS creation request succeeded, but the first PATCH returned HTTP 409
+The TUS creation request succeeded. The first 1 MiB chunk followed the
+provider's incomplete-part path; the next PATCH returned HTTP 409
 `Upload-Offset conflict`. Three automatic retry HEAD requests all returned
-offset `0`, so no checkpoint was reached and no accepted media byte is claimed.
-The redacted receipt recorded:
+offset `0`, so no checkpoint was reached. The redacted receipt recorded:
 
 - run ID `a5c519a0-7f63-43a8-8b0e-dc689d8571e8`;
 - asset ID SHA-256
@@ -74,9 +74,38 @@ The redacted receipt recorded:
 The source is transport-only synthetic data and is not valid media or playback
 proof. No raw asset ID, bearer TUS URL or API key is retained in this evidence.
 
+## Root cause analysis
+
+Confidence: `HIGH`, pending confirmation of the deployed provider version.
+
+Livepeer's current public Studio lockfile resolves
+[`@tus/s3-store` to `1.0.0`](https://github.com/livepeer/studio/blob/72187ec428cdd41c81ff75556d77a609b2990695/yarn.lock#L7500-L7511).
+Its production TUS path uses the S3 store with an
+[8 MiB preferred part size](https://github.com/livepeer/studio/blob/72187ec428cdd41c81ff75556d77a609b2990695/packages/api/src/controllers/asset.ts#L1035-L1049),
+while the repository resume test uses `TusFileStore`, so it does not exercise
+the production incomplete-S3-part path.
+
+In S3 store `1.0.0`, a PATCH below S3's 5 MiB multipart minimum is retained as
+an incomplete `.part` object, but the subsequent HEAD offset lookup reads the
+wrong key and reports zero. The upstream project fixed exactly this behavior in
+[PR #493](https://github.com/tus/tus-node-server/pull/493), released as
+`@tus/s3-store@1.0.1`. This explains both observed signatures:
+
+- the 8,776-byte native PATCH reported 8,776, then HEAD returned zero;
+- Chrome's 1 MiB chunk was retained as incomplete, HEAD returned zero, and the
+  next PATCH carrying the client's 1 MiB offset conflicted with the server's
+  zero offset.
+
+The redacted provider report is
+[Livepeer Studio issue #2352](https://github.com/livepeer/studio/issues/2352).
+Until Livepeer confirms the deployed version, chunks at or above 5 MiB are a
+candidate workaround, not an accepted product contract.
+
 ## Next gate
 
-Do not enable the Worker route or create another asset. First resolve or obtain
-provider guidance for the reproducible POST/PATCH/HEAD offset inconsistency.
-Any rerun requires a new explicit asset-budget approval. Chrome 30%/70% restart,
-Edge, sleep/network loss, endpoint lifetime and exact 20 GB remain open.
+Do not enable the Worker route or create another asset. Wait for Livepeer to
+confirm the deployed S3-store version and supported mitigation. If a bounded
+workaround canary is approved, exact 30%/70% checkpoints can use sequential
+6 MiB, 8 MiB and 6 MiB PATCH bodies; each is at least 5 MiB. Any rerun requires
+a new explicit asset-budget approval. Edge, sleep/network loss, endpoint
+lifetime and exact 20 GB remain open.

@@ -441,14 +441,18 @@ Stop for review before PR-3.
 
 ### PR-3 - Livepeer upload and provider canaries
 
-Status: `PROVIDER_CANARY_PARTIAL / CHROME_TUS_P0_BLOCKED / NOT_DEPLOYED` on
+Status: `PROVIDER_CANARY_PARTIAL / PROVIDER_S3_OFFSET_BUG_OPEN / NOT_DEPLOYED` on
 2026-08-01. JWT intent creation and delete/not-found cleanup pass in the
 dedicated Sandbox project. A separately approved Chrome run created an exact
 20 MiB synthetic source with `tus-js-client@4.3.1`; cross-origin TUS creation
-worked, but the first PATCH returned HTTP 409 and three HEAD retries remained at
-offset zero. The asset was deleted and authenticated inventory returned to
-zero. Chrome restart, 30%/70%, Edge, endpoint lifetime and exact 20 GB gates
-remain open. A new provider mutation requires renewed asset-budget approval. See
+worked, but a sub-5 MiB incomplete part was omitted from subsequent HEAD offset
+calculation; the next PATCH returned HTTP 409 and three HEAD retries remained at
+zero. Public provider source pins the affected `@tus/s3-store@1.0.0`; upstream
+fixed the exact bug in `1.0.1`. Livepeer confirmation is tracked in
+[Studio issue #2352](https://github.com/livepeer/studio/issues/2352). The asset
+was deleted and authenticated inventory returned to zero. Chrome restart,
+30%/70%, Edge, endpoint lifetime and exact 20 GB gates remain open. A new
+provider mutation requires renewed asset-budget approval. See
 [the bounded provider receipt](../evidence/livepeer-provider-canary-2026-08-01.md).
 
 Add the Livepeer client, upload-intent route, `tus-js-client` browser flow,
