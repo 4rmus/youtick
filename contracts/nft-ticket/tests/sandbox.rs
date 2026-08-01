@@ -2,10 +2,9 @@ use near_workspaces::{Account, Contract};
 use serde_json::json;
 use tokio::sync::OnceCell;
 
-const MANIFEST_ROOT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const PACK_ROOT: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-const BYTE_RECEIPT: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-const DELETE_RECEIPT: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+const PROFILE_HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const ASSET_HASH: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const PROJECT_HASH: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
 static CONTRACT_WASM: OnceCell<Vec<u8>> = OnceCell::const_new();
 
@@ -19,135 +18,71 @@ async fn load_contract_wasm() -> anyhow::Result<&'static Vec<u8>> {
         .await
 }
 
-async fn init() -> anyhow::Result<(Contract, Account, Account, Account, Account, Vec<Account>)> {
+async fn init() -> anyhow::Result<(Contract, Account, Account)> {
     let worker = near_workspaces::sandbox().await?;
     let wasm = load_contract_wasm().await?;
     let contract = worker.dev_deploy(wasm).await?;
     let platform = worker.dev_create_account().await?;
-    let verifier = worker.dev_create_account().await?;
-    let cleaner = worker.dev_create_account().await?;
+    let bridge = worker.dev_create_account().await?;
     let creator = worker.dev_create_account().await?;
-    let mut kms = Vec::with_capacity(5);
-    for _ in 0..5 {
-        kms.push(worker.dev_create_account().await?);
-    }
-
     contract
         .call("new")
         .args_json(json!({
             "platform_account_id": platform.id(),
-            "verifier_account_id": verifier.id(),
-            "source_cleanup_account_id": cleaner.id(),
-            "kms_operator_ids": kms.iter().map(Account::id).collect::<Vec<_>>(),
+            "bridge_account_id": bridge.id(),
         }))
         .transact()
         .await?
         .into_result()?;
-
-    Ok((contract, platform, verifier, cleaner, creator, kms))
+    Ok((contract, bridge, creator))
 }
 
 #[tokio::test]
-async fn exact_evidence_publishes_once() -> anyhow::Result<()> {
-    let (contract, _platform, verifier, cleaner, creator, kms) = init().await?;
-
+async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
+    let (contract, bridge, creator) = init().await?;
     creator
         .call(contract.id(), "create_paid_job")
         .args_json(json!({
             "job_id": "job-1",
             "title": "Paid video",
             "price_usdc": "2000000",
-            "source_bytes": "1000000",
-            "ingest_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
+            "expected_source_bytes": "1000000",
+            "profile_id": "paid-media-livepeer-v1",
+            "profile_config_sha256": PROFILE_HASH,
         }))
         .transact()
         .await?
         .into_result()?;
 
-    let missing_evidence = creator
-        .call(contract.id(), "finalize_paid_publish")
-        .args_json(json!({
+    let args = json!({
+        "submission": {
             "job_id": "job-1",
             "generation": 1,
-            "manifest_sha256": MANIFEST_ROOT,
-        }))
-        .transact()
-        .await?;
-    assert!(missing_evidence.is_failure());
-
-    verifier
-        .call(contract.id(), "record_byte_integrity")
-        .args_json(json!({
-            "submission": {
-                "job_id": "job-1",
-                "generation": 1,
-                "manifest_cid": "bafy-manifest",
-                "manifest_sha256": MANIFEST_ROOT,
-                "pack_root_sha256": PACK_ROOT,
-                "logical_bytes": "1000000",
-                "pack_count": 4,
-                "full_readback": true,
-                "receipt_digest": BYTE_RECEIPT,
-            },
-        }))
-        .transact()
-        .await?
-        .into_result()?;
-
-    for (index, operator) in kms.iter().enumerate() {
-        operator
-            .call(contract.id(), "record_kms_store")
-            .args_json(json!({
-                "job_id": "job-1",
-                "generation": 1,
-                "manifest_sha256": MANIFEST_ROOT,
-                "stored_and_read_back": true,
-                "receipt_digest": format!("{:064x}", index + 1),
-            }))
-            .transact()
-            .await?
-            .into_result()?;
-    }
-
-    cleaner
-        .call(contract.id(), "record_source_delete")
-        .args_json(json!({
-            "submission": {
-                "job_id": "job-1",
-                "generation": 1,
-                "manifest_sha256": MANIFEST_ROOT,
-                "head_not_found": true,
-                "get_not_found": true,
-                "object_count": 0,
-                "multipart_count": 0,
-                "receipt_digest": DELETE_RECEIPT,
-            },
-        }))
-        .transact()
-        .await?
-        .into_result()?;
-
-    let first: serde_json::Value = creator
-        .call(contract.id(), "finalize_paid_publish")
-        .args_json(json!({
-            "job_id": "job-1",
-            "generation": 1,
-            "manifest_sha256": MANIFEST_ROOT,
-        }))
+            "creator_id": creator.id(),
+            "expected_source_bytes": "1000000",
+            "profile_id": "paid-media-livepeer-v1",
+            "profile_config_sha256": PROFILE_HASH,
+            "asset_id_hash": ASSET_HASH,
+            "playback_id": "playback_001",
+            "project_id_hash": PROJECT_HASH,
+            "verified_source_bytes": "1000000",
+            "provider_source_fingerprint": null,
+            "ready_at_ms": "1785589200000",
+            "availability": "ACTIVE",
+        },
+    });
+    let first: serde_json::Value = bridge
+        .call(contract.id(), "finalize_livepeer_publication")
+        .args_json(args.clone())
         .transact()
         .await?
         .json()?;
-    let second: serde_json::Value = creator
-        .call(contract.id(), "finalize_paid_publish")
-        .args_json(json!({
-            "job_id": "job-1",
-            "generation": 1,
-            "manifest_sha256": MANIFEST_ROOT,
-        }))
+    let second: serde_json::Value = bridge
+        .call(contract.id(), "finalize_livepeer_publication")
+        .args_json(args)
         .transact()
         .await?
         .json()?;
-
     assert_eq!(first, second);
     assert_eq!(first["publication_id"], "job-1");
     Ok(())
