@@ -11,6 +11,7 @@ import {
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.LIVEPEER_BROWSER_CANARY_PORT || 4174);
 const SOURCE_BYTES = 20 * 1024 * 1024;
+const CHUNK_BYTES = 8 * 1024 * 1024;
 const apiKey = process.env.LIVEPEER_API_KEY;
 const mutationsEnabled = process.env.LIVEPEER_PROVIDER_CANARY_MUTATIONS === 'true';
 
@@ -62,7 +63,8 @@ async function cleanup() {
         client: 'tus-js-client@4.3.1',
         run_id: runId,
         source_bytes: SOURCE_BYTES,
-        checkpoint_bytes: [6 * 1024 * 1024, 14 * 1024 * 1024],
+        chunk_bytes: CHUNK_BYTES,
+        checkpoint_bytes: [8 * 1024 * 1024, 16 * 1024 * 1024],
         events: state.events,
         create_status: state.create.status,
         delete_status: deleteStatus,
@@ -113,7 +115,7 @@ const server = createServer(async (request, response) => {
             const event = await readJson(request);
             if (!['client_start', 'head', 'checkpoint', 'success'].includes(event.kind)
                 || !Number.isInteger(event.offset) || event.offset < 0 || event.offset > SOURCE_BYTES
-                || ![0, 30, 70, 100].includes(event.stage)) {
+                || ![0, 40, 80, 100].includes(event.stage)) {
                 throw new Error('event_invalid');
             }
             state.events.push({ kind: event.kind, offset: event.offset, stage: event.stage });

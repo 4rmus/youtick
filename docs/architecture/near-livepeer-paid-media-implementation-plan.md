@@ -172,6 +172,11 @@ final asset re-fetch are authoritative for readiness.
 7. The bridge reconciles by deterministic metadata, records one accepted asset
    and deletes provable orphans.
 
+The browser TUS product default is `chunkSize: 8 * 1024 * 1024`; the final
+chunk may be smaller. This matches the deployed Studio S3 path's preferred part
+size and has bounded Chrome resume evidence. Changing it requires a new
+provider canary.
+
 The public Livepeer API does not currently document a server-bound
 `expectedBytes`, `maxBytes`, upload URL lifetime or idempotency key. Therefore
 an honest UI byte check is not a security boundary.
@@ -441,20 +446,24 @@ Stop for review before PR-3.
 
 ### PR-3 - Livepeer upload and provider canaries
 
-Status: `PROVIDER_CANARY_PARTIAL / DEPLOYED_S3_OFFSET_BUG_CONFIRMED / NOT_DEPLOYED`
+Status: `PROVIDER_CANARY_PARTIAL / 8_MIB_BROWSER_RESUME_PASS / PROVIDER_FIX_OPEN / NOT_DEPLOYED`
 on 2026-08-01. JWT intent creation and delete/not-found cleanup pass in the
-dedicated Sandbox project. A separately approved Chrome run created an exact
-20 MiB synthetic source with `tus-js-client@4.3.1`; cross-origin TUS creation
-worked, but a sub-5 MiB incomplete part was omitted from subsequent HEAD offset
-calculation; the next PATCH returned HTTP 409 and three HEAD retries remained at
-zero. Livepeer's public `/api/version` endpoint reports the exact deployed
-Studio SHA whose frozen lockfile resolves the affected `@tus/s3-store@1.0.0`;
-upstream fixed the exact bug and added sub-5 MiB regression coverage in `1.0.1`.
-Provider remediation and supported mitigation are tracked in
-[Studio issue #2352](https://github.com/livepeer/studio/issues/2352). The asset
-was deleted and authenticated inventory returned to zero. Chrome restart,
-30%/70%, Edge, endpoint lifetime and exact 20 GB gates remain open. A new
-provider mutation requires renewed asset-budget approval. See
+dedicated Sandbox project. The first approved Chrome run reproduced a deployed
+S3 offset bug with 1 MiB chunks: HEAD omitted the incomplete part, the next
+PATCH returned HTTP 409 and retries remained at zero. Livepeer's deployed
+Studio revision resolves the affected `@tus/s3-store@1.0.0`; upstream fixed the
+exact bug and added sub-5 MiB regression coverage in `1.0.1`.
+
+A second explicitly approved Chrome run used the new fixed 8 MiB product
+default on an exact 20 MiB synthetic source. Reloads at 8 MiB (40%) and 16 MiB
+(80%) returned the correct HEAD offsets and uploaded only the missing bytes;
+the final 4 MiB completed successfully. Cleanup returned delete HTTP 204,
+post-delete GET HTTP 404 and authenticated inventory `0`. Provider remediation
+and supported mitigation remain tracked in
+[Studio issue #2352](https://github.com/livepeer/studio/issues/2352). Chrome
+restart therefore passes under the 8 MiB workaround; Edge, sleep/network loss,
+endpoint lifetime and exact 20 GB remain open. A new provider mutation requires
+renewed asset-budget approval. See
 [the bounded provider receipt](../evidence/livepeer-provider-canary-2026-08-01.md).
 
 Add the Livepeer client, upload-intent route, `tus-js-client` browser flow,
@@ -463,7 +472,8 @@ device-key request signing and focused UI tests. Do not port the R2 upload path.
 Acceptance:
 
 - exact byte behavior follows the selected P0 outcome;
-- real 30% and 70% uploads resume only missing data;
+- two browser restarts at natural non-final chunk boundaries resume only
+  missing data; the bounded 20 MiB canary uses 8 MiB and 16 MiB (40%/80%);
 - sleep, network loss and browser restart are covered;
 - CORS and endpoint lifetime are measured;
 - ambiguous create recovery and orphan cleanup pass;

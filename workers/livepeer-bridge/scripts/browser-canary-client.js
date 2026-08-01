@@ -1,8 +1,9 @@
 import { Upload } from '/tus-client.js';
 
 const SOURCE_BYTES = 20 * 1024 * 1024;
-const CHECKPOINTS = { 0: 6 * 1024 * 1024, 30: 14 * 1024 * 1024 };
-const RESUME_OFFSETS = { 0: 0, 30: 6 * 1024 * 1024, 70: 14 * 1024 * 1024 };
+const CHUNK_BYTES = 8 * 1024 * 1024;
+const CHECKPOINTS = { 0: 8 * 1024 * 1024, 40: 16 * 1024 * 1024 };
+const RESUME_OFFSETS = { 0: 0, 40: 8 * 1024 * 1024, 80: 16 * 1024 * 1024 };
 const status = document.querySelector('#status');
 const evidence = document.querySelector('#evidence');
 
@@ -35,7 +36,7 @@ async function run() {
     const intent = await post('/intent');
     const stageKey = `youtick-livepeer-canary:${intent.run_id}`;
     const stage = Number(localStorage.getItem(stageKey) || '0');
-    if (![0, 30, 70].includes(stage)) throw new Error('browser_stage_invalid');
+    if (![0, 40, 80].includes(stage)) throw new Error('browser_stage_invalid');
 
     const bytes = new Uint8Array(SOURCE_BYTES);
     bytes.set([0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109]);
@@ -48,7 +49,7 @@ async function run() {
 
     const upload = new Upload(file, {
         endpoint: intent.tus_endpoint,
-        chunkSize: 1024 * 1024,
+        chunkSize: CHUNK_BYTES,
         metadata: { filename: file.name, filetype: file.type },
         removeFingerprintOnSuccess: true,
         retryDelays: [0, 1000, 3000],
@@ -65,7 +66,7 @@ async function run() {
             if (targetOffset === SOURCE_BYTES || acceptedBytes !== targetOffset || pausing) return;
             pausing = true;
             await upload.abort(false);
-            const nextStage = stage === 0 ? 30 : 70;
+            const nextStage = stage === 0 ? 40 : 80;
             localStorage.setItem(stageKey, String(nextStage));
             await post('/event', { kind: 'checkpoint', offset: acceptedBytes, stage: nextStage });
             show(`paused-${nextStage}`, { accepted_bytes: acceptedBytes, source_bytes: SOURCE_BYTES });

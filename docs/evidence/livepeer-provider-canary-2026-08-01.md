@@ -1,6 +1,6 @@
 # Livepeer provider canary evidence - 2026-08-01
 
-Status: `PARTIAL / DEPLOYED_S3_OFFSET_BUG_CONFIRMED / SANDBOX CLEAN`
+Status: `PARTIAL / 8_MIB_BROWSER_RESUME_PASS / PROVIDER_FIX_OPEN / SANDBOX CLEAN`
 
 This evidence belongs to PR-3. It is a bounded Sandbox and Chrome provider
 receipt, not testnet, staging or production proof.
@@ -11,7 +11,8 @@ receipt, not testnet, staging or production proof.
 - backend-only API key with CORS disabled;
 - no paid plan or payment-method change;
 - an initial maximum of three synthetic assets, followed by explicit approval
-  for one additional Chrome asset with an exact 20 MiB source;
+  for two additional Chrome assets with exact 20 MiB sources; the second used
+  the proposed 8 MiB product default;
 - every asset deleted after evidence collection;
 - provider feature and public Worker route remain disabled.
 
@@ -25,11 +26,12 @@ No API key, raw asset ID, playback ID or bearer TUS URL is recorded here.
 | JWT upload-intent creation | `PASS` | Create HTTP 200; response policy `jwt`; TUS endpoint returned |
 | Empty-intent cleanup | `PASS` | Delete HTTP 204; immediate asset GET HTTP 404 |
 | Provider identity redaction | `PASS` | Only SHA-256 identities appear in the receipt |
-| 30% resume | `UNPROVEN / FAIL-CLOSED` | Native PATCH reported offset `8776`; eight HEAD reads reported `0`. Chrome accepted a sub-5 MiB incomplete part, then the next PATCH returned HTTP 409; three retry HEAD reads reported `0` |
-| 70% resume | `NOT_RUN` | 30% checkpoint failed first |
-| Orphan cleanup | `PASS` | Fourth asset delete HTTP 204, immediate GET HTTP 404; final project asset inventory count `0` |
+| Legacy 30% resume | `UNPROVEN / FAIL-CLOSED` | Native PATCH reported offset `8776`; eight HEAD reads reported `0`. Chrome accepted a sub-5 MiB incomplete part, then the next PATCH returned HTTP 409; three retry HEAD reads reported `0` |
+| 8 MiB product-default resume | `PASS / WORKAROUND` | Chrome restarted at natural 8 MiB and 16 MiB boundaries; HEAD returned both offsets and only the missing bytes were uploaded |
+| Orphan cleanup | `PASS` | Latest asset delete HTTP 204, immediate GET HTTP 404; final authenticated project asset inventory count `0` |
 | Chrome CORS | `PASS / TRANSPORT ONLY` | Chrome completed cross-origin TUS creation and reached PATCH/HEAD provider responses; no browser CORS rejection occurred |
-| Chrome restart | `BLOCKED` | Provider rejected the initial chunk before the 30% restart checkpoint |
+| Chrome restart | `PASS / 8_MIB_WORKAROUND` | Two page reloads resumed at 8 MiB (40%) and 16 MiB (80%), then completed the exact 20 MiB source |
+| Account availability | `PASS` | Read-only account check returned HTTP 200 with `disabled=false` and `suspended=false`; the upload completed |
 | Exact 20 GB / +1 byte | `OPEN` | Not attempted |
 | Endpoint lifetime and billing | `OPEN` | Not measured |
 
@@ -50,7 +52,7 @@ and cleanup. The observed mismatch may be related to provider persistence,
 minimum chunk behavior or the probe client. It is not converted into a provider
 claim.
 
-The separately approved fourth and final asset used Chrome and
+The first separately approved Chrome asset used
 `tus-js-client@4.3.1`. The browser created an exact 20,971,520-byte synthetic
 source (SHA-256
 `857d1806038000b99adab2adea99fd074fa1f712634b2b80279cc169082b367e`) and
@@ -68,6 +70,21 @@ offset `0`, so no checkpoint was reached. The redacted receipt recorded:
 - run ID `a5c519a0-7f63-43a8-8b0e-dc689d8571e8`;
 - asset ID SHA-256
   `2fea1e1c76c54fed92e150c2424c726cf0c8c2930a2c8bee885dd65083d88aaa`;
+- create HTTP 200, delete HTTP 204 and post-delete GET HTTP 404;
+- final authenticated project inventory count `0`.
+
+After explicit approval for one more asset, the same exact 20 MiB browser
+source was retested with a fixed 8 MiB chunk default. The first page load
+paused at 8,388,608 bytes (40%). After reload, HEAD returned 8,388,608 and the
+second upload paused at 16,777,216 bytes (80%). After another reload, HEAD
+returned 16,777,216 and the remaining 4,194,304 bytes completed successfully.
+The redacted receipt recorded:
+
+- run ID `5cd26033-2df3-4b67-bf63-b0f9d2206595`;
+- chunk size `8,388,608`, checkpoint offsets `8,388,608` and `16,777,216`,
+  and final offset `20,971,520`;
+- asset ID SHA-256
+  `89dff9ab22eb82ae70891d98b0cc0932fefc8488f4909cf648f22a1e5de86ca3`;
 - create HTTP 200, delete HTTP 204 and post-delete GET HTTP 404;
 - final authenticated project inventory count `0`.
 
@@ -122,14 +139,17 @@ The current
 recommends TUS but does not declare a minimum PATCH size. A historical
 [official client change](https://github.com/livepeer/ui-kit/pull/43) used 5 MiB
 chunks for stream inputs because of S3, but left browser `File` uploads
-unbounded. Chunks at or above 5 MiB are therefore a source-supported candidate
-workaround, not a current product contract.
+unbounded. YouTick now selects 8 MiB as its product default: the bounded Chrome
+canary proves it as a workaround for the observed deployed path, but it does
+not repair the provider bug or establish a provider-supported chunk contract.
 
 ## Next gate
 
-Do not enable the Worker route or create another asset. Wait for Livepeer to
-confirm remediation or the supported mitigation. If a bounded workaround
-canary is approved, exact 30%/70% checkpoints can use sequential 6 MiB, 8 MiB
-and 6 MiB PATCH bodies; each is at least 5 MiB. Any rerun requires a new
-explicit asset-budget approval. Edge, sleep/network loss, endpoint lifetime and
-exact 20 GB remain open.
+Do not enable the Worker route or create another asset. Keep the 8 MiB product
+default behind the disabled feature flag and wait for Livepeer to confirm a
+provider remediation or supported mitigation. The fixed-size product default
+naturally proves two non-final restart points at 8 MiB (40%) and 16 MiB (80%)
+for this 20 MiB source; the earlier exact 30%/70% fixture is no longer the
+product-default acceptance fixture. Any rerun requires a new explicit
+asset-budget approval. Edge, sleep/network loss, endpoint lifetime and exact
+20 GB remain open.
