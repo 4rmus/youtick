@@ -4,7 +4,7 @@
 
 ---
 
-> Target, not deployed: [Paid Media v4 Implementation Plan](./decentralized-paid-media-v4-plan.md)
+> Target, not deployed: [NEAR + Livepeer Paid Media v1 Plan](./near-livepeer-paid-media-implementation-plan.md)
 
 ## Summary
 

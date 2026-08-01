@@ -51,6 +51,7 @@ export default withMermaid(
           text: 'Architecture',
           items: [
             { text: 'System Architecture', link: '/architecture/' },
+            { text: 'NEAR + Livepeer Paid Media v1', link: '/architecture/near-livepeer-paid-media-implementation-plan' },
             { text: 'Smart Contract', link: '/architecture/smart-contract' },
             { text: 'Session Keys & Signless', link: '/architecture/session-keys' },
             { text: 'Storage', link: '/architecture/storage' },
@@ -85,6 +86,7 @@ export default withMermaid(
             { text: 'ADR-007 Browser Key Hardening', link: '/adr/adr-007-browser-key-hardening' },
             { text: 'ADR-008 Operator Onboarding', link: '/adr/adr-008-operator-onboarding' },
             { text: 'ADR-009 Emergency Takedown & DAO Handover', link: '/adr/adr-009-emergency-takedown-and-dao-handover' },
+            { text: 'ADR-010 Livepeer Paid Media', link: '/adr/adr-010-livepeer-paid-media' },
           ],
         },
         {
