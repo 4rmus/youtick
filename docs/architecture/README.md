@@ -4,7 +4,8 @@
 
 ---
 
-> Target, not deployed: [NEAR + Livepeer Paid Media v1 Plan](./near-livepeer-paid-media-implementation-plan.md)
+> Target, testnet evidence only and no product runtime:
+> [NEAR + Livepeer Paid Media v1 Plan](./near-livepeer-paid-media-implementation-plan.md)
 
 ## Summary
 

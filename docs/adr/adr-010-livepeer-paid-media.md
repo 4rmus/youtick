@@ -2,9 +2,10 @@
 
 ## Status
 
-Accepted as the only paid-media target architecture. `CONDITIONAL_GO` and
-`NOT_DEPLOYED`: provider, product and governance P0 gates remain open, so this
-decision does not authorize testnet, staging or production activation.
+Accepted as the only paid-media target architecture. `CONDITIONAL_GO`,
+`TESTNET_EVIDENCE_ONLY` and `NOT_STAGING_OR_PRODUCTION`: provider and
+production-budget P0 gates remain open. The bounded testnet allowance contract
+approved on 2026-08-01 is evidence, not Worker, web or product activation.
 
 ## Context
 
@@ -54,15 +55,28 @@ deletion or negative-playback gates.
 The protocol identifiers, canonical request envelope and publication tuple are
 locked in [`protocol/paid-media-livepeer-v1`](https://github.com/4rmus/youtick/blob/main/protocol/paid-media-livepeer-v1/README.md).
 
+## Accepted product and key policy
+
+The 2026-08-01 product decision locks exact source admission, creator restart,
+sale suspension, takedown, closed-canary refund and key authority behavior in
+the protocol. Browser, bridge and contract reject `20_000_000_001` before any
+provider mutation. Creator keys are single-job, finite-allowance FunctionCall
+keys for `create_paid_job`; bridge keys are separate finite-allowance
+FunctionCall keys for the two operator methods. Platform governance owns key
+rotation and no runtime receives FullAccess.
+
+The bounded testnet receipt records `5 TGas` and `0.008 NEAR` for one creator
+call. It is not a production allowance: production volume, gas price and
+rotation-window budgets remain a release gate.
+
 ## P0 gates retained
 
 The implementation plan is authoritative for the full list. In summary, the
-following remain release blockers: exact upload-length and endpoint behavior;
+following remain release blockers: exact provider upload-length and endpoint behavior;
 ambiguous-create lookup; CORS and 30%/70% resume; guaranteed provider fields and
 rendition lookup; JWT-negative playback; deletion, retention, region, DPA and
-SLA; failed-upload billing and budget controls; refund/takedown/resume policy;
-the supported device matrix; and the final allowance budget and rotation
-authority.
+SLA; failed-upload billing and budget controls; the remaining supported-device
+canaries; and the final production allowance and rotation-window budget.
 
 Unknown provider behavior must remain an explicit unknown. It cannot be turned
 into a production assumption by this ADR.

@@ -67,6 +67,8 @@ export const NEAR_CONFIG = {
 } as const;
 
 export const FEATURE_FLAGS = {
+    /** Livepeer paid-media v1. Keep false until every mandatory provider gate passes. */
+    enablePaidMediaLivepeerV1: process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 === 'true',
     /** Paid-media v4 private R2 ingest. Keep false until provider canaries pass. */
     enablePaidMediaV4Ingest: process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_V4_INGEST === 'true',
     /** Cross-chain checkout is experimental and must be explicitly enabled. */
@@ -81,6 +83,7 @@ export const FEATURE_FLAGS = {
 
 export const MEDIA_UPLOAD_POLICY = {
     paidSourceMaxBytes: 20_000_000_000,
+    livepeerTusChunkBytes: 8 * 1024 * 1024,
     r2PartBytes: 64 * 1024 * 1024,
 } as const;
 
@@ -89,6 +92,7 @@ export const APP_CONFIG = {
     turnstileSiteKey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '',
     storageApiUrl: process.env.NEXT_PUBLIC_STORAGE_API_URL || '',
     mediaDeliveryUrl: process.env.NEXT_PUBLIC_MEDIA_DELIVERY_URL || '',
+    livepeerBridgeUrl: process.env.NEXT_PUBLIC_LIVEPEER_BRIDGE_URL || '',
 } as const;
 
 /**

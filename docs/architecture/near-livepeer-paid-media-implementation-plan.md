@@ -1,6 +1,6 @@
 # NEAR + Livepeer Paid Media v1 Implementation Plan
 
-> Status: `DECISION_LOCKED / CONDITIONAL_GO / NOT_DEPLOYED`
+> Status: `DECISION_LOCKED / CONDITIONAL_GO / TESTNET_EVIDENCE_ONLY / RUNTIME_NOT_DEPLOYED`
 >
 > Initial baseline: `origin/main@c1c59f6a30006492582ab3898b7bba466b9e7f2c`
 >
@@ -15,7 +15,7 @@
 |---|---|
 | Livepeer component fit | `GO` |
 | Architecture direction | `CONDITIONAL_GO` |
-| Implementation progress | `PR_2_IMPLEMENTED / REVIEW_REQUIRED` |
+| Implementation progress | `PR_2_MERGED / PR_3_PROVIDER_CANARY_PARTIAL` |
 | Testnet and staging | `NO_GO` |
 | Production | `NO_GO` |
 
@@ -171,6 +171,11 @@ final asset re-fetch are authoritative for readiness.
    create another asset.
 7. The bridge reconciles by deterministic metadata, records one accepted asset
    and deletes provable orphans.
+
+The browser TUS product default is `chunkSize: 8 * 1024 * 1024`; the final
+chunk may be smaller. This matches the deployed Studio S3 path's preferred part
+size and has bounded Chrome resume evidence. Changing it requires a new
+provider canary.
 
 The public Livepeer API does not currently document a server-bound
 `expectedBytes`, `maxBytes`, upload URL lifetime or idempotency key. Therefore
@@ -358,10 +363,32 @@ Current gate ownership:
 | P0 scope | Status | Blocks |
 |---|---|---|
 | Provider upload, recovery, browser, metadata, playback, deletion and billing evidence (1-7) | `OPEN / PROVIDER_CANARY_REQUIRED` | Provider-facing PR-3 and PR-4 behavior |
-| Refund, takedown and exact resume policy (8) | `OPEN / PRODUCT_GOVERNANCE_DECISION_REQUIRED` | PR-4 policy and PR-6 operations |
+| Refund, takedown and exact resume policy (8) | `LOCKED / IMPLEMENTATION_PENDING` | PR-4 and PR-6 must implement the locked policy |
 | Desktop Chrome and Edge matrix (9) | `LOCKED` | Safari/iOS claims remain excluded |
 | Method allowlist and governance/timelock principle (10) | `LOCKED` | None for disabled PR-2 primitives |
-| Numeric key allowance and exact governance account (10) | `OPEN / OPERATOR_EVIDENCE_REQUIRED` | Transaction signing, key provisioning and deployment |
+| Numeric key allowance and exact governance account (10) | `TESTNET_MEASURED / PRODUCTION_BUDGET_OPEN` | Production key provisioning and deployment |
+
+Accepted 2026-08-01 product and operator decisions:
+
+- Browser, bridge and contract accept decimal `20_000_000_000` bytes and reject
+  `20_000_000_001` before provider mutation. The exact 20 GB provider canary
+  remains open; a +1-byte provider upload is forbidden.
+- One creator FunctionCall key is scoped to the exact market and
+  `create_paid_job`, uses a five-minute signed-request window and is removed
+  after intent creation or expiry. The bounded testnet profile measured
+  `5 TGas` with `0.008 NEAR`; production must re-measure.
+- The separate bridge FunctionCall key is scoped to the exact market and only
+  `finalize_livepeer_publication` plus `suspend_livepeer_sales`. Platform
+  governance owns key add/remove and rotation; FullAccess is forbidden.
+- Sales do not open before provider-ready finalization. Sales suspension blocks
+  new purchases while preserving existing playback. Takedown blocks sales and
+  playback while preserving entitlement history and an audit record.
+- Closed-canary refunds for permanent provider loss or takedown are manual and
+  recorded. Only the creator may restart an unpublished job; restart increments
+  generation and invalidates older work. Published jobs cannot restart.
+
+The account, transaction and cleanup receipt is
+[the bounded testnet allowance evidence](../evidence/near-livepeer-testnet-allowance-2026-08-01.md).
 
 PR-2 may implement only the disabled persistence, validation, final-read and
 outbox primitives. It must not add provider mutation, request-signature bypass,
@@ -421,9 +448,9 @@ Stop for review before PR-2.
 
 ### PR-2 - Disabled control plane foundation
 
-Status: `IMPLEMENTED / REVIEW_REQUIRED / HARD_DISABLED / NOT_DEPLOYED` on
-2026-08-01. Focused persistence, concurrency, outbox, redaction, type and
-Worker dry-run checks pass.
+Status: `MERGED / HARD_DISABLED / NOT_DEPLOYED` by PR #64 at
+`298e9395225a7f6c5473810454615bee2e92e096`. Focused persistence,
+concurrency, outbox, redaction, type and Worker dry-run checks pass.
 
 Create `workers/livepeer-bridge` with Worker routing, SQLite Durable Object
 state, protocol validation, NEAR final reads and persisted outbox primitives.
@@ -441,13 +468,52 @@ Stop for review before PR-3.
 
 ### PR-3 - Livepeer upload and provider canaries
 
+Status: `CODE_ONLY_PARTIAL / 8_MIB_BROWSER_RESUME_PASS / NETWORK_ENDPOINT_5M_PASS / PROVIDER_FIX_OPEN / RUNTIME_NOT_DEPLOYED`
+on 2026-08-01. JWT intent creation and delete/not-found cleanup pass in the
+dedicated Sandbox project. The first approved Chrome run reproduced a deployed
+S3 offset bug with 1 MiB chunks: HEAD omitted the incomplete part, the next
+PATCH returned HTTP 409 and retries remained at zero. Livepeer's deployed
+Studio revision resolves the affected `@tus/s3-store@1.0.0`; upstream fixed the
+exact bug and added sub-5 MiB regression coverage in `1.0.1`.
+
+A second explicitly approved Chrome run used the new fixed 8 MiB product
+default on an exact 20 MiB synthetic source. Reloads at 8 MiB (40%) and 16 MiB
+(80%) returned the correct HEAD offsets and uploaded only the missing bytes;
+the final 4 MiB completed successfully. Cleanup returned delete HTTP 204,
+post-delete GET HTTP 404 and authenticated inventory `0`. Provider remediation
+and supported mitigation remain tracked in
+[Studio issue #2352](https://github.com/livepeer/studio/issues/2352). Chrome
+restart therefore passes under the 8 MiB workaround. A later exact 20 MiB
+network canary proved CORS, an unknown opaque endpoint returning 404, a
+five-minute idle window preserving the 8 MiB offset and recovery after a live
+HTTPS PATCH disconnect. The provider committed no partial progress from the
+interrupted PATCH, so HEAD remained authoritative and only the missing bytes
+were resent. Desktop Edge, device sleep/wake, a contractual endpoint
+lifetime/refresh/revoke policy and exact 20 GB remain open. A new provider
+mutation requires renewed asset-budget approval. See
+[the bounded provider receipt](../evidence/livepeer-provider-canary-2026-08-01.md).
+
+The disabled implementation now includes the signed upload-intent route,
+same-final-block creator access-key proof, atomic nonce consumption, one-create
+Durable Object state, JWT provider request, and the browser `tus-js-client`
+flow. The browser fixes `chunkSize` at 8 MiB, accepts a smaller final chunk,
+resumes one unambiguous local upload URL and does not retry HTTP 409 offset
+conflicts. `CREATE_PENDING` and `CREATE_AMBIGUOUS` never create a second asset.
+No runtime was enabled. The later bounded network/endpoint canary created one
+zero-media probe asset and one 20 MiB media-bearing asset; both were deleted and
+the authenticated project inventory returned to `0`.
+UI activation remains intentionally unwired until production key provisioning,
+rotation and budget controls are implemented and the mandatory provider P0
+evidence closes. The bounded testnet allowance receipt does not enable runtime.
+
 Add the Livepeer client, upload-intent route, `tus-js-client` browser flow,
 device-key request signing and focused UI tests. Do not port the R2 upload path.
 
 Acceptance:
 
 - exact byte behavior follows the selected P0 outcome;
-- real 30% and 70% uploads resume only missing data;
+- two browser restarts at natural non-final chunk boundaries resume only
+  missing data; the bounded 20 MiB canary uses 8 MiB and 16 MiB (40%/80%);
 - sleep, network loss and browser restart are covered;
 - CORS and endpoint lifetime are measured;
 - ambiguous create recovery and orphan cleanup pass;

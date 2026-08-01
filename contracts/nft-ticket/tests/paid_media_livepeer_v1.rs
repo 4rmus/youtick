@@ -39,6 +39,30 @@ fn create_job(contract: &mut Contract, job_id: &str, creator: &str) {
     );
 }
 
+#[test]
+fn accepts_exact_source_limit_and_rejects_one_byte_more() {
+    let mut contract = contract();
+    testing_env!(context("creator.testnet").build());
+    contract.create_paid_job(
+        "job-max".to_string(),
+        "Paid video".to_string(),
+        U128(2_000_000),
+        U128(20_000_000_000),
+        PROFILE.to_string(),
+        PROFILE_HASH.to_string(),
+    );
+    must_fail(|| {
+        contract.create_paid_job(
+            "job-too-large".to_string(),
+            "Paid video".to_string(),
+            U128(2_000_000),
+            U128(20_000_000_001),
+            PROFILE.to_string(),
+            PROFILE_HASH.to_string(),
+        );
+    });
+}
+
 fn finalize(
     contract: &mut Contract,
     job_id: &str,

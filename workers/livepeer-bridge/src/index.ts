@@ -1,5 +1,8 @@
+import { base58Decode } from '../../shared/src/base58';
+
 export interface Env {
     LIVEPEER_BRIDGE_ENABLED?: string;
+    LIVEPEER_API_KEY?: string;
     ALLOWED_ORIGINS?: string;
     NEAR_NETWORK?: string;
     NEAR_RPC_URL?: string;
@@ -45,7 +48,7 @@ type OnChainJob = {
 };
 type JobRecord = {
     schema: 'youtick.livepeer-control-job.v1';
-    state: 'INTENT_RESERVED';
+    state: 'CREATE_PENDING' | 'CREATE_AMBIGUOUS' | 'UPLOAD_READY';
     network: 'testnet' | 'mainnet';
     contractId: string;
     jobId: string;
@@ -55,6 +58,17 @@ type JobRecord = {
     profileId: 'paid-media-livepeer-v1';
     profileConfigSha256: string;
     createdAtMs: number;
+    assetId?: string;
+    playbackId?: string;
+    projectId?: string;
+    tusEndpoint?: string;
+};
+type FinalJob = { job: OnChainJob; blockHash: string };
+type ProviderUpload = {
+    assetId: string;
+    playbackId: string;
+    projectId: string;
+    tusEndpoint: string;
 };
 type OutboxMethod = 'finalize_livepeer_publication' | 'suspend_livepeer_sales';
 type OutboxInput = {
@@ -70,9 +84,14 @@ type OutboxRecord = OutboxInput & {
     createdAtMs: number;
 };
 
-const PUBLIC_CONTROL_REQUESTS_IMPLEMENTED = false;
+const PUBLIC_CONTROL_REQUESTS_IMPLEMENTED = true;
 const MAX_CONTROL_BODY_BYTES = 64 * 1024;
 const MAX_SOURCE_BYTES = 20_000_000_000n;
+const LIVEPEER_TUS_CHUNK_BYTES = 8 * 1024 * 1024;
+const LIVEPEER_API_BASE = 'https://livepeer.studio/api';
+const PROFILE_CONFIG_SHA256 = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
+const SESSION_METHOD = 'create_paid_job';
+const CONTROL_MAX_FUTURE_MS = 5 * 60 * 1000;
 const JOB_KEY = 'job:v1';
 const DEFAULT_ALLOWED_ORIGINS = 'https://youtick.net,https://www.youtick.net';
 const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
@@ -89,6 +108,8 @@ const SENSITIVE_LOG_KEY = /authorization|secret|token|tus|upload.*url|signed.*tr
 const SAFE_ERROR_CODES = new Set([
     'control_body_too_large',
     'control_request_expired',
+    'device_key_not_authorized',
+    'device_nonce_replayed',
     'deployment_binding_mismatch',
     'invalid_control_envelope',
     'invalid_control_request',
@@ -102,6 +123,8 @@ const SAFE_ERROR_CODES = new Set([
     'origin_denied',
     'outbox_conflict',
     'protocol_binding_mismatch',
+    'provider_create_ambiguous',
+    'provider_create_pending',
     'reservation_conflict',
     'runtime_not_configured',
 ]);
@@ -113,16 +136,29 @@ export default {
             return json({
                 status: 'ok',
                 service: 'livepeer-bridge',
-                stage: 'DISABLED',
+                stage: env.LIVEPEER_BRIDGE_ENABLED === 'true' ? 'ENABLED' : 'DISABLED',
                 publicControlImplemented: PUBLIC_CONTROL_REQUESTS_IMPLEMENTED,
-                providerMutationEnabled: false,
-                controlPlaneReady: false,
+                providerMutationEnabled: env.LIVEPEER_BRIDGE_ENABLED === 'true',
+                controlPlaneReady: env.LIVEPEER_BRIDGE_ENABLED === 'true'
+                    && Boolean(env.LIVEPEER_CONTROL)
+                    && validApiKey(env.LIVEPEER_API_KEY),
             });
         }
 
+        if (request.method === 'OPTIONS' && url.pathname === '/v1/upload-intents') {
+            const origin = request.headers.get('Origin') || '';
+            if (!allowedOrigins(env).has(origin)) return json({ error: 'origin_denied' }, 403);
+            return withCors(new Response(null, { status: 204 }), origin);
+        }
+
         if (request.method === 'POST' && url.pathname === '/v1/upload-intents') {
+            const origin = request.headers.get('Origin') || '';
+            const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
             if (!PUBLIC_CONTROL_REQUESTS_IMPLEMENTED || env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
-                return json({ error: 'control_plane_disabled' }, 503);
+                return withCors(json({ error: 'control_plane_disabled' }, 503), corsOrigin);
+            }
+            if (!validApiKey(env.LIVEPEER_API_KEY) || !env.LIVEPEER_CONTROL) {
+                return withCors(json({ error: 'runtime_not_configured' }, 503), corsOrigin);
             }
             return forwardUploadIntent(request, env);
         }
@@ -156,21 +192,50 @@ export class LivepeerControl {
 
     private async reserveUploadIntent(request: Request): Promise<Response> {
         const input = await parseUploadIntentRequest(request, this.env);
-        const chainJob = await readFinalMediaJob(this.env, input.body.job_id);
+        await verifyControlSignature(request, input.envelope);
+        const { job: chainJob, blockHash } = await readFinalMediaJob(this.env, input.body.job_id);
         requireExactChainJob(input, chainJob);
+        await requireFinalAccessKey(this.env, input.envelope, blockHash);
 
         const candidate = jobRecord(input);
-        const created = await this.state.storage.transaction(async (transaction) => {
+        const result = await this.state.storage.transaction(async (transaction) => {
+            const nonceKey = `nonce:${input.envelope.device_nonce}`;
+            if (await transaction.get(nonceKey)) throw new Error('device_nonce_replayed');
             const existing = await transaction.get<JobRecord>(JOB_KEY);
             if (existing) {
                 if (!sameJob(existing, candidate)) throw new Error('reservation_conflict');
-                return false;
+                await transaction.put(nonceKey, Date.now());
+                return { record: existing, created: false };
             }
+            await transaction.put(nonceKey, Date.now());
             await transaction.put(JOB_KEY, candidate);
-            return true;
+            return { record: candidate, created: true };
         });
 
-        return json({ ...candidate, created }, created ? 201 : 200);
+        if (!result.created) {
+            if (result.record.state === 'UPLOAD_READY') return uploadIntentResponse(result.record, false);
+            throw new Error(result.record.state === 'CREATE_PENDING'
+                ? 'provider_create_pending'
+                : 'provider_create_ambiguous');
+        }
+
+        let provider: ProviderUpload;
+        try {
+            provider = await createProviderUpload(this.env, candidate);
+        } catch {
+            await this.state.storage.put(JOB_KEY, { ...candidate, state: 'CREATE_AMBIGUOUS' });
+            throw new Error('provider_create_ambiguous');
+        }
+        const ready: JobRecord = {
+            ...candidate,
+            state: 'UPLOAD_READY',
+            assetId: provider.assetId,
+            playbackId: provider.playbackId,
+            projectId: provider.projectId,
+            tusEndpoint: provider.tusEndpoint,
+        };
+        await this.state.storage.put(JOB_KEY, ready);
+        return uploadIntentResponse(ready, true);
     }
 
     private async enqueueOutbox(request: Request): Promise<Response> {
@@ -196,6 +261,8 @@ export class LivepeerControl {
 }
 
 export async function forwardUploadIntent(request: Request, env: Env): Promise<Response> {
+    const origin = request.headers.get('Origin') || '';
+    const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
     try {
         if (!env.LIVEPEER_CONTROL) throw new Error('runtime_not_configured');
         const forwardingRequest = request.clone();
@@ -207,11 +274,11 @@ export async function forwardUploadIntent(request: Request, env: Env): Promise<R
             input.body.generation,
         );
         const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(objectName));
-        return object.fetch(forwardingRequest);
+        return withCors(await object.fetch(forwardingRequest), corsOrigin);
     } catch (error) {
         const code = safeErrorCode(error);
         console.error(formatLog('livepeer_bridge_route_failed', { code }));
-        return json({ error: code }, errorStatus(code));
+        return withCors(json({ error: code }, errorStatus(code)), corsOrigin);
     }
 }
 
@@ -265,7 +332,11 @@ async function parseUploadIntentRequest(request: Request, env: Env): Promise<Upl
         throw new Error('deployment_binding_mismatch');
     }
     if (!allowedOrigins(env).has(envelope.origin)) throw new Error('origin_denied');
-    if (BigInt(envelope.expires_at_ms) <= BigInt(Date.now())) throw new Error('control_request_expired');
+    const now = BigInt(Date.now());
+    const expiresAt = BigInt(envelope.expires_at_ms);
+    if (expiresAt <= now || expiresAt > now + BigInt(CONTROL_MAX_FUTURE_MS)) {
+        throw new Error('control_request_expired');
+    }
     return { body, envelope };
 }
 
@@ -286,8 +357,7 @@ function parseUploadBody(value: unknown): UploadIntentBody {
         || !/^[1-9][0-9]{0,19}$/.test(body.expected_source_bytes)
         || BigInt(body.expected_source_bytes) > MAX_SOURCE_BYTES
         || body.profile_id !== 'paid-media-livepeer-v1'
-        || typeof body.profile_config_sha256 !== 'string'
-        || !SHA256_PATTERN.test(body.profile_config_sha256)) {
+        || body.profile_config_sha256 !== PROFILE_CONFIG_SHA256) {
         throw new Error('invalid_upload_intent');
     }
     return body as UploadIntentBody;
@@ -336,12 +406,12 @@ function parseControlEnvelope(value: unknown): ControlEnvelope {
     return envelope as ControlEnvelope;
 }
 
-async function readFinalMediaJob(env: Env, jobId: string): Promise<OnChainJob> {
+async function readFinalMediaJob(env: Env, jobId: string): Promise<FinalJob> {
     if (!isHttpsUrl(env.NEAR_RPC_URL) || !ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '')) {
         throw new Error('runtime_not_configured');
     }
     let response: Response;
-    let payload: { result?: { result?: number[] }; error?: unknown };
+    let payload: { result?: { result?: number[]; block_hash?: unknown }; error?: unknown };
     try {
         response = await fetch(env.NEAR_RPC_URL!, {
             method: 'POST',
@@ -364,7 +434,10 @@ async function readFinalMediaJob(env: Env, jobId: string): Promise<OnChainJob> {
     } catch {
         throw new Error('near_job_query_failed');
     }
-    if (!response.ok || payload.error || !Array.isArray(payload.result?.result)) {
+    if (!response.ok
+        || payload.error
+        || !Array.isArray(payload.result?.result)
+        || typeof payload.result.block_hash !== 'string') {
         throw new Error('near_job_query_failed');
     }
     const raw = new TextDecoder().decode(new Uint8Array(payload.result.result));
@@ -375,7 +448,159 @@ async function readFinalMediaJob(env: Env, jobId: string): Promise<OnChainJob> {
         throw new Error('near_job_response_invalid');
     }
     if (!job || typeof job !== 'object' || Array.isArray(job)) throw new Error('near_job_not_found');
-    return job as OnChainJob;
+    return { job: job as OnChainJob, blockHash: payload.result.block_hash };
+}
+
+async function requireFinalAccessKey(
+    env: Env,
+    envelope: ControlEnvelope,
+    blockHash: string,
+): Promise<void> {
+    let response: Response;
+    let payload: { result?: unknown; error?: unknown };
+    try {
+        response = await fetch(env.NEAR_RPC_URL!, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 'paid-media-livepeer-v1-device-key',
+                method: 'query',
+                params: {
+                    request_type: 'view_access_key',
+                    block_id: blockHash,
+                    account_id: envelope.account_id,
+                    public_key: envelope.session_public_key,
+                },
+            }),
+            signal: AbortSignal.timeout(2_500),
+        });
+        payload = await response.json() as typeof payload;
+    } catch {
+        throw new Error('near_job_query_failed');
+    }
+    if (!response.ok || payload.error || !payload.result) throw new Error('device_key_not_authorized');
+    const result = requireObject(payload.result, 'device_key_not_authorized');
+    const permission = requireObject(result.permission, 'device_key_not_authorized');
+    const functionCall = requireObject(permission.FunctionCall, 'device_key_not_authorized');
+    if (functionCall.receiver_id !== envelope.contract_id
+        || !Array.isArray(functionCall.method_names)
+        || !functionCall.method_names.includes(SESSION_METHOD)
+        || typeof functionCall.allowance !== 'string'
+        || !/^[1-9][0-9]*$/.test(functionCall.allowance)) {
+        throw new Error('device_key_not_authorized');
+    }
+}
+
+async function verifyControlSignature(request: Request, envelope: ControlEnvelope): Promise<void> {
+    const signature = request.headers.get('X-Youtick-Signature') || '';
+    let signatureBytes: Uint8Array;
+    try {
+        signatureBytes = base64Decode(signature);
+    } catch {
+        throw new Error('invalid_control_request');
+    }
+    let publicKeyBytes: Uint8Array;
+    try {
+        publicKeyBytes = base58Decode(envelope.session_public_key);
+    } catch {
+        throw new Error('invalid_control_request');
+    }
+    if (signatureBytes.length !== 64 || publicKeyBytes.length !== 32) {
+        throw new Error('invalid_control_request');
+    }
+    const key = await crypto.subtle.importKey('raw', publicKeyBytes, 'Ed25519', false, ['verify']);
+    const valid = await crypto.subtle.verify(
+        'Ed25519',
+        key,
+        signatureBytes,
+        new TextEncoder().encode(canonicalControlMessage(envelope)),
+    );
+    if (!valid) throw new Error('invalid_control_request');
+}
+
+function canonicalControlMessage(envelope: ControlEnvelope): string {
+    return [
+        envelope.domain,
+        envelope.version,
+        envelope.method,
+        envelope.route,
+        envelope.network,
+        envelope.contract_id,
+        envelope.account_id,
+        envelope.resource,
+        envelope.session_public_key,
+        envelope.origin,
+        envelope.device_nonce,
+        envelope.expires_at_ms,
+        envelope.body_sha256,
+    ].join('\n');
+}
+
+async function createProviderUpload(env: Env, job: JobRecord): Promise<ProviderUpload> {
+    if (!validApiKey(env.LIVEPEER_API_KEY)) throw new Error('runtime_not_configured');
+    const response = await fetch(`${LIVEPEER_API_BASE}/asset/request-upload`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${env.LIVEPEER_API_KEY}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            name: `youtick-${job.jobId}-g${job.generation}`,
+            playbackPolicy: { type: 'jwt' },
+            creatorId: { type: 'unverified', value: `${job.jobId}:${job.generation}` },
+            profiles: [{
+                name: '720p',
+                width: 1280,
+                height: 720,
+                bitrate: 3_000_000,
+                fps: 30,
+                fpsDen: 1,
+                gop: '2',
+                profile: 'H264Baseline',
+                encoder: 'H.264',
+            }],
+        }),
+        signal: AbortSignal.timeout(20_000),
+    });
+    let body: unknown;
+    try {
+        body = await response.json();
+    } catch {
+        throw new Error('provider_create_ambiguous');
+    }
+    const value = requireObject(body, 'provider_create_ambiguous');
+    const asset = requireObject(value.asset, 'provider_create_ambiguous');
+    if (!response.ok
+        || typeof value.tusEndpoint !== 'string'
+        || !isLivepeerTusEndpoint(value.tusEndpoint)
+        || typeof asset.id !== 'string'
+        || typeof asset.playbackId !== 'string'
+        || typeof asset.projectId !== 'string'
+        || requireObject(asset.playbackPolicy, 'provider_create_ambiguous').type !== 'jwt') {
+        throw new Error('provider_create_ambiguous');
+    }
+    return {
+        assetId: asset.id,
+        playbackId: asset.playbackId,
+        projectId: asset.projectId,
+        tusEndpoint: value.tusEndpoint,
+    };
+}
+
+function uploadIntentResponse(record: JobRecord, created: boolean): Response {
+    if (record.state !== 'UPLOAD_READY' || !record.tusEndpoint) {
+        throw new Error('provider_create_ambiguous');
+    }
+    return json({
+        schema: 'youtick.livepeer-upload-intent.v1',
+        job_id: record.jobId,
+        generation: record.generation,
+        expected_source_bytes: record.expectedSourceBytes,
+        chunk_bytes: LIVEPEER_TUS_CHUNK_BYTES,
+        tus_endpoint: record.tusEndpoint,
+        created,
+    }, created ? 201 : 200);
 }
 
 function requireExactChainJob(input: UploadIntentRequest, job: OnChainJob): void {
@@ -393,7 +618,7 @@ function requireExactChainJob(input: UploadIntentRequest, job: OnChainJob): void
 function jobRecord(input: UploadIntentRequest): JobRecord {
     return {
         schema: 'youtick.livepeer-control-job.v1',
-        state: 'INTENT_RESERVED',
+        state: 'CREATE_PENDING',
         network: input.envelope.network,
         contractId: input.envelope.contract_id,
         jobId: input.body.job_id,
@@ -506,6 +731,24 @@ function isHttpsUrl(value?: string): boolean {
     }
 }
 
+function isLivepeerTusEndpoint(value: string): boolean {
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' && url.hostname === 'origin.livepeer.com';
+    } catch {
+        return false;
+    }
+}
+
+function validApiKey(value?: string): boolean {
+    return typeof value === 'string' && value.length >= 16 && !/[\r\n]/.test(value);
+}
+
+function base64Decode(value: string): Uint8Array {
+    const binary = atob(value);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
     let binary = '';
     for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -514,9 +757,14 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 function errorStatus(code: string): number {
     if (code === 'internal_error') return 500;
-    if (code === 'origin_denied') return 403;
-    if (code.includes('conflict') || code === 'on_chain_job_mismatch') return 409;
-    if (code.startsWith('near_') || code === 'runtime_not_configured') return 503;
+    if (code === 'origin_denied' || code === 'device_key_not_authorized') return 403;
+    if (code.includes('conflict')
+        || code === 'on_chain_job_mismatch'
+        || code === 'device_nonce_replayed'
+        || code === 'provider_create_pending') return 409;
+    if (code.startsWith('near_')
+        || code === 'runtime_not_configured'
+        || code === 'provider_create_ambiguous') return 503;
     return 400;
 }
 
@@ -531,4 +779,13 @@ function json(body: JsonObject, status = 200): Response {
         status,
         headers: { 'Cache-Control': 'no-store' },
     });
+}
+
+function withCors(response: Response, origin: string): Response {
+    const headers = new Headers(response.headers);
+    if (origin) headers.set('Access-Control-Allow-Origin', origin);
+    headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    headers.set('Access-Control-Allow-Headers', 'Content-Type, X-Youtick-Signature');
+    headers.set('Vary', 'Origin');
+    return new Response(response.body, { status: response.status, headers });
 }
