@@ -86,6 +86,25 @@ const OUTBOX_METHODS = new Set<OutboxMethod>([
     'suspend_livepeer_sales',
 ]);
 const SENSITIVE_LOG_KEY = /authorization|secret|token|tus|upload.*url|signed.*transaction|private.*key/i;
+const SAFE_ERROR_CODES = new Set([
+    'control_body_too_large',
+    'control_request_expired',
+    'deployment_binding_mismatch',
+    'invalid_control_envelope',
+    'invalid_control_request',
+    'invalid_json',
+    'invalid_outbox',
+    'invalid_upload_intent',
+    'near_job_not_found',
+    'near_job_query_failed',
+    'near_job_response_invalid',
+    'on_chain_job_mismatch',
+    'origin_denied',
+    'outbox_conflict',
+    'protocol_binding_mismatch',
+    'reservation_conflict',
+    'runtime_not_configured',
+]);
 
 export default {
     async fetch(request: Request, env: Env): Promise<Response> {
@@ -129,7 +148,7 @@ export class LivepeerControl {
             }
             return json({ error: 'not_found' }, 404);
         } catch (error) {
-            const code = error instanceof Error ? error.message : 'internal_error';
+            const code = safeErrorCode(error);
             console.error(formatLog('livepeer_control_request_failed', { code }));
             return json({ error: code }, errorStatus(code));
         }
@@ -190,7 +209,7 @@ export async function forwardUploadIntent(request: Request, env: Env): Promise<R
         const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(objectName));
         return object.fetch(forwardingRequest);
     } catch (error) {
-        const code = error instanceof Error ? error.message : 'internal_error';
+        const code = safeErrorCode(error);
         console.error(formatLog('livepeer_bridge_route_failed', { code }));
         return json({ error: code }, errorStatus(code));
     }
@@ -494,10 +513,17 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 function errorStatus(code: string): number {
+    if (code === 'internal_error') return 500;
     if (code === 'origin_denied') return 403;
     if (code.includes('conflict') || code === 'on_chain_job_mismatch') return 409;
     if (code.startsWith('near_') || code === 'runtime_not_configured') return 503;
     return 400;
+}
+
+function safeErrorCode(error: unknown): string {
+    return error instanceof Error && SAFE_ERROR_CODES.has(error.message)
+        ? error.message
+        : 'internal_error';
 }
 
 function json(body: JsonObject, status = 200): Response {
