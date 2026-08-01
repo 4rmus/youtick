@@ -1,5 +1,5 @@
-use near_sdk::collections::{LookupMap, UnorderedSet};
-use near_sdk::json_types::U128;
+use near_sdk::collections::LookupMap;
+use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
     env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseOrValue,
@@ -8,8 +8,7 @@ use near_sdk::{
 
 const TESTNET_USDC: &str = "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af";
 const MAINNET_USDC: &str = "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
-const PROFILE: &str = "paid-media-v4";
-const KMS_OPERATOR_COUNT: usize = 5;
+const PROFILE: &str = "paid-media-livepeer-v1";
 const PAID_SOURCE_MAX_BYTES: u128 = 20_000_000_000;
 const FT_TRANSFER_GAS: Gas = Gas::from_tgas(20);
 const WITHDRAW_CALLBACK_GAS: Gas = Gas::from_tgas(10);
@@ -24,73 +23,28 @@ impl near_sdk::IntoStorageKey for StorageKey {
 }
 
 impl StorageKey {
-    const KMS_OPERATORS: Self = Self(b"v4:kms");
-    const MEDIA_JOBS: Self = Self(b"v4:jobs");
-    const PUBLICATIONS: Self = Self(b"v4:publications");
-    const ENTITLEMENTS: Self = Self(b"v4:entitlements");
-    const CREATOR_BALANCES: Self = Self(b"v4:creator-balances");
-    const RECEIPT_BINDINGS: Self = Self(b"v4:receipt-bindings");
+    const MEDIA_JOBS: Self = Self(b"livepeer-v1:jobs");
+    const PUBLICATIONS: Self = Self(b"livepeer-v1:publications");
+    const ASSET_BINDINGS: Self = Self(b"livepeer-v1:asset-bindings");
+    const PLAYBACK_BINDINGS: Self = Self(b"livepeer-v1:playback-bindings");
+    const ENTITLEMENTS: Self = Self(b"livepeer-v1:entitlements");
+    const CREATOR_BALANCES: Self = Self(b"livepeer-v1:creator-balances");
 }
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MediaJobStatus {
     Authorized,
-    L3FullReadbackVerified,
-    Kms5Of5,
-    SourceDeleteConfirmed,
     Published,
 }
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ByteIntegrityReceipt {
-    pub manifest_cid: String,
-    pub manifest_sha256: String,
-    pub pack_root_sha256: String,
-    pub logical_bytes: U128,
-    pub pack_count: u32,
-    pub receipt_digest: String,
-}
-
-#[near(serializers = [json])]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ByteIntegritySubmission {
-    pub job_id: String,
-    pub generation: u64,
-    pub manifest_cid: String,
-    pub manifest_sha256: String,
-    pub pack_root_sha256: String,
-    pub logical_bytes: U128,
-    pub pack_count: u32,
-    pub full_readback: bool,
-    pub receipt_digest: String,
-}
-
-#[near(serializers = [borsh, json])]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct KmsStoreReceipt {
-    pub operator_id: AccountId,
-    pub receipt_digest: String,
-}
-
-#[near(serializers = [borsh, json])]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SourceDeleteReceipt {
-    pub receipt_digest: String,
-}
-
-#[near(serializers = [json])]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SourceDeleteSubmission {
-    pub job_id: String,
-    pub generation: u64,
-    pub manifest_sha256: String,
-    pub head_not_found: bool,
-    pub get_not_found: bool,
-    pub object_count: u32,
-    pub multipart_count: u32,
-    pub receipt_digest: String,
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PublicationAvailability {
+    Active,
+    SalesSuspended,
+    Takedown,
 }
 
 #[near(serializers = [borsh, json])]
@@ -98,16 +52,13 @@ pub struct SourceDeleteSubmission {
 pub struct MediaJob {
     pub job_id: String,
     pub creator_id: AccountId,
-    pub profile: String,
+    pub profile_id: String,
+    pub profile_config_sha256: String,
     pub title: String,
     pub price_usdc: U128,
-    pub source_bytes: U128,
-    pub ingest_public_key: String,
+    pub expected_source_bytes: U128,
     pub generation: u64,
     pub status: MediaJobStatus,
-    pub byte_integrity: Option<ByteIntegrityReceipt>,
-    pub kms_receipts: Vec<KmsStoreReceipt>,
-    pub source_delete: Option<SourceDeleteReceipt>,
     pub created_at_ms: u64,
     pub published_at_ms: Option<u64>,
 }
@@ -120,9 +71,36 @@ pub struct Publication {
     pub title: String,
     pub price_usdc: U128,
     pub generation: u64,
-    pub manifest_cid: String,
-    pub manifest_sha256: String,
+    pub expected_source_bytes: U128,
+    pub profile_id: String,
+    pub profile_config_sha256: String,
+    pub asset_id_hash: String,
+    pub playback_id: String,
+    pub project_id_hash: String,
+    pub verified_source_bytes: U128,
+    pub provider_source_fingerprint: Option<String>,
+    pub ready_at_ms: U64,
+    pub published_availability: PublicationAvailability,
+    pub availability: PublicationAvailability,
     pub published_at_ms: u64,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LivepeerPublicationSubmission {
+    pub job_id: String,
+    pub generation: u64,
+    pub creator_id: AccountId,
+    pub expected_source_bytes: U128,
+    pub profile_id: String,
+    pub profile_config_sha256: String,
+    pub asset_id_hash: String,
+    pub playback_id: String,
+    pub project_id_hash: String,
+    pub verified_source_bytes: U128,
+    pub provider_source_fingerprint: Option<String>,
+    pub ready_at_ms: U64,
+    pub availability: PublicationAvailability,
 }
 
 #[derive(Deserialize)]
@@ -156,59 +134,35 @@ struct PlatformWithdrawCallbackArgs {
 #[derive(PanicOnDefault)]
 pub struct Contract {
     platform_account_id: AccountId,
-    verifier_account_id: AccountId,
-    source_cleanup_account_id: AccountId,
-    // ponytail: PR-1 uses immutable NEAR caller identities; add registry-governed
-    // rotation with the PR-3 runtime before any deployment.
-    kms_operator_ids: UnorderedSet<AccountId>,
+    // ponytail: immutable for code-only PR-1; add timelocked rotation only after
+    // the P0 rotation authority is decided and before any deployment.
+    bridge_account_id: AccountId,
     media_jobs: LookupMap<String, MediaJob>,
     publications: LookupMap<String, Publication>,
+    asset_bindings: LookupMap<String, String>,
+    playback_bindings: LookupMap<String, String>,
     entitlements: LookupMap<String, bool>,
     creator_balances: LookupMap<AccountId, u128>,
-    receipt_bindings: LookupMap<String, String>,
     platform_balance: u128,
 }
 
 #[near]
 impl Contract {
     #[init]
-    pub fn new(
-        platform_account_id: AccountId,
-        verifier_account_id: AccountId,
-        source_cleanup_account_id: AccountId,
-        kms_operator_ids: Vec<AccountId>,
-    ) -> Self {
+    pub fn new(platform_account_id: AccountId, bridge_account_id: AccountId) -> Self {
         require!(
-            kms_operator_ids.len() == KMS_OPERATOR_COUNT,
-            "Exactly five KMS operators are required"
+            platform_account_id != bridge_account_id,
+            "Platform and bridge accounts must differ"
         );
-        require!(
-            verifier_account_id != source_cleanup_account_id,
-            "Verifier and source cleanup accounts must be independent"
-        );
-
-        let mut kms_operators = UnorderedSet::new(StorageKey::KMS_OPERATORS);
-        for operator_id in kms_operator_ids {
-            require!(
-                operator_id != verifier_account_id && operator_id != source_cleanup_account_id,
-                "Verifier and source cleanup accounts cannot be KMS operators"
-            );
-            require!(
-                kms_operators.insert(&operator_id),
-                "KMS operators must be unique"
-            );
-        }
-
         Self {
             platform_account_id,
-            verifier_account_id,
-            source_cleanup_account_id,
-            kms_operator_ids: kms_operators,
+            bridge_account_id,
             media_jobs: LookupMap::new(StorageKey::MEDIA_JOBS),
             publications: LookupMap::new(StorageKey::PUBLICATIONS),
+            asset_bindings: LookupMap::new(StorageKey::ASSET_BINDINGS),
+            playback_bindings: LookupMap::new(StorageKey::PLAYBACK_BINDINGS),
             entitlements: LookupMap::new(StorageKey::ENTITLEMENTS),
             creator_balances: LookupMap::new(StorageKey::CREATOR_BALANCES),
-            receipt_bindings: LookupMap::new(StorageKey::RECEIPT_BINDINGS),
             platform_balance: 0,
         }
     }
@@ -218,13 +172,14 @@ impl Contract {
         job_id: String,
         title: String,
         price_usdc: U128,
-        source_bytes: U128,
-        ingest_public_key: String,
+        expected_source_bytes: U128,
+        profile_id: String,
+        profile_config_sha256: String,
     ) -> MediaJob {
         assert_identifier("job_id", &job_id);
         assert_title(&title);
-        assert_source_bytes(source_bytes.0);
-        assert_ingest_public_key(&ingest_public_key);
+        assert_source_bytes(expected_source_bytes.0);
+        assert_profile(&profile_id, &profile_config_sha256);
         require!(
             price_usdc.0 >= 50 && price_usdc.0 % 50 == 0,
             "USDC price must split exactly into 98/2 shares"
@@ -237,16 +192,13 @@ impl Contract {
         let job = MediaJob {
             job_id: job_id.clone(),
             creator_id: env::predecessor_account_id(),
-            profile: PROFILE.to_string(),
+            profile_id,
+            profile_config_sha256,
             title,
             price_usdc,
-            source_bytes,
-            ingest_public_key,
+            expected_source_bytes,
             generation: 1,
             status: MediaJobStatus::Authorized,
-            byte_integrity: None,
-            kms_receipts: Vec::new(),
-            source_delete: None,
             created_at_ms: env::block_timestamp_ms(),
             published_at_ms: None,
         };
@@ -257,8 +209,9 @@ impl Contract {
     pub fn restart_paid_job(
         &mut self,
         job_id: String,
-        source_bytes: U128,
-        ingest_public_key: String,
+        expected_source_bytes: U128,
+        profile_id: String,
+        profile_config_sha256: String,
     ) -> MediaJob {
         let mut job = self.media_jobs.get(&job_id).expect("Media job not found");
         require!(
@@ -269,251 +222,117 @@ impl Contract {
             job.status != MediaJobStatus::Published,
             "Published media jobs cannot restart"
         );
-        require!(
-            job.source_delete.is_none(),
-            "A media job cannot restart after source deletion"
-        );
-        assert_source_bytes(source_bytes.0);
-        assert_ingest_public_key(&ingest_public_key);
+        assert_source_bytes(expected_source_bytes.0);
+        assert_profile(&profile_id, &profile_config_sha256);
 
         job.generation = job.generation.checked_add(1).expect("Generation overflow");
-        job.source_bytes = source_bytes;
-        job.ingest_public_key = ingest_public_key;
-        job.status = MediaJobStatus::Authorized;
-        job.byte_integrity = None;
-        job.kms_receipts.clear();
-        job.source_delete = None;
+        job.expected_source_bytes = expected_source_bytes;
+        job.profile_id = profile_id;
+        job.profile_config_sha256 = profile_config_sha256;
         self.media_jobs.insert(&job_id, &job);
         job
     }
 
-    pub fn record_byte_integrity(
+    pub fn finalize_livepeer_publication(
         &mut self,
-        submission: ByteIntegritySubmission,
-    ) -> ByteIntegrityReceipt {
-        require!(
-            env::predecessor_account_id() == self.verifier_account_id,
-            "Only the independent verifier can record byte integrity"
-        );
-        require!(submission.full_readback, "Full byte readback is required");
-        assert_cid(&submission.manifest_cid);
-        assert_sha256("manifest_sha256", &submission.manifest_sha256);
-        assert_sha256("pack_root_sha256", &submission.pack_root_sha256);
-        assert_sha256("receipt_digest", &submission.receipt_digest);
-        require!(
-            submission.logical_bytes.0 > 0,
-            "logical_bytes must be positive"
-        );
-        require!(submission.pack_count > 0, "pack_count must be positive");
-
-        let mut job = self.job_for_generation(&submission.job_id, submission.generation);
-        require!(
-            job.status != MediaJobStatus::Published,
-            "Published media jobs cannot accept evidence"
-        );
-        self.bind_receipt_digest(
-            &submission.receipt_digest,
-            &format!(
-                "{PROFILE}:byte:{}:{}:{}:{}",
-                job.creator_id,
-                submission.job_id,
-                submission.generation,
-                submission.manifest_sha256
-            ),
-        );
-        let receipt = ByteIntegrityReceipt {
-            manifest_cid: submission.manifest_cid,
-            manifest_sha256: submission.manifest_sha256,
-            pack_root_sha256: submission.pack_root_sha256,
-            logical_bytes: submission.logical_bytes,
-            pack_count: submission.pack_count,
-            receipt_digest: submission.receipt_digest,
-        };
-
-        if let Some(existing) = &job.byte_integrity {
-            require!(existing == &receipt, "Conflicting byte-integrity receipt");
-            return existing.clone();
-        }
-
-        job.byte_integrity = Some(receipt.clone());
-        job.status = MediaJobStatus::L3FullReadbackVerified;
-        self.media_jobs.insert(&submission.job_id, &job);
-        receipt
-    }
-
-    pub fn record_kms_store(
-        &mut self,
-        job_id: String,
-        generation: u64,
-        manifest_sha256: String,
-        stored_and_read_back: bool,
-        receipt_digest: String,
-    ) -> KmsStoreReceipt {
-        let operator_id = env::predecessor_account_id();
-        require!(
-            self.kms_operator_ids.contains(&operator_id),
-            "Caller is not a configured KMS operator"
-        );
-        require!(
-            stored_and_read_back,
-            "KMS durable store and readback are required"
-        );
-        assert_sha256("manifest_sha256", &manifest_sha256);
-        assert_sha256("receipt_digest", &receipt_digest);
-
-        let mut job = self.job_for_generation(&job_id, generation);
-        require!(
-            job.status != MediaJobStatus::Published,
-            "Published media jobs cannot accept evidence"
-        );
-        let integrity = job
-            .byte_integrity
-            .as_ref()
-            .expect("Byte-integrity receipt is required before KMS");
-        require!(
-            integrity.manifest_sha256 == manifest_sha256,
-            "Manifest root mismatch"
-        );
-        self.bind_receipt_digest(
-            &receipt_digest,
-            &format!(
-                "{PROFILE}:kms:{}:{job_id}:{generation}:{manifest_sha256}:{operator_id}",
-                job.creator_id
-            ),
-        );
-
-        let receipt = KmsStoreReceipt {
-            operator_id: operator_id.clone(),
-            receipt_digest,
-        };
-        if let Some(existing) = job
-            .kms_receipts
-            .iter()
-            .find(|existing| existing.operator_id == operator_id)
-        {
-            require!(existing == &receipt, "Conflicting KMS receipt");
-            return existing.clone();
-        }
-
-        job.kms_receipts.push(receipt.clone());
-        if job.kms_receipts.len() == KMS_OPERATOR_COUNT {
-            job.status = MediaJobStatus::Kms5Of5;
-        }
-        self.media_jobs.insert(&job_id, &job);
-        receipt
-    }
-
-    pub fn record_source_delete(
-        &mut self,
-        submission: SourceDeleteSubmission,
-    ) -> SourceDeleteReceipt {
-        require!(
-            env::predecessor_account_id() == self.source_cleanup_account_id,
-            "Only the source cleanup account can record deletion"
-        );
-        require!(
-            submission.head_not_found && submission.get_not_found,
-            "Fresh HEAD and GET not-found checks are required"
-        );
-        require!(
-            submission.object_count == 0 && submission.multipart_count == 0,
-            "Raw object and multipart inventories must be empty"
-        );
-        assert_sha256("manifest_sha256", &submission.manifest_sha256);
-        assert_sha256("receipt_digest", &submission.receipt_digest);
-
-        let mut job = self.job_for_generation(&submission.job_id, submission.generation);
-        require!(
-            job.status != MediaJobStatus::Published,
-            "Published media jobs cannot accept evidence"
-        );
-        let integrity = job
-            .byte_integrity
-            .as_ref()
-            .expect("Byte-integrity receipt is required before source deletion");
-        require!(
-            integrity.manifest_sha256 == submission.manifest_sha256,
-            "Manifest root mismatch"
-        );
-        require!(
-            job.kms_receipts.len() == KMS_OPERATOR_COUNT,
-            "Five KMS store/readback receipts are required before source deletion"
-        );
-        self.bind_receipt_digest(
-            &submission.receipt_digest,
-            &format!(
-                "{PROFILE}:delete:{}:{}:{}:{}",
-                job.creator_id,
-                submission.job_id,
-                submission.generation,
-                submission.manifest_sha256
-            ),
-        );
-
-        let receipt = SourceDeleteReceipt {
-            receipt_digest: submission.receipt_digest,
-        };
-        if let Some(existing) = &job.source_delete {
-            require!(existing == &receipt, "Conflicting source-delete receipt");
-            return existing.clone();
-        }
-
-        job.source_delete = Some(receipt.clone());
-        job.status = MediaJobStatus::SourceDeleteConfirmed;
-        self.media_jobs.insert(&submission.job_id, &job);
-        receipt
-    }
-
-    pub fn finalize_paid_publish(
-        &mut self,
-        job_id: String,
-        generation: u64,
-        manifest_sha256: String,
+        submission: LivepeerPublicationSubmission,
     ) -> Publication {
-        assert_sha256("manifest_sha256", &manifest_sha256);
-        let mut job = self.job_for_generation(&job_id, generation);
-        let integrity = job
-            .byte_integrity
-            .as_ref()
-            .expect("Byte-integrity receipt is required");
+        self.assert_bridge();
+        assert_profile(&submission.profile_id, &submission.profile_config_sha256);
+        assert_sha256("asset_id_hash", &submission.asset_id_hash);
+        assert_playback_id(&submission.playback_id);
+        assert_sha256("project_id_hash", &submission.project_id_hash);
+        if let Some(fingerprint) = &submission.provider_source_fingerprint {
+            assert_sha256("provider_source_fingerprint", fingerprint);
+        }
+        require!(submission.ready_at_ms.0 > 0, "ready_at_ms must be positive");
+
+        let mut job = self.job_for_generation(&submission.job_id, submission.generation);
         require!(
-            integrity.manifest_sha256 == manifest_sha256,
-            "Manifest root mismatch"
+            job.creator_id == submission.creator_id,
+            "Media job creator mismatch"
+        );
+        require!(
+            job.expected_source_bytes == submission.expected_source_bytes,
+            "Expected source byte mismatch"
+        );
+        require!(
+            submission.verified_source_bytes == submission.expected_source_bytes,
+            "Verified source byte mismatch"
+        );
+        require!(
+            job.profile_id == submission.profile_id,
+            "Media job profile mismatch"
+        );
+        require!(
+            job.profile_config_sha256 == submission.profile_config_sha256,
+            "Media job profile configuration mismatch"
         );
 
-        if let Some(publication) = self.publications.get(&job_id) {
+        if let Some(existing) = self.publications.get(&submission.job_id) {
             require!(
-                publication.generation == generation
-                    && publication.manifest_sha256 == manifest_sha256,
+                publication_matches(&existing, &submission),
                 "Conflicting finalize request"
             );
-            return publication;
+            return existing;
         }
 
-        require!(
-            job.kms_receipts.len() == KMS_OPERATOR_COUNT,
-            "Five KMS store/readback receipts are required"
+        self.bind_identity(
+            &self.asset_bindings,
+            &submission.asset_id_hash,
+            &submission.job_id,
+            "asset_id_hash",
         );
-        require!(
-            job.source_delete.is_some(),
-            "Source delete receipt is required"
+        self.bind_identity(
+            &self.playback_bindings,
+            &submission.playback_id,
+            &submission.job_id,
+            "playback_id",
         );
 
         let published_at_ms = env::block_timestamp_ms();
         let publication = Publication {
-            publication_id: job_id.clone(),
-            creator_id: job.creator_id.clone(),
+            publication_id: submission.job_id.clone(),
+            creator_id: submission.creator_id,
             title: job.title.clone(),
             price_usdc: job.price_usdc,
-            generation,
-            manifest_cid: integrity.manifest_cid.clone(),
-            manifest_sha256,
+            generation: submission.generation,
+            expected_source_bytes: submission.expected_source_bytes,
+            profile_id: submission.profile_id,
+            profile_config_sha256: submission.profile_config_sha256,
+            asset_id_hash: submission.asset_id_hash.clone(),
+            playback_id: submission.playback_id.clone(),
+            project_id_hash: submission.project_id_hash,
+            verified_source_bytes: submission.verified_source_bytes,
+            provider_source_fingerprint: submission.provider_source_fingerprint,
+            ready_at_ms: submission.ready_at_ms,
+            published_availability: submission.availability.clone(),
+            availability: submission.availability,
             published_at_ms,
         };
         job.status = MediaJobStatus::Published;
         job.published_at_ms = Some(published_at_ms);
-        self.media_jobs.insert(&job_id, &job);
-        self.publications.insert(&job_id, &publication);
+        self.media_jobs.insert(&submission.job_id, &job);
+        self.publications.insert(&submission.job_id, &publication);
+        self.asset_bindings
+            .insert(&submission.asset_id_hash, &submission.job_id);
+        self.playback_bindings
+            .insert(&submission.playback_id, &submission.job_id);
+        publication
+    }
+
+    pub fn suspend_livepeer_sales(&mut self, publication_id: String) -> Publication {
+        self.assert_bridge();
+        let mut publication = self
+            .publications
+            .get(&publication_id)
+            .expect("Publication not found");
+        require!(
+            publication.availability != PublicationAvailability::Takedown,
+            "Takedown publication cannot change through sales suspension"
+        );
+        publication.availability = PublicationAvailability::SalesSuspended;
+        self.publications.insert(&publication_id, &publication);
         publication
     }
 
@@ -535,7 +354,10 @@ impl Contract {
             .expect("Publication not found");
         let entitlement_key = entitlement_key(&sender_id, &message.publication_id);
 
-        if amount != publication.price_usdc || self.entitlements.get(&entitlement_key).is_some() {
+        if publication.availability != PublicationAvailability::Active
+            || amount != publication.price_usdc
+            || self.entitlements.get(&entitlement_key).is_some()
+        {
             return PromiseOrValue::Value(amount);
         }
 
@@ -615,7 +437,6 @@ impl Contract {
         if matches!(env::promise_result(0), PromiseResult::Successful(_)) {
             return true;
         }
-
         let restored = self
             .creator_balances
             .get(&creator_id)
@@ -635,7 +456,6 @@ impl Contract {
         if matches!(env::promise_result(0), PromiseResult::Successful(_)) {
             return true;
         }
-
         self.platform_balance = self
             .platform_balance
             .checked_add(amount.0)
@@ -671,6 +491,13 @@ impl Contract {
 }
 
 impl Contract {
+    fn assert_bridge(&self) {
+        require!(
+            env::predecessor_account_id() == self.bridge_account_id,
+            "Only the configured Livepeer bridge can call this method"
+        );
+    }
+
     fn job_for_generation(&self, job_id: &str, generation: u64) -> MediaJob {
         let job = self
             .media_jobs
@@ -681,6 +508,18 @@ impl Contract {
             "Media job generation mismatch"
         );
         job
+    }
+
+    fn bind_identity(
+        &self,
+        bindings: &LookupMap<String, String>,
+        identity: &str,
+        job_id: &str,
+        label: &str,
+    ) {
+        if let Some(existing) = bindings.get(&identity.to_string()) {
+            require!(existing == job_id, format!("{label} is already bound"));
+        }
     }
 
     fn usdc_contract_id(&self) -> AccountId {
@@ -696,27 +535,36 @@ impl Contract {
     }
 
     fn ft_transfer(&self, receiver_id: AccountId, amount: u128, memo: &str) -> Promise {
-        let args = FtTransferArgs {
-            receiver_id,
-            amount: U128(amount),
-            memo: Some(memo.to_string()),
-        };
         Promise::new(self.usdc_contract_id()).function_call(
             "ft_transfer".to_string(),
-            near_sdk::serde_json::to_vec(&args).expect("Failed to serialize ft_transfer"),
+            near_sdk::serde_json::to_vec(&FtTransferArgs {
+                receiver_id,
+                amount: U128(amount),
+                memo: Some(memo.to_string()),
+            })
+            .expect("Failed to serialize ft_transfer"),
             NearToken::from_yoctonear(1),
             FT_TRANSFER_GAS,
         )
     }
+}
 
-    fn bind_receipt_digest(&mut self, digest: &str, binding: &str) {
-        if let Some(existing) = self.receipt_bindings.get(&digest.to_string()) {
-            require!(existing == binding, "Receipt digest is already bound");
-            return;
-        }
-        self.receipt_bindings
-            .insert(&digest.to_string(), &binding.to_string());
-    }
+fn publication_matches(
+    publication: &Publication,
+    submission: &LivepeerPublicationSubmission,
+) -> bool {
+    publication.generation == submission.generation
+        && publication.creator_id == submission.creator_id
+        && publication.expected_source_bytes == submission.expected_source_bytes
+        && publication.profile_id == submission.profile_id
+        && publication.profile_config_sha256 == submission.profile_config_sha256
+        && publication.asset_id_hash == submission.asset_id_hash
+        && publication.playback_id == submission.playback_id
+        && publication.project_id_hash == submission.project_id_hash
+        && publication.verified_source_bytes == submission.verified_source_bytes
+        && publication.provider_source_fingerprint == submission.provider_source_fingerprint
+        && publication.ready_at_ms == submission.ready_at_ms
+        && publication.published_availability == submission.availability
 }
 
 fn entitlement_key(account_id: &AccountId, publication_id: &str) -> String {
@@ -729,7 +577,8 @@ fn assert_identifier(label: &str, value: &str) {
             && value.len() <= 128
             && value
                 .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')),
+                .all(|byte| byte.is_ascii_alphanumeric()
+                    || matches!(byte, b'-' | b'_' | b'.' | b':')),
         format!("{label} must be 1-128 ASCII identifier characters")
     );
 }
@@ -741,51 +590,26 @@ fn assert_title(value: &str) {
     );
 }
 
+fn assert_playback_id(value: &str) {
+    require!(
+        (6..=128).contains(&value.len())
+            && value
+                .bytes()
+                .all(|byte| { byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') }),
+        "playback_id must be 6-128 URL-safe ASCII characters"
+    );
+}
+
 fn assert_source_bytes(value: u128) {
     require!(
         (1..=PAID_SOURCE_MAX_BYTES).contains(&value),
-        "source_bytes must be between 1 and 20,000,000,000"
+        "expected_source_bytes must be between 1 and 20,000,000,000"
     );
 }
 
-fn assert_ingest_public_key(value: &str) {
-    let encoded = value.strip_prefix("ed25519:").unwrap_or("");
-    require!(
-        (43..=44).contains(&encoded.len()) && decoded_base58_len(encoded) == Some(32),
-        "ingest_public_key must be a canonical ed25519 public key"
-    );
-}
-
-fn decoded_base58_len(value: &str) -> Option<usize> {
-    const ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-    let mut bytes = vec![0u8];
-    for character in value.bytes() {
-        let mut carry = ALPHABET.iter().position(|byte| *byte == character)? as u32;
-        for byte in bytes.iter_mut().rev() {
-            let next = u32::from(*byte) * 58 + carry;
-            *byte = (next & 0xff) as u8;
-            carry = next >> 8;
-        }
-        while carry > 0 {
-            bytes.insert(0, (carry & 0xff) as u8);
-            carry >>= 8;
-        }
-    }
-    let leading_zeroes = value.bytes().take_while(|byte| *byte == b'1').count();
-    let significant = bytes
-        .iter()
-        .position(|byte| *byte != 0)
-        .unwrap_or(bytes.len());
-    Some(leading_zeroes + bytes.len() - significant)
-}
-
-fn assert_cid(value: &str) {
-    require!(
-        !value.is_empty()
-            && value.len() <= 200
-            && value.bytes().all(|byte| byte.is_ascii_graphic()),
-        "manifest_cid must be 1-200 visible ASCII characters"
-    );
+fn assert_profile(profile_id: &str, profile_config_sha256: &str) {
+    require!(profile_id == PROFILE, "Unsupported paid-media profile");
+    assert_sha256("profile_config_sha256", profile_config_sha256);
 }
 
 fn assert_sha256(label: &str, value: &str) {
@@ -817,21 +641,13 @@ mod tests {
 
     fn contract() -> Contract {
         testing_env!(context("market.testnet").build());
-        Contract::new(
-            account("platform.testnet"),
-            account("verifier.testnet"),
-            account("cleaner.testnet"),
-            (1..=5)
-                .map(|index| account(&format!("kms-{index}.testnet")))
-                .collect(),
-        )
+        Contract::new(account("platform.testnet"), account("bridge.testnet"))
     }
 
     #[test]
     fn selects_circle_usdc_from_network() {
         let contract = contract();
         assert_eq!(contract.get_usdc_contract_id(), account(TESTNET_USDC));
-
         let mut builder = context("market.near");
         builder.current_account_id(account("market.near"));
         testing_env!(builder.build());
@@ -843,11 +659,8 @@ mod tests {
         let mut contract = contract();
         let creator_id = account("creator.testnet");
         contract.creator_balances.insert(&creator_id, &1_960_000);
-
         testing_env!(context("creator.testnet").build());
         contract.withdraw_creator_balance();
-        assert_eq!(contract.get_creator_balance(creator_id.clone()), U128(0));
-
         testing_env!(
             context("market.testnet").build(),
             near_sdk::test_vm_config(),

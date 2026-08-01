@@ -60,9 +60,14 @@ assert(oldPlan.includes("SUPERSEDED / CODE_ONLY / NOT_DEPLOYED"), "old target is
 assert(evaluation.includes("SOURCE_EVALUATION / SUPERSEDED_BY_ADR_010 / NOT_DEPLOYED"), "evaluation truth marker mismatch");
 assert(docsIndex.includes("NEAR + Livepeer Paid Media v1 Plan"), "docs index target link missing");
 assert(architectureIndex.includes("near-livepeer-paid-media-implementation-plan.md"), "architecture target link missing");
-for (const file of [marketReadmePath, accessReadmePath]) {
-  assert(readFileSync(file, "utf8").includes("V4 SUPERSEDED / CODE ONLY / NOT DEPLOYED"), `${file.slice(root.length + 1)} target marker mismatch`);
-}
+assert(
+  readFileSync(marketReadmePath, "utf8").includes("LIVEPEER_V1 / CODE_ONLY / BLOCKED_BY_P0_DECISIONS / NOT_DEPLOYED"),
+  "contracts/nft-ticket/README.md target marker mismatch",
+);
+assert(
+  readFileSync(accessReadmePath, "utf8").includes("V4 SUPERSEDED / CODE ONLY / NOT DEPLOYED"),
+  "contracts/access-control/README.md target marker mismatch",
+);
 
 const evaluationHash = createHash("sha256").update(evaluation).digest("hex");
 assert(plan.includes(`SHA-256\n\`${evaluationHash}\``), "source evaluation SHA-256 drift");

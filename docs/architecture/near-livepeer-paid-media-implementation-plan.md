@@ -15,7 +15,7 @@
 |---|---|
 | Livepeer component fit | `GO` |
 | Architecture direction | `CONDITIONAL_GO` |
-| Implementation start | `BLOCKED_BY_P0_DECISIONS` |
+| Implementation progress | `PR_1_IMPLEMENTED / REVIEW_REQUIRED` |
 | Testnet and staging | `NO_GO` |
 | Production | `NO_GO` |
 
@@ -334,8 +334,8 @@ supported claim until a real device proves header propagation and refresh.
 
 ## 11. P0 decision gates
 
-Implementation remains blocked until the following are recorded in this plan
-or a linked ADR/vendor evidence file:
+Provider/runtime implementation remains blocked until the following are
+recorded in this plan or a linked ADR/vendor evidence file:
 
 1. Exact upload-length binding, URL lifetime, refresh/revoke and idempotency.
 2. Provider filtering or lookup needed to recover ambiguous creates.
@@ -356,6 +356,9 @@ to a production assumption.
 ## 12. Pull request sequence
 
 ### PR-0 - Truth, protocol and CI routing
+
+Status: `MERGED` by PR #62 at
+`1ee10752ab596fcd0aaf3ac3cbf4f385fec139b5`.
 
 Planned surfaces:
 
@@ -380,6 +383,9 @@ Stop for review before PR-1.
 
 ### PR-1 - Contract and ABI
 
+Status: `IMPLEMENTED / REVIEW_REQUIRED / NOT_DEPLOYED` on 2026-08-01.
+Focused unit, invariant, sandbox, ABI, format, clippy and build checks pass.
+
 Planned surfaces:
 
 - `contracts/nft-ticket/src/` and focused Livepeer profile tests;
@@ -399,6 +405,8 @@ Acceptance:
 Stop for review before PR-2.
 
 ### PR-2 - Disabled control plane foundation
+
+Status: `BLOCKED_BY_PR_1_REVIEW_AND_RELEVANT_P0_DECISIONS`.
 
 Create `workers/livepeer-bridge` with Worker routing, SQLite Durable Object
 state, protocol validation, NEAR final reads and persisted outbox primitives.

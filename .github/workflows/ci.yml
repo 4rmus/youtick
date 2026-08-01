@@ -107,7 +107,7 @@ jobs:
             contracts=true
           fi
 
-          if grep -Eq '^contracts/' /tmp/changed-files; then
+          if grep -Eq '^(contracts/|scripts/check-paid-media-livepeer-v1-abi\.mjs$)' /tmp/changed-files; then
             contracts=true
           fi
 
@@ -365,8 +365,8 @@ jobs:
         run: cargo test --lib
         working-directory: contracts/nft-ticket
 
-      - name: Test paid-media v4 contract
-        run: cargo test --test paid_media_v4
+      - name: Test paid-media Livepeer v1 contract
+        run: cargo test --test paid_media_livepeer_v1
         working-directory: contracts/nft-ticket
 
       - name: Test nft-ticket sandbox tests
@@ -388,8 +388,8 @@ jobs:
           (cd contracts/nft-ticket && cargo near build non-reproducible-wasm)
           (cd contracts/access-control && cargo near build non-reproducible-wasm)
 
-      - name: Enforce paid-only ABI
-        run: node scripts/check-paid-media-v4-abi.mjs
+      - name: Enforce paid-media Livepeer v1 ABI
+        run: node scripts/check-paid-media-livepeer-v1-abi.mjs
 
       - name: Test operator-registry
         run: cargo test

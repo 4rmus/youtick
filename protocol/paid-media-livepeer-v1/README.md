@@ -66,10 +66,11 @@ checks in later PRs.
 
 ## Publication tuple
 
-`finalize_livepeer_publication` accepts the tuple represented by
-`finalize_publication` in the schema. The bridge must re-fetch provider state
-before submission. Optional provider fingerprints are provider-issued audit
-metadata and are not independent integrity evidence.
+`finalize_livepeer_publication` accepts
+`{ "submission": <finalize_publication> }`, where `finalize_publication` is the
+tuple represented in the schema. The bridge must re-fetch provider state before
+submission. Optional provider fingerprints are provider-issued audit metadata
+and are not independent integrity evidence.
 
 Publication availability is separate from immutable identity:
 
