@@ -13,8 +13,10 @@ but provider mutation and deployment remain disabled.
   that key on the creator account at the same final NEAR block as the job.
 - A job generation creates at most one provider intent. `CREATE_AMBIGUOUS`
   never retries blindly.
-- The browser uploads directly with fixed 8 MiB TUS chunks; the final chunk may
-  be smaller.
+- The Worker creates the TUS resource with the final job's exact byte length,
+  verifies the stored length and zero offset, then returns only that opaque URL.
+- The browser PATCHes that resource directly with fixed 8 MiB TUS chunks; the
+  final chunk may be smaller.
 - Media request bodies never pass through this Worker.
 - One SQLite-backed Durable Object class is used with named job and operator
   instances.

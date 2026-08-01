@@ -14,6 +14,8 @@ const RPC_URL = 'https://rpc.testnet.near.org';
 const CONTRACT_ID = 'paid-media-livepeer-v1.testnet';
 const API_KEY = 'test-livepeer-api-key';
 const BLOCK_HASH = '11111111111111111111111111111111';
+const TUS_ENDPOINT = 'https://origin.livepeer.com/api/asset/upload/tus?token=secret';
+const TUS_UPLOAD_URL = 'https://origin.livepeer.com/api/asset/upload/tus/upload-123';
 let requestKey: CryptoKeyPair;
 let requestPublicKey: string;
 let nonceCounter = 0;
@@ -132,7 +134,7 @@ function accessKeyResponse(): Response {
 
 function providerResponse(): Response {
     return Response.json({
-        tusEndpoint: 'https://origin.livepeer.com/api/asset/upload/tus?token=secret',
+        tusEndpoint: TUS_ENDPOINT,
         asset: {
             id: 'asset-123',
             playbackId: 'playback-123',
@@ -146,6 +148,7 @@ function backendFetch(options?: {
     providerGate?: Promise<void>;
     providerFailure?: boolean;
     unauthorizedKey?: boolean;
+    tusLengthMismatch?: boolean;
 }) {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -167,6 +170,23 @@ function backendFetch(options?: {
             await options?.providerGate;
             if (options?.providerFailure) return Response.json({ error: 'failed' }, { status: 503 });
             return providerResponse();
+        }
+        if (url === TUS_ENDPOINT && init?.method === 'POST') {
+            return new Response(null, {
+                status: 201,
+                headers: { Location: TUS_UPLOAD_URL },
+            });
+        }
+        if (url === TUS_UPLOAD_URL && init?.method === 'HEAD') {
+            return new Response(null, {
+                status: 200,
+                headers: {
+                    'Upload-Length': options?.tusLengthMismatch
+                        ? '20000000001'
+                        : String(vectors.upload_intent.body.expected_source_bytes),
+                    'Upload-Offset': '0',
+                },
+            });
         }
         throw new Error(`unexpected_fetch:${url}`);
     });
@@ -346,6 +366,14 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             creatorId: { type: 'unverified', value: 'job-001:1' },
             profiles: [{ name: '720p', width: 1280, height: 720 }],
         });
+        const tusCreate = fetchMock.mock.calls.find(([url]) => String(url) === TUS_ENDPOINT);
+        expect(tusCreate?.[1]).toMatchObject({
+            method: 'POST',
+            headers: expect.objectContaining({
+                'Tus-Resumable': '1.0.0',
+                'Upload-Length': String(vectors.upload_intent.body.expected_source_bytes),
+            }),
+        });
     });
 
     it('preserves and reuses one provider intent across object restart or eviction', async () => {
@@ -366,7 +394,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         const replay = await restartedInstance.fetch(await controlRequest());
         expect(replay.status).toBe(200);
         expect(await replay.json()).toMatchObject({
-            tus_endpoint: 'https://origin.livepeer.com/api/asset/upload/tus?token=secret',
+            tus_endpoint: TUS_UPLOAD_URL,
             created: false,
         });
         expect(fetchMock.mock.calls.filter(([url]) => (
@@ -398,6 +426,18 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         const retry = await control.fetch(await controlRequest());
         expect(retry.status).toBe(503);
         expect(await retry.json()).toEqual({ error: 'provider_create_ambiguous' });
+    });
+
+    it('fails closed when the provider does not bind the requested upload length', async () => {
+        const testState = createState();
+        const control = new LivepeerControl(testState.state, createEnv());
+        vi.stubGlobal('fetch', backendFetch({ tusLengthMismatch: true }));
+
+        const response = await control.fetch(await controlRequest());
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'provider_create_ambiguous' });
+        expect(testState.values.get('job:v1')).toMatchObject({ state: 'CREATE_AMBIGUOUS' });
     });
 
     it('persists one idempotent outbox record and rejects a conflict', async () => {

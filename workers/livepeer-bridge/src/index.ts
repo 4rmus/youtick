@@ -133,6 +133,7 @@ const MAX_CONTROL_BODY_BYTES = 64 * 1024;
 const MAX_SOURCE_BYTES = 20_000_000_000n;
 const LIVEPEER_TUS_CHUNK_BYTES = 8 * 1024 * 1024;
 const LIVEPEER_API_BASE = 'https://livepeer.studio/api';
+const LIVEPEER_TUS_VERSION = '1.0.0';
 const PROFILE_CONFIG_SHA256 = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
 const SESSION_METHOD = 'create_paid_job';
 const CONTROL_MAX_FUTURE_MS = 5 * 60 * 1000;
@@ -774,12 +775,44 @@ async function createProviderUpload(env: Env, job: JobRecord): Promise<ProviderU
         || requireObject(asset.playbackPolicy, 'provider_create_ambiguous').type !== 'jwt') {
         throw new Error('provider_create_ambiguous');
     }
+    const tusEndpoint = await createBoundTusResource(
+        value.tusEndpoint,
+        job.expectedSourceBytes,
+    );
     return {
         assetId: asset.id,
         playbackId: asset.playbackId,
         projectId: asset.projectId,
-        tusEndpoint: value.tusEndpoint,
+        tusEndpoint,
     };
+}
+
+async function createBoundTusResource(endpoint: string, expectedBytes: string): Promise<string> {
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Tus-Resumable': LIVEPEER_TUS_VERSION,
+            'Upload-Length': expectedBytes,
+            'Upload-Metadata': 'filename c291cmNlLm1wNA==,filetype dmlkZW8vbXA0',
+        },
+        signal: AbortSignal.timeout(20_000),
+    });
+    const location = response.headers.get('Location');
+    if (response.status !== 201 || !location) throw new Error('provider_create_ambiguous');
+    const uploadUrl = new URL(location, endpoint).toString();
+    if (!isLivepeerTusEndpoint(uploadUrl)) throw new Error('provider_create_ambiguous');
+
+    const head = await fetch(uploadUrl, {
+        method: 'HEAD',
+        headers: { 'Tus-Resumable': LIVEPEER_TUS_VERSION },
+        signal: AbortSignal.timeout(10_000),
+    });
+    if (![200, 204].includes(head.status)
+        || head.headers.get('Upload-Length') !== expectedBytes
+        || head.headers.get('Upload-Offset') !== '0') {
+        throw new Error('provider_create_ambiguous');
+    }
+    return uploadUrl;
 }
 
 function uploadIntentResponse(record: JobRecord, created: boolean): Response {

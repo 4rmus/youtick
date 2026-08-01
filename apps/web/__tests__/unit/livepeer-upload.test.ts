@@ -3,29 +3,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const tus = vi.hoisted(() => ({
     instances: [] as Array<{
         options: Record<string, unknown>;
-        resumed: unknown;
         started: boolean;
     }>,
-    previous: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock('tus-js-client', () => ({
     Upload: class {
         options: Record<string, unknown>;
-        resumed: unknown;
         started = false;
 
         constructor(_file: File, options: Record<string, unknown>) {
             this.options = options;
             tus.instances.push(this);
-        }
-
-        async findPreviousUploads() {
-            return tus.previous;
-        }
-
-        resumeFromPreviousUpload(previous: unknown) {
-            this.resumed = previous;
         }
 
         start() {
@@ -75,14 +64,13 @@ const INTENT: LivepeerUploadIntent = {
     generation: 1,
     expected_source_bytes: String(SOURCE_BYTES),
     chunk_bytes: 8 * 1024 * 1024,
-    tus_endpoint: 'https://origin.livepeer.com/api/asset/upload/tus?token=secret',
+    tus_endpoint: 'https://origin.livepeer.com/api/asset/upload/tus/upload-123',
     created: true,
 };
 
 describe('Livepeer browser upload', () => {
     beforeEach(() => {
         tus.instances.length = 0;
-        tus.previous = [];
         vi.restoreAllMocks();
     });
 
@@ -148,24 +136,18 @@ describe('Livepeer browser upload', () => {
         expect(fetchMock).toHaveBeenCalledOnce();
     });
 
-    it('resumes with fixed 8 MiB chunks and does not retry an offset conflict', async () => {
-        const previous = {
-            size: SOURCE_BYTES,
-            uploadUrl: 'https://origin.livepeer.com/api/asset/upload/tus/one?token=secret',
-        };
-        tus.previous = [previous];
+    it('resumes the fixed resource with 8 MiB chunks and does not retry an offset conflict', async () => {
         const file = new File([new Uint8Array(SOURCE_BYTES)], 'video.mp4', { type: 'video/mp4' });
 
         await uploadLivepeerSource(file, INTENT);
 
         const instance = tus.instances[0];
-        expect(instance.resumed).toBe(previous);
         expect(instance.started).toBe(true);
+        expect(instance.options.uploadUrl).toBe(INTENT.tus_endpoint);
+        expect(instance.options.endpoint).toBeUndefined();
+        expect(instance.options.storeFingerprintForResuming).toBe(false);
         expect(instance.options.chunkSize).toBe(8 * 1024 * 1024);
         expect(file.size % Number(instance.options.chunkSize)).toBe(4 * 1024 * 1024);
-        const fingerprint = await (instance.options.fingerprint as () => Promise<string>)();
-        expect(fingerprint).toContain('youtick-livepeer-v1:job-001:1');
-        expect(fingerprint).not.toContain('token=secret');
         const shouldRetry = instance.options.onShouldRetry as (error: unknown) => boolean;
         const error = (status: number) => ({
             originalResponse: { getStatus: () => status },
@@ -174,14 +156,13 @@ describe('Livepeer browser upload', () => {
         expect(shouldRetry(error(503))).toBe(true);
     });
 
-    it('fails closed when local resume state contains multiple upload URLs', async () => {
-        tus.previous = [
-            { size: SOURCE_BYTES, uploadUrl: `${INTENT.tus_endpoint}/one` },
-            { size: SOURCE_BYTES, uploadUrl: `${INTENT.tus_endpoint}/two` },
-        ];
+    it('rejects a file that does not match the provider-bound length', async () => {
         const file = new File([new Uint8Array(SOURCE_BYTES)], 'video.mp4', { type: 'video/mp4' });
 
-        await expect(uploadLivepeerSource(file, INTENT)).rejects.toThrow('livepeer_resume_ambiguous');
-        expect(tus.instances[0].started).toBe(false);
+        await expect(uploadLivepeerSource(file, {
+            ...INTENT,
+            expected_source_bytes: String(SOURCE_BYTES + 1),
+        })).rejects.toThrow('invalid_livepeer_upload');
+        expect(tus.instances).toHaveLength(0);
     });
 });

@@ -1,6 +1,6 @@
 # Livepeer provider canary evidence - 2026-08-01
 
-Status: `PARTIAL / 8_MIB_BROWSER_RESUME_PASS / NETWORK_ENDPOINT_5M_PASS / PROVIDER_FIX_OPEN / SANDBOX CLEAN`
+Status: `PARTIAL / EXACT_LENGTH_BOUND / 8_MIB_BROWSER_RESUME_PASS / NETWORK_ENDPOINT_5M_PASS / PROVIDER_FIX_OPEN / SANDBOX CLEAN`
 
 This evidence belongs to PR-3. It is a bounded Sandbox and Chrome provider
 receipt, not testnet, staging or production proof.
@@ -24,6 +24,13 @@ payment setting and ended with an empty project inventory.
 
 No API key, raw asset ID, playback ID or bearer TUS URL is recorded here.
 
+The later exact-length request authorized a minimal provider proof. Three
+temporary assets were used: one zero-media exact-20-GB resource, one
+inconclusive zero-media overflow attempt that timed out, and one one-byte
+resource used to prove post-completion overflow rejection. All three assets
+were deleted. Total accepted media was one byte; no plan or billing setting was
+changed.
+
 ## Results
 
 | Check | Result | Evidence |
@@ -44,7 +51,9 @@ No API key, raw asset ID, playback ID or bearer TUS URL is recorded here.
 | Desktop Edge | `BLOCKED / NOT RUN` | Microsoft Edge and an Edge browser connection were unavailable on the test machine; Chrome was not substituted as Edge evidence |
 | Device sleep | `OPEN` | A no-request idle window was measured, not an operating-system sleep/wake cycle |
 | Account availability | `PASS` | Read-only account check returned HTTP 200 with `disabled=false` and `suspended=false`; the upload completed |
-| Exact 20 GB / +1 byte | `OPEN` | Not attempted |
+| Exact 20 GB admission | `PASS / BODY NOT UPLOADED` | TUS create HTTP 201; HEAD returned length `20000000000`, offset `0`; zero media bytes uploaded |
+| Bound-length enforcement | `PASS` | A one-byte resource completed at offset `1`; a second byte returned HTTP 500 and HEAD remained length/offset `1/1` |
+| App 20 GB + 1 rejection | `PASS / PRE-PROVIDER` | Browser and bridge tests reject `20000000001` before Livepeer mutation; no 20 GB + 1 provider upload was attempted |
 | Contractual endpoint lifetime and billing | `OPEN` | The canary proves only one bounded five-minute idle window; refresh, revoke and billing behavior remain unspecified |
 
 The first successful no-media receipt used correlation ID
@@ -117,6 +126,33 @@ It recorded:
 The source is transport-only synthetic data and is not valid media or playback
 proof. No raw asset ID, bearer TUS URL or API key is retained in this evidence.
 
+## Exact-length receipt
+
+On 2026-08-01 the bridge API key created a temporary JWT-policy asset, then its
+TUS creation endpoint received `Upload-Length: 20000000000`. Creation returned
+HTTP 201 and a HEAD request to the opaque resource URL returned HTTP 200,
+`Upload-Length: 20000000000` and `Upload-Offset: 0`. No media body was sent.
+The asset and upload URL SHA-256 values were respectively
+`7ac9e5fd676fe9067619c8dcb95eb9539278e32c3af718c68a3a2365c7ff4317`
+and `22b6590f35ad6220c270f3891d8fcfccbcbd9059735c91ceed4db1cedfea079c`.
+Delete returned HTTP 204 and the following asset GET returned HTTP 404.
+
+A separate one-byte TUS resource accepted its first byte and returned offset
+`1`. A second PATCH at offset `1` returned HTTP 500; the following HEAD still
+returned length `1` and offset `1`, proving the extra byte was not committed.
+The asset and upload URL SHA-256 values were respectively
+`bdf167b6f0a7f4f7c94748c399f66a6aaba344c3269441d6af781df7ad437f9d`
+and `201a3f9f8c1ccee299b28ce6182905143358da1ea52835576450f56c64dd81df`.
+Delete returned HTTP 204 and the following asset GET returned HTTP 404.
+
+An earlier direct two-byte PATCH against a one-byte incomplete resource timed
+out without a usable provider response, so it is explicitly excluded from the
+proof. Its asset was also deleted and returned HTTP 404. The proof establishes
+provider enforcement of the resource's declared byte length and exact 20 GB
+admission without a 20 GB body. It does not establish successful 20 GB
+transfer, transcode, playback, billing or contractual endpoint lifetime.
+The final authenticated asset-list request returned HTTP 200 with count `0`.
+
 ## Root cause analysis
 
 The public-source audit covered the current Livepeer documentation index,
@@ -171,13 +207,14 @@ not repair the provider bug or establish a provider-supported chunk contract.
 
 ## Next gate
 
-Do not enable the Worker route or create another asset. Keep the 8 MiB product
-default behind the disabled feature flag and wait for Livepeer to confirm a
-provider remediation or supported mitigation. The fixed-size product default
+Do not enable the Worker route or create another asset. Keep the exact-length
+resource creation and 8 MiB product default behind the disabled feature flag
+and wait for Livepeer to confirm a provider remediation or supported
+mitigation. The fixed-size product default
 naturally proves two non-final restart points at 8 MiB (40%) and 16 MiB (80%)
 for this 20 MiB source; the earlier exact 30%/70% fixture is no longer the
 product-default acceptance fixture. Any rerun requires a new explicit
 asset-budget approval. Provider-level network interruption and a bounded
-five-minute endpoint window now pass. Desktop Edge, device sleep/wake, a
-contractual endpoint lifetime/refresh/revoke policy and exact 20 GB remain
-open.
+five-minute endpoint window and exact 20 GB length admission now pass. Desktop
+Edge, device sleep/wake, a contractual endpoint lifetime/refresh/revoke policy
+and full 20 GB transfer/processing remain open.
