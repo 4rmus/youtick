@@ -15,7 +15,7 @@
 |---|---|
 | Livepeer component fit | `GO` |
 | Architecture direction | `CONDITIONAL_GO` |
-| Implementation progress | `PR_1_IMPLEMENTED / REVIEW_REQUIRED` |
+| Implementation progress | `PR_2_IMPLEMENTED / REVIEW_REQUIRED` |
 | Testnet and staging | `NO_GO` |
 | Production | `NO_GO` |
 
@@ -353,6 +353,21 @@ Fail-closed implementation may proceed behind a disabled flag only after the
 affected PR's protocol is locked. No P0 uncertainty may be silently converted
 to a production assumption.
 
+Current gate ownership:
+
+| P0 scope | Status | Blocks |
+|---|---|---|
+| Provider upload, recovery, browser, metadata, playback, deletion and billing evidence (1-7) | `OPEN / PROVIDER_CANARY_REQUIRED` | Provider-facing PR-3 and PR-4 behavior |
+| Refund, takedown and exact resume policy (8) | `OPEN / PRODUCT_GOVERNANCE_DECISION_REQUIRED` | PR-4 policy and PR-6 operations |
+| Desktop Chrome and Edge matrix (9) | `LOCKED` | Safari/iOS claims remain excluded |
+| Method allowlist and governance/timelock principle (10) | `LOCKED` | None for disabled PR-2 primitives |
+| Numeric key allowance and exact governance account (10) | `OPEN / OPERATOR_EVIDENCE_REQUIRED` | Transaction signing, key provisioning and deployment |
+
+PR-2 may implement only the disabled persistence, validation, final-read and
+outbox primitives. It must not add provider mutation, request-signature bypass,
+transaction signing, credentials or deployment while the later gates remain
+open.
+
 ## 12. Pull request sequence
 
 ### PR-0 - Truth, protocol and CI routing
@@ -383,8 +398,8 @@ Stop for review before PR-1.
 
 ### PR-1 - Contract and ABI
 
-Status: `IMPLEMENTED / REVIEW_REQUIRED / NOT_DEPLOYED` on 2026-08-01.
-Focused unit, invariant, sandbox, ABI, format, clippy and build checks pass.
+Status: `MERGED` by PR #63 at
+`c4b235bfc55111ca0d25c1be13f851c6125ec43f`.
 
 Planned surfaces:
 
@@ -406,7 +421,9 @@ Stop for review before PR-2.
 
 ### PR-2 - Disabled control plane foundation
 
-Status: `BLOCKED_BY_PR_1_REVIEW_AND_RELEVANT_P0_DECISIONS`.
+Status: `IMPLEMENTED / REVIEW_REQUIRED / HARD_DISABLED / NOT_DEPLOYED` on
+2026-08-01. Focused persistence, concurrency, outbox, redaction, type and
+Worker dry-run checks pass.
 
 Create `workers/livepeer-bridge` with Worker routing, SQLite Durable Object
 state, protocol validation, NEAR final reads and persisted outbox primitives.

@@ -1,0 +1,19 @@
+name = "youtick-livepeer-bridge"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+LIVEPEER_BRIDGE_ENABLED = "false"
+ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
+NEAR_NETWORK = "testnet"
+NEAR_RPC_URL = "<replace-with-dedicated-near-rpc-url>"
+MARKET_CONTRACT_ID = "<replace-with-paid-media-livepeer-v1-contract-id>"
+
+[[durable_objects.bindings]]
+name = "LIVEPEER_CONTROL"
+class_name = "LivepeerControl"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LivepeerControl"]
