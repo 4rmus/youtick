@@ -9,6 +9,10 @@ ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
 NEAR_NETWORK = "testnet"
 NEAR_RPC_URL = "<replace-with-dedicated-near-rpc-url>"
 MARKET_CONTRACT_ID = "<replace-with-paid-media-livepeer-v1-contract-id>"
+LIVEPEER_PROJECT_ID = "<replace-with-livepeer-project-id>"
+LIVEPEER_API_TOKEN_NAME = "<replace-with-livepeer-api-token-name>"
+NEAR_OPERATOR_ACCOUNT_ID = "<replace-with-livepeer-bridge-account-id>"
+NEAR_OPERATOR_KEY_EPOCH = "1"
 
 [[durable_objects.bindings]]
 name = "LIVEPEER_CONTROL"

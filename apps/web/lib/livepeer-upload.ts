@@ -1,4 +1,4 @@
-import { Upload, type DetailedError, type PreviousUpload } from 'tus-js-client';
+import { Upload, type DetailedError } from 'tus-js-client';
 import { APP_CONFIG, FEATURE_FLAGS, MEDIA_UPLOAD_POLICY, NEAR_CONFIG } from '@/lib/constants';
 import { base64Encode, hexEncode } from '@/lib/crypto/codec';
 import { getActiveUploadSessionKey } from '@/lib/upload-session-manager';
@@ -94,22 +94,10 @@ export async function uploadLivepeerSource(
         rejectUpload = reject;
     });
     const upload = new Upload(file, {
-        endpoint: intent.tus_endpoint,
+        uploadUrl: intent.tus_endpoint,
         chunkSize: MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes,
-        fingerprint: async () => [
-            'youtick-livepeer-v1',
-            intent.job_id,
-            intent.generation,
-            file.name,
-            file.type,
-            file.size,
-            file.lastModified,
-            await sha256Hex(intent.tus_endpoint),
-        ].join(':'),
-        metadata: { filename: file.name, filetype: file.type },
         retryDelays: [0, 1000, 3000],
-        removeFingerprintOnSuccess: true,
-        storeFingerprintForResuming: true,
+        storeFingerprintForResuming: false,
         onProgress: options?.onProgress,
         onShouldRetry: (error) => shouldRetry(error),
         onError: (error) => rejectUpload(new Error(
@@ -122,12 +110,6 @@ export async function uploadLivepeerSource(
     };
     options?.signal?.addEventListener('abort', abort, { once: true });
     try {
-        const previous = await upload.findPreviousUploads();
-        if (previous.length > 1) throw new Error('livepeer_resume_ambiguous');
-        if (previous.length === 1) {
-            validatePreviousUpload(previous[0], file.size);
-            upload.resumeFromPreviousUpload(previous[0]);
-        }
         upload.start();
         await completion;
     } finally {
@@ -161,14 +143,6 @@ function validateUpload(file: File, intent: LivepeerUploadIntent): void {
         || intent.chunk_bytes !== MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes
         || !isLivepeerTusUrl(intent.tus_endpoint)) {
         throw new Error('invalid_livepeer_upload');
-    }
-}
-
-function validatePreviousUpload(previous: PreviousUpload, expectedBytes: number): void {
-    if (previous.size !== expectedBytes
-        || !previous.uploadUrl
-        || !isLivepeerTusUrl(previous.uploadUrl)) {
-        throw new Error('invalid_livepeer_resume');
     }
 }
 

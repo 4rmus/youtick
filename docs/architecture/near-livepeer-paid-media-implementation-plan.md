@@ -15,14 +15,15 @@
 |---|---|
 | Livepeer component fit | `GO` |
 | Architecture direction | `CONDITIONAL_GO` |
-| Implementation progress | `PR_2_MERGED / PR_3_PROVIDER_CANARY_PARTIAL` |
+| Implementation progress | `PR_3_MERGED / PR_4_CODE_ONLY_COMPLETE` |
 | Testnet and staging | `NO_GO` |
 | Production | `NO_GO` |
 
-This plan locks the architecture boundary and delivery sequence. It does not
-prove that Livepeer accepts an exact 20 GB source without cost exposure, that a
-supported browser can resume a real upload, that NEAR testnet finalization
-works, or that any runtime has been deployed.
+This plan locks the architecture boundary and delivery sequence. A bounded
+provider canary proves exact 20 GB TUS length admission without uploading the
+20 GB body; it does not prove full 20 GB processing or billing. Chrome resume
+passes with the locked 8 MiB chunk workaround. NEAR testnet finalization and
+runtime deployment remain unproven.
 
 The input evaluation was reviewed from the local architecture evidence branch
 as `near-livepeer-serverless-paid-media-evaluation.md`, SHA-256
@@ -100,7 +101,7 @@ The locked boundaries are:
 | Livepeer Studio | Sees plaintext, stores and serves media, can mutate or delete an asset | JWT from creation, project/token binding, re-fetch, negative playback probes, reconciler and takedown policy |
 | Worker deploy authority | Can access Worker secrets | Separate production authority, audit, rotation and least privilege; do not claim HSM custody |
 | Livepeer bridge Worker | Can mint playback JWTs and submit provider publication facts | Exact protocol validation, short TTLs, narrow NEAR key, fail closed and immutable audit state |
-| Creator browser | Receives a bearer TUS endpoint and can ignore UI limits | Allowlist, quota, reservation, provider budget, source-size verification and orphan deletion |
+| Creator browser | Receives one bearer, fixed-length TUS resource and may upload arbitrary bytes within that length | Final-job byte binding, bridge-created resource, one intent per generation, post-upload verification and orphan deletion |
 | NEAR RPC provider | Supplies finality, entitlement and grant inputs | Final-block reads, semantic contract re-check, timeout recovery and fail closed |
 | NEAR contracts | Authoritative settlement and policy state | Generation binding, global identity uniqueness, idempotency and timelocked recovery |
 
@@ -166,10 +167,14 @@ final asset re-fetch are authoritative for readiness.
    calling Livepeer.
 4. The Livepeer asset is created with JWT playback policy, fixed profile and
    deterministic routing metadata in the first request.
-5. The browser uploads directly to the returned TUS endpoint.
-6. Timeout during asset creation enters `CREATE_AMBIGUOUS`; it must not blindly
-   create another asset.
-7. The bridge reconciles by deterministic metadata, records one accepted asset
+5. The bridge creates the TUS resource with the final job's exact
+   `Upload-Length`, verifies that length and offset `0` with `HEAD`, and returns
+   only the opaque resource URL.
+6. The browser uploads directly to that fixed-length URL using PATCH; it never
+   receives the provider's TUS creation endpoint.
+7. Timeout during asset or TUS-resource creation enters `CREATE_AMBIGUOUS`; it
+   must not blindly create another asset.
+8. The bridge reconciles by deterministic metadata, records one accepted asset
    and deletes provable orphans.
 
 The browser TUS product default is `chunkSize: 8 * 1024 * 1024`; the final
@@ -177,9 +182,13 @@ chunk may be smaller. This matches the deployed Studio S3 path's preferred part
 size and has bounded Chrome resume evidence. Changing it requires a new
 provider canary.
 
-The public Livepeer API does not currently document a server-bound
-`expectedBytes`, `maxBytes`, upload URL lifetime or idempotency key. Therefore
-an honest UI byte check is not a security boundary.
+The public Livepeer asset API does not currently document an `expectedBytes`,
+`maxBytes`, upload URL lifetime or idempotency key. The deployed TUS endpoint,
+however, accepted a server-stored `Upload-Length` at resource creation and
+rejected a PATCH beyond the completed declared length. Therefore the bridge,
+not the browser, creates the resource and verifies the stored length before
+returning its opaque URL. An honest UI byte check alone is not a security
+boundary.
 
 Exact 20 GB admission has two allowed outcomes:
 
@@ -191,11 +200,19 @@ Exact 20 GB admission has two allowed outcomes:
   hard limits, post-upload size enforcement and deletion. The release evidence
   must not claim pre-cost rejection.
 
+The first outcome is selected. On 2026-08-01 Livepeer accepted a zero-offset
+TUS resource with `Upload-Length: 20000000000`; a separate one-byte resource
+rejected a second byte and retained `Upload-Length: 1`, `Upload-Offset: 1`.
+YouTick rejects `20_000_000_001` before any provider request. This closes
+pre-upload byte binding, not full 20 GB processing, provider billing, endpoint
+lifetime or create-idempotency evidence.
+
 References:
 
 - [Livepeer direct upload guide](https://docs.livepeer.org/v1/developers/guides/upload-video-asset)
 - [Livepeer API support matrix](https://docs.livepeer.org/v1/references/api-support-matrix)
 - [Livepeer request-upload API](https://docs.livepeer.org/v1/api-reference/asset/upload)
+- [TUS 1.0 creation and length contract](https://tus.io/protocols/resumable-upload)
 
 ## 7. Webhook and provider readiness
 
@@ -362,7 +379,7 @@ Current gate ownership:
 
 | P0 scope | Status | Blocks |
 |---|---|---|
-| Provider upload, recovery, browser, metadata, playback, deletion and billing evidence (1-7) | `OPEN / PROVIDER_CANARY_REQUIRED` | Provider-facing PR-3 and PR-4 behavior |
+| Provider upload, recovery, browser, metadata, playback, deletion and billing evidence (1-7) | `PARTIAL / EXACT_LENGTH_BOUND / 15M_IDLE_PASS / TUS_REVOKE_PASS / OTHER_GATES_OPEN` | Remaining provider-facing PR-3 and PR-4 behavior |
 | Refund, takedown and exact resume policy (8) | `LOCKED / IMPLEMENTATION_PENDING` | PR-4 and PR-6 must implement the locked policy |
 | Desktop Chrome and Edge matrix (9) | `LOCKED` | Safari/iOS claims remain excluded |
 | Method allowlist and governance/timelock principle (10) | `LOCKED` | None for disabled PR-2 primitives |
@@ -371,8 +388,10 @@ Current gate ownership:
 Accepted 2026-08-01 product and operator decisions:
 
 - Browser, bridge and contract accept decimal `20_000_000_000` bytes and reject
-  `20_000_000_001` before provider mutation. The exact 20 GB provider canary
-  remains open; a +1-byte provider upload is forbidden.
+  `20_000_000_001` before provider mutation. The bridge creates and verifies a
+  provider TUS resource bound to the accepted length before returning its
+  opaque URL. Full 20 GB transfer/processing remains unproven and a 20 GB + 1
+  byte provider upload remains forbidden.
 - One creator FunctionCall key is scoped to the exact market and
   `create_paid_job`, uses a five-minute signed-request window and is removed
   after intent creation or expiry. The bounded testnet profile measured
@@ -386,6 +405,23 @@ Accepted 2026-08-01 product and operator decisions:
 - Closed-canary refunds for permanent provider loss or takedown are manual and
   recorded. Only the creator may restart an unpublished job; restart increments
   generation and invalidates older work. Published jobs cannot restart.
+
+Accepted 2026-08-02 cost and endpoint decisions:
+
+- The product assumes Livepeer provides no project hard spend cap and accepts
+  the residual provider-cost risk. This is not public runtime activation;
+  creator allowlist, local active-intent/create quotas and automatic new-intent
+  shutdown remain required before activation.
+- No automatic TUS expiry or refresh API is assumed. A bounded canary proved a
+  15-minute idle resource, but returned no `Upload-Expires`.
+- Asset deletion does not revoke its TUS resource. Cancel, expiry and orphan
+  cleanup must explicitly terminate the persisted TUS URL, verify HEAD 404/410,
+  then delete the asset and verify asset GET 404/410.
+- If a TUS resource disappears, the same generation does not create a new
+  asset. The creator must restart with a new generation.
+
+The endpoint receipt is
+[the bounded lifetime and revoke evidence](../evidence/livepeer-endpoint-revoke-canary-2026-08-02.md).
 
 The account, transaction and cleanup receipt is
 [the bounded testnet allowance evidence](../evidence/near-livepeer-testnet-allowance-2026-08-01.md).
@@ -468,7 +504,7 @@ Stop for review before PR-3.
 
 ### PR-3 - Livepeer upload and provider canaries
 
-Status: `CODE_ONLY_PARTIAL / 8_MIB_BROWSER_RESUME_PASS / NETWORK_ENDPOINT_5M_PASS / PROVIDER_FIX_OPEN / RUNTIME_NOT_DEPLOYED`
+Status: `CODE_ONLY_PARTIAL / EXACT_LENGTH_BOUND / 8_MIB_BROWSER_RESUME_PASS / NETWORK_ENDPOINT_5M_PASS / PROVIDER_FIX_OPEN / RUNTIME_NOT_DEPLOYED`
 on 2026-08-01. JWT intent creation and delete/not-found cleanup pass in the
 dedicated Sandbox project. The first approved Chrome run reproduced a deployed
 S3 offset bug with 1 MiB chunks: HEAD omitted the incomplete part, the next
@@ -489,16 +525,19 @@ five-minute idle window preserving the 8 MiB offset and recovery after a live
 HTTPS PATCH disconnect. The provider committed no partial progress from the
 interrupted PATCH, so HEAD remained authoritative and only the missing bytes
 were resent. Desktop Edge, device sleep/wake, a contractual endpoint
-lifetime/refresh/revoke policy and exact 20 GB remain open. A new provider
-mutation requires renewed asset-budget approval. See
+lifetime and full 20 GB processing remain open. A later one-byte canary extended
+idle evidence to 15 minutes and proved that asset deletion does not revoke the
+TUS resource; explicit TUS DELETE does. A new provider mutation requires renewed
+asset-budget approval. See
 [the bounded provider receipt](../evidence/livepeer-provider-canary-2026-08-01.md).
 
 The disabled implementation now includes the signed upload-intent route,
 same-final-block creator access-key proof, atomic nonce consumption, one-create
-Durable Object state, JWT provider request, and the browser `tus-js-client`
-flow. The browser fixes `chunkSize` at 8 MiB, accepts a smaller final chunk,
-resumes one unambiguous local upload URL and does not retry HTTP 409 offset
-conflicts. `CREATE_PENDING` and `CREATE_AMBIGUOUS` never create a second asset.
+Durable Object state, JWT provider request, bridge-created exact-length TUS
+resource, and the browser `tus-js-client` flow. The browser fixes `chunkSize`
+at 8 MiB, accepts a smaller final chunk, resumes only the bridge-provided fixed
+resource URL and does not retry HTTP 409 offset conflicts. `CREATE_PENDING` and
+`CREATE_AMBIGUOUS` never create a second asset.
 No runtime was enabled. The later bounded network/endpoint canary created one
 zero-media probe asset and one 20 MiB media-bearing asset; both were deleted and
 the authenticated project inventory returned to `0`.
@@ -523,6 +562,19 @@ Acceptance:
 Stop for review before PR-4.
 
 ### PR-4 - Webhook, verification and NEAR finalize
+
+Status: `CODE_ONLY_COMPLETE / HARD_DISABLED / NOT_DEPLOYED` on 2026-08-01.
+The Worker verifies the exact raw webhook body and timestamp, digest-deduplicates
+provider transitions, re-fetches asset and playback state, runs JWT-negative
+HLS/MP4/download probes, and fails closed on project, API token name, policy,
+playback and source-size drift. The named operator object persists nonce, recent
+block hash, signed transaction bytes and transaction hash before broadcast; a
+retry queries the same hash and accepts completion only when the final
+`get_publication` view matches the submitted tuple. Focused tests cover duplicate,
+unknown and out-of-order events, provider identity drift, crash-after-sign state,
+timeout-after-broadcast recovery, two parallel jobs and conflicting final chain
+state. The route and provider mutation remain disabled; no real webhook, NEAR
+finalize, deployment or activation is claimed.
 
 Add raw-body webhook verification, digest dedup, provider re-fetch, playback
 negative probes, operator outbox and final NEAR transaction recovery.
@@ -599,6 +651,13 @@ not only the number of uploaded assets.
 
 Provider commercial terms, retention and billing must be captured as dated
 evidence before production approval.
+
+The product decision assumes there is no provider-enforced project hard cap
+and accepts that residual risk. Local controls reduce exposure but are not a
+provider hard cap. Before activation the bridge must enforce an explicit
+creator allowlist, bounded active intents and provider creates, a configured
+local budget threshold and automatic rejection of new intents after the first
+limit is reached.
 
 - [Livepeer pricing](https://livepeer.studio/pricing)
 

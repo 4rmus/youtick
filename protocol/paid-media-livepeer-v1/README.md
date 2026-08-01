@@ -1,6 +1,6 @@
 # Paid media Livepeer v1 protocol
 
-Status: `BOUNDED_TESTNET_CONTRACT / PRODUCT_P0_LOCKED / PROVIDER_P0_OPEN / RUNTIME_DISABLED`
+Status: `PR_4_CODE_ONLY / PRODUCT_P0_LOCKED / PROVIDER_P0_OPEN / RUNTIME_DISABLED`
 
 This directory locks the messages shared by the future web, bridge Worker and
 NEAR contracts. A dedicated testnet contract exists for bounded allowance
@@ -114,9 +114,9 @@ The accepted product policy is:
   generation and invalidates older intent, webhook and finalize work;
 - a published job cannot restart and requires a new publication job.
 
-The contract, Worker and operations implementation of the remaining takedown
-and refund actions belongs to PR-4 and PR-6; this protocol text does not claim
-that those later runtime paths are deployed.
+The Worker now persists verified readiness and an idempotent NEAR finalize
+outbox. Remaining takedown, refund and operator runbook work belongs to PR-6;
+this protocol text does not claim that those runtime paths are deployed.
 
 ## Playback token request
 
