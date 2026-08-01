@@ -2,9 +2,9 @@
 
 > Status: `DECISION_LOCKED / CONDITIONAL_GO / NOT_DEPLOYED`
 >
-> Baseline: `origin/main@c1c59f6a30006492582ab3898b7bba466b9e7f2c`
+> Initial baseline: `origin/main@c1c59f6a30006492582ab3898b7bba466b9e7f2c`
 >
-> Integration branch: `agent/livepeer-paid-media-v1`
+> Delivery model: incremental PR branches from the latest accepted `origin/main`
 >
 > This is the only active target plan for the paid-media rewrite. The current
 > public-alpha runtime remains live until a separately approved cutover.
