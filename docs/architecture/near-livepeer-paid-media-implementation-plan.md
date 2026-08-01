@@ -446,7 +446,7 @@ Stop for review before PR-3.
 
 ### PR-3 - Livepeer upload and provider canaries
 
-Status: `PROVIDER_CANARY_PARTIAL / 8_MIB_BROWSER_RESUME_PASS / PROVIDER_FIX_OPEN / NOT_DEPLOYED`
+Status: `CODE_ONLY_PARTIAL / 8_MIB_BROWSER_RESUME_PASS / PROVIDER_FIX_OPEN / NOT_DEPLOYED`
 on 2026-08-01. JWT intent creation and delete/not-found cleanup pass in the
 dedicated Sandbox project. The first approved Chrome run reproduced a deployed
 S3 offset bug with 1 MiB chunks: HEAD omitted the incomplete part, the next
@@ -465,6 +465,16 @@ restart therefore passes under the 8 MiB workaround; Edge, sleep/network loss,
 endpoint lifetime and exact 20 GB remain open. A new provider mutation requires
 renewed asset-budget approval. See
 [the bounded provider receipt](../evidence/livepeer-provider-canary-2026-08-01.md).
+
+The disabled implementation now includes the signed upload-intent route,
+same-final-block creator access-key proof, atomic nonce consumption, one-create
+Durable Object state, JWT provider request, and the browser `tus-js-client`
+flow. The browser fixes `chunkSize` at 8 MiB, accepts a smaller final chunk,
+resumes one unambiguous local upload URL and does not retry HTTP 409 offset
+conflicts. `CREATE_PENDING` and `CREATE_AMBIGUOUS` never create a second asset.
+No runtime was enabled and no additional provider asset was created.
+UI activation remains intentionally unwired until the numeric session-key
+allowance and funding policy in P0 gate 10 is approved.
 
 Add the Livepeer client, upload-intent route, `tus-js-client` browser flow,
 device-key request signing and focused UI tests. Do not port the R2 upload path.

@@ -12,6 +12,8 @@ const ENV_KEYS = [
     'NEXT_PUBLIC_STORAGE_API_URL',
     'NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER',
     'NEXT_PUBLIC_MEDIA_DELIVERY_URL',
+    'NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1',
+    'NEXT_PUBLIC_LIVEPEER_BRIDGE_URL',
 ] as const;
 
 function resetNearEnv(): void {
@@ -91,6 +93,16 @@ describe('FEATURE_FLAGS', () => {
         const { FEATURE_FLAGS } = await import('@/lib/constants');
 
         expect(FEATURE_FLAGS.enableCrossChainCheckout).toBe(false);
+    });
+
+    it('keeps Livepeer disabled with the locked 8 MiB chunk default', async () => {
+        resetNearEnv();
+
+        const { APP_CONFIG, FEATURE_FLAGS, MEDIA_UPLOAD_POLICY } = await import('@/lib/constants');
+
+        expect(FEATURE_FLAGS.enablePaidMediaLivepeerV1).toBe(false);
+        expect(APP_CONFIG.livepeerBridgeUrl).toBe('');
+        expect(MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes).toBe(8 * 1024 * 1024);
     });
 
     it('enables cross-chain checkout only when explicitly set to true', async () => {

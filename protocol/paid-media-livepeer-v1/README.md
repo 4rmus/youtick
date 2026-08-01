@@ -10,6 +10,9 @@ NEAR contracts. It does not implement or enable any runtime.
 - protocol: `youtick.paid-media-livepeer-v1.protocol.v1`;
 - control-signature domain: `youtick.paid-media-livepeer-v1.control`;
 - publication profile: `paid-media-livepeer-v1`;
+- profile configuration SHA-256:
+  `96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77`
+  for the canonical 720p H.264 Baseline configuration;
 - maximum declared source size: decimal `20_000_000_000` bytes;
 - initial browser claim: desktop Chrome and desktop Edge only;
 - operator methods: `finalize_livepeer_publication` and
@@ -57,6 +60,12 @@ Every string field rejects CR and LF. `body_sha256` is the lowercase SHA-256 of
 the UTF-8 request body serialized as canonical JSON: object keys sorted by
 Unicode code point, arrays kept in order, no insignificant whitespace. The
 golden vector is the executable interoperability example.
+
+The browser sends the base64 Ed25519 signature of the canonical message in
+`X-Youtick-Signature`. For upload intents, the bridge also proves that
+`session_public_key` belongs to `account_id` at the same final NEAR block used
+to read the media job, is a finite-allowance FunctionCall key for the exact
+market and `create_paid_job`, and atomically rejects a reused `device_nonce`.
 
 The initial routes are `POST /v1/upload-intents` and
 `POST /v1/playback-tokens`. Upload binds `job:<job_id>:<generation>`; playback

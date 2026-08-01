@@ -44,6 +44,8 @@ Without these the app cannot connect to the right contract set or network.
 | `NEXT_PUBLIC_STORAGE_API_URL` | Storage API Worker URL | Required for Lighthouse pin/status piloting |
 | `NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER` | Opens the Media Delivery Worker read path | Set `true` only after worker deploy + smoke test |
 | `NEXT_PUBLIC_MEDIA_DELIVERY_URL` | Media Delivery Worker URL | Required for encrypted IPFS manifest/segment routing |
+| `NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1` | Authorizes the code-only Livepeer paid-media path | Keep `false` until UI wiring and every mandatory provider/release gate are approved |
+| `NEXT_PUBLIC_LIVEPEER_BRIDGE_URL` | Livepeer control-plane Worker URL | Required only when the Livepeer feature is approved and enabled |
 
 ### Server-side onboarding
 

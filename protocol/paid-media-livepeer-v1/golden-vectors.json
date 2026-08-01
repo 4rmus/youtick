@@ -19,10 +19,10 @@
       "generation": 1,
       "expected_source_bytes": "20000000000",
       "profile_id": "paid-media-livepeer-v1",
-      "profile_config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "profile_config_sha256": "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77"
     },
-    "canonical_body": "{\"expected_source_bytes\":\"20000000000\",\"generation\":1,\"job_id\":\"job-001\",\"profile_config_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"profile_id\":\"paid-media-livepeer-v1\"}",
-    "body_sha256": "7264b8f4130af1388fb573809915802ee3c2be1c8b7eeba07d267d8161a70e44",
+    "canonical_body": "{\"expected_source_bytes\":\"20000000000\",\"generation\":1,\"job_id\":\"job-001\",\"profile_config_sha256\":\"96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77\",\"profile_id\":\"paid-media-livepeer-v1\"}",
+    "body_sha256": "6cd140f18cd86d78c239c84ad600324bc84d9d94b70f333313912f17bb1c7de3",
     "envelope": {
       "domain": "youtick.paid-media-livepeer-v1.control",
       "version": "1",
@@ -36,9 +36,9 @@
       "origin": "https://app.youtick.net",
       "device_nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
       "expires_at_ms": "1785585600000",
-      "body_sha256": "7264b8f4130af1388fb573809915802ee3c2be1c8b7eeba07d267d8161a70e44"
+      "body_sha256": "6cd140f18cd86d78c239c84ad600324bc84d9d94b70f333313912f17bb1c7de3"
     },
-    "canonical_message": "youtick.paid-media-livepeer-v1.control\n1\nPOST\n/v1/upload-intents\ntestnet\npaid-media-livepeer-v1.testnet\ncreator.testnet\njob:job-001:1\ned25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF\nhttps://app.youtick.net\nAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n1785585600000\n7264b8f4130af1388fb573809915802ee3c2be1c8b7eeba07d267d8161a70e44"
+    "canonical_message": "youtick.paid-media-livepeer-v1.control\n1\nPOST\n/v1/upload-intents\ntestnet\npaid-media-livepeer-v1.testnet\ncreator.testnet\njob:job-001:1\ned25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF\nhttps://app.youtick.net\nAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n1785585600000\n6cd140f18cd86d78c239c84ad600324bc84d9d94b70f333313912f17bb1c7de3"
   },
   "finalize_publication": {
     "job_id": "job-001",
@@ -46,7 +46,7 @@
     "creator_id": "creator.testnet",
     "expected_source_bytes": "20000000000",
     "profile_id": "paid-media-livepeer-v1",
-    "profile_config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "profile_config_sha256": "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77",
     "asset_id_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "playback_id": "playback_001",
     "project_id_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
