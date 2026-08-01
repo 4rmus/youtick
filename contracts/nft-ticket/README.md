@@ -1,8 +1,9 @@
 # YouTick paid media market contract
 
-Status: `V4 TARGET / CODE ONLY / NOT DEPLOYED`
+Status: `V4 SUPERSEDED / CODE ONLY / NOT DEPLOYED`
 
-This crate builds the fresh paid-only v4 market contract. The deployed
+This crate builds the superseded paid-only v4 market contract. It is retained
+as code-only history while the Livepeer v1 target is implemented. The deployed
 public-alpha contract remains unchanged until a separately approved cutover.
 
 The contract supports:

@@ -1,0 +1,332 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://youtick.net/protocol/paid-media-livepeer-v1/schema.json",
+  "title": "YouTick paid media Livepeer v1 golden vectors",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_id",
+    "profile_id",
+    "limits",
+    "operator",
+    "upload_intent",
+    "finalize_publication",
+    "playback_token_request"
+  ],
+  "properties": {
+    "protocol_id": {
+      "const": "youtick.paid-media-livepeer-v1.protocol.v1"
+    },
+    "profile_id": {
+      "const": "paid-media-livepeer-v1"
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_source_bytes", "initial_browser_matrix"],
+      "properties": {
+        "max_source_bytes": {
+          "const": "20000000000"
+        },
+        "initial_browser_matrix": {
+          "const": ["desktop-chrome", "desktop-edge"]
+        }
+      }
+    },
+    "operator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method_names", "deposit_yocto", "full_access"],
+      "properties": {
+        "method_names": {
+          "const": [
+            "finalize_livepeer_publication",
+            "suspend_livepeer_sales"
+          ]
+        },
+        "deposit_yocto": {
+          "const": "0"
+        },
+        "full_access": {
+          "const": false
+        }
+      }
+    },
+    "upload_intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "body",
+        "canonical_body",
+        "body_sha256",
+        "envelope",
+        "canonical_message"
+      ],
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/upload_intent_body"
+        },
+        "canonical_body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "body_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "envelope": {
+          "$ref": "#/$defs/control_envelope"
+        },
+        "canonical_message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "finalize_publication": {
+      "$ref": "#/$defs/finalize_publication"
+    },
+    "playback_token_request": {
+      "$ref": "#/$defs/playback_token_request"
+    }
+  },
+  "$defs": {
+    "plain_string": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\r\\n]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "decimal_u64": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "account_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$"
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+    },
+    "playback_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{6,128}$"
+    },
+    "upload_intent_body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id",
+        "generation",
+        "expected_source_bytes",
+        "profile_id",
+        "profile_config_sha256"
+      ],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/job_id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expected_source_bytes": {
+          "$ref": "#/$defs/decimal_u64"
+        },
+        "profile_id": {
+          "const": "paid-media-livepeer-v1"
+        },
+        "profile_config_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "control_envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "domain",
+        "version",
+        "method",
+        "route",
+        "network",
+        "contract_id",
+        "account_id",
+        "resource",
+        "session_public_key",
+        "origin",
+        "device_nonce",
+        "expires_at_ms",
+        "body_sha256"
+      ],
+      "properties": {
+        "domain": {
+          "const": "youtick.paid-media-livepeer-v1.control"
+        },
+        "version": {
+          "const": "1"
+        },
+        "method": {
+          "const": "POST"
+        },
+        "route": {
+          "enum": ["/v1/upload-intents", "/v1/playback-tokens"]
+        },
+        "network": {
+          "enum": ["testnet", "mainnet"]
+        },
+        "contract_id": {
+          "$ref": "#/$defs/account_id"
+        },
+        "account_id": {
+          "$ref": "#/$defs/account_id"
+        },
+        "resource": {
+          "$ref": "#/$defs/plain_string"
+        },
+        "session_public_key": {
+          "type": "string",
+          "pattern": "^ed25519:[1-9A-HJ-NP-Za-km-z]{32,64}$"
+        },
+        "origin": {
+          "type": "string",
+          "pattern": "^https://[^\\r\\n]+$"
+        },
+        "device_nonce": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "expires_at_ms": {
+          "$ref": "#/$defs/decimal_u64"
+        },
+        "body_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "finalize_publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id",
+        "generation",
+        "creator_id",
+        "expected_source_bytes",
+        "profile_id",
+        "profile_config_sha256",
+        "asset_id_hash",
+        "playback_id",
+        "project_id_hash",
+        "verified_source_bytes",
+        "ready_at_ms",
+        "availability"
+      ],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/job_id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "creator_id": {
+          "$ref": "#/$defs/account_id"
+        },
+        "expected_source_bytes": {
+          "$ref": "#/$defs/decimal_u64"
+        },
+        "profile_id": {
+          "const": "paid-media-livepeer-v1"
+        },
+        "profile_config_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "asset_id_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "playback_id": {
+          "$ref": "#/$defs/playback_id"
+        },
+        "project_id_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "verified_source_bytes": {
+          "$ref": "#/$defs/decimal_u64"
+        },
+        "provider_source_fingerprint": {
+          "$ref": "#/$defs/sha256"
+        },
+        "ready_at_ms": {
+          "$ref": "#/$defs/decimal_u64"
+        },
+        "availability": {
+          "enum": ["ACTIVE", "SALES_SUSPENDED", "TAKEDOWN"]
+        }
+      }
+    },
+    "playback_token_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "body",
+        "canonical_body",
+        "body_sha256",
+        "envelope",
+        "canonical_message"
+      ],
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/playback_token_body"
+        },
+        "canonical_body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "body_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "envelope": {
+          "$ref": "#/$defs/control_envelope"
+        },
+        "canonical_message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "playback_token_body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id",
+        "generation",
+        "playback_id",
+        "grant_id",
+        "requested_ttl_seconds"
+      ],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/job_id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "playback_id": {
+          "$ref": "#/$defs/playback_id"
+        },
+        "grant_id": {
+          "$ref": "#/$defs/plain_string"
+        },
+        "requested_ttl_seconds": {
+          "type": "integer",
+          "minimum": 120,
+          "maximum": 300
+        }
+      }
+    }
+  }
+}

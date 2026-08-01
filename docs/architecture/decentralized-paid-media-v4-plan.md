@@ -1,9 +1,10 @@
 # Paid Media v4 Implementation Plan
 
-> Status: `DECISION_LOCKED / CLEAN_INTEGRATION_BRANCH / NOT_DEPLOYED`
+> Status: `SUPERSEDED / CODE_ONLY / NOT_DEPLOYED`
 >
-> This is the only active target plan for the paid-media rewrite. The current
-> public-alpha architecture remains live until a separately approved cutover.
+> Superseded by the [NEAR + Livepeer Paid Media v1 Plan](./near-livepeer-paid-media-implementation-plan.md).
+> The current public-alpha architecture remains live until a separately
+> approved cutover.
 
 ## 1. Product scope
 

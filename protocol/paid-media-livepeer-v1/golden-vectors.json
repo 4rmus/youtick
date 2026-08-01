@@ -1,0 +1,85 @@
+{
+  "protocol_id": "youtick.paid-media-livepeer-v1.protocol.v1",
+  "profile_id": "paid-media-livepeer-v1",
+  "limits": {
+    "max_source_bytes": "20000000000",
+    "initial_browser_matrix": ["desktop-chrome", "desktop-edge"]
+  },
+  "operator": {
+    "method_names": [
+      "finalize_livepeer_publication",
+      "suspend_livepeer_sales"
+    ],
+    "deposit_yocto": "0",
+    "full_access": false
+  },
+  "upload_intent": {
+    "body": {
+      "job_id": "job-001",
+      "generation": 1,
+      "expected_source_bytes": "20000000000",
+      "profile_id": "paid-media-livepeer-v1",
+      "profile_config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "canonical_body": "{\"expected_source_bytes\":\"20000000000\",\"generation\":1,\"job_id\":\"job-001\",\"profile_config_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"profile_id\":\"paid-media-livepeer-v1\"}",
+    "body_sha256": "7264b8f4130af1388fb573809915802ee3c2be1c8b7eeba07d267d8161a70e44",
+    "envelope": {
+      "domain": "youtick.paid-media-livepeer-v1.control",
+      "version": "1",
+      "method": "POST",
+      "route": "/v1/upload-intents",
+      "network": "testnet",
+      "contract_id": "paid-media-livepeer-v1.testnet",
+      "account_id": "creator.testnet",
+      "resource": "job:job-001:1",
+      "session_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
+      "origin": "https://app.youtick.net",
+      "device_nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "expires_at_ms": "1785585600000",
+      "body_sha256": "7264b8f4130af1388fb573809915802ee3c2be1c8b7eeba07d267d8161a70e44"
+    },
+    "canonical_message": "youtick.paid-media-livepeer-v1.control\n1\nPOST\n/v1/upload-intents\ntestnet\npaid-media-livepeer-v1.testnet\ncreator.testnet\njob:job-001:1\ned25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF\nhttps://app.youtick.net\nAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n1785585600000\n7264b8f4130af1388fb573809915802ee3c2be1c8b7eeba07d267d8161a70e44"
+  },
+  "finalize_publication": {
+    "job_id": "job-001",
+    "generation": 1,
+    "creator_id": "creator.testnet",
+    "expected_source_bytes": "20000000000",
+    "profile_id": "paid-media-livepeer-v1",
+    "profile_config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "asset_id_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "playback_id": "playback_001",
+    "project_id_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "verified_source_bytes": "20000000000",
+    "provider_source_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "ready_at_ms": "1785589200000",
+    "availability": "ACTIVE"
+  },
+  "playback_token_request": {
+    "body": {
+      "job_id": "job-001",
+      "generation": 1,
+      "playback_id": "playback_001",
+      "grant_id": "play:job-001:buyer.testnet",
+      "requested_ttl_seconds": 180
+    },
+    "canonical_body": "{\"generation\":1,\"grant_id\":\"play:job-001:buyer.testnet\",\"job_id\":\"job-001\",\"playback_id\":\"playback_001\",\"requested_ttl_seconds\":180}",
+    "body_sha256": "eabc1d5e4b46a2c5adf82e5bdf001203d2d1dd39f6a268b0e9ec0ff935b60bff",
+    "envelope": {
+      "domain": "youtick.paid-media-livepeer-v1.control",
+      "version": "1",
+      "method": "POST",
+      "route": "/v1/playback-tokens",
+      "network": "testnet",
+      "contract_id": "paid-media-livepeer-v1.testnet",
+      "account_id": "buyer.testnet",
+      "resource": "playback:job-001:1:playback_001",
+      "session_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
+      "origin": "https://app.youtick.net",
+      "device_nonce": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+      "expires_at_ms": "1785589200000",
+      "body_sha256": "eabc1d5e4b46a2c5adf82e5bdf001203d2d1dd39f6a268b0e9ec0ff935b60bff"
+    },
+    "canonical_message": "youtick.paid-media-livepeer-v1.control\n1\nPOST\n/v1/playback-tokens\ntestnet\npaid-media-livepeer-v1.testnet\nbuyer.testnet\nplayback:job-001:1:playback_001\ned25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF\nhttps://app.youtick.net\nAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\n1785589200000\neabc1d5e4b46a2c5adf82e5bdf001203d2d1dd39f6a268b0e9ec0ff935b60bff"
+  }
+}
