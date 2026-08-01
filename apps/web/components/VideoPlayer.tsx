@@ -2,13 +2,17 @@
 
 import React from 'react';
 import { IpfsPlayer } from './IpfsPlayer';
+import { LivepeerPlayer } from './LivepeerPlayer';
 import { useLanguage } from '@/components/providers/LanguageContext';
+import { FEATURE_FLAGS } from '@/lib/constants';
+import type { LivepeerPlaybackInput } from '@/lib/livepeer-playback';
 
 interface VideoPlayerProps {
     // IPFS data
     cid?: string;
     thumbnailUrl?: string;
     initialDurationSeconds?: number;
+    livepeer?: LivepeerPlaybackInput;
 
     // Player settings
     className?: string;
@@ -21,9 +25,18 @@ export function VideoPlayer({
     cid,
     thumbnailUrl,
     initialDurationSeconds,
+    livepeer,
     className = '',
 }: VideoPlayerProps) {
     const { t } = useLanguage();
+
+    if (livepeer && FEATURE_FLAGS.enablePaidMediaLivepeerV1) {
+        return (
+            <div className={`video-player-container ${className}`}>
+                <LivepeerPlayer {...livepeer} poster={thumbnailUrl} />
+            </div>
+        );
+    }
 
     if (cid) {
         return (

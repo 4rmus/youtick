@@ -15,7 +15,7 @@
 |---|---|
 | Livepeer component fit | `GO` |
 | Architecture direction | `CONDITIONAL_GO` |
-| Implementation progress | `PR_3_MERGED / PR_4_CODE_ONLY_COMPLETE` |
+| Implementation progress | `PR_4_MERGED / PR_5_CODE_ONLY_COMPLETE` |
 | Testnet and staging | `NO_GO` |
 | Production | `NO_GO` |
 
@@ -563,7 +563,9 @@ Stop for review before PR-4.
 
 ### PR-4 - Webhook, verification and NEAR finalize
 
-Status: `CODE_ONLY_COMPLETE / HARD_DISABLED / NOT_DEPLOYED` on 2026-08-01.
+Status: `MERGED / HARD_DISABLED / NOT_DEPLOYED` on 2026-08-02. PR #66 was
+squash-merged as `origin/main@e61ddb1f8e6d93e819435008c701356c6ccf0457` after
+all scoped GitHub checks passed. No runtime was enabled by the merge.
 The Worker verifies the exact raw webhook body and timestamp, digest-deduplicates
 provider transitions, re-fetches asset and playback state, runs JWT-negative
 HLS/MP4/download probes, and fails closed on project, API token name, policy,
@@ -590,6 +592,27 @@ Acceptance:
 Stop for review before PR-5.
 
 ### PR-5 - Playback
+
+Status: `CODE_ONLY_COMPLETE / REAL_PLAYBACK_CANARY_OPEN / HARD_DISABLED /
+NOT_DEPLOYED` on 2026-08-02.
+
+The disabled implementation adds the signed `/v1/playback-tokens` route. The
+job Durable Object verifies the session signature and atomically consumes its
+nonce, then reads the publication at finality and performs entitlement, grant
+and grant-verification reads at that exact block hash. Account, Play scope,
+resource, origin, device, generation and playback bindings fail closed. A valid
+grant produces a 2-5 minute, grant-expiry-bounded ES256 Livepeer JWT returned
+with `Cache-Control: no-store`.
+
+The browser player keeps the Play grant and rotating JWT in memory, attaches
+the JWT only as the `Livepeer-Jwt` HLS request header and refreshes without a
+wallet prompt. The watch route does not pass Livepeer publication data into the
+player yet, so the feature remains intentionally unwired. Unit tests cover the
+authorization failure matrix, same-final-block reads, JWT claims/signature,
+nonce replay, grant-bounded expiry, header-only delivery, in-memory refresh and
+malformed responses. Real JWT-free/malformed provider denial and successful
+Chrome/Edge playback remain mandatory canary evidence before this phase can be
+accepted for deployment.
 
 Add the session-proof token endpoint and Livepeer player path.
 

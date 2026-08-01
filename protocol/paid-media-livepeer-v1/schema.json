@@ -305,6 +305,8 @@
         "generation",
         "playback_id",
         "grant_id",
+        "origin_hash",
+        "device_hash",
         "requested_ttl_seconds"
       ],
       "properties": {
@@ -320,6 +322,12 @@
         },
         "grant_id": {
           "$ref": "#/$defs/plain_string"
+        },
+        "origin_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "device_hash": {
+          "$ref": "#/$defs/sha256"
         },
         "requested_ttl_seconds": {
           "type": "integer",

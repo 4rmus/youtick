@@ -17,6 +17,10 @@ export interface Env {
     NEAR_NETWORK?: string;
     NEAR_RPC_URL?: string;
     MARKET_CONTRACT_ID?: string;
+    ACCESS_CONTRACT_ID?: string;
+    LIVEPEER_JWT_PRIVATE_KEY?: string;
+    LIVEPEER_JWT_PUBLIC_KEY?: string;
+    LIVEPEER_JWT_ISSUER?: string;
     NEAR_OPERATOR_ACCOUNT_ID?: string;
     NEAR_OPERATOR_PRIVATE_KEY?: string;
     NEAR_OPERATOR_KEY_EPOCH?: string;
@@ -31,11 +35,20 @@ type UploadIntentBody = {
     profile_id: 'paid-media-livepeer-v1';
     profile_config_sha256: string;
 };
+type PlaybackTokenBody = {
+    job_id: string;
+    generation: number;
+    playback_id: string;
+    grant_id: string;
+    origin_hash: string;
+    device_hash: string;
+    requested_ttl_seconds: number;
+};
 type ControlEnvelope = {
     domain: 'youtick.paid-media-livepeer-v1.control';
     version: '1';
     method: 'POST';
-    route: '/v1/upload-intents';
+    route: '/v1/upload-intents' | '/v1/playback-tokens';
     network: 'testnet' | 'mainnet';
     contract_id: string;
     account_id: string;
@@ -48,6 +61,10 @@ type ControlEnvelope = {
 };
 type UploadIntentRequest = {
     body: UploadIntentBody;
+    envelope: ControlEnvelope;
+};
+type PlaybackTokenRequest = {
+    body: PlaybackTokenBody;
     envelope: ControlEnvelope;
 };
 type OnChainJob = {
@@ -138,6 +155,8 @@ const PROFILE_CONFIG_SHA256 = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575b
 const SESSION_METHOD = 'create_paid_job';
 const CONTROL_MAX_FUTURE_MS = 5 * 60 * 1000;
 const WEBHOOK_TOLERANCE_MS = 5 * 60 * 1000;
+const PLAYBACK_MIN_TTL_SECONDS = 120;
+const PLAYBACK_MAX_TTL_SECONDS = 300;
 const FINALIZE_GAS = 50_000_000_000_000n;
 const JOB_KEY = 'job:v1';
 const DEFAULT_ALLOWED_ORIGINS = 'https://youtick.net,https://www.youtick.net';
@@ -148,6 +167,7 @@ const SESSION_KEY_PATTERN = /^ed25519:[1-9A-HJ-NP-Za-km-z]{32,64}$/;
 const NONCE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
+const PLAYBACK_ID_PATTERN = /^[A-Za-z0-9_-]{6,128}$/;
 const OUTBOX_METHODS = new Set<OutboxMethod>([
     'finalize_livepeer_publication',
     'suspend_livepeer_sales',
@@ -164,6 +184,7 @@ const SAFE_ERROR_CODES = new Set([
     'invalid_json',
     'invalid_finalize_request',
     'invalid_outbox',
+    'invalid_playback_request',
     'invalid_upload_intent',
     'invalid_webhook',
     'invalid_webhook_signature',
@@ -180,6 +201,8 @@ const SAFE_ERROR_CODES = new Set([
     'provider_playback_exposed',
     'provider_playback_mismatch',
     'provider_state_invalid',
+    'playback_authorization_unavailable',
+    'playback_denied',
     'protocol_binding_mismatch',
     'provider_create_ambiguous',
     'provider_create_pending',
@@ -201,10 +224,14 @@ export default {
                 controlPlaneReady: env.LIVEPEER_BRIDGE_ENABLED === 'true'
                     && Boolean(env.LIVEPEER_CONTROL)
                     && validWebhookConfig(env),
+                playbackReady: env.LIVEPEER_BRIDGE_ENABLED === 'true'
+                    && Boolean(env.LIVEPEER_CONTROL)
+                    && validPlaybackConfig(env),
             });
         }
 
-        if (request.method === 'OPTIONS' && url.pathname === '/v1/upload-intents') {
+        if (request.method === 'OPTIONS'
+            && ['/v1/upload-intents', '/v1/playback-tokens'].includes(url.pathname)) {
             const origin = request.headers.get('Origin') || '';
             if (!allowedOrigins(env).has(origin)) return json({ error: 'origin_denied' }, 403);
             return withCors(new Response(null, { status: 204 }), origin);
@@ -232,6 +259,18 @@ export default {
             return forwardUploadIntent(request, env);
         }
 
+        if (request.method === 'POST' && url.pathname === '/v1/playback-tokens') {
+            const origin = request.headers.get('Origin') || '';
+            const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
+            if (!PUBLIC_CONTROL_REQUESTS_IMPLEMENTED || env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
+                return withCors(json({ error: 'control_plane_disabled' }, 503), corsOrigin);
+            }
+            if (!env.LIVEPEER_CONTROL || !validPlaybackConfig(env)) {
+                return withCors(json({ error: 'runtime_not_configured' }, 503), corsOrigin);
+            }
+            return forwardPlaybackToken(request, env);
+        }
+
         return json({ error: 'not_found', endpoints: ['/__health'] }, 404);
     },
 };
@@ -249,6 +288,9 @@ export class LivepeerControl {
         try {
             if (request.method === 'POST' && url.pathname === '/v1/upload-intents') {
                 return await this.reserveUploadIntent(request);
+            }
+            if (request.method === 'POST' && url.pathname === '/v1/playback-tokens') {
+                return await this.issuePlaybackToken(request);
             }
             if (request.method === 'POST' && url.pathname === '/internal/outbox') {
                 return await this.enqueueOutbox(request);
@@ -315,6 +357,36 @@ export class LivepeerControl {
         };
         await this.state.storage.put(JOB_KEY, ready);
         return uploadIntentResponse(ready, true);
+    }
+
+    private async issuePlaybackToken(request: Request): Promise<Response> {
+        const input = await parsePlaybackTokenRequest(request, this.env);
+        await verifyControlSignature(request, input.envelope);
+        await this.state.storage.transaction(async (transaction) => {
+            const nonceKey = `nonce:${input.envelope.device_nonce}`;
+            if (await transaction.get(nonceKey)) throw new Error('device_nonce_replayed');
+            await transaction.put(nonceKey, Date.now());
+        });
+
+        const authorization = await readPlaybackAuthorization(this.env, input);
+        const nowMs = Date.now();
+        const remainingSeconds = Math.floor((authorization.grantExpiresAtMs - nowMs) / 1000);
+        if (remainingSeconds < 1) throw new Error('playback_denied');
+        const ttlSeconds = Math.min(input.body.requested_ttl_seconds, remainingSeconds);
+        const issuedAtSeconds = Math.floor(nowMs / 1000);
+        const token = await signLivepeerJwt(
+            this.env,
+            input.body.playback_id,
+            issuedAtSeconds,
+            ttlSeconds,
+        );
+        return json({
+            schema: 'youtick.livepeer-playback-token.v1',
+            playback_id: input.body.playback_id,
+            token,
+            expires_at_ms: String((issuedAtSeconds + ttlSeconds) * 1000),
+            hls_url: livepeerHlsUrl(input.body.playback_id),
+        });
     }
 
     private async enqueueOutbox(request: Request): Promise<Response> {
@@ -445,6 +517,27 @@ export async function forwardUploadIntent(request: Request, env: Env): Promise<R
     }
 }
 
+export async function forwardPlaybackToken(request: Request, env: Env): Promise<Response> {
+    const origin = request.headers.get('Origin') || '';
+    const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
+    try {
+        if (!env.LIVEPEER_CONTROL || !validPlaybackConfig(env)) throw new Error('runtime_not_configured');
+        const forwardingRequest = request.clone();
+        const input = await parsePlaybackTokenRequest(request, env);
+        const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(jobObjectName(
+            input.envelope.network,
+            input.envelope.contract_id,
+            input.body.job_id,
+            input.body.generation,
+        )));
+        return withCors(await object.fetch(forwardingRequest), corsOrigin);
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('livepeer_playback_route_failed', { code }));
+        return withCors(json({ error: code }, errorStatus(code)), corsOrigin);
+    }
+}
+
 export async function forwardLivepeerWebhook(request: Request, env: Env): Promise<Response> {
     try {
         if (!env.LIVEPEER_CONTROL || !validWebhookConfig(env)) {
@@ -518,7 +611,8 @@ async function parseUploadIntentRequest(request: Request, env: Env): Promise<Upl
     const envelope = parseControlEnvelope(value.envelope);
     const bodySha256 = await sha256Hex(canonicalJson(body));
 
-    if (envelope.body_sha256 !== bodySha256
+    if (envelope.route !== '/v1/upload-intents'
+        || envelope.body_sha256 !== bodySha256
         || envelope.resource !== `job:${body.job_id}:${body.generation}`
         || request.headers.get('Origin') !== envelope.origin) {
         throw new Error('protocol_binding_mismatch');
@@ -533,6 +627,65 @@ async function parseUploadIntentRequest(request: Request, env: Env): Promise<Upl
         throw new Error('control_request_expired');
     }
     return { body, envelope };
+}
+
+async function parsePlaybackTokenRequest(request: Request, env: Env): Promise<PlaybackTokenRequest> {
+    const value = await readJsonObject(request);
+    requireExactKeys(value, ['body', 'envelope'], 'invalid_control_request');
+    const body = parsePlaybackTokenBody(value.body);
+    const envelope = parseControlEnvelope(value.envelope);
+    const bodySha256 = await sha256Hex(canonicalJson(body));
+
+    if (envelope.route !== '/v1/playback-tokens'
+        || envelope.body_sha256 !== bodySha256
+        || envelope.resource !== `playback:${body.job_id}:${body.generation}:${body.playback_id}`
+        || body.grant_id !== `play:${body.job_id}:${envelope.account_id}`
+        || request.headers.get('Origin') !== envelope.origin
+        || body.origin_hash !== await sha256Hex(envelope.origin)) {
+        throw new Error('protocol_binding_mismatch');
+    }
+    if (envelope.network !== env.NEAR_NETWORK || envelope.contract_id !== env.MARKET_CONTRACT_ID) {
+        throw new Error('deployment_binding_mismatch');
+    }
+    if (!allowedOrigins(env).has(envelope.origin)) throw new Error('origin_denied');
+    const now = BigInt(Date.now());
+    const expiresAt = BigInt(envelope.expires_at_ms);
+    if (expiresAt <= now || expiresAt > now + BigInt(CONTROL_MAX_FUTURE_MS)) {
+        throw new Error('control_request_expired');
+    }
+    return { body, envelope };
+}
+
+function parsePlaybackTokenBody(value: unknown): PlaybackTokenBody {
+    const body = requireObject(value, 'invalid_playback_request');
+    requireExactKeys(body, [
+        'job_id',
+        'generation',
+        'playback_id',
+        'grant_id',
+        'origin_hash',
+        'device_hash',
+        'requested_ttl_seconds',
+    ], 'invalid_playback_request');
+    if (typeof body.job_id !== 'string'
+        || !JOB_ID_PATTERN.test(body.job_id)
+        || !Number.isSafeInteger(body.generation)
+        || (body.generation as number) < 1
+        || typeof body.playback_id !== 'string'
+        || !PLAYBACK_ID_PATTERN.test(body.playback_id)
+        || typeof body.grant_id !== 'string'
+        || body.grant_id.length > 256
+        || /[\r\n]/.test(body.grant_id)
+        || typeof body.origin_hash !== 'string'
+        || !SHA256_PATTERN.test(body.origin_hash)
+        || typeof body.device_hash !== 'string'
+        || !SHA256_PATTERN.test(body.device_hash)
+        || !Number.isSafeInteger(body.requested_ttl_seconds)
+        || (body.requested_ttl_seconds as number) < PLAYBACK_MIN_TTL_SECONDS
+        || (body.requested_ttl_seconds as number) > PLAYBACK_MAX_TTL_SECONDS) {
+        throw new Error('invalid_playback_request');
+    }
+    return body as PlaybackTokenBody;
 }
 
 function parseUploadBody(value: unknown): UploadIntentBody {
@@ -578,7 +731,7 @@ function parseControlEnvelope(value: unknown): ControlEnvelope {
     if (envelope.domain !== 'youtick.paid-media-livepeer-v1.control'
         || envelope.version !== '1'
         || envelope.method !== 'POST'
-        || envelope.route !== '/v1/upload-intents'
+        || !['/v1/upload-intents', '/v1/playback-tokens'].includes(String(envelope.route))
         || !['testnet', 'mainnet'].includes(String(envelope.network))
         || typeof envelope.contract_id !== 'string'
         || !ACCOUNT_ID_PATTERN.test(envelope.contract_id)
@@ -857,6 +1010,164 @@ function jobRecord(input: UploadIntentRequest): JobRecord {
         profileConfigSha256: input.body.profile_config_sha256,
         createdAtMs: Date.now(),
     };
+}
+
+async function readPlaybackAuthorization(
+    env: Env,
+    input: PlaybackTokenRequest,
+): Promise<{ grantExpiresAtMs: number }> {
+    if (!validPlaybackConfig(env)) throw new Error('runtime_not_configured');
+    const publicationRead = await nearPlaybackView(
+        env,
+        env.MARKET_CONTRACT_ID!,
+        'get_publication',
+        { publication_id: input.body.job_id },
+    );
+    const publication = requireObject(publicationRead.value, 'playback_denied');
+    if (publication.publication_id !== input.body.job_id
+        || publication.generation !== input.body.generation
+        || publication.playback_id !== input.body.playback_id
+        || !['ACTIVE', 'SALES_SUSPENDED'].includes(String(publication.availability))) {
+        throw new Error('playback_denied');
+    }
+
+    const [entitlementRead, grantRead, verificationRead] = await Promise.all([
+        nearPlaybackView(env, env.MARKET_CONTRACT_ID!, 'has_entitlement', {
+            account_id: input.envelope.account_id,
+            publication_id: input.body.job_id,
+        }, publicationRead.blockHash),
+        nearPlaybackView(env, env.ACCESS_CONTRACT_ID!, 'get_session_grant', {
+            session_pk: input.envelope.session_public_key,
+        }, publicationRead.blockHash),
+        nearPlaybackView(env, env.ACCESS_CONTRACT_ID!, 'verify_session_grant', {
+            session_pk: input.envelope.session_public_key,
+            scope: 'Play',
+            resource_id: input.body.job_id,
+            origin_hash: input.body.origin_hash,
+            device_hash: input.body.device_hash,
+        }, publicationRead.blockHash),
+    ]);
+    const grant = requireObject(grantRead.value, 'playback_denied');
+    const verification = requireObject(verificationRead.value, 'playback_denied');
+    if (entitlementRead.value !== true
+        || verification.valid !== true
+        || verification.owner_id !== input.envelope.account_id
+        || grant.owner_id !== input.envelope.account_id
+        || grant.session_pk !== input.envelope.session_public_key
+        || grant.scope !== 'Play'
+        || grant.resource_id !== input.body.job_id
+        || grant.origin_hash !== input.body.origin_hash
+        || grant.device_hash !== input.body.device_hash
+        || grant.revoked !== false
+        || !Number.isSafeInteger(grant.expires_at_ms)
+        || (grant.expires_at_ms as number) <= Date.now()) {
+        throw new Error('playback_denied');
+    }
+    return { grantExpiresAtMs: grant.expires_at_ms as number };
+}
+
+async function nearPlaybackView(
+    env: Env,
+    contractId: string,
+    methodName: string,
+    args: JsonObject,
+    blockId?: string,
+): Promise<{ value: unknown; blockHash: string }> {
+    let response: Response;
+    let payload: { result?: { result?: number[]; block_hash?: unknown }; error?: unknown };
+    try {
+        response = await fetch(env.NEAR_RPC_URL!, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: `paid-media-livepeer-v1-playback-${methodName}`,
+                method: 'query',
+                params: {
+                    request_type: 'call_function',
+                    ...(blockId ? { block_id: blockId } : { finality: 'final' }),
+                    account_id: contractId,
+                    method_name: methodName,
+                    args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify(args))),
+                },
+            }),
+            signal: AbortSignal.timeout(2_500),
+        });
+        payload = await response.json() as typeof payload;
+    } catch {
+        throw new Error('playback_authorization_unavailable');
+    }
+    if (!response.ok
+        || payload.error
+        || !Array.isArray(payload.result?.result)
+        || typeof payload.result.block_hash !== 'string'
+        || (blockId && payload.result.block_hash !== blockId)) {
+        throw new Error('playback_authorization_unavailable');
+    }
+    const raw = new TextDecoder().decode(new Uint8Array(payload.result.result));
+    try {
+        return {
+            value: raw ? JSON.parse(raw) as unknown : null,
+            blockHash: payload.result.block_hash,
+        };
+    } catch {
+        throw new Error('playback_authorization_unavailable');
+    }
+}
+
+async function signLivepeerJwt(
+    env: Env,
+    playbackId: string,
+    issuedAtSeconds: number,
+    ttlSeconds: number,
+): Promise<string> {
+    let privateKey: CryptoKey;
+    try {
+        privateKey = await crypto.subtle.importKey(
+            'pkcs8',
+            decodePkcs8(env.LIVEPEER_JWT_PRIVATE_KEY!),
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            false,
+            ['sign'],
+        );
+    } catch {
+        throw new Error('runtime_not_configured');
+    }
+    const header = base64UrlJson({ alg: 'ES256', typ: 'JWT' });
+    const payload = base64UrlJson({
+        action: 'pull',
+        iss: env.LIVEPEER_JWT_ISSUER,
+        pub: env.LIVEPEER_JWT_PUBLIC_KEY,
+        sub: playbackId,
+        video: 'none',
+        exp: issuedAtSeconds + ttlSeconds,
+        iat: issuedAtSeconds,
+    });
+    const signingInput = `${header}.${payload}`;
+    const signature = await crypto.subtle.sign(
+        { name: 'ECDSA', hash: 'SHA-256' },
+        privateKey,
+        new TextEncoder().encode(signingInput),
+    );
+    return `${signingInput}.${base64UrlBytes(new Uint8Array(signature))}`;
+}
+
+function decodePkcs8(value: string): Uint8Array {
+    const decoded = value.startsWith('-----BEGIN PRIVATE KEY-----') ? value : atob(value);
+    const body = decoded.replace(/(?:-----(?:BEGIN|END) PRIVATE KEY-----|\s)/g, '');
+    return base64Decode(body);
+}
+
+function base64UrlJson(value: JsonObject): string {
+    return base64UrlBytes(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+function base64UrlBytes(value: Uint8Array): string {
+    return bytesToBase64(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function livepeerHlsUrl(playbackId: string): string {
+    return `https://playback.livepeer.studio/asset/hls/${playbackId}/index.m3u8`;
 }
 
 function sameJob(left: JobRecord, right: JobRecord): boolean {
@@ -1472,6 +1783,20 @@ function validProviderVerificationConfig(env: Env): boolean {
         && env.LIVEPEER_API_TOKEN_NAME.length <= 128;
 }
 
+function validPlaybackConfig(env: Env): boolean {
+    return isHttpsUrl(env.NEAR_RPC_URL)
+        && ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '')
+        && ACCOUNT_ID_PATTERN.test(env.ACCESS_CONTRACT_ID || '')
+        && ['testnet', 'mainnet'].includes(env.NEAR_NETWORK || '')
+        && typeof env.LIVEPEER_JWT_PRIVATE_KEY === 'string'
+        && env.LIVEPEER_JWT_PRIVATE_KEY.length >= 64
+        && typeof env.LIVEPEER_JWT_PUBLIC_KEY === 'string'
+        && env.LIVEPEER_JWT_PUBLIC_KEY.length >= 32
+        && !/[\r\n]/.test(env.LIVEPEER_JWT_PUBLIC_KEY)
+        && typeof env.LIVEPEER_JWT_ISSUER === 'string'
+        && isHttpsOrigin(env.LIVEPEER_JWT_ISSUER);
+}
+
 function validOperatorConfig(env: Env): boolean {
     const structurallyValid = isHttpsUrl(env.NEAR_RPC_URL)
         && ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '')
@@ -1597,7 +1922,8 @@ function errorStatus(code: string): number {
     if (code === 'internal_error') return 500;
     if (code === 'origin_denied'
         || code === 'device_key_not_authorized'
-        || code === 'invalid_webhook_signature') return 403;
+        || code === 'invalid_webhook_signature'
+        || code === 'playback_denied') return 403;
     if (code.includes('conflict')
         || code === 'on_chain_job_mismatch'
         || code === 'near_finalize_failed'
@@ -1610,6 +1936,7 @@ function errorStatus(code: string): number {
         || code === 'provider_create_pending') return 409;
     if (code.startsWith('near_')
         || code === 'runtime_not_configured'
+        || code === 'playback_authorization_unavailable'
         || code === 'provider_create_ambiguous') return 503;
     return 400;
 }

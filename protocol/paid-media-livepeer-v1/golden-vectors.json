@@ -61,10 +61,12 @@
       "generation": 1,
       "playback_id": "playback_001",
       "grant_id": "play:job-001:buyer.testnet",
+      "origin_hash": "6f16d4141d34924d1bb00837725dc24e3a1ad5a649a6d761d6d23600c787f6b9",
+      "device_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "requested_ttl_seconds": 180
     },
-    "canonical_body": "{\"generation\":1,\"grant_id\":\"play:job-001:buyer.testnet\",\"job_id\":\"job-001\",\"playback_id\":\"playback_001\",\"requested_ttl_seconds\":180}",
-    "body_sha256": "eabc1d5e4b46a2c5adf82e5bdf001203d2d1dd39f6a268b0e9ec0ff935b60bff",
+    "canonical_body": "{\"device_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"generation\":1,\"grant_id\":\"play:job-001:buyer.testnet\",\"job_id\":\"job-001\",\"origin_hash\":\"6f16d4141d34924d1bb00837725dc24e3a1ad5a649a6d761d6d23600c787f6b9\",\"playback_id\":\"playback_001\",\"requested_ttl_seconds\":180}",
+    "body_sha256": "1ae1a3f9dba9a801b9c0c7ed61b3b53cd2bd1578c494fdcfdc0d64cef45de848",
     "envelope": {
       "domain": "youtick.paid-media-livepeer-v1.control",
       "version": "1",
@@ -78,8 +80,8 @@
       "origin": "https://app.youtick.net",
       "device_nonce": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
       "expires_at_ms": "1785589200000",
-      "body_sha256": "eabc1d5e4b46a2c5adf82e5bdf001203d2d1dd39f6a268b0e9ec0ff935b60bff"
+      "body_sha256": "1ae1a3f9dba9a801b9c0c7ed61b3b53cd2bd1578c494fdcfdc0d64cef45de848"
     },
-    "canonical_message": "youtick.paid-media-livepeer-v1.control\n1\nPOST\n/v1/playback-tokens\ntestnet\npaid-media-livepeer-v1.testnet\nbuyer.testnet\nplayback:job-001:1:playback_001\ned25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF\nhttps://app.youtick.net\nAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\n1785589200000\neabc1d5e4b46a2c5adf82e5bdf001203d2d1dd39f6a268b0e9ec0ff935b60bff"
+    "canonical_message": "youtick.paid-media-livepeer-v1.control\n1\nPOST\n/v1/playback-tokens\ntestnet\npaid-media-livepeer-v1.testnet\nbuyer.testnet\nplayback:job-001:1:playback_001\ned25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF\nhttps://app.youtick.net\nAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\n1785589200000\n1ae1a3f9dba9a801b9c0c7ed61b3b53cd2bd1578c494fdcfdc0d64cef45de848"
   }
 }
