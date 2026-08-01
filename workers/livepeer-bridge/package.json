@@ -7,6 +7,7 @@
         "node": ">=24 <25"
     },
     "scripts": {
+        "canary:browser": "node --env-file-if-exists=.dev.vars scripts/browser-canary-server.mjs",
         "canary:provider": "node --env-file-if-exists=.dev.vars scripts/provider-canary.mjs",
         "canary:tus-resume": "node --env-file-if-exists=.dev.vars scripts/tus-resume-canary.mjs",
         "check": "tsc --noEmit -p tsconfig.json",
@@ -19,6 +20,8 @@
     "devDependencies": {
         "@cloudflare/workers-types": "4.20260510.1",
         "@vitest/ui": "4.1.5",
+        "esbuild": "0.27.3",
+        "tus-js-client": "4.3.1",
         "typescript": "5.9.3",
         "vitest": "4.1.5",
         "wrangler": "4.90.0"
