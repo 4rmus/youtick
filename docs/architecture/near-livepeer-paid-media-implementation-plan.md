@@ -15,7 +15,7 @@
 |---|---|
 | Livepeer component fit | `GO` |
 | Architecture direction | `CONDITIONAL_GO` |
-| Implementation progress | `PR_1_IMPLEMENTED / REVIEW_REQUIRED` |
+| Implementation progress | `PR_2_IMPLEMENTED / REVIEW_REQUIRED` |
 | Testnet and staging | `NO_GO` |
 | Production | `NO_GO` |
 
@@ -398,8 +398,8 @@ Stop for review before PR-1.
 
 ### PR-1 - Contract and ABI
 
-Status: `IMPLEMENTED / REVIEW_REQUIRED / NOT_DEPLOYED` on 2026-08-01.
-Focused unit, invariant, sandbox, ABI, format, clippy and build checks pass.
+Status: `MERGED` by PR #63 at
+`c4b235bfc55111ca0d25c1be13f851c6125ec43f`.
 
 Planned surfaces:
 
@@ -421,7 +421,9 @@ Stop for review before PR-2.
 
 ### PR-2 - Disabled control plane foundation
 
-Status: `BLOCKED_BY_PR_1_REVIEW_AND_RELEVANT_P0_DECISIONS`.
+Status: `IMPLEMENTED / REVIEW_REQUIRED / HARD_DISABLED / NOT_DEPLOYED` on
+2026-08-01. Focused persistence, concurrency, outbox, redaction, type and
+Worker dry-run checks pass.
 
 Create `workers/livepeer-bridge` with Worker routing, SQLite Durable Object
 state, protocol validation, NEAR final reads and persisted outbox primitives.
