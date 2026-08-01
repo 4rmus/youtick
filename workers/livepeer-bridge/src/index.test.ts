@@ -117,7 +117,7 @@ function rpcResponse(): Response {
     });
 }
 
-function accessKeyResponse(): Response {
+function accessKeyResponse(methodNames = ['create_paid_job']): Response {
     return Response.json({
         result: {
             block_hash: BLOCK_HASH,
@@ -125,7 +125,7 @@ function accessKeyResponse(): Response {
                 FunctionCall: {
                     allowance: '100000000000000000000000',
                     receiver_id: CONTRACT_ID,
-                    method_names: ['create_paid_job'],
+                    method_names: methodNames,
                 },
             },
         },
@@ -149,6 +149,7 @@ function backendFetch(options?: {
     providerFailure?: boolean;
     unauthorizedKey?: boolean;
     tusLengthMismatch?: boolean;
+    methodNames?: string[];
 }) {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -161,7 +162,7 @@ function backendFetch(options?: {
                 if (options?.unauthorizedKey) {
                     return Response.json({ result: { permission: 'FullAccess' } });
                 }
-                return accessKeyResponse();
+                return accessKeyResponse(options?.methodNames);
             }
             expect(rpcBody.params.finality).toBe('final');
             return rpcResponse();
@@ -415,6 +416,11 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         const unauthorizedKey = await control.fetch(await controlRequest());
         expect(unauthorizedKey.status).toBe(403);
         expect(await unauthorizedKey.json()).toEqual({ error: 'device_key_not_authorized' });
+
+        vi.stubGlobal('fetch', backendFetch({ methodNames: ['create_paid_job', 'withdraw'] }));
+        const overbroadKey = await control.fetch(await controlRequest());
+        expect(overbroadKey.status).toBe(403);
+        expect(await overbroadKey.json()).toEqual({ error: 'device_key_not_authorized' });
 
         const failingFetch = backendFetch({ providerFailure: true });
         vi.stubGlobal('fetch', failingFetch);

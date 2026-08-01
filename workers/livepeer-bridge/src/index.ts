@@ -680,7 +680,8 @@ async function requireFinalAccessKey(
     const functionCall = requireObject(permission.FunctionCall, 'device_key_not_authorized');
     if (functionCall.receiver_id !== envelope.contract_id
         || !Array.isArray(functionCall.method_names)
-        || !functionCall.method_names.includes(SESSION_METHOD)
+        || functionCall.method_names.length !== 1
+        || functionCall.method_names[0] !== SESSION_METHOD
         || typeof functionCall.allowance !== 'string'
         || !/^[1-9][0-9]*$/.test(functionCall.allowance)) {
         throw new Error('device_key_not_authorized');
@@ -1330,11 +1331,14 @@ async function readOperatorAccessKey(
     const result = requireObject(payload.result, 'runtime_not_configured');
     const permission = requireObject(result.permission, 'runtime_not_configured');
     const functionCall = requireObject(permission.FunctionCall, 'runtime_not_configured');
+    const methodNames = functionCall.method_names;
     if (functionCall.receiver_id !== env.MARKET_CONTRACT_ID
         || typeof functionCall.allowance !== 'string'
         || !/^[1-9][0-9]*$/.test(functionCall.allowance)
-        || !Array.isArray(functionCall.method_names)
-        || !functionCall.method_names.includes('finalize_livepeer_publication')
+        || !Array.isArray(methodNames)
+        || methodNames.length !== OUTBOX_METHODS.size
+        || methodNames.some((method) => typeof method !== 'string' || !OUTBOX_METHODS.has(method as OutboxMethod))
+        || Array.from(OUTBOX_METHODS).some((method) => !methodNames.includes(method))
         || typeof result.nonce !== 'number'
         || !Number.isSafeInteger(result.nonce)
         || typeof result.block_hash !== 'string') {

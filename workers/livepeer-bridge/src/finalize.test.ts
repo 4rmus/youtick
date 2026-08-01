@@ -213,6 +213,7 @@ function operatorRpc(options?: {
     onSend?: (signedTx: string) => void;
     publicationFor?: (jobId: string) => unknown;
     sendThrowsOnce?: boolean;
+    methodNames?: string[];
 }) {
     let sendCount = 0;
     return vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -229,7 +230,8 @@ function operatorRpc(options?: {
                         FunctionCall: {
                             allowance: '8000000000000000000000',
                             receiver_id: CONTRACT_ID,
-                            method_names: ['finalize_livepeer_publication', 'suspend_livepeer_sales'],
+                            method_names: options?.methodNames
+                                ?? ['finalize_livepeer_publication', 'suspend_livepeer_sales'],
                         },
                     },
                 },
@@ -449,6 +451,18 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(response.status).toBe(409);
         expect(await response.json()).toEqual({ error: 'near_finalize_mismatch' });
         expect(testState.values.get('outbox:job-001:1:finalize')).toMatchObject({ state: 'PENDING' });
+    });
+
+    it.each([
+        [['finalize_livepeer_publication']],
+        [['finalize_livepeer_publication', 'suspend_livepeer_sales', 'withdraw']],
+    ])('rejects an operator key without the exact method allowlist', async (methodNames) => {
+        const control = new LivepeerControl(createState().state, createEnv());
+        vi.stubGlobal('fetch', operatorRpc({ methodNames }));
+
+        const response = await control.fetch(await finalizeRequest());
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'runtime_not_configured' });
     });
 
     it('serializes two jobs onto distinct nonces and confirms the exact chain tuples', async () => {
