@@ -8,6 +8,7 @@
     },
     "scripts": {
         "canary:browser": "node --env-file-if-exists=.dev.vars scripts/browser-canary-server.mjs",
+        "canary:network-endpoint": "node --env-file-if-exists=.dev.vars scripts/network-endpoint-canary.mjs",
         "canary:provider": "node --env-file-if-exists=.dev.vars scripts/provider-canary.mjs",
         "canary:tus-resume": "node --env-file-if-exists=.dev.vars scripts/tus-resume-canary.mjs",
         "check": "tsc --noEmit -p tsconfig.json",

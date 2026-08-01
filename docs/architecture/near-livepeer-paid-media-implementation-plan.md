@@ -468,7 +468,7 @@ Stop for review before PR-3.
 
 ### PR-3 - Livepeer upload and provider canaries
 
-Status: `CODE_ONLY_PARTIAL / 8_MIB_BROWSER_RESUME_PASS / PROVIDER_FIX_OPEN / RUNTIME_NOT_DEPLOYED`
+Status: `CODE_ONLY_PARTIAL / 8_MIB_BROWSER_RESUME_PASS / NETWORK_ENDPOINT_5M_PASS / PROVIDER_FIX_OPEN / RUNTIME_NOT_DEPLOYED`
 on 2026-08-01. JWT intent creation and delete/not-found cleanup pass in the
 dedicated Sandbox project. The first approved Chrome run reproduced a deployed
 S3 offset bug with 1 MiB chunks: HEAD omitted the incomplete part, the next
@@ -483,9 +483,14 @@ the final 4 MiB completed successfully. Cleanup returned delete HTTP 204,
 post-delete GET HTTP 404 and authenticated inventory `0`. Provider remediation
 and supported mitigation remain tracked in
 [Studio issue #2352](https://github.com/livepeer/studio/issues/2352). Chrome
-restart therefore passes under the 8 MiB workaround; Edge, sleep/network loss,
-endpoint lifetime and exact 20 GB remain open. A new provider mutation requires
-renewed asset-budget approval. See
+restart therefore passes under the 8 MiB workaround. A later exact 20 MiB
+network canary proved CORS, an unknown opaque endpoint returning 404, a
+five-minute idle window preserving the 8 MiB offset and recovery after a live
+HTTPS PATCH disconnect. The provider committed no partial progress from the
+interrupted PATCH, so HEAD remained authoritative and only the missing bytes
+were resent. Desktop Edge, device sleep/wake, a contractual endpoint
+lifetime/refresh/revoke policy and exact 20 GB remain open. A new provider
+mutation requires renewed asset-budget approval. See
 [the bounded provider receipt](../evidence/livepeer-provider-canary-2026-08-01.md).
 
 The disabled implementation now includes the signed upload-intent route,
@@ -494,7 +499,9 @@ Durable Object state, JWT provider request, and the browser `tus-js-client`
 flow. The browser fixes `chunkSize` at 8 MiB, accepts a smaller final chunk,
 resumes one unambiguous local upload URL and does not retry HTTP 409 offset
 conflicts. `CREATE_PENDING` and `CREATE_AMBIGUOUS` never create a second asset.
-No runtime was enabled and no additional provider asset was created.
+No runtime was enabled. The later bounded network/endpoint canary created one
+zero-media probe asset and one 20 MiB media-bearing asset; both were deleted and
+the authenticated project inventory returned to `0`.
 UI activation remains intentionally unwired until production key provisioning,
 rotation and budget controls are implemented and the mandatory provider P0
 evidence closes. The bounded testnet allowance receipt does not enable runtime.

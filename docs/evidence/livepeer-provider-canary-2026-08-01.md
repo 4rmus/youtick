@@ -1,6 +1,6 @@
 # Livepeer provider canary evidence - 2026-08-01
 
-Status: `PARTIAL / 8_MIB_BROWSER_RESUME_PASS / PROVIDER_FIX_OPEN / SANDBOX CLEAN`
+Status: `PARTIAL / 8_MIB_BROWSER_RESUME_PASS / NETWORK_ENDPOINT_5M_PASS / PROVIDER_FIX_OPEN / SANDBOX CLEAN`
 
 This evidence belongs to PR-3. It is a bounded Sandbox and Chrome provider
 receipt, not testnet, staging or production proof.
@@ -15,6 +15,12 @@ receipt, not testnet, staging or production proof.
   the proposed 8 MiB product default;
 - every asset deleted after evidence collection;
 - provider feature and public Worker route remain disabled.
+
+The later network/endpoint request authorized one bounded 20 MiB media canary.
+An initial zero-media asset was also created and deleted when the first probe
+incorrectly assumed that the upload `Location` would carry a separate query
+token. The corrected run used one media-bearing asset, changed no paid-plan or
+payment setting and ended with an empty project inventory.
 
 No API key, raw asset ID, playback ID or bearer TUS URL is recorded here.
 
@@ -31,9 +37,15 @@ No API key, raw asset ID, playback ID or bearer TUS URL is recorded here.
 | Orphan cleanup | `PASS` | Latest asset delete HTTP 204, immediate GET HTTP 404; final authenticated project asset inventory count `0` |
 | Chrome CORS | `PASS / TRANSPORT ONLY` | Chrome completed cross-origin TUS creation and reached PATCH/HEAD provider responses; no browser CORS rejection occurred |
 | Chrome restart | `PASS / 8_MIB_WORKAROUND` | Two page reloads resumed at 8 MiB (40%) and 16 MiB (80%), then completed the exact 20 MiB source |
+| Network interruption | `PASS / PROVIDER TRANSPORT` | A live 8 MiB HTTPS PATCH was disconnected after attempting 1 MiB; HEAD remained at 8 MiB, so the client resent the second 8 MiB and completed with the final 4 MiB |
+| Endpoint idle lifetime | `PASS / BOUNDED 5 MINUTES` | After 300,000 ms without a request, HEAD preserved the exact 8 MiB offset; measured endpoint age at resume was 341,361 ms |
+| Endpoint CORS | `PASS` | OPTIONS returned HTTP 204 for the local browser origin and allowed GET, HEAD, PUT, PATCH, POST and DELETE with the required TUS headers |
+| Opaque endpoint capability | `PASS` | The returned upload `Location` had no query component; an unknown opaque location returned HTTP 404 |
+| Desktop Edge | `BLOCKED / NOT RUN` | Microsoft Edge and an Edge browser connection were unavailable on the test machine; Chrome was not substituted as Edge evidence |
+| Device sleep | `OPEN` | A no-request idle window was measured, not an operating-system sleep/wake cycle |
 | Account availability | `PASS` | Read-only account check returned HTTP 200 with `disabled=false` and `suspended=false`; the upload completed |
 | Exact 20 GB / +1 byte | `OPEN` | Not attempted |
-| Endpoint lifetime and billing | `OPEN` | Not measured |
+| Contractual endpoint lifetime and billing | `OPEN` | The canary proves only one bounded five-minute idle window; refresh, revoke and billing behavior remain unspecified |
 
 The first successful no-media receipt used correlation ID
 `1b8af518-e55a-48bf-92fe-7e812a41e9a0` and recorded:
@@ -87,6 +99,20 @@ The redacted receipt recorded:
   `89dff9ab22eb82ae70891d98b0cc0932fefc8488f4909cf648f22a1e5de86ca3`;
 - create HTTP 200, delete HTTP 204 and post-delete GET HTTP 404;
 - final authenticated project inventory count `0`.
+
+The later network/endpoint canary used the same exact 20 MiB synthetic source.
+It recorded:
+
+- source bytes `20,971,520` and chunk bytes `8,388,608`;
+- endpoint idle window `300,000 ms` and age at successful resume `341,361 ms`;
+- first and post-interruption provider offsets both `8,388,608`;
+- interrupted PATCH declared `8,388,608` bytes and attempted `1,048,576`
+  bytes before the client destroyed the connection;
+- final offset `20,971,520`;
+- asset ID SHA-256
+  `19c90863d2333fc0e1bb4bdffa70134cc4f100ecf88211082ffe2e967bd7b50f`;
+- delete HTTP 204, post-delete GET HTTP 404 and final authenticated project
+  inventory count `0`.
 
 The source is transport-only synthetic data and is not valid media or playback
 proof. No raw asset ID, bearer TUS URL or API key is retained in this evidence.
@@ -151,5 +177,7 @@ provider remediation or supported mitigation. The fixed-size product default
 naturally proves two non-final restart points at 8 MiB (40%) and 16 MiB (80%)
 for this 20 MiB source; the earlier exact 30%/70% fixture is no longer the
 product-default acceptance fixture. Any rerun requires a new explicit
-asset-budget approval. Edge, sleep/network loss, endpoint lifetime and exact
-20 GB remain open.
+asset-budget approval. Provider-level network interruption and a bounded
+five-minute endpoint window now pass. Desktop Edge, device sleep/wake, a
+contractual endpoint lifetime/refresh/revoke policy and exact 20 GB remain
+open.

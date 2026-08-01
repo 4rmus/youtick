@@ -47,9 +47,17 @@ provider identities and HTTP status evidence.
 npm run test:provider-canary
 LIVEPEER_PROVIDER_CANARY_MUTATIONS=true npm run canary:provider
 LIVEPEER_PROVIDER_CANARY_MUTATIONS=true npm run canary:tus-resume -- /path/to/canary.mp4 30,70
+LIVEPEER_PROVIDER_CANARY_MUTATIONS=true npm run canary:network-endpoint
 ```
 
 Use a dedicated Sandbox project and backend-only API key in `.dev.vars`. Never
 commit the key or enable CORS access for it. The TUS script proves provider
 offset behavior from a developer machine; it does not prove browser CORS or the
 Chrome/Edge restart matrix.
+
+The network-endpoint canary uses one exact 20 MiB synthetic source with fixed
+8 MiB chunks. It measures a five-minute idle endpoint window, rejects an unknown
+opaque upload capability, interrupts one live HTTPS PATCH, resumes from HEAD
+offset, completes only the missing bytes and deletes the asset. It does not
+prove Microsoft Edge behavior or an endpoint lifetime beyond the measured
+window.
