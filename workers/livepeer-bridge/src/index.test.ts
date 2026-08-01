@@ -285,6 +285,27 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             .toBe('operator:testnet:ed25519:key:2');
     });
 
+    it('accepts exact 20 GB and rejects one byte more before provider forwarding', async () => {
+        const fetchStub = vi.fn(async () => Response.json({ state: 'UPLOAD_READY' }));
+        const idFromName = vi.fn(() => ({ toString: () => 'object-id' }));
+        const get = vi.fn(() => ({ fetch: fetchStub }));
+        const env = createEnv({
+            LIVEPEER_CONTROL: { idFromName, get } as unknown as DurableObjectNamespace,
+        });
+
+        const exact = await forwardUploadIntent(await controlRequest({
+            body: { expected_source_bytes: '20000000000' },
+        }), env);
+        expect(exact.status).toBe(200);
+
+        const tooLarge = await forwardUploadIntent(await controlRequest({
+            body: { expected_source_bytes: '20000000001' },
+        }), env);
+        expect(tooLarge.status).toBe(400);
+        expect(await tooLarge.json()).toEqual({ error: 'invalid_upload_intent' });
+        expect(fetchStub).toHaveBeenCalledOnce();
+    });
+
     it('accepts one concurrent reservation winner after final NEAR reads', async () => {
         const testState = createState();
         const control = new LivepeerControl(testState.state, createEnv());

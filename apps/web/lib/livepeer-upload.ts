@@ -24,6 +24,11 @@ export async function requestLivepeerUploadIntent(input: {
     expectedSourceBytes: number;
 }): Promise<LivepeerUploadIntent> {
     requireFeature();
+    if (!Number.isSafeInteger(input.expectedSourceBytes)
+        || input.expectedSourceBytes < 1
+        || input.expectedSourceBytes > MEDIA_UPLOAD_POLICY.paidSourceMaxBytes) {
+        throw new Error('source_limit_exceeded');
+    }
     const keyPair = getActiveUploadSessionKey(input.accountId);
     if (!keyPair) throw new Error('livepeer_session_key_missing');
     const route = '/v1/upload-intents';

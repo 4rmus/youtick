@@ -1,6 +1,6 @@
 # NEAR + Livepeer Paid Media v1 Implementation Plan
 
-> Status: `DECISION_LOCKED / CONDITIONAL_GO / NOT_DEPLOYED`
+> Status: `DECISION_LOCKED / CONDITIONAL_GO / TESTNET_EVIDENCE_ONLY / RUNTIME_NOT_DEPLOYED`
 >
 > Initial baseline: `origin/main@c1c59f6a30006492582ab3898b7bba466b9e7f2c`
 >
@@ -363,10 +363,32 @@ Current gate ownership:
 | P0 scope | Status | Blocks |
 |---|---|---|
 | Provider upload, recovery, browser, metadata, playback, deletion and billing evidence (1-7) | `OPEN / PROVIDER_CANARY_REQUIRED` | Provider-facing PR-3 and PR-4 behavior |
-| Refund, takedown and exact resume policy (8) | `OPEN / PRODUCT_GOVERNANCE_DECISION_REQUIRED` | PR-4 policy and PR-6 operations |
+| Refund, takedown and exact resume policy (8) | `LOCKED / IMPLEMENTATION_PENDING` | PR-4 and PR-6 must implement the locked policy |
 | Desktop Chrome and Edge matrix (9) | `LOCKED` | Safari/iOS claims remain excluded |
 | Method allowlist and governance/timelock principle (10) | `LOCKED` | None for disabled PR-2 primitives |
-| Numeric key allowance and exact governance account (10) | `OPEN / OPERATOR_EVIDENCE_REQUIRED` | Transaction signing, key provisioning and deployment |
+| Numeric key allowance and exact governance account (10) | `TESTNET_MEASURED / PRODUCTION_BUDGET_OPEN` | Production key provisioning and deployment |
+
+Accepted 2026-08-01 product and operator decisions:
+
+- Browser, bridge and contract accept decimal `20_000_000_000` bytes and reject
+  `20_000_000_001` before provider mutation. The exact 20 GB provider canary
+  remains open; a +1-byte provider upload is forbidden.
+- One creator FunctionCall key is scoped to the exact market and
+  `create_paid_job`, uses a five-minute signed-request window and is removed
+  after intent creation or expiry. The bounded testnet profile measured
+  `5 TGas` with `0.008 NEAR`; production must re-measure.
+- The separate bridge FunctionCall key is scoped to the exact market and only
+  `finalize_livepeer_publication` plus `suspend_livepeer_sales`. Platform
+  governance owns key add/remove and rotation; FullAccess is forbidden.
+- Sales do not open before provider-ready finalization. Sales suspension blocks
+  new purchases while preserving existing playback. Takedown blocks sales and
+  playback while preserving entitlement history and an audit record.
+- Closed-canary refunds for permanent provider loss or takedown are manual and
+  recorded. Only the creator may restart an unpublished job; restart increments
+  generation and invalidates older work. Published jobs cannot restart.
+
+The account, transaction and cleanup receipt is
+[the bounded testnet allowance evidence](../evidence/near-livepeer-testnet-allowance-2026-08-01.md).
 
 PR-2 may implement only the disabled persistence, validation, final-read and
 outbox primitives. It must not add provider mutation, request-signature bypass,
@@ -446,7 +468,7 @@ Stop for review before PR-3.
 
 ### PR-3 - Livepeer upload and provider canaries
 
-Status: `CODE_ONLY_PARTIAL / 8_MIB_BROWSER_RESUME_PASS / PROVIDER_FIX_OPEN / NOT_DEPLOYED`
+Status: `CODE_ONLY_PARTIAL / 8_MIB_BROWSER_RESUME_PASS / PROVIDER_FIX_OPEN / RUNTIME_NOT_DEPLOYED`
 on 2026-08-01. JWT intent creation and delete/not-found cleanup pass in the
 dedicated Sandbox project. The first approved Chrome run reproduced a deployed
 S3 offset bug with 1 MiB chunks: HEAD omitted the incomplete part, the next
@@ -473,8 +495,9 @@ flow. The browser fixes `chunkSize` at 8 MiB, accepts a smaller final chunk,
 resumes one unambiguous local upload URL and does not retry HTTP 409 offset
 conflicts. `CREATE_PENDING` and `CREATE_AMBIGUOUS` never create a second asset.
 No runtime was enabled and no additional provider asset was created.
-UI activation remains intentionally unwired until the numeric session-key
-allowance and funding policy in P0 gate 10 is approved.
+UI activation remains intentionally unwired until production key provisioning,
+rotation and budget controls are implemented and the mandatory provider P0
+evidence closes. The bounded testnet allowance receipt does not enable runtime.
 
 Add the Livepeer client, upload-intent route, `tus-js-client` browser flow,
 device-key request signing and focused UI tests. Do not port the R2 upload path.

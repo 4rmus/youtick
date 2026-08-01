@@ -121,6 +121,33 @@ describe('Livepeer browser upload', () => {
         expect(request.envelope.body_sha256).toMatch(/^[0-9a-f]{64}$/);
     });
 
+    it('accepts exact 20 GB and rejects one byte more before bridge use', async () => {
+        const exactIntent = {
+            ...INTENT,
+            job_id: 'job-max',
+            expected_source_bytes: '20000000000',
+        };
+        const fetchMock = vi.fn<(
+            input: RequestInfo | URL,
+            init?: RequestInit,
+        ) => Promise<Response>>().mockResolvedValue(Response.json(exactIntent, { status: 201 }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        await expect(requestLivepeerUploadIntent({
+            accountId: 'creator.testnet',
+            jobId: 'job-max',
+            generation: 1,
+            expectedSourceBytes: 20_000_000_000,
+        })).resolves.toEqual(exactIntent);
+        await expect(requestLivepeerUploadIntent({
+            accountId: 'creator.testnet',
+            jobId: 'job-too-large',
+            generation: 1,
+            expectedSourceBytes: 20_000_000_001,
+        })).rejects.toThrow('source_limit_exceeded');
+        expect(fetchMock).toHaveBeenCalledOnce();
+    });
+
     it('resumes with fixed 8 MiB chunks and does not retry an offset conflict', async () => {
         const previous = {
             size: SOURCE_BYTES,

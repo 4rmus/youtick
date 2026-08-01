@@ -1,9 +1,10 @@
 # Paid media Livepeer v1 protocol
 
-Status: `CODE_ONLY / BLOCKED_BY_P0_DECISIONS / NOT_DEPLOYED`
+Status: `BOUNDED_TESTNET_CONTRACT / PRODUCT_P0_LOCKED / PROVIDER_P0_OPEN / RUNTIME_DISABLED`
 
 This directory locks the messages shared by the future web, bridge Worker and
-NEAR contracts. It does not implement or enable any runtime.
+NEAR contracts. A dedicated testnet contract exists for bounded allowance
+evidence; no Worker, web, staging or production runtime is enabled.
 
 ## Constants
 
@@ -20,9 +21,22 @@ NEAR contracts. It does not implement or enable any runtime.
 - operator key: finite-allowance FunctionCall key for the exact receiver;
   FullAccess is forbidden.
 
-The size constant is an admission and contract value. Whether Livepeer can
-reject `20_000_000_001` before provider cost remains a P0 decision/canary and
-must not be inferred from this schema.
+The size constant is an admission and contract value. Browser, bridge and
+contract reject `20_000_000_001` before provider mutation. One exact decimal
+`20_000_000_000`-byte provider upload remains a production canary; a +1-byte
+provider upload is neither required nor allowed.
+
+Creator upload authorization uses one finite-allowance FunctionCall key per
+job, restricted to the exact market and `create_paid_job`. The signed bridge
+request expires within five minutes, the key is removed after intent creation
+or expiry, and a reused nonce fails. The 2026-08-01 testnet measurement locks
+`5 TGas` and `0.008 NEAR` allowance for the bounded test profile; production
+must re-measure instead of copying that value.
+
+The bridge operator uses a separate finite-allowance FunctionCall key for the
+exact market and only `finalize_livepeer_publication` and
+`suspend_livepeer_sales`. The platform governance account controls add/remove
+and rotation; the runtime never holds a FullAccess key.
 
 ## Bound identity
 
@@ -87,7 +101,22 @@ Publication availability is separate from immutable identity:
 - `SALES_SUSPENDED`: new sales fail; existing entitlement playback is allowed;
 - `TAKEDOWN`: new sales and playback tokens fail; entitlement history remains.
 
-Refund and resume authority remain P0 product/governance decisions.
+The accepted product policy is:
+
+- sale cannot open before a provider-ready publication is finalized;
+- `SALES_SUSPENDED` rejects new purchases and preserves existing entitlement
+  playback;
+- `TAKEDOWN` rejects new purchases and playback while preserving entitlement
+  history and an auditable action record;
+- closed-canary refunds for permanent provider loss or takedown are manual and
+  recorded; automatic refund logic is deferred until volume justifies it;
+- only the creator may restart an unpublished job; restart increments the
+  generation and invalidates older intent, webhook and finalize work;
+- a published job cannot restart and requires a new publication job.
+
+The contract, Worker and operations implementation of the remaining takedown
+and refund actions belongs to PR-4 and PR-6; this protocol text does not claim
+that those later runtime paths are deployed.
 
 ## Playback token request
 
