@@ -15,7 +15,7 @@
 |---|---|
 | Livepeer component fit | `GO` |
 | Architecture direction | `CONDITIONAL_GO` |
-| Implementation progress | `PR_2_IMPLEMENTED / REVIEW_REQUIRED` |
+| Implementation progress | `PR_2_MERGED / PR_3_PROVIDER_CANARY_PARTIAL` |
 | Testnet and staging | `NO_GO` |
 | Production | `NO_GO` |
 
@@ -421,9 +421,9 @@ Stop for review before PR-2.
 
 ### PR-2 - Disabled control plane foundation
 
-Status: `IMPLEMENTED / REVIEW_REQUIRED / HARD_DISABLED / NOT_DEPLOYED` on
-2026-08-01. Focused persistence, concurrency, outbox, redaction, type and
-Worker dry-run checks pass.
+Status: `MERGED / HARD_DISABLED / NOT_DEPLOYED` by PR #64 at
+`298e9395225a7f6c5473810454615bee2e92e096`. Focused persistence,
+concurrency, outbox, redaction, type and Worker dry-run checks pass.
 
 Create `workers/livepeer-bridge` with Worker routing, SQLite Durable Object
 state, protocol validation, NEAR final reads and persisted outbox primitives.
@@ -440,6 +440,13 @@ Acceptance:
 Stop for review before PR-3.
 
 ### PR-3 - Livepeer upload and provider canaries
+
+Status: `PROVIDER_CANARY_PARTIAL / RESUME_P0_OPEN / NOT_DEPLOYED` on
+2026-08-01. JWT intent creation and delete/not-found cleanup pass in the
+dedicated Sandbox project. The 30% TUS PATCH reported the expected offset, but
+subsequent HEAD requests remained at zero; 70%, browser CORS/restart and exact
+20 GB gates remain open. See
+[the bounded provider receipt](../evidence/livepeer-provider-canary-2026-08-01.md).
 
 Add the Livepeer client, upload-intent route, `tus-js-client` browser flow,
 device-key request signing and focused UI tests. Do not port the R2 upload path.
