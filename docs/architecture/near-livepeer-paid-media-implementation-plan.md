@@ -379,7 +379,7 @@ Current gate ownership:
 
 | P0 scope | Status | Blocks |
 |---|---|---|
-| Provider upload, recovery, browser, metadata, playback, deletion and billing evidence (1-7) | `PARTIAL / EXACT_LENGTH_BOUND / OTHER_PROVIDER_GATES_OPEN` | Remaining provider-facing PR-3 and PR-4 behavior |
+| Provider upload, recovery, browser, metadata, playback, deletion and billing evidence (1-7) | `PARTIAL / EXACT_LENGTH_BOUND / 15M_IDLE_PASS / TUS_REVOKE_PASS / OTHER_GATES_OPEN` | Remaining provider-facing PR-3 and PR-4 behavior |
 | Refund, takedown and exact resume policy (8) | `LOCKED / IMPLEMENTATION_PENDING` | PR-4 and PR-6 must implement the locked policy |
 | Desktop Chrome and Edge matrix (9) | `LOCKED` | Safari/iOS claims remain excluded |
 | Method allowlist and governance/timelock principle (10) | `LOCKED` | None for disabled PR-2 primitives |
@@ -405,6 +405,23 @@ Accepted 2026-08-01 product and operator decisions:
 - Closed-canary refunds for permanent provider loss or takedown are manual and
   recorded. Only the creator may restart an unpublished job; restart increments
   generation and invalidates older work. Published jobs cannot restart.
+
+Accepted 2026-08-02 cost and endpoint decisions:
+
+- The product assumes Livepeer provides no project hard spend cap and accepts
+  the residual provider-cost risk. This is not public runtime activation;
+  creator allowlist, local active-intent/create quotas and automatic new-intent
+  shutdown remain required before activation.
+- No automatic TUS expiry or refresh API is assumed. A bounded canary proved a
+  15-minute idle resource, but returned no `Upload-Expires`.
+- Asset deletion does not revoke its TUS resource. Cancel, expiry and orphan
+  cleanup must explicitly terminate the persisted TUS URL, verify HEAD 404/410,
+  then delete the asset and verify asset GET 404/410.
+- If a TUS resource disappears, the same generation does not create a new
+  asset. The creator must restart with a new generation.
+
+The endpoint receipt is
+[the bounded lifetime and revoke evidence](../evidence/livepeer-endpoint-revoke-canary-2026-08-02.md).
 
 The account, transaction and cleanup receipt is
 [the bounded testnet allowance evidence](../evidence/near-livepeer-testnet-allowance-2026-08-01.md).
@@ -508,8 +525,10 @@ five-minute idle window preserving the 8 MiB offset and recovery after a live
 HTTPS PATCH disconnect. The provider committed no partial progress from the
 interrupted PATCH, so HEAD remained authoritative and only the missing bytes
 were resent. Desktop Edge, device sleep/wake, a contractual endpoint
-lifetime/refresh/revoke policy and full 20 GB processing remain open. A new provider
-mutation requires renewed asset-budget approval. See
+lifetime and full 20 GB processing remain open. A later one-byte canary extended
+idle evidence to 15 minutes and proved that asset deletion does not revoke the
+TUS resource; explicit TUS DELETE does. A new provider mutation requires renewed
+asset-budget approval. See
 [the bounded provider receipt](../evidence/livepeer-provider-canary-2026-08-01.md).
 
 The disabled implementation now includes the signed upload-intent route,
@@ -632,6 +651,13 @@ not only the number of uploaded assets.
 
 Provider commercial terms, retention and billing must be captured as dated
 evidence before production approval.
+
+The product decision assumes there is no provider-enforced project hard cap
+and accepts that residual risk. Local controls reduce exposure but are not a
+provider hard cap. Before activation the bridge must enforce an explicit
+creator allowlist, bounded active intents and provider creates, a configured
+local budget threshold and automatic rejection of new intents after the first
+limit is reached.
 
 - [Livepeer pricing](https://livepeer.studio/pricing)
 

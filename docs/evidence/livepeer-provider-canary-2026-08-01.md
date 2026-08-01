@@ -41,7 +41,7 @@ changed.
 | Provider identity redaction | `PASS` | Only SHA-256 identities appear in the receipt |
 | Legacy 30% resume | `UNPROVEN / FAIL-CLOSED` | Native PATCH reported offset `8776`; eight HEAD reads reported `0`. Chrome accepted a sub-5 MiB incomplete part, then the next PATCH returned HTTP 409; three retry HEAD reads reported `0` |
 | 8 MiB product-default resume | `PASS / WORKAROUND` | Chrome restarted at natural 8 MiB and 16 MiB boundaries; HEAD returned both offsets and only the missing bytes were uploaded |
-| Orphan cleanup | `PASS` | Latest asset delete HTTP 204, immediate GET HTTP 404; final authenticated project asset inventory count `0` |
+| Orphan cleanup | `PASS / ASSET ONLY` | Asset delete HTTP 204 and GET HTTP 404 clear inventory, but later evidence proves this does not revoke the TUS resource |
 | Chrome CORS | `PASS / TRANSPORT ONLY` | Chrome completed cross-origin TUS creation and reached PATCH/HEAD provider responses; no browser CORS rejection occurred |
 | Chrome restart | `PASS / 8_MIB_WORKAROUND` | Two page reloads resumed at 8 MiB (40%) and 16 MiB (80%), then completed the exact 20 MiB source |
 | Network interruption | `PASS / PROVIDER TRANSPORT` | A live 8 MiB HTTPS PATCH was disconnected after attempting 1 MiB; HEAD remained at 8 MiB, so the client resent the second 8 MiB and completed with the final 4 MiB |
@@ -218,3 +218,8 @@ asset-budget approval. Provider-level network interruption and a bounded
 five-minute endpoint window and exact 20 GB length admission now pass. Desktop
 Edge, device sleep/wake, a contractual endpoint lifetime/refresh/revoke policy
 and full 20 GB transfer/processing remain open.
+
+The later
+[endpoint lifetime and revoke canary](./livepeer-endpoint-revoke-canary-2026-08-02.md)
+supersedes any interpretation that asset DELETE alone revokes an outstanding
+TUS upload capability.
