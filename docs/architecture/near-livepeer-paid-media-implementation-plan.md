@@ -353,6 +353,21 @@ Fail-closed implementation may proceed behind a disabled flag only after the
 affected PR's protocol is locked. No P0 uncertainty may be silently converted
 to a production assumption.
 
+Current gate ownership:
+
+| P0 scope | Status | Blocks |
+|---|---|---|
+| Provider upload, recovery, browser, metadata, playback, deletion and billing evidence (1-7) | `OPEN / PROVIDER_CANARY_REQUIRED` | Provider-facing PR-3 and PR-4 behavior |
+| Refund, takedown and exact resume policy (8) | `OPEN / PRODUCT_GOVERNANCE_DECISION_REQUIRED` | PR-4 policy and PR-6 operations |
+| Desktop Chrome and Edge matrix (9) | `LOCKED` | Safari/iOS claims remain excluded |
+| Method allowlist and governance/timelock principle (10) | `LOCKED` | None for disabled PR-2 primitives |
+| Numeric key allowance and exact governance account (10) | `OPEN / OPERATOR_EVIDENCE_REQUIRED` | Transaction signing, key provisioning and deployment |
+
+PR-2 may implement only the disabled persistence, validation, final-read and
+outbox primitives. It must not add provider mutation, request-signature bypass,
+transaction signing, credentials or deployment while the later gates remain
+open.
+
 ## 12. Pull request sequence
 
 ### PR-0 - Truth, protocol and CI routing
