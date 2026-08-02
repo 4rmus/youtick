@@ -24,12 +24,14 @@ async fn init() -> anyhow::Result<(Contract, Account, Account)> {
     let contract = worker.dev_deploy(wasm).await?;
     let platform = worker.dev_create_account().await?;
     let bridge = worker.dev_create_account().await?;
+    let governance = worker.dev_create_account().await?;
     let creator = worker.dev_create_account().await?;
     contract
         .call("new")
         .args_json(json!({
             "platform_account_id": platform.id(),
             "bridge_account_id": bridge.id(),
+            "takedown_authority_id": governance.id(),
         }))
         .transact()
         .await?

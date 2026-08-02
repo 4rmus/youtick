@@ -13,7 +13,7 @@ const state = vi.hoisted(() => ({
         deviceHash: string;
     },
     hlsInstances: [] as Array<{
-        config: { xhrSetup: (xhr: XMLHttpRequest) => void };
+        config: { xhrSetup: (xhr: XMLHttpRequest, url: string) => void };
         source?: string;
         media?: HTMLVideoElement;
         destroyed: boolean;
@@ -42,12 +42,12 @@ vi.mock('hls.js', () => ({
             return true;
         }
 
-        config: { xhrSetup: (xhr: XMLHttpRequest) => void };
+        config: { xhrSetup: (xhr: XMLHttpRequest, url: string) => void };
         source?: string;
         media?: HTMLVideoElement;
         destroyed = false;
 
-        constructor(config: { xhrSetup: (xhr: XMLHttpRequest) => void }) {
+        constructor(config: { xhrSetup: (xhr: XMLHttpRequest, url: string) => void }) {
             this.config = config;
             state.hlsInstances.push(this);
         }
@@ -161,7 +161,25 @@ describe('Livepeer browser playback', () => {
         const session = await startLivepeerPlayback(video, INPUT);
         const hls = state.hlsInstances[0];
         const setRequestHeader = vi.fn();
-        hls.config.xhrSetup({ setRequestHeader } as unknown as XMLHttpRequest);
+        for (const url of [
+            'https://livepeercdn.com:8443/segment.ts',
+            'https://user:password@livepeercdn.com/segment.ts',
+        ]) {
+            expect(() => hls.config.xhrSetup(
+                { setRequestHeader } as unknown as XMLHttpRequest,
+                url,
+            )).toThrow('livepeer_playback_url_invalid');
+        }
+        expect(setRequestHeader).not.toHaveBeenCalled();
+        for (const url of [
+            'https://asset-cdn.lp-playback.studio/hls/playback_001/segment.ts',
+            'https://asset-cdn.lp-playback.com/hls/recording-001/segment.ts',
+        ]) {
+            hls.config.xhrSetup(
+                { setRequestHeader } as unknown as XMLHttpRequest,
+                url,
+            );
+        }
         expect(setRequestHeader).toHaveBeenCalledWith('Livepeer-Jwt', 'first.token.signature');
         expect(hls.source).toBe(tokenResponse().hls_url);
         expect(hls.media).toBe(video);
@@ -169,7 +187,10 @@ describe('Livepeer browser playback', () => {
         expect(refresh).toBeTypeOf('function');
         await refresh?.();
         expect(fetchMock).toHaveBeenCalledTimes(2);
-        hls.config.xhrSetup({ setRequestHeader } as unknown as XMLHttpRequest);
+        hls.config.xhrSetup(
+            { setRequestHeader } as unknown as XMLHttpRequest,
+            'https://playback.livepeer.studio/asset/hls/playback_001/index.m3u8',
+        );
         expect(setRequestHeader).toHaveBeenLastCalledWith('Livepeer-Jwt', 'second.token.signature');
         session.destroy();
         expect(hls.destroyed).toBe(true);

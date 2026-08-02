@@ -8,6 +8,8 @@ import {
     requestUpload,
 } from './provider-canary.mjs';
 
+throw new Error('legacy_browser_canary_retired_use_canary_playback_live');
+
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.LIVEPEER_BROWSER_CANARY_PORT || 4174);
 const SOURCE_BYTES = 20 * 1024 * 1024;

@@ -43,14 +43,16 @@ async function jwtKeys(): Promise<{ privatePem: string; publicKey: string; verif
     ) as CryptoKeyPair;
     const pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey) as ArrayBuffer);
     const spki = new Uint8Array(await crypto.subtle.exportKey('spki', pair.publicKey) as ArrayBuffer);
+    const privatePem = `-----BEGIN PRIVATE KEY-----\n${base64(pkcs8)}\n-----END PRIVATE KEY-----`;
+    const publicPem = `-----BEGIN PUBLIC KEY-----\n${base64(spki)}\n-----END PUBLIC KEY-----`;
     return {
-        privatePem: `-----BEGIN PRIVATE KEY-----\n${base64(pkcs8)}\n-----END PRIVATE KEY-----`,
-        publicKey: base64(spki),
+        privatePem: base64(new TextEncoder().encode(privatePem)),
+        publicKey: base64(new TextEncoder().encode(publicPem)),
         verifyKey: pair.publicKey,
     };
 }
 
-async function createEnv(): Promise<{ env: Env; verifyKey: CryptoKey }> {
+async function createEnv(): Promise<{ env: Env; verifyKey: CryptoKey; testState: TestState }> {
     const keys = await jwtKeys();
     const env: Env = {
         LIVEPEER_BRIDGE_ENABLED: 'true',
@@ -63,7 +65,29 @@ async function createEnv(): Promise<{ env: Env; verifyKey: CryptoKey }> {
         LIVEPEER_JWT_PUBLIC_KEY: keys.publicKey,
         LIVEPEER_JWT_ISSUER: ORIGIN,
     };
-    const control = new LivepeerControl(createState().state, env);
+    const testState = createState();
+    testState.values.set('job:v1', {
+        schema: 'youtick.livepeer-control-job.v1',
+        state: 'ONCHAIN_PUBLISHED',
+        network: 'testnet',
+        contractId: MARKET_ID,
+        jobId: JOB_ID,
+        generation: 1,
+        creator: 'creator.testnet',
+        expectedSourceBytes: '20000000',
+        profileId: 'paid-media-livepeer-v1',
+        profileConfigSha256: '9'.repeat(64),
+        createdAtMs: Date.now(),
+        playbackId: PLAYBACK_ID,
+    });
+    testState.values.set('reconcile:v1', {
+        schema: 'youtick.livepeer-reconcile.v1',
+        status: 'HEALTHY',
+        consecutiveErrors: 0,
+        nextReconcileAtMs: Date.now() + 900_000,
+        lastGoodAtMs: Date.now(),
+    });
+    const control = new LivepeerControl(testState.state, env);
     env.LIVEPEER_CONTROL = {
         idFromName: vi.fn((name: string) => {
             expect(name).toBe(`job:testnet:${MARKET_ID}:${JOB_ID}:1`);
@@ -71,7 +95,7 @@ async function createEnv(): Promise<{ env: Env; verifyKey: CryptoKey }> {
         }),
         get: vi.fn(() => ({ fetch: (request: Request) => control.fetch(request) })),
     } as unknown as DurableObjectNamespace;
-    return { env, verifyKey: keys.verifyKey };
+    return { env, verifyKey: keys.verifyKey, testState };
 }
 
 async function playbackRequest(overrides?: {
@@ -295,6 +319,7 @@ describe('Livepeer bridge PR-5 playback tokens', () => {
         ['device', { grant: { device_hash: 'b'.repeat(64) } }],
         ['generation', { publication: { generation: 2 } }],
         ['playback', { publication: { playback_id: 'other_playback' } }],
+        ['takedown', { publication: { availability: 'TAKEDOWN' } }],
         ['revoked', { grant: { revoked: true } }],
         ['expired', { grant: { expires_at_ms: Date.now() - 1 } }],
         ['entitlement', { entitlement: false }],
@@ -323,6 +348,28 @@ describe('Livepeer bridge PR-5 playback tokens', () => {
         expect(Number(payload.exp) - Number(payload.iat)).toBeGreaterThanOrEqual(89);
         expect(Number(payload.exp) - Number(payload.iat)).toBeLessThanOrEqual(90);
     });
+
+    it.each(['DRIFT_BLOCKED', 'PROVIDER_UNKNOWN', 'NEAR_UNKNOWN']) (
+        'does not read NEAR or issue a JWT while reconciliation is %s',
+        async (status) => {
+            const { env, testState } = await createEnv();
+            testState.values.set('reconcile:v1', {
+                schema: 'youtick.livepeer-reconcile.v1',
+                status,
+                consecutiveErrors: 1,
+                nextReconcileAtMs: Date.now() + 60_000,
+            });
+            const signed = await playbackRequest();
+            const rpc = vi.fn();
+            vi.stubGlobal('fetch', rpc);
+
+            const response = await handler.fetch(signed.request, env);
+
+            expect(response.status).toBe(403);
+            expect(await response.json()).toEqual({ error: 'playback_denied' });
+            expect(rpc).not.toHaveBeenCalled();
+        },
+    );
 
     it('rejects a mismatched signed resource before any chain read', async () => {
         const { env } = await createEnv();

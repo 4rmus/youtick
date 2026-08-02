@@ -24,7 +24,11 @@ fn context(predecessor: &str) -> VMContextBuilder {
 
 fn contract() -> Contract {
     testing_env!(context("market.testnet").build());
-    Contract::new(account("platform.testnet"), account("bridge.testnet"))
+    Contract::new(
+        account("platform.testnet"),
+        account("bridge.testnet"),
+        account("governance.testnet"),
+    )
 }
 
 fn create_job(contract: &mut Contract, job_id: &str, creator: &str) {
@@ -150,6 +154,27 @@ fn only_bridge_can_finalize_exact_job_tuple() {
         value.profile_id = "paid-media-v4".to_string();
         contract.finalize_livepeer_publication(value);
     });
+}
+
+#[test]
+fn initial_finalize_requires_active_availability() {
+    for (index, availability) in [
+        PublicationAvailability::SalesSuspended,
+        PublicationAvailability::Takedown,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut contract = contract();
+        let job_id = format!("job-availability-{index}");
+        create_job(&mut contract, &job_id, "creator.testnet");
+        testing_env!(context("bridge.testnet").build());
+        must_fail(|| {
+            let mut value = submission(&job_id, 1, "creator.testnet", ASSET_HASH, "playback_001");
+            value.availability = availability;
+            contract.finalize_livepeer_publication(value);
+        });
+    }
 }
 
 #[test]
@@ -289,4 +314,110 @@ fn sales_suspension_refunds_new_purchase_and_keeps_entitlement() {
     );
     assert!(matches!(refunded, PromiseOrValue::Value(U128(2_000_000))));
     assert!(contract.has_entitlement(account("buyer.testnet"), "job-1".to_string()));
+}
+
+#[test]
+fn governance_takedown_is_one_way_and_preserves_entitlement_history() {
+    let mut contract = contract();
+    create_job(&mut contract, "job-takedown", "creator.testnet");
+    finalize(
+        &mut contract,
+        "job-takedown",
+        1,
+        "creator.testnet",
+        ASSET_HASH,
+        "playback_takedown",
+    );
+    testing_env!(context(TESTNET_USDC).build());
+    let accepted = contract.ft_on_transfer(
+        account("buyer.testnet"),
+        U128(2_000_000),
+        r#"{"publication_id":"job-takedown"}"#.to_string(),
+    );
+    assert!(matches!(accepted, PromiseOrValue::Value(U128(0))));
+
+    testing_env!(context("bridge.testnet").build());
+    must_fail(|| {
+        contract.takedown_livepeer_publication(
+            "job-takedown".to_string(),
+            "PUBLIC_MEDIA_EXPOSURE".to_string(),
+            "incident-001".to_string(),
+            FINGERPRINT.to_string(),
+            U64(1_785_589_300_000),
+        );
+    });
+
+    testing_env!(context("governance.testnet").build());
+    let takedown = contract.takedown_livepeer_publication(
+        "job-takedown".to_string(),
+        "PUBLIC_MEDIA_EXPOSURE".to_string(),
+        "incident-001".to_string(),
+        FINGERPRINT.to_string(),
+        U64(1_785_589_300_000),
+    );
+    assert_eq!(takedown.availability, PublicationAvailability::Takedown);
+    assert_eq!(
+        contract
+            .get_takedown("job-takedown".to_string())
+            .unwrap()
+            .incident_id,
+        "incident-001"
+    );
+    let replay = contract.takedown_livepeer_publication(
+        "job-takedown".to_string(),
+        "PUBLIC_MEDIA_EXPOSURE".to_string(),
+        "incident-001".to_string(),
+        FINGERPRINT.to_string(),
+        U64(1_785_589_300_000),
+    );
+    assert_eq!(replay, takedown);
+    must_fail(|| {
+        contract.takedown_livepeer_publication(
+            "job-takedown".to_string(),
+            "LEGAL_REQUIREMENT".to_string(),
+            "incident-002".to_string(),
+            FINGERPRINT.to_string(),
+            U64(1_785_589_300_000),
+        );
+    });
+
+    testing_env!(context("bridge.testnet").build());
+    must_fail(|| {
+        contract.suspend_livepeer_sales("job-takedown".to_string());
+    });
+    testing_env!(context(TESTNET_USDC).build());
+    let refunded = contract.ft_on_transfer(
+        account("second-buyer.testnet"),
+        U128(2_000_000),
+        r#"{"publication_id":"job-takedown"}"#.to_string(),
+    );
+    assert!(matches!(refunded, PromiseOrValue::Value(U128(2_000_000))));
+    assert!(contract.has_entitlement(account("buyer.testnet"), "job-takedown".to_string()));
+}
+
+#[test]
+fn governance_can_move_sales_suspended_publication_to_takedown() {
+    let mut contract = contract();
+    create_job(&mut contract, "job-suspended", "creator.testnet");
+    finalize(
+        &mut contract,
+        "job-suspended",
+        1,
+        "creator.testnet",
+        ASSET_HASH,
+        "playback_suspended",
+    );
+    testing_env!(context("bridge.testnet").build());
+    contract.suspend_livepeer_sales("job-suspended".to_string());
+
+    testing_env!(context("governance.testnet").build());
+    let publication = contract.takedown_livepeer_publication(
+        "job-suspended".to_string(),
+        "GOVERNANCE_DECISION".to_string(),
+        "incident-suspended".to_string(),
+        FINGERPRINT.to_string(),
+        U64(1_785_589_300_000),
+    );
+
+    assert_eq!(publication.availability, PublicationAvailability::Takedown);
 }

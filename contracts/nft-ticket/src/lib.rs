@@ -29,6 +29,7 @@ impl StorageKey {
     const PLAYBACK_BINDINGS: Self = Self(b"livepeer-v1:playback-bindings");
     const ENTITLEMENTS: Self = Self(b"livepeer-v1:entitlements");
     const CREATOR_BALANCES: Self = Self(b"livepeer-v1:creator-balances");
+    const TAKEDOWNS: Self = Self(b"livepeer-v1:takedowns");
 }
 
 #[near(serializers = [borsh, json])]
@@ -103,6 +104,17 @@ pub struct LivepeerPublicationSubmission {
     pub availability: PublicationAvailability,
 }
 
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TakedownRecord {
+    pub publication_id: String,
+    pub reason_code: String,
+    pub incident_id: String,
+    pub evidence_sha256: String,
+    pub effective_at_ms: U64,
+    pub recorded_at_ms: U64,
+}
+
 #[derive(Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 struct PurchaseMessage {
@@ -137,6 +149,21 @@ pub struct Contract {
     // ponytail: immutable for code-only PR-1; add timelocked rotation only after
     // the P0 rotation authority is decided and before any deployment.
     bridge_account_id: AccountId,
+    takedown_authority_id: AccountId,
+    media_jobs: LookupMap<String, MediaJob>,
+    publications: LookupMap<String, Publication>,
+    asset_bindings: LookupMap<String, String>,
+    playback_bindings: LookupMap<String, String>,
+    entitlements: LookupMap<String, bool>,
+    creator_balances: LookupMap<AccountId, u128>,
+    takedowns: LookupMap<String, TakedownRecord>,
+    platform_balance: u128,
+}
+
+#[near(serializers = [borsh])]
+struct ContractBeforeTakedown {
+    platform_account_id: AccountId,
+    bridge_account_id: AccountId,
     media_jobs: LookupMap<String, MediaJob>,
     publications: LookupMap<String, Publication>,
     asset_bindings: LookupMap<String, String>,
@@ -149,21 +176,59 @@ pub struct Contract {
 #[near]
 impl Contract {
     #[init]
-    pub fn new(platform_account_id: AccountId, bridge_account_id: AccountId) -> Self {
+    pub fn new(
+        platform_account_id: AccountId,
+        bridge_account_id: AccountId,
+        takedown_authority_id: AccountId,
+    ) -> Self {
         require!(
             platform_account_id != bridge_account_id,
             "Platform and bridge accounts must differ"
         );
+        require!(
+            takedown_authority_id != bridge_account_id
+                && takedown_authority_id != platform_account_id,
+            "Takedown authority must be separate"
+        );
         Self {
             platform_account_id,
             bridge_account_id,
+            takedown_authority_id,
             media_jobs: LookupMap::new(StorageKey::MEDIA_JOBS),
             publications: LookupMap::new(StorageKey::PUBLICATIONS),
             asset_bindings: LookupMap::new(StorageKey::ASSET_BINDINGS),
             playback_bindings: LookupMap::new(StorageKey::PLAYBACK_BINDINGS),
             entitlements: LookupMap::new(StorageKey::ENTITLEMENTS),
             creator_balances: LookupMap::new(StorageKey::CREATOR_BALANCES),
+            takedowns: LookupMap::new(StorageKey::TAKEDOWNS),
             platform_balance: 0,
+        }
+    }
+
+    #[init(ignore_state)]
+    pub fn migrate(takedown_authority_id: AccountId) -> Self {
+        require!(
+            env::predecessor_account_id() == env::current_account_id(),
+            "Only the contract account can migrate"
+        );
+        let old: ContractBeforeTakedown = env::state_read().expect("Old state is missing");
+        require!(
+            takedown_authority_id != old.bridge_account_id
+                && takedown_authority_id != old.platform_account_id,
+            "Takedown authority must be separate"
+        );
+        Self {
+            platform_account_id: old.platform_account_id,
+            bridge_account_id: old.bridge_account_id,
+            takedown_authority_id,
+            media_jobs: old.media_jobs,
+            publications: old.publications,
+            asset_bindings: old.asset_bindings,
+            playback_bindings: old.playback_bindings,
+            entitlements: old.entitlements,
+            creator_balances: old.creator_balances,
+            takedowns: LookupMap::new(StorageKey::TAKEDOWNS),
+            platform_balance: old.platform_balance,
         }
     }
 
@@ -238,6 +303,10 @@ impl Contract {
         submission: LivepeerPublicationSubmission,
     ) -> Publication {
         self.assert_bridge();
+        require!(
+            submission.availability == PublicationAvailability::Active,
+            "Initial publication availability must be active"
+        );
         assert_profile(&submission.profile_id, &submission.profile_config_sha256);
         assert_sha256("asset_id_hash", &submission.asset_id_hash);
         assert_playback_id(&submission.playback_id);
@@ -333,6 +402,70 @@ impl Contract {
         );
         publication.availability = PublicationAvailability::SalesSuspended;
         self.publications.insert(&publication_id, &publication);
+        publication
+    }
+
+    pub fn takedown_livepeer_publication(
+        &mut self,
+        publication_id: String,
+        reason_code: String,
+        incident_id: String,
+        evidence_sha256: String,
+        effective_at_ms: U64,
+    ) -> Publication {
+        self.assert_takedown_authority();
+        require!(
+            matches!(
+                reason_code.as_str(),
+                "PUBLIC_MEDIA_EXPOSURE"
+                    | "LEGAL_REQUIREMENT"
+                    | "KEY_COMPROMISE"
+                    | "GOVERNANCE_DECISION"
+            ),
+            "Unsupported takedown reason"
+        );
+        assert_identifier("incident_id", &incident_id);
+        assert_sha256("evidence_sha256", &evidence_sha256);
+        require!(
+            effective_at_ms.0 > 0 && effective_at_ms.0 <= env::block_timestamp_ms(),
+            "Takedown effective time must have arrived"
+        );
+        let mut publication = self
+            .publications
+            .get(&publication_id)
+            .expect("Publication not found");
+        if publication.availability == PublicationAvailability::Takedown {
+            let existing = self
+                .takedowns
+                .get(&publication_id)
+                .expect("Takedown record missing");
+            require!(
+                existing.reason_code == reason_code
+                    && existing.incident_id == incident_id
+                    && existing.evidence_sha256 == evidence_sha256
+                    && existing.effective_at_ms == effective_at_ms,
+                "Conflicting takedown request"
+            );
+            return publication;
+        }
+        require!(
+            matches!(
+                publication.availability,
+                PublicationAvailability::Active | PublicationAvailability::SalesSuspended
+            ),
+            "Publication cannot transition to takedown"
+        );
+        let record = TakedownRecord {
+            publication_id: publication_id.clone(),
+            reason_code,
+            incident_id,
+            evidence_sha256,
+            effective_at_ms,
+            recorded_at_ms: U64(env::block_timestamp_ms()),
+        };
+        publication.availability = PublicationAvailability::Takedown;
+        self.publications.insert(&publication_id, &publication);
+        self.takedowns.insert(&publication_id, &record);
         publication
     }
 
@@ -471,6 +604,10 @@ impl Contract {
         self.publications.get(&publication_id)
     }
 
+    pub fn get_takedown(&self, publication_id: String) -> Option<TakedownRecord> {
+        self.takedowns.get(&publication_id)
+    }
+
     pub fn has_entitlement(&self, account_id: AccountId, publication_id: String) -> bool {
         self.entitlements
             .get(&entitlement_key(&account_id, &publication_id))
@@ -495,6 +632,13 @@ impl Contract {
         require!(
             env::predecessor_account_id() == self.bridge_account_id,
             "Only the configured Livepeer bridge can call this method"
+        );
+    }
+
+    fn assert_takedown_authority(&self) {
+        require!(
+            env::predecessor_account_id() == self.takedown_authority_id,
+            "Only the configured takedown authority can call this method"
         );
     }
 
@@ -641,7 +785,11 @@ mod tests {
 
     fn contract() -> Contract {
         testing_env!(context("market.testnet").build());
-        Contract::new(account("platform.testnet"), account("bridge.testnet"))
+        Contract::new(
+            account("platform.testnet"),
+            account("bridge.testnet"),
+            account("governance.testnet"),
+        )
     }
 
     #[test]
@@ -670,5 +818,32 @@ mod tests {
         );
         assert!(!contract.on_creator_withdraw(creator_id.clone(), U128(1_960_000)));
         assert_eq!(contract.get_creator_balance(creator_id), U128(1_960_000));
+    }
+
+    #[test]
+    fn migrates_existing_state_to_a_separate_takedown_authority() {
+        testing_env!(context("market.testnet").build());
+        let old = ContractBeforeTakedown {
+            platform_account_id: account("platform.testnet"),
+            bridge_account_id: account("bridge.testnet"),
+            media_jobs: LookupMap::new(StorageKey::MEDIA_JOBS),
+            publications: LookupMap::new(StorageKey::PUBLICATIONS),
+            asset_bindings: LookupMap::new(StorageKey::ASSET_BINDINGS),
+            playback_bindings: LookupMap::new(StorageKey::PLAYBACK_BINDINGS),
+            entitlements: LookupMap::new(StorageKey::ENTITLEMENTS),
+            creator_balances: LookupMap::new(StorageKey::CREATOR_BALANCES),
+            platform_balance: 50,
+        };
+        env::state_write(&old);
+
+        let migrated = Contract::migrate(account("governance.testnet"));
+
+        assert_eq!(migrated.platform_account_id, account("platform.testnet"));
+        assert_eq!(migrated.bridge_account_id, account("bridge.testnet"));
+        assert_eq!(
+            migrated.takedown_authority_id,
+            account("governance.testnet")
+        );
+        assert_eq!(migrated.platform_balance, 50);
     }
 }

@@ -212,14 +212,5 @@ export async function runNetworkEndpointCanary({
 }
 
 if (import.meta.main) {
-    const fileBytes = new Uint8Array(SOURCE_BYTES);
-    fileBytes.set([0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109]);
-    const idleMs = Number(process.env.LIVEPEER_ENDPOINT_IDLE_MS || DEFAULT_IDLE_MS);
-    const receipt = await runNetworkEndpointCanary({
-        apiKey: process.env.LIVEPEER_API_KEY,
-        mutationsEnabled: process.env.LIVEPEER_PROVIDER_CANARY_MUTATIONS === 'true',
-        fileBytes,
-        idleMs,
-    });
-    process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
+    throw new Error('legacy_network_endpoint_canary_retired_use_canary_playback');
 }

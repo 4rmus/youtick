@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import {
     deleteAsset,
     getAssetStatus,
@@ -23,7 +22,49 @@ function readOffset(response) {
     return Number(value);
 }
 
+function isLivepeerTusUrl(value) {
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:'
+            && !url.port
+            && !url.username
+            && !url.password
+            && url.hostname === 'origin.livepeer.com';
+    } catch {
+        return false;
+    }
+}
+
+function headerValues(response, name) {
+    return (response.headers.get(name) || '').split(',').map((value) => value.trim()).filter(Boolean);
+}
+
+export async function requireTusTermination(endpoint, fetchImpl = fetch) {
+    if (!isLivepeerTusUrl(endpoint)) throw new Error('tus_endpoint_invalid');
+    const response = await fetchImpl(endpoint, {
+        method: 'OPTIONS',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(10_000),
+    });
+    requireStatus(response, [200, 204], 'tus_options_failed');
+    const versions = headerValues(response, 'Tus-Version');
+    const resumable = headerValues(response, 'Tus-Resumable');
+    const standardVersion = versions.includes(TUS_VERSION);
+    const livepeerLegacyVersion = response.status === 204
+        && versions.length === 0
+        && resumable.length === 1
+        && resumable[0] === TUS_VERSION;
+    if (!standardVersion && !livepeerLegacyVersion) {
+        throw new Error('tus_version_unsupported');
+    }
+    if (!headerValues(response, 'Tus-Extension').includes('termination')) {
+        throw new Error('tus_termination_unsupported');
+    }
+    return standardVersion ? 'tus-version' : 'livepeer-legacy-tus-resumable';
+}
+
 export async function createTusResource(endpoint, size, fetchImpl = fetch) {
+    if (!isLivepeerTusUrl(endpoint)) throw new Error('tus_endpoint_invalid');
     const response = await fetchImpl(endpoint, {
         method: 'POST',
         headers: {
@@ -36,7 +77,14 @@ export async function createTusResource(endpoint, size, fetchImpl = fetch) {
     requireStatus(response, [201], 'tus_create_failed');
     const location = response.headers.get('Location');
     if (!location) throw new Error('tus_location_missing');
-    return new URL(location, endpoint).toString();
+    let uploadUrl;
+    try {
+        uploadUrl = new URL(location, endpoint).toString();
+    } catch {
+        throw new Error('tus_location_invalid');
+    }
+    if (!isLivepeerTusUrl(uploadUrl)) throw new Error('tus_location_invalid');
+    return uploadUrl;
 }
 
 export async function readTusOffset(uploadUrl, fetchImpl = fetch) {
@@ -167,14 +215,5 @@ export async function runTusResumeCanary({
 }
 
 if (import.meta.main) {
-    const filePath = process.argv[2];
-    const resumePercents = String(process.argv[3] || '').split(',').filter(Boolean).map(Number);
-    if (!filePath) throw new Error('usage: npm run canary:tus-resume -- <file> <30,70>');
-    const receipt = await runTusResumeCanary({
-        apiKey: process.env.LIVEPEER_API_KEY,
-        mutationsEnabled: process.env.LIVEPEER_PROVIDER_CANARY_MUTATIONS === 'true',
-        fileBytes: new Uint8Array(await readFile(filePath)),
-        resumePercents,
-    });
-    process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
+    throw new Error('legacy_tus_resume_canary_retired_use_canary_playback');
 }

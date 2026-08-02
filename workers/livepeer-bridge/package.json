@@ -7,15 +7,14 @@
         "node": ">=24 <25"
     },
     "scripts": {
-        "canary:browser": "node --env-file-if-exists=.dev.vars scripts/browser-canary-server.mjs",
-        "canary:network-endpoint": "node --env-file-if-exists=.dev.vars scripts/network-endpoint-canary.mjs",
+        "canary:playback": "node --env-file-if-exists=.dev.vars scripts/playback-canary.mjs",
+        "canary:playback:live": "node --env-file-if-exists=.dev.vars scripts/live-playback-canary.mjs",
         "canary:provider": "node --env-file-if-exists=.dev.vars scripts/provider-canary.mjs",
-        "canary:tus-resume": "node --env-file-if-exists=.dev.vars scripts/tus-resume-canary.mjs",
         "check": "tsc --noEmit -p tsconfig.json",
         "dev": "wrangler dev",
         "deploy": "wrangler deploy",
         "test": "vitest",
-        "test:provider-canary": "node --test scripts/*.test.mjs",
+        "test:provider-canary": "node --test scripts/*.test.mjs ../../apps/web/scripts/livepeer-hls-browser-canary.test.mjs",
         "test:run": "vitest --run"
     },
     "devDependencies": {

@@ -13,14 +13,19 @@ const TOKEN_NAME = 'paid-media-canary';
 const ASSET_ID = 'asset-123';
 const PLAYBACK_ID = 'playback-123';
 const EXPECTED_BYTES = '20000000';
+const HLS_ERROR = '#EXTM3U\n#EXT-X-ERROR:access_denied\n#EXT-X-ENDLIST\n';
+const MIXED_IFRAME_HLS = '#EXTM3U\n#EXT-X-ERROR\n#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=128000,URI="iframe.m3u8"\n';
+const THUMBNAIL_VTT = 'WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nkeyframes_0.jpg\n';
 
 type TestState = {
     state: DurableObjectState;
     values: Map<string, unknown>;
+    alarms: number[];
 };
 
 function createState(): TestState {
     const values = new Map<string, unknown>();
+    const alarms: number[] = [];
     let transactionTail = Promise.resolve();
     const get = async <T>(key: string) => structuredClone(values.get(key)) as T | undefined;
     const put = async (key: string, value: unknown) => values.set(key, structuredClone(value));
@@ -29,6 +34,7 @@ function createState(): TestState {
         get,
         put,
         delete: remove,
+        setAlarm: async (at: number | Date) => alarms.push(Number(at)),
         transaction: async <T>(callback: (transaction: {
             get: typeof get;
             put: typeof put;
@@ -38,7 +44,7 @@ function createState(): TestState {
             return run;
         },
     };
-    return { state: { storage } as unknown as DurableObjectState, values };
+    return { state: { storage } as unknown as DurableObjectState, values, alarms };
 }
 
 function createEnv(overrides?: Partial<Env>): Env {
@@ -48,6 +54,7 @@ function createEnv(overrides?: Partial<Env>): Env {
         LIVEPEER_API_KEY: API_KEY,
         LIVEPEER_PROJECT_ID: PROJECT_ID,
         LIVEPEER_API_TOKEN_NAME: TOKEN_NAME,
+        LIVEPEER_CREATOR_ALLOWLIST: 'creator.testnet',
         LIVEPEER_WEBHOOK_SECRET: WEBHOOK_SECRET,
         NEAR_NETWORK: 'testnet',
         NEAR_RPC_URL: RPC_URL,
@@ -56,6 +63,24 @@ function createEnv(overrides?: Partial<Env>): Env {
         NEAR_OPERATOR_PRIVATE_KEY: key.toString(),
         NEAR_OPERATOR_KEY_EPOCH: '1',
         ...overrides,
+    };
+}
+
+async function thumbnailPlaybackEnv(): Promise<Partial<Env>> {
+    const pair = await crypto.subtle.generateKey(
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['sign', 'verify'],
+    ) as CryptoKeyPair;
+    const pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey) as ArrayBuffer);
+    const spki = new Uint8Array(await crypto.subtle.exportKey('spki', pair.publicKey) as ArrayBuffer);
+    const privatePem = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...pkcs8))}\n-----END PRIVATE KEY-----`;
+    const publicPem = `-----BEGIN PUBLIC KEY-----\n${btoa(String.fromCharCode(...spki))}\n-----END PUBLIC KEY-----`;
+    return {
+        ACCESS_CONTRACT_ID: 'paid-media-access.testnet',
+        LIVEPEER_JWT_PRIVATE_KEY: btoa(privatePem),
+        LIVEPEER_JWT_PUBLIC_KEY: btoa(publicPem),
+        LIVEPEER_JWT_ISSUER: 'https://youtick.test',
     };
 }
 
@@ -72,6 +97,7 @@ function jobRecord() {
         profileId: 'paid-media-livepeer-v1',
         profileConfigSha256: '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77',
         createdAtMs: Date.now(),
+        apiTokenName: TOKEN_NAME,
         assetId: ASSET_ID,
         playbackId: PLAYBACK_ID,
         projectId: PROJECT_ID,
@@ -104,7 +130,7 @@ function providerPlayback(overrides?: Record<string, unknown>) {
             source: [
                 {
                     type: 'html5/application/vnd.apple.mpegurl',
-                    url: `https://playback.livepeer.studio/hls/${PLAYBACK_ID}/index.m3u8`,
+                    url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/index.m3u8`,
                 },
                 {
                     type: 'html5/video/mp4',
@@ -117,6 +143,51 @@ function providerPlayback(overrides?: Record<string, unknown>) {
             ...overrides,
         },
     };
+}
+
+async function publishedJob() {
+    const job = jobRecord();
+    const publicationValue = {
+        job_id: job.jobId,
+        generation: job.generation,
+        creator_id: job.creator,
+        expected_source_bytes: job.expectedSourceBytes,
+        profile_id: job.profileId,
+        profile_config_sha256: job.profileConfigSha256,
+        asset_id_hash: await sha256(ASSET_ID),
+        playback_id: PLAYBACK_ID,
+        project_id_hash: await sha256(PROJECT_ID),
+        verified_source_bytes: job.expectedSourceBytes,
+        provider_source_fingerprint: 'd'.repeat(64),
+        ready_at_ms: '1785589200000',
+        availability: 'ACTIVE',
+    };
+    return {
+        ...job,
+        state: 'ONCHAIN_PUBLISHED',
+        tusEndpoint: undefined,
+        publication: publicationValue,
+    };
+}
+
+function reconcileFetch(
+    publicationValue: Awaited<ReturnType<typeof publishedJob>>['publication'],
+    asset = providerAsset(),
+) {
+    const contractValue = {
+        publication_id: publicationValue.job_id,
+        ...publicationValue,
+        published_availability: publicationValue.availability,
+        availability: publicationValue.availability,
+    };
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(asset);
+        if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback());
+        if (url === RPC_URL) return rpcResult(contractValue);
+        if (url.includes('.m3u8')) return new Response(HLS_ERROR, { status: 200 });
+        return new Response(null, { status: 403 });
+    });
 }
 
 function webhook(event = 'asset.ready', timestamp = Date.now()) {
@@ -187,6 +258,18 @@ async function finalizeRequest(value = publication()): Promise<Request> {
             idempotencyKey: `${value.job_id}:${value.generation}:finalize`,
             payloadSha256,
             submission: value,
+        }),
+    });
+}
+
+async function suspendSalesRequest(publicationId = 'job-001'): Promise<Request> {
+    const payloadSha256 = await sha256(canonicalJson({ publication_id: publicationId }));
+    return new Request('https://object/internal/suspend-sales', {
+        method: 'POST',
+        body: JSON.stringify({
+            idempotencyKey: `${publicationId}:suspend-sales`,
+            payloadSha256,
+            publicationId,
         }),
     });
 }
@@ -307,11 +390,107 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(objectFetch).toHaveBeenCalledOnce();
     });
 
+    it('accepts the previous webhook secret during the rotation overlap', async () => {
+        const previousSecret = 'previous-webhook-secret';
+        const objectFetch = vi.fn(async () => Response.json({ accepted: true }));
+        const env = createEnv({
+            LIVEPEER_WEBHOOK_SECRET_PREVIOUS: previousSecret,
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'id' })),
+                get: vi.fn(() => ({ fetch: objectFetch })),
+            } as unknown as DurableObjectNamespace,
+        });
+
+        const response = await handler.fetch(
+            await signedWebhookRequest(webhook('asset.updated'), previousSecret),
+            env,
+        );
+
+        expect(response.status).toBe(200);
+        expect(objectFetch).toHaveBeenCalledOnce();
+    });
+
+    it.each(['asset.updated', 'asset.failed', 'asset.deleted'])(
+        'ignores %s without changing the job or calling external systems',
+        async (event) => {
+            const testState = createState();
+            const job = jobRecord();
+            testState.values.set('job:v1', job);
+            const operatorFetch = vi.fn(async () => Response.json({ accepted: true }));
+            const control = new LivepeerControl(testState.state, createEnv({
+                LIVEPEER_CONTROL: {
+                    idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                    get: vi.fn(() => ({ fetch: operatorFetch })),
+                } as unknown as DurableObjectNamespace,
+            }));
+            const providerFetch = vi.fn();
+            vi.stubGlobal('fetch', providerFetch);
+
+            const response = await control.fetch(internalWebhookRequest(webhook(event)));
+
+            expect(response.status).toBe(202);
+            expect(await response.json()).toEqual({ accepted: true, ignored: true });
+            expect(testState.values.get('job:v1')).toEqual(job);
+            expect(providerFetch).not.toHaveBeenCalled();
+            expect(operatorFetch).not.toHaveBeenCalled();
+        },
+    );
+
     it.each([
         ['project', providerAsset({ projectId: 'wrong-project' }), providerPlayback(), 'provider_identity_mismatch'],
         ['token', providerAsset({ createdByTokenName: 'wrong-token' }), providerPlayback(), 'provider_identity_mismatch'],
         ['policy', providerAsset({ playbackPolicy: { type: 'public' } }), providerPlayback(), 'provider_state_invalid'],
         ['playback', providerAsset(), providerPlayback({ playbackPolicy: { type: 'public' } }), 'provider_playback_mismatch'],
+        ['source port', providerAsset(), providerPlayback({ source: [
+            {
+                type: 'html5/application/vnd.apple.mpegurl',
+                url: `https://asset-cdn.lp-playback.studio:8443/hls/${PLAYBACK_ID}/index.m3u8`,
+            },
+            {
+                type: 'html5/video/mp4',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/static720p0.mp4`,
+            },
+        ] }), 'provider_playback_mismatch'],
+        ['source credentials', providerAsset(), providerPlayback({ source: [
+            {
+                type: 'html5/application/vnd.apple.mpegurl',
+                url: `https://user:password@asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/index.m3u8`,
+            },
+            {
+                type: 'html5/video/mp4',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/static720p0.mp4`,
+            },
+        ] }), 'provider_playback_mismatch'],
+        ['unsupported output type', providerAsset(), providerPlayback({ source: [
+            {
+                type: 'html5/application/vnd.apple.mpegurl',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/index.m3u8`,
+            },
+            {
+                type: 'html5/video/mp4',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/static720p0.mp4`,
+                width: 1280,
+                height: 720,
+                bitrate: 3_000_000,
+            },
+            {
+                type: 'html5/video/h264',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/video.h264`,
+            },
+        ] }), 'provider_playback_mismatch'],
+        ['missing required MP4 rendition', providerAsset(), providerPlayback({ source: [
+            {
+                type: 'html5/application/vnd.apple.mpegurl',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/index.m3u8`,
+            },
+            {
+                type: 'html5/video/mp4',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/alternate.mp4`,
+                width: 854,
+                height: 480,
+                bitrate: 1_000_000,
+            },
+        ] }), 'provider_playback_mismatch'],
         ['size', providerAsset({ size: Number(EXPECTED_BYTES) + 1 }), providerPlayback(), 'provider_state_invalid'],
     ])('fails closed on wrong provider %s', async (_name, asset, playback, code) => {
         const testState = createState();
@@ -332,7 +511,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
     it('deduplicates ready transitions, proves private playback, and clears the TUS capability', async () => {
         const testState = createState();
         testState.values.set('job:v1', jobRecord());
-        const operatorFetch = vi.fn(async () => Response.json({ accepted: true, finalized: true }));
+        const operatorFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true, finalized: true }));
         const env = createEnv({
             LIVEPEER_CONTROL: {
                 idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
@@ -340,10 +519,39 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             } as unknown as DurableObjectNamespace,
         });
         const control = new LivepeerControl(testState.state, env);
-        const providerFetch = vi.fn(async (input: RequestInfo | URL) => {
+        const canonicalHls = `https://playback.livepeer.studio/asset/hls/${PLAYBACK_ID}/index.m3u8`;
+        const providerHls = `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/index.m3u8`;
+        const alternateHls = `https://livepeercdn.studio/recordings/recording-001/index.m3u8`;
+        const alternateMp4 = `https://asset-cdn.lp-playback.com/hls/recording-001/static360p0.mp4`;
+        const playback = providerPlayback({ source: [
+            {
+                type: 'html5/application/vnd.apple.mpegurl',
+                url: providerHls,
+            },
+            {
+                type: 'html5/application/vnd.apple.mpegurl',
+                url: alternateHls,
+            },
+            {
+                type: 'html5/video/mp4',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/static720p0.mp4`,
+                width: 1280,
+                height: 720,
+                bitrate: 3_000_000,
+            },
+            {
+                type: 'html5/video/mp4',
+                url: alternateMp4,
+                width: 204,
+                height: 360,
+                bitrate: 449_890,
+            },
+        ] });
+        const providerFetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
             const url = String(input);
             if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
-            if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback());
+            if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(playback);
+            if (url === canonicalHls) return new Response(HLS_ERROR, { status: 200 });
             return new Response(null, { status: 403 });
         });
         vi.stubGlobal('fetch', providerFetch);
@@ -356,14 +564,434 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             publication: { playback_id: PLAYBACK_ID, verified_source_bytes: EXPECTED_BYTES },
         });
         expect(testState.values.get('job:v1')).not.toHaveProperty('tusEndpoint');
-        expect(providerFetch).toHaveBeenCalledTimes(14);
-        expect(operatorFetch).toHaveBeenCalledOnce();
+        expect(testState.values.get('reconcile:v1')).toMatchObject({ status: 'PROVIDER_UNKNOWN' });
+        expect(testState.alarms).toHaveLength(1);
+        expect(providerFetch).toHaveBeenCalledTimes(17);
+        const calls = providerFetch.mock.calls.map(([input, init]) => ({
+            url: String(input),
+            method: (init as RequestInit | undefined)?.method,
+            headers: new Headers((init as RequestInit | undefined)?.headers),
+            redirect: (init as RequestInit | undefined)?.redirect,
+        }));
+        for (const hlsUrl of [canonicalHls, providerHls, alternateHls]) {
+            expect(calls.filter((call) => call.url === hlsUrl)).toHaveLength(4);
+            expect(calls.filter((call) => call.url === hlsUrl && call.headers.has('Livepeer-Jwt'))).toHaveLength(3);
+        }
+        const anonymousOutputs = calls.filter((call) => [
+            `https://livepeercdn.com/asset/${PLAYBACK_ID}/video`,
+            `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/static720p0.mp4`,
+            alternateMp4,
+        ].includes(call.url));
+        expect(anonymousOutputs).toHaveLength(3);
+        for (const call of anonymousOutputs) {
+            expect(call.method).toBe('GET');
+            expect(call.redirect).toBe('manual');
+            expect(call.headers.has('Livepeer-Jwt')).toBe(false);
+        }
+        expect(operatorFetch.mock.calls.filter(([request]) => (
+            new URL(request.url).pathname === '/internal/finalize'
+        ))).toHaveLength(1);
 
         const duplicate = await control.fetch(internalWebhookRequest(readyEvent));
         expect(duplicate.status).toBe(200);
         expect(await duplicate.json()).toMatchObject({ duplicate: true, finalized: true });
-        expect(providerFetch).toHaveBeenCalledTimes(14);
-        expect(operatorFetch).toHaveBeenCalledOnce();
+        expect(providerFetch).toHaveBeenCalledTimes(17);
+        expect(operatorFetch.mock.calls.filter(([request]) => (
+            new URL(request.url).pathname === '/internal/finalize'
+        ))).toHaveLength(1);
+    });
+
+    it('marks a published job healthy and schedules the 15 minute alarm', async () => {
+        const now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const testState = createState();
+        const job = await publishedJob();
+        testState.values.set('job:v1', job);
+        testState.values.set('reconcile:v1', {
+            schema: 'youtick.livepeer-reconcile.v1',
+            status: 'PROVIDER_UNKNOWN',
+            consecutiveErrors: 0,
+            nextReconcileAtMs: now,
+        });
+        const control = new LivepeerControl(testState.state, createEnv());
+        vi.stubGlobal('fetch', reconcileFetch(job.publication));
+
+        await control.alarm();
+
+        expect(testState.values.get('reconcile:v1')).toMatchObject({
+            status: 'HEALTHY',
+            consecutiveErrors: 0,
+            lastGoodAtMs: now,
+            nextReconcileAtMs: now + 15 * 60 * 1000,
+        });
+        expect(testState.alarms.at(-1)).toBe(now + 15 * 60 * 1000);
+    });
+
+    it('does not read provider or NEAR while the runtime flag is disabled', async () => {
+        const now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const testState = createState();
+        testState.values.set('job:v1', await publishedJob());
+        const control = new LivepeerControl(testState.state, createEnv({
+            LIVEPEER_BRIDGE_ENABLED: 'false',
+        }));
+        const externalFetch = vi.fn();
+        vi.stubGlobal('fetch', externalFetch);
+
+        await control.alarm();
+
+        expect(externalFetch).not.toHaveBeenCalled();
+        expect(testState.alarms.at(-1)).toBe(now + 15 * 60 * 1000);
+    });
+
+    it('blocks immediately and enqueues one sales suspension only after repeated drift', async () => {
+        let now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const testState = createState();
+        const job = await publishedJob();
+        testState.values.set('job:v1', job);
+        testState.values.set('reconcile:v1', {
+            schema: 'youtick.livepeer-reconcile.v1',
+            status: 'HEALTHY',
+            consecutiveErrors: 0,
+            nextReconcileAtMs: now,
+            lastGoodAtMs: now - 1,
+        });
+        const control = new LivepeerControl(testState.state, createEnv());
+        vi.stubGlobal('fetch', reconcileFetch(job.publication, providerAsset({
+            playbackPolicy: { type: 'public' },
+        })));
+
+        await control.alarm();
+        expect(testState.values.get('reconcile:v1')).toMatchObject({
+            status: 'DRIFT_BLOCKED',
+            lastDrift: { observations: 1 },
+            nextReconcileAtMs: now + 60_000,
+        });
+        expect(testState.values.has('outbox:job-001:suspend-sales')).toBe(false);
+
+        now += 60_000;
+        await control.alarm();
+        expect(testState.values.get('reconcile:v1')).toMatchObject({
+            lastDrift: { observations: 2 },
+            nextReconcileAtMs: now + 120_000,
+        });
+        now += 120_000;
+        await control.alarm();
+
+        expect(testState.values.get('reconcile:v1')).toMatchObject({
+            status: 'DRIFT_BLOCKED',
+            lastDrift: { observations: 3 },
+            salesSuspensionQueuedAtMs: now - 120_000,
+            nextReconcileAtMs: now + 240_000,
+        });
+        expect(testState.values.get('outbox:job-001:suspend-sales')).toMatchObject({
+            state: 'PENDING',
+            method: 'suspend_livepeer_sales',
+            jobId: 'job-001',
+            generation: 1,
+        });
+        expect([...testState.values.keys()].filter((key) => key.endsWith(':suspend-sales'))).toHaveLength(1);
+    });
+
+    it('treats provider 5xx as unknown without queuing a chain mutation', async () => {
+        const now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const testState = createState();
+        const job = await publishedJob();
+        testState.values.set('job:v1', job);
+        const control = new LivepeerControl(testState.state, createEnv());
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
+
+        await control.alarm();
+
+        expect(testState.values.get('reconcile:v1')).toMatchObject({
+            status: 'PROVIDER_UNKNOWN',
+            consecutiveErrors: 1,
+            nextReconcileAtMs: now + 60_000,
+        });
+        expect([...testState.values.keys()].some((key) => key.endsWith(':suspend-sales'))).toBe(false);
+    });
+
+    it('treats provider authentication errors as unknown, not sale-suspending drift', async () => {
+        const now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const testState = createState();
+        const job = await publishedJob();
+        testState.values.set('job:v1', job);
+        const control = new LivepeerControl(testState.state, createEnv());
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })));
+
+        await control.alarm();
+        await control.alarm();
+
+        expect(testState.values.get('reconcile:v1')).toMatchObject({
+            status: 'PROVIDER_UNKNOWN',
+            consecutiveErrors: 2,
+        });
+        expect([...testState.values.keys()].some((key) => key.endsWith(':suspend-sales'))).toBe(false);
+    });
+
+    it('still requires two healthy observations when an outage interrupts drift recovery', async () => {
+        let now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const testState = createState();
+        const job = await publishedJob();
+        testState.values.set('job:v1', job);
+        testState.values.set('reconcile:v1', {
+            schema: 'youtick.livepeer-reconcile.v1',
+            status: 'HEALTHY',
+            consecutiveErrors: 0,
+            nextReconcileAtMs: now,
+            lastGoodAtMs: now - 1,
+        });
+        const control = new LivepeerControl(testState.state, createEnv());
+
+        vi.stubGlobal('fetch', reconcileFetch(job.publication, providerAsset({
+            playbackPolicy: { type: 'public' },
+        })));
+        await control.alarm();
+        now += 60_000;
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
+        await control.alarm();
+        now += 60_000;
+        vi.stubGlobal('fetch', reconcileFetch(job.publication));
+        await control.alarm();
+        expect(testState.values.get('reconcile:v1')).toMatchObject({
+            status: 'DRIFT_BLOCKED',
+            recovery: { observations: 1 },
+        });
+
+        now += 60_000;
+        await control.alarm();
+
+        expect(testState.values.get('reconcile:v1')).toMatchObject({
+            status: 'HEALTHY',
+            lastGoodAtMs: now,
+        });
+    });
+
+    it('auto-closes creator admission on a provider inventory identity mismatch', async () => {
+        const jobState = createState();
+        const admissionState = createState();
+        const job = await publishedJob();
+        jobState.values.set('job:v1', job);
+        admissionState.values.set('admission:v1', {
+            schema: 'youtick.livepeer-admission.v1',
+            status: 'OPEN',
+            reservations: {},
+            daily: { utcDay: '2026-08-02', globalAttempts: 0, creatorAttempts: {} },
+            monthly: { utcMonth: '2026-08', reservedSourceBytes: '0' },
+        });
+        let admission!: LivepeerControl;
+        const env = createEnv();
+        env.LIVEPEER_CONTROL = {
+            idFromName: vi.fn((name: string) => ({ toString: () => name })),
+            get: vi.fn((id: DurableObjectId) => ({
+                fetch: (request: Request) => id.toString().startsWith('admission:')
+                    ? admission.fetch(request)
+                    : Response.json({ accepted: true }),
+            })),
+        } as unknown as DurableObjectNamespace;
+        admission = new LivepeerControl(admissionState.state, env);
+        const control = new LivepeerControl(jobState.state, env);
+        vi.stubGlobal('fetch', reconcileFetch(job.publication, providerAsset({
+            projectId: 'wrong-project',
+        })));
+
+        await control.alarm();
+
+        expect(jobState.values.get('reconcile:v1')).toMatchObject({
+            status: 'DRIFT_BLOCKED',
+            lastDrift: { code: 'provider_identity_mismatch' },
+        });
+        expect(admissionState.values.get('admission:v1')).toMatchObject({
+            status: 'AUTO_CLOSED',
+            closure: { code: 'provider_budget_or_inventory' },
+        });
+    });
+
+    it('fails closed when the canonical HLS route permits anonymous playback', async () => {
+        const testState = createState();
+        testState.values.set('job:v1', jobRecord());
+        const operatorFetch = vi.fn(async () => Response.json({ accepted: true, finalized: true }));
+        const env = createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                get: vi.fn(() => ({ fetch: operatorFetch })),
+            } as unknown as DurableObjectNamespace,
+        });
+        const control = new LivepeerControl(testState.state, env);
+        const canonicalHls = `https://playback.livepeer.studio/asset/hls/${PLAYBACK_ID}/index.m3u8`;
+        const providerFetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
+            if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback());
+            if (url === canonicalHls) return new Response(MIXED_IFRAME_HLS, { status: 200 });
+            return new Response(null, { status: 403 });
+        });
+        vi.stubGlobal('fetch', providerFetch);
+
+        const response = await control.fetch(internalWebhookRequest());
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ error: 'provider_playback_exposed' });
+        const hlsCall = providerFetch.mock.calls.find(([input]) => String(input) === canonicalHls);
+        expect(hlsCall).toBeDefined();
+        const init = hlsCall![1];
+        expect(init?.method).toBe('GET');
+        expect(init?.redirect).toBe('manual');
+        expect(new Headers(init?.headers).has('Livepeer-Jwt')).toBe(false);
+        expect(operatorFetch).not.toHaveBeenCalled();
+        expect(testState.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_READY' });
+    });
+
+    it('fails closed when the provider HLS source permits anonymous playback', async () => {
+        const testState = createState();
+        testState.values.set('job:v1', jobRecord());
+        const operatorFetch = vi.fn(async () => Response.json({ accepted: true, finalized: true }));
+        const env = createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                get: vi.fn(() => ({ fetch: operatorFetch })),
+            } as unknown as DurableObjectNamespace,
+        });
+        const control = new LivepeerControl(testState.state, env);
+        const canonicalHls = `https://playback.livepeer.studio/asset/hls/${PLAYBACK_ID}/index.m3u8`;
+        const providerHls = `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/index.m3u8`;
+        const providerFetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
+            if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback());
+            if (url === canonicalHls) return new Response(HLS_ERROR, { status: 200 });
+            if (url === providerHls) return new Response(MIXED_IFRAME_HLS, { status: 200 });
+            return new Response(null, { status: 403 });
+        });
+        vi.stubGlobal('fetch', providerFetch);
+
+        const response = await control.fetch(internalWebhookRequest());
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ error: 'provider_playback_exposed' });
+        const hlsCall = providerFetch.mock.calls.find(([input]) => String(input) === providerHls);
+        expect(hlsCall).toBeDefined();
+        const init = hlsCall![1];
+        expect(init?.method).toBe('GET');
+        expect(init?.redirect).toBe('manual');
+        expect(new Headers(init?.headers).has('Livepeer-Jwt')).toBe(false);
+        expect(operatorFetch).not.toHaveBeenCalled();
+        expect(testState.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_READY' });
+    });
+
+    it('fails closed when an additional provider MP4 source permits anonymous playback', async () => {
+        const testState = createState();
+        testState.values.set('job:v1', jobRecord());
+        const operatorFetch = vi.fn(async () => Response.json({ accepted: true, finalized: true }));
+        const env = createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                get: vi.fn(() => ({ fetch: operatorFetch })),
+            } as unknown as DurableObjectNamespace,
+        });
+        const control = new LivepeerControl(testState.state, env);
+        const canonicalHls = `https://playback.livepeer.studio/asset/hls/${PLAYBACK_ID}/index.m3u8`;
+        const alternateMp4 = `https://asset-cdn.lp-playback.com/hls/recording-001/static360p0.mp4`;
+        const playback = providerPlayback({ source: [
+            {
+                type: 'html5/application/vnd.apple.mpegurl',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/index.m3u8`,
+            },
+            {
+                type: 'html5/video/mp4',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/static720p0.mp4`,
+                width: 1280,
+                height: 720,
+                bitrate: 3_000_000,
+            },
+            {
+                type: 'html5/video/mp4',
+                url: alternateMp4,
+                width: 204,
+                height: 360,
+                bitrate: 449_890,
+            },
+        ] });
+        const providerFetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
+            if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(playback);
+            if (url === canonicalHls) return new Response(HLS_ERROR, { status: 200 });
+            if (url === alternateMp4) return new Response(null, { status: 200 });
+            return new Response(null, { status: 403 });
+        });
+        vi.stubGlobal('fetch', providerFetch);
+
+        const response = await control.fetch(internalWebhookRequest());
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ error: 'provider_playback_exposed' });
+        const mp4Call = providerFetch.mock.calls.find(([input]) => String(input) === alternateMp4);
+        expect(mp4Call).toBeDefined();
+        const init = mp4Call![1];
+        expect(init?.method).toBe('GET');
+        expect(init?.redirect).toBe('manual');
+        expect(new Headers(init?.headers).has('Livepeer-Jwt')).toBe(false);
+        expect(operatorFetch).not.toHaveBeenCalled();
+        expect(testState.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_READY' });
+    });
+
+    it('proves thumbnail VTT and images are private before finalization', async () => {
+        const testState = createState();
+        testState.values.set('job:v1', jobRecord());
+        const operatorFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true, finalized: true }));
+        const env = createEnv({
+            ...await thumbnailPlaybackEnv(),
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                get: vi.fn(() => ({ fetch: operatorFetch })),
+            } as unknown as DurableObjectNamespace,
+        });
+        const control = new LivepeerControl(testState.state, env);
+        const canonicalHls = `https://playback.livepeer.studio/asset/hls/${PLAYBACK_ID}/index.m3u8`;
+        const vtt = `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/thumbnails/thumbnails.vtt`;
+        const thumbnail = `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/thumbnails/keyframes_0.jpg`;
+        const playback = providerPlayback({ source: [
+            {
+                type: 'html5/application/vnd.apple.mpegurl',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/index.m3u8`,
+            },
+            {
+                type: 'html5/video/mp4',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/static720p0.mp4`,
+                width: 1280,
+                height: 720,
+                bitrate: 3_000_000,
+            },
+            { type: 'text/vtt', url: vtt },
+        ] });
+        const providerFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
+            if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(playback);
+            if (url === canonicalHls) return new Response(HLS_ERROR, { status: 200 });
+            if (url === vtt && new Headers(init?.headers).has('Livepeer-Jwt')) {
+                return new Response(THUMBNAIL_VTT, { status: 200 });
+            }
+            return new Response(null, { status: 403 });
+        });
+        vi.stubGlobal('fetch', providerFetch);
+
+        const response = await control.fetch(internalWebhookRequest());
+        expect(response.status).toBe(200);
+        const calls = providerFetch.mock.calls.map(([input, init]) => ({
+            url: String(input),
+            headers: new Headers((init as RequestInit | undefined)?.headers),
+            redirect: (init as RequestInit | undefined)?.redirect,
+        }));
+        expect(calls.filter((call) => call.url === vtt && !call.headers.has('Livepeer-Jwt'))).toHaveLength(1);
+        expect(calls.filter((call) => call.url === vtt && call.headers.has('Livepeer-Jwt'))).toHaveLength(1);
+        expect(calls.filter((call) => call.url === thumbnail && !call.headers.has('Livepeer-Jwt'))).toHaveLength(1);
+        expect(calls.filter((call) => call.url === thumbnail && call.redirect === 'manual')).toHaveLength(1);
+        expect(operatorFetch.mock.calls.filter(([request]) => (
+            new URL(request.url).pathname === '/internal/finalize'
+        ))).toHaveLength(1);
     });
 
     it('accepts one concurrent ready-event verifier', async () => {
@@ -451,6 +1079,37 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(response.status).toBe(409);
         expect(await response.json()).toEqual({ error: 'near_finalize_mismatch' });
         expect(testState.values.get('outbox:job-001:1:finalize')).toMatchObject({ state: 'PENDING' });
+    });
+
+    it('executes one idempotent suspend_livepeer_sales outbox transaction', async () => {
+        const testState = createState();
+        const control = new LivepeerControl(testState.state, createEnv());
+        let suspended = false;
+        const sent: string[] = [];
+        vi.stubGlobal('fetch', operatorRpc({
+            onSend: (signedTx) => {
+                sent.push(signedTx);
+                suspended = true;
+            },
+            publicationFor: () => ({
+                ...contractPublication(publication()),
+                availability: suspended ? 'SALES_SUSPENDED' : 'ACTIVE',
+            }),
+        }));
+
+        const first = await control.fetch(await suspendSalesRequest());
+        const duplicate = await control.fetch(await suspendSalesRequest());
+
+        expect(first.status).toBe(200);
+        expect(await first.json()).toMatchObject({ suspended: true });
+        expect(duplicate.status).toBe(200);
+        expect(await duplicate.json()).toMatchObject({ suspended: true });
+        expect(sent).toHaveLength(1);
+        expect(new TextDecoder().decode(base64Decode(sent[0]))).toContain('suspend_livepeer_sales');
+        expect(testState.values.get('outbox:job-001:suspend-sales')).toMatchObject({
+            state: 'CONFIRMED',
+            nonce: '11',
+        });
     });
 
     it.each([

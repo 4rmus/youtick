@@ -13,6 +13,9 @@ const ORIGIN = 'https://app.youtick.net';
 const RPC_URL = 'https://rpc.testnet.near.org';
 const CONTRACT_ID = 'paid-media-livepeer-v1.testnet';
 const API_KEY = 'test-livepeer-api-key';
+const OPERATOR_ID = 'paid-media-operator.testnet';
+const OPERATOR_TOKEN = 'test-paid-media-operator-token-32-bytes';
+const OPERATOR_TOKEN_PREVIOUS = 'previous-paid-media-operator-token-32-bytes';
 const BLOCK_HASH = '11111111111111111111111111111111';
 const TUS_ENDPOINT = 'https://origin.livepeer.com/api/asset/upload/tus?token=secret';
 const TUS_UPLOAD_URL = 'https://origin.livepeer.com/api/asset/upload/tus/upload-123';
@@ -23,10 +26,12 @@ let nonceCounter = 0;
 type TestState = {
     state: DurableObjectState;
     values: Map<string, unknown>;
+    alarms: number[];
 };
 
 function createState(): TestState {
     const values = new Map<string, unknown>();
+    const alarms: number[] = [];
     let transactionTail = Promise.resolve();
     const get = async <T>(key: string) => structuredClone(values.get(key)) as T | undefined;
     const put = async (key: string, value: unknown) => {
@@ -35,6 +40,7 @@ function createState(): TestState {
     const storage = {
         get,
         put,
+        setAlarm: async (at: number | Date) => alarms.push(Number(at)),
         transaction: async <T>(callback: (transaction: {
             get: typeof get;
             put: typeof put;
@@ -47,6 +53,7 @@ function createState(): TestState {
     return {
         state: { storage } as unknown as DurableObjectState,
         values,
+        alarms,
     };
 }
 
@@ -58,6 +65,12 @@ function createEnv(overrides?: Partial<Env>): Env {
         NEAR_RPC_URL: RPC_URL,
         MARKET_CONTRACT_ID: CONTRACT_ID,
         LIVEPEER_API_KEY: API_KEY,
+        LIVEPEER_API_TOKEN_NAME: 'paid-media-test',
+        LIVEPEER_CREATOR_ALLOWLIST: String(vectors.upload_intent.envelope.account_id),
+        LIVEPEER_CONTROL: {
+            idFromName: (name: string) => ({ toString: () => name }),
+            get: () => ({ fetch: async () => Response.json({ accepted: true }) }),
+        } as unknown as DurableObjectNamespace,
         ...overrides,
     };
 }
@@ -132,9 +145,9 @@ function accessKeyResponse(methodNames = ['create_paid_job']): Response {
     });
 }
 
-function providerResponse(): Response {
+function providerResponse(tusEndpoint = TUS_ENDPOINT): Response {
     return Response.json({
-        tusEndpoint: TUS_ENDPOINT,
+        tusEndpoint,
         asset: {
             id: 'asset-123',
             playbackId: 'playback-123',
@@ -147,8 +160,10 @@ function providerResponse(): Response {
 function backendFetch(options?: {
     providerGate?: Promise<void>;
     providerFailure?: boolean;
+    providerStatus?: number;
     unauthorizedKey?: boolean;
     tusLengthMismatch?: boolean;
+    tusEndpoint?: string;
     methodNames?: string[];
 }) {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -169,8 +184,11 @@ function backendFetch(options?: {
         }
         if (url === 'https://livepeer.studio/api/asset/request-upload') {
             await options?.providerGate;
+            if (options?.providerStatus) {
+                return Response.json({ error: 'closed' }, { status: options.providerStatus });
+            }
             if (options?.providerFailure) return Response.json({ error: 'failed' }, { status: 503 });
-            return providerResponse();
+            return providerResponse(options?.tusEndpoint);
         }
         if (url === TUS_ENDPOINT && init?.method === 'POST') {
             return new Response(null, {
@@ -190,6 +208,16 @@ function backendFetch(options?: {
             });
         }
         throw new Error(`unexpected_fetch:${url}`);
+    });
+}
+
+function admissionRequest(
+    path: 'reserve' | 'mark' | 'reopen',
+    body: Record<string, unknown>,
+): Request {
+    return new Request(`https://object/internal/admission/${path}`, {
+        method: 'POST',
+        body: JSON.stringify(body),
     });
 }
 
@@ -279,6 +307,13 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(response.status).toBe(503);
         expect(await response.json()).toEqual({ error: 'control_plane_disabled' });
 
+        const reopen = await handler.fetch(new Request(
+            'https://bridge.youtick.net/v1/operations/admission-reopen',
+            { method: 'POST', body: '{}' },
+        ), createEnv());
+        expect(reopen.status).toBe(503);
+        expect(await reopen.json()).toEqual({ error: 'control_plane_disabled' });
+
         const preflight = await handler.fetch(new Request(
             'https://bridge.youtick.net/v1/upload-intents',
             { method: 'OPTIONS', headers: { Origin: ORIGIN } },
@@ -342,6 +377,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             String(url).includes('/asset/request-upload')
         ))).toBe(true));
         expect(testState.values.get('job:v1')).toMatchObject({ state: 'CREATE_PENDING' });
+        expect(testState.values.get('job:v1')).toMatchObject({ apiTokenName: 'paid-media-test' });
 
         const second = await control.fetch(await controlRequest());
         expect(second.status).toBe(409);
@@ -381,13 +417,20 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         const fetchMock = backendFetch();
         vi.stubGlobal('fetch', fetchMock);
         const testState = createState();
-        const firstInstance = new LivepeerControl(testState.state, createEnv());
+        const admissionFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true }));
+        const env = createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: (name: string) => ({ toString: () => name }),
+                get: () => ({ fetch: admissionFetch }),
+            } as unknown as DurableObjectNamespace,
+        });
+        const firstInstance = new LivepeerControl(testState.state, env);
         const request = await controlRequest();
         const repeatedNonce = request.clone();
         const created = await firstInstance.fetch(request);
         expect(created.status).toBe(201);
 
-        const restartedInstance = new LivepeerControl(testState.state, createEnv());
+        const restartedInstance = new LivepeerControl(testState.state, env);
         const replayedNonce = await restartedInstance.fetch(repeatedNonce);
         expect(replayedNonce.status).toBe(409);
         expect(await replayedNonce.json()).toEqual({ error: 'device_nonce_replayed' });
@@ -400,6 +443,9 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         });
         expect(fetchMock.mock.calls.filter(([url]) => (
             String(url).includes('/asset/request-upload')
+        ))).toHaveLength(1);
+        expect(admissionFetch.mock.calls.filter(([request]) => (
+            new URL(request.url).pathname === '/internal/admission/reserve'
         ))).toHaveLength(1);
     });
 
@@ -446,6 +492,19 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(testState.values.get('job:v1')).toMatchObject({ state: 'CREATE_AMBIGUOUS' });
     });
 
+    it('rejects a TUS endpoint with a nondefault HTTPS port before POST', async () => {
+        const testState = createState();
+        const control = new LivepeerControl(testState.state, createEnv());
+        const unsafeEndpoint = 'https://origin.livepeer.com:8443/api/asset/upload/tus';
+        const fetchMock = backendFetch({ tusEndpoint: unsafeEndpoint });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const response = await control.fetch(await controlRequest());
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'provider_create_ambiguous' });
+        expect(fetchMock.mock.calls.some(([url]) => String(url) === unsafeEndpoint)).toBe(false);
+    });
+
     it('persists one idempotent outbox record and rejects a conflict', async () => {
         const testState = createState();
         const control = new LivepeerControl(testState.state, createEnv());
@@ -490,5 +549,239 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(log).not.toContain('signed-bytes');
         expect(log).not.toContain('"key"');
         expect(log).toContain('job-001');
+    });
+
+    it('fails closed before Livepeer when the creator allowlist is empty', async () => {
+        const admissionState = createState();
+        let admission!: LivepeerControl;
+        const namespace = {
+            idFromName: (name: string) => ({ toString: () => name }),
+            get: () => ({ fetch: (request: Request) => admission.fetch(request) }),
+        } as unknown as DurableObjectNamespace;
+        const env = createEnv({ LIVEPEER_CREATOR_ALLOWLIST: '', LIVEPEER_CONTROL: namespace });
+        admission = new LivepeerControl(admissionState.state, env);
+        const control = new LivepeerControl(createState().state, env);
+        const fetchMock = backendFetch();
+        vi.stubGlobal('fetch', fetchMock);
+
+        const response = await control.fetch(await controlRequest());
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'admission_closed' });
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/asset/request-upload'))).toBe(false);
+    });
+
+    it('rejects an active-job quota overflow before Livepeer', async () => {
+        const admissionState = createState();
+        let admission!: LivepeerControl;
+        const namespace = {
+            idFromName: (name: string) => ({ toString: () => name }),
+            get: () => ({ fetch: (request: Request) => admission.fetch(request) }),
+        } as unknown as DurableObjectNamespace;
+        const env = createEnv({ LIVEPEER_CONTROL: namespace });
+        admission = new LivepeerControl(admissionState.state, env);
+        expect((await admission.fetch(admissionRequest('reserve', {
+            jobId: 'other-job',
+            generation: 1,
+            creator: String(vectors.upload_intent.envelope.account_id),
+            expectedSourceBytes: '1000',
+        }))).status).toBe(200);
+        const control = new LivepeerControl(createState().state, env);
+        const fetchMock = backendFetch();
+        vi.stubGlobal('fetch', fetchMock);
+
+        const response = await control.fetch(await controlRequest());
+
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ error: 'admission_denied' });
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/asset/request-upload'))).toBe(false);
+    });
+
+    it('auto-closes admission after a provider 429 response', async () => {
+        const admissionState = createState();
+        let admission!: LivepeerControl;
+        const namespace = {
+            idFromName: (name: string) => ({ toString: () => name }),
+            get: () => ({ fetch: (request: Request) => admission.fetch(request) }),
+        } as unknown as DurableObjectNamespace;
+        const env = createEnv({ LIVEPEER_CONTROL: namespace });
+        admission = new LivepeerControl(admissionState.state, env);
+        const jobState = createState();
+        const control = new LivepeerControl(jobState.state, env);
+        vi.stubGlobal('fetch', backendFetch({ providerStatus: 429 }));
+
+        const response = await control.fetch(await controlRequest());
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'provider_create_ambiguous' });
+        expect(jobState.values.get('job:v1')).toMatchObject({ state: 'CREATE_AMBIGUOUS' });
+        expect(admissionState.values.get('admission:v1')).toMatchObject({
+            status: 'AUTO_CLOSED',
+            closure: { code: 'provider_budget_or_inventory' },
+        });
+    });
+
+    it('enforces one active job and two UTC-day attempts in the admission object', async () => {
+        const creator = String(vectors.upload_intent.envelope.account_id);
+        const control = new LivepeerControl(createState().state, createEnv());
+        const reserve = (jobId: string) => control.fetch(admissionRequest('reserve', {
+            jobId,
+            generation: 1,
+            creator,
+            expectedSourceBytes: '1000',
+        }));
+        const release = (jobId: string) => control.fetch(admissionRequest('mark', {
+            jobId,
+            generation: 1,
+            state: 'ONCHAIN_PUBLISHED',
+        }));
+
+        expect((await reserve('job-a')).status).toBe(200);
+        const activeLimit = await reserve('job-b');
+        expect(activeLimit.status).toBe(409);
+        expect(await activeLimit.json()).toEqual({ error: 'admission_denied' });
+        expect((await release('job-a')).status).toBe(200);
+        expect((await release('job-a')).status).toBe(200);
+        expect((await reserve('job-b')).status).toBe(200);
+        expect((await release('job-b')).status).toBe(200);
+        const dailyLimit = await reserve('job-c');
+        expect(dailyLimit.status).toBe(409);
+        expect(await dailyLimit.json()).toEqual({ error: 'admission_denied' });
+    });
+
+    it('auto-closes on monthly budget overflow and an ambiguous create older than 15 minutes', async () => {
+        const creator = String(vectors.upload_intent.envelope.account_id);
+        let now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const budgetState = createState();
+        const budgetControl = new LivepeerControl(budgetState.state, createEnv());
+        const reserve = (control: LivepeerControl, jobId: string, expectedSourceBytes: string) => (
+            control.fetch(admissionRequest('reserve', {
+                jobId,
+                generation: 1,
+                creator,
+                expectedSourceBytes,
+            }))
+        );
+
+        expect((await reserve(budgetControl, 'job-budget-a', '20000000000')).status).toBe(200);
+        expect((await budgetControl.fetch(admissionRequest('mark', {
+            jobId: 'job-budget-a', generation: 1, state: 'ONCHAIN_PUBLISHED',
+        }))).status).toBe(200);
+        const overflow = await reserve(budgetControl, 'job-budget-b', '1');
+        expect(overflow.status).toBe(503);
+        expect(await overflow.json()).toEqual({ error: 'admission_closed' });
+        expect(budgetState.values.get('admission:v1')).toMatchObject({
+            status: 'AUTO_CLOSED',
+            closure: { code: 'monthly_source_bytes_exceeded' },
+        });
+
+        const ambiguousState = createState();
+        const ambiguousControl = new LivepeerControl(ambiguousState.state, createEnv());
+        expect((await reserve(ambiguousControl, 'job-ambiguous', '1000')).status).toBe(200);
+        now += 5 * 60 * 1000;
+        expect((await ambiguousControl.fetch(admissionRequest('mark', {
+            jobId: 'job-ambiguous', generation: 1, state: 'CREATE_AMBIGUOUS',
+        }))).status).toBe(200);
+        expect(ambiguousState.alarms.at(-1)).toBe(now + 15 * 60 * 1000);
+        const stillReserved = await reserve(ambiguousControl, 'job-after-ambiguous', '1000');
+        expect(stillReserved.status).toBe(409);
+        expect(await stillReserved.json()).toEqual({ error: 'admission_denied' });
+        now += 10 * 60 * 1000;
+        await ambiguousControl.alarm();
+        expect(ambiguousState.values.get('admission:v1')).toMatchObject({ status: 'OPEN' });
+        expect(ambiguousState.alarms.at(-1)).toBe(now + 5 * 60 * 1000);
+        now += 5 * 60 * 1000;
+        await ambiguousControl.alarm();
+        expect(ambiguousState.values.get('admission:v1')).toMatchObject({
+            status: 'AUTO_CLOSED',
+            closure: { code: 'create_ambiguous_timeout' },
+        });
+    });
+
+    it('reopens AUTO_CLOSED only with operator auth, matching closure evidence and idempotency', async () => {
+        const creator = String(vectors.upload_intent.envelope.account_id);
+        const admissionState = createState();
+        let admission!: LivepeerControl;
+        const admissionFetch = vi.fn((request: Request) => admission.fetch(request));
+        const namespace = {
+            idFromName: (name: string) => ({ toString: () => name }),
+            get: () => ({ fetch: admissionFetch }),
+        } as unknown as DurableObjectNamespace;
+        const env = createEnv({
+            LIVEPEER_BRIDGE_ENABLED: 'true',
+            LIVEPEER_PAID_MEDIA_OPERATOR_ID: OPERATOR_ID,
+            LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN: OPERATOR_TOKEN,
+            LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN_PREVIOUS: OPERATOR_TOKEN_PREVIOUS,
+            LIVEPEER_CONTROL: namespace,
+        });
+        admission = new LivepeerControl(admissionState.state, env);
+        expect((await admission.fetch(admissionRequest('reserve', {
+            jobId: 'job-reopen', generation: 1, creator, expectedSourceBytes: '1000',
+        }))).status).toBe(200);
+        expect((await admission.fetch(admissionRequest('mark', {
+            jobId: 'job-reopen', generation: 1, state: 'CREATE_AMBIGUOUS',
+        }))).status).toBe(200);
+        expect((await admission.fetch(admissionRequest('mark', {
+            jobId: 'job-reopen', generation: 1, state: 'AUTO_CLOSED',
+        }))).status).toBe(200);
+        const closure = (admissionState.values.get('admission:v1') as {
+            closure: { code: string; observedAtMs: number };
+        }).closure;
+        const body = {
+            idempotency_key: 'reopen-incident-001',
+            network: 'testnet',
+            contract_id: CONTRACT_ID,
+            closure_code: closure.code,
+            closure_observed_at_ms: String(closure.observedAtMs),
+            incident_id: 'incident-001',
+            evidence_sha256: 'a'.repeat(64),
+            resolution_code: 'TUS_TERMINATION_CONFIRMED',
+            job_id: 'job-reopen',
+            generation: 1,
+        };
+        const request = (requestBody: Record<string, unknown>, token?: string) => new Request(
+            'https://bridge.youtick.net/v1/operations/admission-reopen',
+            {
+                method: 'POST',
+                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+                body: JSON.stringify(requestBody),
+            },
+        );
+
+        const unauthorized = await handler.fetch(request(body), env);
+        expect(unauthorized.status).toBe(403);
+        expect(await unauthorized.json()).toEqual({ error: 'operator_unauthorized' });
+
+        const stale = await handler.fetch(request({
+            ...body,
+            closure_observed_at_ms: String(closure.observedAtMs - 1),
+        }, OPERATOR_TOKEN), env);
+        expect(stale.status).toBe(403);
+        expect(await stale.json()).toEqual({ error: 'admission_reopen_denied' });
+
+        const reopened = await handler.fetch(request(body, OPERATOR_TOKEN_PREVIOUS), env);
+        expect(reopened.status).toBe(201);
+        expect(await reopened.json()).toEqual({ accepted: true, reopened: true, replayed: false });
+        expect(admissionState.values.get('admission:v1')).toMatchObject({
+            status: 'OPEN',
+            reservations: {},
+        });
+        expect(admissionState.values.get('admission:reopen:reopen-incident-001')).toMatchObject({
+            schema: 'youtick.livepeer-admission-reopen.v1',
+            operatorId: OPERATOR_ID,
+            incidentId: 'incident-001',
+            evidenceSha256: 'a'.repeat(64),
+        });
+
+        const replay = await handler.fetch(request(body, OPERATOR_TOKEN), env);
+        expect(replay.status).toBe(200);
+        expect(await replay.json()).toEqual({ accepted: true, reopened: true, replayed: true });
+        const conflict = await handler.fetch(request({
+            ...body,
+            evidence_sha256: 'b'.repeat(64),
+        }, OPERATOR_TOKEN), env);
+        expect(conflict.status).toBe(409);
+        expect(await conflict.json()).toEqual({ error: 'admission_reopen_conflict' });
     });
 });

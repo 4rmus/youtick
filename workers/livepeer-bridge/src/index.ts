@@ -12,7 +12,12 @@ export interface Env {
     LIVEPEER_API_KEY?: string;
     LIVEPEER_PROJECT_ID?: string;
     LIVEPEER_API_TOKEN_NAME?: string;
+    LIVEPEER_CREATOR_ALLOWLIST?: string;
+    LIVEPEER_PAID_MEDIA_OPERATOR_ID?: string;
+    LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN?: string;
+    LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN_PREVIOUS?: string;
     LIVEPEER_WEBHOOK_SECRET?: string;
+    LIVEPEER_WEBHOOK_SECRET_PREVIOUS?: string;
     ALLOWED_ORIGINS?: string;
     NEAR_NETWORK?: string;
     NEAR_RPC_URL?: string;
@@ -89,11 +94,31 @@ type JobRecord = {
     profileId: 'paid-media-livepeer-v1';
     profileConfigSha256: string;
     createdAtMs: number;
+    apiTokenName: string;
     assetId?: string;
     playbackId?: string;
     projectId?: string;
     tusEndpoint?: string;
     publication?: FinalizePublication;
+};
+type ReconcileStatus = 'HEALTHY' | 'DRIFT_BLOCKED' | 'PROVIDER_UNKNOWN' | 'NEAR_UNKNOWN';
+type ReconcileRecord = {
+    schema: 'youtick.livepeer-reconcile.v1';
+    status: ReconcileStatus;
+    consecutiveErrors: number;
+    nextReconcileAtMs: number;
+    lastGoodAtMs?: number;
+    lastDrift?: {
+        code: string;
+        firstObservedAtMs: number;
+        lastObservedAtMs: number;
+        observations: number;
+    };
+    recovery?: {
+        firstObservedAtMs: number;
+        observations: number;
+    };
+    salesSuspensionQueuedAtMs?: number;
 };
 type FinalJob = { job: OnChainJob; blockHash: string };
 type ProviderUpload = {
@@ -112,7 +137,7 @@ type OutboxInput = {
 };
 type OutboxRecord = OutboxInput & {
     schema: 'youtick.livepeer-control-outbox.v1';
-    state: 'PENDING';
+    state: 'PENDING' | 'CONFIRMED';
     createdAtMs: number;
 };
 type FinalizePublication = {
@@ -135,14 +160,57 @@ type FinalizeInput = {
     payloadSha256: string;
     submission: FinalizePublication;
 };
-type OperatorRecord = FinalizeInput & {
+type SuspendSalesInput = {
+    idempotencyKey: string;
+    payloadSha256: string;
+    publicationId: string;
+};
+type OperatorRecord = {
     schema: 'youtick.livepeer-operator-outbox.v1';
     state: 'PENDING' | 'RESERVED' | 'SIGNED' | 'BROADCAST' | 'CONFIRMED';
+    idempotencyKey: string;
+    payloadSha256: string;
     createdAtMs: number;
     nonce?: string;
     blockHash?: string;
     signedTxBase64?: string;
     txHash?: string;
+};
+type AdmissionJobState = 'CREATE_PENDING' | 'CREATE_AMBIGUOUS' | 'UPLOAD_READY'
+    | 'READY_VERIFIED' | 'FINALIZE_QUEUED';
+type AdmissionReservation = {
+    creator: string;
+    expectedSourceBytes: string;
+    state: AdmissionJobState;
+    createdAtMs: number;
+    ambiguousAtMs?: number;
+};
+type AdmissionRecord = {
+    schema: 'youtick.livepeer-admission.v1';
+    status: 'OPEN' | 'AUTO_CLOSED';
+    reservations: Record<string, AdmissionReservation>;
+    daily: { utcDay: string; globalAttempts: number; creatorAttempts: Record<string, number> };
+    monthly: { utcMonth: string; reservedSourceBytes: string };
+    closure?: { code: string; observedAtMs: number };
+};
+type AdmissionResolutionCode = 'PROVIDER_ABSENCE_CONFIRMED'
+    | 'TUS_TERMINATION_CONFIRMED'
+    | 'INVENTORY_RECONCILED'
+    | 'BUDGET_WINDOW_ROLLED';
+type AdmissionReopenInput = {
+    idempotencyKey: string;
+    operatorId: string;
+    closureCode: string;
+    closureObservedAtMs: number;
+    incidentId: string;
+    evidenceSha256: string;
+    resolutionCode: AdmissionResolutionCode;
+    jobId: string | null;
+    generation: number | null;
+};
+type AdmissionReopenRecord = AdmissionReopenInput & {
+    schema: 'youtick.livepeer-admission-reopen.v1';
+    reopenedAtMs: number;
 };
 
 const PUBLIC_CONTROL_REQUESTS_IMPLEMENTED = true;
@@ -151,6 +219,11 @@ const MAX_SOURCE_BYTES = 20_000_000_000n;
 const LIVEPEER_TUS_CHUNK_BYTES = 8 * 1024 * 1024;
 const LIVEPEER_API_BASE = 'https://livepeer.studio/api';
 const LIVEPEER_TUS_VERSION = '1.0.0';
+const LIVEPEER_HLS_SOURCE_TYPE = 'html5/application/vnd.apple.mpegurl';
+const LIVEPEER_MP4_SOURCE_TYPE = 'html5/video/mp4';
+const LIVEPEER_VTT_SOURCE_TYPE = 'text/vtt';
+const MAX_PROVIDER_PLAYBACK_OUTPUTS = 16;
+const MAX_THUMBNAIL_REFERENCE_PROBES = 32;
 const PROFILE_CONFIG_SHA256 = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
 const SESSION_METHOD = 'create_paid_job';
 const CONTROL_MAX_FUTURE_MS = 5 * 60 * 1000;
@@ -159,6 +232,19 @@ const PLAYBACK_MIN_TTL_SECONDS = 120;
 const PLAYBACK_MAX_TTL_SECONDS = 300;
 const FINALIZE_GAS = 50_000_000_000_000n;
 const JOB_KEY = 'job:v1';
+const RECONCILE_KEY = 'reconcile:v1';
+const RECONCILE_HEALTHY_INTERVAL_MS = 15 * 60 * 1000;
+const RECONCILE_CONFIRMATION_MS = 60 * 1000;
+const RECONCILE_BACKOFF_MS = [60, 120, 240, 480, 900].map((seconds) => seconds * 1000);
+const ADMISSION_KEY = 'admission:v1';
+const ADMISSION_REOPEN_KEY_PREFIX = 'admission:reopen:';
+const ADMISSION_MONTHLY_SOURCE_BYTES = 20_000_000_000n;
+const ADMISSION_AMBIGUOUS_TIMEOUT_MS = 15 * 60 * 1000;
+const ADMISSION_CLOSURE_CODES = new Set([
+    'monthly_source_bytes_exceeded',
+    'provider_budget_or_inventory',
+    'create_ambiguous_timeout',
+]);
 const DEFAULT_ALLOWED_ORIGINS = 'https://youtick.net,https://www.youtick.net';
 const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -166,16 +252,35 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const SESSION_KEY_PATTERN = /^ed25519:[1-9A-HJ-NP-Za-km-z]{32,64}$/;
 const NONCE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
+const IDENTIFIER_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
 const PLAYBACK_ID_PATTERN = /^[A-Za-z0-9_-]{6,128}$/;
 const OUTBOX_METHODS = new Set<OutboxMethod>([
     'finalize_livepeer_publication',
     'suspend_livepeer_sales',
 ]);
+const STRONG_PROVIDER_DRIFT_CODES = new Set([
+    'provider_asset_missing',
+    'provider_identity_mismatch',
+    'provider_playback_exposed',
+    'provider_playback_mismatch',
+    'provider_playback_missing',
+    'provider_state_invalid',
+]);
+const PROVIDER_INVENTORY_DRIFT_CODES = new Set([
+    'provider_asset_missing',
+    'provider_identity_mismatch',
+    'provider_playback_missing',
+    'provider_publication_mismatch',
+]);
 const SENSITIVE_LOG_KEY = /authorization|secret|token|tus|upload.*url|signed.*transaction|private.*key/i;
 const SAFE_ERROR_CODES = new Set([
     'control_body_too_large',
     'control_request_expired',
+    'admission_closed',
+    'admission_denied',
+    'admission_reopen_conflict',
+    'admission_reopen_denied',
     'device_key_not_authorized',
     'device_nonce_replayed',
     'deployment_binding_mismatch',
@@ -183,6 +288,7 @@ const SAFE_ERROR_CODES = new Set([
     'invalid_control_request',
     'invalid_json',
     'invalid_finalize_request',
+    'invalid_admission_reopen',
     'invalid_outbox',
     'invalid_playback_request',
     'invalid_upload_intent',
@@ -196,11 +302,16 @@ const SAFE_ERROR_CODES = new Set([
     'near_job_response_invalid',
     'on_chain_job_mismatch',
     'origin_denied',
+    'operator_unauthorized',
     'outbox_conflict',
     'provider_identity_mismatch',
+    'provider_asset_missing',
+    'provider_admission_closed',
+    'provider_playback_missing',
     'provider_playback_exposed',
     'provider_playback_mismatch',
     'provider_state_invalid',
+    'provider_unavailable',
     'playback_authorization_unavailable',
     'playback_denied',
     'protocol_binding_mismatch',
@@ -223,7 +334,9 @@ export default {
                 providerMutationEnabled: env.LIVEPEER_BRIDGE_ENABLED === 'true',
                 controlPlaneReady: env.LIVEPEER_BRIDGE_ENABLED === 'true'
                     && Boolean(env.LIVEPEER_CONTROL)
-                    && validWebhookConfig(env),
+                    && validWebhookConfig(env)
+                    && validAdmissionConfig(env)
+                    && validAdmissionReopenConfig(env),
                 playbackReady: env.LIVEPEER_BRIDGE_ENABLED === 'true'
                     && Boolean(env.LIVEPEER_CONTROL)
                     && validPlaybackConfig(env),
@@ -247,13 +360,23 @@ export default {
             return forwardLivepeerWebhook(request, env);
         }
 
+        if (request.method === 'POST' && url.pathname === '/v1/operations/admission-reopen') {
+            if (env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
+                return json({ error: 'control_plane_disabled' }, 503);
+            }
+            if (!env.LIVEPEER_CONTROL || !validAdmissionReopenConfig(env)) {
+                return json({ error: 'runtime_not_configured' }, 503);
+            }
+            return forwardAdmissionReopen(request, env);
+        }
+
         if (request.method === 'POST' && url.pathname === '/v1/upload-intents') {
             const origin = request.headers.get('Origin') || '';
             const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
             if (!PUBLIC_CONTROL_REQUESTS_IMPLEMENTED || env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
                 return withCors(json({ error: 'control_plane_disabled' }, 503), corsOrigin);
             }
-            if (!env.LIVEPEER_CONTROL || !validWebhookConfig(env)) {
+            if (!env.LIVEPEER_CONTROL || !validWebhookConfig(env) || !validAdmissionConfig(env)) {
                 return withCors(json({ error: 'runtime_not_configured' }, 503), corsOrigin);
             }
             return forwardUploadIntent(request, env);
@@ -283,6 +406,20 @@ export class LivepeerControl {
         private readonly env: Env,
     ) {}
 
+    async alarm(): Promise<void> {
+        if (await this.state.storage.get<AdmissionRecord>(ADMISSION_KEY)) {
+            await expireAmbiguousAdmissions(this.state);
+            return;
+        }
+        const job = await this.state.storage.get<JobRecord>(JOB_KEY);
+        if (!job || job.state !== 'ONCHAIN_PUBLISHED' || !job.publication) return;
+        if (this.env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
+            await scheduleReconcile(this.state, Date.now() + RECONCILE_HEALTHY_INTERVAL_MS);
+            return;
+        }
+        await reconcilePublishedJob(this.state, this.env, job);
+    }
+
     async fetch(request: Request): Promise<Response> {
         const url = new URL(request.url);
         try {
@@ -303,6 +440,20 @@ export class LivepeerControl {
                 this.operatorTail = run.then(() => undefined, () => undefined);
                 return await run;
             }
+            if (request.method === 'POST' && url.pathname === '/internal/suspend-sales') {
+                const run = this.operatorTail.then(() => this.suspendSales(request));
+                this.operatorTail = run.then(() => undefined, () => undefined);
+                return await run;
+            }
+            if (request.method === 'POST' && url.pathname === '/internal/admission/reserve') {
+                return await reserveAdmission(this.state, this.env, await readJsonObject(request));
+            }
+            if (request.method === 'POST' && url.pathname === '/internal/admission/mark') {
+                return await markAdmission(this.state, await readJsonObject(request));
+            }
+            if (request.method === 'POST' && url.pathname === '/internal/admission/reopen') {
+                return await reopenAdmission(this.state, await readJsonObject(request));
+            }
             return json({ error: 'not_found' }, 404);
         } catch (error) {
             const code = safeErrorCode(error);
@@ -318,7 +469,10 @@ export class LivepeerControl {
         requireExactChainJob(input, chainJob);
         await requireFinalAccessKey(this.env, input.envelope, blockHash);
 
-        const candidate = jobRecord(input);
+        const candidate = jobRecord(input, this.env);
+        if (!await this.state.storage.get<JobRecord>(JOB_KEY)) {
+            await requestAdmission(this.env, candidate);
+        }
         const result = await this.state.storage.transaction(async (transaction) => {
             const nonceKey = `nonce:${input.envelope.device_nonce}`;
             if (await transaction.get(nonceKey)) throw new Error('device_nonce_replayed');
@@ -343,8 +497,12 @@ export class LivepeerControl {
         let provider: ProviderUpload;
         try {
             provider = await createProviderUpload(this.env, candidate);
-        } catch {
+        } catch (error) {
             await this.state.storage.put(JOB_KEY, { ...candidate, state: 'CREATE_AMBIGUOUS' });
+            await updateAdmission(this.env, candidate, 'CREATE_AMBIGUOUS');
+            if (safeErrorCode(error) === 'provider_admission_closed') {
+                await updateAdmission(this.env, candidate, 'AUTO_CLOSED');
+            }
             throw new Error('provider_create_ambiguous');
         }
         const ready: JobRecord = {
@@ -356,12 +514,25 @@ export class LivepeerControl {
             tusEndpoint: provider.tusEndpoint,
         };
         await this.state.storage.put(JOB_KEY, ready);
+        await updateAdmission(this.env, ready, 'UPLOAD_READY');
         return uploadIntentResponse(ready, true);
     }
 
     private async issuePlaybackToken(request: Request): Promise<Response> {
         const input = await parsePlaybackTokenRequest(request, this.env);
         await verifyControlSignature(request, input.envelope);
+        const [job, reconcile] = await Promise.all([
+            this.state.storage.get<JobRecord>(JOB_KEY),
+            this.state.storage.get<ReconcileRecord>(RECONCILE_KEY),
+        ]);
+        if (!job
+            || job.state !== 'ONCHAIN_PUBLISHED'
+            || job.jobId !== input.body.job_id
+            || job.generation !== input.body.generation
+            || job.playbackId !== input.body.playback_id
+            || reconcile?.status !== 'HEALTHY') {
+            throw new Error('playback_denied');
+        }
         await this.state.storage.transaction(async (transaction) => {
             const nonceKey = `nonce:${input.envelope.device_nonce}`;
             if (await transaction.get(nonceKey)) throw new Error('device_nonce_replayed');
@@ -421,11 +592,18 @@ export class LivepeerControl {
         }
         const webhook = parseWebhook(requireObject(value, 'invalid_webhook'));
         const asset = webhookAsset(webhook);
-        if (!asset || webhook.event !== 'asset.ready') {
+        if (!asset) {
             return json({ accepted: true, ignored: true }, 202);
         }
         const existing = await this.state.storage.get<JobRecord>(JOB_KEY);
         if (!existing || asset.id !== existing.assetId) {
+            return json({ accepted: true, ignored: true }, 202);
+        }
+        if (webhook.event !== 'asset.ready') {
+            if (existing.state === 'ONCHAIN_PUBLISHED') {
+                await scheduleReconcile(this.state, Date.now());
+                return json({ accepted: true, ignored: true, reconcile_triggered: true }, 202);
+            }
             return json({ accepted: true, ignored: true }, 202);
         }
 
@@ -455,6 +633,7 @@ export class LivepeerControl {
                     publication,
                 };
                 await this.state.storage.put(JOB_KEY, record);
+                await updateAdmission(this.env, record, 'READY_VERIFIED');
                 await this.state.storage.put(dedupKey, {
                     state: 'VERIFIED',
                     event: webhook.event,
@@ -474,6 +653,8 @@ export class LivepeerControl {
         }
 
         if (record.state === 'ONCHAIN_PUBLISHED') {
+            await updateAdmission(this.env, record, 'ONCHAIN_PUBLISHED');
+            await ensureReconcileScheduled(this.state);
             return json({ accepted: true, duplicate: Boolean(seen), finalized: true });
         }
         if (!record.publication) throw new Error('provider_state_invalid');
@@ -485,6 +666,10 @@ export class LivepeerControl {
                 state: result.finalized === true ? 'ONCHAIN_PUBLISHED' : 'FINALIZE_QUEUED',
             };
             await this.state.storage.put(JOB_KEY, record);
+            await updateAdmission(this.env, record, record.state);
+            if (record.state === 'ONCHAIN_PUBLISHED') {
+                await ensureReconcileScheduled(this.state);
+            }
         }
         return response;
     }
@@ -492,6 +677,544 @@ export class LivepeerControl {
     private async finalizePublication(request: Request): Promise<Response> {
         const input = await parseFinalizeInput(await readJsonObject(request));
         return processFinalizeOutbox(this.state, this.env, input);
+    }
+
+    private async suspendSales(request: Request): Promise<Response> {
+        const input = await parseSuspendSalesInput(await readJsonObject(request));
+        return processSuspendSalesOutbox(this.state, this.env, input);
+    }
+}
+
+async function requestAdmission(env: Env, job: JobRecord): Promise<void> {
+    if (!env.LIVEPEER_CONTROL) throw new Error('runtime_not_configured');
+    const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
+        admissionObjectName(job.network, job.contractId),
+    ));
+    const response = await object.fetch(new Request('https://object/internal/admission/reserve', {
+        method: 'POST',
+        body: JSON.stringify({
+            jobId: job.jobId,
+            generation: job.generation,
+            creator: job.creator,
+            expectedSourceBytes: job.expectedSourceBytes,
+        }),
+    }));
+    if (!response.ok) {
+        const result = await response.json() as { error?: unknown };
+        throw new Error(result.error === 'admission_denied' ? 'admission_denied' : 'admission_closed');
+    }
+}
+
+async function updateAdmission(
+    env: Env,
+    job: JobRecord,
+    state: AdmissionJobState | 'ONCHAIN_PUBLISHED' | 'AUTO_CLOSED',
+): Promise<void> {
+    if (!env.LIVEPEER_CONTROL) throw new Error('runtime_not_configured');
+    const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
+        admissionObjectName(job.network, job.contractId),
+    ));
+    const response = await object.fetch(new Request('https://object/internal/admission/mark', {
+        method: 'POST',
+        body: JSON.stringify({ jobId: job.jobId, generation: job.generation, state }),
+    }));
+    if (!response.ok) throw new Error('admission_closed');
+}
+
+async function tryAutoCloseAdmission(env: Env, job: JobRecord): Promise<void> {
+    try {
+        await updateAdmission(env, job, 'AUTO_CLOSED');
+    } catch {
+        // Reconciliation must retain its own alarm even if admission storage is unavailable.
+    }
+}
+
+async function reserveAdmission(
+    state: DurableObjectState,
+    env: Env,
+    input: JsonObject,
+): Promise<Response> {
+    requireExactKeys(input, ['jobId', 'generation', 'creator', 'expectedSourceBytes'], 'invalid_outbox');
+    if (typeof input.jobId !== 'string'
+        || !JOB_ID_PATTERN.test(input.jobId)
+        || !Number.isSafeInteger(input.generation)
+        || (input.generation as number) < 1
+        || typeof input.creator !== 'string'
+        || !ACCOUNT_ID_PATTERN.test(input.creator)
+        || typeof input.expectedSourceBytes !== 'string'
+        || !/^[1-9][0-9]{0,19}$/.test(input.expectedSourceBytes)) {
+        throw new Error('invalid_outbox');
+    }
+    const creator = input.creator as string;
+    const expectedSourceBytes = input.expectedSourceBytes as string;
+    const allowlist = creatorAllowlist(env);
+    if (!allowlist.has(creator)) throw new Error('admission_closed');
+    const now = Date.now();
+    const utcDay = new Date(now).toISOString().slice(0, 10);
+    const utcMonth = utcDay.slice(0, 7);
+    const reservationKey = `${input.jobId}:${input.generation}`;
+    const result = await state.storage.transaction(async (transaction) => {
+        const stored = await transaction.get<AdmissionRecord>(ADMISSION_KEY);
+        const record = stored || emptyAdmissionRecord(utcDay, utcMonth);
+        if (record.status === 'AUTO_CLOSED') throw new Error('admission_closed');
+        const existing = record.reservations[reservationKey];
+        if (existing) {
+            if (existing.creator !== creator
+                || existing.expectedSourceBytes !== expectedSourceBytes) {
+                throw new Error('admission_denied');
+            }
+            return { record, created: false, closed: false };
+        }
+        const daily = record.daily.utcDay === utcDay
+            ? record.daily
+            : { utcDay, globalAttempts: 0, creatorAttempts: {} };
+        const monthly = record.monthly.utcMonth === utcMonth
+            ? record.monthly
+            : { utcMonth, reservedSourceBytes: '0' };
+        const active = Object.values(record.reservations);
+        if (active.length >= 1
+            || active.some((reservation) => reservation.creator === creator)
+            || daily.globalAttempts >= 2
+            || (daily.creatorAttempts[creator] || 0) >= 2) {
+            throw new Error('admission_denied');
+        }
+        const reservedSourceBytes = BigInt(monthly.reservedSourceBytes) + BigInt(expectedSourceBytes);
+        if (reservedSourceBytes > ADMISSION_MONTHLY_SOURCE_BYTES) {
+            const closed: AdmissionRecord = {
+                ...record,
+                status: 'AUTO_CLOSED',
+                closure: { code: 'monthly_source_bytes_exceeded', observedAtMs: now },
+            };
+            await transaction.put(ADMISSION_KEY, closed);
+            return { record: closed, created: false, closed: true };
+        }
+        const next: AdmissionRecord = {
+            ...record,
+            reservations: {
+                ...record.reservations,
+                [reservationKey]: {
+                    creator,
+                    expectedSourceBytes,
+                    state: 'CREATE_PENDING',
+                    createdAtMs: now,
+                },
+            },
+            daily: {
+                ...daily,
+                globalAttempts: daily.globalAttempts + 1,
+                creatorAttempts: {
+                    ...daily.creatorAttempts,
+                    [creator]: (daily.creatorAttempts[creator] || 0) + 1,
+                },
+            },
+            monthly: { utcMonth, reservedSourceBytes: String(reservedSourceBytes) },
+        };
+        await transaction.put(ADMISSION_KEY, next);
+        return { record: next, created: true, closed: false };
+    });
+    if (result.closed) throw new Error('admission_closed');
+    return json({ accepted: true, created: result.created });
+}
+
+async function markAdmission(state: DurableObjectState, input: JsonObject): Promise<Response> {
+    requireExactKeys(input, ['jobId', 'generation', 'state'], 'invalid_outbox');
+    if (typeof input.jobId !== 'string'
+        || !JOB_ID_PATTERN.test(input.jobId)
+        || !Number.isSafeInteger(input.generation)
+        || (input.generation as number) < 1
+        || !['CREATE_AMBIGUOUS', 'UPLOAD_READY', 'READY_VERIFIED', 'FINALIZE_QUEUED', 'ONCHAIN_PUBLISHED', 'AUTO_CLOSED'].includes(String(input.state))) {
+        throw new Error('invalid_outbox');
+    }
+    const reservationKey = `${input.jobId}:${input.generation}`;
+    let ambiguousAlarmAt: number | null = null;
+    await state.storage.transaction(async (transaction) => {
+        const record = await transaction.get<AdmissionRecord>(ADMISSION_KEY);
+        if (!record) throw new Error('admission_closed');
+        if (input.state === 'AUTO_CLOSED') {
+            if (record.status === 'AUTO_CLOSED') return;
+            await transaction.put(ADMISSION_KEY, {
+                ...record,
+                status: 'AUTO_CLOSED',
+                closure: { code: 'provider_budget_or_inventory', observedAtMs: Date.now() },
+            } satisfies AdmissionRecord);
+            return;
+        }
+        const reservation = record.reservations[reservationKey];
+        if (!reservation && input.state === 'ONCHAIN_PUBLISHED') return;
+        if (!reservation) throw new Error('admission_denied');
+        const reservations = { ...record.reservations };
+        if (input.state === 'ONCHAIN_PUBLISHED') {
+            delete reservations[reservationKey];
+        } else {
+            const ambiguousAtMs = input.state === 'CREATE_AMBIGUOUS'
+                ? reservation.ambiguousAtMs || Date.now()
+                : undefined;
+            reservations[reservationKey] = {
+                ...reservation,
+                state: input.state as AdmissionJobState,
+                ambiguousAtMs,
+            };
+            if (input.state === 'CREATE_AMBIGUOUS') {
+                ambiguousAlarmAt = ambiguousAtMs! + ADMISSION_AMBIGUOUS_TIMEOUT_MS;
+            }
+        }
+        await transaction.put(ADMISSION_KEY, { ...record, reservations });
+    });
+    if (ambiguousAlarmAt !== null) await state.storage.setAlarm(ambiguousAlarmAt);
+    return json({ accepted: true });
+}
+
+async function expireAmbiguousAdmissions(state: DurableObjectState): Promise<void> {
+    const now = Date.now();
+    const record = await state.storage.get<AdmissionRecord>(ADMISSION_KEY);
+    if (!record || record.status === 'AUTO_CLOSED') return;
+    const deadlines = Object.values(record.reservations)
+        .filter((reservation) => reservation.state === 'CREATE_AMBIGUOUS')
+        .map((reservation) => (
+            (reservation.ambiguousAtMs || reservation.createdAtMs) + ADMISSION_AMBIGUOUS_TIMEOUT_MS
+        ));
+    const expired = deadlines.some((deadline) => now >= deadline);
+    if (expired) {
+        await state.storage.put(ADMISSION_KEY, {
+            ...record,
+            status: 'AUTO_CLOSED',
+            closure: { code: 'create_ambiguous_timeout', observedAtMs: now },
+        } satisfies AdmissionRecord);
+    } else if (deadlines.length > 0) {
+        await state.storage.setAlarm(Math.min(...deadlines));
+    }
+}
+
+async function reopenAdmission(state: DurableObjectState, input: JsonObject): Promise<Response> {
+    const reopen = parseAdmissionReopenInput(input);
+    const auditKey = `${ADMISSION_REOPEN_KEY_PREFIX}${reopen.idempotencyKey}`;
+    const result = await state.storage.transaction(async (transaction) => {
+        const existing = await transaction.get<AdmissionReopenRecord>(auditKey);
+        if (existing) {
+            if (!sameAdmissionReopen(existing, reopen)) throw new Error('admission_reopen_conflict');
+            return { replayed: true };
+        }
+        const record = await transaction.get<AdmissionRecord>(ADMISSION_KEY);
+        if (!record
+            || record.status !== 'AUTO_CLOSED'
+            || record.closure?.code !== reopen.closureCode
+            || record.closure.observedAtMs !== reopen.closureObservedAtMs) {
+            throw new Error('admission_reopen_denied');
+        }
+        const reservations = { ...record.reservations };
+        if (reopen.jobId !== null && reopen.generation !== null) {
+            const reservationKey = `${reopen.jobId}:${reopen.generation}`;
+            if (reservations[reservationKey]?.state !== 'CREATE_AMBIGUOUS') {
+                throw new Error('admission_reopen_denied');
+            }
+            delete reservations[reservationKey];
+        }
+        if (reopen.resolutionCode === 'BUDGET_WINDOW_ROLLED'
+            && record.monthly.utcMonth === new Date().toISOString().slice(0, 7)) {
+            throw new Error('admission_reopen_denied');
+        }
+        await transaction.put(ADMISSION_KEY, {
+            schema: record.schema,
+            status: 'OPEN',
+            reservations,
+            daily: record.daily,
+            monthly: record.monthly,
+        } satisfies AdmissionRecord);
+        await transaction.put(auditKey, {
+            schema: 'youtick.livepeer-admission-reopen.v1',
+            ...reopen,
+            reopenedAtMs: Date.now(),
+        } satisfies AdmissionReopenRecord);
+        return { replayed: false };
+    });
+    return json({ accepted: true, reopened: true, replayed: result.replayed }, result.replayed ? 200 : 201);
+}
+
+function parseAdmissionReopenInput(input: JsonObject): AdmissionReopenInput {
+    requireExactKeys(input, [
+        'idempotencyKey',
+        'operatorId',
+        'closureCode',
+        'closureObservedAtMs',
+        'incidentId',
+        'evidenceSha256',
+        'resolutionCode',
+        'jobId',
+        'generation',
+    ], 'invalid_admission_reopen');
+    const resolutionCode = input.resolutionCode as AdmissionResolutionCode;
+    const hasJob = typeof input.jobId === 'string' && Number.isSafeInteger(input.generation);
+    const hasNoJob = input.jobId === null && input.generation === null;
+    const jobResolution = resolutionCode === 'PROVIDER_ABSENCE_CONFIRMED'
+        || resolutionCode === 'TUS_TERMINATION_CONFIRMED';
+    const generalResolution = resolutionCode === 'INVENTORY_RECONCILED'
+        || resolutionCode === 'BUDGET_WINDOW_ROLLED';
+    if (typeof input.idempotencyKey !== 'string'
+        || !IDEMPOTENCY_PATTERN.test(input.idempotencyKey)
+        || typeof input.operatorId !== 'string'
+        || !IDENTIFIER_PATTERN.test(input.operatorId)
+        || typeof input.closureCode !== 'string'
+        || !ADMISSION_CLOSURE_CODES.has(input.closureCode)
+        || !Number.isSafeInteger(input.closureObservedAtMs)
+        || (input.closureObservedAtMs as number) < 1
+        || typeof input.incidentId !== 'string'
+        || !IDENTIFIER_PATTERN.test(input.incidentId)
+        || typeof input.evidenceSha256 !== 'string'
+        || !SHA256_PATTERN.test(input.evidenceSha256)
+        || (!jobResolution && !generalResolution)
+        || (jobResolution && !hasJob)
+        || (generalResolution && !hasNoJob)
+        || (hasJob && (!JOB_ID_PATTERN.test(input.jobId as string)
+            || (input.generation as number) < 1))) {
+        throw new Error('invalid_admission_reopen');
+    }
+    if ((input.closureCode === 'monthly_source_bytes_exceeded'
+        && resolutionCode !== 'BUDGET_WINDOW_ROLLED')
+        || (input.closureCode === 'create_ambiguous_timeout' && !jobResolution)
+        || (input.closureCode === 'provider_budget_or_inventory'
+            && resolutionCode === 'BUDGET_WINDOW_ROLLED')) {
+        throw new Error('invalid_admission_reopen');
+    }
+    return input as unknown as AdmissionReopenInput;
+}
+
+function sameAdmissionReopen(left: AdmissionReopenRecord, right: AdmissionReopenInput): boolean {
+    return left.idempotencyKey === right.idempotencyKey
+        && left.operatorId === right.operatorId
+        && left.closureCode === right.closureCode
+        && left.closureObservedAtMs === right.closureObservedAtMs
+        && left.incidentId === right.incidentId
+        && left.evidenceSha256 === right.evidenceSha256
+        && left.resolutionCode === right.resolutionCode
+        && left.jobId === right.jobId
+        && left.generation === right.generation;
+}
+
+function emptyAdmissionRecord(utcDay: string, utcMonth: string): AdmissionRecord {
+    return {
+        schema: 'youtick.livepeer-admission.v1',
+        status: 'OPEN',
+        reservations: {},
+        daily: { utcDay, globalAttempts: 0, creatorAttempts: {} },
+        monthly: { utcMonth, reservedSourceBytes: '0' },
+    };
+}
+
+function creatorAllowlist(env: Env): Set<string> {
+    const values = (env.LIVEPEER_CREATOR_ALLOWLIST || '').split(',').map((value) => value.trim()).filter(Boolean);
+    return values.length > 0 && values.every((value) => ACCOUNT_ID_PATTERN.test(value))
+        ? new Set(values)
+        : new Set();
+}
+
+async function ensureReconcileScheduled(state: DurableObjectState): Promise<void> {
+    const existing = await state.storage.get<ReconcileRecord>(RECONCILE_KEY);
+    if (!existing) {
+        const now = Date.now();
+        await state.storage.put(RECONCILE_KEY, {
+            schema: 'youtick.livepeer-reconcile.v1',
+            status: 'PROVIDER_UNKNOWN',
+            consecutiveErrors: 0,
+            nextReconcileAtMs: now,
+        } satisfies ReconcileRecord);
+    }
+    await scheduleReconcile(state, Date.now());
+}
+
+async function scheduleReconcile(state: DurableObjectState, atMs: number): Promise<void> {
+    await state.storage.setAlarm(atMs);
+}
+
+async function reconcilePublishedJob(
+    state: DurableObjectState,
+    env: Env,
+    job: JobRecord,
+): Promise<void> {
+    await tryProcessSalesSuspension(state, env, job);
+    try {
+        const verified = await verifyReadyProviderAsset(env, job);
+        if (canonicalJson(verified) !== canonicalJson(job.publication)) {
+            await persistDriftReconcile(state, env, job, 'provider_publication_mismatch');
+            return;
+        }
+    } catch (error) {
+        const code = safeErrorCode(error);
+        if (!STRONG_PROVIDER_DRIFT_CODES.has(code)) {
+            await persistUnknownReconcile(state, 'PROVIDER_UNKNOWN');
+            return;
+        }
+        await persistDriftReconcile(state, env, job, code);
+        return;
+    }
+
+    try {
+        const publication = await readFinalPublication(env, job.publication!);
+        if (!publication
+            || !publicationMatches(job.publication!, publication)
+            || !['ACTIVE', 'SALES_SUSPENDED'].includes(String(publication.availability))) {
+            await persistDriftReconcile(state, env, job, 'near_publication_mismatch');
+            return;
+        }
+    } catch (error) {
+        if (safeErrorCode(error) === 'near_finalize_pending') {
+            await persistUnknownReconcile(state, 'NEAR_UNKNOWN');
+            return;
+        }
+        await persistDriftReconcile(state, env, job, 'near_publication_mismatch');
+        return;
+    }
+
+    await persistHealthyReconcile(state);
+}
+
+async function persistUnknownReconcile(
+    state: DurableObjectState,
+    status: 'PROVIDER_UNKNOWN' | 'NEAR_UNKNOWN',
+): Promise<void> {
+    const previous = await state.storage.get<ReconcileRecord>(RECONCILE_KEY);
+    const consecutiveErrors = (previous?.consecutiveErrors || 0) + 1;
+    const delay = RECONCILE_BACKOFF_MS[Math.min(consecutiveErrors - 1, RECONCILE_BACKOFF_MS.length - 1)];
+    const nextReconcileAtMs = Date.now() + delay;
+    await state.storage.put(RECONCILE_KEY, {
+        schema: 'youtick.livepeer-reconcile.v1',
+        status,
+        consecutiveErrors,
+        nextReconcileAtMs,
+        lastGoodAtMs: previous?.lastGoodAtMs,
+        lastDrift: previous?.lastDrift,
+        salesSuspensionQueuedAtMs: previous?.salesSuspensionQueuedAtMs,
+    } satisfies ReconcileRecord);
+    await scheduleReconcile(state, nextReconcileAtMs);
+}
+
+async function persistDriftReconcile(
+    state: DurableObjectState,
+    env: Env,
+    job: JobRecord,
+    code: string,
+): Promise<void> {
+    const now = Date.now();
+    const previous = await state.storage.get<ReconcileRecord>(RECONCILE_KEY);
+    const repeated = previous?.status === 'DRIFT_BLOCKED' && previous.lastDrift?.code === code;
+    const lastDrift = repeated ? {
+        ...previous.lastDrift!,
+        lastObservedAtMs: now,
+        observations: previous.lastDrift!.observations + 1,
+    } : {
+        code,
+        firstObservedAtMs: now,
+        lastObservedAtMs: now,
+        observations: 1,
+    };
+    const confirmed = lastDrift.observations >= 2
+        && now - lastDrift.firstObservedAtMs >= RECONCILE_CONFIRMATION_MS;
+    const consecutiveErrors = (previous?.consecutiveErrors || 0) + 1;
+    const delay = RECONCILE_BACKOFF_MS[Math.min(consecutiveErrors - 1, RECONCILE_BACKOFF_MS.length - 1)];
+    const nextReconcileAtMs = now + delay;
+    let salesSuspensionQueuedAtMs = previous?.salesSuspensionQueuedAtMs;
+    if (PROVIDER_INVENTORY_DRIFT_CODES.has(code)) {
+        await tryAutoCloseAdmission(env, job);
+    }
+    if (confirmed && !salesSuspensionQueuedAtMs) {
+        await enqueueSalesSuspension(state, job, code);
+        salesSuspensionQueuedAtMs = now;
+    }
+    if (confirmed) await tryProcessSalesSuspension(state, env, job);
+    await state.storage.put(RECONCILE_KEY, {
+        schema: 'youtick.livepeer-reconcile.v1',
+        status: 'DRIFT_BLOCKED',
+        consecutiveErrors,
+        nextReconcileAtMs,
+        lastGoodAtMs: previous?.lastGoodAtMs,
+        lastDrift,
+        salesSuspensionQueuedAtMs,
+    } satisfies ReconcileRecord);
+    await scheduleReconcile(state, nextReconcileAtMs);
+}
+
+async function persistHealthyReconcile(state: DurableObjectState): Promise<void> {
+    const now = Date.now();
+    const previous = await state.storage.get<ReconcileRecord>(RECONCILE_KEY);
+    const recovering = (previous?.lastDrift !== undefined && previous.status !== 'HEALTHY')
+        || previous?.recovery !== undefined;
+    if (recovering) {
+        const recovery = previous?.recovery || { firstObservedAtMs: now, observations: 0 };
+        const nextRecovery = { ...recovery, observations: recovery.observations + 1 };
+        if (nextRecovery.observations < 2
+            || now - nextRecovery.firstObservedAtMs < RECONCILE_CONFIRMATION_MS) {
+            const nextReconcileAtMs = now + RECONCILE_CONFIRMATION_MS;
+            await state.storage.put(RECONCILE_KEY, {
+                schema: 'youtick.livepeer-reconcile.v1',
+                status: 'DRIFT_BLOCKED',
+                consecutiveErrors: 0,
+                nextReconcileAtMs,
+                lastGoodAtMs: previous?.lastGoodAtMs,
+                lastDrift: previous?.lastDrift,
+                recovery: nextRecovery,
+                salesSuspensionQueuedAtMs: previous?.salesSuspensionQueuedAtMs,
+            } satisfies ReconcileRecord);
+            await scheduleReconcile(state, nextReconcileAtMs);
+            return;
+        }
+    }
+    const nextReconcileAtMs = now + RECONCILE_HEALTHY_INTERVAL_MS;
+    await state.storage.put(RECONCILE_KEY, {
+        schema: 'youtick.livepeer-reconcile.v1',
+        status: 'HEALTHY',
+        consecutiveErrors: 0,
+        nextReconcileAtMs,
+        lastGoodAtMs: now,
+        lastDrift: previous?.lastDrift,
+        salesSuspensionQueuedAtMs: previous?.salesSuspensionQueuedAtMs,
+    } satisfies ReconcileRecord);
+    await scheduleReconcile(state, nextReconcileAtMs);
+}
+
+async function enqueueSalesSuspension(
+    state: DurableObjectState,
+    job: JobRecord,
+    driftCode: string,
+): Promise<void> {
+    const idempotencyKey = `${job.jobId}:suspend-sales`;
+    const key = `outbox:${idempotencyKey}`;
+    const payloadSha256 = await sha256Hex(canonicalJson({
+        method: 'suspend_livepeer_sales',
+        publication_id: job.jobId,
+        drift_code: driftCode,
+    }));
+    await state.storage.transaction(async (transaction) => {
+        const existing = await transaction.get<OutboxRecord>(key);
+        if (existing) return;
+        await transaction.put(key, {
+            schema: 'youtick.livepeer-control-outbox.v1',
+            state: 'PENDING',
+            idempotencyKey,
+            method: 'suspend_livepeer_sales',
+            jobId: job.jobId,
+            generation: job.generation,
+            payloadSha256,
+            createdAtMs: Date.now(),
+        } satisfies OutboxRecord);
+    });
+}
+
+async function tryProcessSalesSuspension(
+    state: DurableObjectState,
+    env: Env,
+    job: JobRecord,
+): Promise<void> {
+    const key = `outbox:${job.jobId}:suspend-sales`;
+    const record = await state.storage.get<OutboxRecord>(key);
+    if (!record || record.state === 'CONFIRMED') return;
+    try {
+        const response = await forwardSalesSuspension(env, job.jobId);
+        if (!response.ok) return;
+        const result = await response.json() as { suspended?: unknown };
+        if (result.suspended === true) {
+            await state.storage.put(key, { ...record, state: 'CONFIRMED' });
+        }
+    } catch {
+        // The durable alarm retry owns the next attempt; no provider or NEAR details are persisted.
     }
 }
 
@@ -538,6 +1261,76 @@ export async function forwardPlaybackToken(request: Request, env: Env): Promise<
     }
 }
 
+export async function forwardAdmissionReopen(request: Request, env: Env): Promise<Response> {
+    try {
+        if (!env.LIVEPEER_CONTROL || !validAdmissionReopenConfig(env)) {
+            throw new Error('runtime_not_configured');
+        }
+        await requireOperatorAuthorization(request, env);
+        const input = parseAdmissionReopenRequest(await readJsonObject(request), env);
+        const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(admissionObjectName(
+            env.NEAR_NETWORK!,
+            env.MARKET_CONTRACT_ID!,
+        )));
+        return await object.fetch(new Request('https://object/internal/admission/reopen', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(input),
+        }));
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('livepeer_admission_reopen_failed', { code }));
+        return json({ error: code }, errorStatus(code));
+    }
+}
+
+function parseAdmissionReopenRequest(input: JsonObject, env: Env): AdmissionReopenInput {
+    requireExactKeys(input, [
+        'idempotency_key',
+        'network',
+        'contract_id',
+        'closure_code',
+        'closure_observed_at_ms',
+        'incident_id',
+        'evidence_sha256',
+        'resolution_code',
+        'job_id',
+        'generation',
+    ], 'invalid_admission_reopen');
+    if (input.network !== env.NEAR_NETWORK || input.contract_id !== env.MARKET_CONTRACT_ID) {
+        throw new Error('admission_reopen_denied');
+    }
+    return parseAdmissionReopenInput({
+        idempotencyKey: input.idempotency_key,
+        operatorId: env.LIVEPEER_PAID_MEDIA_OPERATOR_ID,
+        closureCode: input.closure_code,
+        closureObservedAtMs: typeof input.closure_observed_at_ms === 'string'
+            && /^[1-9][0-9]{0,15}$/.test(input.closure_observed_at_ms)
+            ? Number(input.closure_observed_at_ms)
+            : Number.NaN,
+        incidentId: input.incident_id,
+        evidenceSha256: input.evidence_sha256,
+        resolutionCode: input.resolution_code,
+        jobId: input.job_id,
+        generation: input.generation,
+    });
+}
+
+async function requireOperatorAuthorization(request: Request, env: Env): Promise<void> {
+    const authorization = request.headers.get('Authorization') || '';
+    const encoder = new TextEncoder();
+    const actual = encoder.encode(authorization);
+    const authorized = [
+        env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN,
+        env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN_PREVIOUS,
+    ].filter((value): value is string => typeof value === 'string').reduce((matched, token) => (
+        constantTimeEqual(actual, encoder.encode(`Bearer ${token}`)) || matched
+    ), false);
+    if (!authorized) {
+        throw new Error('operator_unauthorized');
+    }
+}
+
 export async function forwardLivepeerWebhook(request: Request, env: Env): Promise<Response> {
     try {
         if (!env.LIVEPEER_CONTROL || !validWebhookConfig(env)) {
@@ -545,10 +1338,10 @@ export async function forwardLivepeerWebhook(request: Request, env: Env): Promis
         }
         const rawBody = new Uint8Array(await request.arrayBuffer());
         if (rawBody.byteLength > MAX_CONTROL_BODY_BYTES) throw new Error('control_body_too_large');
-        const webhook = await verifyAndParseWebhook(
+        const webhook = await verifyWebhookWithOverlap(
             rawBody,
             request.headers.get('Livepeer-Signature') || '',
-            env.LIVEPEER_WEBHOOK_SECRET!,
+            env,
         );
         const route = webhookRoute(webhook);
         if (!route) return json({ accepted: true, ignored: true }, 202);
@@ -581,6 +1374,10 @@ export function jobObjectName(
 
 export function operatorObjectName(network: string, publicKey: string, keyEpoch: number): string {
     return `operator:${network}:${publicKey}:${keyEpoch}`;
+}
+
+export function admissionObjectName(network: string, contractId: string): string {
+    return `admission:${network}:${contractId}`;
 }
 
 export function sanitizeForLog(value: unknown, key = ''): unknown {
@@ -912,6 +1709,9 @@ async function createProviderUpload(env: Env, job: JobRecord): Promise<ProviderU
         }),
         signal: AbortSignal.timeout(20_000),
     });
+    if (response.status === 402 || response.status === 429) {
+        throw new Error('provider_admission_closed');
+    }
     let body: unknown;
     try {
         body = await response.json();
@@ -996,7 +1796,12 @@ function requireExactChainJob(input: UploadIntentRequest, job: OnChainJob): void
     }
 }
 
-function jobRecord(input: UploadIntentRequest): JobRecord {
+function jobRecord(input: UploadIntentRequest, env: Env): JobRecord {
+    if (typeof env.LIVEPEER_API_TOKEN_NAME !== 'string'
+        || env.LIVEPEER_API_TOKEN_NAME.length < 1
+        || env.LIVEPEER_API_TOKEN_NAME.length > 128) {
+        throw new Error('runtime_not_configured');
+    }
     return {
         schema: 'youtick.livepeer-control-job.v1',
         state: 'CREATE_PENDING',
@@ -1009,6 +1814,7 @@ function jobRecord(input: UploadIntentRequest): JobRecord {
         profileId: input.body.profile_id,
         profileConfigSha256: input.body.profile_config_sha256,
         createdAtMs: Date.now(),
+        apiTokenName: env.LIVEPEER_API_TOKEN_NAME,
     };
 }
 
@@ -1212,6 +2018,23 @@ type WebhookEvent = {
     payload: JsonObject;
 };
 
+async function verifyWebhookWithOverlap(
+    rawBody: Uint8Array,
+    signatureHeader: string,
+    env: Env,
+): Promise<WebhookEvent> {
+    const secrets = [env.LIVEPEER_WEBHOOK_SECRET, env.LIVEPEER_WEBHOOK_SECRET_PREVIOUS]
+        .filter((value): value is string => Boolean(value));
+    for (const secret of secrets) {
+        try {
+            return await verifyAndParseWebhook(rawBody, signatureHeader, secret);
+        } catch (error) {
+            if (safeErrorCode(error) !== 'invalid_webhook_signature') throw error;
+        }
+    }
+    throw new Error('invalid_webhook_signature');
+}
+
 async function verifyAndParseWebhook(
     rawBody: Uint8Array,
     signatureHeader: string,
@@ -1328,7 +2151,7 @@ async function verifyReadyProviderAsset(env: Env, job: JobRecord): Promise<Final
         || asset.playbackId !== job.playbackId
         || asset.projectId !== job.projectId
         || asset.projectId !== env.LIVEPEER_PROJECT_ID
-        || asset.createdByTokenName !== env.LIVEPEER_API_TOKEN_NAME
+        || asset.createdByTokenName !== job.apiTokenName
         || creator.type !== 'unverified'
         || creator.value !== `${job.jobId}:${job.generation}`
         || asset.name !== `youtick-${job.jobId}-g${job.generation}`) {
@@ -1350,22 +2173,57 @@ async function verifyReadyProviderAsset(env: Env, job: JobRecord): Promise<Final
     if (playback.type !== 'vod' || playbackPolicy.type !== 'jwt' || !Array.isArray(playbackMeta.source)) {
         throw new Error('provider_playback_mismatch');
     }
-    const sources = playbackMeta.source.map((source) => requireObject(source, 'provider_playback_mismatch'));
-    const hls = sources.find((source) => source.type === 'html5/application/vnd.apple.mpegurl');
-    const mp4 = sources.find((source) => source.type === 'html5/video/mp4'
-        && source.width === 1280
-        && source.height === 720
-        && typeof source.bitrate === 'number'
-        && source.bitrate > 0);
-    if (!hls || !mp4
-        || !validPlaybackUrl(hls.url, job.playbackId)
-        || !validPlaybackUrl(mp4.url, job.playbackId)
-        || !validPlaybackUrl(asset.downloadUrl, job.playbackId)) {
+    if (playbackMeta.source.length > MAX_PROVIDER_PLAYBACK_OUTPUTS) {
         throw new Error('provider_playback_mismatch');
     }
-    await requirePlaybackDenied(String(hls.url));
-    await requirePlaybackDenied(String(mp4.url));
-    await requirePlaybackDenied(String(asset.downloadUrl));
+    const sources = playbackMeta.source.map((source) => requireObject(source, 'provider_playback_mismatch'));
+    const hlsSources = sources.filter((source) => source.type === LIVEPEER_HLS_SOURCE_TYPE);
+    const mp4Sources = sources.filter((source) => source.type === LIVEPEER_MP4_SOURCE_TYPE);
+    const vttSources = sources.filter((source) => source.type === LIVEPEER_VTT_SOURCE_TYPE);
+    const hlsUrls = [...new Set(hlsSources.map((source) => String(source.url)))];
+    const mp4Urls = [...new Set(mp4Sources.map((source) => String(source.url)))];
+    const vttUrls = [...new Set(vttSources.map((source) => String(source.url)))];
+    if (hlsUrls.length === 0
+        || mp4Urls.length === 0
+        || sources.some((source) => (
+            source.type !== LIVEPEER_HLS_SOURCE_TYPE
+            && source.type !== LIVEPEER_MP4_SOURCE_TYPE
+            && source.type !== LIVEPEER_VTT_SOURCE_TYPE
+        ))
+        || !mp4Sources.some((source) => (
+            source.width === 1280
+            && source.height === 720
+            && typeof source.bitrate === 'number'
+            && source.bitrate > 0
+        ))
+        || hlsUrls.some((url) => !validPlaybackUrl(url))
+        || mp4Urls.some((url) => !validPlaybackUrl(url))
+        || vttUrls.some((url) => !validPlaybackUrl(url))
+        || !validPlaybackUrl(asset.downloadUrl)) {
+        throw new Error('provider_playback_mismatch');
+    }
+    for (const hlsUrl of new Set([livepeerHlsUrl(job.playbackId), ...hlsUrls])) {
+        await requireHlsPlaybackDenied(hlsUrl);
+    }
+    for (const mp4Url of mp4Urls) {
+        await requireAnonymousPlaybackDenied(mp4Url);
+    }
+    for (const vttUrl of vttUrls) {
+        await requireAnonymousPlaybackDenied(vttUrl);
+    }
+    if (vttUrls.length > 0) {
+        if (!validPlaybackConfig(env)) throw new Error('runtime_not_configured');
+        const token = await signLivepeerJwt(
+            env,
+            job.playbackId,
+            Math.floor(Date.now() / 1_000),
+            PLAYBACK_MIN_TTL_SECONDS,
+        );
+        for (const thumbnailUrl of await vttThumbnailUrls(vttUrls, token)) {
+            await requireAnonymousPlaybackDenied(thumbnailUrl);
+        }
+    }
+    await requireAnonymousPlaybackDenied(String(asset.downloadUrl));
 
     let fingerprint: string | null = null;
     if (asset.hash !== null && asset.hash !== undefined) {
@@ -1404,9 +2262,14 @@ async function providerJson(env: Env, path: string): Promise<JsonObject> {
             signal: AbortSignal.timeout(5_000),
         });
     } catch {
-        throw new Error('provider_state_invalid');
+        throw new Error('provider_unavailable');
     }
-    if (!response.ok) throw new Error('provider_state_invalid');
+    if (response.status === 404) {
+        throw new Error(path.startsWith('/asset/') ? 'provider_asset_missing' : 'provider_playback_missing');
+    }
+    if (response.status === 429 || response.status >= 500 || !response.ok) {
+        throw new Error('provider_unavailable');
+    }
     try {
         return requireObject(await response.json(), 'provider_state_invalid');
     } catch {
@@ -1414,7 +2277,31 @@ async function providerJson(env: Env, path: string): Promise<JsonObject> {
     }
 }
 
-async function requirePlaybackDenied(url: string): Promise<void> {
+function hlsManifestKind(body: string): 'error' | 'playable' | 'unknown' {
+    const lines = body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (lines[0] !== '#EXTM3U') return 'unknown';
+    const playable = lines.some((line) => /(?:^|,)URI="[^"]+"/.test(line))
+        || lines.some((line, index) => (
+            (line.startsWith('#EXT-X-STREAM-INF:') || line.startsWith('#EXTINF:'))
+            && index + 1 < lines.length
+            && !lines[index + 1].startsWith('#')
+        ));
+    const error = lines.some((line) => line === '#EXT-X-ERROR' || line.startsWith('#EXT-X-ERROR:'));
+    if (error && !playable) return 'error';
+    return playable ? 'playable' : 'unknown';
+}
+
+async function hlsPlaybackDenied(response: Response): Promise<boolean> {
+    if ([401, 403].includes(response.status)) return true;
+    if (response.status !== 200) return false;
+    try {
+        return hlsManifestKind(await response.text()) === 'error';
+    } catch {
+        return false;
+    }
+}
+
+async function requireHlsPlaybackDenied(url: string): Promise<void> {
     const invalidTokens = [
         null,
         'invalid.invalid.invalid',
@@ -1433,22 +2320,104 @@ async function requirePlaybackDenied(url: string): Promise<void> {
                 signal: AbortSignal.timeout(5_000),
             });
         } catch {
-            throw new Error('provider_playback_mismatch');
+            throw new Error('provider_unavailable');
         }
-        if (![401, 403].includes(response.status)) throw new Error('provider_playback_exposed');
+        if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
+        if (!await hlsPlaybackDenied(response)) throw new Error('provider_playback_exposed');
     }
 }
 
-function validPlaybackUrl(value: unknown, playbackId: string): boolean {
+async function requireAnonymousPlaybackDenied(url: string): Promise<void> {
+    let response: Response;
+    try {
+        response = await fetch(url, {
+            method: 'GET',
+            redirect: 'manual',
+            signal: AbortSignal.timeout(5_000),
+        });
+    } catch {
+        throw new Error('provider_unavailable');
+    }
+    if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
+    if (![401, 403].includes(response.status)) throw new Error('provider_playback_exposed');
+}
+
+function vttReferences(body: string): string[] | null {
+    const lines = body.split(/\r?\n/).map((line) => line.trim());
+    if (lines[0] !== 'WEBVTT') return null;
+    const references: string[] = [];
+    for (let index = 1; index < lines.length; index += 1) {
+        if (!/^(?:(?:\d{2}:)?\d{2}:\d{2}\.\d{3})\s+-->\s+(?:(?:\d{2}:)?\d{2}:\d{2}\.\d{3})(?:\s+.*)?$/.test(lines[index])) {
+            continue;
+        }
+        const cue: string[] = [];
+        while (index + 1 < lines.length && lines[index + 1]) {
+            index += 1;
+            cue.push(lines[index]);
+        }
+        if (cue.length !== 1) return null;
+        references.push(cue[0]);
+    }
+    return references;
+}
+
+function vttReferenceUrl(parentUrl: string, reference: string): string {
+    try {
+        const url = new URL(reference, parentUrl);
+        if (!validPlaybackUrl(url.toString())) throw new Error('invalid');
+        return url.toString();
+    } catch {
+        throw new Error('provider_playback_mismatch');
+    }
+}
+
+async function vttThumbnailUrls(vttUrls: string[], token: string): Promise<string[]> {
+    const thumbnails = new Set<string>();
+    for (const vttUrl of vttUrls) {
+        let response: Response;
+        try {
+            response = await fetch(vttUrl, {
+                method: 'GET',
+                headers: { 'Livepeer-Jwt': token },
+                redirect: 'manual',
+                signal: AbortSignal.timeout(5_000),
+            });
+        } catch {
+            throw new Error('provider_unavailable');
+        }
+        if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
+        if (response.status !== 200) throw new Error('provider_playback_mismatch');
+        let references: string[] | null;
+        try {
+            references = vttReferences(await response.text());
+        } catch {
+            throw new Error('provider_playback_mismatch');
+        }
+        if (!references) throw new Error('provider_playback_mismatch');
+        for (const reference of references) {
+            thumbnails.add(vttReferenceUrl(vttUrl, reference));
+            if (thumbnails.size > MAX_THUMBNAIL_REFERENCE_PROBES) {
+                throw new Error('provider_playback_mismatch');
+            }
+        }
+    }
+    return [...thumbnails];
+}
+
+function validPlaybackUrl(value: unknown): boolean {
     if (typeof value !== 'string') return false;
     try {
         const url = new URL(value);
         return url.protocol === 'https:'
+            && !url.port
+            && !url.username
+            && !url.password
+            && url.pathname.length > 1
             && (url.hostname === 'playback.livepeer.studio'
                 || url.hostname === 'livepeercdn.com'
                 || url.hostname === 'livepeercdn.studio'
-                || url.hostname.endsWith('.lp-playback.studio'))
-            && url.pathname.split('/').includes(playbackId);
+                || url.hostname === 'asset-cdn.lp-playback.com'
+                || url.hostname.endsWith('.lp-playback.studio'));
     } catch {
         return false;
     }
@@ -1472,6 +2441,40 @@ async function forwardFinalize(env: Env, submission: FinalizePublication): Promi
             submission,
         }),
     }));
+}
+
+async function forwardSalesSuspension(env: Env, publicationId: string): Promise<Response> {
+    if (!env.LIVEPEER_CONTROL || !validOperatorConfig(env)) throw new Error('runtime_not_configured');
+    const signer = KeyPairSigner.fromSecretKey(env.NEAR_OPERATOR_PRIVATE_KEY as `ed25519:${string}`);
+    const publicKey = (await signer.getPublicKey()).toString();
+    const keyEpoch = Number(env.NEAR_OPERATOR_KEY_EPOCH);
+    const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
+        operatorObjectName(env.NEAR_NETWORK!, publicKey, keyEpoch),
+    ));
+    const payloadSha256 = await sha256Hex(canonicalJson({ publication_id: publicationId }));
+    return object.fetch(new Request('https://object/internal/suspend-sales', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            idempotencyKey: `${publicationId}:suspend-sales`,
+            payloadSha256,
+            publicationId,
+        }),
+    }));
+}
+
+async function parseSuspendSalesInput(value: JsonObject): Promise<SuspendSalesInput> {
+    requireExactKeys(value, ['idempotencyKey', 'payloadSha256', 'publicationId'], 'invalid_outbox');
+    if (typeof value.publicationId !== 'string'
+        || !JOB_ID_PATTERN.test(value.publicationId)
+        || value.idempotencyKey !== `${value.publicationId}:suspend-sales`
+        || typeof value.payloadSha256 !== 'string'
+        || value.payloadSha256 !== await sha256Hex(canonicalJson({
+            publication_id: value.publicationId,
+        }))) {
+        throw new Error('invalid_outbox');
+    }
+    return value as SuspendSalesInput;
 }
 
 async function parseFinalizeInput(value: JsonObject): Promise<FinalizeInput> {
@@ -1526,6 +2529,41 @@ async function processFinalizeOutbox(
     env: Env,
     input: FinalizeInput,
 ): Promise<Response> {
+    const result = await processOperatorOutbox(
+        state,
+        env,
+        input,
+        'finalize_livepeer_publication',
+        { submission: input.submission },
+        () => finalPublicationMatches(env, input.submission),
+    );
+    return json({ accepted: true, finalized: result.confirmed, tx_hash: result.txHash }, result.status);
+}
+
+async function processSuspendSalesOutbox(
+    state: DurableObjectState,
+    env: Env,
+    input: SuspendSalesInput,
+): Promise<Response> {
+    const result = await processOperatorOutbox(
+        state,
+        env,
+        input,
+        'suspend_livepeer_sales',
+        { publication_id: input.publicationId },
+        () => finalPublicationSalesSuspended(env, input.publicationId),
+    );
+    return json({ accepted: true, suspended: result.confirmed, tx_hash: result.txHash }, result.status);
+}
+
+async function processOperatorOutbox(
+    state: DurableObjectState,
+    env: Env,
+    input: FinalizeInput | SuspendSalesInput,
+    method: OutboxMethod,
+    args: JsonObject,
+    isConfirmed: () => Promise<boolean>,
+): Promise<{ confirmed: boolean; txHash: string | null; status: number }> {
     if (!validOperatorConfig(env)) throw new Error('runtime_not_configured');
     const signer = KeyPairSigner.fromSecretKey(env.NEAR_OPERATOR_PRIVATE_KEY as `ed25519:${string}`);
     const publicKey = await signer.getPublicKey();
@@ -1546,18 +2584,18 @@ async function processFinalizeOutbox(
         return created;
     });
 
-    if (await finalPublicationMatches(env, input.submission)) {
+    if (await isConfirmed()) {
         record = { ...record, state: 'CONFIRMED' };
         await state.storage.put(key, record);
-        return json({ accepted: true, finalized: true, tx_hash: record.txHash || null });
+        return { confirmed: true, txHash: record.txHash || null, status: 200 };
     }
 
     if (record.state === 'BROADCAST' && record.txHash) {
         const status = await queryTransaction(env, record.txHash);
-        if (await finalPublicationMatches(env, input.submission)) {
+        if (await isConfirmed()) {
             record = { ...record, state: 'CONFIRMED' };
             await state.storage.put(key, record);
-            return json({ accepted: true, finalized: true, tx_hash: record.txHash });
+            return { confirmed: true, txHash: record.txHash || null, status: 200 };
         }
         if (status === 'failed') throw new Error('near_finalize_failed');
         if (status === 'invalid_nonce') {
@@ -1592,8 +2630,8 @@ async function processFinalizeOutbox(
             env.MARKET_CONTRACT_ID!,
             BigInt(record.nonce!),
             [actions.functionCall(
-                'finalize_livepeer_publication',
-                { submission: input.submission },
+                method,
+                args,
                 FINALIZE_GAS,
                 0n,
             )],
@@ -1617,16 +2655,16 @@ async function processFinalizeOutbox(
     }
     record = { ...record, state: 'BROADCAST' };
     await state.storage.put(key, record);
-    if (await finalPublicationMatches(env, input.submission)) {
+    if (await isConfirmed()) {
         record = { ...record, state: 'CONFIRMED' };
         await state.storage.put(key, record);
-        return json({ accepted: true, finalized: true, tx_hash: record.txHash });
+        return { confirmed: true, txHash: record.txHash || null, status: 200 };
     }
     if (broadcast === 'failed') throw new Error('near_finalize_failed');
     if (broadcast === 'invalid_nonce') {
         await state.storage.put(key, clearSignedTransaction(record));
     }
-    return json({ accepted: true, finalized: false, tx_hash: record.txHash }, 202);
+    return { confirmed: false, txHash: record.txHash || null, status: 202 };
 }
 
 async function readOperatorAccessKey(
@@ -1695,27 +2733,50 @@ function classifyNearError(error: unknown): 'invalid_nonce' | 'failed' | 'unknow
 }
 
 async function finalPublicationMatches(env: Env, submission: FinalizePublication): Promise<boolean> {
+    const value = await readFinalPublication(env, submission);
+    if (!value) return false;
+    if (!publicationMatches(submission, value)) throw new Error('near_finalize_mismatch');
+    return true;
+}
+
+async function readFinalPublication(
+    env: Env,
+    submission: FinalizePublication,
+): Promise<JsonObject | null> {
+    return readFinalPublicationById(env, submission.job_id);
+}
+
+async function finalPublicationSalesSuspended(env: Env, publicationId: string): Promise<boolean> {
+    const publication = await readFinalPublicationById(env, publicationId);
+    return publication?.publication_id === publicationId
+        && ['SALES_SUSPENDED', 'TAKEDOWN'].includes(String(publication.availability));
+}
+
+async function readFinalPublicationById(env: Env, publicationId: string): Promise<JsonObject | null> {
     const payload = await nearRpc(env, {
         request_type: 'call_function',
         finality: 'final',
         account_id: env.MARKET_CONTRACT_ID,
         method_name: 'get_publication',
         args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify({
-            publication_id: submission.job_id,
+            publication_id: publicationId,
         }))),
     });
     const result = requireObject(payload.result, 'near_finalize_pending');
     if (!Array.isArray(result.result)) throw new Error('near_finalize_pending');
     const raw = new TextDecoder().decode(new Uint8Array(result.result as number[]));
-    if (!raw || raw === 'null') return false;
+    if (!raw || raw === 'null') return null;
     let publication: unknown;
     try {
         publication = JSON.parse(raw);
     } catch {
         throw new Error('near_finalize_mismatch');
     }
-    const value = requireObject(publication, 'near_finalize_mismatch');
-    const matches = value.publication_id === submission.job_id
+    return requireObject(publication, 'near_finalize_mismatch');
+}
+
+function publicationMatches(submission: FinalizePublication, value: JsonObject): boolean {
+    return value.publication_id === submission.job_id
         && value.creator_id === submission.creator_id
         && value.generation === submission.generation
         && value.expected_source_bytes === submission.expected_source_bytes
@@ -1728,8 +2789,6 @@ async function finalPublicationMatches(env: Env, submission: FinalizePublication
         && value.provider_source_fingerprint === submission.provider_source_fingerprint
         && value.ready_at_ms === submission.ready_at_ms
         && value.published_availability === submission.availability;
-    if (!matches) throw new Error('near_finalize_mismatch');
-    return true;
 }
 
 async function nearRpc(env: Env, params: JsonObject): Promise<JsonObject> {
@@ -1770,8 +2829,27 @@ function clearSignedTransaction(record: OperatorRecord): OperatorRecord {
 function validWebhookConfig(env: Env): boolean {
     return typeof env.LIVEPEER_WEBHOOK_SECRET === 'string'
         && env.LIVEPEER_WEBHOOK_SECRET.length >= 16
+        && (env.LIVEPEER_WEBHOOK_SECRET_PREVIOUS === undefined
+            || env.LIVEPEER_WEBHOOK_SECRET_PREVIOUS.length >= 16)
         && validProviderVerificationConfig(env)
         && validOperatorConfig(env);
+}
+
+function validAdmissionConfig(env: Env): boolean {
+    return creatorAllowlist(env).size > 0;
+}
+
+function validAdmissionReopenConfig(env: Env): boolean {
+    return ['testnet', 'mainnet'].includes(env.NEAR_NETWORK || '')
+        && ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '')
+        && typeof env.LIVEPEER_PAID_MEDIA_OPERATOR_ID === 'string'
+        && IDENTIFIER_PATTERN.test(env.LIVEPEER_PAID_MEDIA_OPERATOR_ID)
+        && typeof env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN === 'string'
+        && env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN.length >= 32
+        && !/[\r\n]/.test(env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN)
+        && (env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN_PREVIOUS === undefined
+            || (env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN_PREVIOUS.length >= 32
+                && !/[\r\n]/.test(env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN_PREVIOUS)));
 }
 
 function validProviderVerificationConfig(env: Env): boolean {
@@ -1897,7 +2975,7 @@ function isHttpsUrl(value?: string): boolean {
 function isLivepeerTusEndpoint(value: string): boolean {
     try {
         const url = new URL(value);
-        return url.protocol === 'https:' && url.hostname === 'origin.livepeer.com';
+        return url.protocol === 'https:' && !url.port && url.hostname === 'origin.livepeer.com';
     } catch {
         return false;
     }
@@ -1923,20 +3001,28 @@ function errorStatus(code: string): number {
     if (code === 'origin_denied'
         || code === 'device_key_not_authorized'
         || code === 'invalid_webhook_signature'
+        || code === 'admission_reopen_denied'
+        || code === 'operator_unauthorized'
         || code === 'playback_denied') return 403;
     if (code.includes('conflict')
+        || code === 'admission_denied'
         || code === 'on_chain_job_mismatch'
         || code === 'near_finalize_failed'
         || code === 'near_finalize_mismatch'
+        || code === 'provider_asset_missing'
         || code === 'provider_identity_mismatch'
+        || code === 'provider_playback_missing'
         || code === 'provider_playback_exposed'
         || code === 'provider_playback_mismatch'
         || code === 'provider_state_invalid'
         || code === 'device_nonce_replayed'
         || code === 'provider_create_pending') return 409;
     if (code.startsWith('near_')
+        || code === 'admission_closed'
         || code === 'runtime_not_configured'
         || code === 'playback_authorization_unavailable'
+        || code === 'provider_unavailable'
+        || code === 'provider_admission_closed'
         || code === 'provider_create_ambiguous') return 503;
     return 400;
 }
