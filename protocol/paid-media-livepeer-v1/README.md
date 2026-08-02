@@ -1,6 +1,6 @@
 # Paid media Livepeer v1 protocol
 
-Status: `PR_4_CODE_ONLY / PRODUCT_P0_LOCKED / PROVIDER_P0_OPEN / RUNTIME_DISABLED`
+Status: `PR_5_CODE_ONLY / PRODUCT_P0_LOCKED / PLAYBACK_CANARY_OPEN / RUNTIME_DISABLED`
 
 This directory locks the messages shared by the future web, bridge Worker and
 NEAR contracts. A dedicated testnet contract exists for bounded allowance
@@ -84,8 +84,8 @@ market and `create_paid_job`, and atomically rejects a reused `device_nonce`.
 The initial routes are `POST /v1/upload-intents` and
 `POST /v1/playback-tokens`. Upload binds `job:<job_id>:<generation>`; playback
 binds `playback:<job_id>:<generation>:<playback_id>`. Expiry, nonce replay,
-origin, account, session key and final on-chain checks remain mandatory runtime
-checks in later PRs.
+origin, account, session key and final on-chain checks are implemented in the
+disabled Worker and remain mandatory at runtime.
 
 ## Publication tuple
 
@@ -121,9 +121,10 @@ this protocol text does not claim that those runtime paths are deployed.
 ## Playback token request
 
 The playback request reuses the canonical envelope and binds the account,
-resource, job generation, grant and exact playback ID. The later Worker must
-read entitlement and grant at one final block, issue short-lived ES256 JWTs,
-return `Cache-Control: no-store` and use the `Livepeer-Jwt` HLS header.
+resource, job generation, grant, exact playback ID and the on-chain grant's
+origin and device hashes. The Worker must read entitlement and grant at one
+final block, issue short-lived ES256 JWTs, return `Cache-Control: no-store` and
+use the `Livepeer-Jwt` HLS header.
 
 ## Validation
 

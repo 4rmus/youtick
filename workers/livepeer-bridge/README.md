@@ -1,6 +1,6 @@
 # YouTick Livepeer bridge Worker
 
-Status: `PR-4 CODE-ONLY / DISABLED / NOT DEPLOYED`
+Status: `PR-5 CODE-ONLY / DISABLED / NOT DEPLOYED`
 
 This Worker is the persisted upload-intent control plane for paid-media
 Livepeer v1. The implementation is complete enough for local and mocked tests,
@@ -32,6 +32,14 @@ but provider mutation and deployment remain disabled.
 - The operator object persists nonce, recent block hash, signed transaction
   bytes and transaction hash before broadcast. Retries query the same hash and
   require the final `get_publication` view to match the submitted tuple.
+- `POST /v1/playback-tokens` verifies the canonical session-key signature,
+  consumes the nonce once, and reads publication, entitlement and the Play
+  grant at one final NEAR block. Account, resource, origin, device, generation,
+  playback ID, revocation and expiry mismatches fail closed.
+- Playback JWTs use Livepeer's ES256 `pull` claims, are bounded by the remaining
+  grant lifetime, returned with `Cache-Control: no-store` and used only through
+  the `Livepeer-Jwt` HLS header. The browser refreshes from its in-memory grant;
+  neither the grant secret nor JWT is persisted by the Livepeer path.
 - Structured logs redact secrets, bearer upload URLs and signed transactions.
 
 ## Local checks
@@ -44,12 +52,15 @@ npx wrangler deploy --dry-run
 ```
 
 `GET /__health` reports process health and the disabled capability state.
-`POST /v1/upload-intents` remains unavailable while the runtime flag is false.
+`POST /v1/upload-intents` and `POST /v1/playback-tokens` remain unavailable
+while the runtime flag is false.
 `LIVEPEER_API_KEY` is a Worker secret and must never be placed in `wrangler.toml`
 or a browser environment variable. `LIVEPEER_WEBHOOK_SECRET` and
-`NEAR_OPERATOR_PRIVATE_KEY` are also Worker secrets. The operator key must be a
-finite-allowance FunctionCall key for the exact market and approved methods;
-FullAccess is rejected.
+`NEAR_OPERATOR_PRIVATE_KEY` are also Worker secrets. The Livepeer-issued
+`LIVEPEER_JWT_PRIVATE_KEY` is a Worker secret; only its matching public key is a
+plain deployment variable. The operator key must be a finite-allowance
+FunctionCall key for the exact market and approved methods; FullAccess is
+rejected.
 
 ## Provider canary
 
@@ -76,3 +87,7 @@ opaque upload capability, interrupts one live HTTPS PATCH, resumes from HEAD
 offset, completes only the missing bytes and deletes the asset. It does not
 prove Microsoft Edge behavior or an endpoint lifetime beyond the measured
 window.
+
+A real signed HLS playback and refresh canary is still required for desktop
+Chrome and Edge before enabling the bridge. Local JWT and HLS-header tests are
+not provider or deployment evidence.
