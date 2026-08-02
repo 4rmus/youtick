@@ -1,8 +1,117 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { runTusResumeCanary } from './tus-resume-canary.mjs';
+import {
+    createTusResource,
+    requireTusTermination,
+    runTusResumeCanary,
+} from './tus-resume-canary.mjs';
 
 const API_KEY = 'test-api-key-that-is-long-enough';
+
+test('TUS resource rejects an untrusted endpoint before a request', async () => {
+    let calls = 0;
+    await assert.rejects(
+        createTusResource('https://origin.livepeer.com:8443/tus', 1, async () => {
+            calls += 1;
+            return new Response(null, { status: 201 });
+        }),
+        /tus_endpoint_invalid/,
+    );
+    assert.equal(calls, 0);
+});
+
+test('TUS termination rejects a credentialed endpoint before a request', async () => {
+    let calls = 0;
+    await assert.rejects(
+        requireTusTermination('https://user:password@origin.livepeer.com/tus', async () => {
+            calls += 1;
+            return new Response(null, { status: 204 });
+        }),
+        /tus_endpoint_invalid/,
+    );
+    assert.equal(calls, 0);
+});
+
+test('TUS termination is advertised without a TUS header on OPTIONS', async () => {
+    const calls = [];
+    const source = await requireTusTermination('https://origin.livepeer.com/tus', async (url, init = {}) => {
+        calls.push({
+            url: String(url),
+            method: init.method,
+            redirect: init.redirect,
+            hasTusResumable: new Headers(init.headers).has('Tus-Resumable'),
+        });
+        return new Response(null, {
+            status: 204,
+            headers: {
+                'Tus-Version': '1.0.0,0.2.2',
+                'Tus-Extension': 'creation,termination',
+            },
+        });
+    });
+    assert.equal(source, 'tus-version');
+    assert.deepEqual(calls, [{
+        url: 'https://origin.livepeer.com/tus',
+        method: 'OPTIONS',
+        redirect: 'manual',
+        hasTusResumable: false,
+    }]);
+});
+
+test('TUS termination accepts only the known Livepeer legacy version signature', async () => {
+    const source = await requireTusTermination('https://origin.livepeer.com/tus', async () => (
+        new Response(null, {
+            status: 204,
+            headers: {
+                'Tus-Resumable': '1.0.0',
+                'Tus-Extension': 'creation,termination',
+            },
+        })
+    ));
+    assert.equal(source, 'livepeer-legacy-tus-resumable');
+
+    await assert.rejects(
+        requireTusTermination('https://origin.livepeer.com/tus', async () => (
+            new Response(null, {
+                status: 200,
+                headers: {
+                    'Tus-Resumable': '1.0.0',
+                    'Tus-Extension': 'termination',
+                },
+            })
+        )),
+        /tus_version_unsupported/,
+    );
+});
+
+test('TUS termination rejects a missing supported version or extension', async () => {
+    for (const [headers, code] of [
+        [{ 'Tus-Extension': 'termination' }, 'tus_version_unsupported'],
+        [{ 'Tus-Version': '1.0.0', 'Tus-Extension': 'creation' }, 'tus_termination_unsupported'],
+    ]) {
+        await assert.rejects(
+            requireTusTermination('https://origin.livepeer.com/tus', async () => (
+                new Response(null, { status: 204, headers })
+            )),
+            new RegExp(code),
+        );
+    }
+});
+
+test('TUS resource rejects an untrusted Location before PATCH bytes', async () => {
+    const calls = [];
+    await assert.rejects(
+        createTusResource('https://origin.livepeer.com/tus', 1, async (url, init = {}) => {
+            calls.push({ url: String(url), method: init.method });
+            return new Response(null, {
+                status: 201,
+                headers: { Location: 'https://example.test/upload' },
+            });
+        }),
+        /tus_location_invalid/,
+    );
+    assert.deepEqual(calls, [{ url: 'https://origin.livepeer.com/tus', method: 'POST' }]);
+});
 
 test('TUS canary resumes at 30 and 70 percent and uploads only missing bytes', async () => {
     const fileBytes = new Uint8Array(100).fill(7);

@@ -15,7 +15,7 @@
 |---|---|
 | Livepeer component fit | `GO` |
 | Architecture direction | `CONDITIONAL_GO` |
-| Implementation progress | `PR_4_MERGED / PR_5_CODE_ONLY_COMPLETE` |
+| Implementation progress | `PR_5_MERGED_CODE_ONLY / PR_6_LOCAL_DISABLED_COMPLETE / PROVIDER_AND_D6_GATES_OPEN` |
 | Testnet and staging | `NO_GO` |
 | Production | `NO_GO` |
 
@@ -82,6 +82,7 @@ The locked boundaries are:
 4. Use one SQLite-backed Durable Object class with named instances, not one
    global object:
    - `job:<network>:<contract>:<job_id>:<generation>`;
+   - `admission:<network>:<contract>`;
    - `operator:<network>:<operator_public_key>:<key_epoch>`.
 5. There is no cross-object transaction. Job-to-operator work uses a persisted,
    idempotent outbox/saga.
@@ -379,8 +380,8 @@ Current gate ownership:
 
 | P0 scope | Status | Blocks |
 |---|---|---|
-| Provider upload, recovery, browser, metadata, playback, deletion and billing evidence (1-7) | `PARTIAL / EXACT_LENGTH_BOUND / 15M_IDLE_PASS / TUS_REVOKE_PASS / OTHER_GATES_OPEN` | Remaining provider-facing PR-3 and PR-4 behavior |
-| Refund, takedown and exact resume policy (8) | `LOCKED / IMPLEMENTATION_PENDING` | PR-4 and PR-6 must implement the locked policy |
+| Provider upload, recovery, browser, metadata, playback, deletion and billing evidence (1-7) | `PARTIAL / EXACT_LENGTH_BOUND / 15M_IDLE_PASS / TUS_REVOKE_PASS_UNFINISHED_ONLY / COMPLETED_RESOURCE_UNPROVEN / OTHER_GATES_OPEN`; [commercial/retention public-source review](../evidence/livepeer-commercial-retention-review-2026-08-02.md) leaves P0(6-7) open | Remaining provider-facing PR-3 and PR-4 behavior |
+| Refund, takedown and exact resume policy (8) | `LOCKED / LOCAL_TAKEDOWN_IMPLEMENTED / LIVE_GOVERNANCE_AND_REFUND_EVIDENCE_PENDING` | D6 and activation |
 | Desktop Chrome and Edge matrix (9) | `LOCKED` | Safari/iOS claims remain excluded |
 | Method allowlist and governance/timelock principle (10) | `LOCKED` | None for disabled PR-2 primitives |
 | Numeric key allowance and exact governance account (10) | `TESTNET_MEASURED / PRODUCTION_BUDGET_OPEN` | Production key provisioning and deployment |
@@ -593,8 +594,12 @@ Stop for review before PR-5.
 
 ### PR-5 - Playback
 
-Status: `CODE_ONLY_COMPLETE / REAL_PLAYBACK_CANARY_OPEN / HARD_DISABLED /
-NOT_DEPLOYED` on 2026-08-02.
+Status: `MERGED / CODE_ONLY_COMPLETE / CANONICAL_PLAYBACK_CANARY_INCONCLUSIVE /
+BROWSER_HARNESS_RETRY_REQUIRED / HARD_DISABLED / NOT_DEPLOYED` on 2026-08-02.
+PR #67 was squash-merged as
+`origin/main@4afd0160d851bcfc85ae2733fbab3641941ed927`; its scoped Web, Docs,
+Livepeer Protocol, Livepeer Bridge Worker and CI Gate checks passed. This is
+source-integration evidence only and did not deploy or enable the runtime.
 
 The disabled implementation adds the signed `/v1/playback-tokens` route. The
 job Durable Object verifies the session signature and atomically consumes its
@@ -614,6 +619,98 @@ malformed responses. Real JWT-free/malformed provider denial and successful
 Chrome/Edge playback remain mandatory canary evidence before this phase can be
 accepted for deployment.
 
+The first explicitly approved Sandbox playback canary reached a JWT-free HLS
+probe that returned HTTP `200`, then stopped before correct-token, refresh,
+Chrome or Edge checks. A later code audit found that it used an HLS URL selected
+from provider `meta.source`, whereas the product uses the canonical
+`playback.livepeer.studio/asset/hls/{playbackId}/index.m3u8` route. That first
+result remains inconclusive for the product route; its asset and temporary
+signing-key inventories returned `0`, while its immediate TUS `HEAD` still
+returned `200` after `DELETE`.
+
+A separately approved, one-asset canonical rerun then verified `jwt` policy on
+the returned asset and playback records but received HTTP `200` for an anonymous
+request to the canonical product HLS route. It stopped before MP4/download,
+malformed, wrong-key, wrong-subject, expired, correct-token, refreshed-token or
+Chrome/Edge checks. The post-run authenticated inventories were again `0` assets
+and `0` signing keys. A later read-only baseline showed the same canonical route
+returns HTTP `200` with an HLS error manifest for a nonexistent playback ID.
+Therefore the completed status-only probe is inconclusive, not proof of exposed
+playback. For an HTTP `200` HLS response, the local canary treats only a
+non-playable HLS error manifest as denial; HTTP `401`/`403` already count as
+denial. It requires a playable HLS manifest for correct-token success; when a
+top-level HLS manifest is playable, it makes JWT-free, manual-redirect probes of
+every recognized first-level variant or media segment (at most 32); an
+unrecognized URI attribute fails closed. It records only redacted
+status/class/kind/count evidence. The canary now checks both the
+canonical product HLS route and every provider-reported top-level HLS output;
+the hard-disabled Worker independently checks the same set. MP4 and download
+remain anonymous-boundary checks. No further asset may be created without a new
+approval. The updated harness still needs a real provider rerun before activation
+or deployment. See the
+[inconclusive bounded playback evidence](../evidence/livepeer-playback-canary-2026-08-02.md)
+and the [canonical status-only rerun](../evidence/livepeer-playback-canonical-canary-2026-08-02.md).
+The local rerun harness now uses a one-time loopback challenge and launches the
+installed Chrome and Edge executables itself; its receipt is no longer accepted
+from arbitrary local POST data. This is test-harness hardening only, not a new
+provider or browser-playback result.
+
+Livepeer documents that a VOD playback response can contain multiple MP4 and
+HLS sources, including source URLs whose path carries a recording ID rather than
+the playback ID. The Worker and canary therefore accept up to 16 provider source
+records, require at least one HLS and one canonical 1280x720 MP4 rendition,
+validate every distinct HLS/MP4 URL against an allowlisted Livepeer domain set
+(including `.lp-playback.studio` subdomains), and test every such URL for
+anonymous access. `text/vtt` thumbnail sources are also
+modeled: each VTT must deny anonymous access, be read with a correct short-lived
+JWT, yield at most 32 trusted thumbnail references, and each image must deny
+anonymous access. A duplicate URL is probed once. Any other source type,
+untrusted thumbnail reference or limit breach fails closed. This v1 policy keeps
+thumbnails inside paid media; a public preview would require a separate product
+decision. The browser receipt now requires at least one JWT-header request in
+both the initial and refreshed playback rounds. Browser XHR redirect handling
+remains a real Chrome/Edge canary gate; it has no local `redirect: 'manual'`
+substitute. See Livepeer's
+[multiple-source playback response](https://docs.livepeer.org/v1/developers/guides/playback-an-asset)
+and [thumbnail VTT response](https://docs.livepeer.org/v1/developers/guides/thumbnails-vod).
+
+The most recent approved one-asset attempt reached a ready JWT-policy asset and
+observed HLS, three 1280x720 MP4 outputs and `text/vtt`. The then-current harness
+did not model VTT, so it stopped at `playback_canary_outputs_missing` before any
+anonymous, malformed, correct or refreshed JWT probe and before Chrome or Edge.
+Its TUS `DELETE` returned `204`, but five subsequent `HEAD` requests remained
+`200`; automatic cleanup therefore left the asset untouched. Under the already
+approved asset-deletion authority, controlled recovery then returned asset
+`DELETE` `204` and follow-up `GET` `404`; the authenticated inventories were `0`
+assets and `0` signing keys. That proves asset/key cleanup only, not TUS
+capability termination. Before a future playback-canary run uploads any bytes,
+the revised canary now requires a trusted-endpoint `OPTIONS` response to advertise
+`termination` and either standard `Tus-Version: 1.0.0` or the exact known
+Livepeer legacy signature `204` plus `Tus-Resumable: 1.0.0`; this is a necessary precondition, not deletion
+proof. The freshly approved corrected rerun passed local media and Chrome/Edge
+executable preflight, then stopped because the successful TUS `OPTIONS` response
+did not advertise version `1.0.0`. It created no TUS resource, sent no media
+bytes and ran no JWT or browser probe. Post-run authenticated inventories were
+again `0` assets and `0` signing keys. That one-asset authorization is consumed;
+the local canary now accepts only the exact source-verified legacy discovery
+signature and records its source separately. A further real rerun needs fresh
+explicit approval and must still prove completed-resource termination.
+The former TUS-resume, network-endpoint and browser-upload CLI runners are
+retired because they could delete an asset without proving TUS capability
+termination; their earlier results remain historical bounded evidence only.
+See the [VTT/TUS gate evidence](../evidence/livepeer-playback-vtt-gate-2026-08-02.md).
+
+An earlier separately approved full Sandbox attempt reached the browser step, then
+returned `browser_canary_playback_failed`. Direct post-run inventories were `0`
+assets and `0` signing keys. Investigation found a local harness bug: an unset
+page state was incorrectly treated as a completed state, so no browser playback
+was actually measured and Edge did not run. The corrected harness starts in
+`running`, waits only for `pass` or `fail`, and reports only a redacted failure
+class. Its local read-only nonexistent-ID check now reaches that terminal class.
+This correction is not a provider or browser result; one new explicitly approved
+asset is required to rerun the actual Chrome/Edge matrix. See the
+[invalid browser attempt evidence](../evidence/livepeer-playback-browser-canary-2026-08-02.md).
+
 Add the session-proof token endpoint and Livepeer player path.
 
 Acceptance:
@@ -628,6 +725,32 @@ Acceptance:
 Stop for review before PR-6.
 
 ### PR-6 - Reconciler, operations and testnet E2E
+
+Status: `LOCAL_DISABLED_COMPLETE / D1-D5_LOCAL_CODE_AND_TESTS_COMPLETE /
+LIVE_GOVERNANCE_ROTATION_D6_AND_ACTIVATION_GATES_OPEN /
+TESTNET_NOT_AUTHORIZED` on
+2026-08-02.
+
+The approved disabled implementation now adds per-job alarms, fail-closed drift
+state, the idempotent sales-suspension executor, fixed-name creator admission,
+local quotas/budget closure, separate governance takedown state and rotation
+overlap boundaries. Non-ready webhooks only schedule a provider re-read; they
+do not directly mutate provider or chain state. Initial publication remains
+source-enforced as `ACTIVE`, and the bridge FunctionCall allowlist remains
+limited to finalization and sales suspension.
+
+The [PR-6 completion audit](near-livepeer-pr6-decision-gates.md#tamamlama-denetimi)
+classifies D1-D2 and D5 as locally complete, D3-D4 as partial and D6/PR-7 as
+missing and unauthorized. In particular, local contract tests do not prove a
+real 2/3 multisig/timelock, and a rotation runbook is not a live rotation
+rehearsal. The disabled D5 operation requires a configured operator identity,
+secret authentication, exact closure binding, a redacted incident/evidence hash
+and an idempotency key; no production identity or secret is recorded here.
+
+Testnet work still requires explicit approval for deploy, keys, funding, USDC
+and provider/NEAR mutations. The
+[PR-6 decision packet](near-livepeer-pr6-decision-gates.md) records the
+approved D1-D5 values and local evidence; it is not runtime authority.
 
 Add asset/policy drift reconciliation, sale suspension, evidence schema,
 rotation and outage runbooks, exact-SHA testnet deployment and one real paid
@@ -673,7 +796,10 @@ session length. The load test and budget must use expected concurrent viewers,
 not only the number of uploaded assets.
 
 Provider commercial terms, retention and billing must be captured as dated
-evidence before production approval.
+evidence before production approval. The dated
+[public-source review](../evidence/livepeer-commercial-retention-review-2026-08-02.md)
+records the pricing input and the still-open written provider/legal evidence; it
+does not close P0(6) or P0(7).
 
 The product decision assumes there is no provider-enforced project hard cap
 and accepts that residual risk. Local controls reduce exposure but are not a

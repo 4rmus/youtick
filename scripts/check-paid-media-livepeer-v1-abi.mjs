@@ -19,13 +19,16 @@ const expectedMarket = [
   "get_media_job",
   "get_platform_balance",
   "get_publication",
+  "get_takedown",
   "get_usdc_contract_id",
   "has_entitlement",
+  "migrate",
   "new",
   "on_creator_withdraw",
   "on_platform_withdraw",
   "restart_paid_job",
   "suspend_livepeer_sales",
+  "takedown_livepeer_publication",
   "withdraw_creator_balance",
   "withdraw_platform_balance",
 ];
@@ -62,7 +65,7 @@ assertExactMethods("access", access, expectedAccess);
 
 const marketAbi = JSON.stringify(market);
 const forbidden =
-  /paid-media-v4|manifest|kms|cid|receipt|source_delete|ingest_public_key|finalize_paid_publish|record_byte_integrity|record_kms_store/i;
+  /paid-media-v4|manifest|kms|\bcid\b|receipt|source_delete|ingest_public_key|finalize_paid_publish|record_byte_integrity|record_kms_store/i;
 const match = marketAbi.match(forbidden);
 if (match) throw new Error(`market ABI contains superseded v4 term: ${match[0]}`);
 

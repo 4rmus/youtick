@@ -96,7 +96,10 @@ export async function startLivepeerPlayback(
     }
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     const hls = new Hls({
-        xhrSetup: (xhr) => xhr.setRequestHeader('Livepeer-Jwt', access.token),
+        xhrSetup: (xhr, url) => {
+            if (!isLivepeerPlaybackUrl(url)) throw new Error('livepeer_playback_url_invalid');
+            xhr.setRequestHeader('Livepeer-Jwt', access.token);
+        },
     });
     const scheduleRefresh = () => {
         const delay = Math.max(1_000, Number(access.expires_at_ms) - Date.now() - TOKEN_REFRESH_SKEW_MS);
@@ -141,6 +144,23 @@ function parsePlaybackToken(value: Record<string, unknown>, playbackId: string):
 
 function livepeerHlsUrl(playbackId: string): string {
     return `https://playback.livepeer.studio/asset/hls/${playbackId}/index.m3u8`;
+}
+
+function isLivepeerPlaybackUrl(value: string): boolean {
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:'
+            && !url.port
+            && !url.username
+            && !url.password
+            && (url.hostname === 'playback.livepeer.studio'
+                || url.hostname === 'livepeercdn.com'
+                || url.hostname === 'livepeercdn.studio'
+                || url.hostname === 'asset-cdn.lp-playback.com'
+                || url.hostname.endsWith('.lp-playback.studio'));
+    } catch {
+        return false;
+    }
 }
 
 function bridgeRoute(): string {
