@@ -15,15 +15,17 @@
 |---|---|
 | Livepeer component fit | `GO` |
 | Architecture direction | `CONDITIONAL_GO` |
-| Implementation progress | `PR_5_MERGED_CODE_ONLY / PR_6_LOCAL_DISABLED_COMPLETE / PROVIDER_AND_D6_GATES_OPEN` |
-| Testnet and staging | `NO_GO` |
+| Implementation progress | `PR_5_MERGED_CODE_ONLY / 32_MIB_PROVIDER_AND_CHROME_EDGE_PASS / TESTNET_PURCHASE_PASS / D6_PARTIAL` |
+| Testnet and staging | `TESTNET_EVIDENCE_PARTIAL / STAGING_NO_GO` |
 | Production | `NO_GO` |
 
-This plan locks the architecture boundary and delivery sequence. A bounded
-provider canary proves exact 20 GB TUS length admission without uploading the
-20 GB body; it does not prove full 20 GB processing or billing. Chrome resume
-passes with the locked 8 MiB chunk workaround. NEAR testnet finalization and
-runtime deployment remain unproven.
+This plan locks the architecture boundary and delivery sequence. The earlier
+bounded provider receipts prove exact 20 GB TUS length admission without
+uploading the 20 GB body; they do not prove full 20 GB processing or billing.
+The current product value is fixed 32 MiB sequential TUS PATCHes. An exact
+80 MiB provider upload, Chrome/Edge JWT matrix, NEAR testnet finalization and
+buyer purchase passed on 2026-08-03. Worker/web exact-SHA deployment, runtime
+grant issuance, withdrawal and activation remain unproven.
 
 The input evaluation was reviewed from the local architecture evidence branch
 as `near-livepeer-serverless-paid-media-evaluation.md`, SHA-256
@@ -36,10 +38,13 @@ integration branch was created.
 The first release supports one paid-video path:
 
 - creator upload from an explicitly supported desktop browser;
-- one wallet transaction to create the paid publication job;
+- one USDC `ft_transfer_call` to pay the byte-based upload fee and atomically
+  create the paid publication job;
 - direct browser-to-Livepeer TUS upload with no media bytes in YouTick servers;
 - NEAR-native USDC purchase;
 - 98% creator and 2% platform settlement;
+- ticket price of at least 2 USDC; the creator upload fee is separate from the
+  buyer ticket price;
 - finalized entitlement plus a short-lived Play grant for playback;
 - wallet-free playback-token refresh after the Play grant exists.
 
@@ -178,13 +183,19 @@ final asset re-fetch are authoritative for readiness.
 8. The bridge reconciles by deterministic metadata, records one accepted asset
    and deletes provable orphans.
 
-The browser TUS product default is `chunkSize: 8 * 1024 * 1024`; the final
-chunk may be smaller. This matches the deployed Studio S3 path's preferred part
-size and has bounded Chrome resume evidence. Changing it requires a new
-provider canary.
+The browser TUS product value is fixed at `chunkSize: 32 * 1024 * 1024` with
+`parallelUploads: 1`. PATCH requests to the same resource are strictly
+sequential. Only the final PATCH may be smaller; no intermediate PATCH may be
+below 5 MiB. Before every resume the client uses HEAD to verify the same opaque
+resource's `Upload-Offset` and `Upload-Length`. HTTP 409 is not retried blindly,
+and a retry never creates a second asset. This supersedes the historical 8 MiB
+workaround and requires the bounded 80 MiB provider/browser canary before any
+runtime claim.
 
-The public Livepeer asset API does not currently document an `expectedBytes`,
-`maxBytes`, upload URL lifetime or idempotency key. The deployed TUS endpoint,
+The public Livepeer upload documentation checked on 2026-08-03 does not publish
+an exact single-file maximum, `expectedBytes`, `maxBytes`, upload URL lifetime
+or idempotency key. Absence of a documented maximum is not evidence of unlimited
+support. The deployed TUS endpoint,
 however, accepted a server-stored `Upload-Length` at resource creation and
 rejected a PATCH beyond the completed declared length. Therefore the bridge,
 not the browser, creates the resource and verifies the stored length before
@@ -210,7 +221,7 @@ lifetime or create-idempotency evidence.
 
 References:
 
-- [Livepeer direct upload guide](https://docs.livepeer.org/v1/developers/guides/upload-video-asset)
+- [Livepeer direct upload guide](https://docs.livepeer.org/developers/guides/upload-video-asset)
 - [Livepeer API support matrix](https://docs.livepeer.org/v1/references/api-support-matrix)
 - [Livepeer request-upload API](https://docs.livepeer.org/v1/api-reference/asset/upload)
 - [TUS 1.0 creation and length contract](https://tus.io/protocols/resumable-upload)
@@ -393,10 +404,12 @@ Accepted 2026-08-01 product and operator decisions:
   provider TUS resource bound to the accepted length before returning its
   opaque URL. Full 20 GB transfer/processing remains unproven and a 20 GB + 1
   byte provider upload remains forbidden.
-- One creator FunctionCall key is scoped to the exact market and
-  `create_paid_job`, uses a five-minute signed-request window and is removed
-  after intent creation or expiry. The bounded testnet profile measured
-  `5 TGas` with `0.008 NEAR`; production must re-measure.
+- The target creator session key is scoped to the exact market and only
+  `create_paid_job`, with a five-minute signed-request window. The disabled
+  Worker enforces that shape, but the web does not yet provision or remove this
+  dedicated key; runtime upload therefore remains unwired and fail-closed. The
+  bounded testnet profile measured `5 TGas` with `0.008 NEAR`; production must
+  re-measure.
 - The separate bridge FunctionCall key is scoped to the exact market and only
   `finalize_livepeer_publication` plus `suspend_livepeer_sales`. Platform
   governance owns key add/remove and rotation; FullAccess is forbidden.
@@ -421,8 +434,30 @@ Accepted 2026-08-02 cost and endpoint decisions:
 - If a TUS resource disappears, the same generation does not create a new
   asset. The creator must restart with a new generation.
 
+Accepted 2026-08-03 product and economics decisions:
+
+- `20_000_000_000` bytes is a per-file ceiling, not a monthly source quota.
+  `20_000_000_001` is rejected before provider mutation.
+- The creator upload fee is
+  `ceil(source_bytes / 1_000_000_000 * 300_000)` micro-USDC. It is consumed
+  only when a new on-chain job is created. Pause/resume, reconciliation and a
+  same-job retry do not charge again; a new job does. There is no automatic
+  refund.
+- Ticket price is any integer micro-USDC amount at or above `2_000_000`. The
+  existing 98/2 split is unchanged. A future 5% commission is a separate
+  product change and is not implemented here.
+- Monthly admission is a separate provider-operation dollar budget. Its
+  production value is intentionally unset until D6, so runtime admission fails
+  closed. The fixed 80 MiB canary is outside public or production quota claims.
+- Livepeer transcode, storage and delivery remain minute-based provider costs,
+  separate from the byte-based creator fee. The Growth monthly minimum is a
+  commercial invoice floor, not a hard cap.
+
 The endpoint receipt is
 [the bounded lifetime and revoke evidence](../evidence/livepeer-endpoint-revoke-canary-2026-08-02.md).
+
+The current 32 MiB, fee and bounded live-canary receipt is
+[the 32 MiB and fee gate evidence](../evidence/livepeer-32mib-fee-local-gate-2026-08-03.md).
 
 The account, transaction and cleanup receipt is
 [the bounded testnet allowance evidence](../evidence/near-livepeer-testnet-allowance-2026-08-01.md).
@@ -505,16 +540,16 @@ Stop for review before PR-3.
 
 ### PR-3 - Livepeer upload and provider canaries
 
-Status: `CODE_ONLY_PARTIAL / EXACT_LENGTH_BOUND / 8_MIB_BROWSER_RESUME_PASS / NETWORK_ENDPOINT_5M_PASS / PROVIDER_FIX_OPEN / RUNTIME_NOT_DEPLOYED`
-on 2026-08-01. JWT intent creation and delete/not-found cleanup pass in the
+Status: `CODE_ONLY_PARTIAL / EXACT_LENGTH_BOUND / HISTORICAL_8_MIB_BROWSER_PASS / CURRENT_32_MIB_AND_80_MIB_LIVE_PASS / BROWSER_RESTART_OPEN / RUNTIME_NOT_DEPLOYED`
+as updated on 2026-08-03. JWT intent creation and delete/not-found cleanup pass in the
 dedicated Sandbox project. The first approved Chrome run reproduced a deployed
 S3 offset bug with 1 MiB chunks: HEAD omitted the incomplete part, the next
 PATCH returned HTTP 409 and retries remained at zero. Livepeer's deployed
 Studio revision resolves the affected `@tus/s3-store@1.0.0`; upstream fixed the
 exact bug and added sub-5 MiB regression coverage in `1.0.1`.
 
-A second explicitly approved Chrome run used the new fixed 8 MiB product
-default on an exact 20 MiB synthetic source. Reloads at 8 MiB (40%) and 16 MiB
+A second explicitly approved historical Chrome run used the then-current fixed
+8 MiB product default on an exact 20 MiB synthetic source. Reloads at 8 MiB (40%) and 16 MiB
 (80%) returned the correct HEAD offsets and uploaded only the missing bytes;
 the final 4 MiB completed successfully. Cleanup returned delete HTTP 204,
 post-delete GET HTTP 404 and authenticated inventory `0`. Provider remediation
@@ -532,11 +567,12 @@ TUS resource; explicit TUS DELETE does. A new provider mutation requires renewed
 asset-budget approval. See
 [the bounded provider receipt](../evidence/livepeer-provider-canary-2026-08-01.md).
 
+That 8 MiB evidence is historical and does not prove the current 32 MiB value.
 The disabled implementation now includes the signed upload-intent route,
 same-final-block creator access-key proof, atomic nonce consumption, one-create
 Durable Object state, JWT provider request, bridge-created exact-length TUS
 resource, and the browser `tus-js-client` flow. The browser fixes `chunkSize`
-at 8 MiB, accepts a smaller final chunk, resumes only the bridge-provided fixed
+at 32 MiB, uses one sequential request, accepts a smaller final chunk, resumes only the bridge-provided fixed
 resource URL and does not retry HTTP 409 offset conflicts. `CREATE_PENDING` and
 `CREATE_AMBIGUOUS` never create a second asset.
 No runtime was enabled. The later bounded network/endpoint canary created one
@@ -552,8 +588,9 @@ device-key request signing and focused UI tests. Do not port the R2 upload path.
 Acceptance:
 
 - exact byte behavior follows the selected P0 outcome;
-- two browser restarts at natural non-final chunk boundaries resume only
-  missing data; the bounded 20 MiB canary uses 8 MiB and 16 MiB (40%/80%);
+- the exact 80 MiB canary uses 32 + 32 + 16 MiB and resumes from the same opaque
+  resource after the first and second non-final boundaries, uploading only
+  missing data;
 - sleep, network loss and browser restart are covered;
 - CORS and endpoint lifetime are measured;
 - ambiguous create recovery and orphan cleanup pass;
@@ -594,8 +631,8 @@ Stop for review before PR-5.
 
 ### PR-5 - Playback
 
-Status: `MERGED / CODE_ONLY_COMPLETE / CANONICAL_PLAYBACK_CANARY_INCONCLUSIVE /
-BROWSER_HARNESS_RETRY_REQUIRED / HARD_DISABLED / NOT_DEPLOYED` on 2026-08-02.
+Status: `MERGED / CODE_ONLY_COMPLETE / CANONICAL_CHROME_EDGE_CANARY_PASS /
+HARD_DISABLED / NOT_DEPLOYED` as updated on 2026-08-03.
 PR #67 was squash-merged as
 `origin/main@4afd0160d851bcfc85ae2733fbab3641941ed927`; its scoped Web, Docs,
 Livepeer Protocol, Livepeer Bridge Worker and CI Gate checks passed. This is
@@ -616,8 +653,9 @@ player yet, so the feature remains intentionally unwired. Unit tests cover the
 authorization failure matrix, same-final-block reads, JWT claims/signature,
 nonce replay, grant-bounded expiry, header-only delivery, in-memory refresh and
 malformed responses. Real JWT-free/malformed provider denial and successful
-Chrome/Edge playback remain mandatory canary evidence before this phase can be
-accepted for deployment.
+Chrome/Edge playback were mandatory provider canary evidence and passed in the
+bounded 2026-08-03 run described below. Runtime-issued grant/token playback and
+deployment remain open.
 
 The first explicitly approved Sandbox playback canary reached a JWT-free HLS
 probe that returned HTTP `200`, then stopped before correct-token, refresh,
@@ -646,8 +684,8 @@ status/class/kind/count evidence. The canary now checks both the
 canonical product HLS route and every provider-reported top-level HLS output;
 the hard-disabled Worker independently checks the same set. MP4 and download
 remain anonymous-boundary checks. No further asset may be created without a new
-approval. The updated harness still needs a real provider rerun before activation
-or deployment. See the
+approval. At that point the updated harness still needed a real provider rerun;
+the later 2026-08-03 bounded result below supersedes this historical gate. See the
 [inconclusive bounded playback evidence](../evidence/livepeer-playback-canary-2026-08-02.md)
 and the [canonical status-only rerun](../evidence/livepeer-playback-canonical-canary-2026-08-02.md).
 The local rerun harness now uses a one-time loopback challenge and launches the
@@ -693,8 +731,8 @@ did not advertise version `1.0.0`. It created no TUS resource, sent no media
 bytes and ran no JWT or browser probe. Post-run authenticated inventories were
 again `0` assets and `0` signing keys. That one-asset authorization is consumed;
 the local canary now accepts only the exact source-verified legacy discovery
-signature and records its source separately. A further real rerun needs fresh
-explicit approval and must still prove completed-resource termination.
+signature and records its source separately. At that point a further real rerun
+needed fresh explicit approval and completed-resource termination proof.
 The former TUS-resume, network-endpoint and browser-upload CLI runners are
 retired because they could delete an asset without proving TUS capability
 termination; their earlier results remain historical bounded evidence only.
@@ -708,8 +746,20 @@ was actually measured and Edge did not run. The corrected harness starts in
 `running`, waits only for `pass` or `fail`, and reports only a redacted failure
 class. Its local read-only nonexistent-ID check now reaches that terminal class.
 This correction is not a provider or browser result; one new explicitly approved
-asset is required to rerun the actual Chrome/Edge matrix. See the
+asset was required to rerun the actual Chrome/Edge matrix. See the
 [invalid browser attempt evidence](../evidence/livepeer-playback-browser-canary-2026-08-02.md).
+
+The corrected 2026-08-03 run proved an exact 80 MiB provider-ready asset and
+the full Chrome/Edge matrix. The local harness defects were a CSP that omitted
+hls.js's `blob:` MediaSource and premature/misclassified `video.play()` errors.
+Both browsers denied anonymous, malformed, wrong-key, wrong-subject and expired
+JWTs, then played correct and refreshed JWTs without persistent storage. The
+testnet creator fee, finalization and buyer purchase also passed; sales were
+suspended and provider inventories returned to zero. See
+[the testnet execution receipt](../evidence/livepeer-testnet-e2e-2026-08-03.md).
+This bounded harness pause/resume does not prove a real page reload, browser
+restart or device sleep/wake at the current 32 MiB value; those PR-3 acceptance
+items remain open for the wired product flow.
 
 Add the session-proof token endpoint and Livepeer player path.
 
@@ -727,9 +777,8 @@ Stop for review before PR-6.
 ### PR-6 - Reconciler, operations and testnet E2E
 
 Status: `LOCAL_DISABLED_COMPLETE / D1-D5_LOCAL_CODE_AND_TESTS_COMPLETE /
-LIVE_GOVERNANCE_ROTATION_D6_AND_ACTIVATION_GATES_OPEN /
-TESTNET_NOT_AUTHORIZED` on
-2026-08-02.
+TESTNET_UPLOAD_FINALIZE_BUY_PARTIAL / LIVE_GOVERNANCE_ROTATION_AND_ACTIVATION_GATES_OPEN /
+RUNTIME_NOT_DEPLOYED` as updated on 2026-08-03.
 
 The approved disabled implementation now adds per-job alarms, fail-closed drift
 state, the idempotent sales-suspension executor, fixed-name creator admission,
@@ -747,8 +796,9 @@ rehearsal. The disabled D5 operation requires a configured operator identity,
 secret authentication, exact closure binding, a redacted incident/evidence hash
 and an idempotency key; no production identity or secret is recorded here.
 
-Testnet work still requires explicit approval for deploy, keys, funding, USDC
-and provider/NEAR mutations. The
+The bounded 2026-08-03 testnet continuation was separately approved and did not
+authorize Worker/web deployment or runtime activation. Any further deploy, key,
+funding, USDC or provider/NEAR mutation still requires explicit approval. The
 [PR-6 decision packet](near-livepeer-pr6-decision-gates.md) records the
 approved D1-D5 values and local evidence; it is not runtime authority.
 
@@ -800,6 +850,14 @@ evidence before production approval. The dated
 [public-source review](../evidence/livepeer-commercial-retention-review-2026-08-02.md)
 records the pricing input and the still-open written provider/legal evidence; it
 does not close P0(6) or P0(7).
+
+The current public Growth prices checked on 2026-08-03 are $0.33 per 60
+transcoded minutes, $0.09 per 60 stored minutes per month and $0.03 per 60
+delivered minutes, with a $100 monthly minimum. Before/after provider usage and
+the source duration are required to record actual and estimated cost for the
+80 MiB canary. Two files with the same byte count may have different durations
+and provider cost; they still have the same creator upload fee because no
+duration surcharge exists.
 
 The product decision assumes there is no provider-enforced project hard cap
 and accepts that residual risk. Local controls reduce exposure but are not a
