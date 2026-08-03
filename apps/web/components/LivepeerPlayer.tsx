@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { ensureSessionGrant } from '@/lib/access-grants';
+import { useWallet } from '@/components/providers/WalletProvider';
 import {
     startLivepeerPlayback,
     type LivepeerPlaybackInput,
@@ -17,6 +19,7 @@ export function LivepeerPlayer({
     generation,
     playbackId,
 }: LivepeerPlayerProps) {
+    const { getWallet } = useWallet();
     const videoRef = useRef<HTMLVideoElement>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -25,12 +28,23 @@ export function LivepeerPlayer({
         if (!video) return;
         let disposed = false;
         let destroy: (() => void) | undefined;
-        void startLivepeerPlayback(video, {
-            accountId,
-            jobId,
-            generation,
-            playbackId,
-        }, (nextError) => setError(nextError.message))
+        void getWallet()
+            .then((wallet) => ensureSessionGrant({
+                accountId,
+                scope: 'Play',
+                resourceId: jobId,
+                wallet,
+            }))
+            .then((grant) => {
+                if (disposed) throw new Error('livepeer_playback_cancelled');
+                if (!grant) throw new Error('livepeer_play_grant_missing');
+                return startLivepeerPlayback(video, {
+                    accountId,
+                    jobId,
+                    generation,
+                    playbackId,
+                }, (nextError) => setError(nextError.message));
+            })
             .then((session) => {
                 if (disposed) session.destroy();
                 else destroy = session.destroy;
@@ -43,7 +57,7 @@ export function LivepeerPlayer({
             disposed = true;
             destroy?.();
         };
-    }, [accountId, generation, jobId, playbackId]);
+    }, [accountId, generation, getWallet, jobId, playbackId]);
 
     return (
         <div className="relative aspect-video bg-black">

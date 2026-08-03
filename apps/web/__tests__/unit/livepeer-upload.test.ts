@@ -46,10 +46,15 @@ vi.mock('@/lib/constants', () => ({
 
 import {
     authorizeLivepeerPaidJob,
+    clearLivepeerUploadDraft,
+    parseLivepeerPriceUsdc,
     livepeerSessionKeyAllowanceYocto,
     livepeerUploadFeeUsdc,
     requestLivepeerUploadIntent,
+    readLivepeerUploadDraft,
     uploadLivepeerSource,
+    validateLivepeerSourceFile,
+    writeLivepeerUploadDraft,
     type LivepeerUploadIntent,
 } from '@/lib/livepeer-upload';
 
@@ -176,6 +181,41 @@ describe('Livepeer browser upload', () => {
             expectedSourceBytes: 20_000_000_001,
         })).rejects.toThrow('source_limit_exceeded');
         expect(fetchMock).toHaveBeenCalledOnce();
+    });
+
+    it('accepts only bounded MP4 input and exact micro-USDC prices', () => {
+        expect(validateLivepeerSourceFile({ size: 1, type: 'video/mp4' })).toEqual({ ok: true });
+        expect(validateLivepeerSourceFile({ size: 0, type: 'video/mp4' }))
+            .toEqual({ ok: false, error: 'empty_file' });
+        expect(validateLivepeerSourceFile({ size: 20_000_000_001, type: 'video/mp4' }))
+            .toEqual({ ok: false, error: 'source_limit_exceeded' });
+        expect(validateLivepeerSourceFile({ size: 1, type: 'video/quicktime' }))
+            .toEqual({ ok: false, error: 'unsupported_video_type' });
+        expect(parseLivepeerPriceUsdc('2')).toBe('2000000');
+        expect(parseLivepeerPriceUsdc('2.000001')).toBe('2000001');
+        expect(() => parseLivepeerPriceUsdc('1.999999')).toThrow('invalid_ticket_price');
+        expect(() => parseLivepeerPriceUsdc('2.0000001')).toThrow('invalid_ticket_price');
+    });
+
+    it('restores only the same selected file and job after a wallet redirect', () => {
+        const file = new File(['video'], 'video.mp4', { type: 'video/mp4', lastModified: 123 });
+        const draft = {
+            jobId: 'job-001',
+            title: 'Paid video',
+            price: '2.00',
+            sourceBytes: file.size,
+            sourceName: file.name,
+            sourceLastModified: file.lastModified,
+        };
+        writeLivepeerUploadDraft('creator.testnet', draft);
+
+        expect(readLivepeerUploadDraft('creator.testnet', file)).toEqual(draft);
+        expect(readLivepeerUploadDraft(
+            'creator.testnet',
+            new File(['other'], 'other.mp4', { type: 'video/mp4', lastModified: 456 }),
+        )).toBeNull();
+        clearLivepeerUploadDraft('creator.testnet');
+        expect(readLivepeerUploadDraft('creator.testnet', file)).toBeNull();
     });
 
     it('uses one sequential 32 MiB TUS stream and does not retry an offset conflict', async () => {
