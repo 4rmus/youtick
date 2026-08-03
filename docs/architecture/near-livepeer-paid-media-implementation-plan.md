@@ -15,7 +15,7 @@
 |---|---|
 | Livepeer component fit | `GO` |
 | Architecture direction | `CONDITIONAL_GO` |
-| Implementation progress | `PR_5_MERGED_CODE_ONLY / 32_MIB_PROVIDER_AND_CHROME_EDGE_PASS / TESTNET_PURCHASE_PASS / D6_PARTIAL` |
+| Implementation progress | `PR_6_LOCAL_CODE_MERGED / WEB_UI_WIRING_LOCAL / 32_MIB_PROVIDER_AND_CHROME_EDGE_PASS / TESTNET_PURCHASE_PASS / D6_PARTIAL` |
 | Testnet and staging | `TESTNET_EVIDENCE_PARTIAL / STAGING_NO_GO` |
 | Production | `NO_GO` |
 
@@ -368,7 +368,8 @@ supported claim until a real device proves header propagation and refresh.
 
 ## 11. P0 decision gates
 
-Provider/runtime implementation remains blocked until the following are
+Production activation and the remaining provider/runtime evidence remain
+blocked until the following are
 recorded in this plan or a linked ADR/vendor evidence file:
 
 1. Exact upload-length binding, URL lifetime, refresh/revoke and idempotency.
@@ -391,7 +392,7 @@ Current gate ownership:
 
 | P0 scope | Status | Blocks |
 |---|---|---|
-| Provider upload, recovery, browser, metadata, playback, deletion and billing evidence (1-7) | `PARTIAL / EXACT_LENGTH_BOUND / 15M_IDLE_PASS / TUS_REVOKE_PASS_UNFINISHED_ONLY / COMPLETED_RESOURCE_UNPROVEN / OTHER_GATES_OPEN`; [commercial/retention public-source review](../evidence/livepeer-commercial-retention-review-2026-08-02.md) leaves P0(6-7) open | Remaining provider-facing PR-3 and PR-4 behavior |
+| Provider upload, recovery, browser, metadata, playback, deletion and billing evidence (1-7) | `PARTIAL / EXACT_LENGTH_BOUND / 15M_IDLE_PASS / ONE_COMPLETED_TUS_TERMINATION_PASS / FINAL_RECOVERY_POST_DELETE_HEAD_OPEN / OTHER_GATES_OPEN`; [commercial/retention public-source review](../evidence/livepeer-commercial-retention-review-2026-08-02.md) leaves P0(6-7) open | Remaining provider-facing PR-3 and PR-4 behavior |
 | Refund, takedown and exact resume policy (8) | `LOCKED / LOCAL_TAKEDOWN_IMPLEMENTED / LIVE_GOVERNANCE_AND_REFUND_EVIDENCE_PENDING` | D6 and activation |
 | Desktop Chrome and Edge matrix (9) | `LOCKED` | Safari/iOS claims remain excluded |
 | Method allowlist and governance/timelock principle (10) | `LOCKED` | None for disabled PR-2 primitives |
@@ -409,10 +410,10 @@ Accepted 2026-08-01 product and operator decisions:
   Worker enforces that shape. The disabled web client now provisions one
   job-scoped testnet key alongside USDC authorization and requires on-chain
   removal after an accepted upload intent; failed removal remains retryable.
-  Mainnet allowance is intentionally unset and no UI caller or runtime flag is
-  enabled, so runtime upload remains unwired and fail-closed. The
-  bounded testnet profile measured `5 TGas` with `0.008 NEAR`; production must
-  re-measure.
+  Mainnet allowance is intentionally unset. A default-off web UI caller now
+  exists locally, but no runtime flag is enabled, so upload remains fail-closed.
+  The bounded testnet profile measured `5 TGas` with `0.008 NEAR`; production
+  must re-measure.
 - The separate bridge FunctionCall key is scoped to the exact market and only
   `finalize_livepeer_publication` plus `suspend_livepeer_sales`. Platform
   governance owns key add/remove and rotation; FullAccess is forbidden.
@@ -543,7 +544,7 @@ Stop for review before PR-3.
 
 ### PR-3 - Livepeer upload and provider canaries
 
-Status: `CODE_ONLY_PARTIAL / WEB_JOB_KEY_LIFECYCLE_LOCAL / EXACT_LENGTH_BOUND / HISTORICAL_8_MIB_BROWSER_PASS / CURRENT_32_MIB_AND_80_MIB_LIVE_PASS / BROWSER_RESTART_OPEN / RUNTIME_NOT_DEPLOYED`
+Status: `CODE_ONLY_PARTIAL / WEB_JOB_KEY_LIFECYCLE_LOCAL / WEB_UI_WIRING_LOCAL / EXACT_LENGTH_BOUND / HISTORICAL_8_MIB_BROWSER_PASS / CURRENT_32_MIB_AND_80_MIB_LIVE_PASS / BROWSER_RESTART_OPEN / RUNTIME_NOT_DEPLOYED`
 as updated on 2026-08-04. JWT intent creation and delete/not-found cleanup pass in the
 dedicated Sandbox project. The first approved Chrome run reproduced a deployed
 S3 offset bug with 1 MiB chunks: HEAD omitted the incomplete part, the next
@@ -582,10 +583,11 @@ No runtime was enabled. The later bounded network/endpoint canary created one
 zero-media probe asset and one 20 MiB media-bearing asset; both were deleted and
 the authenticated project inventory returned to `0`.
 The web library now implements testnet-only per-job key provisioning and
-post-intent removal, including retry-safe deletion failure handling. UI
-activation remains intentionally unwired until production key allowance,
-rotation and budget controls are implemented and the mandatory provider P0
-evidence closes. The bounded testnet allowance receipt does not enable runtime.
+post-intent removal, including retry-safe deletion failure handling. A local,
+default-off upload form binds job creation, intent and direct TUS upload to one
+persisted job ID; it does not enable runtime. Production key allowance,
+rotation and budget controls plus the mandatory provider P0 evidence remain
+activation gates. The bounded testnet allowance receipt does not enable runtime.
 
 Add the Livepeer client, upload-intent route, `tus-js-client` browser flow,
 device-key request signing and focused UI tests. Do not port the R2 upload path.
@@ -636,8 +638,9 @@ Stop for review before PR-5.
 
 ### PR-5 - Playback
 
-Status: `MERGED / CODE_ONLY_COMPLETE / CANONICAL_CHROME_EDGE_CANARY_PASS /
-HARD_DISABLED / NOT_DEPLOYED` as updated on 2026-08-03.
+Status: `MERGED / CODE_ONLY_COMPLETE / WEB_UI_WIRING_LOCAL /
+CANONICAL_CHROME_EDGE_CANARY_PASS / HARD_DISABLED / NOT_DEPLOYED` as updated on
+2026-08-04.
 PR #67 was squash-merged as
 `origin/main@4afd0160d851bcfc85ae2733fbab3641941ed927`; its scoped Web, Docs,
 Livepeer Protocol, Livepeer Bridge Worker and CI Gate checks passed. This is
@@ -653,8 +656,10 @@ with `Cache-Control: no-store`.
 
 The browser player keeps the Play grant and rotating JWT in memory, attaches
 the JWT only as the `Livepeer-Jwt` HLS request header and refreshes without a
-wallet prompt. The watch route does not pass Livepeer publication data into the
-player yet, so the feature remains intentionally unwired. Unit tests cover the
+wallet prompt. A default-off `/watch?job=<job_id>` path now reads the v1
+publication and entitlement, provisions the existing Play grant and passes the
+bound publication tuple into the player. There is no v1 discover index, so this
+is a closed-D6 deep link rather than a public catalog path. Unit tests cover the
 authorization failure matrix, same-final-block reads, JWT claims/signature,
 nonce replay, grant-bounded expiry, header-only delivery, in-memory refresh and
 malformed responses. Real JWT-free/malformed provider denial and successful
@@ -781,9 +786,9 @@ Stop for review before PR-6.
 
 ### PR-6 - Reconciler, operations and testnet E2E
 
-Status: `LOCAL_DISABLED_COMPLETE / D1-D5_LOCAL_CODE_AND_TESTS_COMPLETE /
+Status: `LOCAL_DISABLED_COMPLETE / WEB_UI_WIRING_LOCAL / D1-D5_LOCAL_CODE_AND_TESTS_COMPLETE /
 TESTNET_UPLOAD_FINALIZE_BUY_PARTIAL / LIVE_GOVERNANCE_ROTATION_AND_ACTIVATION_GATES_OPEN /
-RUNTIME_NOT_DEPLOYED` as updated on 2026-08-03.
+RUNTIME_NOT_DEPLOYED` as updated on 2026-08-04.
 
 The approved disabled implementation now adds per-job alarms, fail-closed drift
 state, the idempotent sales-suspension executor, fixed-name creator admission,

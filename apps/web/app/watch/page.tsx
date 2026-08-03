@@ -14,7 +14,7 @@ import { PageShell } from '@/components/PageShell';
 import { ScreenState } from '@/components/ScreenState';
 import { Button } from '@/components/ui/button';
 import { getProvider, viewContract } from '@/lib/near';
-import { NEAR_CONFIG } from '@/lib/constants';
+import { FEATURE_FLAGS, NEAR_CONFIG } from '@/lib/constants';
 import type { NFTEvent } from '@/lib/types';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from '@/components/Web4Link';
@@ -24,6 +24,7 @@ import { useNearPrice } from '@/hooks/useNearPrice';
 import { getContentTypeLabel } from '@/lib/content-types';
 import { hasRecentTicketPurchase, markRecentTicketPurchase } from '@/lib/ticket-access-cache';
 import { getLatestEventsQuery } from '@/lib/event-query';
+import { LivepeerWatch } from '@/components/LivepeerWatch';
 
 import {
     Play,
@@ -50,6 +51,15 @@ export default function WatchPage() {
 }
 
 function WatchContent() {
+    const searchParams = useSearchParams();
+    const livepeerJobId = FEATURE_FLAGS.enablePaidMediaLivepeerV1
+        ? searchParams.get('job')
+        : null;
+    if (livepeerJobId) return <LivepeerWatch jobId={livepeerJobId} />;
+    return <LegacyWatchContent />;
+}
+
+function LegacyWatchContent() {
     const { t } = useLanguage();
     const { accountId } = useWallet();
     const { nearToUsdStr } = useNearPrice();

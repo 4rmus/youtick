@@ -19,6 +19,7 @@ const LIVEPEER_TUS_ORIGIN = 'https://origin.livepeer.com';
 const PROFILE_ID = 'paid-media-livepeer-v1';
 const PROFILE_CONFIG_SHA256 = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
 const LIVEPEER_SESSION_STORAGE_PREFIX = 'youtick:livepeer-job-session:';
+const LIVEPEER_DRAFT_STORAGE_PREFIX = 'youtick:livepeer-ui-draft:';
 const TESTNET_CREATOR_KEY_ALLOWANCE_YOCTO = 8_000_000_000_000_000_000_000n;
 const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -32,6 +33,67 @@ export type LivepeerUploadIntent = {
     tus_endpoint: string;
     created: boolean;
 };
+
+export type LivepeerUploadDraft = {
+    jobId: string;
+    title: string;
+    price: string;
+    sourceBytes: number;
+    sourceName: string;
+    sourceLastModified: number;
+};
+
+export type LivepeerSourceValidation =
+    | { ok: true }
+    | { ok: false; error: 'empty_file' | 'source_limit_exceeded' | 'unsupported_video_type' };
+
+export function validateLivepeerSourceFile(file: Pick<File, 'size' | 'type'>): LivepeerSourceValidation {
+    if (!Number.isSafeInteger(file.size) || file.size < 1) return { ok: false, error: 'empty_file' };
+    if (file.size > MEDIA_UPLOAD_POLICY.paidSourceMaxBytes) {
+        return { ok: false, error: 'source_limit_exceeded' };
+    }
+    if (file.type !== 'video/mp4') return { ok: false, error: 'unsupported_video_type' };
+    return { ok: true };
+}
+
+export function parseLivepeerPriceUsdc(value: string): string {
+    const match = value.trim().match(/^(\d{1,8})(?:\.(\d{1,6}))?$/);
+    if (!match) throw new Error('invalid_ticket_price');
+    const amount = BigInt(match[1]) * 1_000_000n + BigInt((match[2] || '').padEnd(6, '0'));
+    if (amount < 2_000_000n) throw new Error('invalid_ticket_price');
+    return amount.toString();
+}
+
+export function createLivepeerJobId(): string {
+    return `lp-${crypto.randomUUID()}`;
+}
+
+export function writeLivepeerUploadDraft(accountId: string, draft: LivepeerUploadDraft): void {
+    validateJobSessionIdentity(accountId, draft.jobId);
+    sessionStorage.setItem(`${LIVEPEER_DRAFT_STORAGE_PREFIX}${accountId}`, JSON.stringify(draft));
+}
+
+export function readLivepeerUploadDraft(accountId: string, file: File): LivepeerUploadDraft | null {
+    const storageKey = `${LIVEPEER_DRAFT_STORAGE_PREFIX}${accountId}`;
+    const raw = sessionStorage.getItem(storageKey);
+    if (!raw) return null;
+    try {
+        const draft = JSON.parse(raw) as LivepeerUploadDraft;
+        validateJobSessionIdentity(accountId, draft.jobId);
+        return draft.sourceBytes === file.size
+            && draft.sourceName === file.name
+            && draft.sourceLastModified === file.lastModified
+            ? draft
+            : null;
+    } catch {
+        sessionStorage.removeItem(storageKey);
+        return null;
+    }
+}
+
+export function clearLivepeerUploadDraft(accountId: string): void {
+    sessionStorage.removeItem(`${LIVEPEER_DRAFT_STORAGE_PREFIX}${accountId}`);
+}
 
 export function livepeerUploadFeeUsdc(sourceBytes: number): string {
     if (!Number.isSafeInteger(sourceBytes)

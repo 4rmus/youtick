@@ -1,0 +1,104 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const state = vi.hoisted(() => ({
+    viewContract: vi.fn(),
+    send: vi.fn(),
+}));
+
+vi.mock('@/lib/constants', () => ({
+    GAS_CONSTANTS: { mediumGas: 100_000_000_000_000n },
+    NEAR_CONFIG: {
+        marketContractId: 'paid-media-livepeer-v1.testnet',
+        usdcContractId: 'usdc.testnet',
+    },
+}));
+
+vi.mock('@/lib/near', () => ({
+    getProvider: () => ({ id: 'provider' }),
+    viewContract: state.viewContract,
+}));
+
+vi.mock('@/lib/signless-access-key', () => ({
+    signAndSendWithSignlessProvision: state.send,
+}));
+
+import {
+    buyLivepeerTicket,
+    hasLivepeerEntitlement,
+    parseLivepeerPublication,
+    readLivepeerPublication,
+    type LivepeerPublication,
+} from '@/lib/livepeer-publication';
+
+const PUBLICATION = {
+    publication_id: 'job-001',
+    creator_id: 'creator.testnet',
+    title: 'Paid video',
+    price_usdc: '2000001',
+    generation: 1,
+    playback_id: 'playback_001',
+    availability: 'ACTIVE',
+} satisfies LivepeerPublication;
+
+describe('Livepeer publication UI boundary', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('reads only a publication bound to the requested job', async () => {
+        state.viewContract.mockResolvedValueOnce(PUBLICATION);
+
+        await expect(readLivepeerPublication('job-001')).resolves.toEqual(PUBLICATION);
+        expect(state.viewContract).toHaveBeenCalledWith(
+            { id: 'provider' },
+            'paid-media-livepeer-v1.testnet',
+            'get_publication',
+            { publication_id: 'job-001' },
+        );
+        expect(() => parseLivepeerPublication({ ...PUBLICATION, publication_id: 'job-002' }, 'job-001'))
+            .toThrow('invalid_livepeer_publication');
+        expect(() => parseLivepeerPublication({ ...PUBLICATION, availability: 'UNKNOWN' }, 'job-001'))
+            .toThrow('invalid_livepeer_publication');
+    });
+
+    it('buys the exact publication with NEAR-native USDC and provisions playback access', async () => {
+        state.send.mockResolvedValueOnce({});
+        const wallet = { signAndSendTransaction: vi.fn(), signAndSendTransactions: vi.fn() };
+
+        await buyLivepeerTicket(wallet as never, 'buyer.testnet', PUBLICATION);
+
+        const [, accountId, transactions] = state.send.mock.calls[0];
+        expect(accountId).toBe('buyer.testnet');
+        expect(transactions).toHaveLength(1);
+        expect(transactions[0]).toMatchObject({
+            receiverId: 'usdc.testnet',
+            actions: [{
+                methodName: 'ft_transfer_call',
+                args: {
+                    receiver_id: 'paid-media-livepeer-v1.testnet',
+                    amount: '2000001',
+                    memo: 'YouTick Livepeer ticket purchase',
+                    msg: JSON.stringify({ action: 'buy_ticket', publication_id: 'job-001' }),
+                },
+                deposit: 1n,
+            }],
+        });
+        await expect(buyLivepeerTicket(wallet as never, 'buyer.testnet', {
+            ...PUBLICATION,
+            availability: 'SALES_SUSPENDED',
+        })).rejects.toThrow('livepeer_sales_closed');
+        expect(state.send).toHaveBeenCalledOnce();
+    });
+
+    it('checks entitlement against the v1 market and job ID', async () => {
+        state.viewContract.mockResolvedValueOnce(true);
+
+        await expect(hasLivepeerEntitlement('buyer.testnet', 'job-001')).resolves.toBe(true);
+        expect(state.viewContract).toHaveBeenCalledWith(
+            { id: 'provider' },
+            'paid-media-livepeer-v1.testnet',
+            'has_entitlement',
+            { account_id: 'buyer.testnet', publication_id: 'job-001' },
+        );
+    });
+});
