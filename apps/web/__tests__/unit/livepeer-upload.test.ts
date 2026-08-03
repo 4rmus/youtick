@@ -34,11 +34,13 @@ vi.mock('@/lib/constants', () => ({
     FEATURE_FLAGS: { enablePaidMediaLivepeerV1: true },
     MEDIA_UPLOAD_POLICY: {
         paidSourceMaxBytes: 20_000_000_000,
-        livepeerTusChunkBytes: 8 * 1024 * 1024,
+        livepeerTusChunkBytes: 32 * 1024 * 1024,
     },
+    GAS_CONSTANTS: { mediumGas: 100_000_000_000_000n },
     NEAR_CONFIG: {
         networkId: 'testnet',
         marketContractId: 'paid-media-livepeer-v1.testnet',
+        usdcContractId: 'usdc.testnet',
     },
 }));
 
@@ -52,6 +54,8 @@ vi.mock('@/lib/upload-session-manager', () => ({
 }));
 
 import {
+    authorizeLivepeerPaidJob,
+    livepeerUploadFeeUsdc,
     requestLivepeerUploadIntent,
     uploadLivepeerSource,
     type LivepeerUploadIntent,
@@ -63,7 +67,7 @@ const INTENT: LivepeerUploadIntent = {
     job_id: 'job-001',
     generation: 1,
     expected_source_bytes: String(SOURCE_BYTES),
-    chunk_bytes: 8 * 1024 * 1024,
+    chunk_bytes: 32 * 1024 * 1024,
     tus_endpoint: 'https://origin.livepeer.com/api/asset/upload/tus/upload-123',
     created: true,
 };
@@ -136,24 +140,83 @@ describe('Livepeer browser upload', () => {
         expect(fetchMock).toHaveBeenCalledOnce();
     });
 
-    it('resumes the fixed resource with 8 MiB chunks and does not retry an offset conflict', async () => {
-        const file = new File([new Uint8Array(SOURCE_BYTES)], 'video.mp4', { type: 'video/mp4' });
+    it('uses one sequential 32 MiB TUS stream and does not retry an offset conflict', async () => {
+        const sourceBytes = 80 * 1024 * 1024;
+        const file = new File([new Uint8Array(sourceBytes)], 'video.mp4', { type: 'video/mp4' });
 
-        await uploadLivepeerSource(file, INTENT);
+        await uploadLivepeerSource(file, {
+            ...INTENT,
+            expected_source_bytes: String(sourceBytes),
+        });
 
         const instance = tus.instances[0];
         expect(instance.started).toBe(true);
         expect(instance.options.uploadUrl).toBe(INTENT.tus_endpoint);
         expect(instance.options.endpoint).toBeUndefined();
         expect(instance.options.storeFingerprintForResuming).toBe(false);
-        expect(instance.options.chunkSize).toBe(8 * 1024 * 1024);
-        expect(file.size % Number(instance.options.chunkSize)).toBe(4 * 1024 * 1024);
+        expect(instance.options.chunkSize).toBe(32 * 1024 * 1024);
+        expect(instance.options.parallelUploads).toBe(1);
+        expect(file.size % Number(instance.options.chunkSize)).toBe(16 * 1024 * 1024);
         const shouldRetry = instance.options.onShouldRetry as (error: unknown) => boolean;
         const error = (status: number) => ({
             originalResponse: { getStatus: () => status },
         });
         expect(shouldRetry(error(409))).toBe(false);
         expect(shouldRetry(error(503))).toBe(true);
+    });
+
+    it('quotes exact-byte upload fees and creates one USDC-paid job transaction', async () => {
+        expect(livepeerUploadFeeUsdc(83_886_080)).toBe('25166');
+        expect(livepeerUploadFeeUsdc(1_000_000_000)).toBe('300000');
+        expect(livepeerUploadFeeUsdc(5_000_000_000)).toBe('1500000');
+        expect(livepeerUploadFeeUsdc(10_000_000_000)).toBe('3000000');
+        expect(livepeerUploadFeeUsdc(20_000_000_000)).toBe('6000000');
+        expect(() => livepeerUploadFeeUsdc(20_000_000_001)).toThrow('source_limit_exceeded');
+
+        type Transaction = {
+            receiverId: string;
+            actions: Array<{
+                methodName: string;
+                args: { receiver_id: string; amount: string; msg: string };
+                deposit: bigint;
+            }>;
+        };
+        const transactions: Transaction[] = [];
+        const signAndSendTransaction = vi.fn(async (transaction: Transaction) => {
+            transactions.push(transaction);
+            return {};
+        });
+        const wallet = { signAndSendTransaction } as never;
+        await authorizeLivepeerPaidJob(wallet, {
+            jobId: 'job-001',
+            title: ' Paid video ',
+            priceUsdc: '2000001',
+            expectedSourceBytes: 83_886_080,
+        });
+        const transaction = transactions[0]!;
+        expect(transaction.receiverId).toBe('usdc.testnet');
+        expect(transaction.actions[0]).toMatchObject({
+            methodName: 'ft_transfer_call',
+            args: expect.objectContaining({
+                receiver_id: 'paid-media-livepeer-v1.testnet',
+                amount: '25166',
+            }),
+            deposit: 1n,
+        });
+        const message = JSON.parse(transaction.actions[0].args.msg);
+        expect(message).toMatchObject({
+            action: 'create_paid_job',
+            price_usdc: '2000001',
+            expected_source_bytes: '83886080',
+        });
+
+        await expect(authorizeLivepeerPaidJob(wallet, {
+            jobId: 'job-cheap',
+            title: 'Paid video',
+            priceUsdc: '1999999',
+            expectedSourceBytes: 1_000_000,
+        })).rejects.toThrow('invalid_ticket_price');
+        expect(signAndSendTransaction).toHaveBeenCalledOnce();
     });
 
     it('rejects a file that does not match the provider-bound length', async () => {

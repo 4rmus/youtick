@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
-import { runPlaybackCanary } from './playback-canary.mjs';
+import {
+    requireLocalCanaryMp4,
+    runPlaybackCanary,
+    tusChunkRanges,
+} from './playback-canary.mjs';
 
 function keys() {
     const pair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
@@ -38,6 +42,66 @@ const ERROR_WITH_KEY_OR_MAP_HLS = '#EXTM3U\n#EXT-X-ERROR\n#EXT-X-KEY:METHOD=AES-
 const ERROR_WITH_BYTERANGE_SEGMENT_HLS = '#EXTM3U\n#EXT-X-ERROR\n#EXTINF:4.0,\n#EXT-X-BYTERANGE:1024@0\nsegment_0.ts\n';
 const THUMBNAIL_VTT = 'WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nkeyframes_0.jpg\n';
 
+test('80 MiB is uploaded sequentially as 32 + 32 + 16 MiB', () => {
+    assert.deepEqual(tusChunkRanges(80 * 1024 * 1024).map(({ offset, bytes }) => ({
+        offset,
+        bytes,
+    })), [
+        { offset: 0, bytes: 32 * 1024 * 1024 },
+        { offset: 32 * 1024 * 1024, bytes: 32 * 1024 * 1024 },
+        { offset: 64 * 1024 * 1024, bytes: 16 * 1024 * 1024 },
+    ]);
+});
+
+test('local preflight requires an exact playable 80 MiB MP4 before mutation', () => {
+    const fileBytes = new Uint8Array(80 * 1024 * 1024);
+    let invocation;
+    const result = requireLocalCanaryMp4('/tmp/canary.mp4', fileBytes, (...args) => {
+        invocation = args;
+        return {
+            status: 0,
+            stdout: JSON.stringify({
+                format: { format_name: 'mov,mp4,m4a,3gp,3g2,mj2', duration: '12.5' },
+                streams: [{ codec_type: 'video' }],
+            }),
+        };
+    });
+    assert.deepEqual(result, { duration_seconds: 12.5 });
+    assert.equal(invocation[0], 'ffprobe');
+    assert.equal(invocation[1].at(-1), '/tmp/canary.mp4');
+    assert.throws(
+        () => requireLocalCanaryMp4('/tmp/canary.mp4', new Uint8Array(1), () => ({})),
+        /playback_canary_requires_exact_80_mib/,
+    );
+});
+
+test('playback canary pauses and resumes from the authoritative HEAD offset', async () => {
+    const key = keys();
+    const { fetchImpl } = providerFetch(key.publicKey);
+    const sleeps = [];
+    const receipt = await runPlaybackCanary({
+        apiKey: 'test-api-key-123456',
+        mutationsEnabled: true,
+        privateKey: key.privateKey,
+        publicKey: key.publicKey,
+        fileBytes: new Uint8Array(40 * 1024 * 1024),
+        fetchImpl,
+        sleep: async (milliseconds) => { sleeps.push(milliseconds); },
+        now: () => 1_700_000_000_000,
+        readyAttempts: 1,
+        correlationId: 'test-correlation',
+    });
+    assert.deepEqual(receipt.upload.chunks.map(({ start_offset, bytes }) => ({
+        start_offset,
+        bytes,
+    })), [
+        { start_offset: 0, bytes: 32 * 1024 * 1024 },
+        { start_offset: 32 * 1024 * 1024, bytes: 8 * 1024 * 1024 },
+    ]);
+    assert.equal(receipt.upload.pause_resume_offset, 32 * 1024 * 1024);
+    assert.ok(sleeps.includes(1_000));
+});
+
 function hlsResponse(status, body) {
     return new Response(body, { status, headers: { 'Content-Type': 'application/vnd.apple.mpegurl' } });
 }
@@ -63,7 +127,9 @@ function providerFetch(registeredPublicKey, {
     tusDeleteVisibleAfter = 0,
     tusVersion = '1.0.0',
     tusExtensions = 'creation,termination',
+    omitTusCapabilityHeaders = false,
     tusLocation = '/resource-123',
+    tusPatchFailure,
     anonymousHlsStatus,
     anonymousHlsBody,
     anonymousSourceHlsStatus,
@@ -112,12 +178,16 @@ function providerFetch(registeredPublicKey, {
     ]);
     const calls = [];
     let tusHeadsAfterDelete = 0;
+    let tusOffset = 0;
+    let tusLength = 4;
+    let createRequested = false;
     const fetchImpl = async (url, init = {}) => {
         const method = init.method || 'GET';
         const target = String(url);
         const headers = new Headers(init.headers);
         calls.push({ target, method, hasJwt: headers.has('Livepeer-Jwt'), redirect: init.redirect });
         if (target.endsWith('/asset/request-upload') && method === 'POST') {
+            createRequested = true;
             if (requestUploadResponseLost) throw new Error('simulated_request_upload_response_lost');
             return response(200, {
                 tusEndpoint: 'https://origin.livepeer.com/api/asset/upload/tus',
@@ -130,16 +200,21 @@ function providerFetch(registeredPublicKey, {
             });
         }
         if (target === 'https://origin.livepeer.com/api/asset/upload/tus' && method === 'OPTIONS') {
-            return response(204, undefined, {
+            return response(204, undefined, omitTusCapabilityHeaders ? {} : {
                 'Tus-Version': tusVersion,
                 'Tus-Extension': tusExtensions,
             });
         }
         if (target === 'https://origin.livepeer.com/api/asset/upload/tus' && method === 'POST') {
+            tusLength = Number(headers.get('Upload-Length'));
             return response(tusCreateStatus, undefined, tusCreateStatus === 201 && tusLocation ? { Location: tusLocation } : {});
         }
         if (target === 'https://origin.livepeer.com/resource-123' && method === 'PATCH') {
-            return response(204, undefined, { 'Upload-Offset': '4' });
+            if (tusPatchFailure === 'disconnect') throw new Error('simulated_connection_disconnect');
+            if (tusPatchFailure === 'timeout') throw new DOMException('timed out', 'TimeoutError');
+            if (Number.isSafeInteger(tusPatchFailure)) return response(tusPatchFailure);
+            tusOffset += new Uint8Array(init.body).byteLength;
+            return response(204, undefined, { 'Upload-Offset': String(tusOffset) });
         }
         if (target === 'https://origin.livepeer.com/resource-123' && method === 'HEAD') {
             const deleted = calls.some((call) => call.target === target && call.method === 'DELETE');
@@ -147,7 +222,10 @@ function providerFetch(registeredPublicKey, {
                 tusHeadsAfterDelete += 1;
                 return response(tusHeadsAfterDelete > tusDeleteVisibleAfter ? 404 : 200);
             }
-            return response(200, undefined, { 'Upload-Offset': '4' });
+            return response(200, undefined, {
+                'Upload-Offset': String(tusOffset),
+                'Upload-Length': String(tusLength),
+            });
         }
         if (target === 'https://origin.livepeer.com/resource-123' && method === 'DELETE') {
             return response(tusDeleteStatus);
@@ -162,7 +240,8 @@ function providerFetch(registeredPublicKey, {
                 creatorId: { type: 'unverified', value: 'test-correlation' },
                 playbackPolicy: { type: 'jwt' },
                 status: { phase: 'ready' },
-                size: 4,
+                size: tusLength,
+                videoSpec: { duration: 120.5 },
                 downloadUrl: download,
             });
         }
@@ -209,7 +288,7 @@ function providerFetch(registeredPublicKey, {
         if (target.endsWith('/asset/asset-123') && method === 'DELETE') return response(204);
         if (target.endsWith('/asset') && method === 'GET') {
             const deleted = calls.some((call) => call.target.endsWith('/asset/asset-123') && call.method === 'DELETE');
-            return response(200, requestUploadResponseLost && !deleted ? [{
+            return response(200, createRequested && !deleted ? [{
                 id: 'asset-123',
                 name: 'youtick-paid-media-canary-test-correlation',
                 creatorId: { type: 'unverified', value: 'test-correlation' },
@@ -261,7 +340,8 @@ test('playback canary accepts Livepeer base64-encoded PEM signing keys', async (
         correlationId: 'test-correlation',
     });
     assert.equal(receipt.hls.correct, 200);
-    assert.equal(receipt.cleanup.inventory_count, 0);
+    assert.equal(receipt.cleanup.inventory_after.count, 0);
+    assert.equal(receipt.cleanup.inventory_restored, true);
 });
 
 test('playback canary verifies JWT access, redacts identities and cleans up', async () => {
@@ -294,10 +374,12 @@ test('playback canary verifies JWT access, redacts identities and cleans up', as
     assert.equal(receipt.tus_version_source, 'tus-version');
     assert.equal(receipt.tus_termination_advertised, true);
     assert.deepEqual(receipt.cleanup, {
+        inventory_before: { count: 0, id_sha256: [] },
         tus: { delete_status: 204, post_delete_status: 404 },
         asset_delete_status: 204,
         asset_post_delete_status: 404,
-        inventory_count: 0,
+        inventory_after: { count: 0, id_sha256: [] },
+        inventory_restored: true,
     });
     assert.equal(receipt.browser_matrix_proven, false);
     assert.equal(receipt.browser, null);
@@ -308,6 +390,29 @@ test('playback canary verifies JWT access, redacts identities and cleans up', as
     assert.ok(calls.filter((call) => call.hasJwt).every((call) => call.redirect === 'manual'));
     assert.ok(calls.findIndex((call) => call.target === 'https://origin.livepeer.com/resource-123' && call.method === 'DELETE')
         < calls.findIndex((call) => call.target.endsWith('/asset/asset-123') && call.method === 'DELETE'));
+});
+
+test('playback canary uses real TUS operations when Livepeer OPTIONS omits capability headers', async () => {
+    const key = keys();
+    const { fetchImpl, calls } = providerFetch(key.publicKey, { omitTusCapabilityHeaders: true });
+    const receipt = await runPlaybackCanary({
+        apiKey: 'test-api-key-123456',
+        mutationsEnabled: true,
+        privateKey: key.privateKey,
+        publicKey: key.publicKey,
+        fileBytes: new Uint8Array([1, 2, 3, 4]),
+        fetchImpl,
+        sleep: async () => {},
+        now: () => 1_700_000_000_000,
+        readyAttempts: 1,
+        correlationId: 'test-correlation',
+    });
+    assert.equal(receipt.tus_version_source, 'not-advertised');
+    assert.equal(receipt.tus_termination_advertised, false);
+    assert.ok(calls.some((call) => (
+        call.target === 'https://origin.livepeer.com/api/asset/upload/tus' && call.method === 'POST'
+    )));
+    assert.deepEqual(receipt.cleanup.tus, { delete_status: 204, post_delete_status: 404 });
 });
 
 test('playback canary deletes an unuploaded asset when TUS termination is not advertised', async () => {
@@ -433,6 +538,36 @@ test('playback canary reconciles a lost upload response before cleanup', async (
     assert.ok(calls.some((call) => call.target.endsWith('/asset/asset-123') && call.method === 'DELETE'));
     assert.ok(!calls.some((call) => call.target === 'https://origin.livepeer.com/api/asset/upload/tus' && call.method === 'POST'));
 });
+
+for (const [failure, expected] of [
+    [409, /tus_patch_failed_409/],
+    ['disconnect', /simulated_connection_disconnect/],
+    ['timeout', /timed out/],
+]) {
+    test(`playback canary fails closed on TUS ${failure} without creating a second asset`, async () => {
+        const key = keys();
+        const { fetchImpl, calls } = providerFetch(key.publicKey, { tusPatchFailure: failure });
+        await assert.rejects(runPlaybackCanary({
+            apiKey: 'test-api-key-123456',
+            mutationsEnabled: true,
+            privateKey: key.privateKey,
+            publicKey: key.publicKey,
+            fileBytes: new Uint8Array([1, 2, 3, 4]),
+            fetchImpl,
+            sleep: async () => {},
+            now: () => 1_700_000_000_000,
+            readyAttempts: 1,
+            correlationId: 'test-correlation',
+        }), expected);
+        assert.equal(calls.filter((call) => call.target.endsWith('/asset/request-upload')).length, 1);
+        assert.equal(calls.filter((call) => call.target === 'https://origin.livepeer.com/resource-123'
+            && call.method === 'PATCH').length, 1);
+        assert.ok(calls.some((call) => call.target === 'https://origin.livepeer.com/resource-123'
+            && call.method === 'DELETE'));
+        assert.ok(calls.some((call) => call.target.endsWith('/asset/asset-123')
+            && call.method === 'DELETE'));
+    });
+}
 
 test('playback canary accepts an anonymous HLS error manifest as a denial', async () => {
     const key = keys();
@@ -1057,7 +1192,7 @@ test('playback canary retries TUS visibility after a successful delete', async (
         correlationId: 'test-correlation',
     });
     assert.deepEqual(receipt.cleanup.tus, { delete_status: 204, post_delete_status: 404 });
-    assert.equal(calls.filter((call) => call.target === 'https://origin.livepeer.com/resource-123' && call.method === 'HEAD').length, 3);
+    assert.equal(calls.filter((call) => call.target === 'https://origin.livepeer.com/resource-123' && call.method === 'HEAD').length, 4);
 });
 
 test('playback canary keeps only compact Chrome and Edge evidence', async () => {
@@ -1078,6 +1213,10 @@ test('playback canary keeps only compact Chrome and Edge evidence', async () => 
             assert.equal(input.hlsUrl, 'https://playback.livepeer.studio/asset/hls/playback-123/index.m3u8');
             assert.equal(new URL(input.hlsUrl).search, '');
             assert.match(input.issueToken(), /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+            assert.equal(input.issueToken('malformed'), 'malformed.jwt');
+            assert.match(input.issueToken('wrong_key'), /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+            assert.match(input.issueToken('wrong_subject'), /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+            assert.match(input.issueToken('expired'), /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
             return {
                 matrix_proven: true,
                 chrome: {
@@ -1085,6 +1224,16 @@ test('playback canary keeps only compact Chrome and Edge evidence', async () => 
                     refreshed_played: true,
                     initial_hls_header_requests: 1,
                     refreshed_hls_header_requests: 1,
+                    anonymous_denied: true,
+                    anonymous_hls_header_requests: 0,
+                    malformed_denied: true,
+                    malformed_hls_header_requests: 1,
+                    wrong_key_denied: true,
+                    wrong_key_hls_header_requests: 1,
+                    wrong_subject_denied: true,
+                    wrong_subject_hls_header_requests: 1,
+                    expired_denied: true,
+                    expired_hls_header_requests: 1,
                     persistent_storage_empty: true,
                     ignored: 'not-in-receipt',
                 },
@@ -1093,6 +1242,16 @@ test('playback canary keeps only compact Chrome and Edge evidence', async () => 
                     refreshed_played: true,
                     initial_hls_header_requests: 1,
                     refreshed_hls_header_requests: 2,
+                    anonymous_denied: true,
+                    anonymous_hls_header_requests: 0,
+                    malformed_denied: true,
+                    malformed_hls_header_requests: 2,
+                    wrong_key_denied: true,
+                    wrong_key_hls_header_requests: 2,
+                    wrong_subject_denied: true,
+                    wrong_subject_hls_header_requests: 2,
+                    expired_denied: true,
+                    expired_hls_header_requests: 2,
                     persistent_storage_empty: true,
                 },
             };
@@ -1105,6 +1264,16 @@ test('playback canary keeps only compact Chrome and Edge evidence', async () => 
             refreshed_played: true,
             initial_hls_header_requests: 1,
             refreshed_hls_header_requests: 1,
+            anonymous_denied: true,
+            anonymous_hls_header_requests: 0,
+            malformed_denied: true,
+            malformed_hls_header_requests: 1,
+            wrong_key_denied: true,
+            wrong_key_hls_header_requests: 1,
+            wrong_subject_denied: true,
+            wrong_subject_hls_header_requests: 1,
+            expired_denied: true,
+            expired_hls_header_requests: 1,
             persistent_storage_empty: true,
         },
         edge: {
@@ -1112,6 +1281,16 @@ test('playback canary keeps only compact Chrome and Edge evidence', async () => 
             refreshed_played: true,
             initial_hls_header_requests: 1,
             refreshed_hls_header_requests: 2,
+            anonymous_denied: true,
+            anonymous_hls_header_requests: 0,
+            malformed_denied: true,
+            malformed_hls_header_requests: 2,
+            wrong_key_denied: true,
+            wrong_key_hls_header_requests: 2,
+            wrong_subject_denied: true,
+            wrong_subject_hls_header_requests: 2,
+            expired_denied: true,
+            expired_hls_header_requests: 2,
             persistent_storage_empty: true,
         },
     });

@@ -13,6 +13,8 @@ export interface Env {
     LIVEPEER_PROJECT_ID?: string;
     LIVEPEER_API_TOKEN_NAME?: string;
     LIVEPEER_CREATOR_ALLOWLIST?: string;
+    LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS?: string;
+    LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS?: string;
     LIVEPEER_PAID_MEDIA_OPERATOR_ID?: string;
     LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN?: string;
     LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN_PREVIOUS?: string;
@@ -181,16 +183,17 @@ type AdmissionJobState = 'CREATE_PENDING' | 'CREATE_AMBIGUOUS' | 'UPLOAD_READY'
 type AdmissionReservation = {
     creator: string;
     expectedSourceBytes: string;
+    estimatedProviderCostUsdMicros: string;
     state: AdmissionJobState;
     createdAtMs: number;
     ambiguousAtMs?: number;
 };
 type AdmissionRecord = {
-    schema: 'youtick.livepeer-admission.v1';
+    schema: 'youtick.livepeer-admission.v2';
     status: 'OPEN' | 'AUTO_CLOSED';
     reservations: Record<string, AdmissionReservation>;
     daily: { utcDay: string; globalAttempts: number; creatorAttempts: Record<string, number> };
-    monthly: { utcMonth: string; reservedSourceBytes: string };
+    monthly: { utcMonth: string; reservedBudgetUsdMicros: string };
     closure?: { code: string; observedAtMs: number };
 };
 type AdmissionResolutionCode = 'PROVIDER_ABSENCE_CONFIRMED'
@@ -216,7 +219,7 @@ type AdmissionReopenRecord = AdmissionReopenInput & {
 const PUBLIC_CONTROL_REQUESTS_IMPLEMENTED = true;
 const MAX_CONTROL_BODY_BYTES = 64 * 1024;
 const MAX_SOURCE_BYTES = 20_000_000_000n;
-const LIVEPEER_TUS_CHUNK_BYTES = 8 * 1024 * 1024;
+const LIVEPEER_TUS_CHUNK_BYTES = 32 * 1024 * 1024;
 const LIVEPEER_API_BASE = 'https://livepeer.studio/api';
 const LIVEPEER_TUS_VERSION = '1.0.0';
 const LIVEPEER_HLS_SOURCE_TYPE = 'html5/application/vnd.apple.mpegurl';
@@ -238,10 +241,9 @@ const RECONCILE_CONFIRMATION_MS = 60 * 1000;
 const RECONCILE_BACKOFF_MS = [60, 120, 240, 480, 900].map((seconds) => seconds * 1000);
 const ADMISSION_KEY = 'admission:v1';
 const ADMISSION_REOPEN_KEY_PREFIX = 'admission:reopen:';
-const ADMISSION_MONTHLY_SOURCE_BYTES = 20_000_000_000n;
 const ADMISSION_AMBIGUOUS_TIMEOUT_MS = 15 * 60 * 1000;
 const ADMISSION_CLOSURE_CODES = new Set([
-    'monthly_source_bytes_exceeded',
+    'monthly_budget_exceeded',
     'provider_budget_or_inventory',
     'create_ambiguous_timeout',
 ]);
@@ -749,6 +751,8 @@ async function reserveAdmission(
     const expectedSourceBytes = input.expectedSourceBytes as string;
     const allowlist = creatorAllowlist(env);
     if (!allowlist.has(creator)) throw new Error('admission_closed');
+    const budget = operationBudget(env);
+    if (!budget) throw new Error('admission_closed');
     const now = Date.now();
     const utcDay = new Date(now).toISOString().slice(0, 10);
     const utcMonth = utcDay.slice(0, 7);
@@ -770,7 +774,7 @@ async function reserveAdmission(
             : { utcDay, globalAttempts: 0, creatorAttempts: {} };
         const monthly = record.monthly.utcMonth === utcMonth
             ? record.monthly
-            : { utcMonth, reservedSourceBytes: '0' };
+            : { utcMonth, reservedBudgetUsdMicros: '0' };
         const active = Object.values(record.reservations);
         if (active.length >= 1
             || active.some((reservation) => reservation.creator === creator)
@@ -778,12 +782,13 @@ async function reserveAdmission(
             || (daily.creatorAttempts[creator] || 0) >= 2) {
             throw new Error('admission_denied');
         }
-        const reservedSourceBytes = BigInt(monthly.reservedSourceBytes) + BigInt(expectedSourceBytes);
-        if (reservedSourceBytes > ADMISSION_MONTHLY_SOURCE_BYTES) {
+        const reservedBudgetUsdMicros = BigInt(monthly.reservedBudgetUsdMicros)
+            + budget.jobReservationUsdMicros;
+        if (reservedBudgetUsdMicros > budget.monthlyBudgetUsdMicros) {
             const closed: AdmissionRecord = {
                 ...record,
                 status: 'AUTO_CLOSED',
-                closure: { code: 'monthly_source_bytes_exceeded', observedAtMs: now },
+                closure: { code: 'monthly_budget_exceeded', observedAtMs: now },
             };
             await transaction.put(ADMISSION_KEY, closed);
             return { record: closed, created: false, closed: true };
@@ -795,6 +800,7 @@ async function reserveAdmission(
                 [reservationKey]: {
                     creator,
                     expectedSourceBytes,
+                    estimatedProviderCostUsdMicros: String(budget.jobReservationUsdMicros),
                     state: 'CREATE_PENDING',
                     createdAtMs: now,
                 },
@@ -807,7 +813,7 @@ async function reserveAdmission(
                     [creator]: (daily.creatorAttempts[creator] || 0) + 1,
                 },
             },
-            monthly: { utcMonth, reservedSourceBytes: String(reservedSourceBytes) },
+            monthly: { utcMonth, reservedBudgetUsdMicros: String(reservedBudgetUsdMicros) },
         };
         await transaction.put(ADMISSION_KEY, next);
         return { record: next, created: true, closed: false };
@@ -968,7 +974,7 @@ function parseAdmissionReopenInput(input: JsonObject): AdmissionReopenInput {
             || (input.generation as number) < 1))) {
         throw new Error('invalid_admission_reopen');
     }
-    if ((input.closureCode === 'monthly_source_bytes_exceeded'
+    if ((input.closureCode === 'monthly_budget_exceeded'
         && resolutionCode !== 'BUDGET_WINDOW_ROLLED')
         || (input.closureCode === 'create_ambiguous_timeout' && !jobResolution)
         || (input.closureCode === 'provider_budget_or_inventory'
@@ -992,11 +998,11 @@ function sameAdmissionReopen(left: AdmissionReopenRecord, right: AdmissionReopen
 
 function emptyAdmissionRecord(utcDay: string, utcMonth: string): AdmissionRecord {
     return {
-        schema: 'youtick.livepeer-admission.v1',
+        schema: 'youtick.livepeer-admission.v2',
         status: 'OPEN',
         reservations: {},
         daily: { utcDay, globalAttempts: 0, creatorAttempts: {} },
-        monthly: { utcMonth, reservedSourceBytes: '0' },
+        monthly: { utcMonth, reservedBudgetUsdMicros: '0' },
     };
 }
 
@@ -1005,6 +1011,20 @@ function creatorAllowlist(env: Env): Set<string> {
     return values.length > 0 && values.every((value) => ACCOUNT_ID_PATTERN.test(value))
         ? new Set(values)
         : new Set();
+}
+
+function operationBudget(env: Env): {
+    monthlyBudgetUsdMicros: bigint;
+    jobReservationUsdMicros: bigint;
+} | null {
+    const monthly = env.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS || '';
+    const job = env.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS || '';
+    if (!/^[1-9][0-9]{0,19}$/.test(monthly) || !/^[1-9][0-9]{0,19}$/.test(job)) return null;
+    const monthlyBudgetUsdMicros = BigInt(monthly);
+    const jobReservationUsdMicros = BigInt(job);
+    return jobReservationUsdMicros <= monthlyBudgetUsdMicros
+        ? { monthlyBudgetUsdMicros, jobReservationUsdMicros }
+        : null;
 }
 
 async function ensureReconcileScheduled(state: DurableObjectState): Promise<void> {

@@ -21,8 +21,12 @@ function failureCode(error) {
     const message = error instanceof Error ? error.message : '';
     if (/^canary_hls_(network|media|other)_(401_403|4xx|5xx|other|none)$/.test(message)) return message;
     if (message === 'canary_playback_timeout') return 'canary_timeout';
+    if (/^canary_playback_timeout_canary_hls_(network|media|other)_(401_403|4xx|5xx|other|none)$/.test(message)) return message;
+    if (message === 'canary_negative_playable') return 'canary_negative_playable';
+    if (message === 'canary_negative_timeout') return 'canary_negative_timeout';
     if (message === 'canary_playback_url_invalid') return 'canary_invalid_provider_url';
     if (message === 'canary_autoplay_blocked') return 'canary_autoplay_blocked';
+    if (/^canary_playback_start_[A-Za-z]+$/.test(message)) return message;
     if (message === 'canary_request_failed') return 'canary_local_control';
     return 'canary_unknown';
 }
@@ -97,11 +101,13 @@ async function playOnce(hlsUrl, token) {
         let headerRequests = 0;
         let completed = false;
         let hls;
+        let lastHlsFailure = 'canary_hls_other_none';
         const stop = (error) => {
             if (completed) return;
             completed = true;
             clearTimeout(timeout);
             video.removeEventListener('timeupdate', onTimeUpdate);
+            video.removeEventListener('canplay', onCanPlay);
             hls?.destroy();
             video.pause();
             video.removeAttribute('src');
@@ -112,7 +118,17 @@ async function playOnce(hlsUrl, token) {
         const onTimeUpdate = () => {
             if (video.currentTime >= 1) stop();
         };
-        const timeout = setTimeout(() => stop(new Error('canary_playback_timeout')), 75_000);
+        const onCanPlay = () => {
+            video.muted = true;
+            void video.play().catch((error) => stop(new Error(
+                error?.name === 'NotAllowedError'
+                    ? 'canary_autoplay_blocked'
+                    : 'canary_playback_start_' + (error?.name || 'UnknownError'),
+            )));
+        };
+        const timeout = setTimeout(() => stop(new Error(
+            'canary_playback_timeout_' + lastHlsFailure,
+        )), 75_000);
         hls = new Hls({
             xhrSetup: (xhr, url) => {
                 if (!validProviderPlaybackUrl(url)) throw new Error('canary_playback_url_invalid');
@@ -121,12 +137,54 @@ async function playOnce(hlsUrl, token) {
             },
         });
         hls.on(Hls.Events.ERROR, (_event, data) => {
-            if (data.fatal) stop(new Error(hlsFailureCode(data)));
-        });
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            void video.play().catch(() => stop(new Error('canary_autoplay_blocked')));
+            lastHlsFailure = hlsFailureCode(data);
+            if (data.fatal) stop(new Error(lastHlsFailure));
         });
         video.addEventListener('timeupdate', onTimeUpdate);
+        video.addEventListener('canplay', onCanPlay, { once: true });
+        hls.loadSource(hlsUrl);
+        hls.attachMedia(video);
+    });
+}
+
+async function denyOnce(hlsUrl, token) {
+    return new Promise((resolve, reject) => {
+        let headerRequests = 0;
+        let completed = false;
+        let hls;
+        const stop = (error) => {
+            if (completed) return;
+            completed = true;
+            clearTimeout(timeout);
+            video.removeEventListener('playing', onPlaying);
+            hls?.destroy();
+            video.pause();
+            video.removeAttribute('src');
+            video.load();
+            if (error) reject(error);
+            else resolve({ denied: true, headerRequests });
+        };
+        const onPlaying = () => stop(new Error('canary_negative_playable'));
+        const timeout = setTimeout(() => stop(new Error('canary_negative_timeout')), 30_000);
+        hls = new Hls({
+            xhrSetup: (xhr, url) => {
+                if (!validProviderPlaybackUrl(url)) throw new Error('canary_playback_url_invalid');
+                if (token !== null) {
+                    xhr.setRequestHeader('Livepeer-Jwt', token);
+                    headerRequests += 1;
+                }
+            },
+        });
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+            if (data.fatal) stop();
+        });
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            void video.play().catch((error) => {
+                if (error?.name === 'NotAllowedError') stop(new Error('canary_autoplay_blocked'));
+                else stop();
+            });
+        });
+        video.addEventListener('playing', onPlaying);
         hls.loadSource(hlsUrl);
         hls.attachMedia(video);
     });
@@ -140,6 +198,15 @@ async function run() {
     }
     const config = await json('/config');
     if (!validCanonicalHlsUrl(config.hls_url)) throw new Error('canary_hls_url_invalid');
+    const anonymous = await denyOnce(config.hls_url, null);
+    const malformed = await json('/token?kind=malformed', { method: 'POST' });
+    const malformedPlayback = await denyOnce(config.hls_url, malformed.token);
+    const wrong = await json('/token?kind=wrong_key', { method: 'POST' });
+    const wrongPlayback = await denyOnce(config.hls_url, wrong.token);
+    const wrongSubject = await json('/token?kind=wrong_subject', { method: 'POST' });
+    const wrongSubjectPlayback = await denyOnce(config.hls_url, wrongSubject.token);
+    const expired = await json('/token?kind=expired', { method: 'POST' });
+    const expiredPlayback = await denyOnce(config.hls_url, expired.token);
     const first = await json('/token', { method: 'POST' });
     const firstPlayback = await playOnce(config.hls_url, first.token);
     await delay(1_100);
@@ -152,6 +219,16 @@ async function run() {
         refreshed_played: refreshedPlayback.played,
         initial_hls_header_requests: firstPlayback.headerRequests,
         refreshed_hls_header_requests: refreshedPlayback.headerRequests,
+        anonymous_denied: anonymous.denied,
+        anonymous_hls_header_requests: anonymous.headerRequests,
+        malformed_denied: malformedPlayback.denied,
+        malformed_hls_header_requests: malformedPlayback.headerRequests,
+        wrong_key_denied: wrongPlayback.denied,
+        wrong_key_hls_header_requests: wrongPlayback.headerRequests,
+        wrong_subject_denied: wrongSubjectPlayback.denied,
+        wrong_subject_hls_header_requests: wrongSubjectPlayback.headerRequests,
+        expired_denied: expiredPlayback.denied,
+        expired_hls_header_requests: expiredPlayback.headerRequests,
         persistent_storage_empty: localStorage.length === 0 && sessionStorage.length === 0,
     };
 }
@@ -190,7 +267,7 @@ function json(response, status, value) {
 function page(response, contentType, body) {
     response.writeHead(200, {
         'Cache-Control': 'no-store',
-        'Content-Security-Policy': "default-src 'self'; connect-src 'self' https:; media-src https:; script-src 'self'; style-src 'self'",
+        'Content-Security-Policy': "default-src 'self'; connect-src 'self' https:; media-src https: blob:; script-src 'self'; style-src 'self'",
         'Content-Type': contentType,
         'Referrer-Policy': 'no-referrer',
         'X-Content-Type-Options': 'nosniff',
@@ -225,6 +302,20 @@ function validReport(value) {
         && value.initial_hls_header_requests >= 0
         && Number.isSafeInteger(value.refreshed_hls_header_requests)
         && value.refreshed_hls_header_requests >= 0
+        && value.anonymous_denied === true
+        && value.anonymous_hls_header_requests === 0
+        && value.malformed_denied === true
+        && Number.isSafeInteger(value.malformed_hls_header_requests)
+        && value.malformed_hls_header_requests >= 1
+        && value.wrong_key_denied === true
+        && Number.isSafeInteger(value.wrong_key_hls_header_requests)
+        && value.wrong_key_hls_header_requests >= 1
+        && value.wrong_subject_denied === true
+        && Number.isSafeInteger(value.wrong_subject_hls_header_requests)
+        && value.wrong_subject_hls_header_requests >= 1
+        && value.expired_denied === true
+        && Number.isSafeInteger(value.expired_hls_header_requests)
+        && value.expired_hls_header_requests >= 1
         && typeof value.persistent_storage_empty === 'boolean';
 }
 
@@ -242,6 +333,16 @@ function compactReport(value) {
         refreshed_played: value.refreshed_played,
         initial_hls_header_requests: value.initial_hls_header_requests,
         refreshed_hls_header_requests: value.refreshed_hls_header_requests,
+        anonymous_denied: value.anonymous_denied,
+        anonymous_hls_header_requests: value.anonymous_hls_header_requests,
+        malformed_denied: value.malformed_denied,
+        malformed_hls_header_requests: value.malformed_hls_header_requests,
+        wrong_key_denied: value.wrong_key_denied,
+        wrong_key_hls_header_requests: value.wrong_key_hls_header_requests,
+        wrong_subject_denied: value.wrong_subject_denied,
+        wrong_subject_hls_header_requests: value.wrong_subject_hls_header_requests,
+        expired_denied: value.expired_denied,
+        expired_hls_header_requests: value.expired_hls_header_requests,
         persistent_storage_empty: value.persistent_storage_empty,
     };
 }
@@ -350,8 +451,16 @@ export async function runLivepeerHlsBrowserCanary({
                 return;
             }
             if (request.method === 'POST' && url.pathname === '/token' && authorized) {
-                const token = issueToken();
-                if (typeof token !== 'string' || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
+                const kind = url.searchParams.get('kind') || 'correct';
+                if (!['correct', 'malformed', 'wrong_key', 'wrong_subject', 'expired'].includes(kind)) {
+                    throw new Error('browser_canary_token_kind_invalid');
+                }
+                const token = issueToken(kind);
+                const valid = kind === 'malformed'
+                    ? typeof token === 'string' && token.length > 0 && !/[\r\n]/.test(token)
+                    : typeof token === 'string'
+                        && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token);
+                if (!valid) {
                     throw new Error('browser_canary_token_invalid');
                 }
                 json(response, 200, { token });
@@ -392,9 +501,19 @@ export async function runLivepeerHlsBrowserCanary({
         if (!chrome || !edge
             || !chrome.initial_played || !chrome.refreshed_played
             || chrome.initial_hls_header_requests < 1 || chrome.refreshed_hls_header_requests < 1
+            || !chrome.anonymous_denied || chrome.anonymous_hls_header_requests !== 0
+            || !chrome.malformed_denied || chrome.malformed_hls_header_requests < 1
+            || !chrome.wrong_key_denied || chrome.wrong_key_hls_header_requests < 1
+            || !chrome.wrong_subject_denied || chrome.wrong_subject_hls_header_requests < 1
+            || !chrome.expired_denied || chrome.expired_hls_header_requests < 1
             || !chrome.persistent_storage_empty
             || !edge.initial_played || !edge.refreshed_played
             || edge.initial_hls_header_requests < 1 || edge.refreshed_hls_header_requests < 1
+            || !edge.anonymous_denied || edge.anonymous_hls_header_requests !== 0
+            || !edge.malformed_denied || edge.malformed_hls_header_requests < 1
+            || !edge.wrong_key_denied || edge.wrong_key_hls_header_requests < 1
+            || !edge.wrong_subject_denied || edge.wrong_subject_hls_header_requests < 1
+            || !edge.expired_denied || edge.expired_hls_header_requests < 1
             || !edge.persistent_storage_empty) {
             throw new Error('browser_canary_matrix_failed');
         }

@@ -32,35 +32,167 @@ fn contract() -> Contract {
 }
 
 fn create_job(contract: &mut Contract, job_id: &str, creator: &str) {
-    testing_env!(context(creator).build());
-    contract.create_paid_job(
-        job_id.to_string(),
-        "Paid video".to_string(),
-        U128(2_000_000),
-        U128(1_000_000),
-        PROFILE.to_string(),
-        PROFILE_HASH.to_string(),
-    );
+    create_job_with(contract, job_id, creator, 2_000_000, 1_000_000);
+}
+
+fn upload_fee(source_bytes: u128) -> u128 {
+    source_bytes * 3 / 10_000 + u128::from(source_bytes * 3 % 10_000 != 0)
+}
+
+fn create_job_with(
+    contract: &mut Contract,
+    job_id: &str,
+    creator: &str,
+    price_usdc: u128,
+    source_bytes: u128,
+) -> PromiseOrValue<U128> {
+    testing_env!(context(TESTNET_USDC).build());
+    contract.ft_on_transfer(
+        account(creator),
+        U128(upload_fee(source_bytes)),
+        near_sdk::serde_json::json!({
+            "action": "create_paid_job",
+            "job_id": job_id,
+            "title": "Paid video",
+            "price_usdc": price_usdc.to_string(),
+            "expected_source_bytes": source_bytes.to_string(),
+            "profile_id": PROFILE,
+            "profile_config_sha256": PROFILE_HASH,
+        })
+        .to_string(),
+    )
 }
 
 #[test]
 fn accepts_exact_source_limit_and_rejects_one_byte_more() {
     let mut contract = contract();
+    assert!(matches!(
+        create_job_with(
+            &mut contract,
+            "job-max",
+            "creator.testnet",
+            2_000_000,
+            20_000_000_000,
+        ),
+        PromiseOrValue::Value(U128(0))
+    ));
+    must_fail(|| {
+        create_job_with(
+            &mut contract,
+            "job-too-large",
+            "creator.testnet",
+            2_000_000,
+            20_000_000_001,
+        );
+    });
+}
+
+#[test]
+fn creator_upload_fee_uses_exact_bytes_and_replay_is_refunded() {
+    let cases = [
+        (83_886_080, 25_166),
+        (1_000_000_000, 300_000),
+        (5_000_000_000, 1_500_000),
+        (10_000_000_000, 3_000_000),
+        (20_000_000_000, 6_000_000),
+    ];
+    for (index, (source_bytes, expected_fee)) in cases.into_iter().enumerate() {
+        let mut contract = contract();
+        let job_id = format!("job-fee-{index}");
+        assert_eq!(upload_fee(source_bytes), expected_fee);
+        let first = create_job_with(
+            &mut contract,
+            &job_id,
+            "creator.testnet",
+            2_000_000,
+            source_bytes,
+        );
+        assert!(matches!(first, PromiseOrValue::Value(U128(0))));
+        assert_eq!(contract.get_platform_balance(), U128(expected_fee));
+
+        let replay = create_job_with(
+            &mut contract,
+            &job_id,
+            "creator.testnet",
+            2_000_000,
+            source_bytes,
+        );
+        assert!(matches!(replay, PromiseOrValue::Value(U128(value)) if value == expected_fee));
+        assert_eq!(contract.get_platform_balance(), U128(expected_fee));
+
+        let new_job = create_job_with(
+            &mut contract,
+            &format!("job-fee-new-{index}"),
+            "creator.testnet",
+            2_000_000,
+            source_bytes,
+        );
+        assert!(matches!(new_job, PromiseOrValue::Value(U128(0))));
+        assert_eq!(contract.get_platform_balance(), U128(expected_fee * 2));
+    }
+}
+
+#[test]
+fn ticket_minimum_is_two_usdc_and_existing_two_percent_split_is_unchanged() {
+    let mut contract = contract();
+    must_fail(|| {
+        create_job_with(
+            &mut contract,
+            "job-too-cheap",
+            "creator.testnet",
+            1_999_999,
+            1_000_000,
+        );
+    });
+    create_job_with(
+        &mut contract,
+        "job-price",
+        "creator.testnet",
+        2_000_001,
+        1_000_000,
+    );
+    finalize(
+        &mut contract,
+        "job-price",
+        1,
+        "creator.testnet",
+        ASSET_HASH,
+        "playback_price",
+    );
+
+    testing_env!(context(TESTNET_USDC).build());
+    let purchase = contract.ft_on_transfer(
+        account("buyer.testnet"),
+        U128(2_000_001),
+        r#"{"publication_id":"job-price"}"#.to_string(),
+    );
+    assert!(matches!(purchase, PromiseOrValue::Value(U128(0))));
+    assert_eq!(
+        contract.get_creator_balance(account("creator.testnet")),
+        U128(1_960_001),
+    );
+    assert_eq!(contract.get_platform_balance(), U128(40_300));
+}
+
+#[test]
+fn retry_keeps_exact_source_bytes_without_a_second_charge() {
+    let mut contract = contract();
+    create_job(&mut contract, "job-retry", "creator.testnet");
+    let charged = contract.get_platform_balance();
+
     testing_env!(context("creator.testnet").build());
-    contract.create_paid_job(
-        "job-max".to_string(),
-        "Paid video".to_string(),
-        U128(2_000_000),
-        U128(20_000_000_000),
+    let restarted = contract.restart_paid_job(
+        "job-retry".to_string(),
+        U128(1_000_000),
         PROFILE.to_string(),
         PROFILE_HASH.to_string(),
     );
+    assert_eq!(restarted.generation, 2);
+    assert_eq!(contract.get_platform_balance(), charged);
     must_fail(|| {
-        contract.create_paid_job(
-            "job-too-large".to_string(),
-            "Paid video".to_string(),
-            U128(2_000_000),
-            U128(20_000_000_001),
+        contract.restart_paid_job(
+            "job-retry".to_string(),
+            U128(1_000_001),
             PROFILE.to_string(),
             PROFILE_HASH.to_string(),
         );

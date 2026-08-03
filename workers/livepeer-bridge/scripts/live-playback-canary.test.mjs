@@ -75,6 +75,9 @@ test('live playback canary accepts 201 and redacts a cleaned signing key', async
             create_status: 201,
             delete_status: 204,
             post_delete_absent: true,
+            inventory_before_count: 0,
+            inventory_after_count: 0,
+            inventory_restored: true,
         },
     });
     assert.doesNotMatch(JSON.stringify(receipt), /signing-key-123/);
@@ -97,7 +100,7 @@ test('live playback canary deletes its signing key after a playback failure', as
         /playback_gate_failed/,
     );
     assert.equal(calls.filter((call) => call.method === 'DELETE').length, 1);
-    assert.equal(calls.filter((call) => call.method === 'GET').length, 2);
+    assert.equal(calls.filter((call) => call.method === 'GET').length, 3);
 });
 
 test('live playback canary leaves an ambiguously created signing key for manual recovery', async () => {

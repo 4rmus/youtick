@@ -10,6 +10,9 @@ const TESTNET_USDC: &str = "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520
 const MAINNET_USDC: &str = "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
 const PROFILE: &str = "paid-media-livepeer-v1";
 const PAID_SOURCE_MAX_BYTES: u128 = 20_000_000_000;
+const MIN_TICKET_PRICE_USDC: u128 = 2_000_000;
+const UPLOAD_FEE_NUMERATOR: u128 = 3;
+const UPLOAD_FEE_DENOMINATOR: u128 = 10_000;
 const FT_TRANSFER_GAS: Gas = Gas::from_tgas(20);
 const WITHDRAW_CALLBACK_GAS: Gas = Gas::from_tgas(10);
 
@@ -117,8 +120,27 @@ pub struct TakedownRecord {
 
 #[derive(Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-struct PurchaseMessage {
-    publication_id: String,
+struct TransferMessage {
+    action: Option<String>,
+    publication_id: Option<String>,
+    job_id: Option<String>,
+    title: Option<String>,
+    price_usdc: Option<U128>,
+    expected_source_bytes: Option<U128>,
+    profile_id: Option<String>,
+    profile_config_sha256: Option<String>,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaidJobRequest {
+    pub creator_id: AccountId,
+    pub job_id: String,
+    pub title: String,
+    pub price_usdc: U128,
+    pub expected_source_bytes: U128,
+    pub profile_id: String,
+    pub profile_config_sha256: String,
 }
 
 #[derive(Serialize)]
@@ -232,22 +254,27 @@ impl Contract {
         }
     }
 
-    pub fn create_paid_job(
-        &mut self,
-        job_id: String,
-        title: String,
-        price_usdc: U128,
-        expected_source_bytes: U128,
-        profile_id: String,
-        profile_config_sha256: String,
-    ) -> MediaJob {
+    pub fn create_paid_job(&mut self, request: PaidJobRequest) -> MediaJob {
+        let PaidJobRequest {
+            creator_id,
+            job_id,
+            title,
+            price_usdc,
+            expected_source_bytes,
+            profile_id,
+            profile_config_sha256,
+        } = request;
+        require!(
+            env::predecessor_account_id() == self.usdc_contract_id(),
+            "Paid jobs must be created through USDC ft_transfer_call"
+        );
         assert_identifier("job_id", &job_id);
         assert_title(&title);
         assert_source_bytes(expected_source_bytes.0);
         assert_profile(&profile_id, &profile_config_sha256);
         require!(
-            price_usdc.0 >= 50 && price_usdc.0 % 50 == 0,
-            "USDC price must split exactly into 98/2 shares"
+            price_usdc.0 >= MIN_TICKET_PRICE_USDC,
+            "USDC ticket price must be at least 2.000000"
         );
         require!(
             self.media_jobs.get(&job_id).is_none(),
@@ -256,7 +283,7 @@ impl Contract {
 
         let job = MediaJob {
             job_id: job_id.clone(),
-            creator_id: env::predecessor_account_id(),
+            creator_id,
             profile_id,
             profile_config_sha256,
             title,
@@ -289,9 +316,12 @@ impl Contract {
         );
         assert_source_bytes(expected_source_bytes.0);
         assert_profile(&profile_id, &profile_config_sha256);
+        require!(
+            job.expected_source_bytes == expected_source_bytes,
+            "A retry must keep the original source byte count"
+        );
 
         job.generation = job.generation.checked_add(1).expect("Generation overflow");
-        job.expected_source_bytes = expected_source_bytes;
         job.profile_id = profile_id;
         job.profile_config_sha256 = profile_config_sha256;
         self.media_jobs.insert(&job_id, &job);
@@ -479,13 +509,63 @@ impl Contract {
             env::predecessor_account_id() == self.usdc_contract_id(),
             "Only Circle USDC is accepted"
         );
-        let message: PurchaseMessage =
+        let message: TransferMessage =
             near_sdk::serde_json::from_str(&msg).expect("Invalid purchase message");
+
+        if message.action.as_deref() == Some("create_paid_job") {
+            require!(message.publication_id.is_none(), "Invalid paid job message");
+            let expected_source_bytes = message
+                .expected_source_bytes
+                .expect("expected_source_bytes is required");
+            let expected_fee = upload_fee_usdc(expected_source_bytes.0);
+            require!(amount.0 == expected_fee, "Incorrect creator upload fee");
+            let job_id = message.job_id.expect("job_id is required");
+            let title = message.title.expect("title is required");
+            let price_usdc = message.price_usdc.expect("price_usdc is required");
+            let profile_id = message.profile_id.expect("profile_id is required");
+            let profile_config_sha256 = message
+                .profile_config_sha256
+                .expect("profile_config_sha256 is required");
+
+            if let Some(existing) = self.media_jobs.get(&job_id) {
+                require!(
+                    existing.creator_id == sender_id
+                        && existing.title == title
+                        && existing.price_usdc == price_usdc
+                        && existing.expected_source_bytes == expected_source_bytes
+                        && existing.profile_id == profile_id
+                        && existing.profile_config_sha256 == profile_config_sha256,
+                    "Conflicting paid job replay"
+                );
+                return PromiseOrValue::Value(amount);
+            }
+
+            self.create_paid_job(PaidJobRequest {
+                creator_id: sender_id,
+                job_id,
+                title,
+                price_usdc,
+                expected_source_bytes,
+                profile_id,
+                profile_config_sha256,
+            });
+            self.platform_balance = self
+                .platform_balance
+                .checked_add(amount.0)
+                .expect("Platform balance overflow");
+            return PromiseOrValue::Value(U128(0));
+        }
+
+        require!(
+            message.action.as_deref().is_none() || message.action.as_deref() == Some("buy_ticket"),
+            "Unsupported transfer action"
+        );
+        let publication_id = message.publication_id.expect("publication_id is required");
         let publication = self
             .publications
-            .get(&message.publication_id)
+            .get(&publication_id)
             .expect("Publication not found");
-        let entitlement_key = entitlement_key(&sender_id, &message.publication_id);
+        let entitlement_key = entitlement_key(&sender_id, &publication_id);
 
         if publication.availability != PublicationAvailability::Active
             || amount != publication.price_usdc
@@ -749,6 +829,15 @@ fn assert_source_bytes(value: u128) {
         (1..=PAID_SOURCE_MAX_BYTES).contains(&value),
         "expected_source_bytes must be between 1 and 20,000,000,000"
     );
+}
+
+fn upload_fee_usdc(source_bytes: u128) -> u128 {
+    assert_source_bytes(source_bytes);
+    source_bytes
+        .checked_mul(UPLOAD_FEE_NUMERATOR)
+        .and_then(|value| value.checked_add(UPLOAD_FEE_DENOMINATOR - 1))
+        .expect("Upload fee overflow")
+        / UPLOAD_FEE_DENOMINATOR
 }
 
 fn assert_profile(profile_id: &str, profile_config_sha256: &str) {

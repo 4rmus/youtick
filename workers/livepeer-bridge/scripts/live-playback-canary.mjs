@@ -4,7 +4,7 @@ import {
     requireDesktopBrowserExecutables,
     runLivepeerHlsBrowserCanary,
 } from '../../../apps/web/scripts/livepeer-hls-browser-canary.mjs';
-import { runPlaybackCanary } from './playback-canary.mjs';
+import { requireLocalCanaryMp4, runPlaybackCanary } from './playback-canary.mjs';
 
 const LIVEPEER_API_BASE = 'https://livepeer.studio/api';
 
@@ -175,6 +175,20 @@ async function runLivePlaybackCanary({
             cleanupErrors.push(error);
         }
     }
+    if (signingKey) {
+        try {
+            const signingKeyIdsAfter = await signingKeyIds(apiKey, fetchImpl);
+            signingKeyReceipt.inventory_before_count = signingKeyIdsBefore.length;
+            signingKeyReceipt.inventory_after_count = signingKeyIdsAfter.length;
+            signingKeyReceipt.inventory_restored = JSON.stringify([...signingKeyIdsBefore].sort())
+                === JSON.stringify([...signingKeyIdsAfter].sort());
+            if (!signingKeyReceipt.inventory_restored) {
+                cleanupErrors.push(new Error('live_playback_canary_signing_key_inventory_not_restored'));
+            }
+        } catch (error) {
+            cleanupErrors.push(error);
+        }
+    }
     if (runError && cleanupErrors.length > 0) {
         throw new AggregateError([runError, ...cleanupErrors], 'live_playback_canary_failed_with_cleanup_failure');
     }
@@ -189,18 +203,20 @@ if (import.meta.main) {
     try {
         const filePath = process.argv[2];
         if (!filePath) {
-            throw new Error('usage: npm run canary:playback:live -- /path/to/short-valid.mp4');
+            throw new Error('usage: npm run canary:playback:live -- /path/to/exact-80mib-valid.mp4');
         }
+        const fileBytes = new Uint8Array(await readFile(filePath));
+        const localSource = requireLocalCanaryMp4(filePath, fileBytes);
         const receipt = await runLivePlaybackCanary({
             apiKey: process.env.LIVEPEER_API_KEY,
             mutationsEnabled: process.env.LIVEPEER_PLAYBACK_CANARY_MUTATIONS === 'true',
             signingKeyMutationsEnabled: process.env.LIVEPEER_PLAYBACK_CANARY_SIGNING_KEY_MUTATIONS === 'true',
             issuer: process.env.LIVEPEER_PLAYBACK_CANARY_ISSUER || 'https://youtick.net',
-            fileBytes: new Uint8Array(await readFile(filePath)),
+            fileBytes,
             browserPort: Number(process.env.LIVEPEER_PLAYBACK_CANARY_PORT || 0),
             browserTimeoutMs: Number(process.env.LIVEPEER_PLAYBACK_CANARY_BROWSER_TIMEOUT_MS || 180_000),
         });
-        process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
+        process.stdout.write(`${JSON.stringify({ ...receipt, local_source: localSource }, null, 2)}\n`);
     } catch (error) {
         const recovery = error && typeof error === 'object' ? error.recovery : undefined;
         if (recovery) process.stderr.write(`${JSON.stringify({ recovery })}\n`);

@@ -1,6 +1,6 @@
 # YouTick Livepeer bridge Worker
 
-Status: `PR-6 LOCAL CODE COMPLETE / DISABLED / NOT DEPLOYED / TESTNET NOT AUTHORIZED`
+Status: `PR-6 LOCAL CODE COMPLETE / 80_MIB_AND_CHROME_EDGE_CANARY_PASS / D6_PARTIAL / DISABLED / NOT DEPLOYED`
 
 This Worker is the persisted upload-intent control plane for paid-media
 Livepeer v1. The implementation is complete enough for local and mocked tests,
@@ -17,14 +17,15 @@ did not enable the runtime.
   never retries blindly.
 - The Worker creates the TUS resource with the final job's exact byte length,
   verifies the stored length and zero offset, then returns only that opaque URL.
-- The browser PATCHes that resource directly with fixed 8 MiB TUS chunks; the
-  final chunk may be smaller.
+- The browser PATCHes that resource directly with fixed 32 MiB TUS chunks and
+  one sequential request at a time; only the final chunk may be smaller.
 - Media request bodies never pass through this Worker.
 - One SQLite-backed Durable Object class is used with named job, admission and
   operator instances.
-- The fixed admission object fails closed on an empty creator allowlist and
-  reserves the one-active-job, two-daily-create and 20 GB monthly limits before
-  any Livepeer create request.
+- The fixed admission object fails closed on an empty creator allowlist or an
+  unset/invalid operation budget. It reserves the one-active-job,
+  two-daily-create and configured monthly dollar budget before any Livepeer
+  create request. Decimal 20 GB remains a per-file limit, not a monthly quota.
 - Final NEAR job reads happen before an atomic intent reservation.
 - Job-side reservation outbox records contain only an idempotency key and
   payload hash. The operator outbox adds signed transaction bytes only after
@@ -73,8 +74,13 @@ plain deployment variable. The operator key must be a finite-allowance
 FunctionCall key for the exact market and approved methods; FullAccess is
 rejected.
 
-`LIVEPEER_CREATOR_ALLOWLIST` is intentionally empty by default. Rotation uses
-these local gates before any separately approved runtime change:
+`LIVEPEER_CREATOR_ALLOWLIST` is intentionally empty by default.
+`LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS` and
+`LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS` are also intentionally empty.
+D6 must approve positive values in millionths of a dollar; a missing value
+closes admission before provider mutation. This reservation is not a Livepeer
+hard cap. Rotation uses these local gates before any separately approved
+runtime change:
 
 - Write `LIVEPEER_API_TOKEN_NAME` into every new job; keep the old token until
   no pre-publication job uses it and the 24-hour rollback window ends.
@@ -99,7 +105,7 @@ the configured `LIVEPEER_PAID_MEDIA_OPERATOR_ID`, then binds the request to the
 exact network, contract, closure code/time, incident ID, evidence SHA-256 and
 idempotency key. An ambiguous reservation can be released only with a fixed
 provider-absence or completed-TUS-termination resolution code. Reopen does not
-reset daily counters or monthly reserved bytes. The actual operator identity,
+reset daily counters or the monthly reserved operation budget. The actual operator identity,
 secret creation and runtime use remain activation gates, not local evidence.
 
 ## Provider canary
@@ -122,9 +128,10 @@ historical evidence, not runnable provider commands. The only supported
 media-upload mutation path is `canary:playback` or `canary:playback:live`, which
 requires TUS `DELETE` plus `HEAD` `404`/`410` before asset deletion.
 
-A real signed HLS playback and refresh canary is still required for desktop
-Chrome and Edge before enabling the bridge. Local JWT and HLS-header tests are
-not provider or deployment evidence.
+The bounded 2026-08-03 run passed signed HLS playback, refresh and the negative
+JWT matrix in desktop Chrome and Edge. This is provider/browser evidence, not
+Worker/web deployment or runtime-issued grant/token evidence. See the
+[testnet execution receipt](../../docs/evidence/livepeer-testnet-e2e-2026-08-03.md).
 
 The first 2026-08-02 Sandbox playback canary stopped at a JWT-free HLS response
 of HTTP 200 but selected provider `meta.source`, not the product's canonical HLS
@@ -152,15 +159,15 @@ canonical status-only evidence](../../docs/evidence/livepeer-playback-canonical-
 
 An earlier approved full Sandbox attempt reached the browser step and cleaned both
 the asset and its temporary signing key; direct inventories returned `0` for
-both. It did not measure Chrome playback: the local runner treated an unset page
+both. It did not measure Chrome playback: the then-current local runner treated an unset page
 state as completed and exited before the client attempted playback, so Edge did
 not run. The harness now waits only for `pass` or `fail` and emits a redacted
-failure class. This is local harness hardening, not browser/provider evidence;
-a newly approved asset is required for the corrected Chrome/Edge rerun. See
+failure class. This was local harness hardening, not browser/provider evidence;
+a newly approved asset was required for the corrected Chrome/Edge rerun. See
 [the invalid browser attempt evidence](../../docs/evidence/livepeer-playback-browser-canary-2026-08-02.md).
 
-`canary:playback` is a separate, opt-in provider manifest receipt. It needs one
-short, valid MP4 (at most 8 MiB) plus a dedicated, already-registered Sandbox
+`canary:playback` is a separate, opt-in provider manifest receipt. The current
+bounded run requires one exact 80 MiB valid MP4 plus a dedicated, already-registered Sandbox
 signing key; it does not create or rotate signing keys. It validates provider
 HLS/MP4/download output bindings, probes anonymous denial for the canonical and
 provider-reported HLS outputs plus MP4/download, and checks every recognized
@@ -189,9 +196,21 @@ correlation ID needed for manual asset recovery, never the asset ID or TUS URL.
 The non-live `canary:playback` deliberately records
 `browser_matrix_proven: false`; `canary:playback:live` can set it true only after
 both browsers pass. A browser receipt requires at least one JWT-header request
-in both the initial and refreshed playback rounds. Browser XHR redirect behavior
+in both the initial and refreshed playback rounds. It also requires anonymous,
+malformed, wrong-key and expired denial in each browser; the anonymous probe
+must send no JWT header. Browser XHR redirect behavior
 is still real-Chrome/Edge canary evidence, not a Node `redirect: 'manual'`
 equivalent.
+
+Before any mutation, the canary requires an exact 80 MiB local MP4 and uses
+`ffprobe` to require MP4 format, at least one video stream and a positive
+duration. The source is then sent as exact 32 + 32 + 16 MiB sequential PATCHes.
+After the first chunk the canary pauses, issues a new authoritative HEAD on the
+same resource and resumes from that offset. It verifies `Upload-Offset` and
+`Upload-Length`, never retries 409 blindly and never creates a second asset. It
+records advertised `Tus-Max-Size` when present; the current public Livepeer
+guide does not publish an exact single-file maximum, which is not an
+unlimited-size guarantee.
 
 After an explicit signing-key mutation approval, `canary:playback:live` first
 verifies that installed desktop Chrome and Edge are executable. Only then can
@@ -203,15 +222,22 @@ deleted by inventory guesswork: it returns only hashes of newly observed key
 IDs with `manual_required`. It requires both mutation switches and never writes
 the key, JWT or playback URL to a file or receipt.
 
+Do not run either mutation command until one allowlisted test creator and one
+separate buyer identity are recorded for that exact bounded run. Their absence
+is a hard pre-provider stop, even when `.dev.vars` contains an API key. The
+initial stopped gate and later bounded pass are recorded in
+[the 32 MiB and fee evidence](../../docs/evidence/livepeer-32mib-fee-local-gate-2026-08-03.md)
+and [the testnet execution receipt](../../docs/evidence/livepeer-testnet-e2e-2026-08-03.md).
+
 ```bash
 LIVEPEER_PLAYBACK_CANARY_MUTATIONS=true \
 LIVEPEER_PLAYBACK_CANARY_PRIVATE_KEY='...' \
 LIVEPEER_PLAYBACK_CANARY_PUBLIC_KEY='...' \
-npm run canary:playback -- /path/to/short-valid.mp4
+npm run canary:playback -- /path/to/exact-80mib-valid.mp4
 ```
 
 ```bash
 LIVEPEER_PLAYBACK_CANARY_MUTATIONS=true \
 LIVEPEER_PLAYBACK_CANARY_SIGNING_KEY_MUTATIONS=true \
-npm run canary:playback:live -- /path/to/short-valid.mp4
+npm run canary:playback:live -- /path/to/exact-80mib-valid.mp4
 ```

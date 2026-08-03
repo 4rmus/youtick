@@ -39,7 +39,7 @@ function headerValues(response, name) {
     return (response.headers.get(name) || '').split(',').map((value) => value.trim()).filter(Boolean);
 }
 
-export async function requireTusTermination(endpoint, fetchImpl = fetch) {
+export async function inspectTusCapabilities(endpoint, fetchImpl = fetch) {
     if (!isLivepeerTusUrl(endpoint)) throw new Error('tus_endpoint_invalid');
     const response = await fetchImpl(endpoint, {
         method: 'OPTIONS',
@@ -49,18 +49,35 @@ export async function requireTusTermination(endpoint, fetchImpl = fetch) {
     requireStatus(response, [200, 204], 'tus_options_failed');
     const versions = headerValues(response, 'Tus-Version');
     const resumable = headerValues(response, 'Tus-Resumable');
+    const extensions = headerValues(response, 'Tus-Extension');
     const standardVersion = versions.includes(TUS_VERSION);
     const livepeerLegacyVersion = response.status === 204
         && versions.length === 0
         && resumable.length === 1
         && resumable[0] === TUS_VERSION;
-    if (!standardVersion && !livepeerLegacyVersion) {
+    const notAdvertised = response.status === 204
+        && versions.length === 0
+        && resumable.length === 0
+        && extensions.length === 0;
+    if (!standardVersion && !livepeerLegacyVersion && !notAdvertised) {
         throw new Error('tus_version_unsupported');
     }
-    if (!headerValues(response, 'Tus-Extension').includes('termination')) {
+    if (!notAdvertised && !extensions.includes('termination')) {
         throw new Error('tus_termination_unsupported');
     }
-    return standardVersion ? 'tus-version' : 'livepeer-legacy-tus-resumable';
+    const maxSize = response.headers.get('Tus-Max-Size');
+    if (maxSize !== null && !/^[1-9][0-9]*$/.test(maxSize)) {
+        throw new Error('tus_max_size_invalid');
+    }
+    return {
+        versionSource: standardVersion
+            ? 'tus-version'
+            : livepeerLegacyVersion ? 'livepeer-legacy-tus-resumable' : 'not-advertised',
+        extensions,
+        terminationAdvertised: extensions.includes('termination'),
+        concatenationAdvertised: extensions.includes('concatenation'),
+        maxSize,
+    };
 }
 
 export async function createTusResource(endpoint, size, fetchImpl = fetch) {
@@ -97,6 +114,18 @@ export async function readTusOffset(uploadUrl, fetchImpl = fetch) {
     return readOffset(response);
 }
 
+export async function readTusState(uploadUrl, fetchImpl = fetch) {
+    const response = await fetchImpl(uploadUrl, {
+        method: 'HEAD',
+        headers: { 'Tus-Resumable': TUS_VERSION },
+        signal: AbortSignal.timeout(10_000),
+    });
+    requireStatus(response, [200, 204], 'tus_head_failed');
+    const length = response.headers.get('Upload-Length');
+    if (!length || !/^[1-9][0-9]*$/.test(length)) throw new Error('tus_length_missing');
+    return { offset: readOffset(response), length: Number(length) };
+}
+
 export async function patchTus(uploadUrl, offset, bytes, fetchImpl = fetch) {
     const response = await fetchImpl(uploadUrl, {
         method: 'PATCH',
@@ -106,7 +135,7 @@ export async function patchTus(uploadUrl, offset, bytes, fetchImpl = fetch) {
             'Content-Type': 'application/offset+octet-stream',
         },
         body: bytes,
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(300_000),
     });
     requireStatus(response, [204], 'tus_patch_failed');
     return readOffset(response);

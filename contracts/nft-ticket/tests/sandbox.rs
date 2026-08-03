@@ -1,12 +1,16 @@
-use near_workspaces::{Account, Contract};
+use near_sdk::{Gas, NearToken};
+use near_workspaces::types::{KeyType, SecretKey};
+use near_workspaces::{AccessKey, Account, AccountDetailsPatch, Contract};
 use serde_json::json;
 use tokio::sync::OnceCell;
 
 const PROFILE_HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const ASSET_HASH: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const PROJECT_HASH: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const TESTNET_USDC: &str = "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af";
 
 static CONTRACT_WASM: OnceCell<Vec<u8>> = OnceCell::const_new();
+static MOCK_FT_WASM: OnceCell<Vec<u8>> = OnceCell::const_new();
 
 async fn load_contract_wasm() -> anyhow::Result<&'static Vec<u8>> {
     CONTRACT_WASM
@@ -18,14 +22,52 @@ async fn load_contract_wasm() -> anyhow::Result<&'static Vec<u8>> {
         .await
 }
 
-async fn init() -> anyhow::Result<(Contract, Account, Account)> {
+async fn load_mock_ft_wasm() -> anyhow::Result<&'static Vec<u8>> {
+    MOCK_FT_WASM
+        .get_or_try_init(|| async {
+            near_workspaces::compile_project("tests/mock-ft")
+                .await
+                .map_err(anyhow::Error::from)
+        })
+        .await
+}
+
+async fn init() -> anyhow::Result<(Contract, Account, Account, Contract)> {
     let worker = near_workspaces::sandbox().await?;
     let wasm = load_contract_wasm().await?;
-    let contract = worker.dev_deploy(wasm).await?;
+    let mock_ft_wasm = load_mock_ft_wasm().await?;
+    let market_id = "paid-media-livepeer-v1.testnet".parse()?;
+    let market_key = SecretKey::from_seed(KeyType::ED25519, "paid-media-livepeer-v1.testnet");
+    worker
+        .patch(&market_id)
+        .account(AccountDetailsPatch::default().balance(NearToken::from_near(100)))
+        .access_key(market_key.public_key(), AccessKey::full_access())
+        .code(wasm)
+        .transact()
+        .await?;
+    let contract = Contract::from_secret_key(market_id, market_key, &worker);
     let platform = worker.dev_create_account().await?;
     let bridge = worker.dev_create_account().await?;
     let governance = worker.dev_create_account().await?;
     let creator = worker.dev_create_account().await?;
+    let usdc_id = TESTNET_USDC.parse()?;
+    let usdc_key = SecretKey::from_seed(KeyType::ED25519, TESTNET_USDC);
+    worker
+        .patch(&usdc_id)
+        .account(AccountDetailsPatch::default().balance(NearToken::from_near(100)))
+        .access_key(usdc_key.public_key(), AccessKey::full_access())
+        .code(mock_ft_wasm)
+        .transact()
+        .await?;
+    let usdc = Contract::from_secret_key(usdc_id, usdc_key, &worker);
+    usdc.call("new")
+        .args_json(json!({
+            "owner_id": creator.id(),
+            "total_supply": "20000000",
+        }))
+        .transact()
+        .await?
+        .into_result()?;
     contract
         .call("new")
         .args_json(json!({
@@ -36,25 +78,90 @@ async fn init() -> anyhow::Result<(Contract, Account, Account)> {
         .transact()
         .await?
         .into_result()?;
-    Ok((contract, bridge, creator))
+    Ok((contract, bridge, creator, usdc))
 }
 
 #[tokio::test]
 async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
-    let (contract, bridge, creator) = init().await?;
+    let (contract, bridge, creator, usdc) = init().await?;
+    let create_message = json!({
+        "action": "create_paid_job",
+        "job_id": "job-1",
+        "title": "Paid video",
+        "price_usdc": "2000000",
+        "expected_source_bytes": "1000000",
+        "profile_id": "paid-media-livepeer-v1",
+        "profile_config_sha256": PROFILE_HASH,
+    })
+    .to_string();
     creator
-        .call(contract.id(), "create_paid_job")
+        .call(usdc.id(), "ft_transfer_call")
         .args_json(json!({
-            "job_id": "job-1",
-            "title": "Paid video",
-            "price_usdc": "2000000",
-            "expected_source_bytes": "1000000",
-            "profile_id": "paid-media-livepeer-v1",
-            "profile_config_sha256": PROFILE_HASH,
+            "receiver_id": contract.id(),
+            "amount": "300",
+            "memo": "paid-media-livepeer-v1 sandbox",
+            "msg": create_message,
         }))
+        .deposit(NearToken::from_yoctonear(1))
+        .gas(Gas::from_tgas(100))
         .transact()
         .await?
         .into_result()?;
+    let job: serde_json::Value = contract
+        .view("get_media_job")
+        .args_json(json!({ "job_id": "job-1" }))
+        .await?
+        .json()?;
+    assert_eq!(job["creator_id"], creator.id().as_str());
+    assert_eq!(job["expected_source_bytes"], "1000000");
+
+    let creator_after_create: String = usdc
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": creator.id() }))
+        .await?
+        .json()?;
+    let market_after_create: String = usdc
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": contract.id() }))
+        .await?
+        .json()?;
+    assert_eq!(creator_after_create, "19999700");
+    assert_eq!(market_after_create, "300");
+
+    creator
+        .call(usdc.id(), "ft_transfer_call")
+        .args_json(json!({
+            "receiver_id": contract.id(),
+            "amount": "300",
+            "memo": "paid-media-livepeer-v1 replay",
+            "msg": json!({
+                "action": "create_paid_job",
+                "job_id": "job-1",
+                "title": "Paid video",
+                "price_usdc": "2000000",
+                "expected_source_bytes": "1000000",
+                "profile_id": "paid-media-livepeer-v1",
+                "profile_config_sha256": PROFILE_HASH,
+            })
+            .to_string(),
+        }))
+        .deposit(NearToken::from_yoctonear(1))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?
+        .into_result()?;
+    let creator_after_replay: String = usdc
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": creator.id() }))
+        .await?
+        .json()?;
+    let market_after_replay: String = usdc
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": contract.id() }))
+        .await?
+        .json()?;
+    assert_eq!(creator_after_replay, creator_after_create);
+    assert_eq!(market_after_replay, market_after_create);
 
     let args = json!({
         "submission": {

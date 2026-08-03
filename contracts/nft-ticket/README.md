@@ -8,16 +8,19 @@ fresh contract IDs; no deployed public-alpha contract is migrated in place.
 The contract supports:
 
 - creator-owned, generation-bound paid media jobs;
+- atomic job creation through Circle USDC `ft_transfer_call`, charging
+  `ceil(source_bytes / 1_000_000_000 * 300_000)` micro-USDC once per new job;
 - the exact `paid-media-livepeer-v1` profile and configuration hash;
 - bridge-only, idempotent Livepeer publication finalization;
 - globally unique asset hash and playback ID bindings;
 - mutable sale availability separated from immutable publication identity;
-- Circle USDC purchase with a 98% creator / 2% platform split;
+- Circle USDC tickets at 2 USDC or more with a 98% creator / 2% platform split;
 - durable entitlement history and withdrawal liability restoration.
 
 The ABI does not contain the superseded v4 KMS, CID, byte-receipt, source-delete
-or browser ingest-key fields. Resume and takedown authority remain P0 decisions,
-so PR-1 adds no such governance method.
+or browser ingest-key fields. Pause/resume, reconciliation and an exact same-job
+replay cannot charge the creator again; a conflicting replay fails. A new job
+is a new charge and no automatic refund is implemented.
 
 Protocol details and exact bindings are in
 [`protocol/paid-media-livepeer-v1`](../../protocol/paid-media-livepeer-v1/README.md).
