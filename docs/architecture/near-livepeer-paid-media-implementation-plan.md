@@ -15,7 +15,7 @@
 |---|---|
 | Livepeer component fit | `GO` |
 | Architecture direction | `CONDITIONAL_GO` |
-| Implementation progress | `PR_6_LOCAL_CODE_MERGED / WEB_UI_WIRING_LOCAL / 32_MIB_PROVIDER_AND_CHROME_EDGE_PASS / TESTNET_PURCHASE_PASS / D6_PARTIAL` |
+| Implementation progress | `PR_6_LOCAL_CODE_MERGED / WEB_UI_WIRING_MERGED / 32_MIB_PROVIDER_AND_CHROME_EDGE_PASS / TESTNET_PURCHASE_PASS / D6_PACKET_PREPARED` |
 | Testnet and staging | `TESTNET_EVIDENCE_PARTIAL / STAGING_NO_GO` |
 | Production | `NO_GO` |
 
@@ -810,7 +810,9 @@ The bounded 2026-08-03 testnet continuation was separately approved and did not
 authorize Worker/web deployment or runtime activation. Any further deploy, key,
 funding, USDC or provider/NEAR mutation still requires explicit approval. The
 [PR-6 decision packet](near-livepeer-pr6-decision-gates.md) records the
-approved D1-D5 values and local evidence; it is not runtime authority.
+approved D1-D5 values and local evidence. The linked
+[D6 execution packet](near-livepeer-d6-execution-packet.md) now pins the
+remaining bounded values, but it is not runtime authority.
 
 Add asset/policy drift reconciliation, sale suspension, evidence schema,
 rotation and outage runbooks, exact-SHA testnet deployment and one real paid

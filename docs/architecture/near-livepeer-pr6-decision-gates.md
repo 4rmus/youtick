@@ -1,7 +1,7 @@
 # Livepeer paid-media PR-6 karar kapıları
 
 Durum: `APPROVED / LOCAL_DISABLED_COMPLETE / TESTNET_UPLOAD_FINALIZE_BUY_PARTIAL /
-RUNTIME_DISABLED` as updated on 2026-08-03.
+D6_PACKET_PREPARED / RUNTIME_DISABLED` as updated on 2026-08-04.
 
 Bu kayıt, [uygulama planındaki](near-livepeer-paid-media-implementation-plan.md)
 PR-6 ön koşullarını karar verilebilir hâle getirir. Bir canlı ortam izni, anahtar
@@ -202,7 +202,13 @@ geçişi ve daha önce verilmiş kısa ömürlü JWT'lerin ne kadar süre yaşay
 | D6 testnet E2E | `PARTIAL / UPLOAD_FINALIZE_BUY_PASS` | Test creator/buyer, exact fee, provider-ready finalize, 2.000001 USDC purchase, entitlement ve satış askısı | Exact-SHA deploy, runtime grant, withdrawal ve rotasyon/outage tatbikatı |
 | PR-7 cutover | `MISSING_NOT_AUTHORIZED` | Yok | 72 saat kapalı canary ve ayrı aktivasyon onayı |
 
-### Kalan D6 için ayrıca onaylanması gereken yürütme paketi
+### Kalan D6 için hazırlanan yürütme paketi
+
+Sekiz alan, exact source SHA, fresh hesap adları, key/funding sınırları,
+provider/USDC bütçesi, browser matrisi ve rollback/cleanup sahibiyle
+[D6 yürütme paketi v1](near-livepeer-d6-execution-packet.md) içinde
+doldurulmuştur. Paket `PREPARED / EXECUTION_NOT_AUTHORIZED` durumundadır;
+hazırlanması deploy, funding, provider/NEAR mutation veya runtime izni değildir.
 
 Kalan D6 deploy/runtime çalışması ancak aşağıdaki değerler tek bir sınırlı
 onayda doldurulduktan sonra devam eder:
@@ -222,12 +228,12 @@ onayda doldurulduktan sonra devam eder:
 8. Deploy hedefi, rollback sahibi, evidence dizini ve çalışma sonunda asset,
    signing key, TUS capability, NEAR key ve bakiye envanteri.
 
-Bu alanlardan biri boşsa D6 başlamaz. Özellikle mevcut dirty worktree veya
-yerel PASS bir deploy SHA'sı değildir.
+Bu alanlardan biri boşsa veya paketle çelişirse D6 başlamaz. Özellikle mevcut
+dirty worktree veya yerel PASS bir deploy SHA'sı değildir.
 
-D6'nın kalan kısmı için ayrı, sınırlı testnet izni gerekir. `LIVEPEER_BRIDGE_ENABLED=false`
-kalır; public playback, deploy, provider/NEAR mutasyonu veya anahtar işlemi
-açılmaz.
+D6'nın kalan kısmı için paketteki exact onay cümlesiyle ayrı, sınırlı testnet
+izni gerekir. O onay verilene kadar `LIVEPEER_BRIDGE_ENABLED=false` kalır;
+public playback, deploy, provider/NEAR mutasyonu veya anahtar işlemi açılmaz.
 
 Kaynaklar:
 
