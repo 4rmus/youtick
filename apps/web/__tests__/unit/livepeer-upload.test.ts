@@ -44,17 +44,9 @@ vi.mock('@/lib/constants', () => ({
     },
 }));
 
-vi.mock('@/lib/upload-session-manager', () => ({
-    getActiveUploadSessionKey: () => ({
-        getPublicKey: () => ({
-            toString: () => 'ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF',
-        }),
-        sign: () => ({ signature: new Uint8Array(64).fill(7) }),
-    }),
-}));
-
 import {
     authorizeLivepeerPaidJob,
+    livepeerSessionKeyAllowanceYocto,
     livepeerUploadFeeUsdc,
     requestLivepeerUploadIntent,
     uploadLivepeerSource,
@@ -72,20 +64,50 @@ const INTENT: LivepeerUploadIntent = {
     created: true,
 };
 
+function createWallet() {
+    return {
+        signAndSendTransactions: vi.fn<(params: {
+            transactions: Array<{ receiverId: string; actions: unknown[] }>;
+        }) => Promise<unknown[]>>().mockResolvedValue([]),
+        signAndSendTransaction: vi.fn<(params: {
+            receiverId: string;
+            actions: unknown[];
+        }) => Promise<object>>().mockResolvedValue({}),
+    };
+}
+
+async function provisionJobSession(
+    wallet: ReturnType<typeof createWallet>,
+    jobId = 'job-001',
+    expectedSourceBytes = SOURCE_BYTES,
+) {
+    return authorizeLivepeerPaidJob(wallet as never, {
+        accountId: 'creator.testnet',
+        jobId,
+        title: 'Paid video',
+        priceUsdc: '2000001',
+        expectedSourceBytes,
+    });
+}
+
 describe('Livepeer browser upload', () => {
     beforeEach(() => {
         tus.instances.length = 0;
         vi.restoreAllMocks();
+        sessionStorage.clear();
     });
 
-    it('signs the locked upload-intent envelope', async () => {
+    it('signs the locked upload-intent envelope and removes the single-job key', async () => {
+        const wallet = createWallet();
+        const publicKey = await provisionJobSession(wallet);
         const fetchMock = vi.fn<(
             input: RequestInfo | URL,
             init?: RequestInit,
-        ) => Promise<Response>>().mockResolvedValue(Response.json(INTENT, { status: 201 }));
+        ) => Promise<Response>>().mockImplementation(async () => Response.json(INTENT, { status: 201 }));
         vi.stubGlobal('fetch', fetchMock);
 
         await expect(requestLivepeerUploadIntent({
+            wallet: wallet as never,
             accountId: 'creator.testnet',
             jobId: 'job-001',
             generation: 1,
@@ -106,14 +128,28 @@ describe('Livepeer browser upload', () => {
         expect(request.envelope).toMatchObject({
             account_id: 'creator.testnet',
             resource: 'job:job-001:1',
-            session_public_key: 'ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF',
+            session_public_key: publicKey,
             origin: 'https://app.youtick.net',
         });
         expect(request.envelope.device_nonce).toMatch(/^[A-Za-z0-9_-]{43}$/);
         expect(request.envelope.body_sha256).toMatch(/^[0-9a-f]{64}$/);
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledWith({
+            receiverId: 'creator.testnet',
+            actions: [expect.objectContaining({ type: 'DeleteKey' })],
+        });
+        await expect(requestLivepeerUploadIntent({
+            wallet: wallet as never,
+            accountId: 'creator.testnet',
+            jobId: 'job-001',
+            generation: 1,
+            expectedSourceBytes: SOURCE_BYTES,
+        })).rejects.toThrow('livepeer_session_key_missing');
+        expect(fetchMock).toHaveBeenCalledOnce();
     });
 
     it('accepts exact 20 GB and rejects one byte more before bridge use', async () => {
+        const wallet = createWallet();
+        await provisionJobSession(wallet, 'job-max', 20_000_000_000);
         const exactIntent = {
             ...INTENT,
             job_id: 'job-max',
@@ -126,12 +162,14 @@ describe('Livepeer browser upload', () => {
         vi.stubGlobal('fetch', fetchMock);
 
         await expect(requestLivepeerUploadIntent({
+            wallet: wallet as never,
             accountId: 'creator.testnet',
             jobId: 'job-max',
             generation: 1,
             expectedSourceBytes: 20_000_000_000,
         })).resolves.toEqual(exactIntent);
         await expect(requestLivepeerUploadIntent({
+            wallet: wallet as never,
             accountId: 'creator.testnet',
             jobId: 'job-too-large',
             generation: 1,
@@ -165,37 +203,54 @@ describe('Livepeer browser upload', () => {
         expect(shouldRetry(error(503))).toBe(true);
     });
 
-    it('quotes exact-byte upload fees and creates one USDC-paid job transaction', async () => {
+    it('provisions the exact testnet key and creates one USDC-paid job transaction', async () => {
         expect(livepeerUploadFeeUsdc(83_886_080)).toBe('25166');
         expect(livepeerUploadFeeUsdc(1_000_000_000)).toBe('300000');
         expect(livepeerUploadFeeUsdc(5_000_000_000)).toBe('1500000');
         expect(livepeerUploadFeeUsdc(10_000_000_000)).toBe('3000000');
         expect(livepeerUploadFeeUsdc(20_000_000_000)).toBe('6000000');
         expect(() => livepeerUploadFeeUsdc(20_000_000_001)).toThrow('source_limit_exceeded');
+        expect(livepeerSessionKeyAllowanceYocto('testnet'))
+            .toBe(8_000_000_000_000_000_000_000n);
+        expect(() => livepeerSessionKeyAllowanceYocto('mainnet'))
+            .toThrow('livepeer_session_key_budget_unset');
 
         type Transaction = {
             receiverId: string;
             actions: Array<{
-                methodName: string;
-                args: { receiver_id: string; amount: string; msg: string };
-                deposit: bigint;
+                type?: string;
+                methodName?: string;
+                receiverId?: string;
+                methodNames?: string[];
+                allowance?: bigint;
+                args?: { receiver_id: string; amount: string; msg: string };
+                deposit?: bigint;
             }>;
         };
-        const transactions: Transaction[] = [];
-        const signAndSendTransaction = vi.fn(async (transaction: Transaction) => {
-            transactions.push(transaction);
-            return {};
-        });
-        const wallet = { signAndSendTransaction } as never;
-        await authorizeLivepeerPaidJob(wallet, {
+        const wallet = createWallet();
+        await authorizeLivepeerPaidJob(wallet as never, {
+            accountId: 'creator.testnet',
             jobId: 'job-001',
             title: ' Paid video ',
             priceUsdc: '2000001',
             expectedSourceBytes: 83_886_080,
         });
-        const transaction = transactions[0]!;
-        expect(transaction.receiverId).toBe('usdc.testnet');
-        expect(transaction.actions[0]).toMatchObject({
+        const { transactions } = wallet.signAndSendTransactions.mock.calls[0][0] as {
+            transactions: Transaction[];
+        };
+        expect(transactions).toHaveLength(2);
+        expect(transactions[0]).toMatchObject({
+            receiverId: 'creator.testnet',
+            actions: [{
+                type: 'AddKey',
+                receiverId: 'paid-media-livepeer-v1.testnet',
+                methodNames: ['create_paid_job'],
+                allowance: 8_000_000_000_000_000_000_000n,
+            }],
+        });
+        const payment = transactions[1]!;
+        expect(payment.receiverId).toBe('usdc.testnet');
+        expect(payment.actions[0]).toMatchObject({
             methodName: 'ft_transfer_call',
             args: expect.objectContaining({
                 receiver_id: 'paid-media-livepeer-v1.testnet',
@@ -203,20 +258,68 @@ describe('Livepeer browser upload', () => {
             }),
             deposit: 1n,
         });
-        const message = JSON.parse(transaction.actions[0].args.msg);
+        const message = JSON.parse(payment.actions[0].args!.msg);
         expect(message).toMatchObject({
             action: 'create_paid_job',
             price_usdc: '2000001',
             expected_source_bytes: '83886080',
         });
 
-        await expect(authorizeLivepeerPaidJob(wallet, {
+        await expect(authorizeLivepeerPaidJob(wallet as never, {
+            accountId: 'creator.testnet',
             jobId: 'job-cheap',
             title: 'Paid video',
             priceUsdc: '1999999',
             expectedSourceBytes: 1_000_000,
         })).rejects.toThrow('invalid_ticket_price');
-        expect(signAndSendTransaction).toHaveBeenCalledOnce();
+        expect(wallet.signAndSendTransactions).toHaveBeenCalledOnce();
+    });
+
+    it('reuses the same job key without adding a second access key', async () => {
+        const wallet = createWallet();
+        const firstPublicKey = await provisionJobSession(wallet);
+        const secondPublicKey = await provisionJobSession(wallet);
+
+        expect(secondPublicKey).toBe(firstPublicKey);
+        const secondCall = wallet.signAndSendTransactions.mock.calls[1][0];
+        expect(secondCall.transactions).toHaveLength(1);
+        expect(secondCall.transactions[0].receiverId).toBe('usdc.testnet');
+    });
+
+    it('drops a newly prepared key when wallet authorization fails', async () => {
+        const wallet = createWallet();
+        wallet.signAndSendTransactions.mockRejectedValueOnce(new Error('wallet rejected authorization'));
+
+        await expect(provisionJobSession(wallet)).rejects.toThrow('wallet rejected authorization');
+        await expect(requestLivepeerUploadIntent({
+            wallet: wallet as never,
+            accountId: 'creator.testnet',
+            jobId: 'job-001',
+            generation: 1,
+            expectedSourceBytes: SOURCE_BYTES,
+        })).rejects.toThrow('livepeer_session_key_missing');
+    });
+
+    it('keeps the job key available when on-chain removal fails', async () => {
+        const wallet = createWallet();
+        await provisionJobSession(wallet);
+        wallet.signAndSendTransaction.mockRejectedValueOnce(new Error('wallet rejected delete'));
+        const fetchMock = vi.fn<(
+            input: RequestInfo | URL,
+            init?: RequestInit,
+        ) => Promise<Response>>().mockImplementation(async () => Response.json(INTENT, { status: 201 }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const request = {
+            wallet: wallet as never,
+            accountId: 'creator.testnet',
+            jobId: 'job-001',
+            generation: 1,
+            expectedSourceBytes: SOURCE_BYTES,
+        };
+        await expect(requestLivepeerUploadIntent(request)).rejects.toThrow('wallet rejected delete');
+        await expect(requestLivepeerUploadIntent(request)).resolves.toEqual(INTENT);
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledTimes(2);
     });
 
     it('rejects a file that does not match the provider-bound length', async () => {

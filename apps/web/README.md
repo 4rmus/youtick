@@ -78,6 +78,7 @@ lib/
   guest-account.ts         # implicit-account onboarding helpers
   access-grants.ts         # session grant lifecycle
   upload-session-manager.ts
+  livepeer-upload.ts       # disabled paid-media job key + TUS lifecycle
   gift-service.ts
 ```
 

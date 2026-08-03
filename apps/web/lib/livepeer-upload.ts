@@ -1,5 +1,10 @@
 import { Upload, type DetailedError } from 'tus-js-client';
-import { actions } from 'near-api-js';
+import {
+    KeyPair,
+    type KeyPairString,
+    PublicKey,
+    actions,
+} from 'near-api-js';
 import {
     APP_CONFIG,
     FEATURE_FLAGS,
@@ -8,12 +13,15 @@ import {
     NEAR_CONFIG,
 } from '@/lib/constants';
 import { base64Encode, hexEncode } from '@/lib/crypto/codec';
-import { getActiveUploadSessionKey } from '@/lib/upload-session-manager';
 import type { WalletInstance } from '@/lib/types';
 
 const LIVEPEER_TUS_ORIGIN = 'https://origin.livepeer.com';
 const PROFILE_ID = 'paid-media-livepeer-v1';
 const PROFILE_CONFIG_SHA256 = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
+const LIVEPEER_SESSION_STORAGE_PREFIX = 'youtick:livepeer-job-session:';
+const TESTNET_CREATOR_KEY_ALLOWANCE_YOCTO = 8_000_000_000_000_000_000_000n;
+const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
+const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
 export type LivepeerUploadIntent = {
     schema: 'youtick.livepeer-upload-intent.v1';
@@ -34,13 +42,22 @@ export function livepeerUploadFeeUsdc(sourceBytes: number): string {
     return ((BigInt(sourceBytes) * 3n + 9_999n) / 10_000n).toString();
 }
 
+export function livepeerSessionKeyAllowanceYocto(
+    networkId: 'testnet' | 'mainnet' = NEAR_CONFIG.networkId,
+): bigint {
+    if (networkId !== 'testnet') throw new Error('livepeer_session_key_budget_unset');
+    return TESTNET_CREATOR_KEY_ALLOWANCE_YOCTO;
+}
+
 export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
+    accountId: string;
     jobId: string;
     title: string;
     priceUsdc: string;
     expectedSourceBytes: number;
-}): Promise<void> {
+}): Promise<string> {
     requireFeature();
+    validateJobSessionIdentity(input.accountId, input.jobId);
     const title = input.title.trim();
     if (!title || new TextEncoder().encode(title).length > 200) throw new Error('invalid_title');
     if (!/^[1-9][0-9]{0,19}$/.test(input.priceUsdc)
@@ -48,31 +65,57 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
         throw new Error('invalid_ticket_price');
     }
     const amount = livepeerUploadFeeUsdc(input.expectedSourceBytes);
-    await wallet.signAndSendTransaction({
-        receiverId: NEAR_CONFIG.usdcContractId,
-        actions: [actions.functionCall(
-            'ft_transfer_call',
-            {
-                receiver_id: NEAR_CONFIG.marketContractId,
-                amount,
-                memo: 'YouTick creator upload fee',
-                msg: JSON.stringify({
-                    action: 'create_paid_job',
-                    job_id: input.jobId,
-                    title,
-                    price_usdc: input.priceUsdc,
-                    expected_source_bytes: String(input.expectedSourceBytes),
-                    profile_id: PROFILE_ID,
-                    profile_config_sha256: PROFILE_CONFIG_SHA256,
-                }),
-            },
-            GAS_CONSTANTS.mediumGas,
-            1n,
-        )],
-    });
+    const allowanceYocto = livepeerSessionKeyAllowanceYocto();
+    const existingKey = loadLivepeerJobSessionKey(input.accountId, input.jobId);
+    const keyPair = existingKey ?? KeyPair.fromRandom('ed25519');
+    const publicKey = keyPair.getPublicKey().toString();
+
+    const transactions = [
+        ...(!existingKey ? [{
+            receiverId: input.accountId,
+            actions: [actions.addFunctionCallAccessKey(
+                PublicKey.fromString(publicKey),
+                NEAR_CONFIG.marketContractId,
+                ['create_paid_job'],
+                allowanceYocto,
+            )],
+        }] : []),
+        {
+            receiverId: NEAR_CONFIG.usdcContractId,
+            actions: [actions.functionCall(
+                'ft_transfer_call',
+                {
+                    receiver_id: NEAR_CONFIG.marketContractId,
+                    amount,
+                    memo: 'YouTick creator upload fee',
+                    msg: JSON.stringify({
+                        action: 'create_paid_job',
+                        job_id: input.jobId,
+                        title,
+                        price_usdc: input.priceUsdc,
+                        expected_source_bytes: String(input.expectedSourceBytes),
+                        profile_id: PROFILE_ID,
+                        profile_config_sha256: PROFILE_CONFIG_SHA256,
+                    }),
+                },
+                GAS_CONSTANTS.mediumGas,
+                1n,
+            )],
+        },
+    ];
+
+    if (!existingKey) persistLivepeerJobSessionKey(input.accountId, input.jobId, keyPair);
+    try {
+        await wallet.signAndSendTransactions({ transactions });
+        return publicKey;
+    } catch (error) {
+        if (!existingKey) clearLivepeerJobSessionKey(input.accountId, input.jobId);
+        throw error;
+    }
 }
 
 export async function requestLivepeerUploadIntent(input: {
+    wallet: WalletInstance;
     accountId: string;
     jobId: string;
     generation: number;
@@ -84,7 +127,8 @@ export async function requestLivepeerUploadIntent(input: {
         || input.expectedSourceBytes > MEDIA_UPLOAD_POLICY.paidSourceMaxBytes) {
         throw new Error('source_limit_exceeded');
     }
-    const keyPair = getActiveUploadSessionKey(input.accountId);
+    validateJobSessionIdentity(input.accountId, input.jobId);
+    const keyPair = loadLivepeerJobSessionKey(input.accountId, input.jobId);
     if (!keyPair) throw new Error('livepeer_session_key_missing');
     const route = '/v1/upload-intents';
     const origin = browserOrigin();
@@ -127,7 +171,25 @@ export async function requestLivepeerUploadIntent(input: {
     if (!response.ok) {
         throw new Error(typeof value.error === 'string' ? value.error : `livepeer_control_http_${response.status}`);
     }
-    return parseIntent(value, input);
+    const intent = parseIntent(value, input);
+    await revokeLivepeerJobSessionKey(input.wallet, input.accountId, input.jobId);
+    return intent;
+}
+
+export async function revokeLivepeerJobSessionKey(
+    wallet: WalletInstance,
+    accountId: string,
+    jobId: string,
+): Promise<boolean> {
+    validateJobSessionIdentity(accountId, jobId);
+    const keyPair = loadLivepeerJobSessionKey(accountId, jobId);
+    if (!keyPair) return false;
+    await wallet.signAndSendTransaction({
+        receiverId: accountId,
+        actions: [actions.deleteKey(keyPair.getPublicKey())],
+    });
+    clearLivepeerJobSessionKey(accountId, jobId);
+    return true;
 }
 
 export async function uploadLivepeerSource(
@@ -224,6 +286,66 @@ function isLivepeerTusUrl(value: string): boolean {
 
 function requireFeature(): void {
     if (!FEATURE_FLAGS.enablePaidMediaLivepeerV1) throw new Error('livepeer_control_disabled');
+}
+
+function validateJobSessionIdentity(accountId: string, jobId: string): void {
+    if (!ACCOUNT_ID_PATTERN.test(accountId) || !JOB_ID_PATTERN.test(jobId)) {
+        throw new Error('invalid_livepeer_session');
+    }
+}
+
+function livepeerJobSessionStorageKey(accountId: string, jobId: string): string {
+    return `${LIVEPEER_SESSION_STORAGE_PREFIX}${accountId}:${jobId}`;
+}
+
+function persistLivepeerJobSessionKey(accountId: string, jobId: string, keyPair: KeyPair): void {
+    if (typeof window === 'undefined') throw new Error('livepeer_session_storage_unavailable');
+    const storageKey = livepeerJobSessionStorageKey(accountId, jobId);
+    const value = JSON.stringify({
+        secretKey: keyPair.toString(),
+        publicKey: keyPair.getPublicKey().toString(),
+    });
+    try {
+        sessionStorage.setItem(storageKey, value);
+        if (sessionStorage.getItem(storageKey) !== value) throw new Error('storage_write_failed');
+    } catch {
+        try {
+            sessionStorage.removeItem(storageKey);
+        } catch {
+            // Storage is already unavailable; fail closed below.
+        }
+        throw new Error('livepeer_session_storage_unavailable');
+    }
+}
+
+function loadLivepeerJobSessionKey(accountId: string, jobId: string): KeyPair | null {
+    if (typeof window === 'undefined') return null;
+    const storageKey = livepeerJobSessionStorageKey(accountId, jobId);
+    const raw = sessionStorage.getItem(storageKey);
+    if (!raw) return null;
+    try {
+        const value = JSON.parse(raw) as { secretKey?: string; publicKey?: string };
+        if (typeof value.secretKey !== 'string' || typeof value.publicKey !== 'string') {
+            throw new Error('invalid_session_key');
+        }
+        const keyPair = KeyPair.fromString(value.secretKey as KeyPairString);
+        if (keyPair.getPublicKey().toString() !== value.publicKey) {
+            throw new Error('invalid_session_key');
+        }
+        return keyPair;
+    } catch {
+        try {
+            sessionStorage.removeItem(storageKey);
+        } catch {
+            // Treat inaccessible storage as a missing session.
+        }
+        return null;
+    }
+}
+
+function clearLivepeerJobSessionKey(accountId: string, jobId: string): void {
+    if (typeof window === 'undefined') return;
+    sessionStorage.removeItem(livepeerJobSessionStorageKey(accountId, jobId));
 }
 
 function browserOrigin(): string {

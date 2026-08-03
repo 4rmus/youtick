@@ -406,8 +406,11 @@ Accepted 2026-08-01 product and operator decisions:
   byte provider upload remains forbidden.
 - The target creator session key is scoped to the exact market and only
   `create_paid_job`, with a five-minute signed-request window. The disabled
-  Worker enforces that shape, but the web does not yet provision or remove this
-  dedicated key; runtime upload therefore remains unwired and fail-closed. The
+  Worker enforces that shape. The disabled web client now provisions one
+  job-scoped testnet key alongside USDC authorization and requires on-chain
+  removal after an accepted upload intent; failed removal remains retryable.
+  Mainnet allowance is intentionally unset and no UI caller or runtime flag is
+  enabled, so runtime upload remains unwired and fail-closed. The
   bounded testnet profile measured `5 TGas` with `0.008 NEAR`; production must
   re-measure.
 - The separate bridge FunctionCall key is scoped to the exact market and only
@@ -540,8 +543,8 @@ Stop for review before PR-3.
 
 ### PR-3 - Livepeer upload and provider canaries
 
-Status: `CODE_ONLY_PARTIAL / EXACT_LENGTH_BOUND / HISTORICAL_8_MIB_BROWSER_PASS / CURRENT_32_MIB_AND_80_MIB_LIVE_PASS / BROWSER_RESTART_OPEN / RUNTIME_NOT_DEPLOYED`
-as updated on 2026-08-03. JWT intent creation and delete/not-found cleanup pass in the
+Status: `CODE_ONLY_PARTIAL / WEB_JOB_KEY_LIFECYCLE_LOCAL / EXACT_LENGTH_BOUND / HISTORICAL_8_MIB_BROWSER_PASS / CURRENT_32_MIB_AND_80_MIB_LIVE_PASS / BROWSER_RESTART_OPEN / RUNTIME_NOT_DEPLOYED`
+as updated on 2026-08-04. JWT intent creation and delete/not-found cleanup pass in the
 dedicated Sandbox project. The first approved Chrome run reproduced a deployed
 S3 offset bug with 1 MiB chunks: HEAD omitted the incomplete part, the next
 PATCH returned HTTP 409 and retries remained at zero. Livepeer's deployed
@@ -578,7 +581,9 @@ resource URL and does not retry HTTP 409 offset conflicts. `CREATE_PENDING` and
 No runtime was enabled. The later bounded network/endpoint canary created one
 zero-media probe asset and one 20 MiB media-bearing asset; both were deleted and
 the authenticated project inventory returned to `0`.
-UI activation remains intentionally unwired until production key provisioning,
+The web library now implements testnet-only per-job key provisioning and
+post-intent removal, including retry-safe deletion failure handling. UI
+activation remains intentionally unwired until production key allowance,
 rotation and budget controls are implemented and the mandatory provider P0
 evidence closes. The bounded testnet allowance receipt does not enable runtime.
 

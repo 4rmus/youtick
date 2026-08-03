@@ -1,6 +1,6 @@
 # Paid media Livepeer v1 protocol
 
-Status: `PR_6_LOCAL_CODE / PRODUCT_P0_LOCKED / BOUNDED_CHROME_EDGE_CANARY_PASS / D6_PARTIAL / RUNTIME_DISABLED`
+Status: `PR_6_LOCAL_CODE / WEB_JOB_KEY_LIFECYCLE_LOCAL / PRODUCT_P0_LOCKED / BOUNDED_CHROME_EDGE_CANARY_PASS / D6_PARTIAL / RUNTIME_DISABLED`
 
 This directory locks the messages shared by the future web, bridge Worker and
 NEAR contracts. A dedicated testnet contract exists for bounded allowance
@@ -49,8 +49,12 @@ Creator upload authorization uses one finite-allowance FunctionCall key per
 job. Job creation itself is an exact USDC `ft_transfer_call`; it records the
 on-chain source byte count and consumes the calculated upload fee atomically.
 The disabled Worker requires the key to target the exact market and only
-`create_paid_job`; the current web upload flow does not yet provision or remove
-that dedicated key, so runtime upload remains unwired and fail-closed. The
+`create_paid_job`. The disabled web client now prepares that single-job key in
+the same wallet approval group as USDC job creation, keeps its secret only in
+job-scoped `sessionStorage`, and requires `DeleteKey` after an accepted upload
+intent. Failed removal keeps the local key available for retry. Mainnet
+provisioning still fails closed because its allowance budget is unset, and no
+UI caller or runtime flag is enabled. The
 signed bridge request expires within five minutes and a reused nonce fails. The
 2026-08-01 testnet measurement locks
 `5 TGas` and `0.008 NEAR` allowance for the bounded test profile; production
