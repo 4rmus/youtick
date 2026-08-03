@@ -6,6 +6,9 @@ Accepted as the only paid-media target architecture. `CONDITIONAL_GO`,
 `TESTNET_EVIDENCE_ONLY` and `NOT_STAGING_OR_PRODUCTION`: provider and
 production-budget P0 gates remain open. The bounded testnet allowance contract
 approved on 2026-08-01 is evidence, not Worker, web or product activation.
+The fixed 32 MiB path passed an exact 80 MiB provider upload, Chrome/Edge JWT
+matrix and testnet purchase on 2026-08-03. Runtime deployment, withdrawal,
+rotation/outage drills, 20 GB and production budget gates remain open.
 
 ## Context
 
@@ -51,6 +54,16 @@ deletion or negative-playback gates.
 9. Runtime work remains feature-disabled until the relevant P0 facts are
    recorded and canary-tested. Local checks and green CI are not deployment
    evidence.
+10. Upload uses one sequential fixed 32 MiB TUS PATCH at a time on the same
+    bridge-issued opaque resource. HEAD is authoritative before resume; HTTP
+    409 is fail-closed and does not create a replacement asset.
+11. The per-file source ceiling is decimal 20 GB. Monthly admission is instead
+    a separate provider-operation dollar budget whose production value remains
+    unset until D6; an unset value closes admission.
+12. A new job consumes an exact creator fee of $0.30 per decimal GB, rounded up
+    to the next USDC micro-unit. Same-job retries, resume and reconciliation do
+    not charge again. Tickets have a 2 USDC minimum and retain the 98/2 split.
+    No duration surcharge, automatic refund or 5% commission is introduced.
 
 The protocol identifiers, canonical request envelope and publication tuple are
 locked in [`protocol/paid-media-livepeer-v1`](https://github.com/4rmus/youtick/blob/main/protocol/paid-media-livepeer-v1/README.md).
@@ -64,6 +77,10 @@ provider mutation. Creator keys are single-job, finite-allowance FunctionCall
 keys for `create_paid_job`; bridge keys are separate finite-allowance
 FunctionCall keys for the two operator methods. Platform governance owns key
 rotation and no runtime receives FullAccess.
+
+The creator fee and provider invoice are distinct. Livepeer transcode, storage
+and delivery are minute-based, so equal-byte videos can have different provider
+costs. The Growth monthly minimum is not treated as a hard spend cap.
 
 The bounded testnet receipt records `5 TGas` and `0.008 NEAR` for one creator
 call. It is not a production allowance: production volume, gas price and

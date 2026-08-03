@@ -6,12 +6,13 @@ import {
     generateKeyPairSync,
     randomUUID,
 } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import {
     createTusResource,
+    inspectTusCapabilities,
     patchTus,
-    readTusOffset,
-    requireTusTermination,
+    readTusState,
 } from './tus-resume-canary.mjs';
 import {
     deleteAsset,
@@ -20,16 +21,52 @@ import {
 } from './provider-canary.mjs';
 
 const LIVEPEER_API_BASE = 'https://livepeer.studio/api';
-const MAX_CANARY_BYTES = 8 * 1024 * 1024;
+const MAX_CANARY_BYTES = 80 * 1024 * 1024;
+const TUS_CHUNK_BYTES = 32 * 1024 * 1024;
+const TUS_MIN_INTERMEDIATE_PATCH_BYTES = 5 * 1024 * 1024;
 const READY_ATTEMPTS = 120;
 const READY_DELAY_MS = 5_000;
-const DELETE_VISIBLE_RETRIES = 5;
+const TUS_DELETE_VISIBLE_RETRIES = 60;
+const ASSET_DELETE_VISIBLE_RETRIES = 5;
 const MAX_HLS_REFERENCE_PROBES = 32;
 const MAX_PROVIDER_PLAYBACK_OUTPUTS = 16;
 const MAX_THUMBNAIL_REFERENCE_PROBES = 32;
 const LIVEPEER_HLS_SOURCE_TYPE = 'html5/application/vnd.apple.mpegurl';
 const LIVEPEER_MP4_SOURCE_TYPE = 'html5/video/mp4';
 const LIVEPEER_VTT_SOURCE_TYPE = 'text/vtt';
+
+export function requireLocalCanaryMp4(filePath, fileBytes, probe = spawnSync) {
+    if (typeof filePath !== 'string' || filePath.length === 0
+        || !(fileBytes instanceof Uint8Array)
+        || fileBytes.byteLength !== MAX_CANARY_BYTES) {
+        throw new Error('playback_canary_requires_exact_80_mib');
+    }
+    const result = probe('ffprobe', [
+        '-v', 'error',
+        '-show_entries', 'format=format_name,duration:stream=codec_type',
+        '-of', 'json',
+        filePath,
+    ], { encoding: 'utf8' });
+    if (result?.status !== 0 || typeof result.stdout !== 'string') {
+        throw new Error('playback_canary_ffprobe_failed');
+    }
+    let metadata;
+    try {
+        metadata = JSON.parse(result.stdout);
+    } catch {
+        throw new Error('playback_canary_ffprobe_invalid');
+    }
+    const durationSeconds = Number(metadata?.format?.duration);
+    const formats = String(metadata?.format?.format_name || '').split(',');
+    if (!formats.includes('mp4')
+        || !Array.isArray(metadata?.streams)
+        || !metadata.streams.some((stream) => stream?.codec_type === 'video')
+        || !Number.isFinite(durationSeconds)
+        || durationSeconds <= 0) {
+        throw new Error('playback_canary_source_not_playable_mp4');
+    }
+    return { duration_seconds: durationSeconds };
+}
 
 function sha256(value) {
     return createHash('sha256').update(value).digest('hex');
@@ -45,6 +82,63 @@ function requireCanarySource(fileBytes) {
         || fileBytes.byteLength > MAX_CANARY_BYTES) {
         throw new Error('playback_canary_source_invalid');
     }
+}
+
+export function tusChunkRanges(sourceBytes, chunkBytes = TUS_CHUNK_BYTES) {
+    if (!Number.isSafeInteger(sourceBytes) || sourceBytes < 1
+        || chunkBytes !== TUS_CHUNK_BYTES) {
+        throw new Error('playback_canary_chunk_plan_invalid');
+    }
+    const ranges = [];
+    for (let offset = 0; offset < sourceBytes; offset += chunkBytes) {
+        const end = Math.min(offset + chunkBytes, sourceBytes);
+        if (end < sourceBytes && end - offset < TUS_MIN_INTERMEDIATE_PATCH_BYTES) {
+            throw new Error('playback_canary_intermediate_patch_too_small');
+        }
+        ranges.push({ offset, end, bytes: end - offset });
+    }
+    return ranges;
+}
+
+async function uploadTusSequential(uploadUrl, fileBytes, fetchImpl, sleep) {
+    const initial = await readTusState(uploadUrl, fetchImpl);
+    if (initial.offset !== 0 || initial.length !== fileBytes.byteLength) {
+        throw new Error('playback_canary_initial_tus_state_invalid');
+    }
+    const chunks = [];
+    let pauseResumeOffset = null;
+    let nextOffset = initial.offset;
+    for (const range of tusChunkRanges(fileBytes.byteLength)) {
+        if (range.offset !== nextOffset) throw new Error('playback_canary_resume_offset_invalid');
+        const patchOffset = await patchTus(
+            uploadUrl,
+            nextOffset,
+            fileBytes.subarray(range.offset, range.end),
+            fetchImpl,
+        );
+        if (patchOffset !== range.end) throw new Error('playback_canary_patch_offset_invalid');
+        const observed = await readTusState(uploadUrl, fetchImpl);
+        if (observed.offset !== range.end || observed.length !== fileBytes.byteLength) {
+            throw new Error('playback_canary_upload_offset_invalid');
+        }
+        chunks.push({
+            bytes: range.bytes,
+            start_offset: range.offset,
+            patch_offset: patchOffset,
+            head_offset: observed.offset,
+        });
+        nextOffset = observed.offset;
+        if (chunks.length === 1 && range.end < fileBytes.byteLength) {
+            await sleep(1_000);
+            const resumed = await readTusState(uploadUrl, fetchImpl);
+            if (resumed.offset !== observed.offset || resumed.length !== fileBytes.byteLength) {
+                throw new Error('playback_canary_resume_offset_invalid');
+            }
+            pauseResumeOffset = resumed.offset;
+            nextOffset = resumed.offset;
+        }
+    }
+    return { initial, chunks, pauseResumeOffset };
 }
 
 function privateKeyInput(value) {
@@ -198,7 +292,10 @@ function requireReadyAsset(asset, expected) {
     if (asset?.playbackPolicy?.type !== 'jwt'
         || asset?.status?.phase !== 'ready'
         || !Number.isSafeInteger(asset?.size)
-        || asset.size !== expected.sourceBytes) {
+        || asset.size !== expected.sourceBytes
+        || typeof asset?.videoSpec?.duration !== 'number'
+        || !Number.isFinite(asset.videoSpec.duration)
+        || asset.videoSpec.duration <= 0) {
         throw new Error('playback_canary_asset_state_mismatch');
     }
 }
@@ -494,7 +591,7 @@ async function terminateTusResource(uploadUrl, fetchImpl, sleep) {
     });
     if (deleted.status !== 204) throw new Error(`playback_canary_tus_delete_${deleted.status}`);
     let head;
-    for (let attempt = 0; attempt < DELETE_VISIBLE_RETRIES; attempt += 1) {
+    for (let attempt = 0; attempt < TUS_DELETE_VISIBLE_RETRIES; attempt += 1) {
         head = await fetchImpl(uploadUrl, {
             method: 'HEAD',
             headers: { 'Tus-Resumable': '1.0.0' },
@@ -503,7 +600,7 @@ async function terminateTusResource(uploadUrl, fetchImpl, sleep) {
         if ([404, 410].includes(head.status)) {
             return { delete_status: deleted.status, post_delete_status: head.status };
         }
-        if (attempt < DELETE_VISIBLE_RETRIES - 1) await sleep(1_000);
+        if (attempt < TUS_DELETE_VISIBLE_RETRIES - 1) await sleep(1_000);
     }
     throw new Error(`playback_canary_tus_still_live_${head.status}`);
 }
@@ -537,12 +634,24 @@ async function findCanaryAsset(apiKey, correlationId, fetchImpl) {
     return matches[0]?.id;
 }
 
-async function listAssetCount(apiKey, fetchImpl) {
-    return (await listAssets(apiKey, fetchImpl)).length;
+function inventoryReceipt(assets) {
+    const hashes = assets.map((asset) => {
+        if (typeof asset?.id !== 'string') throw new Error('playback_canary_inventory_invalid');
+        return sha256(asset.id);
+    }).sort();
+    return { count: hashes.length, id_sha256: hashes };
 }
 
-async function cleanupCanary({ apiKey, assetId, tusCreateAttempted, uploadUrl, fetchImpl, sleep }) {
-    const cleanup = {};
+async function cleanupCanary({
+    apiKey,
+    assetId,
+    inventoryBefore,
+    tusCreateAttempted,
+    uploadUrl,
+    fetchImpl,
+    sleep,
+}) {
+    const cleanup = { inventory_before: inventoryReceipt(inventoryBefore) };
     const errors = [];
     let tusCleanupProven = !tusCreateAttempted;
     if (tusCreateAttempted && !uploadUrl) {
@@ -557,6 +666,12 @@ async function cleanupCanary({ apiKey, assetId, tusCreateAttempted, uploadUrl, f
     }
     if (assetId && !tusCleanupProven) {
         cleanup.asset_delete_skipped = 'tus_cleanup_unproven';
+        try {
+            cleanup.inventory_after = inventoryReceipt(await listAssets(apiKey, fetchImpl));
+            cleanup.inventory_restored = false;
+        } catch (error) {
+            errors.push(error);
+        }
         return { cleanup, errors };
     }
     if (assetId) {
@@ -566,7 +681,7 @@ async function cleanupCanary({ apiKey, assetId, tusCreateAttempted, uploadUrl, f
             errors.push(error);
         }
 
-        for (let attempt = 0; attempt < DELETE_VISIBLE_RETRIES; attempt += 1) {
+        for (let attempt = 0; attempt < ASSET_DELETE_VISIBLE_RETRIES; attempt += 1) {
             try {
                 cleanup.asset_post_delete_status = await getAssetStatus(apiKey, assetId, fetchImpl);
             } catch (error) {
@@ -574,20 +689,20 @@ async function cleanupCanary({ apiKey, assetId, tusCreateAttempted, uploadUrl, f
                 break;
             }
             if ([404, 410].includes(cleanup.asset_post_delete_status)) break;
-            if (attempt < DELETE_VISIBLE_RETRIES - 1) await sleep(1_000);
+            if (attempt < ASSET_DELETE_VISIBLE_RETRIES - 1) await sleep(1_000);
         }
         if (![404, 410].includes(cleanup.asset_post_delete_status)) {
             errors.push(new Error(`playback_canary_asset_still_live_${cleanup.asset_post_delete_status}`));
         }
 
-        try {
-            cleanup.inventory_count = await listAssetCount(apiKey, fetchImpl);
-            if (cleanup.inventory_count !== 0) {
-                errors.push(new Error('playback_canary_inventory_not_empty'));
-            }
-        } catch (error) {
-            errors.push(error);
-        }
+    }
+    try {
+        cleanup.inventory_after = inventoryReceipt(await listAssets(apiKey, fetchImpl));
+        cleanup.inventory_restored = JSON.stringify(cleanup.inventory_after.id_sha256)
+            === JSON.stringify(cleanup.inventory_before.id_sha256);
+        if (!cleanup.inventory_restored) errors.push(new Error('playback_canary_inventory_not_restored'));
+    } catch (error) {
+        errors.push(error);
     }
     return { cleanup, errors };
 }
@@ -606,6 +721,20 @@ function browserEvidence(value) {
             || result.initial_hls_header_requests < 1
             || !Number.isSafeInteger(result.refreshed_hls_header_requests)
             || result.refreshed_hls_header_requests < 1
+            || result.anonymous_denied !== true
+            || result.anonymous_hls_header_requests !== 0
+            || result.malformed_denied !== true
+            || !Number.isSafeInteger(result.malformed_hls_header_requests)
+            || result.malformed_hls_header_requests < 1
+            || result.wrong_key_denied !== true
+            || !Number.isSafeInteger(result.wrong_key_hls_header_requests)
+            || result.wrong_key_hls_header_requests < 1
+            || result.wrong_subject_denied !== true
+            || !Number.isSafeInteger(result.wrong_subject_hls_header_requests)
+            || result.wrong_subject_hls_header_requests < 1
+            || result.expired_denied !== true
+            || !Number.isSafeInteger(result.expired_hls_header_requests)
+            || result.expired_hls_header_requests < 1
             || result.persistent_storage_empty !== true) {
             throw new Error('playback_canary_browser_matrix_failed');
         }
@@ -614,6 +743,16 @@ function browserEvidence(value) {
             refreshed_played: true,
             initial_hls_header_requests: result.initial_hls_header_requests,
             refreshed_hls_header_requests: result.refreshed_hls_header_requests,
+            anonymous_denied: true,
+            anonymous_hls_header_requests: 0,
+            malformed_denied: true,
+            malformed_hls_header_requests: result.malformed_hls_header_requests,
+            wrong_key_denied: true,
+            wrong_key_hls_header_requests: result.wrong_key_hls_header_requests,
+            wrong_subject_denied: true,
+            wrong_subject_hls_header_requests: result.wrong_subject_hls_header_requests,
+            expired_denied: true,
+            expired_hls_header_requests: result.expired_hls_header_requests,
             persistent_storage_empty: true,
         };
     }
@@ -653,7 +792,9 @@ export async function runPlaybackCanary({
     let tusVersionSource;
     let receipt;
     let runError;
+    let inventoryBefore = [];
     try {
+        inventoryBefore = await listAssets(apiKey, fetchImpl);
         let create;
         try {
             create = await requestUpload(apiKey, correlationId, fetchImpl);
@@ -666,14 +807,11 @@ export async function runPlaybackCanary({
             throw error;
         }
         assetId = create.body.asset.id;
-        tusVersionSource = await requireTusTermination(create.body.tusEndpoint, fetchImpl);
+        const tusCapabilities = await inspectTusCapabilities(create.body.tusEndpoint, fetchImpl);
+        tusVersionSource = tusCapabilities.versionSource;
         tusCreateAttempted = true;
         uploadUrl = await createTusResource(create.body.tusEndpoint, fileBytes.byteLength, fetchImpl);
-        const finalOffset = await patchTus(uploadUrl, 0, fileBytes, fetchImpl);
-        if (finalOffset !== fileBytes.byteLength
-            || await readTusOffset(uploadUrl, fetchImpl) !== fileBytes.byteLength) {
-            throw new Error('playback_canary_upload_offset_invalid');
-        }
+        const upload = await uploadTusSequential(uploadUrl, fileBytes, fetchImpl, sleep);
 
         const ready = await waitForReady(apiKey, {
             assetId,
@@ -743,7 +881,12 @@ export async function runPlaybackCanary({
         const browser = browserProbe
             ? browserEvidence(await browserProbe({
                 hlsUrl: urls.hls,
-                issueToken: () => {
+                issueToken: (kind = 'correct') => {
+                    if (kind === 'malformed') return 'malformed.jwt';
+                    if (kind === 'wrong_key') return wrongKeyToken;
+                    if (kind === 'wrong_subject') return wrongSubjectToken;
+                    if (kind === 'expired') return expiredToken;
+                    if (kind !== 'correct') throw new Error('playback_canary_browser_token_kind_invalid');
                     const browserIssuedAt = Math.floor(now() / 1_000);
                     return signJwt({
                         privateKey,
@@ -762,11 +905,29 @@ export async function runPlaybackCanary({
             correlation_id: correlationId,
             source_bytes: fileBytes.byteLength,
             source_sha256: sha256(fileBytes),
+            duration_seconds: ready.asset.videoSpec.duration,
             create_status: create.status,
             ready_attempts: ready.attempts,
             playback_policy: create.body.asset.playbackPolicy.type,
             tus_version_source: tusVersionSource,
-            tus_termination_advertised: true,
+            tus_termination_advertised: tusCapabilities.terminationAdvertised,
+            tus_concatenation_advertised: tusCapabilities.concatenationAdvertised,
+            tus_max_size: tusCapabilities.maxSize,
+            chunk_bytes: TUS_CHUNK_BYTES,
+            parallel_uploads: 1,
+            upload: {
+                initial_offset: upload.initial.offset,
+                upload_length: upload.initial.length,
+                chunks: upload.chunks,
+                pause_resume_offset: upload.pauseResumeOffset,
+                final_offset: upload.chunks.at(-1)?.head_offset,
+            },
+            outputs: {
+                hls_count: ready.urls.source_hls.length,
+                mp4_count: ready.urls.mp4.length,
+                vtt_count: ready.urls.vtt.length,
+                canonical_720p_mp4: true,
+            },
             hls,
             denied,
             asset_id_sha256: sha256(assetId),
@@ -782,6 +943,7 @@ export async function runPlaybackCanary({
     const { cleanup, errors } = await cleanupCanary({
         apiKey,
         assetId,
+        inventoryBefore,
         tusCreateAttempted,
         uploadUrl,
         fetchImpl,
@@ -808,17 +970,19 @@ if (import.meta.main) {
     try {
         const filePath = process.argv[2];
         if (!filePath) {
-            throw new Error('usage: npm run canary:playback -- /path/to/short-valid.mp4');
+            throw new Error('usage: npm run canary:playback -- /path/to/exact-80mib-valid.mp4');
         }
+        const fileBytes = new Uint8Array(await readFile(filePath));
+        const localSource = requireLocalCanaryMp4(filePath, fileBytes);
         const receipt = await runPlaybackCanary({
             apiKey: process.env.LIVEPEER_API_KEY,
             mutationsEnabled: process.env.LIVEPEER_PLAYBACK_CANARY_MUTATIONS === 'true',
             privateKey: process.env.LIVEPEER_PLAYBACK_CANARY_PRIVATE_KEY,
             publicKey: process.env.LIVEPEER_PLAYBACK_CANARY_PUBLIC_KEY,
             issuer: process.env.LIVEPEER_PLAYBACK_CANARY_ISSUER || 'https://youtick.net',
-            fileBytes: new Uint8Array(await readFile(filePath)),
+            fileBytes,
         });
-        process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
+        process.stdout.write(`${JSON.stringify({ ...receipt, local_source: localSource }, null, 2)}\n`);
     } catch (error) {
         const recovery = error && typeof error === 'object' ? error.recovery : undefined;
         if (recovery) process.stderr.write(`${JSON.stringify({ recovery })}\n`);

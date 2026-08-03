@@ -64,6 +64,8 @@ test('browser canary serves no-store inputs only to its launched browser challen
             await release;
             const pageUrl = new URL(input.url);
             const query = pageUrl.search;
+            const document = await fetch(input.url);
+            assert.match(document.headers.get('Content-Security-Policy') || '', /media-src https: blob:/);
             const config = await fetch(`${pageUrl.origin}/config${query}`);
             assert.equal(config.headers.get('Cache-Control'), 'no-store');
             assert.deepEqual(await config.json(), {
@@ -79,6 +81,16 @@ test('browser canary serves no-store inputs only to its launched browser challen
                 refreshed_played: true,
                 initial_hls_header_requests: 1,
                 refreshed_hls_header_requests: 1,
+                anonymous_denied: true,
+                anonymous_hls_header_requests: 0,
+                malformed_denied: true,
+                malformed_hls_header_requests: 1,
+                wrong_key_denied: true,
+                wrong_key_hls_header_requests: 1,
+                wrong_subject_denied: true,
+                wrong_subject_hls_header_requests: 1,
+                expired_denied: true,
+                expired_hls_header_requests: 1,
                 persistent_storage_empty: true,
                 ignored: 'not-retained',
             };
@@ -99,6 +111,16 @@ test('browser canary serves no-store inputs only to its launched browser challen
             refreshed_played: true,
             initial_hls_header_requests: 1,
             refreshed_hls_header_requests: 1,
+            anonymous_denied: true,
+            anonymous_hls_header_requests: 0,
+            malformed_denied: true,
+            malformed_hls_header_requests: 1,
+            wrong_key_denied: true,
+            wrong_key_hls_header_requests: 1,
+            wrong_subject_denied: true,
+            wrong_subject_hls_header_requests: 1,
+            expired_denied: true,
+            expired_hls_header_requests: 1,
             persistent_storage_empty: true,
         },
         edge: {
@@ -106,6 +128,16 @@ test('browser canary serves no-store inputs only to its launched browser challen
             refreshed_played: true,
             initial_hls_header_requests: 1,
             refreshed_hls_header_requests: 1,
+            anonymous_denied: true,
+            anonymous_hls_header_requests: 0,
+            malformed_denied: true,
+            malformed_hls_header_requests: 1,
+            wrong_key_denied: true,
+            wrong_key_hls_header_requests: 1,
+            wrong_subject_denied: true,
+            wrong_subject_hls_header_requests: 1,
+            expired_denied: true,
+            expired_hls_header_requests: 1,
             persistent_storage_empty: true,
         },
     });
@@ -131,6 +163,16 @@ test('browser canary requires a JWT header request in both playback rounds', asy
                 refreshed_played: true,
                 initial_hls_header_requests: 0,
                 refreshed_hls_header_requests: 2,
+                anonymous_denied: true,
+                anonymous_hls_header_requests: 0,
+                malformed_denied: true,
+                malformed_hls_header_requests: 1,
+                wrong_key_denied: true,
+                wrong_key_hls_header_requests: 1,
+                wrong_subject_denied: true,
+                wrong_subject_hls_header_requests: 1,
+                expired_denied: true,
+                expired_hls_header_requests: 1,
                 persistent_storage_empty: true,
             }),
         }),

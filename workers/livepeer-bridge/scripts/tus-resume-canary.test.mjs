@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     createTusResource,
-    requireTusTermination,
+    inspectTusCapabilities,
     runTusResumeCanary,
 } from './tus-resume-canary.mjs';
 
@@ -23,7 +23,7 @@ test('TUS resource rejects an untrusted endpoint before a request', async () => 
 test('TUS termination rejects a credentialed endpoint before a request', async () => {
     let calls = 0;
     await assert.rejects(
-        requireTusTermination('https://user:password@origin.livepeer.com/tus', async () => {
+        inspectTusCapabilities('https://user:password@origin.livepeer.com/tus', async () => {
             calls += 1;
             return new Response(null, { status: 204 });
         }),
@@ -34,7 +34,7 @@ test('TUS termination rejects a credentialed endpoint before a request', async (
 
 test('TUS termination is advertised without a TUS header on OPTIONS', async () => {
     const calls = [];
-    const source = await requireTusTermination('https://origin.livepeer.com/tus', async (url, init = {}) => {
+    const source = await inspectTusCapabilities('https://origin.livepeer.com/tus', async (url, init = {}) => {
         calls.push({
             url: String(url),
             method: init.method,
@@ -49,7 +49,13 @@ test('TUS termination is advertised without a TUS header on OPTIONS', async () =
             },
         });
     });
-    assert.equal(source, 'tus-version');
+    assert.deepEqual(source, {
+        versionSource: 'tus-version',
+        extensions: ['creation', 'termination'],
+        terminationAdvertised: true,
+        concatenationAdvertised: false,
+        maxSize: null,
+    });
     assert.deepEqual(calls, [{
         url: 'https://origin.livepeer.com/tus',
         method: 'OPTIONS',
@@ -58,8 +64,8 @@ test('TUS termination is advertised without a TUS header on OPTIONS', async () =
     }]);
 });
 
-test('TUS termination accepts only the known Livepeer legacy version signature', async () => {
-    const source = await requireTusTermination('https://origin.livepeer.com/tus', async () => (
+test('TUS capabilities accept only the known Livepeer legacy version signature', async () => {
+    const source = await inspectTusCapabilities('https://origin.livepeer.com/tus', async () => (
         new Response(null, {
             status: 204,
             headers: {
@@ -68,10 +74,10 @@ test('TUS termination accepts only the known Livepeer legacy version signature',
             },
         })
     ));
-    assert.equal(source, 'livepeer-legacy-tus-resumable');
+    assert.equal(source.versionSource, 'livepeer-legacy-tus-resumable');
 
     await assert.rejects(
-        requireTusTermination('https://origin.livepeer.com/tus', async () => (
+        inspectTusCapabilities('https://origin.livepeer.com/tus', async () => (
             new Response(null, {
                 status: 200,
                 headers: {
@@ -84,13 +90,26 @@ test('TUS termination accepts only the known Livepeer legacy version signature',
     );
 });
 
-test('TUS termination rejects a missing supported version or extension', async () => {
+test('TUS capabilities record Livepeer bare 204 without treating it as protocol denial', async () => {
+    const source = await inspectTusCapabilities('https://origin.livepeer.com/tus', async () => (
+        new Response(null, { status: 204 })
+    ));
+    assert.deepEqual(source, {
+        versionSource: 'not-advertised',
+        extensions: [],
+        terminationAdvertised: false,
+        concatenationAdvertised: false,
+        maxSize: null,
+    });
+});
+
+test('TUS capabilities reject inconsistent version or extension advertisements', async () => {
     for (const [headers, code] of [
         [{ 'Tus-Extension': 'termination' }, 'tus_version_unsupported'],
         [{ 'Tus-Version': '1.0.0', 'Tus-Extension': 'creation' }, 'tus_termination_unsupported'],
     ]) {
         await assert.rejects(
-            requireTusTermination('https://origin.livepeer.com/tus', async () => (
+            inspectTusCapabilities('https://origin.livepeer.com/tus', async () => (
                 new Response(null, { status: 204, headers })
             )),
             new RegExp(code),

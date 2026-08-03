@@ -16,16 +16,19 @@ const DEFAULT_CONTRACT_IDS: Record<NetworkId, {
     marketContractId: string;
     accessContractId: string;
     registryContractId: string;
+    usdcContractId: string;
 }> = {
     testnet: {
         marketContractId: 'replace-with-market.testnet',
         accessContractId: 'replace-with-access.testnet',
         registryContractId: 'replace-with-registry.testnet',
+        usdcContractId: '3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af',
     },
     mainnet: {
         marketContractId: 'youtick.near',
         accessContractId: 'access.youtick.near',
         registryContractId: 'registry.youtick.near',
+        usdcContractId: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
     },
 };
 
@@ -64,6 +67,10 @@ export const NEAR_CONFIG = {
     /** Zero-trust registry contract ID */
     registryContractId:
         getContractId('NEXT_PUBLIC_REGISTRY_CONTRACT_ID', defaultContracts.registryContractId),
+
+    /** Circle USDC contract used for paid-job creation and ticket settlement. */
+    usdcContractId:
+        getContractId('NEXT_PUBLIC_USDC_CONTRACT_ID', defaultContracts.usdcContractId),
 } as const;
 
 export const FEATURE_FLAGS = {
@@ -83,7 +90,7 @@ export const FEATURE_FLAGS = {
 
 export const MEDIA_UPLOAD_POLICY = {
     paidSourceMaxBytes: 20_000_000_000,
-    livepeerTusChunkBytes: 8 * 1024 * 1024,
+    livepeerTusChunkBytes: 32 * 1024 * 1024,
     r2PartBytes: 64 * 1024 * 1024,
 } as const;
 

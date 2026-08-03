@@ -777,11 +777,11 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         const job = await publishedJob();
         jobState.values.set('job:v1', job);
         admissionState.values.set('admission:v1', {
-            schema: 'youtick.livepeer-admission.v1',
+            schema: 'youtick.livepeer-admission.v2',
             status: 'OPEN',
             reservations: {},
             daily: { utcDay: '2026-08-02', globalAttempts: 0, creatorAttempts: {} },
-            monthly: { utcMonth: '2026-08', reservedSourceBytes: '0' },
+            monthly: { utcMonth: '2026-08', reservedBudgetUsdMicros: '0' },
         });
         let admission!: LivepeerControl;
         const env = createEnv();

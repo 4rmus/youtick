@@ -1,6 +1,6 @@
 # Paid media Livepeer v1 protocol
 
-Status: `PR_5_CODE_ONLY / PRODUCT_P0_LOCKED / PLAYBACK_CANARY_OPEN / RUNTIME_DISABLED`
+Status: `PR_6_LOCAL_CODE / PRODUCT_P0_LOCKED / BOUNDED_CHROME_EDGE_CANARY_PASS / D6_PARTIAL / RUNTIME_DISABLED`
 
 This directory locks the messages shared by the future web, bridge Worker and
 NEAR contracts. A dedicated testnet contract exists for bounded allowance
@@ -15,6 +15,12 @@ evidence; no Worker, web, staging or production runtime is enabled.
   `96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77`
   for the canonical 720p H.264 Baseline configuration;
 - maximum declared source size: decimal `20_000_000_000` bytes;
+- browser upload chunks: fixed `33_554_432` bytes (32 MiB), one sequential
+  PATCH at a time; only the final PATCH may be smaller;
+- creator upload fee: `ceil(source_bytes / 1_000_000_000 * 300_000)` micro-USDC,
+  charged once when a new job is created;
+- ticket minimum: `2_000_000` micro-USDC; larger integer micro-USDC values are
+  allowed and the existing 98/2 creator/platform split is unchanged;
 - initial browser claim: desktop Chrome and desktop Edge only;
 - operator methods: `finalize_livepeer_publication` and
   `suspend_livepeer_sales`, both with zero deposit;
@@ -26,10 +32,27 @@ contract reject `20_000_000_001` before provider mutation. One exact decimal
 `20_000_000_000`-byte provider upload remains a production canary; a +1-byte
 provider upload is neither required nor allowed.
 
+The 20 GB value is a per-file product limit, not a monthly source-byte quota.
+Monthly admission uses a separate provider-operation budget. Its production
+value is a D6 decision and the Worker fails closed while it is unset. Provider
+transcode, storage and delivery costs remain minute-based and are not used to
+add a duration fee to the creator's byte-based upload fee.
+
+Upload is bound to the bridge-issued opaque TUS resource URL. The client reads
+`Upload-Offset` and `Upload-Length` with HEAD before resuming, never creates a
+second asset for a retry, never retries a 409 blindly and never sends parallel
+PATCH requests to one resource. Pause, resume, reconciliation and a same-job
+retry do not charge again. A new job is a new charge. No automatic refund is
+defined.
+
 Creator upload authorization uses one finite-allowance FunctionCall key per
-job, restricted to the exact market and `create_paid_job`. The signed bridge
-request expires within five minutes, the key is removed after intent creation
-or expiry, and a reused nonce fails. The 2026-08-01 testnet measurement locks
+job. Job creation itself is an exact USDC `ft_transfer_call`; it records the
+on-chain source byte count and consumes the calculated upload fee atomically.
+The disabled Worker requires the key to target the exact market and only
+`create_paid_job`; the current web upload flow does not yet provision or remove
+that dedicated key, so runtime upload remains unwired and fail-closed. The
+signed bridge request expires within five minutes and a reused nonce fails. The
+2026-08-01 testnet measurement locks
 `5 TGas` and `0.008 NEAR` allowance for the bounded test profile; production
 must re-measure instead of copying that value.
 

@@ -1,14 +1,18 @@
 # Livepeer paid-media PR-6 karar kapıları
 
-Durum: `APPROVED / LOCAL_DISABLED_COMPLETE / RUNTIME_DISABLED /
-TESTNET_NOT_AUTHORIZED`
-on 2026-08-02.
+Durum: `APPROVED / LOCAL_DISABLED_COMPLETE / TESTNET_UPLOAD_FINALIZE_BUY_PARTIAL /
+RUNTIME_DISABLED` as updated on 2026-08-03.
 
 Bu kayıt, [uygulama planındaki](near-livepeer-paid-media-implementation-plan.md)
 PR-6 ön koşullarını karar verilebilir hâle getirir. Bir canlı ortam izni, anahtar
 yetkisi, para harcama limiti veya testnet çalışma talimatı değildir. Buradaki
 "öneri" alanları 2026-08-02 tarihli kullanıcı onayıyla D1-D5 için kabul
 edilmiştir. Bu onay D6 yetkisi değildir.
+
+2026-08-03 eki: 20 GB aylık rezervasyon olarak değil, yalnız dosya başına sınır
+olarak tutulur. D5'in aylık koruması ayrı bir dolar bazlı operasyon bütçesidir.
+Üretim değeri D6'ya kadar boş kalır ve Worker bu durumda provider çağrısından
+önce fail-closed davranır.
 
 ## Kod öncesi kaynakla doğrulanan başlangıç durumu
 
@@ -104,9 +108,10 @@ ile değil.
   `CREATE_AMBIGUOUS`, `UPLOAD_READY`, `READY_VERIFIED` ve `FINALIZE_QUEUED`
   aktif sayılır; `CREATE_AMBIGUOUS` kanıtlı provider sonucu/temizlik olmadan slot
   bırakmaz.
-- UTC gün başına global ve creator başına en çok 2 provider create denemesi;
-  UTC ay başına en çok `20_000_000_000` rezerve source byte uygulanır. Rezervasyon
-  provider çağrısından önce atomik yapılır.
+- UTC gün başına global ve creator başına en çok 2 provider create denemesi
+  uygulanır. UTC aylık dolar bütçesi ile iş başına ayrılan tahmini provider
+  maliyeti provider çağrısından önce atomik rezerve edilir. Her iki değer D6'da
+  yazılana kadar kabul kapalıdır. Bu yerel eşik provider hard-cap değildir.
 - Bütçe aşımı, provider `402/429`, envanter uyuşmazlığı veya 15 dakikayı aşan
   `CREATE_AMBIGUOUS` kabul durumunu `AUTO_CLOSED` yapar. Yalnız paid-media
   operator redakte çözüm kanıtıyla yeniden açabilir.
@@ -172,7 +177,7 @@ geçişi ve daha önce verilmiş kısa ömürlü JWT'lerin ne kadar süre yaşay
 - `LivepeerControl` iş alarmı; provider/NEAR unknown, drift, iki gözlemli satış
   askısı ve iki sağlıklı gözlemli kurtarma kaydını uygular.
 - Sabit adlı admission nesnesi boş allowlist, aktif iş, günlük create ve aylık
-  byte rezervasyonunu provider çağrısından önce uygular; 402/429 ve 15 dakikalık
+  operasyon bütçesi rezervasyonunu provider çağrısından önce uygular; 402/429 ve 15 dakikalık
   `CREATE_AMBIGUOUS` durumunda `AUTO_CLOSED` olur.
 - Sözleşme migration'ı ayrı `takedown_authority_id` ekler;
   `takedown_livepeer_publication` bridge hesabına verilmez ve entitlement
@@ -192,14 +197,15 @@ geçişi ve daha önce verilmiş kısa ömürlü JWT'lerin ne kadar süre yaşay
 | D2 drift ve satış askısı | `DONE_LOCAL` | Unknown/strong drift ayrımı, iki gözlem, idempotent outbox, iki sağlıklı gözlemli recovery testleri | Gerçek provider/NEAR kesinti tatbikatı yok |
 | D3 takedown | `PARTIAL` | Ayrı authority alanı, migration, tek yönlü geçiş ve entitlement koruma testleri | Gerçek 2/3 multisig hesabı, 24 saat timelock ve acil yol kanıtı yok |
 | D4 rotasyon | `PARTIAL` | API token adı işte; webhook ve operator token eski+yeni overlap desteği; exact NEAR allowlist ve runbook | API/webhook/operator/JWT/NEAR canlı overlap, rollback ve eski anahtar silme kanıtı yok |
-| D5 admission | `DONE_LOCAL` | Provider öncesi allowlist/kota/bütçe; 402/429, envanter drift'i ve 15 dakika ambiguity auto-close; operator-authenticated, evidence-bound, idempotent reopen | İlk creator/operator gerçek kimlikleri ve canlı çözüm kanıtı aktivasyon öncesi kaydedilmeli |
-| PR-3/PR-5 provider kapıları | `UNPROVEN` | Yerel canary testleri | Tamamlanmış TUS resource termination ve gerçek JWT Chrome/Edge canary eksik |
-| D6 testnet E2E | `MISSING_NOT_AUTHORIZED` | Yok | Exact SHA deploy, gerçek upload/buy/watch/withdraw ve rotasyon tatbikatı |
+| D5 admission | `DONE_LOCAL / RUNTIME_FAIL_CLOSED` | Provider öncesi allowlist/kota/dolar bütçesi; 402/429, envanter drift'i ve 15 dakika ambiguity auto-close; operator-authenticated, evidence-bound, idempotent reopen | Bounded test kimlikleri kaydedildi; runtime creator/operator kimlikleri ile aylık/iş başı bütçe değerleri hâlâ gerekli |
+| PR-3/PR-5 provider kapıları | `PASS_BOUNDED / RUNTIME_DISABLED` | Gerçek 80 MiB 32+32+16 upload; Chrome/Edge doğru/refresh JWT ve beş negatif senaryo; provider envanteri temiz | 20 GB, provider kullanım faturası ve final recovery TUS URL postcondition kanıtı yok |
+| D6 testnet E2E | `PARTIAL / UPLOAD_FINALIZE_BUY_PASS` | Test creator/buyer, exact fee, provider-ready finalize, 2.000001 USDC purchase, entitlement ve satış askısı | Exact-SHA deploy, runtime grant, withdrawal ve rotasyon/outage tatbikatı |
 | PR-7 cutover | `MISSING_NOT_AUTHORIZED` | Yok | 72 saat kapalı canary ve ayrı aktivasyon onayı |
 
-### D6 için ayrıca onaylanması gereken yürütme paketi
+### Kalan D6 için ayrıca onaylanması gereken yürütme paketi
 
-D6 ancak aşağıdaki değerler tek bir sınırlı onayda doldurulduktan sonra başlar:
+Kalan D6 deploy/runtime çalışması ancak aşağıdaki değerler tek bir sınırlı
+onayda doldurulduktan sonra devam eder:
 
 1. PR-6'nın temiz branch/commit SHA'sı ve CI sonucu.
 2. Fresh testnet market/access contract ID'leri; bridge, creator, buyer,
@@ -207,17 +213,19 @@ D6 ancak aşağıdaki değerler tek bir sınırlı onayda doldurulduktan sonra b
 3. NEAR key başına exact receiver/method listesi, allowance ve en fazla funding.
 4. Livepeer Sandbox project/token/webhook/JWT key kapsamı; en fazla asset, source
    byte ve signing-key mutasyonu ile zorunlu cleanup sahibi.
-5. USDC purchase ve withdrawal için en yüksek tutar; otomatik refund yapılmaması.
-6. Chrome ve Edge'de doğru JWT, refresh, anonim/malformed denial ve completed
+5. Aylık operasyon bütçesi ile iş başı provider maliyet rezervasyonu; bu
+   değerler boşken admission kapalı kalır.
+6. USDC purchase ve withdrawal için en yüksek tutar; otomatik refund yapılmaması.
+7. Chrome ve Edge'de doğru JWT, refresh, anonim/malformed denial ve completed
    TUS termination kanıtlarının aynı bounded akışta mı ayrı canary'de mi
    kapanacağı.
-7. Deploy hedefi, rollback sahibi, evidence dizini ve çalışma sonunda asset,
+8. Deploy hedefi, rollback sahibi, evidence dizini ve çalışma sonunda asset,
    signing key, TUS capability, NEAR key ve bakiye envanteri.
 
 Bu alanlardan biri boşsa D6 başlamaz. Özellikle mevcut dirty worktree veya
 yerel PASS bir deploy SHA'sı değildir.
 
-D6 için ayrı, sınırlı testnet izni gerekir. `LIVEPEER_BRIDGE_ENABLED=false`
+D6'nın kalan kısmı için ayrı, sınırlı testnet izni gerekir. `LIVEPEER_BRIDGE_ENABLED=false`
 kalır; public playback, deploy, provider/NEAR mutasyonu veya anahtar işlemi
 açılmaz.
 

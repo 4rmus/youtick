@@ -67,6 +67,8 @@ function createEnv(overrides?: Partial<Env>): Env {
         LIVEPEER_API_KEY: API_KEY,
         LIVEPEER_API_TOKEN_NAME: 'paid-media-test',
         LIVEPEER_CREATOR_ALLOWLIST: String(vectors.upload_intent.envelope.account_id),
+        LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '200000000',
+        LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '100000000',
         LIVEPEER_CONTROL: {
             idFromName: (name: string) => ({ toString: () => name }),
             get: () => ({ fetch: async () => Response.json({ accepted: true }) }),
@@ -388,7 +390,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(created.status).toBe(201);
         expect(await created.json()).toMatchObject({
             schema: 'youtick.livepeer-upload-intent.v1',
-            chunk_bytes: 8 * 1024 * 1024,
+            chunk_bytes: 32 * 1024 * 1024,
             created: true,
         });
         const providerCalls = fetchMock.mock.calls.filter(([url]) => (
@@ -649,12 +651,26 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(await dailyLimit.json()).toEqual({ error: 'admission_denied' });
     });
 
-    it('auto-closes on monthly budget overflow and an ambiguous create older than 15 minutes', async () => {
+    it('fails closed without a production budget and auto-closes on USD budget overflow', async () => {
         const creator = String(vectors.upload_intent.envelope.account_id);
         let now = 1_785_600_000_000;
         vi.spyOn(Date, 'now').mockImplementation(() => now);
         const budgetState = createState();
-        const budgetControl = new LivepeerControl(budgetState.state, createEnv());
+        const missingBudget = new LivepeerControl(createState().state, createEnv({
+            LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '',
+            LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '',
+        }));
+        expect((await missingBudget.fetch(admissionRequest('reserve', {
+            jobId: 'job-no-budget',
+            generation: 1,
+            creator,
+            expectedSourceBytes: '1',
+        }))).status).toBe(503);
+
+        const budgetControl = new LivepeerControl(budgetState.state, createEnv({
+            LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '100000000',
+            LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '60000000',
+        }));
         const reserve = (control: LivepeerControl, jobId: string, expectedSourceBytes: string) => (
             control.fetch(admissionRequest('reserve', {
                 jobId,
@@ -673,7 +689,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(await overflow.json()).toEqual({ error: 'admission_closed' });
         expect(budgetState.values.get('admission:v1')).toMatchObject({
             status: 'AUTO_CLOSED',
-            closure: { code: 'monthly_source_bytes_exceeded' },
+            closure: { code: 'monthly_budget_exceeded' },
         });
 
         const ambiguousState = createState();

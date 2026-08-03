@@ -1,7 +1,15 @@
 import { Upload, type DetailedError } from 'tus-js-client';
-import { APP_CONFIG, FEATURE_FLAGS, MEDIA_UPLOAD_POLICY, NEAR_CONFIG } from '@/lib/constants';
+import { actions } from 'near-api-js';
+import {
+    APP_CONFIG,
+    FEATURE_FLAGS,
+    GAS_CONSTANTS,
+    MEDIA_UPLOAD_POLICY,
+    NEAR_CONFIG,
+} from '@/lib/constants';
 import { base64Encode, hexEncode } from '@/lib/crypto/codec';
 import { getActiveUploadSessionKey } from '@/lib/upload-session-manager';
+import type { WalletInstance } from '@/lib/types';
 
 const LIVEPEER_TUS_ORIGIN = 'https://origin.livepeer.com';
 const PROFILE_ID = 'paid-media-livepeer-v1';
@@ -16,6 +24,53 @@ export type LivepeerUploadIntent = {
     tus_endpoint: string;
     created: boolean;
 };
+
+export function livepeerUploadFeeUsdc(sourceBytes: number): string {
+    if (!Number.isSafeInteger(sourceBytes)
+        || sourceBytes < 1
+        || sourceBytes > MEDIA_UPLOAD_POLICY.paidSourceMaxBytes) {
+        throw new Error('source_limit_exceeded');
+    }
+    return ((BigInt(sourceBytes) * 3n + 9_999n) / 10_000n).toString();
+}
+
+export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
+    jobId: string;
+    title: string;
+    priceUsdc: string;
+    expectedSourceBytes: number;
+}): Promise<void> {
+    requireFeature();
+    const title = input.title.trim();
+    if (!title || new TextEncoder().encode(title).length > 200) throw new Error('invalid_title');
+    if (!/^[1-9][0-9]{0,19}$/.test(input.priceUsdc)
+        || BigInt(input.priceUsdc) < 2_000_000n) {
+        throw new Error('invalid_ticket_price');
+    }
+    const amount = livepeerUploadFeeUsdc(input.expectedSourceBytes);
+    await wallet.signAndSendTransaction({
+        receiverId: NEAR_CONFIG.usdcContractId,
+        actions: [actions.functionCall(
+            'ft_transfer_call',
+            {
+                receiver_id: NEAR_CONFIG.marketContractId,
+                amount,
+                memo: 'YouTick creator upload fee',
+                msg: JSON.stringify({
+                    action: 'create_paid_job',
+                    job_id: input.jobId,
+                    title,
+                    price_usdc: input.priceUsdc,
+                    expected_source_bytes: String(input.expectedSourceBytes),
+                    profile_id: PROFILE_ID,
+                    profile_config_sha256: PROFILE_CONFIG_SHA256,
+                }),
+            },
+            GAS_CONSTANTS.mediumGas,
+            1n,
+        )],
+    });
+}
 
 export async function requestLivepeerUploadIntent(input: {
     accountId: string;
@@ -96,6 +151,7 @@ export async function uploadLivepeerSource(
     const upload = new Upload(file, {
         uploadUrl: intent.tus_endpoint,
         chunkSize: MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes,
+        parallelUploads: 1,
         retryDelays: [0, 1000, 3000],
         storeFingerprintForResuming: false,
         onProgress: options?.onProgress,

@@ -3,6 +3,11 @@
   "profile_id": "paid-media-livepeer-v1",
   "limits": {
     "max_source_bytes": "20000000000",
+    "tus_chunk_bytes": "33554432",
+    "parallel_uploads": 1,
+    "min_ticket_price_usdc": "2000000",
+    "upload_fee_usdc_per_decimal_gb": "300000",
+    "monthly_operation_budget": "D6_REQUIRED_FAIL_CLOSED",
     "initial_browser_matrix": ["desktop-chrome", "desktop-edge"]
   },
   "operator": {
