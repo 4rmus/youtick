@@ -19,6 +19,8 @@ const expectedMarket = [
   "get_media_job",
   "get_platform_balance",
   "get_publication",
+  "get_publications",
+  "get_publications_count",
   "get_takedown",
   "get_usdc_contract_id",
   "has_entitlement",

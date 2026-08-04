@@ -15,6 +15,7 @@ export type LivepeerPublication = {
     generation: number;
     playback_id: string;
     availability: 'ACTIVE' | 'SALES_SUSPENDED' | 'TAKEDOWN';
+    published_at_ms: number;
 };
 
 export async function readLivepeerPublication(jobId: string): Promise<LivepeerPublication | null> {
@@ -81,10 +82,19 @@ export function parseLivepeerPublication(value: unknown, jobId: string): Livepee
         || Number(publication.generation) < 1
         || typeof publication.playback_id !== 'string'
         || !PLAYBACK_ID_PATTERN.test(publication.playback_id)
-        || !['ACTIVE', 'SALES_SUSPENDED', 'TAKEDOWN'].includes(String(publication.availability))) {
+        || !['ACTIVE', 'SALES_SUSPENDED', 'TAKEDOWN'].includes(String(publication.availability))
+        || !Number.isSafeInteger(publication.published_at_ms)
+        || Number(publication.published_at_ms) < 1) {
         throw new Error('invalid_livepeer_publication');
     }
     return publication as LivepeerPublication;
+}
+
+export function formatUsdc(value: string): string {
+    const amount = BigInt(value);
+    const whole = amount / 1_000_000n;
+    const fraction = (amount % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
+    return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
 function requireJobId(jobId: string): void {

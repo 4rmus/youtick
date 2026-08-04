@@ -38,6 +38,7 @@ const PUBLICATION = {
     generation: 1,
     playback_id: 'playback_001',
     availability: 'ACTIVE',
+    published_at_ms: 1_785_589_300_000,
 } satisfies LivepeerPublication;
 
 describe('Livepeer publication UI boundary', () => {

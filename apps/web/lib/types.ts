@@ -114,12 +114,14 @@ export interface NFTMetadata {
  * Video-specific metadata
  */
 export interface VideoMetadata {
-    encrypted_cid: string;
+    encrypted_cid?: string;
+    livepeer_job_id?: string;
     duration_seconds: number;
     event_date?: number;
     content_type: string;
     price?: string;
     price_usd?: number | null;
+    price_usdc?: string | null;
     access_mode?: 'paid' | 'free_collectible';
 }
 

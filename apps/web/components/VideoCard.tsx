@@ -7,6 +7,7 @@ import { CreatorAvatar } from '@/components/CreatorAvatar';
 import { useLanguage } from '@/components/providers/LanguageContext';
 import { Card } from '@/components/ui/card';
 import { getContentTypeLabel } from '@/lib/content-types';
+import { formatUsdc } from '@/lib/livepeer-publication';
 
 export interface VideoCardToken {
     token_id: string;
@@ -18,8 +19,10 @@ export interface VideoCardToken {
     };
     video_metadata?: {
         encrypted_cid?: string;
+        livepeer_job_id?: string;
         price?: string;
         price_usd?: number | null;
+        price_usdc?: string | null;
         content_type?: string;
     };
 }
@@ -50,18 +53,22 @@ export function VideoCard({
     accountId,
 }: VideoCardProps) {
     const { t } = useLanguage();
-    const isVideo = !!token.video_metadata?.encrypted_cid;
+    const livepeerJobId = token.video_metadata?.livepeer_job_id;
+    const isVideo = !!(token.video_metadata?.encrypted_cid || livepeerJobId);
     const priceYocto = token.video_metadata?.price;
     const priceNear = priceYocto ? parseFloat(priceYocto) / 1e24 : 0;
     const priceUsdCents = token.video_metadata?.price_usd;
-    const isFree = priceNear === 0;
+    const priceUsdc = token.video_metadata?.price_usdc;
+    const isFree = !livepeerJobId && priceNear === 0;
     const isCreator = accountId && token.owner_id === accountId;
     const contentTypeLabel = getContentTypeLabel(
         t.discover_page?.content_type as Record<string, string> | undefined,
         token.video_metadata?.content_type,
     );
 
-    const defaultLink = isVideo
+    const defaultLink = livepeerJobId
+        ? `/watch?job=${livepeerJobId}`
+        : isVideo
         ? `/watch?cid=${token.video_metadata?.encrypted_cid || ''}`
         : '/watch';
 
@@ -119,6 +126,8 @@ export function VideoCard({
                                 <span className="text-[9px] font-bold text-white tracking-wider uppercase">{t.discover_page.own}</span>
                             ) : isFree ? (
                                 <span className="text-[9px] font-bold text-white tracking-wider uppercase">{t.profile_page.free}</span>
+                            ) : priceUsdc ? (
+                                <span className="text-[9px] font-bold text-white tracking-wider">{formatUsdc(priceUsdc)} USDC</span>
                             ) : priceUsdCents ? (
                                 <span className="text-[9px] font-bold text-white tracking-wider">${(priceUsdCents / 100).toFixed(2)}</span>
                             ) : (

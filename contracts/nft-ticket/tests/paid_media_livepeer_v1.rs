@@ -353,6 +353,10 @@ fn exact_finalize_replay_is_idempotent_and_conflict_fails() {
         "playback_001",
     );
     assert_eq!(first, second);
+    assert_eq!(contract.get_publications_count(), 1);
+    assert_eq!(contract.get_publications(None, None), vec![first.clone()]);
+    assert!(contract.has_entitlement(account("creator.testnet"), "job-1".to_string()));
+    assert!(!contract.has_entitlement(account("stranger.testnet"), "job-1".to_string()));
 
     testing_env!(context("bridge.testnet").build());
     must_fail(|| {
@@ -364,6 +368,32 @@ fn exact_finalize_replay_is_idempotent_and_conflict_fails() {
             "different_playback",
         ));
     });
+}
+
+#[test]
+fn publication_index_is_paginated_in_publish_order() {
+    let mut contract = contract();
+    for index in 1..=3 {
+        let job_id = format!("job-{index}");
+        create_job(&mut contract, &job_id, "creator.testnet");
+        finalize(
+            &mut contract,
+            &job_id,
+            1,
+            "creator.testnet",
+            &format!("{index:064x}"),
+            &format!("playback_{index:03}"),
+        );
+    }
+
+    assert_eq!(contract.get_publications_count(), 3);
+    let page = contract.get_publications(Some(U64(1)), Some(2));
+    assert_eq!(
+        page.into_iter()
+            .map(|publication| publication.publication_id)
+            .collect::<Vec<_>>(),
+        vec!["job-2", "job-3"]
+    );
 }
 
 #[test]
