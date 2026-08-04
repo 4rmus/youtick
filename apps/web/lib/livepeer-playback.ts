@@ -1,5 +1,5 @@
 import { KeyPair } from 'near-api-js';
-import { getCachedSessionGrant } from '@/lib/access-grants';
+import { getCachedSessionGrant, isSessionGrantVisible } from '@/lib/access-grants';
 import { APP_CONFIG, FEATURE_FLAGS, NEAR_CONFIG } from '@/lib/constants';
 import { base64Encode } from '@/lib/crypto/codec';
 
@@ -88,6 +88,7 @@ export async function startLivepeerPlayback(
     onError?: (error: Error) => void,
 ): Promise<{ destroy: () => void }> {
     const controller = new AbortController();
+    await waitForPlayGrantVisibility(input);
     let access = await requestPlaybackTokenWithRetry(input, controller.signal);
     const { default: Hls } = await import('hls.js');
     if (!Hls.isSupported()) {
@@ -123,6 +124,20 @@ export async function startLivepeerPlayback(
             hls.destroy();
         },
     };
+}
+
+async function waitForPlayGrantVisibility(input: LivepeerPlaybackInput): Promise<void> {
+    const grant = getCachedSessionGrant(input.accountId, 'Play', input.jobId);
+    if (!grant) throw new Error('livepeer_play_grant_missing');
+    for (const delay of [0, 1_000, 2_000, 4_000]) {
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+        try {
+            if (await isSessionGrantVisible(grant)) return;
+        } catch {
+            // Retry while finality or the selected RPC endpoint catches up.
+        }
+    }
+    throw new Error('livepeer_play_grant_pending');
 }
 
 async function requestPlaybackTokenWithRetry(

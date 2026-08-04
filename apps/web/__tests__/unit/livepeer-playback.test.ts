@@ -18,10 +18,12 @@ const state = vi.hoisted(() => ({
         media?: HTMLVideoElement;
         destroyed: boolean;
     }>,
+    isSessionGrantVisible: vi.fn(),
 }));
 
 vi.mock('@/lib/access-grants', () => ({
     getCachedSessionGrant: () => state.grant,
+    isSessionGrantVisible: state.isSessionGrantVisible,
 }));
 
 vi.mock('@/lib/constants', () => ({
@@ -111,6 +113,7 @@ describe('Livepeer browser playback', () => {
     beforeEach(async () => {
         vi.restoreAllMocks();
         state.hlsInstances.length = 0;
+        state.isSessionGrantVisible.mockReset().mockResolvedValue(true);
         await installGrant();
     });
 
@@ -237,6 +240,42 @@ describe('Livepeer browser playback', () => {
         expect(secondRequest.envelope.session_public_key)
             .toBe(firstRequest.envelope.session_public_key);
         session.destroy();
+    });
+
+    it('waits for the Play grant to become final before requesting a token', async () => {
+        const nativeSetTimeout = globalThis.setTimeout;
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+            if (delay === 1_000) {
+                queueMicrotask(() => callback(...args));
+                return 1 as unknown as ReturnType<typeof setTimeout>;
+            }
+            return nativeSetTimeout(callback, delay, ...args);
+        });
+        state.isSessionGrantVisible
+            .mockResolvedValueOnce(false)
+            .mockResolvedValueOnce(true);
+        const fetchMock = vi.fn().mockResolvedValue(Response.json(tokenResponse()));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const session = await startLivepeerPlayback({} as HTMLVideoElement, INPUT);
+
+        expect(state.isSessionGrantVisible).toHaveBeenCalledTimes(2);
+        expect(fetchMock).toHaveBeenCalledOnce();
+        session.destroy();
+    });
+
+    it('does not request a token when the Play grant never becomes final', async () => {
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, _delay, ...args) => {
+            queueMicrotask(() => callback(...args));
+            return 1 as unknown as ReturnType<typeof setTimeout>;
+        });
+        state.isSessionGrantVisible.mockResolvedValue(false);
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+
+        await expect(startLivepeerPlayback({} as HTMLVideoElement, INPUT))
+            .rejects.toThrow('livepeer_play_grant_pending');
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('fails before bridge use when the Play grant binding is missing', async () => {

@@ -2135,9 +2135,11 @@ function parseWebhook(value: JsonObject): WebhookEvent {
 
 function webhookAsset(webhook: WebhookEvent): JsonObject | null {
     const asset = webhook.payload.asset;
-    return asset && typeof asset === 'object' && !Array.isArray(asset)
-        ? asset as JsonObject
-        : null;
+    if (!asset || typeof asset !== 'object' || Array.isArray(asset)) return null;
+    const snapshot = (asset as JsonObject).snapshot;
+    return snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+        ? snapshot as JsonObject
+        : asset as JsonObject;
 }
 
 function webhookRoute(webhook: WebhookEvent): { jobId: string; generation: number } | null {

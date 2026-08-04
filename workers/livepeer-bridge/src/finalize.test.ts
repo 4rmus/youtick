@@ -214,7 +214,10 @@ function internalWebhookRequest(value = webhook()): Request {
     });
 }
 
-async function signedWebhookRequest(value: ReturnType<typeof webhook>, secret = WEBHOOK_SECRET): Promise<Request> {
+async function signedWebhookRequest(
+    value: { timestamp: number } & Record<string, unknown>,
+    secret = WEBHOOK_SECRET,
+): Promise<Request> {
     const raw = JSON.stringify(value);
     const key = await crypto.subtle.importKey(
         'raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
@@ -388,6 +391,15 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             'job:testnet:paid-media-livepeer-v1.testnet:job-001:1',
         );
         expect(objectFetch).toHaveBeenCalledOnce();
+
+        const directValue = webhook();
+        const snapshotValue = {
+            ...directValue,
+            payload: { asset: { id: ASSET_ID, snapshot: directValue.payload.asset } },
+        };
+        const snapshot = await handler.fetch(await signedWebhookRequest(snapshotValue), env);
+        expect(snapshot.status).toBe(200);
+        expect(objectFetch).toHaveBeenCalledTimes(2);
     });
 
     it('accepts the previous webhook secret during the rotation overlap', async () => {
