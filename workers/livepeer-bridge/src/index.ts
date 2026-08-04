@@ -233,7 +233,7 @@ const CONTROL_MAX_FUTURE_MS = 5 * 60 * 1000;
 const WEBHOOK_TOLERANCE_MS = 5 * 60 * 1000;
 const PLAYBACK_MIN_TTL_SECONDS = 120;
 const PLAYBACK_MAX_TTL_SECONDS = 300;
-const FINALIZE_GAS = 50_000_000_000_000n;
+const FINALIZE_GAS = 15_000_000_000_000n;
 const JOB_KEY = 'job:v1';
 const RECONCILE_KEY = 'reconcile:v1';
 const RECONCILE_HEALTHY_INTERVAL_MS = 15 * 60 * 1000;
@@ -1559,7 +1559,7 @@ function parseControlEnvelope(value: unknown): ControlEnvelope {
         || typeof envelope.session_public_key !== 'string'
         || !SESSION_KEY_PATTERN.test(envelope.session_public_key)
         || typeof envelope.origin !== 'string'
-        || !isHttpsOrigin(envelope.origin)
+        || !isAllowedControlOrigin(envelope.origin)
         || typeof envelope.device_nonce !== 'string'
         || !NONCE_PATTERN.test(envelope.device_nonce)
         || typeof envelope.expires_at_ms !== 'string'
@@ -2979,6 +2979,16 @@ function isHttpsOrigin(value: string): boolean {
     try {
         const url = new URL(value);
         return url.protocol === 'https:' && url.origin === value;
+    } catch {
+        return false;
+    }
+}
+
+function isAllowedControlOrigin(value: string): boolean {
+    if (isHttpsOrigin(value)) return true;
+    try {
+        const url = new URL(value);
+        return url.protocol === 'http:' && url.hostname === 'localhost' && url.origin === value;
     } catch {
         return false;
     }

@@ -343,6 +343,22 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             .toBe('operator:testnet:ed25519:key:2');
     });
 
+    it('accepts a configured localhost control origin', async () => {
+        const fetchStub = vi.fn(async () => Response.json({ state: 'UPLOAD_READY' }));
+        const response = await forwardUploadIntent(await controlRequest({
+            envelope: { origin: 'http://localhost:3000' },
+        }), createEnv({
+            ALLOWED_ORIGINS: 'http://localhost:3000',
+            LIVEPEER_CONTROL: {
+                idFromName: () => ({ toString: () => 'object-id' }),
+                get: () => ({ fetch: fetchStub }),
+            } as unknown as DurableObjectNamespace,
+        }));
+
+        expect(response.status).toBe(200);
+        expect(fetchStub).toHaveBeenCalledOnce();
+    });
+
     it('accepts exact 20 GB and rejects one byte more before provider forwarding', async () => {
         const fetchStub = vi.fn(async () => Response.json({ state: 'UPLOAD_READY' }));
         const idFromName = vi.fn(() => ({ toString: () => 'object-id' }));

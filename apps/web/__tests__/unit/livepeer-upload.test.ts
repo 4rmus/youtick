@@ -152,6 +152,31 @@ describe('Livepeer browser upload', () => {
         expect(fetchMock).toHaveBeenCalledOnce();
     });
 
+    it('signs the exact localhost origin used by the configured local runtime', async () => {
+        const originalWindow = globalThis.window;
+        globalThis.window = { location: { origin: 'http://localhost:3000' } } as Window & typeof globalThis;
+        try {
+            const wallet = createWallet();
+            await provisionJobSession(wallet);
+            const fetchMock = vi.fn().mockResolvedValue(Response.json(INTENT, { status: 201 }));
+            vi.stubGlobal('fetch', fetchMock);
+
+            await requestLivepeerUploadIntent({
+                wallet: wallet as never,
+                accountId: 'creator.testnet',
+                jobId: 'job-001',
+                generation: 1,
+                expectedSourceBytes: SOURCE_BYTES,
+            });
+
+            const request = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+            expect(request.envelope.origin).toBe('http://localhost:3000');
+        } finally {
+            globalThis.window = originalWindow;
+            vi.unstubAllGlobals();
+        }
+    });
+
     it('accepts exact 20 GB and rejects one byte more before bridge use', async () => {
         const wallet = createWallet();
         await provisionJobSession(wallet, 'job-max', 20_000_000_000);

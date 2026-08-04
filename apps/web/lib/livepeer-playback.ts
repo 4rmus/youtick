@@ -88,7 +88,7 @@ export async function startLivepeerPlayback(
     onError?: (error: Error) => void,
 ): Promise<{ destroy: () => void }> {
     const controller = new AbortController();
-    let access = await requestLivepeerPlaybackToken(input, controller.signal);
+    let access = await requestPlaybackTokenWithRetry(input, controller.signal);
     const { default: Hls } = await import('hls.js');
     if (!Hls.isSupported()) {
         controller.abort();
@@ -123,6 +123,25 @@ export async function startLivepeerPlayback(
             hls.destroy();
         },
     };
+}
+
+async function requestPlaybackTokenWithRetry(
+    input: LivepeerPlaybackInput,
+    signal: AbortSignal,
+): Promise<LivepeerPlaybackToken> {
+    let lastError: Error | undefined;
+    for (const delay of [0, 1_000, 2_000, 4_000]) {
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+        try {
+            return await requestLivepeerPlaybackToken(input, signal);
+        } catch (error) {
+            lastError = error instanceof Error ? error : new Error('livepeer_playback_failed');
+            if (!['playback_denied', 'playback_authorization_unavailable'].includes(lastError.message)) {
+                throw lastError;
+            }
+        }
+    }
+    throw lastError || new Error('livepeer_playback_failed');
 }
 
 function parsePlaybackToken(value: Record<string, unknown>, playbackId: string): LivepeerPlaybackToken {
@@ -179,7 +198,10 @@ function browserOrigin(): string {
         : APP_CONFIG.publicAppUrl;
     try {
         const url = new URL(origin);
-        if (url.protocol !== 'https:') throw new Error('invalid_livepeer_origin');
+        if (url.protocol !== 'https:'
+            && !(url.protocol === 'http:' && url.hostname === 'localhost')) {
+            throw new Error('invalid_livepeer_origin');
+        }
         return url.origin;
     } catch {
         throw new Error('invalid_livepeer_origin');

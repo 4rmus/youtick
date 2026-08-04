@@ -109,6 +109,7 @@ async function sha256(value: string): Promise<string> {
 
 describe('Livepeer browser playback', () => {
     beforeEach(async () => {
+        vi.restoreAllMocks();
         state.hlsInstances.length = 0;
         await installGrant();
     });
@@ -143,6 +144,24 @@ describe('Livepeer browser playback', () => {
         });
         expect(sessionStorage.setItem).not.toHaveBeenCalled();
         expect(localStorage.setItem).not.toHaveBeenCalled();
+    });
+
+    it('signs the exact localhost origin used by the configured local runtime', async () => {
+        const originalWindow = globalThis.window;
+        globalThis.window = { location: { origin: 'http://localhost:3000' } } as Window & typeof globalThis;
+        if (state.grant) state.grant.originHash = await sha256('http://localhost:3000');
+        try {
+            const fetchMock = vi.fn().mockResolvedValue(Response.json(tokenResponse()));
+            vi.stubGlobal('fetch', fetchMock);
+
+            await requestLivepeerPlaybackToken(INPUT);
+
+            const request = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+            expect(request.envelope.origin).toBe('http://localhost:3000');
+        } finally {
+            globalThis.window = originalWindow;
+            vi.unstubAllGlobals();
+        }
     });
 
     it('adds Livepeer-Jwt to HLS requests and rotates it before expiry', async () => {
@@ -194,6 +213,30 @@ describe('Livepeer browser playback', () => {
         expect(setRequestHeader).toHaveBeenLastCalledWith('Livepeer-Jwt', 'second.token.signature');
         session.destroy();
         expect(hls.destroyed).toBe(true);
+    });
+
+    it('retries the same Play grant while finality catches up', async () => {
+        const nativeSetTimeout = globalThis.setTimeout;
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+            if (delay === 1_000) {
+                queueMicrotask(() => callback(...args));
+                return 1 as unknown as ReturnType<typeof setTimeout>;
+            }
+            return nativeSetTimeout(callback, delay, ...args);
+        });
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(Response.json({ error: 'playback_denied' }, { status: 403 }))
+            .mockResolvedValueOnce(Response.json(tokenResponse()));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const session = await startLivepeerPlayback({} as HTMLVideoElement, INPUT);
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        const firstRequest = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+        const secondRequest = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+        expect(secondRequest.envelope.session_public_key)
+            .toBe(firstRequest.envelope.session_public_key);
+        session.destroy();
     });
 
     it('fails before bridge use when the Play grant binding is missing', async () => {
