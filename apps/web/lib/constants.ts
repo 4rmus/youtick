@@ -73,6 +73,9 @@ export const NEAR_CONFIG = {
 export const FEATURE_FLAGS = {
     /** Livepeer paid-media v1. Keep false until every mandatory provider gate passes. */
     enablePaidMediaLivepeerV1: process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 === 'true',
+    /** Native NEAR creator fee. Keep false until the rate source is separately approved. */
+    enableLivepeerNearCreatorFee:
+        process.env.NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE === 'true',
     /** Paid-media v4 private R2 ingest. Keep false until provider canaries pass. */
     enablePaidMediaV4Ingest: process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_V4_INGEST === 'true',
     /** Cross-chain checkout is experimental and must be explicitly enabled. */

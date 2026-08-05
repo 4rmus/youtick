@@ -13,26 +13,32 @@ const access = JSON.parse(fs.readFileSync(accessPath, "utf8"));
 const expectedMarket = [
   "contract_source_metadata",
   "create_paid_job",
+  "create_paid_job_near",
   "finalize_livepeer_publication",
   "ft_on_transfer",
   "get_creator_balance",
   "get_media_job",
   "get_platform_balance",
+  "get_platform_near_balance",
   "get_publication",
   "get_publications",
   "get_publications_count",
+  "get_quote_key_version",
   "get_takedown",
   "get_usdc_contract_id",
   "has_entitlement",
-  "migrate",
   "new",
   "on_creator_withdraw",
   "on_platform_withdraw",
+  "on_platform_near_withdraw",
+  "replace_upload_key",
   "restart_paid_job",
+  "rotate_quote_public_key",
   "suspend_livepeer_sales",
   "takedown_livepeer_publication",
   "withdraw_creator_balance",
   "withdraw_platform_balance",
+  "withdraw_platform_near",
 ];
 
 const expectedAccess = [
@@ -81,6 +87,12 @@ for (const field of [
   "provider_source_fingerprint",
   "ready_at_ms",
   "availability",
+  "fee_asset",
+  "fee_amount",
+  "fee_usd_micro",
+  "upload_public_key",
+  "upload_key_expires_at_ms",
+  "fee_quote_hash",
 ]) {
   if (!marketAbi.includes(`\"${field}\"`)) {
     throw new Error(`market ABI is missing Livepeer field: ${field}`);

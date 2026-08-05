@@ -45,21 +45,25 @@ PATCH requests to one resource. Pause, resume, reconciliation and a same-job
 retry do not charge again. A new job is a new charge. No automatic refund is
 defined.
 
-Creator upload authorization uses one finite-allowance FunctionCall key per
-job. Job creation itself is an exact USDC `ft_transfer_call`; it records the
-on-chain source byte count and consumes the calculated upload fee atomically.
-The disabled Worker requires the key to target the exact market and only
-`create_paid_job`. The disabled web client now prepares that single-job key in
-the same wallet approval group as USDC job creation, keeps its secret only in
-job-scoped `sessionStorage`, and requires `DeleteKey` after an accepted upload
-intent. Failed removal keeps the local key available for retry. Mainnet
-provisioning still fails closed because its allowance budget is unset. A
-default-off upload and job-deep-link watch caller exists locally, but no runtime
-flag is enabled. The
-signed bridge request expires within five minutes and a reused nonce fails. The
-2026-08-01 testnet measurement locks
-`5 TGas` and `0.008 NEAR` allowance for the bounded test profile; production
-must re-measure instead of copying that value.
+Creator upload authorization v2 uses one job-bound application Ed25519 key.
+The browser creates it before payment, stores its secret only under the exact
+account and job in `sessionStorage`, and sends only the public key in the one
+USDC or native-NEAR payment transaction. The contract records payment and key
+atomically. The Worker verifies the signed control request against the exact
+final on-chain job key before provider admission. Normal upload never calls
+`AddKey`, `DeleteKey` or `signAndSendTransactions`; an accepted intent deletes
+only the local secret. The previous access-key control v1 vector remains as
+`HISTORICAL_NOT_ACCEPTED` evidence.
+
+Native NEAR payment uses `youtick.creator-fee-quote.v1`. The signed quote binds
+network, fresh contract ID, creator, job, bytes, USD fee, NEAR/USD rate, exact
+yoctoNEAR fee, source identity, timestamps and quote-key version. The contract
+uses checked integer conversion and stores the quote SHA-256. The Worker reads
+the Outlayer `wrap.near` cached view through the configured NEAR RPC and signs
+the resulting job-bound quote only when the returned price is non-null and the
+oracle's recency window is at most 60 seconds. Pyth Core on NEAR and
+client/CEX/alternate API fallbacks are not settlement sources; empty or stale
+oracle data disables only the native NEAR rail.
 
 The bridge operator uses a separate finite-allowance FunctionCall key for the
 exact market and only `finalize_livepeer_publication` and
@@ -104,10 +108,10 @@ Unicode code point, arrays kept in order, no insignificant whitespace. The
 golden vector is the executable interoperability example.
 
 The browser sends the base64 Ed25519 signature of the canonical message in
-`X-Youtick-Signature`. For upload intents, the bridge also proves that
-`session_public_key` belongs to `account_id` at the same final NEAR block used
-to read the media job, is a finite-allowance FunctionCall key for the exact
-market and `create_paid_job`, and atomically rejects a reused `device_nonce`.
+`X-Youtick-Signature`. For upload intents, the bridge proves that
+`session_public_key` exactly matches the unexpired `upload_public_key` stored on
+the media job at the same final NEAR block and atomically rejects a reused
+`device_nonce`.
 
 The initial routes are `POST /v1/upload-intents` and
 `POST /v1/playback-tokens`. Upload binds `job:<job_id>:<generation>`; playback

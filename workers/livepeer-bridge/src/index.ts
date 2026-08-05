@@ -9,6 +9,7 @@ import {
 
 export interface Env {
     LIVEPEER_BRIDGE_ENABLED?: string;
+    LIVEPEER_NEAR_CREATOR_FEE_ENABLED?: string;
     LIVEPEER_API_KEY?: string;
     LIVEPEER_PROJECT_ID?: string;
     LIVEPEER_API_TOKEN_NAME?: string;
@@ -31,6 +32,8 @@ export interface Env {
     NEAR_OPERATOR_ACCOUNT_ID?: string;
     NEAR_OPERATOR_PRIVATE_KEY?: string;
     NEAR_OPERATOR_KEY_EPOCH?: string;
+    CREATOR_FEE_QUOTE_PRIVATE_KEY?: string;
+    CREATOR_FEE_QUOTE_KEY_VERSION?: string;
     LIVEPEER_CONTROL?: DurableObjectNamespace;
 }
 
@@ -53,7 +56,7 @@ type PlaybackTokenBody = {
 };
 type ControlEnvelope = {
     domain: 'youtick.paid-media-livepeer-v1.control';
-    version: '1';
+    version: '2';
     method: 'POST';
     route: '/v1/upload-intents' | '/v1/playback-tokens';
     network: 'testnet' | 'mainnet';
@@ -74,6 +77,11 @@ type PlaybackTokenRequest = {
     body: PlaybackTokenBody;
     envelope: ControlEnvelope;
 };
+type CreatorFeeQuoteRequest = {
+    creator_id: string;
+    job_id: string;
+    expected_source_bytes: string;
+};
 type OnChainJob = {
     job_id?: unknown;
     creator_id?: unknown;
@@ -82,6 +90,8 @@ type OnChainJob = {
     expected_source_bytes?: unknown;
     generation?: unknown;
     status?: unknown;
+    upload_public_key?: unknown;
+    upload_key_expires_at_ms?: unknown;
 };
 type JobRecord = {
     schema: 'youtick.livepeer-control-job.v1';
@@ -219,6 +229,13 @@ type AdmissionReopenRecord = AdmissionReopenInput & {
 const PUBLIC_CONTROL_REQUESTS_IMPLEMENTED = true;
 const MAX_CONTROL_BODY_BYTES = 64 * 1024;
 const MAX_SOURCE_BYTES = 20_000_000_000n;
+const CREATOR_FEE_RATE_SOURCE = 'outlayer-price-oracle-wrap-near-v1';
+const OUTLAYER_NEAR_ASSET_ID = 'wrap.near';
+const CREATOR_FEE_MAX_SOURCE_AGE_MS = 60_000;
+const CREATOR_FEE_QUOTE_LIFETIME_MS = 120_000;
+const CREATOR_FEE_RATE_LIMIT = 5;
+const CREATOR_FEE_RATE_WINDOW_MS = 60_000;
+const YOCTO_NEAR = 10n ** 24n;
 const LIVEPEER_TUS_CHUNK_BYTES = 32 * 1024 * 1024;
 const LIVEPEER_API_BASE = 'https://livepeer.studio/api';
 const LIVEPEER_TUS_VERSION = '1.0.0';
@@ -228,7 +245,6 @@ const LIVEPEER_VTT_SOURCE_TYPE = 'text/vtt';
 const MAX_PROVIDER_PLAYBACK_OUTPUTS = 16;
 const MAX_THUMBNAIL_REFERENCE_PROBES = 32;
 const PROFILE_CONFIG_SHA256 = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
-const SESSION_METHOD = 'create_paid_job';
 const CONTROL_MAX_FUTURE_MS = 5 * 60 * 1000;
 const WEBHOOK_TOLERANCE_MS = 5 * 60 * 1000;
 const PLAYBACK_MIN_TTL_SECONDS = 120;
@@ -279,6 +295,7 @@ const SENSITIVE_LOG_KEY = /authorization|secret|token|tus|upload.*url|signed.*tr
 const SAFE_ERROR_CODES = new Set([
     'control_body_too_large',
     'control_request_expired',
+    'creator_fee_quote_rate_limited',
     'admission_closed',
     'admission_denied',
     'admission_reopen_conflict',
@@ -288,6 +305,7 @@ const SAFE_ERROR_CODES = new Set([
     'deployment_binding_mismatch',
     'invalid_control_envelope',
     'invalid_control_request',
+    'invalid_creator_fee_quote_request',
     'invalid_json',
     'invalid_finalize_request',
     'invalid_admission_reopen',
@@ -314,6 +332,9 @@ const SAFE_ERROR_CODES = new Set([
     'provider_playback_mismatch',
     'provider_state_invalid',
     'provider_unavailable',
+    'rate_source_invalid',
+    'rate_source_stale',
+    'rate_source_unavailable',
     'playback_authorization_unavailable',
     'playback_denied',
     'protocol_binding_mismatch',
@@ -346,7 +367,8 @@ export default {
         }
 
         if (request.method === 'OPTIONS'
-            && ['/v1/upload-intents', '/v1/playback-tokens'].includes(url.pathname)) {
+            && ['/v1/upload-intents', '/v1/playback-tokens', '/v1/creator-fee-quotes/near']
+                .includes(url.pathname)) {
             const origin = request.headers.get('Origin') || '';
             if (!allowedOrigins(env).has(origin)) return json({ error: 'origin_denied' }, 403);
             return withCors(new Response(null, { status: 204 }), origin);
@@ -394,6 +416,18 @@ export default {
                 return withCors(json({ error: 'runtime_not_configured' }, 503), corsOrigin);
             }
             return forwardPlaybackToken(request, env);
+        }
+
+        if (request.method === 'POST' && url.pathname === '/v1/creator-fee-quotes/near') {
+            const origin = request.headers.get('Origin') || '';
+            const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
+            if (env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
+                return withCors(json({ error: 'control_plane_disabled' }, 503), corsOrigin);
+            }
+            if (!env.LIVEPEER_CONTROL || !validCreatorFeeQuoteConfig(env)) {
+                return withCors(json({ error: 'runtime_not_configured' }, 503), corsOrigin);
+            }
+            return forwardCreatorFeeQuote(request, env);
         }
 
         return json({ error: 'not_found', endpoints: ['/__health'] }, 404);
@@ -458,6 +492,9 @@ export class LivepeerControl {
             if (request.method === 'POST' && url.pathname === '/internal/admission/mark') {
                 return await markAdmission(this.state, await readJsonObject(request));
             }
+            if (request.method === 'POST' && url.pathname === '/internal/creator-fee-quote') {
+                return await issueCreatorFeeQuote(this.state, this.env, request);
+            }
             if (request.method === 'POST' && url.pathname === '/internal/admission/reopen') {
                 return await reopenAdmission(this.state, await readJsonObject(request));
             }
@@ -472,9 +509,8 @@ export class LivepeerControl {
     private async reserveUploadIntent(request: Request): Promise<Response> {
         const input = await parseUploadIntentRequest(request, this.env);
         await verifyControlSignature(request, input.envelope);
-        const { job: chainJob, blockHash } = await readFinalMediaJob(this.env, input.body.job_id);
+        const { job: chainJob } = await readFinalMediaJob(this.env, input.body.job_id);
         requireExactChainJob(input, chainJob);
-        await requireFinalAccessKey(this.env, input.envelope, blockHash);
 
         const candidate = jobRecord(input, this.env);
         if (!await this.state.storage.get<JobRecord>(JOB_KEY)) {
@@ -1281,6 +1317,232 @@ export async function forwardUploadIntent(request: Request, env: Env): Promise<R
     }
 }
 
+export async function forwardCreatorFeeQuote(request: Request, env: Env): Promise<Response> {
+    const origin = request.headers.get('Origin') || '';
+    const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
+    try {
+        if (!allowedOrigins(env).has(origin)) throw new Error('origin_denied');
+        if (!env.LIVEPEER_CONTROL || !validCreatorFeeQuoteConfig(env)) {
+            throw new Error('runtime_not_configured');
+        }
+        const input = parseCreatorFeeQuoteRequest(await readJsonObject(request.clone()));
+        const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
+            `creator-fee-quote:${env.NEAR_NETWORK}:${env.MARKET_CONTRACT_ID}:${input.creator_id}`,
+        ));
+        return withCors(await object.fetch(new Request('https://object/internal/creator-fee-quote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(input),
+        })), corsOrigin);
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('creator_fee_quote_failed', { code }));
+        return withCors(json({ error: code }, errorStatus(code)), corsOrigin);
+    }
+}
+
+async function issueCreatorFeeQuote(
+    state: DurableObjectState,
+    env: Env,
+    request: Request,
+): Promise<Response> {
+    try {
+        const input = parseCreatorFeeQuoteRequest(await readJsonObject(request));
+        await enforceCreatorFeeQuoteRateLimit(state);
+        const now = Date.now();
+        const rate = await readOutlayerNearUsd(env, now);
+        const sourceBytes = BigInt(input.expected_source_bytes);
+        const feeUsdMicro = (sourceBytes * 3n + 9_999n) / 10_000n;
+        const feeNearYocto = (feeUsdMicro * YOCTO_NEAR + rate.nearUsdMicro - 1n)
+            / rate.nearUsdMicro;
+        const quoteKeyVersion = Number(env.CREATOR_FEE_QUOTE_KEY_VERSION);
+        const quoteWithoutId = {
+            domain: 'youtick.creator-fee-quote',
+            version: '1',
+            network: env.NEAR_NETWORK!,
+            contract_id: env.MARKET_CONTRACT_ID!,
+            creator_id: input.creator_id,
+            job_id: input.job_id,
+            expected_source_bytes: input.expected_source_bytes,
+            fee_usd_micro: feeUsdMicro.toString(),
+            near_usd_micro: rate.nearUsdMicro.toString(),
+            fee_near_yocto: feeNearYocto.toString(),
+            rate_source: CREATOR_FEE_RATE_SOURCE,
+            rate_timestamp_ms: String(rate.timestampMs),
+            expires_at_ms: String(rate.timestampMs + CREATOR_FEE_QUOTE_LIFETIME_MS),
+            quote_key_version: quoteKeyVersion,
+        };
+        const canonicalMessage = canonicalCreatorFeeQuoteMessage(quoteWithoutId);
+        const quoteId = await sha256Hex(canonicalMessage);
+        const privateKey = await importCreatorFeeQuotePrivateKey(env);
+        const signature = new Uint8Array(await crypto.subtle.sign(
+            'Ed25519',
+            privateKey,
+            new TextEncoder().encode(canonicalMessage),
+        ));
+        return json({
+            quote: { ...quoteWithoutId, quote_id: quoteId },
+            signature: bytesToBase64(signature),
+            public_key_version: quoteKeyVersion,
+        });
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('creator_fee_quote_issue_failed', { code }));
+        return json({ error: code }, errorStatus(code));
+    }
+}
+
+function parseCreatorFeeQuoteRequest(value: JsonObject): CreatorFeeQuoteRequest {
+    requireExactKeys(value, [
+        'creator_id', 'job_id', 'expected_source_bytes',
+    ], 'invalid_creator_fee_quote_request');
+    if (typeof value.creator_id !== 'string'
+        || !ACCOUNT_ID_PATTERN.test(value.creator_id)
+        || typeof value.job_id !== 'string'
+        || !JOB_ID_PATTERN.test(value.job_id)
+        || typeof value.expected_source_bytes !== 'string'
+        || !/^[1-9][0-9]{0,19}$/.test(value.expected_source_bytes)
+        || BigInt(value.expected_source_bytes) > MAX_SOURCE_BYTES) {
+        throw new Error('invalid_creator_fee_quote_request');
+    }
+    return value as CreatorFeeQuoteRequest;
+}
+
+async function enforceCreatorFeeQuoteRateLimit(state: DurableObjectState): Promise<void> {
+    const now = Date.now();
+    await state.storage.transaction(async (transaction) => {
+        const current = await transaction.get<{ windowStartedAtMs: number; count: number }>('quote-rate:v1');
+        const next = !current || now - current.windowStartedAtMs >= CREATOR_FEE_RATE_WINDOW_MS
+            ? { windowStartedAtMs: now, count: 1 }
+            : { ...current, count: current.count + 1 };
+        if (next.count > CREATOR_FEE_RATE_LIMIT) throw new Error('creator_fee_quote_rate_limited');
+        await transaction.put('quote-rate:v1', next);
+    });
+}
+
+async function readOutlayerNearUsd(
+    env: Env,
+    now: number,
+): Promise<{ nearUsdMicro: bigint; timestampMs: number }> {
+    let response: Response;
+    let payload: { result?: unknown; error?: unknown };
+    try {
+        response = await fetch(env.NEAR_RPC_URL!, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 'creator-fee-near-usd',
+                method: 'query',
+                params: {
+                    request_type: 'call_function',
+                    finality: 'final',
+                    account_id: env.NEAR_NETWORK === 'mainnet'
+                        ? 'price-oracle.near'
+                        : 'price-oracle.testnet',
+                    method_name: 'get_price_data',
+                    args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify({
+                        asset_ids: [OUTLAYER_NEAR_ASSET_ID],
+                    }))),
+                },
+            }),
+            signal: AbortSignal.timeout(2_500),
+        });
+        payload = await response.json() as typeof payload;
+    } catch {
+        throw new Error('rate_source_unavailable');
+    }
+    if (!response.ok || payload.error || !payload.result) {
+        throw new Error('rate_source_unavailable');
+    }
+    const rpcResult = requireObject(payload.result, 'rate_source_invalid');
+    if (!Array.isArray(rpcResult.result)
+        || rpcResult.result.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
+        throw new Error('rate_source_invalid');
+    }
+    let root: JsonObject;
+    try {
+        root = requireObject(JSON.parse(new TextDecoder().decode(
+            Uint8Array.from(rpcResult.result as number[]),
+        )), 'rate_source_invalid');
+    } catch {
+        throw new Error('rate_source_invalid');
+    }
+    if (typeof root.timestamp !== 'string'
+        || !/^[1-9][0-9]{0,19}$/.test(root.timestamp)
+        || !Number.isInteger(root.recency_duration_sec)
+        || (root.recency_duration_sec as number) < 1
+        || !Array.isArray(root.prices)
+        || root.prices.length !== 1) {
+        throw new Error('rate_source_invalid');
+    }
+    if ((root.recency_duration_sec as number) * 1_000 > CREATOR_FEE_MAX_SOURCE_AGE_MS) {
+        throw new Error('rate_source_stale');
+    }
+    const entry = requireObject(root.prices[0], 'rate_source_invalid');
+    if (entry.asset_id !== OUTLAYER_NEAR_ASSET_ID) throw new Error('rate_source_invalid');
+    if (entry.price === null) throw new Error('rate_source_unavailable');
+    const price = requireObject(entry.price, 'rate_source_invalid');
+    if (typeof price.multiplier !== 'string'
+        || !/^[1-9][0-9]{0,38}$/.test(price.multiplier)
+        || !Number.isInteger(price.decimals)
+        || (price.decimals as number) < 0
+        || (price.decimals as number) > 30) {
+        throw new Error('rate_source_invalid');
+    }
+    const timestampMsBig = BigInt(root.timestamp) / 1_000_000n;
+    if (timestampMsBig > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('rate_source_invalid');
+    const timestampMs = Number(timestampMsBig);
+    if (timestampMs > now) throw new Error('rate_source_invalid');
+    if (now - timestampMs > CREATOR_FEE_MAX_SOURCE_AGE_MS) {
+        throw new Error('rate_source_stale');
+    }
+    const nearUsdMicro = decimalPriceToMicro(
+        BigInt(price.multiplier),
+        price.decimals as number,
+    );
+    if (nearUsdMicro < 1n) throw new Error('rate_source_invalid');
+    return { nearUsdMicro, timestampMs };
+}
+
+function decimalPriceToMicro(multiplier: bigint, decimals: number): bigint {
+    if (decimals <= 6) return multiplier * (10n ** BigInt(6 - decimals));
+    return multiplier / (10n ** BigInt(decimals - 6));
+}
+
+function canonicalCreatorFeeQuoteMessage(quote: Record<string, string | number>): string {
+    return [
+        quote.domain,
+        quote.version,
+        quote.network,
+        quote.contract_id,
+        quote.creator_id,
+        quote.job_id,
+        quote.expected_source_bytes,
+        quote.fee_usd_micro,
+        quote.near_usd_micro,
+        quote.fee_near_yocto,
+        quote.rate_source,
+        quote.rate_timestamp_ms,
+        quote.expires_at_ms,
+        quote.quote_key_version,
+    ].join('\n');
+}
+
+async function importCreatorFeeQuotePrivateKey(env: Env): Promise<CryptoKey> {
+    try {
+        return await crypto.subtle.importKey(
+            'pkcs8',
+            base64Decode(env.CREATOR_FEE_QUOTE_PRIVATE_KEY!),
+            'Ed25519',
+            false,
+            ['sign'],
+        );
+    } catch {
+        throw new Error('runtime_not_configured');
+    }
+}
+
 export async function forwardPlaybackToken(request: Request, env: Env): Promise<Response> {
     const origin = request.headers.get('Origin') || '';
     const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
@@ -1567,7 +1829,7 @@ function parseControlEnvelope(value: unknown): ControlEnvelope {
         'body_sha256',
     ], 'invalid_control_envelope');
     if (envelope.domain !== 'youtick.paid-media-livepeer-v1.control'
-        || envelope.version !== '1'
+        || envelope.version !== '2'
         || envelope.method !== 'POST'
         || !['/v1/upload-intents', '/v1/playback-tokens'].includes(String(envelope.route))
         || !['testnet', 'mainnet'].includes(String(envelope.network))
@@ -1635,48 +1897,6 @@ async function readFinalMediaJob(env: Env, jobId: string): Promise<FinalJob> {
     }
     if (!job || typeof job !== 'object' || Array.isArray(job)) throw new Error('near_job_not_found');
     return { job: job as OnChainJob, blockHash: payload.result.block_hash };
-}
-
-async function requireFinalAccessKey(
-    env: Env,
-    envelope: ControlEnvelope,
-    blockHash: string,
-): Promise<void> {
-    let response: Response;
-    let payload: { result?: unknown; error?: unknown };
-    try {
-        response = await fetch(env.NEAR_RPC_URL!, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                jsonrpc: '2.0',
-                id: 'paid-media-livepeer-v1-device-key',
-                method: 'query',
-                params: {
-                    request_type: 'view_access_key',
-                    block_id: blockHash,
-                    account_id: envelope.account_id,
-                    public_key: envelope.session_public_key,
-                },
-            }),
-            signal: AbortSignal.timeout(2_500),
-        });
-        payload = await response.json() as typeof payload;
-    } catch {
-        throw new Error('near_job_query_failed');
-    }
-    if (!response.ok || payload.error || !payload.result) throw new Error('device_key_not_authorized');
-    const result = requireObject(payload.result, 'device_key_not_authorized');
-    const permission = requireObject(result.permission, 'device_key_not_authorized');
-    const functionCall = requireObject(permission.FunctionCall, 'device_key_not_authorized');
-    if (functionCall.receiver_id !== envelope.contract_id
-        || !Array.isArray(functionCall.method_names)
-        || functionCall.method_names.length !== 1
-        || functionCall.method_names[0] !== SESSION_METHOD
-        || typeof functionCall.allowance !== 'string'
-        || !/^[1-9][0-9]*$/.test(functionCall.allowance)) {
-        throw new Error('device_key_not_authorized');
-    }
 }
 
 async function verifyControlSignature(request: Request, envelope: ControlEnvelope): Promise<void> {
@@ -1832,7 +2052,11 @@ function requireExactChainJob(input: UploadIntentRequest, job: OnChainJob): void
         || job.profile_config_sha256 !== input.body.profile_config_sha256
         || job.expected_source_bytes !== input.body.expected_source_bytes
         || job.generation !== input.body.generation
-        || job.status !== 'Authorized') {
+        || job.status !== 'Authorized'
+        || job.upload_public_key !== input.envelope.session_public_key
+        || typeof job.upload_key_expires_at_ms !== 'string'
+        || !/^[1-9][0-9]{0,15}$/.test(job.upload_key_expires_at_ms)
+        || BigInt(job.upload_key_expires_at_ms) <= BigInt(Date.now())) {
         throw new Error('on_chain_job_mismatch');
     }
 }
@@ -2918,6 +3142,17 @@ function validPlaybackConfig(env: Env): boolean {
         && isHttpsOrigin(env.LIVEPEER_JWT_ISSUER);
 }
 
+function validCreatorFeeQuoteConfig(env: Env): boolean {
+    return env.LIVEPEER_NEAR_CREATOR_FEE_ENABLED === 'true'
+        && ['testnet', 'mainnet'].includes(env.NEAR_NETWORK || '')
+        && isHttpsUrl(env.NEAR_RPC_URL)
+        && ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '')
+        && typeof env.CREATOR_FEE_QUOTE_PRIVATE_KEY === 'string'
+        && env.CREATOR_FEE_QUOTE_PRIVATE_KEY.length >= 64
+        && /^[1-9][0-9]{0,9}$/.test(env.CREATOR_FEE_QUOTE_KEY_VERSION || '')
+        && Number(env.CREATOR_FEE_QUOTE_KEY_VERSION) <= 0xffff_ffff;
+}
+
 function validOperatorConfig(env: Env): boolean {
     const structurallyValid = isHttpsUrl(env.NEAR_RPC_URL)
         && ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '')
@@ -3051,6 +3286,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 function errorStatus(code: string): number {
     if (code === 'internal_error') return 500;
+    if (code === 'creator_fee_quote_rate_limited') return 429;
     if (code === 'origin_denied'
         || code === 'device_key_not_authorized'
         || code === 'invalid_webhook_signature'
@@ -3074,6 +3310,9 @@ function errorStatus(code: string): number {
         || code === 'admission_closed'
         || code === 'runtime_not_configured'
         || code === 'playback_authorization_unavailable'
+        || code === 'rate_source_invalid'
+        || code === 'rate_source_stale'
+        || code === 'rate_source_unavailable'
         || code === 'provider_unavailable'
         || code === 'provider_admission_closed'
         || code === 'provider_create_ambiguous') return 503;

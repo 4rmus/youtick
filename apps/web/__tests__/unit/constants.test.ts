@@ -13,6 +13,7 @@ const ENV_KEYS = [
     'NEXT_PUBLIC_ENABLE_MEDIA_DELIVERY_WORKER',
     'NEXT_PUBLIC_MEDIA_DELIVERY_URL',
     'NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1',
+    'NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE',
     'NEXT_PUBLIC_LIVEPEER_BRIDGE_URL',
 ] as const;
 
@@ -101,8 +102,17 @@ describe('FEATURE_FLAGS', () => {
         const { APP_CONFIG, FEATURE_FLAGS, MEDIA_UPLOAD_POLICY } = await import('@/lib/constants');
 
         expect(FEATURE_FLAGS.enablePaidMediaLivepeerV1).toBe(false);
+        expect(FEATURE_FLAGS.enableLivepeerNearCreatorFee).toBe(false);
         expect(APP_CONFIG.livepeerBridgeUrl).toBe('');
         expect(MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes).toBe(32 * 1024 * 1024);
+    });
+
+    it('enables the NEAR creator-fee rail only when explicitly configured', async () => {
+        process.env.NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE = 'true';
+
+        const { FEATURE_FLAGS } = await import('@/lib/constants');
+
+        expect(FEATURE_FLAGS.enableLivepeerNearCreatorFee).toBe(true);
     });
 
     it('enables cross-chain checkout only when explicitly set to true', async () => {

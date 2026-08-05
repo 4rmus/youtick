@@ -74,6 +74,9 @@ async fn init() -> anyhow::Result<(Contract, Account, Account, Contract)> {
             "platform_account_id": platform.id(),
             "bridge_account_id": bridge.id(),
             "takedown_authority_id": governance.id(),
+            "quote_public_key": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
+            "quote_key_version": 1,
+            "near_operational_reserve": "1000000000000000000000000",
         }))
         .transact()
         .await?
@@ -92,6 +95,8 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
         "expected_source_bytes": "1000000",
         "profile_id": "paid-media-livepeer-v1",
         "profile_config_sha256": PROFILE_HASH,
+        "upload_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
+        "upload_key_expires_at_ms": "9999999999999",
     })
     .to_string();
     creator
@@ -142,6 +147,8 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
                 "expected_source_bytes": "1000000",
                 "profile_id": "paid-media-livepeer-v1",
                 "profile_config_sha256": PROFILE_HASH,
+                "upload_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
+                "upload_key_expires_at_ms": "9999999999999",
             })
             .to_string(),
         }))

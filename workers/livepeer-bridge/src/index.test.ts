@@ -21,6 +21,8 @@ const TUS_ENDPOINT = 'https://origin.livepeer.com/api/asset/upload/tus?token=sec
 const TUS_UPLOAD_URL = 'https://origin.livepeer.com/api/asset/upload/tus/upload-123';
 let requestKey: CryptoKeyPair;
 let requestPublicKey: string;
+let quoteKey: CryptoKeyPair;
+let quotePrivateKey: string;
 let nonceCounter = 0;
 
 type TestState = {
@@ -77,6 +79,58 @@ function createEnv(overrides?: Partial<Env>): Env {
     };
 }
 
+function quoteRequest(body?: Record<string, unknown>): Request {
+    return new Request('https://bridge.youtick.net/v1/creator-fee-quotes/near', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+        body: JSON.stringify({
+            creator_id: 'creator.testnet',
+            job_id: 'job-near',
+            expected_source_bytes: '1000000000',
+            ...body,
+        }),
+    });
+}
+
+function quoteRuntime(overrides?: Partial<Env>): { env: Env; state: TestState } {
+    const state = createState();
+    let control: LivepeerControl;
+    const env = createEnv({
+        LIVEPEER_BRIDGE_ENABLED: 'true',
+        LIVEPEER_NEAR_CREATOR_FEE_ENABLED: 'true',
+        CREATOR_FEE_QUOTE_PRIVATE_KEY: quotePrivateKey,
+        CREATOR_FEE_QUOTE_KEY_VERSION: '1',
+        LIVEPEER_CONTROL: {
+            idFromName: (name: string) => ({ toString: () => name }),
+            get: () => ({ fetch: (request: Request) => control.fetch(request) }),
+        } as unknown as DurableObjectNamespace,
+        ...overrides,
+    });
+    control = new LivepeerControl(state.state, env);
+    return { env, state };
+}
+
+function oracleRpcResponse(
+    price: unknown = { multiplier: '500000099', decimals: 8 },
+    timestamp = '1785589300000000000',
+    assetId = 'wrap.near',
+    recencyDurationSec = 60,
+): Response {
+    const value = JSON.stringify({
+        timestamp,
+        recency_duration_sec: recencyDurationSec,
+        prices: [{ asset_id: assetId, price }],
+    });
+    return Response.json({
+        result: {
+            block_hash: BLOCK_HASH,
+            block_height: 1,
+            logs: [],
+            result: [...new TextEncoder().encode(value)],
+        },
+    });
+}
+
 async function controlRequest(overrides?: {
     body?: Record<string, unknown>;
     envelope?: Record<string, unknown>;
@@ -113,7 +167,7 @@ async function controlRequest(overrides?: {
     });
 }
 
-function rpcResponse(): Response {
+function rpcResponse(uploadPublicKey = requestPublicKey, expiresAtMs = String(Date.now() + 600_000)): Response {
     const body = vectors.upload_intent.body;
     const job = {
         job_id: body.job_id,
@@ -123,26 +177,13 @@ function rpcResponse(): Response {
         expected_source_bytes: body.expected_source_bytes,
         generation: body.generation,
         status: 'Authorized',
+        upload_public_key: uploadPublicKey,
+        upload_key_expires_at_ms: expiresAtMs,
     };
     return Response.json({
         result: {
             block_hash: BLOCK_HASH,
             result: Array.from(new TextEncoder().encode(JSON.stringify(job))),
-        },
-    });
-}
-
-function accessKeyResponse(methodNames = ['create_paid_job']): Response {
-    return Response.json({
-        result: {
-            block_hash: BLOCK_HASH,
-            permission: {
-                FunctionCall: {
-                    allowance: '100000000000000000000000',
-                    receiver_id: CONTRACT_ID,
-                    method_names: methodNames,
-                },
-            },
         },
     });
 }
@@ -163,10 +204,10 @@ function backendFetch(options?: {
     providerGate?: Promise<void>;
     providerFailure?: boolean;
     providerStatus?: number;
-    unauthorizedKey?: boolean;
+    jobPublicKey?: string;
+    uploadKeyExpiresAtMs?: string;
     tusLengthMismatch?: boolean;
     tusEndpoint?: string;
-    methodNames?: string[];
 }) {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -174,15 +215,8 @@ function backendFetch(options?: {
             const rpcBody = JSON.parse(String(init?.body)) as {
                 params: { request_type: string; finality?: string; block_id?: string };
             };
-            if (rpcBody.params.request_type === 'view_access_key') {
-                expect(rpcBody.params.block_id).toBe(BLOCK_HASH);
-                if (options?.unauthorizedKey) {
-                    return Response.json({ result: { permission: 'FullAccess' } });
-                }
-                return accessKeyResponse(options?.methodNames);
-            }
             expect(rpcBody.params.finality).toBe('final');
-            return rpcResponse();
+            return rpcResponse(options?.jobPublicKey, options?.uploadKeyExpiresAtMs);
         }
         if (url === 'https://livepeer.studio/api/asset/request-upload') {
             await options?.providerGate;
@@ -284,6 +318,12 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             await crypto.subtle.exportKey('raw', requestKey.publicKey) as ArrayBuffer,
         );
         requestPublicKey = `ed25519:${base58Encode(rawPublicKey)}`;
+        quoteKey = await crypto.subtle.generateKey(
+            'Ed25519', true, ['sign', 'verify'],
+        ) as CryptoKeyPair;
+        quotePrivateKey = base64Encode(new Uint8Array(
+            await crypto.subtle.exportKey('pkcs8', quoteKey.privateKey) as ArrayBuffer,
+        ));
     });
 
     beforeEach(() => {
@@ -322,6 +362,201 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         ), createEnv());
         expect(preflight.status).toBe(204);
         expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN);
+    });
+
+    it('returns a signed integer-only Outlayer NEAR creator-fee quote', async () => {
+        const now = 1_785_589_310_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const oracleFetch = vi.fn().mockResolvedValue(oracleRpcResponse());
+        vi.stubGlobal('fetch', oracleFetch);
+        const { env } = quoteRuntime();
+
+        const response = await handler.fetch(quoteRequest(), env);
+        expect(response.status).toBe(200);
+        const result = await response.json() as {
+            quote: Record<string, unknown>;
+            signature: string;
+            public_key_version: number;
+        };
+        expect(result.quote).toEqual({
+            domain: 'youtick.creator-fee-quote',
+            version: '1',
+            network: 'testnet',
+            contract_id: CONTRACT_ID,
+            creator_id: 'creator.testnet',
+            job_id: 'job-near',
+            expected_source_bytes: '1000000000',
+            fee_usd_micro: '300000',
+            near_usd_micro: '5000000',
+            fee_near_yocto: '60000000000000000000000',
+            rate_source: 'outlayer-price-oracle-wrap-near-v1',
+            rate_timestamp_ms: '1785589300000',
+            expires_at_ms: '1785589420000',
+            quote_key_version: 1,
+            quote_id: expect.stringMatching(/^[0-9a-f]{64}$/),
+        });
+        expect(result.public_key_version).toBe(1);
+        const valid = await crypto.subtle.verify(
+            'Ed25519',
+            quoteKey.publicKey,
+            Uint8Array.from(atob(result.signature), (character) => character.charCodeAt(0)),
+            new TextEncoder().encode([
+                'domain', 'version', 'network', 'contract_id', 'creator_id', 'job_id',
+                'expected_source_bytes', 'fee_usd_micro', 'near_usd_micro',
+                'fee_near_yocto', 'rate_source', 'rate_timestamp_ms', 'expires_at_ms',
+                'quote_key_version',
+            ].map((key) => String(result.quote[key])).join('\n')),
+        );
+        expect(valid).toBe(true);
+        expect(oracleFetch).toHaveBeenCalledWith(RPC_URL, expect.objectContaining({ method: 'POST' }));
+        const rpcRequest = JSON.parse(String(oracleFetch.mock.calls[0]![1]!.body));
+        expect(rpcRequest).toEqual({
+            jsonrpc: '2.0',
+            id: 'creator-fee-near-usd',
+            method: 'query',
+            params: {
+                request_type: 'call_function',
+                finality: 'final',
+                account_id: 'price-oracle.testnet',
+                method_name: 'get_price_data',
+                args_base64: btoa(JSON.stringify({ asset_ids: ['wrap.near'] })),
+            },
+        });
+    });
+
+    it('keeps the NEAR quote endpoint disabled behind its server-side flag', async () => {
+        const oracleFetch = vi.fn();
+        vi.stubGlobal('fetch', oracleFetch);
+        const { env } = quoteRuntime({ LIVEPEER_NEAR_CREATOR_FEE_ENABLED: 'false' });
+
+        const response = await handler.fetch(quoteRequest(), env);
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'runtime_not_configured' });
+        expect(oracleFetch).not.toHaveBeenCalled();
+    });
+
+    it('reads the mainnet Outlayer contract on mainnet', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_785_589_310_000);
+        const oracleFetch = vi.fn().mockResolvedValue(oracleRpcResponse());
+        vi.stubGlobal('fetch', oracleFetch);
+        const { env } = quoteRuntime();
+        env.NEAR_NETWORK = 'mainnet';
+        env.MARKET_CONTRACT_ID = 'paid-media-livepeer-v1.near';
+
+        expect((await handler.fetch(quoteRequest(), env)).status).toBe(200);
+        const rpcRequest = JSON.parse(String(oracleFetch.mock.calls[0]![1]!.body));
+        expect(rpcRequest.params.account_id).toBe('price-oracle.near');
+    });
+
+    it.each([
+        {
+            name: 'stale',
+            response: oracleRpcResponse(
+                { multiplier: '500000000', decimals: 8 },
+                '1785589249000000000',
+            ),
+            error: 'rate_source_stale',
+        },
+        {
+            name: 'future',
+            response: oracleRpcResponse(
+                { multiplier: '500000000', decimals: 8 },
+                '1785589311000000000',
+            ),
+            error: 'rate_source_invalid',
+        },
+        {
+            name: 'empty',
+            response: oracleRpcResponse(null),
+            error: 'rate_source_unavailable',
+        },
+        {
+            name: 'wrong asset',
+            response: oracleRpcResponse(
+                { multiplier: '500000000', decimals: 8 },
+                '1785589300000000000',
+                'aurora',
+            ),
+            error: 'rate_source_invalid',
+        },
+        {
+            name: 'invalid decimals',
+            response: oracleRpcResponse({ multiplier: '500000000', decimals: 31 }),
+            error: 'rate_source_invalid',
+        },
+        {
+            name: 'unsafe recency window',
+            response: oracleRpcResponse(
+                { multiplier: '500000000', decimals: 8 },
+                '1785589300000000000',
+                'wrap.near',
+                300,
+            ),
+            error: 'rate_source_stale',
+        },
+        {
+            name: 'zero price',
+            response: oracleRpcResponse({ multiplier: '0', decimals: 8 }),
+            error: 'rate_source_invalid',
+        },
+        {
+            name: 'RPC error',
+            response: Response.json({ error: { code: -32000, message: 'oracle unavailable' } }),
+            error: 'rate_source_unavailable',
+        },
+        {
+            name: 'unavailable',
+            response: Response.json({ error: 'unavailable' }, { status: 503 }),
+            error: 'rate_source_unavailable',
+        },
+    ])('fails closed when the Outlayer rate is $name', async ({ response, error }) => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_785_589_310_000);
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+        const { env } = quoteRuntime();
+
+        const result = await handler.fetch(quoteRequest(), env);
+        expect(result.status).toBe(503);
+        expect(await result.json()).toEqual({ error });
+    });
+
+    it('fails closed when the Outlayer RPC request times out', async () => {
+        vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('timed out', 'TimeoutError')));
+        const { env } = quoteRuntime();
+
+        const result = await handler.fetch(quoteRequest(), env);
+        expect(result.status).toBe(503);
+        expect(await result.json()).toEqual({ error: 'rate_source_unavailable' });
+    });
+
+    it('rejects invalid quote input before the Outlayer lookup', async () => {
+        const oracleFetch = vi.fn();
+        vi.stubGlobal('fetch', oracleFetch);
+        const { env } = quoteRuntime();
+
+        const result = await handler.fetch(quoteRequest({ expected_source_bytes: '20000000001' }), env);
+        expect(result.status).toBe(400);
+        expect(await result.json()).toEqual({ error: 'invalid_creator_fee_quote_request' });
+        expect(oracleFetch).not.toHaveBeenCalled();
+    });
+
+    it('rate-limits quote requests without storing quote or wallet data', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_785_589_310_000);
+        vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => oracleRpcResponse(
+            { multiplier: '500000000', decimals: 8 },
+        )));
+        const { env, state } = quoteRuntime();
+
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+            expect((await handler.fetch(quoteRequest(), env)).status).toBe(200);
+        }
+        const limited = await handler.fetch(quoteRequest(), env);
+        expect(limited.status).toBe(429);
+        expect(await limited.json()).toEqual({ error: 'creator_fee_quote_rate_limited' });
+        expect([...state.values.keys()]).toEqual(['quote-rate:v1']);
+        expect(state.values.get('quote-rate:v1')).toEqual({
+            windowStartedAtMs: 1_785_589_310_000,
+            count: 5,
+        });
     });
 
     it('routes the locked identity to one named job object', async () => {
@@ -476,15 +711,19 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(invalidProof.status).toBe(400);
         expect(await invalidProof.json()).toEqual({ error: 'invalid_control_request' });
 
-        vi.stubGlobal('fetch', backendFetch({ unauthorizedKey: true }));
-        const unauthorizedKey = await control.fetch(await controlRequest());
-        expect(unauthorizedKey.status).toBe(403);
-        expect(await unauthorizedKey.json()).toEqual({ error: 'device_key_not_authorized' });
+        const wrongKeyFetch = backendFetch({ jobPublicKey: String(vectors.upload_intent.envelope.session_public_key) });
+        vi.stubGlobal('fetch', wrongKeyFetch);
+        const wrongKey = await control.fetch(await controlRequest());
+        expect(wrongKey.status).toBe(409);
+        expect(await wrongKey.json()).toEqual({ error: 'on_chain_job_mismatch' });
+        expect(wrongKeyFetch.mock.calls.some(([url]) => String(url).includes('/asset/request-upload'))).toBe(false);
 
-        vi.stubGlobal('fetch', backendFetch({ methodNames: ['create_paid_job', 'withdraw'] }));
-        const overbroadKey = await control.fetch(await controlRequest());
-        expect(overbroadKey.status).toBe(403);
-        expect(await overbroadKey.json()).toEqual({ error: 'device_key_not_authorized' });
+        const expiredKeyFetch = backendFetch({ uploadKeyExpiresAtMs: String(Date.now() - 1) });
+        vi.stubGlobal('fetch', expiredKeyFetch);
+        const expiredKey = await control.fetch(await controlRequest());
+        expect(expiredKey.status).toBe(409);
+        expect(await expiredKey.json()).toEqual({ error: 'on_chain_job_mismatch' });
+        expect(expiredKeyFetch.mock.calls.some(([url]) => String(url).includes('/asset/request-upload'))).toBe(false);
 
         const failingFetch = backendFetch({ providerFailure: true });
         vi.stubGlobal('fetch', failingFetch);

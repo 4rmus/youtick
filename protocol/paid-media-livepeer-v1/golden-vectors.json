@@ -18,6 +18,35 @@
     "deposit_yocto": "0",
     "full_access": false
   },
+  "creator_fee_quote": {
+    "quote": {
+      "domain": "youtick.creator-fee-quote",
+      "version": "1",
+      "network": "testnet",
+      "contract_id": "market.testnet",
+      "creator_id": "creator.testnet",
+      "job_id": "job-near",
+      "expected_source_bytes": "1000000000",
+      "fee_usd_micro": "300000",
+      "near_usd_micro": "5000000",
+      "fee_near_yocto": "60000000000000000000000",
+      "rate_source": "approved-source-v1",
+      "rate_timestamp_ms": "1785589300000",
+      "expires_at_ms": "1785589420000",
+      "quote_key_version": 1,
+      "quote_id": "b28676b3d0999a8f9e5cb34b2dca86ebb09f253c9e2c3fb0e85f987c85b72b4b"
+    },
+    "canonical_message": "youtick.creator-fee-quote\n1\ntestnet\nmarket.testnet\ncreator.testnet\njob-near\n1000000000\n300000\n5000000\n60000000000000000000000\napproved-source-v1\n1785589300000\n1785589420000\n1",
+    "quote_id": "b28676b3d0999a8f9e5cb34b2dca86ebb09f253c9e2c3fb0e85f987c85b72b4b",
+    "signature_base64": "JPMvknPFG4Ppk5+q+KjvYUqpGXwvnhHyr6q+DLouO/5KMh/b91q2r9x/DCvNORzeiPwOJ5d8jTa6IBldeaGKDg==",
+    "public_key_base64": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw="
+  },
+  "historical_upload_intent_v1": {
+    "control_version": "1",
+    "authorization": "near-account-access-key",
+    "canonical_message_sha256": "f0f76704c9a70598d30825f0a30190a512699918ecb78c223244e771895729f8",
+    "status": "HISTORICAL_NOT_ACCEPTED"
+  },
   "upload_intent": {
     "body": {
       "job_id": "job-001",
@@ -30,7 +59,7 @@
     "body_sha256": "6cd140f18cd86d78c239c84ad600324bc84d9d94b70f333313912f17bb1c7de3",
     "envelope": {
       "domain": "youtick.paid-media-livepeer-v1.control",
-      "version": "1",
+      "version": "2",
       "method": "POST",
       "route": "/v1/upload-intents",
       "network": "testnet",
@@ -43,7 +72,7 @@
       "expires_at_ms": "1785585600000",
       "body_sha256": "6cd140f18cd86d78c239c84ad600324bc84d9d94b70f333313912f17bb1c7de3"
     },
-    "canonical_message": "youtick.paid-media-livepeer-v1.control\n1\nPOST\n/v1/upload-intents\ntestnet\npaid-media-livepeer-v1.testnet\ncreator.testnet\njob:job-001:1\ned25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF\nhttps://app.youtick.net\nAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n1785585600000\n6cd140f18cd86d78c239c84ad600324bc84d9d94b70f333313912f17bb1c7de3"
+    "canonical_message": "youtick.paid-media-livepeer-v1.control\n2\nPOST\n/v1/upload-intents\ntestnet\npaid-media-livepeer-v1.testnet\ncreator.testnet\njob:job-001:1\ned25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF\nhttps://app.youtick.net\nAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n1785585600000\n6cd140f18cd86d78c239c84ad600324bc84d9d94b70f333313912f17bb1c7de3"
   },
   "finalize_publication": {
     "job_id": "job-001",
@@ -74,7 +103,7 @@
     "body_sha256": "1ae1a3f9dba9a801b9c0c7ed61b3b53cd2bd1578c494fdcfdc0d64cef45de848",
     "envelope": {
       "domain": "youtick.paid-media-livepeer-v1.control",
-      "version": "1",
+      "version": "2",
       "method": "POST",
       "route": "/v1/playback-tokens",
       "network": "testnet",
@@ -87,6 +116,6 @@
       "expires_at_ms": "1785589200000",
       "body_sha256": "1ae1a3f9dba9a801b9c0c7ed61b3b53cd2bd1578c494fdcfdc0d64cef45de848"
     },
-    "canonical_message": "youtick.paid-media-livepeer-v1.control\n1\nPOST\n/v1/playback-tokens\ntestnet\npaid-media-livepeer-v1.testnet\nbuyer.testnet\nplayback:job-001:1:playback_001\ned25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF\nhttps://app.youtick.net\nAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\n1785589200000\n1ae1a3f9dba9a801b9c0c7ed61b3b53cd2bd1578c494fdcfdc0d64cef45de848"
+    "canonical_message": "youtick.paid-media-livepeer-v1.control\n2\nPOST\n/v1/playback-tokens\ntestnet\npaid-media-livepeer-v1.testnet\nbuyer.testnet\nplayback:job-001:1:playback_001\ned25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF\nhttps://app.youtick.net\nAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\n1785589200000\n1ae1a3f9dba9a801b9c0c7ed61b3b53cd2bd1578c494fdcfdc0d64cef45de848"
   }
 }

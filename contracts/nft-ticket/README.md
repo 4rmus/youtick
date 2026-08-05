@@ -10,17 +10,25 @@ The contract supports:
 - creator-owned, generation-bound paid media jobs;
 - atomic job creation through Circle USDC `ft_transfer_call`, charging
   `ceil(source_bytes / 1_000_000_000 * 300_000)` micro-USDC once per new job;
+- native NEAR job creation through a short-lived, server-signed quote with
+  checked integer conversion and a separate NEAR platform ledger;
+- an immutable job-bound upload public key with creator-only unpublished-key
+  replacement;
 - the exact `paid-media-livepeer-v1` profile and configuration hash;
 - bridge-only, idempotent Livepeer publication finalization;
 - globally unique asset hash and playback ID bindings;
 - mutable sale availability separated from immutable publication identity;
 - Circle USDC tickets at 2 USDC or more with a 98% creator / 2% platform split;
 - durable entitlement history and withdrawal liability restoration.
+- NEAR withdrawal bounded by its recorded liability, storage staking and the
+  configured operational reserve.
 
 The ABI does not contain the superseded v4 KMS, CID, byte-receipt, source-delete
 or browser ingest-key fields. Pause/resume, reconciliation and an exact same-job
 replay cannot charge the creator again; a conflicting replay fails. A new job
-is a new charge and no automatic refund is implemented.
+is a new charge and no automatic provider-failure refund is implemented. The
+new MediaJob Borsh layout has no migration entrypoint and must use a fresh
+contract ID.
 
 Protocol details and exact bindings are in
 [`protocol/paid-media-livepeer-v1`](../../protocol/paid-media-livepeer-v1/README.md).

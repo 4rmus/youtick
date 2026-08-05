@@ -48,7 +48,7 @@ export async function requestLivepeerPlaybackToken(
     };
     const envelope = {
         domain: 'youtick.paid-media-livepeer-v1.control',
-        version: '1',
+        version: '2',
         method: 'POST',
         route: PLAYBACK_ROUTE,
         network: NEAR_CONFIG.networkId,

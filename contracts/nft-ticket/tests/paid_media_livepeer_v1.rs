@@ -1,7 +1,10 @@
-use near_sdk::json_types::{U128, U64};
+use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::test_utils::VMContextBuilder;
 use near_sdk::{testing_env, AccountId, PromiseOrValue};
-use youtick_nft::{Contract, LivepeerPublicationSubmission, PublicationAvailability};
+use youtick_nft::{
+    Contract, CreatorFeeQuote, FeeAsset, LivepeerPublicationSubmission, PaidJobRequest,
+    PublicationAvailability,
+};
 
 const PROFILE: &str = "paid-media-livepeer-v1";
 const PROFILE_HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -9,6 +12,17 @@ const ASSET_HASH: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 const PROJECT_HASH: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const FINGERPRINT: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 const TESTNET_USDC: &str = "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af";
+const UPLOAD_KEY: &str = "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF";
+const QUOTE_PUBLIC_KEY: [u8; 32] = [
+    234, 74, 108, 99, 226, 156, 82, 10, 190, 245, 80, 123, 19, 46, 197, 249, 149, 71, 118, 174,
+    190, 190, 123, 146, 66, 30, 234, 105, 20, 70, 210, 44,
+];
+const QUOTE_SIGNATURE: [u8; 64] = [
+    36, 243, 47, 146, 115, 197, 27, 131, 233, 147, 159, 170, 248, 168, 239, 97, 74, 169, 25, 124,
+    47, 158, 17, 242, 175, 170, 190, 12, 186, 46, 59, 254, 74, 50, 31, 219, 247, 90, 182, 175, 220,
+    127, 12, 43, 205, 57, 28, 222, 136, 252, 14, 39, 151, 124, 141, 54, 186, 32, 25, 93, 121, 161,
+    138, 14,
+];
 
 fn account(value: &str) -> AccountId {
     value.parse().unwrap()
@@ -28,7 +42,96 @@ fn contract() -> Contract {
         account("platform.testnet"),
         account("bridge.testnet"),
         account("governance.testnet"),
+        Base64VecU8(QUOTE_PUBLIC_KEY.to_vec()),
+        1,
+        U128(1_000_000_000_000_000_000_000_000),
     )
+}
+
+fn near_request() -> PaidJobRequest {
+    PaidJobRequest {
+        creator_id: account("creator.testnet"),
+        job_id: "job-near".to_string(),
+        title: "Paid video".to_string(),
+        price_usdc: U128(2_000_000),
+        expected_source_bytes: U128(1_000_000_000),
+        profile_id: PROFILE.to_string(),
+        profile_config_sha256: PROFILE_HASH.to_string(),
+        upload_public_key: UPLOAD_KEY.to_string(),
+        upload_key_expires_at_ms: U64(1_785_589_900_000),
+    }
+}
+
+fn near_quote() -> CreatorFeeQuote {
+    CreatorFeeQuote {
+        domain: "youtick.creator-fee-quote".to_string(),
+        version: "1".to_string(),
+        network: "testnet".to_string(),
+        contract_id: account("market.testnet"),
+        creator_id: account("creator.testnet"),
+        job_id: "job-near".to_string(),
+        expected_source_bytes: U128(1_000_000_000),
+        fee_usd_micro: U128(300_000),
+        near_usd_micro: U128(5_000_000),
+        fee_near_yocto: U128(60_000_000_000_000_000_000_000),
+        rate_source: "approved-source-v1".to_string(),
+        rate_timestamp_ms: U64(1_785_589_300_000),
+        expires_at_ms: U64(1_785_589_420_000),
+        quote_key_version: 1,
+        quote_id: "b28676b3d0999a8f9e5cb34b2dca86ebb09f253c9e2c3fb0e85f987c85b72b4b".to_string(),
+    }
+}
+
+#[test]
+fn native_near_quote_creates_once_and_binds_upload_key() {
+    let mut contract = contract();
+    let mut builder = context("creator.testnet");
+    builder.attached_deposit(near_sdk::NearToken::from_yoctonear(
+        60_000_000_000_000_000_000_000,
+    ));
+    testing_env!(builder.build());
+    let created = contract.create_paid_job_near(
+        near_request(),
+        near_quote(),
+        Base64VecU8(QUOTE_SIGNATURE.to_vec()),
+    );
+    let PromiseOrValue::Value(job) = created else {
+        panic!("first payment must create")
+    };
+    assert_eq!(job.fee_asset, FeeAsset::Near);
+    assert_eq!(job.upload_public_key, UPLOAD_KEY);
+    assert_eq!(
+        contract.get_platform_near_balance(),
+        U128(60_000_000_000_000_000_000_000)
+    );
+    assert!(matches!(
+        contract.create_paid_job_near(
+            near_request(),
+            near_quote(),
+            Base64VecU8(QUOTE_SIGNATURE.to_vec()),
+        ),
+        PromiseOrValue::Promise(_)
+    ));
+    assert_eq!(
+        contract.get_platform_near_balance(),
+        U128(60_000_000_000_000_000_000_000)
+    );
+}
+
+#[test]
+fn wrong_or_stale_near_quote_fails_closed() {
+    let mut contract = contract();
+    let mut builder = context("creator.testnet");
+    builder.attached_deposit(near_sdk::NearToken::from_yoctonear(
+        60_000_000_000_000_000_000_000,
+    ));
+    testing_env!(builder.build());
+    must_fail(|| {
+        let mut quote = near_quote();
+        quote.rate_timestamp_ms = U64(1_785_589_239_999);
+        contract.create_paid_job_near(near_request(), quote, Base64VecU8(QUOTE_SIGNATURE.to_vec()));
+    });
+    assert_eq!(contract.get_platform_near_balance(), U128(0));
 }
 
 fn create_job(contract: &mut Contract, job_id: &str, creator: &str) {
@@ -58,6 +161,8 @@ fn create_job_with(
             "expected_source_bytes": source_bytes.to_string(),
             "profile_id": PROFILE,
             "profile_config_sha256": PROFILE_HASH,
+            "upload_public_key": UPLOAD_KEY,
+            "upload_key_expires_at_ms": "1785589900000",
         })
         .to_string(),
     )
@@ -90,6 +195,7 @@ fn accepts_exact_source_limit_and_rejects_one_byte_more() {
 #[test]
 fn creator_upload_fee_uses_exact_bytes_and_replay_is_refunded() {
     let cases = [
+        (1, 1),
         (83_886_080, 25_166),
         (1_000_000_000, 300_000),
         (5_000_000_000, 1_500_000),
@@ -130,6 +236,38 @@ fn creator_upload_fee_uses_exact_bytes_and_replay_is_refunded() {
         assert!(matches!(new_job, PromiseOrValue::Value(U128(0))));
         assert_eq!(contract.get_platform_balance(), U128(expected_fee * 2));
     }
+}
+
+#[test]
+fn creator_can_replace_an_unpublished_upload_key_without_a_second_charge() {
+    let mut contract = contract();
+    create_job(&mut contract, "job-key", "creator.testnet");
+    let charged = contract.get_platform_balance();
+    testing_env!(context("creator.testnet").build());
+    let replacement = "ed25519:9nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF";
+    let job = contract.replace_upload_key(
+        "job-key".to_string(),
+        replacement.to_string(),
+        U64(1_785_590_000_000),
+    );
+    assert_eq!(job.upload_public_key, replacement);
+    assert_eq!(contract.get_platform_balance(), charged);
+    finalize(
+        &mut contract,
+        "job-key",
+        1,
+        "creator.testnet",
+        ASSET_HASH,
+        "playback_key",
+    );
+    testing_env!(context("creator.testnet").build());
+    must_fail(|| {
+        contract.replace_upload_key(
+            "job-key".to_string(),
+            UPLOAD_KEY.to_string(),
+            U64(1_785_590_000_000),
+        );
+    });
 }
 
 #[test]
