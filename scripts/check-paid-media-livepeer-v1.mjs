@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, verify } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +27,29 @@ const messageFields = [
 ];
 checkRequest(vectors.upload_intent, "/v1/upload-intents");
 checkRequest(vectors.playback_token_request, "/v1/playback-tokens");
+assert(vectors.upload_intent.envelope.version === "2", "upload control v2 is required");
+assert(vectors.historical_upload_intent_v1.status === "HISTORICAL_NOT_ACCEPTED", "historical access-key vector must remain rejected");
+
+const quoteFields = [
+  "domain", "version", "network", "contract_id", "creator_id", "job_id",
+  "expected_source_bytes", "fee_usd_micro", "near_usd_micro", "fee_near_yocto",
+  "rate_source", "rate_timestamp_ms", "expires_at_ms", "quote_key_version",
+];
+const quoteVector = vectors.creator_fee_quote;
+const quoteMessage = quoteFields.map((field) => quoteVector.quote[field]).join("\n");
+assert(quoteVector.canonical_message === quoteMessage, "creator quote canonical message drift");
+const quoteId = createHash("sha256").update(quoteMessage).digest("hex");
+assert(quoteVector.quote_id === quoteId && quoteVector.quote.quote_id === quoteId, "creator quote ID drift");
+const rawQuoteKey = Buffer.from(quoteVector.public_key_base64, "base64");
+const quoteKey = createPublicKey({
+  key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), rawQuoteKey]),
+  format: "der",
+  type: "spki",
+});
+assert(verify(null, Buffer.from(quoteMessage), quoteKey, Buffer.from(quoteVector.signature_base64, "base64")), "creator quote signature drift");
+const expectedNear = (BigInt(quoteVector.quote.fee_usd_micro) * 10n ** 24n + BigInt(quoteVector.quote.near_usd_micro) - 1n)
+  / BigInt(quoteVector.quote.near_usd_micro);
+assert(BigInt(quoteVector.quote.fee_near_yocto) === expectedNear, "creator quote NEAR conversion drift");
 
 const upload = vectors.upload_intent.body;
 const publication = vectors.finalize_publication;

@@ -1,7 +1,5 @@
-use std::collections::HashSet;
-
 use near_sdk::collections::LookupMap;
-use near_sdk::json_types::{U128, U64};
+use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
     env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseOrValue,
@@ -17,6 +15,16 @@ const UPLOAD_FEE_NUMERATOR: u128 = 3;
 const UPLOAD_FEE_DENOMINATOR: u128 = 10_000;
 const FT_TRANSFER_GAS: Gas = Gas::from_tgas(20);
 const WITHDRAW_CALLBACK_GAS: Gas = Gas::from_tgas(10);
+const QUOTE_MAX_SOURCE_AGE_MS: u64 = 60_000;
+const QUOTE_MAX_LIFETIME_MS: u64 = 120_000;
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum FeeAsset {
+    Usdc,
+    Near,
+}
 
 #[derive(Clone, Copy)]
 pub struct StorageKey(pub &'static [u8]);
@@ -68,6 +76,12 @@ pub struct MediaJob {
     pub status: MediaJobStatus,
     pub created_at_ms: u64,
     pub published_at_ms: Option<u64>,
+    pub fee_asset: FeeAsset,
+    pub fee_amount: U128,
+    pub fee_usd_micro: U128,
+    pub upload_public_key: String,
+    pub upload_key_expires_at_ms: U64,
+    pub fee_quote_hash: Option<String>,
 }
 
 #[near(serializers = [borsh, json])]
@@ -132,6 +146,8 @@ struct TransferMessage {
     expected_source_bytes: Option<U128>,
     profile_id: Option<String>,
     profile_config_sha256: Option<String>,
+    upload_public_key: Option<String>,
+    upload_key_expires_at_ms: Option<U64>,
 }
 
 #[near(serializers = [json])]
@@ -144,6 +160,28 @@ pub struct PaidJobRequest {
     pub expected_source_bytes: U128,
     pub profile_id: String,
     pub profile_config_sha256: String,
+    pub upload_public_key: String,
+    pub upload_key_expires_at_ms: U64,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreatorFeeQuote {
+    pub domain: String,
+    pub version: String,
+    pub network: String,
+    pub contract_id: AccountId,
+    pub creator_id: AccountId,
+    pub job_id: String,
+    pub expected_source_bytes: U128,
+    pub fee_usd_micro: U128,
+    pub near_usd_micro: U128,
+    pub fee_near_yocto: U128,
+    pub rate_source: String,
+    pub rate_timestamp_ms: U64,
+    pub expires_at_ms: U64,
+    pub quote_key_version: u32,
+    pub quote_id: String,
 }
 
 #[derive(Serialize)]
@@ -167,6 +205,12 @@ struct PlatformWithdrawCallbackArgs {
     amount: U128,
 }
 
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+struct NearWithdrawCallbackArgs {
+    amount: U128,
+}
+
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
@@ -185,21 +229,10 @@ pub struct Contract {
     platform_balance: u128,
     publication_ids: LookupMap<u64, String>,
     publication_count: u64,
-}
-
-#[near(serializers = [borsh])]
-struct ContractBeforePublicationIndex {
-    platform_account_id: AccountId,
-    bridge_account_id: AccountId,
-    takedown_authority_id: AccountId,
-    media_jobs: LookupMap<String, MediaJob>,
-    publications: LookupMap<String, Publication>,
-    asset_bindings: LookupMap<String, String>,
-    playback_bindings: LookupMap<String, String>,
-    entitlements: LookupMap<String, bool>,
-    creator_balances: LookupMap<AccountId, u128>,
-    takedowns: LookupMap<String, TakedownRecord>,
-    platform_balance: u128,
+    platform_near_balance: u128,
+    quote_public_key: Vec<u8>,
+    quote_key_version: u32,
+    near_operational_reserve: u128,
 }
 
 #[near]
@@ -209,11 +242,19 @@ impl Contract {
         platform_account_id: AccountId,
         bridge_account_id: AccountId,
         takedown_authority_id: AccountId,
+        quote_public_key: Base64VecU8,
+        quote_key_version: u32,
+        near_operational_reserve: U128,
     ) -> Self {
         require!(
             platform_account_id != bridge_account_id,
             "Platform and bridge accounts must differ"
         );
+        require!(
+            quote_public_key.0.len() == 32,
+            "Quote public key must be Ed25519"
+        );
+        require!(quote_key_version > 0, "Quote key version must be positive");
         require!(
             takedown_authority_id != bridge_account_id
                 && takedown_authority_id != platform_account_id,
@@ -233,43 +274,10 @@ impl Contract {
             platform_balance: 0,
             publication_ids: LookupMap::new(StorageKey::PUBLICATION_IDS),
             publication_count: 0,
-        }
-    }
-
-    #[init(ignore_state)]
-    pub fn migrate(publication_ids: Vec<String>) -> Self {
-        require!(
-            env::predecessor_account_id() == env::current_account_id(),
-            "Only the contract account can migrate"
-        );
-        let old: ContractBeforePublicationIndex = env::state_read().expect("Old state is missing");
-        let mut index = LookupMap::new(StorageKey::PUBLICATION_IDS);
-        let mut seen = HashSet::new();
-        for (position, publication_id) in publication_ids.iter().enumerate() {
-            require!(
-                seen.insert(publication_id),
-                "Duplicate publication id in migration"
-            );
-            require!(
-                old.publications.get(publication_id).is_some(),
-                "Publication not found in migration"
-            );
-            index.insert(&(position as u64), publication_id);
-        }
-        Self {
-            platform_account_id: old.platform_account_id,
-            bridge_account_id: old.bridge_account_id,
-            takedown_authority_id: old.takedown_authority_id,
-            media_jobs: old.media_jobs,
-            publications: old.publications,
-            asset_bindings: old.asset_bindings,
-            playback_bindings: old.playback_bindings,
-            entitlements: old.entitlements,
-            creator_balances: old.creator_balances,
-            takedowns: old.takedowns,
-            platform_balance: old.platform_balance,
-            publication_ids: index,
-            publication_count: publication_ids.len() as u64,
+            platform_near_balance: 0,
+            quote_public_key: quote_public_key.0,
+            quote_key_version,
+            near_operational_reserve: near_operational_reserve.0,
         }
     }
 
@@ -282,6 +290,8 @@ impl Contract {
             expected_source_bytes,
             profile_id,
             profile_config_sha256,
+            upload_public_key,
+            upload_key_expires_at_ms,
         } = request;
         require!(
             env::predecessor_account_id() == self.usdc_contract_id(),
@@ -291,6 +301,7 @@ impl Contract {
         assert_title(&title);
         assert_source_bytes(expected_source_bytes.0);
         assert_profile(&profile_id, &profile_config_sha256);
+        assert_upload_key(&upload_public_key, upload_key_expires_at_ms.0);
         require!(
             price_usdc.0 >= MIN_TICKET_PRICE_USDC,
             "USDC ticket price must be at least 2.000000"
@@ -300,6 +311,7 @@ impl Contract {
             "Media job already exists"
         );
 
+        let fee_usd_micro = upload_fee_usdc(expected_source_bytes.0);
         let job = MediaJob {
             job_id: job_id.clone(),
             creator_id,
@@ -312,9 +324,112 @@ impl Contract {
             status: MediaJobStatus::Authorized,
             created_at_ms: env::block_timestamp_ms(),
             published_at_ms: None,
+            fee_asset: FeeAsset::Usdc,
+            fee_amount: U128(fee_usd_micro),
+            fee_usd_micro: U128(fee_usd_micro),
+            upload_public_key,
+            upload_key_expires_at_ms,
+            fee_quote_hash: None,
         };
         self.media_jobs.insert(&job_id, &job);
         job
+    }
+
+    #[payable]
+    pub fn create_paid_job_near(
+        &mut self,
+        request: PaidJobRequest,
+        quote: CreatorFeeQuote,
+        quote_signature: Base64VecU8,
+    ) -> PromiseOrValue<MediaJob> {
+        require!(
+            env::predecessor_account_id() == request.creator_id,
+            "Creator mismatch"
+        );
+        self.verify_creator_fee_quote(&request, &quote, &quote_signature.0);
+        let deposit = env::attached_deposit().as_yoctonear();
+        require!(
+            deposit == quote.fee_near_yocto.0,
+            "Incorrect creator upload fee"
+        );
+
+        if let Some(existing) = self.media_jobs.get(&request.job_id) {
+            require!(
+                job_matches_request(&existing, &request, &quote),
+                "Conflicting paid job replay"
+            );
+            return PromiseOrValue::Promise(
+                Promise::new(request.creator_id).transfer(NearToken::from_yoctonear(deposit)),
+            );
+        }
+
+        assert_paid_job_request(&request);
+        let job = MediaJob {
+            job_id: request.job_id.clone(),
+            creator_id: request.creator_id,
+            profile_id: request.profile_id,
+            profile_config_sha256: request.profile_config_sha256,
+            title: request.title,
+            price_usdc: request.price_usdc,
+            expected_source_bytes: request.expected_source_bytes,
+            generation: 1,
+            status: MediaJobStatus::Authorized,
+            created_at_ms: env::block_timestamp_ms(),
+            published_at_ms: None,
+            fee_asset: FeeAsset::Near,
+            fee_amount: quote.fee_near_yocto,
+            fee_usd_micro: quote.fee_usd_micro,
+            upload_public_key: request.upload_public_key,
+            upload_key_expires_at_ms: request.upload_key_expires_at_ms,
+            fee_quote_hash: Some(quote.quote_id),
+        };
+        self.media_jobs.insert(&job.job_id, &job);
+        self.platform_near_balance = self
+            .platform_near_balance
+            .checked_add(deposit)
+            .expect("Platform NEAR balance overflow");
+        PromiseOrValue::Value(job)
+    }
+
+    pub fn replace_upload_key(
+        &mut self,
+        job_id: String,
+        new_public_key: String,
+        expires_at_ms: U64,
+    ) -> MediaJob {
+        let mut job = self.media_jobs.get(&job_id).expect("Media job not found");
+        require!(
+            env::predecessor_account_id() == job.creator_id,
+            "Only the creator can replace the upload key"
+        );
+        require!(
+            job.status == MediaJobStatus::Authorized,
+            "Published media jobs cannot replace upload keys"
+        );
+        assert_upload_key(&new_public_key, expires_at_ms.0);
+        job.upload_public_key = new_public_key;
+        job.upload_key_expires_at_ms = expires_at_ms;
+        self.media_jobs.insert(&job_id, &job);
+        job
+    }
+
+    pub fn rotate_quote_public_key(&mut self, version: u32, public_key: Base64VecU8) {
+        require!(
+            env::predecessor_account_id() == self.platform_account_id,
+            "Only the platform account can rotate quote keys"
+        );
+        require!(
+            version
+                == self
+                    .quote_key_version
+                    .checked_add(1)
+                    .expect("Quote key version overflow"),
+            "Quote key version must increase by one"
+        );
+        require!(public_key.0.len() == 32, "Quote public key must be Ed25519");
+        self.quote_key_version = version;
+        self.quote_public_key = public_key.0;
+        env::log_str(&format!("QUOTE_KEY_ROTATED:{version}"));
     }
 
     pub fn restart_paid_job(
@@ -552,6 +667,12 @@ impl Contract {
             let profile_config_sha256 = message
                 .profile_config_sha256
                 .expect("profile_config_sha256 is required");
+            let upload_public_key = message
+                .upload_public_key
+                .expect("upload_public_key is required");
+            let upload_key_expires_at_ms = message
+                .upload_key_expires_at_ms
+                .expect("upload_key_expires_at_ms is required");
 
             if let Some(existing) = self.media_jobs.get(&job_id) {
                 require!(
@@ -560,7 +681,10 @@ impl Contract {
                         && existing.price_usdc == price_usdc
                         && existing.expected_source_bytes == expected_source_bytes
                         && existing.profile_id == profile_id
-                        && existing.profile_config_sha256 == profile_config_sha256,
+                        && existing.profile_config_sha256 == profile_config_sha256
+                        && existing.upload_public_key == upload_public_key
+                        && existing.upload_key_expires_at_ms == upload_key_expires_at_ms
+                        && existing.fee_asset == FeeAsset::Usdc,
                     "Conflicting paid job replay"
                 );
                 return PromiseOrValue::Value(amount);
@@ -574,6 +698,8 @@ impl Contract {
                 expected_source_bytes,
                 profile_id,
                 profile_config_sha256,
+                upload_public_key,
+                upload_key_expires_at_ms,
             });
             self.platform_balance = self
                 .platform_balance
@@ -667,6 +793,42 @@ impl Contract {
         )
     }
 
+    pub fn withdraw_platform_near(&mut self, amount: U128) -> Promise {
+        require!(
+            env::predecessor_account_id() == self.platform_account_id,
+            "Only the platform account can withdraw"
+        );
+        require!(
+            amount.0 > 0 && amount.0 <= self.platform_near_balance,
+            "Insufficient platform NEAR balance"
+        );
+        let storage_stake = u128::from(env::storage_usage())
+            .checked_mul(env::storage_byte_cost().as_yoctonear())
+            .expect("Storage stake overflow");
+        let protected = storage_stake
+            .checked_add(self.near_operational_reserve)
+            .expect("Protected NEAR balance overflow");
+        let liquid = env::account_balance()
+            .as_yoctonear()
+            .saturating_sub(protected);
+        require!(
+            amount.0 <= liquid,
+            "Withdrawal would consume storage stake or reserve"
+        );
+        self.platform_near_balance -= amount.0;
+        Promise::new(self.platform_account_id.clone())
+            .transfer(NearToken::from_yoctonear(amount.0))
+            .then(
+                Promise::new(env::current_account_id()).function_call(
+                    "on_platform_near_withdraw".to_string(),
+                    near_sdk::serde_json::to_vec(&NearWithdrawCallbackArgs { amount })
+                        .expect("Failed to serialize callback"),
+                    NearToken::from_yoctonear(0),
+                    WITHDRAW_CALLBACK_GAS,
+                ),
+            )
+    }
+
     #[private]
     pub fn on_creator_withdraw(&mut self, creator_id: AccountId, amount: U128) -> bool {
         require!(
@@ -699,6 +861,22 @@ impl Contract {
             .platform_balance
             .checked_add(amount.0)
             .expect("Platform balance overflow");
+        false
+    }
+
+    #[private]
+    pub fn on_platform_near_withdraw(&mut self, amount: U128) -> bool {
+        require!(
+            env::promise_results_count() == 1,
+            "Expected one withdrawal result"
+        );
+        if matches!(env::promise_result(0), PromiseResult::Successful(_)) {
+            return true;
+        }
+        self.platform_near_balance = self
+            .platform_near_balance
+            .checked_add(amount.0)
+            .expect("Platform NEAR balance overflow");
         false
     }
 
@@ -761,12 +939,109 @@ impl Contract {
         U128(self.platform_balance)
     }
 
+    pub fn get_platform_near_balance(&self) -> U128 {
+        U128(self.platform_near_balance)
+    }
+
+    pub fn get_quote_key_version(&self) -> u32 {
+        self.quote_key_version
+    }
+
     pub fn get_usdc_contract_id(&self) -> AccountId {
         self.usdc_contract_id()
     }
 }
 
 impl Contract {
+    fn verify_creator_fee_quote(
+        &self,
+        request: &PaidJobRequest,
+        quote: &CreatorFeeQuote,
+        signature: &[u8],
+    ) {
+        let now = env::block_timestamp_ms();
+        require!(
+            quote.domain == "youtick.creator-fee-quote",
+            "Invalid quote domain"
+        );
+        require!(quote.version == "1", "Invalid quote version");
+        require!(quote.network == self.network_id(), "Quote network mismatch");
+        require!(
+            quote.contract_id == env::current_account_id(),
+            "Quote contract mismatch"
+        );
+        require!(
+            quote.creator_id == request.creator_id && quote.job_id == request.job_id,
+            "Quote job mismatch"
+        );
+        require!(
+            quote.expected_source_bytes == request.expected_source_bytes,
+            "Quote byte count mismatch"
+        );
+        require!(
+            quote.quote_key_version == self.quote_key_version,
+            "Quote key version mismatch"
+        );
+        require!(
+            quote.rate_timestamp_ms.0 <= now
+                && now - quote.rate_timestamp_ms.0 <= QUOTE_MAX_SOURCE_AGE_MS,
+            "Stale quote rate"
+        );
+        require!(
+            quote.expires_at_ms.0 > now
+                && quote.expires_at_ms.0 - quote.rate_timestamp_ms.0 <= QUOTE_MAX_LIFETIME_MS,
+            "Expired quote"
+        );
+        require!(
+            !quote.rate_source.is_empty()
+                && !quote.rate_source.contains('\r')
+                && !quote.rate_source.contains('\n'),
+            "Invalid rate source"
+        );
+        let fee_usd_micro = upload_fee_usdc(request.expected_source_bytes.0);
+        require!(
+            quote.fee_usd_micro.0 == fee_usd_micro,
+            "Quote USD fee mismatch"
+        );
+        require!(quote.near_usd_micro.0 > 0, "Invalid NEAR/USD rate");
+        let fee_near_yocto = div_ceil(
+            fee_usd_micro
+                .checked_mul(10u128.pow(24))
+                .expect("NEAR fee overflow"),
+            quote.near_usd_micro.0,
+        );
+        require!(
+            quote.fee_near_yocto.0 == fee_near_yocto,
+            "Quote NEAR fee mismatch"
+        );
+        let message = canonical_quote_message(quote);
+        require!(
+            quote.quote_id == hex_sha256(message.as_bytes()),
+            "Quote ID mismatch"
+        );
+        let signature: [u8; 64] = signature
+            .try_into()
+            .unwrap_or_else(|_| env::panic_str("Invalid quote signature"));
+        let public_key: [u8; 32] = self
+            .quote_public_key
+            .as_slice()
+            .try_into()
+            .expect("Invalid quote public key");
+        require!(
+            env::ed25519_verify(&signature, message.as_bytes(), &public_key),
+            "Invalid quote signature"
+        );
+    }
+
+    fn network_id(&self) -> String {
+        if env::current_account_id().as_str().ends_with(".testnet") {
+            "testnet".to_string()
+        } else if env::current_account_id().as_str().ends_with(".near") {
+            "mainnet".to_string()
+        } else {
+            env::panic_str("Unsupported NEAR network")
+        }
+    }
     fn assert_bridge(&self) {
         require!(
             env::predecessor_account_id() == self.bridge_account_id,
@@ -892,11 +1167,87 @@ fn assert_source_bytes(value: u128) {
 
 fn upload_fee_usdc(source_bytes: u128) -> u128 {
     assert_source_bytes(source_bytes);
-    source_bytes
-        .checked_mul(UPLOAD_FEE_NUMERATOR)
-        .and_then(|value| value.checked_add(UPLOAD_FEE_DENOMINATOR - 1))
-        .expect("Upload fee overflow")
-        / UPLOAD_FEE_DENOMINATOR
+    div_ceil(
+        source_bytes
+            .checked_mul(UPLOAD_FEE_NUMERATOR)
+            .expect("Upload fee overflow"),
+        UPLOAD_FEE_DENOMINATOR,
+    )
+}
+
+fn div_ceil(numerator: u128, denominator: u128) -> u128 {
+    numerator / denominator + u128::from(numerator % denominator != 0)
+}
+
+fn assert_paid_job_request(request: &PaidJobRequest) {
+    assert_identifier("job_id", &request.job_id);
+    assert_title(&request.title);
+    assert_source_bytes(request.expected_source_bytes.0);
+    assert_profile(&request.profile_id, &request.profile_config_sha256);
+    assert_upload_key(
+        &request.upload_public_key,
+        request.upload_key_expires_at_ms.0,
+    );
+    require!(
+        request.price_usdc.0 >= MIN_TICKET_PRICE_USDC,
+        "USDC ticket price must be at least 2.000000"
+    );
+}
+
+fn assert_upload_key(public_key: &str, expires_at_ms: u64) {
+    require!(
+        public_key.starts_with("ed25519:")
+            && (40..=80).contains(&public_key.len())
+            && public_key[8..].bytes().all(|byte| matches!(byte,
+                b'1'..=b'9' | b'A'..=b'H' | b'J'..=b'N' | b'P'..=b'Z' | b'a'..=b'k' | b'm'..=b'z')),
+        "Invalid upload public key"
+    );
+    require!(
+        expires_at_ms > env::block_timestamp_ms(),
+        "Upload key must not be expired"
+    );
+}
+
+fn canonical_quote_message(quote: &CreatorFeeQuote) -> String {
+    [
+        quote.domain.clone(),
+        quote.version.clone(),
+        quote.network.clone(),
+        quote.contract_id.to_string(),
+        quote.creator_id.to_string(),
+        quote.job_id.clone(),
+        quote.expected_source_bytes.0.to_string(),
+        quote.fee_usd_micro.0.to_string(),
+        quote.near_usd_micro.0.to_string(),
+        quote.fee_near_yocto.0.to_string(),
+        quote.rate_source.clone(),
+        quote.rate_timestamp_ms.0.to_string(),
+        quote.expires_at_ms.0.to_string(),
+        quote.quote_key_version.to_string(),
+    ]
+    .join("\n")
+}
+
+fn hex_sha256(value: &[u8]) -> String {
+    env::sha256(value)
+        .into_iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn job_matches_request(job: &MediaJob, request: &PaidJobRequest, quote: &CreatorFeeQuote) -> bool {
+    job.creator_id == request.creator_id
+        && job.title == request.title
+        && job.price_usdc == request.price_usdc
+        && job.expected_source_bytes == request.expected_source_bytes
+        && job.profile_id == request.profile_id
+        && job.profile_config_sha256 == request.profile_config_sha256
+        && job.upload_public_key == request.upload_public_key
+        && job.upload_key_expires_at_ms == request.upload_key_expires_at_ms
+        && job.fee_asset == FeeAsset::Near
+        && job.fee_amount == quote.fee_near_yocto
+        && job.fee_usd_micro == quote.fee_usd_micro
+        && job.fee_quote_hash.as_deref() == Some(quote.quote_id.as_str())
 }
 
 fn assert_profile(profile_id: &str, profile_config_sha256: &str) {
@@ -928,6 +1279,7 @@ mod tests {
         let mut builder = VMContextBuilder::new();
         builder.current_account_id(account("market.testnet"));
         builder.predecessor_account_id(account(predecessor));
+        builder.block_timestamp(1_785_589_300_000_000_000);
         builder
     }
 
@@ -937,6 +1289,9 @@ mod tests {
             account("platform.testnet"),
             account("bridge.testnet"),
             account("governance.testnet"),
+            Base64VecU8(vec![1; 32]),
+            1,
+            U128(1_000_000_000_000_000_000_000_000),
         )
     }
 
@@ -969,63 +1324,41 @@ mod tests {
     }
 
     #[test]
-    fn migrates_existing_publication_into_index() {
-        testing_env!(context("market.testnet").build());
-        let publication_id = "job-existing".to_string();
-        let mut publications = LookupMap::new(StorageKey::PUBLICATIONS);
-        publications.insert(
-            &publication_id,
-            &Publication {
-                publication_id: publication_id.clone(),
-                creator_id: account("creator.testnet"),
-                title: "Existing publication".to_string(),
-                price_usdc: U128(2_000_000),
-                generation: 1,
-                expected_source_bytes: U128(1_000_000),
-                profile_id: PROFILE.to_string(),
-                profile_config_sha256:
-                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
-                asset_id_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                    .to_string(),
-                playback_id: "playback_001".to_string(),
-                project_id_hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-                    .to_string(),
-                verified_source_bytes: U128(1_000_000),
-                provider_source_fingerprint: None,
-                ready_at_ms: U64(1),
-                published_availability: PublicationAvailability::Active,
-                availability: PublicationAvailability::Active,
-                published_at_ms: 1,
-            },
-        );
-        let old = ContractBeforePublicationIndex {
-            platform_account_id: account("platform.testnet"),
-            bridge_account_id: account("bridge.testnet"),
-            takedown_authority_id: account("governance.testnet"),
-            media_jobs: LookupMap::new(StorageKey::MEDIA_JOBS),
-            publications,
-            asset_bindings: LookupMap::new(StorageKey::ASSET_BINDINGS),
-            playback_bindings: LookupMap::new(StorageKey::PLAYBACK_BINDINGS),
-            entitlements: LookupMap::new(StorageKey::ENTITLEMENTS),
-            creator_balances: LookupMap::new(StorageKey::CREATOR_BALANCES),
-            takedowns: LookupMap::new(StorageKey::TAKEDOWNS),
-            platform_balance: 50,
-        };
-        env::state_write(&old);
+    fn quote_key_rotation_is_platform_only_and_monotonic() {
+        let mut contract = contract();
+        testing_env!(context("attacker.testnet").build());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.rotate_quote_public_key(2, Base64VecU8(vec![2; 32]));
+        }))
+        .is_err());
+        testing_env!(context("platform.testnet").build());
+        contract.rotate_quote_public_key(2, Base64VecU8(vec![2; 32]));
+        assert_eq!(contract.get_quote_key_version(), 2);
+    }
 
-        let migrated = Contract::migrate(vec![publication_id.clone()]);
+    #[test]
+    fn near_withdrawal_preserves_operational_reserve() {
+        let mut contract = contract();
+        contract.platform_near_balance = 100;
+        let mut blocked = context("platform.testnet");
+        blocked.storage_usage(0);
+        blocked.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve + 99,
+        ));
+        testing_env!(blocked.build());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.withdraw_platform_near(U128(100));
+        }))
+        .is_err());
+        assert_eq!(contract.get_platform_near_balance(), U128(100));
 
-        assert_eq!(migrated.platform_account_id, account("platform.testnet"));
-        assert_eq!(migrated.bridge_account_id, account("bridge.testnet"));
-        assert_eq!(
-            migrated.takedown_authority_id,
-            account("governance.testnet")
-        );
-        assert_eq!(migrated.platform_balance, 50);
-        assert_eq!(migrated.get_publications_count(), 1);
-        assert_eq!(
-            migrated.get_publications(None, None)[0].publication_id,
-            publication_id
-        );
+        let mut allowed = context("platform.testnet");
+        allowed.storage_usage(0);
+        allowed.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve + 100,
+        ));
+        testing_env!(allowed.build());
+        contract.withdraw_platform_near(U128(100));
+        assert_eq!(contract.get_platform_near_balance(), U128(0));
     }
 }
