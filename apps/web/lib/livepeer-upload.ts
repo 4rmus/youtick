@@ -416,7 +416,10 @@ function browserOrigin(): string {
         : APP_CONFIG.publicAppUrl;
     try {
         const url = new URL(origin);
-        if (url.protocol !== 'https:') throw new Error('invalid_livepeer_origin');
+        if (url.protocol !== 'https:'
+            && !(url.protocol === 'http:' && url.hostname === 'localhost')) {
+            throw new Error('invalid_livepeer_origin');
+        }
         return url.origin;
     } catch {
         throw new Error('invalid_livepeer_origin');

@@ -4,7 +4,8 @@ import { yoctoToNear } from 'near-api-js';
 import { getProvider, viewContract } from '@/lib/near';
 import { TokenWithVideo } from './useOwnedTokens';
 import { parseTitleMetadata } from '@/lib/metadata-parser';
-import { NEAR_CONFIG } from '@/lib/constants';
+import { FEATURE_FLAGS, NEAR_CONFIG } from '@/lib/constants';
+import type { LivepeerPublication } from '@/lib/livepeer-publication';
 
 const NFT_CONTRACT_ID = NEAR_CONFIG.contractId;
 const PAGE_SIZE = 24;
@@ -76,6 +77,29 @@ export function mapEventRowsToTokens(events: EventRow[]): TokenWithVideo[] {
         });
 }
 
+export function mapLivepeerPublicationsToTokens(
+    publications: LivepeerPublication[],
+): TokenWithVideo[] {
+    return publications
+        .filter((publication) => publication.availability === 'ACTIVE')
+        .sort((left, right) => right.published_at_ms - left.published_at_ms)
+        .map((publication) => ({
+            token_id: `livepeer-${publication.publication_id}`,
+            owner_id: publication.creator_id,
+            metadata: {
+                title: publication.title,
+                copies: 1,
+            },
+            video_metadata: {
+                livepeer_job_id: publication.publication_id,
+                duration_seconds: 0,
+                content_type: 'Exclusive',
+                price_usdc: publication.price_usdc,
+                access_mode: 'paid',
+            },
+        }));
+}
+
 function getPageWindow(
     totalCount: number,
     cursor: string | null,
@@ -140,11 +164,45 @@ async function fetchEventsPage(cursor: string | null, contentType: string | null
     };
 }
 
+async function fetchLivepeerPublicationsPage(
+    cursor: string | null,
+    contentType: string | null,
+): Promise<DiscoverEventsPage> {
+    if (contentType !== null) return { tokens: [], nextCursor: null };
+    const totalCount = cursor == null
+        ? Number(await viewContract<number>(
+            getProvider(),
+            NFT_CONTRACT_ID,
+            'get_publications_count',
+            {},
+        ))
+        : 0;
+    const window = getPageWindow(totalCount, cursor);
+    if (!window) return { tokens: [], nextCursor: null };
+    const publications = await viewContract<LivepeerPublication[]>(
+        getProvider(),
+        NFT_CONTRACT_ID,
+        'get_publications',
+        { from_index: window.fromIndex, limit: window.limit },
+    );
+    return {
+        tokens: mapLivepeerPublicationsToTokens(publications),
+        nextCursor: window.nextCursor,
+    };
+}
+
 export function useAllVideos(contentType?: string | null) {
     const query = useInfiniteQuery({
-        queryKey: ['allVideos', NFT_CONTRACT_ID, contentType ?? 'all'],
+        queryKey: [
+            'allVideos',
+            NFT_CONTRACT_ID,
+            FEATURE_FLAGS.enablePaidMediaLivepeerV1 ? 'livepeer' : 'legacy',
+            contentType ?? 'all',
+        ],
         initialPageParam: null as string | null,
-        queryFn: ({ pageParam }) => fetchEventsPage(pageParam, contentType ?? null),
+        queryFn: ({ pageParam }) => FEATURE_FLAGS.enablePaidMediaLivepeerV1
+            ? fetchLivepeerPublicationsPage(pageParam, contentType ?? null)
+            : fetchEventsPage(pageParam, contentType ?? null),
         getNextPageParam: (lastPage) => lastPage.nextCursor,
         staleTime: 30 * 1000,
         gcTime: 5 * 60 * 1000,

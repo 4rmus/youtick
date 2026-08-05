@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
@@ -33,6 +35,7 @@ impl StorageKey {
     const ENTITLEMENTS: Self = Self(b"livepeer-v1:entitlements");
     const CREATOR_BALANCES: Self = Self(b"livepeer-v1:creator-balances");
     const TAKEDOWNS: Self = Self(b"livepeer-v1:takedowns");
+    const PUBLICATION_IDS: Self = Self(b"livepeer-v1:publication-ids");
 }
 
 #[near(serializers = [borsh, json])]
@@ -180,18 +183,22 @@ pub struct Contract {
     creator_balances: LookupMap<AccountId, u128>,
     takedowns: LookupMap<String, TakedownRecord>,
     platform_balance: u128,
+    publication_ids: LookupMap<u64, String>,
+    publication_count: u64,
 }
 
 #[near(serializers = [borsh])]
-struct ContractBeforeTakedown {
+struct ContractBeforePublicationIndex {
     platform_account_id: AccountId,
     bridge_account_id: AccountId,
+    takedown_authority_id: AccountId,
     media_jobs: LookupMap<String, MediaJob>,
     publications: LookupMap<String, Publication>,
     asset_bindings: LookupMap<String, String>,
     playback_bindings: LookupMap<String, String>,
     entitlements: LookupMap<String, bool>,
     creator_balances: LookupMap<AccountId, u128>,
+    takedowns: LookupMap<String, TakedownRecord>,
     platform_balance: u128,
 }
 
@@ -224,33 +231,45 @@ impl Contract {
             creator_balances: LookupMap::new(StorageKey::CREATOR_BALANCES),
             takedowns: LookupMap::new(StorageKey::TAKEDOWNS),
             platform_balance: 0,
+            publication_ids: LookupMap::new(StorageKey::PUBLICATION_IDS),
+            publication_count: 0,
         }
     }
 
     #[init(ignore_state)]
-    pub fn migrate(takedown_authority_id: AccountId) -> Self {
+    pub fn migrate(publication_ids: Vec<String>) -> Self {
         require!(
             env::predecessor_account_id() == env::current_account_id(),
             "Only the contract account can migrate"
         );
-        let old: ContractBeforeTakedown = env::state_read().expect("Old state is missing");
-        require!(
-            takedown_authority_id != old.bridge_account_id
-                && takedown_authority_id != old.platform_account_id,
-            "Takedown authority must be separate"
-        );
+        let old: ContractBeforePublicationIndex = env::state_read().expect("Old state is missing");
+        let mut index = LookupMap::new(StorageKey::PUBLICATION_IDS);
+        let mut seen = HashSet::new();
+        for (position, publication_id) in publication_ids.iter().enumerate() {
+            require!(
+                seen.insert(publication_id),
+                "Duplicate publication id in migration"
+            );
+            require!(
+                old.publications.get(publication_id).is_some(),
+                "Publication not found in migration"
+            );
+            index.insert(&(position as u64), publication_id);
+        }
         Self {
             platform_account_id: old.platform_account_id,
             bridge_account_id: old.bridge_account_id,
-            takedown_authority_id,
+            takedown_authority_id: old.takedown_authority_id,
             media_jobs: old.media_jobs,
             publications: old.publications,
             asset_bindings: old.asset_bindings,
             playback_bindings: old.playback_bindings,
             entitlements: old.entitlements,
             creator_balances: old.creator_balances,
-            takedowns: LookupMap::new(StorageKey::TAKEDOWNS),
+            takedowns: old.takedowns,
             platform_balance: old.platform_balance,
+            publication_ids: index,
+            publication_count: publication_ids.len() as u64,
         }
     }
 
@@ -413,6 +432,13 @@ impl Contract {
         job.published_at_ms = Some(published_at_ms);
         self.media_jobs.insert(&submission.job_id, &job);
         self.publications.insert(&submission.job_id, &publication);
+        let next_count = self
+            .publication_count
+            .checked_add(1)
+            .expect("Publication count overflow");
+        self.publication_ids
+            .insert(&self.publication_count, &submission.job_id);
+        self.publication_count = next_count;
         self.asset_bindings
             .insert(&submission.asset_id_hash, &submission.job_id);
         self.playback_bindings
@@ -684,14 +710,47 @@ impl Contract {
         self.publications.get(&publication_id)
     }
 
+    pub fn get_publications_count(&self) -> u64 {
+        self.publication_count
+    }
+
+    pub fn get_publications(
+        &self,
+        from_index: Option<U64>,
+        limit: Option<u64>,
+    ) -> Vec<Publication> {
+        let start = from_index.unwrap_or(U64(0)).0.min(self.publication_count);
+        let end = start
+            .saturating_add(limit.unwrap_or(50).min(100))
+            .min(self.publication_count);
+        (start..end)
+            .map(|position| {
+                let publication_id = self
+                    .publication_ids
+                    .get(&position)
+                    .expect("Publication index is inconsistent");
+                self.publications
+                    .get(&publication_id)
+                    .expect("Indexed publication is missing")
+            })
+            .collect()
+    }
+
     pub fn get_takedown(&self, publication_id: String) -> Option<TakedownRecord> {
         self.takedowns.get(&publication_id)
     }
 
     pub fn has_entitlement(&self, account_id: AccountId, publication_id: String) -> bool {
-        self.entitlements
+        if self
+            .entitlements
             .get(&entitlement_key(&account_id, &publication_id))
             .unwrap_or(false)
+        {
+            return true;
+        }
+        self.publications
+            .get(&publication_id)
+            .is_some_and(|publication| publication.creator_id == account_id)
     }
 
     pub fn get_creator_balance(&self, creator_id: AccountId) -> U128 {
@@ -910,22 +969,51 @@ mod tests {
     }
 
     #[test]
-    fn migrates_existing_state_to_a_separate_takedown_authority() {
+    fn migrates_existing_publication_into_index() {
         testing_env!(context("market.testnet").build());
-        let old = ContractBeforeTakedown {
+        let publication_id = "job-existing".to_string();
+        let mut publications = LookupMap::new(StorageKey::PUBLICATIONS);
+        publications.insert(
+            &publication_id,
+            &Publication {
+                publication_id: publication_id.clone(),
+                creator_id: account("creator.testnet"),
+                title: "Existing publication".to_string(),
+                price_usdc: U128(2_000_000),
+                generation: 1,
+                expected_source_bytes: U128(1_000_000),
+                profile_id: PROFILE.to_string(),
+                profile_config_sha256:
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                asset_id_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    .to_string(),
+                playback_id: "playback_001".to_string(),
+                project_id_hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                    .to_string(),
+                verified_source_bytes: U128(1_000_000),
+                provider_source_fingerprint: None,
+                ready_at_ms: U64(1),
+                published_availability: PublicationAvailability::Active,
+                availability: PublicationAvailability::Active,
+                published_at_ms: 1,
+            },
+        );
+        let old = ContractBeforePublicationIndex {
             platform_account_id: account("platform.testnet"),
             bridge_account_id: account("bridge.testnet"),
+            takedown_authority_id: account("governance.testnet"),
             media_jobs: LookupMap::new(StorageKey::MEDIA_JOBS),
-            publications: LookupMap::new(StorageKey::PUBLICATIONS),
+            publications,
             asset_bindings: LookupMap::new(StorageKey::ASSET_BINDINGS),
             playback_bindings: LookupMap::new(StorageKey::PLAYBACK_BINDINGS),
             entitlements: LookupMap::new(StorageKey::ENTITLEMENTS),
             creator_balances: LookupMap::new(StorageKey::CREATOR_BALANCES),
+            takedowns: LookupMap::new(StorageKey::TAKEDOWNS),
             platform_balance: 50,
         };
         env::state_write(&old);
 
-        let migrated = Contract::migrate(account("governance.testnet"));
+        let migrated = Contract::migrate(vec![publication_id.clone()]);
 
         assert_eq!(migrated.platform_account_id, account("platform.testnet"));
         assert_eq!(migrated.bridge_account_id, account("bridge.testnet"));
@@ -934,5 +1022,10 @@ mod tests {
             account("governance.testnet")
         );
         assert_eq!(migrated.platform_balance, 50);
+        assert_eq!(migrated.get_publications_count(), 1);
+        assert_eq!(
+            migrated.get_publications(None, None)[0].publication_id,
+            publication_id
+        );
     }
 }

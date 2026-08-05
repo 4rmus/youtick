@@ -11,6 +11,7 @@ import { ScreenState } from '@/components/ScreenState';
 import { VideoPlayer } from '@/components/VideoPlayer';
 import {
     buyLivepeerTicket,
+    formatUsdc,
     hasLivepeerEntitlement,
     readLivepeerPublication,
 } from '@/lib/livepeer-publication';
@@ -133,11 +134,4 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
             )}
         </PageShell>
     );
-}
-
-function formatUsdc(value: string): string {
-    const amount = BigInt(value);
-    const whole = amount / 1_000_000n;
-    const fraction = (amount % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
-    return fraction ? `${whole}.${fraction}` : whole.toString();
 }

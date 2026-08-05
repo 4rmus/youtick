@@ -74,6 +74,38 @@ describe('useAllVideos data logic', () => {
         const events: unknown[] = [];
         expect(events.length).toBe(0);
     });
+
+    it('maps active Livepeer publications to job watch links', async () => {
+        const { mapLivepeerPublicationsToTokens } = await import('@/hooks/useAllVideos');
+        const tokens = mapLivepeerPublicationsToTokens([
+            {
+                publication_id: 'job-001',
+                creator_id: 'creator.testnet',
+                title: 'Livepeer video',
+                price_usdc: '2000000',
+                generation: 1,
+                playback_id: 'playback_001',
+                availability: 'ACTIVE',
+                published_at_ms: 200,
+            },
+            {
+                publication_id: 'job-hidden',
+                creator_id: 'creator.testnet',
+                title: 'Removed video',
+                price_usdc: '2000000',
+                generation: 1,
+                playback_id: 'playback_002',
+                availability: 'TAKEDOWN',
+                published_at_ms: 100,
+            },
+        ]);
+
+        expect(tokens).toHaveLength(1);
+        expect(tokens[0].video_metadata).toMatchObject({
+            livepeer_job_id: 'job-001',
+            price_usdc: '2000000',
+        });
+    });
 });
 
 describe('useOwnedTokens data logic', () => {

@@ -214,7 +214,10 @@ function internalWebhookRequest(value = webhook()): Request {
     });
 }
 
-async function signedWebhookRequest(value: ReturnType<typeof webhook>, secret = WEBHOOK_SECRET): Promise<Request> {
+async function signedWebhookRequest(
+    value: { timestamp: number } & Record<string, unknown>,
+    secret = WEBHOOK_SECRET,
+): Promise<Request> {
     const raw = JSON.stringify(value);
     const key = await crypto.subtle.importKey(
         'raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
@@ -388,6 +391,15 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             'job:testnet:paid-media-livepeer-v1.testnet:job-001:1',
         );
         expect(objectFetch).toHaveBeenCalledOnce();
+
+        const directValue = webhook();
+        const snapshotValue = {
+            ...directValue,
+            payload: { asset: { id: ASSET_ID, snapshot: directValue.payload.asset } },
+        };
+        const snapshot = await handler.fetch(await signedWebhookRequest(snapshotValue), env);
+        expect(snapshot.status).toBe(200);
+        expect(objectFetch).toHaveBeenCalledTimes(2);
     });
 
     it('accepts the previous webhook secret during the rotation overlap', async () => {
@@ -410,7 +422,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(objectFetch).toHaveBeenCalledOnce();
     });
 
-    it.each(['asset.updated', 'asset.failed', 'asset.deleted'])(
+    it.each(['asset.failed', 'asset.deleted'])(
         'ignores %s without changing the job or calling external systems',
         async (event) => {
             const testState = createState();
@@ -435,6 +447,50 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             expect(operatorFetch).not.toHaveBeenCalled();
         },
     );
+
+    it('recovers when a ready asset.updated follows an early asset.ready read', async () => {
+        const testState = createState();
+        testState.values.set('job:v1', jobRecord());
+        const operatorFetch = vi.fn(async (request: Request) => (
+            new URL(request.url).pathname === '/internal/finalize'
+                ? Response.json({ accepted: true, finalized: true })
+                : Response.json({ accepted: true })
+        ));
+        const control = new LivepeerControl(testState.state, createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                get: vi.fn(() => ({ fetch: operatorFetch })),
+            } as unknown as DurableObjectNamespace,
+        }));
+        let assetReads = 0;
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes(`/asset/${ASSET_ID}`)) {
+                assetReads += 1;
+                return Response.json(providerAsset(assetReads === 1
+                    ? { status: { phase: 'processing' } }
+                    : undefined));
+            }
+            if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback());
+            if (url.endsWith('.m3u8')) return new Response(HLS_ERROR, { status: 200 });
+            return new Response(null, { status: 403 });
+        }));
+
+        const early = await control.fetch(internalWebhookRequest(webhook()));
+        expect(early.status).toBe(409);
+        expect(testState.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_READY' });
+
+        const update = webhook('asset.updated', Date.now() + 1);
+        update.payload.asset.status = { phase: 'ready' };
+        const recovered = await control.fetch(internalWebhookRequest(update));
+
+        expect(recovered.status).toBe(200);
+        expect(testState.values.get('job:v1')).toMatchObject({ state: 'ONCHAIN_PUBLISHED' });
+        expect(assetReads).toBe(2);
+        expect(operatorFetch.mock.calls.filter(([request]) => (
+            new URL(request.url).pathname === '/internal/finalize'
+        ))).toHaveLength(1);
+    });
 
     it.each([
         ['project', providerAsset({ projectId: 'wrong-project' }), providerPlayback(), 'provider_identity_mismatch'],
@@ -625,6 +681,48 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             nextReconcileAtMs: now + 15 * 60 * 1000,
         });
         expect(testState.alarms.at(-1)).toBe(now + 15 * 60 * 1000);
+    });
+
+    it('retries a queued finalization from the job alarm', async () => {
+        const now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const testState = createState();
+        testState.values.set('job:v1', jobRecord());
+        let finalizeCalls = 0;
+        const operatorFetch = vi.fn(async (request: Request) => {
+            if (new URL(request.url).pathname !== '/internal/finalize') {
+                return Response.json({ accepted: true });
+            }
+            finalizeCalls += 1;
+            return Response.json(
+                { accepted: true, finalized: finalizeCalls > 1 },
+                { status: finalizeCalls > 1 ? 200 : 202 },
+            );
+        });
+        const control = new LivepeerControl(testState.state, createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                get: vi.fn(() => ({ fetch: operatorFetch })),
+            } as unknown as DurableObjectNamespace,
+        }));
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
+            if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback());
+            if (url.endsWith('.m3u8')) return new Response(HLS_ERROR, { status: 200 });
+            return new Response(null, { status: 403 });
+        }));
+
+        const ready = await control.fetch(internalWebhookRequest());
+        expect(ready.status).toBe(202);
+        expect(testState.values.get('job:v1')).toMatchObject({ state: 'FINALIZE_QUEUED' });
+        expect(testState.alarms.at(-1)).toBe(now + 60_000);
+
+        await control.alarm();
+
+        expect(finalizeCalls).toBe(2);
+        expect(testState.values.get('job:v1')).toMatchObject({ state: 'ONCHAIN_PUBLISHED' });
+        expect(testState.values.get('reconcile:v1')).toMatchObject({ status: 'PROVIDER_UNKNOWN' });
     });
 
     it('does not read provider or NEAR while the runtime flag is disabled', async () => {

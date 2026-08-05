@@ -233,7 +233,7 @@ const CONTROL_MAX_FUTURE_MS = 5 * 60 * 1000;
 const WEBHOOK_TOLERANCE_MS = 5 * 60 * 1000;
 const PLAYBACK_MIN_TTL_SECONDS = 120;
 const PLAYBACK_MAX_TTL_SECONDS = 300;
-const FINALIZE_GAS = 50_000_000_000_000n;
+const FINALIZE_GAS = 15_000_000_000_000n;
 const JOB_KEY = 'job:v1';
 const RECONCILE_KEY = 'reconcile:v1';
 const RECONCILE_HEALTHY_INTERVAL_MS = 15 * 60 * 1000;
@@ -414,11 +414,16 @@ export class LivepeerControl {
             return;
         }
         const job = await this.state.storage.get<JobRecord>(JOB_KEY);
-        if (!job || job.state !== 'ONCHAIN_PUBLISHED' || !job.publication) return;
+        if (!job || !job.publication) return;
         if (this.env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
             await scheduleReconcile(this.state, Date.now() + RECONCILE_HEALTHY_INTERVAL_MS);
             return;
         }
+        if (['READY_VERIFIED', 'FINALIZE_QUEUED'].includes(job.state)) {
+            await advanceFinalization(this.state, this.env, job);
+            return;
+        }
+        if (job.state !== 'ONCHAIN_PUBLISHED') return;
         await reconcilePublishedJob(this.state, this.env, job);
     }
 
@@ -601,7 +606,11 @@ export class LivepeerControl {
         if (!existing || asset.id !== existing.assetId) {
             return json({ accepted: true, ignored: true }, 202);
         }
-        if (webhook.event !== 'asset.ready') {
+        const readinessEvent = webhook.event === 'asset.ready'
+            || (webhook.event === 'asset.updated'
+                && existing.state === 'UPLOAD_READY'
+                && providerPhase(asset) === 'ready');
+        if (!readinessEvent) {
             if (existing.state === 'ONCHAIN_PUBLISHED') {
                 await scheduleReconcile(this.state, Date.now());
                 return json({ accepted: true, ignored: true, reconcile_triggered: true }, 202);
@@ -660,20 +669,7 @@ export class LivepeerControl {
             return json({ accepted: true, duplicate: Boolean(seen), finalized: true });
         }
         if (!record.publication) throw new Error('provider_state_invalid');
-        const response = await forwardFinalize(this.env, record.publication);
-        if (response.ok) {
-            const result = await response.clone().json() as { finalized?: unknown };
-            record = {
-                ...record,
-                state: result.finalized === true ? 'ONCHAIN_PUBLISHED' : 'FINALIZE_QUEUED',
-            };
-            await this.state.storage.put(JOB_KEY, record);
-            await updateAdmission(this.env, record, record.state);
-            if (record.state === 'ONCHAIN_PUBLISHED') {
-                await ensureReconcileScheduled(this.state);
-            }
-        }
-        return response;
+        return advanceFinalization(this.state, this.env, record);
     }
 
     private async finalizePublication(request: Request): Promise<Response> {
@@ -685,6 +681,31 @@ export class LivepeerControl {
         const input = await parseSuspendSalesInput(await readJsonObject(request));
         return processSuspendSalesOutbox(this.state, this.env, input);
     }
+}
+
+async function advanceFinalization(
+    state: DurableObjectState,
+    env: Env,
+    job: JobRecord,
+): Promise<Response> {
+    const response = await forwardFinalize(env, job.publication!);
+    if (!response.ok) {
+        await scheduleReconcile(state, Date.now() + RECONCILE_BACKOFF_MS[0]);
+        return response;
+    }
+    const result = await response.clone().json() as { finalized?: unknown };
+    const record: JobRecord = {
+        ...job,
+        state: result.finalized === true ? 'ONCHAIN_PUBLISHED' : 'FINALIZE_QUEUED',
+    };
+    await state.storage.put(JOB_KEY, record);
+    await updateAdmission(env, record, record.state);
+    if (record.state === 'ONCHAIN_PUBLISHED') {
+        await ensureReconcileScheduled(state);
+    } else {
+        await scheduleReconcile(state, Date.now() + RECONCILE_BACKOFF_MS[0]);
+    }
+    return response;
 }
 
 async function requestAdmission(env: Env, job: JobRecord): Promise<void> {
@@ -1559,7 +1580,7 @@ function parseControlEnvelope(value: unknown): ControlEnvelope {
         || typeof envelope.session_public_key !== 'string'
         || !SESSION_KEY_PATTERN.test(envelope.session_public_key)
         || typeof envelope.origin !== 'string'
-        || !isHttpsOrigin(envelope.origin)
+        || !isAllowedControlOrigin(envelope.origin)
         || typeof envelope.device_nonce !== 'string'
         || !NONCE_PATTERN.test(envelope.device_nonce)
         || typeof envelope.expires_at_ms !== 'string'
@@ -2114,9 +2135,11 @@ function parseWebhook(value: JsonObject): WebhookEvent {
 
 function webhookAsset(webhook: WebhookEvent): JsonObject | null {
     const asset = webhook.payload.asset;
-    return asset && typeof asset === 'object' && !Array.isArray(asset)
-        ? asset as JsonObject
-        : null;
+    if (!asset || typeof asset !== 'object' || Array.isArray(asset)) return null;
+    const snapshot = (asset as JsonObject).snapshot;
+    return snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+        ? snapshot as JsonObject
+        : asset as JsonObject;
 }
 
 function webhookRoute(webhook: WebhookEvent): { jobId: string; generation: number } | null {
@@ -2979,6 +3002,16 @@ function isHttpsOrigin(value: string): boolean {
     try {
         const url = new URL(value);
         return url.protocol === 'https:' && url.origin === value;
+    } catch {
+        return false;
+    }
+}
+
+function isAllowedControlOrigin(value: string): boolean {
+    if (isHttpsOrigin(value)) return true;
+    try {
+        const url = new URL(value);
+        return url.protocol === 'http:' && url.hostname === 'localhost' && url.origin === value;
     } catch {
         return false;
     }

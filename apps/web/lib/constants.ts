@@ -36,15 +36,12 @@ function getConfiguredNetworkId(): NetworkId {
     return process.env.NEXT_PUBLIC_NEAR_NETWORK === 'testnet' ? 'testnet' : 'mainnet';
 }
 
-function getContractId(envName: string, defaultValue: string, aliasEnvName?: string): string {
-    const value = process.env[envName] || (aliasEnvName ? process.env[aliasEnvName] : undefined);
-    return value || defaultValue;
-}
-
 const configuredNetworkId = getConfiguredNetworkId();
 const defaultContracts = DEFAULT_CONTRACT_IDS[configuredNetworkId];
 const configuredMarketContractId =
-    getContractId('NEXT_PUBLIC_MARKET_CONTRACT_ID', defaultContracts.marketContractId, 'NEXT_PUBLIC_NFT_CONTRACT_ID');
+    process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID
+    || process.env.NEXT_PUBLIC_NFT_CONTRACT_ID
+    || defaultContracts.marketContractId;
 const configuredAppUrl =
     process.env.NEXT_PUBLIC_APP_URL
     || (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'https://youtick.net');
@@ -62,15 +59,15 @@ export const NEAR_CONFIG = {
 
     /** Zero-trust access/session contract ID */
     accessContractId:
-        getContractId('NEXT_PUBLIC_ACCESS_CONTRACT_ID', defaultContracts.accessContractId),
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID || defaultContracts.accessContractId,
 
     /** Zero-trust registry contract ID */
     registryContractId:
-        getContractId('NEXT_PUBLIC_REGISTRY_CONTRACT_ID', defaultContracts.registryContractId),
+        process.env.NEXT_PUBLIC_REGISTRY_CONTRACT_ID || defaultContracts.registryContractId,
 
     /** Circle USDC contract used for paid-job creation and ticket settlement. */
     usdcContractId:
-        getContractId('NEXT_PUBLIC_USDC_CONTRACT_ID', defaultContracts.usdcContractId),
+        process.env.NEXT_PUBLIC_USDC_CONTRACT_ID || defaultContracts.usdcContractId,
 } as const;
 
 export const FEATURE_FLAGS = {
