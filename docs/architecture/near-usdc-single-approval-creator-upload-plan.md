@@ -1,8 +1,8 @@
 # NEAR + USDC Single-Approval Creator Upload Plan
 
-Status: `PLAN_REVIEWED / IMPLEMENTATION_NOT_STARTED / RUNTIME_DISABLED`
+Status: `LOCAL_IMPLEMENTATION_COMPLETE / RUNTIME_DISABLED`
 
-Last reviewed: 2026-08-04
+Last reviewed: 2026-08-05
 
 This plan changes only the creator's one-time, byte-based Livepeer upload fee.
 Ticket pricing, buyer settlement and the existing 98/2 split remain USDC-only.
@@ -45,6 +45,10 @@ user changes.
 
 - Creator upload fee only: decimal `$0.30/GB`, charged once for a new job.
 - Payment assets: Circle USDC on NEAR or native NEAR.
+- The web defaults to USDC-only. Native NEAR requires the separate
+  `NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE=true` web gate and
+  `LIVEPEER_NEAR_CREATOR_FEE_ENABLED=true` Worker gate; while either is off the
+  browser prepares no NEAR transaction and the Worker issues no NEAR quote.
 - Ticket minimum remains `2_000_000` micro-USDC.
 - Buyer payment and creator/platform ticket settlement remain USDC-only.
 - No split payment, automatic swap, cross-chain payment or automatic refund.
@@ -55,9 +59,20 @@ user changes.
   considered usable.
 - Feature flags remain off through code merge and local verification.
 
+## Release sequencing
+
+The first releasable milestone is USDC-only. The NEAR path remains implemented
+and locally tested, but it stays unavailable while `RATE_SOURCE_BLOCKED` is
+open and both NEAR creator-fee feature flags remain disabled. This NEAR gate
+does not block review or CI for the disabled code, or a later separately
+approved USDC-only deployment. Any deployment, feature-flag activation or live
+mutation still requires separate explicit approval.
+
 ## Success criteria
 
-The normal USDC and NEAR paths each satisfy all of the following:
+Local code keeps and tests both payment paths. The initial release applies the
+following criteria to USDC; NEAR must also satisfy them, plus its rate-source
+and activation gates, before later exposure:
 
 1. The UI displays the selected asset and exact amount before wallet approval.
 2. The web client calls `signAndSendTransaction` exactly once.
@@ -203,11 +218,16 @@ Add a narrow endpoint such as `POST /v1/creator-fee-quotes/near`.
 - Return only the quote, signature and public key version.
 - Rate-limit without persisting wallet or quote secrets.
 
-The exact production rate provider is a P0 decision before this endpoint is
-implemented. Pyth Core on NEAR is not eligible due to its announced support end.
-If the approved source is down, NEAR payment closes and USDC remains available.
+The approved local source is the Outlayer `wrap.near` cached view, read from
+`price-oracle.near` or `price-oracle.testnet` through the Worker's configured
+NEAR RPC. No separate price API key or settlement fallback is used. Pyth Core
+on NEAR remains ineligible due to its announced support end. Empty, stale,
+invalid or unavailable oracle data closes NEAR payment while USDC remains
+available. A non-null cached price is usable only when the oracle-reported
+`recency_duration_sec` is at most 60.
 
-Proposed initial bounds, to be measured and locked before coding:
+Locked local bounds; provider liveness and the gas reserve remain activation
+gates:
 
 - maximum source-price age: 60 seconds;
 - maximum quote lifetime: 2 minutes;
@@ -400,14 +420,18 @@ local PASS must not be recorded as deployed capability.
 
 | Slice | Status | Evidence | Remaining gate |
 | --- | --- | --- | --- |
-| Baseline preservation | `PENDING` | none | dirty overlapping worktree |
-| A: protocol + contract | `PENDING` | none | implementation not started |
-| B: Worker + web | `PENDING` | none | implementation not started |
+| Baseline preservation | `COMPLETE` | Draft PR #73; snapshot `a4378c84ee66869ed2134be834af2bea7f12b3b0`; clean branch/worktree check: `git status --short --branch`, `git rev-parse HEAD`; snapshot CI Gate, Contracts, Docs, Web and Livepeer Bridge Worker PASS | PR remains draft; merge not authorized |
+| A: protocol + contract | `LOCAL_COMPLETE` | `node scripts/check-paid-media-livepeer-v1.mjs` PASS; `cargo +1.86.0 fmt --all --check` PASS; `cargo +1.86.0 clippy --all-targets -- -D warnings` PASS; lib `4/4`, focused `16/16`, sandbox `1/1`; WASM `d6ba032f92e5450af16f91ecb60e13e71ed32d56d5c71eec034decd044b06a96`; ABI `market=28, access=24` | CI, fresh contract deployment and external evidence not run |
+| B: Worker + web | `LOCAL_COMPLETE` | USDC is the default web rail; native NEAR additionally requires the default-off web and Worker flags, and neither quote lookup nor NEAR transaction runs while either gate is closed. Source decision: Outlayer `get_price_data` for `wrap.near` through the existing NEAR RPC, 60-second maximum oracle recency, 120-second source-to-expiry window, no fallback, outage closes NEAR only. Worker focused `npm test -- --run src/index.test.ts` `32/32`, full `npm test -- --run` `81/81`, `npm run check` PASS and `npx wrangler deploy --dry-run` PASS with both runtime flags `false`; web focused upload `19/19`, constants `13/13`, full `npm test -- --run` `272/272`, lint and build PASS; docs build, protocol/ABI checkers and `git diff --check` PASS. `PROVIDER` read-only RPC evidence on 2026-08-05 returned HTTP 200 with `price:null` and recency windows of 300 seconds on `price-oracle.testnet` and 600 seconds on `price-oracle.near`; this is not live NEAR capability. | CI; `RATE_SOURCE_BLOCKED` until the target network returns 20 consecutive non-null samples at 30-second intervals with `recency_duration_sec <= 60`; both NEAR flags, quote-key provisioning, measured gas reserve, fresh contract deployment and external evidence require separate approval |
 | C: bounded testnet | `BLOCKED_BY_APPROVAL` | none | deploy/funding/provider mutation |
-| D: production | `BLOCKED_BY_DECISIONS` | none | rate source, key ops, gas, activation |
+| D: production | `RATE_SOURCE_BLOCKED` | Outlayer source and fail-closed policy locked locally; read-only provider probe returned `price:null` and recency windows wider than 60 seconds; runtime remains disabled | fresh-source qualification, quote-key custody and rotation, measured gas reserve, deployment and activation |
 
 ## Sources
 
+- Outlayer price-oracle interface and cache behavior:
+  <https://price-oracle.outlayer.ai/docs/>
+- NEAR oracle overview:
+  <https://docs.near.org/primitives/oracles>
 - Pyth NEAR support notice:
   <https://docs.pyth.network/price-feeds/core/use-real-time-data/pull-integration/near>
 - NEAR fungible-token standard:

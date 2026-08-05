@@ -9,16 +9,22 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { FEATURE_FLAGS } from '@/lib/constants';
 import {
     authorizeLivepeerPaidJob,
     clearLivepeerUploadDraft,
+    configuredCreatorFeeGasReserveYocto,
     createLivepeerJobId,
     parseLivepeerPriceUsdc,
+    livepeerUploadFeeUsdc,
     readLivepeerUploadDraft,
+    prepareCreatorFeePaymentOptions,
     requestLivepeerUploadIntent,
     uploadLivepeerSource,
     validateLivepeerSourceFile,
     writeLivepeerUploadDraft,
+    type CreatorFeeAsset,
+    type SignedNearCreatorFeeQuote,
 } from '@/lib/livepeer-upload';
 
 export function LivepeerPaidUploadForm() {
@@ -35,12 +41,25 @@ export function LivepeerPaidUploadForm() {
     const [error, setError] = React.useState<string | null>(null);
     const [busy, setBusy] = React.useState(false);
     const [complete, setComplete] = React.useState(false);
+    const [payment, setPayment] = React.useState<{
+        usable: CreatorFeeAsset[];
+        usdcFee: string;
+        nearQuote?: SignedNearCreatorFeeQuote;
+    } | null>(null);
+    const [paymentAsset, setPaymentAsset] = React.useState<CreatorFeeAsset | null>(null);
+
+    React.useEffect(() => {
+        setPayment(null);
+        setPaymentAsset(null);
+    }, [accountId]);
 
     const selectFile = (event: React.ChangeEvent<HTMLInputElement>) => {
         const selected = event.target.files?.[0] || null;
         setFile(selected);
         setError(null);
         setComplete(false);
+        setPayment(null);
+        setPaymentAsset(null);
         if (!selected) {
             setFileError(null);
             return;
@@ -55,12 +74,13 @@ export function LivepeerPaidUploadForm() {
         }
     };
 
-    const start = async () => {
+    const preparePayment = async () => {
         if (!accountId || !file || fileError || !title.trim() || !rightsAccepted) return;
         setBusy(true);
         setError(null);
+        setStatus('Checking payment options…');
         try {
-            const priceUsdc = parseLivepeerPriceUsdc(price);
+            parseLivepeerPriceUsdc(price);
             const activeJobId = jobId || createLivepeerJobId();
             const draft = {
                 jobId: activeJobId,
@@ -72,19 +92,61 @@ export function LivepeerPaidUploadForm() {
             };
             setJobId(activeJobId);
             writeLivepeerUploadDraft(accountId, draft);
+            const options = await prepareCreatorFeePaymentOptions({
+                accountId,
+                jobId: activeJobId,
+                expectedSourceBytes: file.size,
+                gasReserveYocto: configuredCreatorFeeGasReserveYocto(),
+            });
+            if (!options.selected) throw new Error('creator_fee_balance_or_gas_insufficient');
+            setPayment(options);
+            setPaymentAsset(options.selected);
+            setStatus(null);
+        } catch (reason) {
+            setError(reason instanceof Error ? reason.message : u.livepeer_failed);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const start = async () => {
+        if (!accountId || !file || fileError || !title.trim() || !rightsAccepted
+            || !jobId || !payment || !paymentAsset) return;
+        setBusy(true);
+        setError(null);
+        try {
+            const priceUsdc = parseLivepeerPriceUsdc(price);
+            if (!payment.usable.includes(paymentAsset)) throw new Error('creator_fee_asset_unavailable');
+            if (paymentAsset === 'NEAR'
+                && (!payment.nearQuote
+                    || BigInt(payment.nearQuote.quote.expires_at_ms) <= BigInt(Date.now()))) {
+                setPayment(null);
+                setPaymentAsset(null);
+                throw new Error('near_creator_fee_quote_expired');
+            }
+            const draft = {
+                jobId,
+                title: title.trim(),
+                price,
+                sourceBytes: file.size,
+                sourceName: file.name,
+                sourceLastModified: file.lastModified,
+            };
+            writeLivepeerUploadDraft(accountId, draft);
             const wallet = await getWallet();
             setStatus(u.livepeer_authorizing);
             await authorizeLivepeerPaidJob(wallet, {
                 accountId,
-                jobId: activeJobId,
+                jobId,
                 title: draft.title,
                 priceUsdc,
                 expectedSourceBytes: file.size,
+                asset: paymentAsset,
+                nearQuote: payment.nearQuote,
             });
             const intent = await requestLivepeerUploadIntent({
-                wallet,
                 accountId,
-                jobId: activeJobId,
+                jobId,
                 generation: 1,
                 expectedSourceBytes: file.size,
             });
@@ -181,6 +243,38 @@ export function LivepeerPaidUploadForm() {
                         <span>{u.paid_browser_rights}</span>
                     </label>
 
+                    {file && !fileError && (
+                        <div className="space-y-2 text-sm font-medium">
+                            <p>Creator upload fee: {formatMicroUsdc(livepeerUploadFeeUsdc(file.size))} USDC</p>
+                            {payment && (
+                                <div role="radiogroup" aria-label="Creator upload fee asset" className="space-y-2">
+                                    {payment.usable.map((asset) => (
+                                        <label key={asset} className="flex items-center gap-2">
+                                            <input
+                                                type="radio"
+                                                name="creator-fee-asset"
+                                                value={asset}
+                                                checked={paymentAsset === asset}
+                                                disabled={busy}
+                                                onChange={() => setPaymentAsset(asset)}
+                                            />
+                                            <span>
+                                                {asset === 'USDC'
+                                                    ? `${formatMicroUsdc(payment.usdcFee)} USDC`
+                                                    : `${formatYoctoNear(payment.nearQuote!.quote.fee_near_yocto)} NEAR`}
+                                            </span>
+                                        </label>
+                                    ))}
+                                    {FEATURE_FLAGS.enableLivepeerNearCreatorFee && !payment.nearQuote && (
+                                        <p className="text-xs text-muted-foreground">
+                                            NEAR is temporarily unavailable; USDC remains available.
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {!accountId ? (
                         <Button type="button" onClick={() => void connect()} disabled={!isReady}>
                             {u.connect_wallet}
@@ -188,6 +282,16 @@ export function LivepeerPaidUploadForm() {
                     ) : complete && jobId ? (
                         <Button asChild className="w-full">
                             <Link href={`/watch?job=${encodeURIComponent(jobId)}`}>{u.livepeer_watch}</Link>
+                        </Button>
+                    ) : !payment ? (
+                        <Button
+                            type="button"
+                            className="w-full"
+                            disabled={!ready || busy}
+                            onClick={() => void preparePayment()}
+                        >
+                            {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Check payment options
                         </Button>
                     ) : (
                         <Button
@@ -209,6 +313,18 @@ export function LivepeerPaidUploadForm() {
             </Card>
         </div>
     );
+}
+
+function formatMicroUsdc(value: string): string {
+    const amount = BigInt(value);
+    const fraction = (amount % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
+    return fraction ? `${amount / 1_000_000n}.${fraction}` : String(amount / 1_000_000n);
+}
+
+function formatYoctoNear(value: string): string {
+    const amount = BigInt(value);
+    const fraction = (amount % (10n ** 24n)).toString().padStart(24, '0').replace(/0+$/, '');
+    return fraction ? `${amount / (10n ** 24n)}.${fraction}` : String(amount / (10n ** 24n));
 }
 
 function validationMessage(

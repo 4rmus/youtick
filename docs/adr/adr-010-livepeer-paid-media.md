@@ -73,10 +73,22 @@ locked in [`protocol/paid-media-livepeer-v1`](https://github.com/4rmus/youtick/b
 The 2026-08-01 product decision locks exact source admission, creator restart,
 sale suspension, takedown, closed-canary refund and key authority behavior in
 the protocol. Browser, bridge and contract reject `20_000_000_001` before any
-provider mutation. Creator keys are single-job, finite-allowance FunctionCall
-keys for `create_paid_job`; bridge keys are separate finite-allowance
-FunctionCall keys for the two operator methods. Platform governance owns key
-rotation and no runtime receives FullAccess.
+provider mutation. Creator upload keys are single-job application Ed25519 keys
+recorded on the exact media job; normal upload does
+not add or delete a NEAR account key. Bridge keys remain separate
+finite-allowance FunctionCall keys for the two operator methods. Platform
+governance owns operator and quote-key rotation and no runtime receives
+FullAccess.
+
+Native-NEAR creator-fee quotes use the cached `wrap.near` price from the
+Outlayer oracle contract, read only by the Worker through the configured NEAR
+RPC. The Worker accepts only a non-null price whose oracle-reported
+`recency_duration_sec` is at most 60; the source-to-expiry window is at most
+120 seconds. There is no browser, alternate API or CEX fallback. Empty, stale
+or unavailable oracle data closes only native NEAR creator fees while USDC may
+remain available.
+The web and Worker native-NEAR creator-fee flags are separate and default off;
+both require explicit activation while the USDC rail remains independent.
 
 The creator fee and provider invoice are distinct. Livepeer transcode, storage
 and delivery are minute-based, so equal-byte videos can have different provider

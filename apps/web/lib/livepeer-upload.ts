@@ -2,7 +2,6 @@ import { Upload, type DetailedError } from 'tus-js-client';
 import {
     KeyPair,
     type KeyPairString,
-    PublicKey,
     actions,
 } from 'near-api-js';
 import {
@@ -13,6 +12,7 @@ import {
     NEAR_CONFIG,
 } from '@/lib/constants';
 import { base64Encode, hexEncode } from '@/lib/crypto/codec';
+import { getProvider, viewContract } from '@/lib/near';
 import type { WalletInstance } from '@/lib/types';
 
 const LIVEPEER_TUS_ORIGIN = 'https://origin.livepeer.com';
@@ -20,7 +20,6 @@ const PROFILE_ID = 'paid-media-livepeer-v1';
 const PROFILE_CONFIG_SHA256 = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
 const LIVEPEER_SESSION_STORAGE_PREFIX = 'youtick:livepeer-job-session:';
 const LIVEPEER_DRAFT_STORAGE_PREFIX = 'youtick:livepeer-ui-draft:';
-const TESTNET_CREATOR_KEY_ALLOWANCE_YOCTO = 8_000_000_000_000_000_000_000n;
 const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
@@ -46,6 +45,51 @@ export type LivepeerUploadDraft = {
 export type LivepeerSourceValidation =
     | { ok: true }
     | { ok: false; error: 'empty_file' | 'source_limit_exceeded' | 'unsupported_video_type' };
+
+export type CreatorFeeAsset = 'USDC' | 'NEAR';
+export type NearCreatorFeeQuote = {
+    domain: 'youtick.creator-fee-quote';
+    version: '1';
+    network: string;
+    contract_id: string;
+    creator_id: string;
+    job_id: string;
+    expected_source_bytes: string;
+    fee_usd_micro: string;
+    near_usd_micro: string;
+    fee_near_yocto: string;
+    rate_source: 'outlayer-price-oracle-wrap-near-v1';
+    rate_timestamp_ms: string;
+    expires_at_ms: string;
+    quote_key_version: number;
+    quote_id: string;
+};
+export type SignedNearCreatorFeeQuote = {
+    quote: NearCreatorFeeQuote;
+    signature: string;
+};
+type LivepeerJobSession = {
+    keyPair: KeyPair;
+    uploadKeyExpiresAtMs: string;
+};
+
+export function selectCreatorFeeAsset(input: {
+    usdcBalance: string;
+    nearBalanceYocto: string;
+    usdcFee: string;
+    nearFeeYocto?: string;
+    gasReserveYocto: string;
+}): { selected: CreatorFeeAsset | null; usable: CreatorFeeAsset[] } {
+    const usdcUsable = BigInt(input.usdcBalance) >= BigInt(input.usdcFee)
+        && BigInt(input.nearBalanceYocto) >= BigInt(input.gasReserveYocto);
+    const nearUsable = input.nearFeeYocto !== undefined
+        && BigInt(input.nearBalanceYocto) >= BigInt(input.nearFeeYocto) + BigInt(input.gasReserveYocto);
+    const usable: CreatorFeeAsset[] = [
+        ...(usdcUsable ? ['USDC' as const] : []),
+        ...(nearUsable ? ['NEAR' as const] : []),
+    ];
+    return { selected: usdcUsable ? 'USDC' : nearUsable ? 'NEAR' : null, usable };
+}
 
 export function validateLivepeerSourceFile(file: Pick<File, 'size' | 'type'>): LivepeerSourceValidation {
     if (!Number.isSafeInteger(file.size) || file.size < 1) return { ok: false, error: 'empty_file' };
@@ -104,21 +148,18 @@ export function livepeerUploadFeeUsdc(sourceBytes: number): string {
     return ((BigInt(sourceBytes) * 3n + 9_999n) / 10_000n).toString();
 }
 
-export function livepeerSessionKeyAllowanceYocto(
-    networkId: 'testnet' | 'mainnet' = NEAR_CONFIG.networkId,
-): bigint {
-    if (networkId !== 'testnet') throw new Error('livepeer_session_key_budget_unset');
-    return TESTNET_CREATOR_KEY_ALLOWANCE_YOCTO;
-}
-
 export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
     accountId: string;
     jobId: string;
     title: string;
     priceUsdc: string;
     expectedSourceBytes: number;
+    asset?: CreatorFeeAsset;
+    nearQuote?: SignedNearCreatorFeeQuote;
 }): Promise<string> {
     requireFeature();
+    const asset = input.asset ?? 'USDC';
+    if (asset === 'NEAR') requireNearCreatorFee();
     validateJobSessionIdentity(input.accountId, input.jobId);
     const title = input.title.trim();
     if (!title || new TextEncoder().encode(title).length > 200) throw new Error('invalid_title');
@@ -127,24 +168,25 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
         throw new Error('invalid_ticket_price');
     }
     const amount = livepeerUploadFeeUsdc(input.expectedSourceBytes);
-    const allowanceYocto = livepeerSessionKeyAllowanceYocto();
-    const existingKey = loadLivepeerJobSessionKey(input.accountId, input.jobId);
-    const keyPair = existingKey ?? KeyPair.fromRandom('ed25519');
+    const existingSession = loadLivepeerJobSessionKey(input.accountId, input.jobId);
+    const keyPair = existingSession?.keyPair ?? KeyPair.fromRandom('ed25519');
     const publicKey = keyPair.getPublicKey().toString();
-
-    const transactions = [
-        ...(!existingKey ? [{
-            receiverId: input.accountId,
-            actions: [actions.addFunctionCallAccessKey(
-                PublicKey.fromString(publicKey),
-                NEAR_CONFIG.marketContractId,
-                ['create_paid_job'],
-                allowanceYocto,
-            )],
-        }] : []),
-        {
-            receiverId: NEAR_CONFIG.usdcContractId,
-            actions: [actions.functionCall(
+    const uploadKeyExpiresAtMs = existingSession?.uploadKeyExpiresAtMs
+        ?? String(Date.now() + 24 * 60 * 60 * 1000);
+    const request = {
+        creator_id: input.accountId,
+        job_id: input.jobId,
+        title,
+        price_usdc: input.priceUsdc,
+        expected_source_bytes: String(input.expectedSourceBytes),
+        profile_id: PROFILE_ID,
+        profile_config_sha256: PROFILE_CONFIG_SHA256,
+        upload_public_key: publicKey,
+        upload_key_expires_at_ms: uploadKeyExpiresAtMs,
+    };
+    const transaction = asset === 'USDC' ? {
+        receiverId: NEAR_CONFIG.usdcContractId,
+        actions: [actions.functionCall(
                 'ft_transfer_call',
                 {
                     receiver_id: NEAR_CONFIG.marketContractId,
@@ -152,32 +194,231 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
                     memo: 'YouTick creator upload fee',
                     msg: JSON.stringify({
                         action: 'create_paid_job',
-                        job_id: input.jobId,
-                        title,
-                        price_usdc: input.priceUsdc,
-                        expected_source_bytes: String(input.expectedSourceBytes),
-                        profile_id: PROFILE_ID,
-                        profile_config_sha256: PROFILE_CONFIG_SHA256,
+                        ...request,
                     }),
                 },
                 GAS_CONSTANTS.mediumGas,
                 1n,
             )],
-        },
-    ];
+    } : {
+        receiverId: NEAR_CONFIG.marketContractId,
+        actions: [actions.functionCall(
+            'create_paid_job_near',
+            {
+                request,
+                quote: input.nearQuote?.quote,
+                quote_signature: input.nearQuote?.signature,
+            },
+            GAS_CONSTANTS.mediumGas,
+            BigInt(input.nearQuote?.quote.fee_near_yocto ?? '0'),
+        )],
+    };
+    if (asset === 'NEAR' && !input.nearQuote) throw new Error('near_creator_fee_quote_required');
 
-    if (!existingKey) persistLivepeerJobSessionKey(input.accountId, input.jobId, keyPair);
+    const existingChainJob = await reconcilePaidJob(input.jobId);
+    if (existingChainJob) {
+        if (!existingSession) throw new Error('livepeer_upload_key_recovery_required');
+        if (exactPaidJob(existingChainJob, request, asset)) return publicKey;
+        throw new Error('livepeer_paid_job_conflict');
+    }
+    if (!existingSession) {
+        persistLivepeerJobSessionKey(
+            input.accountId,
+            input.jobId,
+            keyPair,
+            uploadKeyExpiresAtMs,
+        );
+    }
     try {
-        await wallet.signAndSendTransactions({ transactions });
+        await wallet.signAndSendTransaction(transaction);
         return publicKey;
     } catch (error) {
-        if (!existingKey) clearLivepeerJobSessionKey(input.accountId, input.jobId);
+        const chainJob = await reconcilePaidJob(input.jobId).catch(() => undefined);
+        if (chainJob && exactPaidJob(chainJob, request, asset)) return publicKey;
+        if (chainJob) throw new Error('livepeer_paid_job_conflict');
         throw error;
     }
 }
 
+export async function readCreatorFeeBalances(accountId: string): Promise<{
+    usdcBalance: string;
+    nearBalanceYocto: string;
+}> {
+    if (!ACCOUNT_ID_PATTERN.test(accountId)) throw new Error('invalid_account_id');
+    const [usdcBalance, nearAccount] = await Promise.all([
+        viewContract<string>(getProvider(), NEAR_CONFIG.usdcContractId, 'ft_balance_of', {
+            account_id: accountId,
+        }),
+        getProvider().query({
+            request_type: 'view_account',
+            finality: 'final',
+            account_id: accountId,
+        }) as Promise<{ amount: string }>,
+    ]);
+    return { usdcBalance, nearBalanceYocto: nearAccount.amount };
+}
+
+export async function requestNearCreatorFeeQuote(input: {
+    accountId: string;
+    jobId: string;
+    expectedSourceBytes: number;
+}): Promise<SignedNearCreatorFeeQuote> {
+    requireFeature();
+    requireNearCreatorFee();
+    validateJobSessionIdentity(input.accountId, input.jobId);
+    const feeUsdMicro = livepeerUploadFeeUsdc(input.expectedSourceBytes);
+    const response = await fetch(bridgeRoute('/v1/creator-fee-quotes/near'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            creator_id: input.accountId,
+            job_id: input.jobId,
+            expected_source_bytes: String(input.expectedSourceBytes),
+        }),
+        cache: 'no-store',
+    });
+    const value = await readJson(response);
+    if (!response.ok) {
+        throw new Error(typeof value.error === 'string'
+            ? value.error
+            : `livepeer_control_http_${response.status}`);
+    }
+    const quote = await parseNearCreatorFeeQuote(value, input, feeUsdMicro);
+    return { quote, signature: value.signature as string };
+}
+
+export async function prepareCreatorFeePaymentOptions(input: {
+    accountId: string;
+    jobId: string;
+    expectedSourceBytes: number;
+    gasReserveYocto: string;
+}): Promise<{
+    selected: CreatorFeeAsset | null;
+    usable: CreatorFeeAsset[];
+    usdcFee: string;
+    nearQuote: SignedNearCreatorFeeQuote | undefined;
+}> {
+    if (!/^[1-9][0-9]*$/.test(input.gasReserveYocto)) {
+        throw new Error('creator_fee_gas_reserve_not_configured');
+    }
+    const usdcFee = livepeerUploadFeeUsdc(input.expectedSourceBytes);
+    const balances = await readCreatorFeeBalances(input.accountId);
+    const nearQuote = FEATURE_FLAGS.enableLivepeerNearCreatorFee
+        ? await requestNearCreatorFeeQuote(input).catch(() => undefined)
+        : undefined;
+    const selection = selectCreatorFeeAsset({
+        ...balances,
+        usdcFee,
+        nearFeeYocto: nearQuote?.quote.fee_near_yocto,
+        gasReserveYocto: input.gasReserveYocto,
+    });
+    return { ...selection, usdcFee, nearQuote };
+}
+
+export function configuredCreatorFeeGasReserveYocto(): string {
+    const value = process.env.NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO || '';
+    if (!/^[1-9][0-9]*$/.test(value)) {
+        throw new Error('creator_fee_gas_reserve_not_configured');
+    }
+    return value;
+}
+
+async function parseNearCreatorFeeQuote(
+    value: Record<string, unknown>,
+    expected: { accountId: string; jobId: string; expectedSourceBytes: number },
+    feeUsdMicro: string,
+): Promise<NearCreatorFeeQuote> {
+    const quote = value.quote;
+    if (!quote || typeof quote !== 'object' || Array.isArray(quote)) {
+        throw new Error('invalid_near_creator_fee_quote');
+    }
+    const input = quote as Record<string, unknown>;
+    const integerFields = [
+        'expected_source_bytes', 'fee_usd_micro', 'near_usd_micro', 'fee_near_yocto',
+        'rate_timestamp_ms', 'expires_at_ms',
+    ];
+    if (Object.keys(input).sort().join(',') !== [
+        'contract_id', 'creator_id', 'domain', 'expected_source_bytes', 'expires_at_ms',
+        'fee_near_yocto', 'fee_usd_micro', 'job_id', 'near_usd_micro', 'network',
+        'quote_id', 'quote_key_version', 'rate_source', 'rate_timestamp_ms', 'version',
+    ].sort().join(',')
+        || integerFields.some((field) => (
+            typeof input[field] !== 'string' || !/^[1-9][0-9]*$/.test(input[field] as string)
+        ))
+        || input.domain !== 'youtick.creator-fee-quote'
+        || input.version !== '1'
+        || input.network !== NEAR_CONFIG.networkId
+        || input.contract_id !== NEAR_CONFIG.marketContractId
+        || input.creator_id !== expected.accountId
+        || input.job_id !== expected.jobId
+        || input.expected_source_bytes !== String(expected.expectedSourceBytes)
+        || input.fee_usd_micro !== feeUsdMicro
+        || input.rate_source !== 'outlayer-price-oracle-wrap-near-v1'
+        || !Number.isInteger(input.quote_key_version)
+        || (input.quote_key_version as number) < 1
+        || typeof input.quote_id !== 'string'
+        || !/^[0-9a-f]{64}$/.test(input.quote_id)
+        || value.public_key_version !== input.quote_key_version
+        || typeof value.signature !== 'string'
+        || !isEd25519Signature(value.signature)) {
+        throw new Error('invalid_near_creator_fee_quote');
+    }
+    const now = BigInt(Date.now());
+    const rateTimestamp = BigInt(input.rate_timestamp_ms as string);
+    const expiresAt = BigInt(input.expires_at_ms as string);
+    const nearUsdMicro = BigInt(input.near_usd_micro as string);
+    const expectedNearFee = (BigInt(feeUsdMicro) * (10n ** 24n) + nearUsdMicro - 1n)
+        / nearUsdMicro;
+    if (rateTimestamp > now
+        || now - rateTimestamp > 60_000n
+        || expiresAt <= now
+        || expiresAt - rateTimestamp > 120_000n
+        || input.fee_near_yocto !== expectedNearFee.toString()) {
+        throw new Error('invalid_near_creator_fee_quote');
+    }
+    const canonicalMessage = [
+        'domain', 'version', 'network', 'contract_id', 'creator_id', 'job_id',
+        'expected_source_bytes', 'fee_usd_micro', 'near_usd_micro', 'fee_near_yocto',
+        'rate_source', 'rate_timestamp_ms', 'expires_at_ms', 'quote_key_version',
+    ].map((field) => String(input[field])).join('\n');
+    if (input.quote_id !== await sha256Hex(canonicalMessage)) {
+        throw new Error('invalid_near_creator_fee_quote');
+    }
+    return input as NearCreatorFeeQuote;
+}
+
+function isEd25519Signature(value: string): boolean {
+    try {
+        return Uint8Array.from(atob(value), (character) => character.charCodeAt(0)).length === 64;
+    } catch {
+        return false;
+    }
+}
+
+async function reconcilePaidJob(jobId: string): Promise<Record<string, unknown> | null> {
+    return viewContract<Record<string, unknown> | null>(
+        getProvider(), NEAR_CONFIG.marketContractId, 'get_media_job', { job_id: jobId },
+    );
+}
+
+function exactPaidJob(
+    job: Record<string, unknown>,
+    request: Record<string, string>,
+    asset: CreatorFeeAsset,
+): boolean {
+    return job.job_id === request.job_id
+        && job.creator_id === request.creator_id
+        && job.title === request.title
+        && job.price_usdc === request.price_usdc
+        && job.expected_source_bytes === request.expected_source_bytes
+        && job.profile_id === request.profile_id
+        && job.profile_config_sha256 === request.profile_config_sha256
+        && job.upload_public_key === request.upload_public_key
+        && job.upload_key_expires_at_ms === request.upload_key_expires_at_ms
+        && job.fee_asset === asset;
+}
+
 export async function requestLivepeerUploadIntent(input: {
-    wallet: WalletInstance;
     accountId: string;
     jobId: string;
     generation: number;
@@ -190,8 +431,9 @@ export async function requestLivepeerUploadIntent(input: {
         throw new Error('source_limit_exceeded');
     }
     validateJobSessionIdentity(input.accountId, input.jobId);
-    const keyPair = loadLivepeerJobSessionKey(input.accountId, input.jobId);
-    if (!keyPair) throw new Error('livepeer_session_key_missing');
+    const session = loadLivepeerJobSessionKey(input.accountId, input.jobId);
+    if (!session) throw new Error('livepeer_session_key_missing');
+    const keyPair = session.keyPair;
     const route = '/v1/upload-intents';
     const origin = browserOrigin();
     const body = {
@@ -204,7 +446,7 @@ export async function requestLivepeerUploadIntent(input: {
     const bodySha256 = await sha256Hex(canonicalJson(body));
     const envelope = {
         domain: 'youtick.paid-media-livepeer-v1.control',
-        version: '1',
+        version: '2',
         method: 'POST',
         route,
         network: NEAR_CONFIG.networkId,
@@ -234,24 +476,8 @@ export async function requestLivepeerUploadIntent(input: {
         throw new Error(typeof value.error === 'string' ? value.error : `livepeer_control_http_${response.status}`);
     }
     const intent = parseIntent(value, input);
-    await revokeLivepeerJobSessionKey(input.wallet, input.accountId, input.jobId);
+    clearLivepeerJobSessionKey(input.accountId, input.jobId);
     return intent;
-}
-
-export async function revokeLivepeerJobSessionKey(
-    wallet: WalletInstance,
-    accountId: string,
-    jobId: string,
-): Promise<boolean> {
-    validateJobSessionIdentity(accountId, jobId);
-    const keyPair = loadLivepeerJobSessionKey(accountId, jobId);
-    if (!keyPair) return false;
-    await wallet.signAndSendTransaction({
-        receiverId: accountId,
-        actions: [actions.deleteKey(keyPair.getPublicKey())],
-    });
-    clearLivepeerJobSessionKey(accountId, jobId);
-    return true;
 }
 
 export async function uploadLivepeerSource(
@@ -350,6 +576,12 @@ function requireFeature(): void {
     if (!FEATURE_FLAGS.enablePaidMediaLivepeerV1) throw new Error('livepeer_control_disabled');
 }
 
+function requireNearCreatorFee(): void {
+    if (!FEATURE_FLAGS.enableLivepeerNearCreatorFee) {
+        throw new Error('near_creator_fee_disabled');
+    }
+}
+
 function validateJobSessionIdentity(accountId: string, jobId: string): void {
     if (!ACCOUNT_ID_PATTERN.test(accountId) || !JOB_ID_PATTERN.test(jobId)) {
         throw new Error('invalid_livepeer_session');
@@ -360,12 +592,18 @@ function livepeerJobSessionStorageKey(accountId: string, jobId: string): string 
     return `${LIVEPEER_SESSION_STORAGE_PREFIX}${accountId}:${jobId}`;
 }
 
-function persistLivepeerJobSessionKey(accountId: string, jobId: string, keyPair: KeyPair): void {
+function persistLivepeerJobSessionKey(
+    accountId: string,
+    jobId: string,
+    keyPair: KeyPair,
+    uploadKeyExpiresAtMs: string,
+): void {
     if (typeof window === 'undefined') throw new Error('livepeer_session_storage_unavailable');
     const storageKey = livepeerJobSessionStorageKey(accountId, jobId);
     const value = JSON.stringify({
         secretKey: keyPair.toString(),
         publicKey: keyPair.getPublicKey().toString(),
+        uploadKeyExpiresAtMs,
     });
     try {
         sessionStorage.setItem(storageKey, value);
@@ -380,21 +618,29 @@ function persistLivepeerJobSessionKey(accountId: string, jobId: string, keyPair:
     }
 }
 
-function loadLivepeerJobSessionKey(accountId: string, jobId: string): KeyPair | null {
+function loadLivepeerJobSessionKey(accountId: string, jobId: string): LivepeerJobSession | null {
     if (typeof window === 'undefined') return null;
     const storageKey = livepeerJobSessionStorageKey(accountId, jobId);
     const raw = sessionStorage.getItem(storageKey);
     if (!raw) return null;
     try {
-        const value = JSON.parse(raw) as { secretKey?: string; publicKey?: string };
-        if (typeof value.secretKey !== 'string' || typeof value.publicKey !== 'string') {
+        const value = JSON.parse(raw) as {
+            secretKey?: string;
+            publicKey?: string;
+            uploadKeyExpiresAtMs?: string;
+        };
+        if (typeof value.secretKey !== 'string'
+            || typeof value.publicKey !== 'string'
+            || typeof value.uploadKeyExpiresAtMs !== 'string'
+            || !/^[1-9][0-9]{0,15}$/.test(value.uploadKeyExpiresAtMs)
+            || BigInt(value.uploadKeyExpiresAtMs) <= BigInt(Date.now())) {
             throw new Error('invalid_session_key');
         }
         const keyPair = KeyPair.fromString(value.secretKey as KeyPairString);
         if (keyPair.getPublicKey().toString() !== value.publicKey) {
             throw new Error('invalid_session_key');
         }
-        return keyPair;
+        return { keyPair, uploadKeyExpiresAtMs: value.uploadKeyExpiresAtMs };
     } catch {
         try {
             sessionStorage.removeItem(storageKey);

@@ -122,7 +122,7 @@ async function playbackRequest(overrides?: {
     };
     const envelope = {
         domain: 'youtick.paid-media-livepeer-v1.control',
-        version: '1',
+        version: '2',
         method: 'POST',
         route: '/v1/playback-tokens',
         network: 'testnet',

@@ -11,8 +11,16 @@ did not enable the runtime.
 ## Boundaries
 
 - `LIVEPEER_BRIDGE_ENABLED` remains `false` in `wrangler.toml`.
+- `LIVEPEER_NEAR_CREATOR_FEE_ENABLED` is a separate server-side gate and also
+  remains `false`; the quote endpoint cannot run until both flags are approved.
 - Upload requests carry a canonical Ed25519 device signature. The Worker checks
-  that key on the creator account at the same final NEAR block as the job.
+  that job-bound application key on the final NEAR media job.
+- `POST /v1/creator-fee-quotes/near` reads the cached `wrap.near` price from
+  `price-oracle.near` or `price-oracle.testnet` through the configured NEAR RPC,
+  requires a non-null price and an oracle recency window no wider than 60
+  seconds, and returns an Ed25519-signed quote whose source-to-expiry window is
+  at most 120 seconds. Empty, stale or unavailable oracle data closes only the
+  NEAR rail; the browser may still offer USDC.
 - A job generation creates at most one provider intent. `CREATE_AMBIGUOUS`
   never retries blindly.
 - The Worker creates the TUS resource with the final job's exact byte length,
@@ -61,8 +69,9 @@ npx wrangler deploy --dry-run
 ```
 
 `GET /__health` reports process health and the disabled capability state.
-`POST /v1/upload-intents` and `POST /v1/playback-tokens` remain unavailable
-while the runtime flag is false.
+`POST /v1/upload-intents`, `POST /v1/playback-tokens` and
+`POST /v1/creator-fee-quotes/near` remain unavailable while the runtime flag is
+false.
 `LIVEPEER_API_KEY` is a Worker secret and must never be placed in `wrangler.toml`
 or a browser environment variable. `LIVEPEER_WEBHOOK_SECRET` and
 `NEAR_OPERATOR_PRIVATE_KEY` are also Worker secrets.
@@ -73,6 +82,10 @@ or a browser environment variable. `LIVEPEER_WEBHOOK_SECRET` and
 plain deployment variable. The operator key must be a finite-allowance
 FunctionCall key for the exact market and approved methods; FullAccess is
 rejected.
+The PKCS8-base64 `CREATOR_FEE_QUOTE_PRIVATE_KEY` is also a Worker-only secret.
+`CREATOR_FEE_QUOTE_KEY_VERSION` must exactly match the fresh market contract's
+configured quote key version. The quote endpoint reuses `NEAR_RPC_URL`; it
+requires no separate price API key and has no settlement fallback.
 
 `LIVEPEER_CREATOR_ALLOWLIST` is intentionally empty by default.
 `LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS` and

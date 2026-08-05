@@ -405,15 +405,17 @@ Accepted 2026-08-01 product and operator decisions:
   provider TUS resource bound to the accepted length before returning its
   opaque URL. Full 20 GB transfer/processing remains unproven and a 20 GB + 1
   byte provider upload remains forbidden.
-- The target creator session key is scoped to the exact market and only
-  `create_paid_job`, with a five-minute signed-request window. The disabled
-  Worker enforces that shape. The disabled web client now provisions one
-  job-scoped testnet key alongside USDC authorization and requires on-chain
-  removal after an accepted upload intent; failed removal remains retryable.
-  Mainnet allowance is intentionally unset. A default-off web UI caller now
-  exists locally, but no runtime flag is enabled, so upload remains fail-closed.
-  The bounded testnet profile measured `5 TGas` with `0.008 NEAR`; production
-  must re-measure.
+- Creator upload control v2 uses a job-bound application Ed25519 key recorded
+  atomically by the one USDC or native-NEAR payment transaction. Normal upload
+  uses no NEAR account `AddKey`/`DeleteKey` operation. The disabled Worker reads
+  the final job and requires the exact unexpired key before provider admission.
+  A default-off web caller exists locally, but no runtime flag is enabled, so
+  upload remains fail-closed. The local quote source is locked to the Outlayer
+  `wrap.near` cached view through the existing NEAR RPC, with no alternate price
+  API fallback. Oracle liveness and the measured gas reserve remain separate
+  activation gates. The web and Worker native-NEAR creator-fee flags are
+  separate, default off and must both be approved before that rail is exposed;
+  USDC remains the default rail.
 - The separate bridge FunctionCall key is scoped to the exact market and only
   `finalize_livepeer_publication` plus `suspend_livepeer_sales`. Platform
   governance owns key add/remove and rotation; FullAccess is forbidden.
@@ -447,6 +449,9 @@ Accepted 2026-08-03 product and economics decisions:
   only when a new on-chain job is created. Pause/resume, reconciliation and a
   same-job retry do not charge again; a new job does. There is no automatic
   refund.
+- The creator may pay that one-time fee with Circle USDC or native NEAR. Native
+  NEAR requires a short-lived server-signed quote and a separate NEAR ledger;
+  ticket settlement remains USDC-only.
 - Ticket price is any integer micro-USDC amount at or above `2_000_000`. The
   existing 98/2 split is unchanged. A future 5% commission is a separate
   product change and is not implemented here.
@@ -879,6 +884,8 @@ local budget threshold and automatic rejection of new intents after the first
 limit is reached.
 
 - [Livepeer pricing](https://livepeer.studio/pricing)
+- [Outlayer price oracle](https://price-oracle.outlayer.ai/docs/)
+- [Pyth Core NEAR support notice](https://docs.pyth.network/price-feeds/core/contract-addresses/near)
 
 ## 14. Evidence and release rules
 
