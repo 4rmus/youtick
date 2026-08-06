@@ -41,12 +41,6 @@
     "signature_base64": "JPMvknPFG4Ppk5+q+KjvYUqpGXwvnhHyr6q+DLouO/5KMh/b91q2r9x/DCvNORzeiPwOJ5d8jTa6IBldeaGKDg==",
     "public_key_base64": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw="
   },
-  "historical_upload_intent_v1": {
-    "control_version": "1",
-    "authorization": "near-account-access-key",
-    "canonical_message_sha256": "f0f76704c9a70598d30825f0a30190a512699918ecb78c223244e771895729f8",
-    "status": "HISTORICAL_NOT_ACCEPTED"
-  },
   "upload_intent": {
     "body": {
       "job_id": "job-001",

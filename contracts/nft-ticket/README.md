@@ -23,12 +23,11 @@ The contract supports:
 - NEAR withdrawal bounded by its recorded liability, storage staking and the
   configured operational reserve.
 
-The ABI does not contain the superseded v4 KMS, CID, byte-receipt, source-delete
-or browser ingest-key fields. Pause/resume, reconciliation and an exact same-job
-replay cannot charge the creator again; a conflicting replay fails. A new job
-is a new charge and no automatic provider-failure refund is implemented. The
-new MediaJob Borsh layout has no migration entrypoint and must use a fresh
-contract ID.
+The ABI contains only the Livepeer job, publication, entitlement, takedown and
+payment surfaces. Pause/resume, reconciliation and an exact same-job replay
+cannot charge the creator again; a conflicting replay fails. A new job is a new
+charge and no automatic provider-failure refund is implemented. The MediaJob
+Borsh layout has no migration entrypoint and must use a fresh contract ID.
 
 Protocol details and exact bindings are in
 [`protocol/paid-media-livepeer-v1`](../../protocol/paid-media-livepeer-v1/README.md).

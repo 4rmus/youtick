@@ -421,7 +421,7 @@ fn only_bridge_can_finalize_exact_job_tuple() {
     });
     must_fail(|| {
         let mut value = submission("job-1", 1, "creator.testnet", ASSET_HASH, "playback_001");
-        value.profile_id = "paid-media-v4".to_string();
+        value.profile_id = "unsupported-profile".to_string();
         contract.finalize_livepeer_publication(value);
     });
 }

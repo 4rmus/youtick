@@ -50,10 +50,8 @@ The browser creates it before payment, stores its secret only under the exact
 account and job in `sessionStorage`, and sends only the public key in the one
 USDC or native-NEAR payment transaction. The contract records payment and key
 atomically. The Worker verifies the signed control request against the exact
-final on-chain job key before provider admission. Normal upload never calls
-`AddKey`, `DeleteKey` or `signAndSendTransactions`; an accepted intent deletes
-only the local secret. The previous access-key control v1 vector remains as
-`HISTORICAL_NOT_ACCEPTED` evidence.
+final on-chain job key before provider admission. An accepted intent deletes
+only the local secret.
 
 Native NEAR payment uses `youtick.creator-fee-quote.v1`. The signed quote binds
 network, fresh contract ID, creator, job, bytes, USD fee, NEAR/USD rate, exact
@@ -167,9 +165,6 @@ node scripts/check-paid-media-livepeer-v1.mjs
 ```
 
 The check validates `golden-vectors.json` against `schema.json`, recomputes the
-canonical body hash and signed message, verifies target-document truth and
-checks local links in the PR-0 documents.
+canonical body hashes and signed messages, and verifies the creator fee quote.
 
-Architecture decision: [ADR-010](../../docs/adr/adr-010-livepeer-paid-media.md).
-Implementation sequence:
-[NEAR + Livepeer Paid Media v1](../../docs/architecture/near-livepeer-paid-media-implementation-plan.md).
+Current architecture: [YouTick architecture](../../docs/architecture/README.md).

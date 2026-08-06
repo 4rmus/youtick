@@ -60,14 +60,24 @@ pub const TIMELOCK_DELAY_NS: u64 = 86_400_000_000_000; // 24 hours
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
 pub enum TimelockAction {
-    SetScopePolicy { scope: SessionScope, policy: ScopePolicy },
-    SetMarketContract { market_contract_id: AccountId },
-    SetRegistryContract { registry_contract_id: AccountId },
-    PauseScope { scope: SessionScope },
-    UnpauseScope { scope: SessionScope },
+    SetScopePolicy {
+        scope: SessionScope,
+        policy: ScopePolicy,
+    },
+    SetMarketContract {
+        market_contract_id: AccountId,
+    },
+    PauseScope {
+        scope: SessionScope,
+    },
+    UnpauseScope {
+        scope: SessionScope,
+    },
     PauseContract,
     UnpauseContract,
-    ProposeOwner { proposed_owner_id: AccountId },
+    ProposeOwner {
+        proposed_owner_id: AccountId,
+    },
 }
 
 #[near(serializers = [borsh, json])]
@@ -84,7 +94,6 @@ pub struct AccessControlContract {
     owner_id: AccountId,
     pending_owner_id: Option<AccountId>,
     market_contract_id: AccountId,
-    registry_contract_id: AccountId,
     grants: LookupMap<String, SessionGrant>,
     grants_by_owner: LookupMap<AccountId, Vec<String>>,
     scope_policies: LookupMap<String, ScopePolicy>,
@@ -97,16 +106,11 @@ pub struct AccessControlContract {
 #[near]
 impl AccessControlContract {
     #[init]
-    pub fn new(
-        owner_id: AccountId,
-        market_contract_id: AccountId,
-        registry_contract_id: AccountId,
-    ) -> Self {
+    pub fn new(owner_id: AccountId, market_contract_id: AccountId) -> Self {
         let mut contract = Self {
             owner_id,
             pending_owner_id: None,
             market_contract_id,
-            registry_contract_id,
             grants: LookupMap::new(StorageKey::Grants),
             grants_by_owner: LookupMap::new(StorageKey::GrantsByOwner),
             scope_policies: LookupMap::new(StorageKey::ScopePolicies),
@@ -164,8 +168,7 @@ impl AccessControlContract {
         require!(
             caller == target_owner_id
                 || caller == self.owner_id
-                || caller == self.market_contract_id
-                || caller == self.registry_contract_id,
+                || caller == self.market_contract_id,
             "Unauthorized: caller cannot issue session grants",
         );
 
@@ -275,15 +278,6 @@ impl AccessControlContract {
 
     fn set_market_contract_timelocked(&mut self, market_contract_id: AccountId) {
         self.market_contract_id = market_contract_id;
-    }
-
-    pub fn set_registry_contract(&mut self, registry_contract_id: AccountId) {
-        let _ = registry_contract_id;
-        Self::panic_timelock_required()
-    }
-
-    fn set_registry_contract_timelocked(&mut self, registry_contract_id: AccountId) {
-        self.registry_contract_id = registry_contract_id;
     }
 
     pub fn pause_scope(&mut self, scope: SessionScope) {
@@ -489,9 +483,6 @@ impl AccessControlContract {
             }
             TimelockAction::SetMarketContract { market_contract_id } => {
                 self.set_market_contract_timelocked(market_contract_id);
-            }
-            TimelockAction::SetRegistryContract { registry_contract_id } => {
-                self.set_registry_contract_timelocked(registry_contract_id);
             }
             TimelockAction::PauseScope { scope } => {
                 self.pause_scope_timelocked(scope);
@@ -712,13 +703,9 @@ mod tests {
     fn issues_play_grant_with_policy_defaults() {
         let owner = account("owner.testnet");
         testing_env!(context("market.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(
-            owner,
-            account("market.testnet"),
-            account("registry.testnet"),
-        );
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
 
-        let resource_id = Some("cid-1".to_string());
+        let resource_id = Some("job-1".to_string());
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
         let ttl_ms = 60_000;
@@ -745,7 +732,7 @@ mod tests {
         );
 
         assert_eq!(grant.owner_id, account("market.testnet"));
-        assert!(contract.can_play(account("market.testnet"), Some("cid-1".to_string())));
+        assert!(contract.can_play(account("market.testnet"), Some("job-1".to_string())));
     }
 
     #[test]
@@ -753,11 +740,7 @@ mod tests {
     fn rejects_grant_ttl_above_scope_limit() {
         let owner = account("owner.testnet");
         testing_env!(context("market.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(
-            owner,
-            account("market.testnet"),
-            account("registry.testnet"),
-        );
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
 
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
@@ -789,13 +772,9 @@ mod tests {
     fn revoke_and_pause_work_as_expected() {
         let owner = account("owner.testnet");
         testing_env!(context("market.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(
-            owner.clone(),
-            account("market.testnet"),
-            account("registry.testnet"),
-        );
+        let mut contract = AccessControlContract::new(owner.clone(), account("market.testnet"));
 
-        let resource_id = Some("cid-1".to_string());
+        let resource_id = Some("job-1".to_string());
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
         let ttl_ms = 60_000;
@@ -821,7 +800,7 @@ mod tests {
             session_pok,
         );
         contract.revoke_session_grant(session_pk);
-        assert!(!contract.can_play(account("market.testnet"), Some("cid-1".to_string())));
+        assert!(!contract.can_play(account("market.testnet"), Some("job-1".to_string())));
 
         testing_env!(context("owner.testnet", 2_000).build());
         let id = contract.propose_action(TimelockAction::PauseScope {
@@ -839,20 +818,16 @@ mod tests {
     #[should_panic(expected = "Unauthorized: caller cannot issue session grants")]
     fn rejects_delegated_grant_from_unauthorized_caller() {
         let owner = account("owner.testnet");
-        testing_env!(context("eve.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(
-            owner,
-            account("market.testnet"),
-            account("registry.testnet"),
-        );
+        testing_env!(context("registry.testnet", 1_000).build());
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
 
-        let resource_id = Some("cid-1".to_string());
+        let resource_id = Some("job-1".to_string());
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
         let ttl_ms = 60_000;
         let (session_pk, session_pok) = session_key_and_proof(
-            "evil-grant",
-            "eve.testnet",
+            "registry-grant",
+            "registry.testnet",
             "alice.testnet",
             SessionScope::Play,
             resource_id.as_ref(),
@@ -877,13 +852,9 @@ mod tests {
     fn user_can_issue_own_grant_with_session_key_proof() {
         let owner = account("owner.testnet");
         testing_env!(context("alice.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(
-            owner,
-            account("market.testnet"),
-            account("registry.testnet"),
-        );
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
 
-        let resource_id = Some("cid-1".to_string());
+        let resource_id = Some("job-1".to_string());
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
         let ttl_ms = 60_000;
@@ -910,7 +881,7 @@ mod tests {
         );
 
         assert_eq!(grant.owner_id, account("alice.testnet"));
-        assert!(contract.can_play(account("alice.testnet"), Some("cid-1".to_string())));
+        assert!(contract.can_play(account("alice.testnet"), Some("job-1".to_string())));
     }
 
     #[test]
@@ -918,13 +889,9 @@ mod tests {
     fn rejects_grant_with_wrong_session_key_proof() {
         let owner = account("owner.testnet");
         testing_env!(context("alice.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(
-            owner,
-            account("market.testnet"),
-            account("registry.testnet"),
-        );
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
 
-        let resource_id = Some("cid-1".to_string());
+        let resource_id = Some("job-1".to_string());
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
         let ttl_ms = 60_000;
@@ -966,11 +933,7 @@ mod tests {
     fn direct_set_scope_policy_requires_timelock() {
         let owner = account("owner.testnet");
         testing_env!(context("owner.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(
-            owner.clone(),
-            account("market.testnet"),
-            account("registry.testnet"),
-        );
+        let mut contract = AccessControlContract::new(owner.clone(), account("market.testnet"));
 
         contract.set_scope_policy(
             SessionScope::Play,
@@ -986,11 +949,7 @@ mod tests {
     fn contract_pause_blocks_session_grant() {
         let owner = account("owner.testnet");
         testing_env!(context("owner.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(
-            owner.clone(),
-            account("market.testnet"),
-            account("registry.testnet"),
-        );
+        let mut contract = AccessControlContract::new(owner.clone(), account("market.testnet"));
 
         let id = contract.propose_action(TimelockAction::PauseContract);
 

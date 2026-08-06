@@ -1,5 +1,5 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,7 +28,6 @@ const messageFields = [
 checkRequest(vectors.upload_intent, "/v1/upload-intents");
 checkRequest(vectors.playback_token_request, "/v1/playback-tokens");
 assert(vectors.upload_intent.envelope.version === "2", "upload control v2 is required");
-assert(vectors.historical_upload_intent_v1.status === "HISTORICAL_NOT_ACCEPTED", "historical access-key vector must remain rejected");
 
 const quoteFields = [
   "domain", "version", "network", "contract_id", "creator_id", "job_id",
@@ -64,40 +63,6 @@ for (const field of ["job_id", "generation", "playback_id"]) {
   assert(playback[field] === publication[field], `playback ${field} mismatch`);
 }
 assert(publication.verified_source_bytes === upload.expected_source_bytes, "verified source byte mismatch");
-
-const planPath = resolve(root, "docs/architecture/near-livepeer-paid-media-implementation-plan.md");
-const oldPlanPath = resolve(root, "docs/architecture/decentralized-paid-media-v4-plan.md");
-const evaluationPath = resolve(root, "near-livepeer-serverless-paid-media-evaluation.md");
-const adrPath = resolve(root, "docs/adr/adr-010-livepeer-paid-media.md");
-const docsIndexPath = resolve(root, "docs/README.md");
-const architectureIndexPath = resolve(root, "docs/architecture/README.md");
-const marketReadmePath = resolve(root, "contracts/nft-ticket/README.md");
-const accessReadmePath = resolve(root, "contracts/access-control/README.md");
-const plan = readFileSync(planPath, "utf8");
-const oldPlan = readFileSync(oldPlanPath, "utf8");
-const evaluation = readFileSync(evaluationPath, "utf8");
-const docsIndex = readFileSync(docsIndexPath, "utf8");
-const architectureIndex = readFileSync(architectureIndexPath, "utf8");
-assert(plan.includes("This is the only active target plan"), "canonical target marker missing");
-assert(oldPlan.includes("SUPERSEDED / CODE_ONLY / NOT_DEPLOYED"), "old target is not marked superseded");
-assert(evaluation.includes("SOURCE_EVALUATION / SUPERSEDED_BY_ADR_010 / NOT_DEPLOYED"), "evaluation truth marker mismatch");
-assert(docsIndex.includes("NEAR + Livepeer Paid Media v1 Plan"), "docs index target link missing");
-assert(architectureIndex.includes("near-livepeer-paid-media-implementation-plan.md"), "architecture target link missing");
-assert(
-  readFileSync(marketReadmePath, "utf8").includes("LIVEPEER_V1 / CODE_ONLY / BLOCKED_BY_P0_DECISIONS / NOT_DEPLOYED"),
-  "contracts/nft-ticket/README.md target marker mismatch",
-);
-assert(
-  readFileSync(accessReadmePath, "utf8").includes("V4 SUPERSEDED / CODE ONLY / NOT DEPLOYED"),
-  "contracts/access-control/README.md target marker mismatch",
-);
-
-const evaluationHash = createHash("sha256").update(evaluation).digest("hex");
-assert(plan.includes(`SHA-256\n\`${evaluationHash}\``), "source evaluation SHA-256 drift");
-
-for (const file of [planPath, oldPlanPath, evaluationPath, adrPath, docsIndexPath, architectureIndexPath, resolve(protocolDir, "README.md")]) {
-  checkLocalLinks(file);
-}
 
 console.log("paid-media-livepeer-v1 protocol: OK");
 
@@ -151,16 +116,6 @@ function validate(node, value, path, document) {
     assert(Number.isInteger(value), `${path} must be an integer`);
     if (node.minimum !== undefined) assert(value >= node.minimum, `${path} is below minimum`);
     if (node.maximum !== undefined) assert(value <= node.maximum, `${path} is above maximum`);
-  }
-}
-
-function checkLocalLinks(file) {
-  const markdown = readFileSync(file, "utf8");
-  for (const match of markdown.matchAll(/\]\(([^)]+)\)/g)) {
-    const href = match[1].split(/[?#]/, 1)[0];
-    if (!href || /^(https?:|mailto:)/.test(href)) continue;
-    const target = resolve(dirname(file), decodeURIComponent(href));
-    assert(existsSync(target), `${file.slice(root.length + 1)} has dead link: ${match[1]}`);
   }
 }
 

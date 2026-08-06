@@ -1,11 +1,11 @@
 # YouTick paid media access-control contract
 
-Status: `V4 SUPERSEDED / CODE ONLY / NOT DEPLOYED`
+Status: `LIVEPEER_V1 / CODE ONLY / NOT DEPLOYED`
 
-This crate builds the superseded v4 playback authorization contract. It is
-retained as code-only history while the Livepeer v1 target is implemented. Its
-only session scope is `Play`; publishing is authorized by the market/media-job
-flow and no gift, trial or claim scopes remain in the ABI.
+This crate builds the Livepeer v1 playback authorization contract for fresh
+contract IDs. Its only session scope is `Play`; a subject, the contract owner,
+or the market contract may issue a grant after proving control of the ephemeral
+session key.
 
 Core behavior:
 
@@ -22,5 +22,4 @@ cargo +1.86.0 test
 cargo +1.86.0 near build non-reproducible-wasm
 ```
 
-The deployed public-alpha access contract remains unchanged until a separately
-approved v4 cutover.
+Deployment and activation require separate approval.
