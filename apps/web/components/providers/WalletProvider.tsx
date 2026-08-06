@@ -1,364 +1,183 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
-import { NearConnector, type NearWalletBase, type Account } from '@hot-labs/near-connect';
-import { NEAR_CONFIG } from '@/lib/constants';
-import { getRpcEndpoints } from '@/lib/rpc-failover';
-import type { WalletInstance } from '@/lib/types';
-import { clearKmsAuthCache } from '@/lib/kms/client';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { NearConnector, type Account, type NearWalletBase } from '@hot-labs/near-connect';
 import { clearSessionGrantCache } from '@/lib/access-grants';
-import { clearManagedNearAccount, migrateLegacyManagedNearAccount, writeManagedNearAccount, type ManagedNearAccountKind } from '@/lib/managed-near-account';
-import { TrialWallet } from '@/lib/trial-wallet';
-import { buildSignlessAccessKeyRequest, clearSignlessAccessKey, createSignlessAccessKey, persistSignlessAccessKey, reconcileSignlessAccessKey } from '@/lib/signless-access-key';
+import { NEAR_NETWORK } from '@/lib/constants';
+import { getRpcEndpoints } from '@/lib/rpc-failover';
+import {
+    buildSignlessAccessKeyRequest,
+    clearSignlessAccessKey,
+    createSignlessAccessKey,
+    persistSignlessAccessKey,
+    reconcileSignlessAccessKey,
+} from '@/lib/signless-access-key';
+import type { WalletInstance } from '@/lib/types';
 
 interface WalletContextValue {
     accountId: string | null;
-    isTrial: boolean;
-    managedAccountKind: ManagedNearAccountKind | null;
-    walletType: string | null;
     getWallet: () => Promise<WalletInstance>;
     signOut: () => Promise<void>;
     connect: () => Promise<void>;
-    setEvmLinkedAccount: (accountId: string) => void;
-    setManagedAccount: (accountId: string, kind: ManagedNearAccountKind) => void;
     isReady: boolean;
 }
 
-type NearConnectNetwork = 'mainnet' | 'testnet';
-
 const WalletContext = createContext<WalletContextValue | null>(null);
 
-function getNearConnectNetwork(): NearConnectNetwork {
-    return NEAR_CONFIG.networkId === 'testnet' ? 'testnet' : 'mainnet';
-}
-
-function getNearConnectProviders() {
-    const endpoints = getRpcEndpoints();
-    return getNearConnectNetwork() === 'testnet'
-        ? { mainnet: [], testnet: endpoints }
-        : { mainnet: endpoints, testnet: [] };
-}
-
-function getErrorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
-
-async function clearWalletAuthCaches(accountId: string): Promise<void> {
-    clearKmsAuthCache(accountId);
-    clearSessionGrantCache(accountId);
-    await clearSignlessAccessKey(accountId);
-}
-
-function recordNearConnectError(error: unknown, code: string): void {
-    const normalized = error instanceof Error ? error : new Error(getErrorMessage(error));
-
-    if (process.env.NODE_ENV !== 'production') {
-        console.error(`[near-connect:${code}]`, normalized);
-    }
-
-    if (process.env.NEXT_PUBLIC_SENTRY_ENABLED === 'true') {
-        import('@sentry/nextjs')
-            .then((Sentry) => {
-                Sentry.captureException(normalized, {
-                    tags: {
-                        component: 'near-connect',
-                        near_connect_error: code,
-                    },
-                });
-            })
-            .catch(() => {});
-    }
-}
-
 function createWalletAdapter(wallet: NearWalletBase): WalletInstance {
-    const network = getNearConnectNetwork();
-
     return {
         async signAndSendTransaction(params) {
-            const result = await wallet.signAndSendTransaction({
-                network,
+            return (await wallet.signAndSendTransaction({
+                network: NEAR_NETWORK,
                 receiverId: params.receiverId,
                 actions: params.actions as Parameters<NearWalletBase['signAndSendTransaction']>[0]['actions'],
-            });
-            return (result || {}) as object;
+            }) || {}) as object;
         },
         async signAndSendTransactions(params) {
-            const result = await wallet.signAndSendTransactions({
-                network,
+            return await wallet.signAndSendTransactions({
+                network: NEAR_NETWORK,
                 transactions: params.transactions as Parameters<NearWalletBase['signAndSendTransactions']>[0]['transactions'],
-            });
-            return result as object[] | void;
+            }) as object[] | void;
         },
         async getAccounts() {
-            return wallet.getAccounts({ network });
+            return wallet.getAccounts({ network: NEAR_NETWORK });
         },
         async signMessage(params) {
-            const signed = await wallet.signMessage({
-                network,
+            return wallet.signMessage({
+                network: NEAR_NETWORK,
                 message: params.message,
                 recipient: params.recipient,
                 nonce: params.nonce,
             });
-
-            return {
-                ...signed,
-                state: params.state,
-            };
         },
     };
 }
 
-export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export function WalletProvider({ children }: { children: React.ReactNode }) {
     const connectorRef = useRef<NearConnector | null>(null);
     const walletRef = useRef<NearWalletBase | null>(null);
     const accountIdRef = useRef<string | null>(null);
-    const managedAccountKindRef = useRef<ManagedNearAccountKind | null>(null);
     const [accountId, setAccountId] = useState<string | null>(null);
-    const [managedAccountKind, setManagedAccountKindState] = useState<ManagedNearAccountKind | null>(null);
-    const [walletType, setWalletType] = useState<string | null>(null);
     const [isReady, setIsReady] = useState(false);
-    const [initError, setInitError] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
 
-    const applyManagedAccount = useCallback((nextAccountId: string, kind: ManagedNearAccountKind) => {
-        const previousAccountId = accountIdRef.current;
-        if (previousAccountId && previousAccountId !== nextAccountId) {
-            void clearWalletAuthCaches(previousAccountId);
-        }
-
-        walletRef.current = null;
-        accountIdRef.current = nextAccountId;
-        managedAccountKindRef.current = kind;
-        setAccountId(nextAccountId);
-        setManagedAccountKindState(kind);
-        setWalletType(kind);
+    const clearAuth = useCallback(async (id: string | null) => {
+        if (!id) return;
+        clearSessionGrantCache(id);
+        await clearSignlessAccessKey(id);
     }, []);
 
-    const applyConnectedWallet = useCallback((wallet: NearWalletBase, accounts: Account[]) => {
+    const applyWallet = useCallback((wallet: NearWalletBase, accounts: Account[]) => {
         const nextAccountId = accounts[0]?.accountId ?? null;
         const previousAccountId = accountIdRef.current;
-
-        if (previousAccountId && previousAccountId !== nextAccountId) {
-            void clearWalletAuthCaches(previousAccountId);
-        }
-
+        if (previousAccountId && previousAccountId !== nextAccountId) void clearAuth(previousAccountId);
         walletRef.current = wallet;
         accountIdRef.current = nextAccountId;
-        managedAccountKindRef.current = null;
         setAccountId(nextAccountId);
-        setManagedAccountKindState(null);
-        setWalletType(wallet.manifest.id);
-    }, []);
-
-    const applyStoredManagedAccount = useCallback(async (): Promise<boolean> => {
-        const managed = migrateLegacyManagedNearAccount();
-        if (managed && await TrialWallet.hasValidKey(managed.accountId)) {
-            applyManagedAccount(managed.accountId, managed.kind);
-            return true;
-        }
-        if (managed) {
-            clearManagedNearAccount();
-        }
-        walletRef.current = null;
-        accountIdRef.current = null;
-        managedAccountKindRef.current = null;
-        setAccountId(null);
-        setManagedAccountKindState(null);
-        setWalletType(null);
-        return false;
-    }, [applyManagedAccount]);
+    }, [clearAuth]);
 
     useEffect(() => {
         let mounted = true;
-        const network = getNearConnectNetwork();
+        const providers = NEAR_NETWORK === 'testnet'
+            ? { mainnet: [], testnet: getRpcEndpoints() }
+            : { mainnet: getRpcEndpoints(), testnet: [] };
         const connector = new NearConnector({
-            network,
-            providers: getNearConnectProviders(),
+            network: NEAR_NETWORK,
+            providers,
             features: {
                 signMessage: true,
                 signAndSendTransaction: true,
                 signAndSendTransactions: true,
-                [network]: true,
+                [NEAR_NETWORK]: true,
             },
             autoConnect: false,
             footerBranding: null,
         });
-
         connectorRef.current = connector;
 
         connector.on('wallet:signIn', ({ wallet, accounts }) => {
             if (!mounted) return;
-            applyConnectedWallet(wallet, accounts);
-            setInitError(null);
+            applyWallet(wallet, accounts);
+            setError(null);
         });
-
         connector.on('wallet:signOut', () => {
             if (!mounted) return;
-            const previousAccountId = accountIdRef.current;
-            if (previousAccountId) {
-                void clearWalletAuthCaches(previousAccountId);
-            }
+            void clearAuth(accountIdRef.current);
             walletRef.current = null;
             accountIdRef.current = null;
-            managedAccountKindRef.current = null;
             setAccountId(null);
-            setManagedAccountKindState(null);
-            setWalletType(null);
         });
 
         connector.whenManifestLoaded
             .then(async () => {
-                if (!mounted) return;
-
-                if (connector.availableWallets.length === 0) {
-                    throw new Error('No NEAR Connect wallet manifest entries are available for this network.');
-                }
-
-                try {
-                    const connected = await connector.getConnectedWallet();
-                    if (mounted) {
-                        applyConnectedWallet(connected.wallet, connected.accounts);
-                    }
-                } catch {
-                    await applyStoredManagedAccount();
-                }
+                const connected = await connector.getConnectedWallet();
+                if (mounted) applyWallet(connected.wallet, connected.accounts);
             })
-            .catch(async (error) => {
-                if (!mounted) return;
-                if (await applyStoredManagedAccount()) {
-                    setInitError(null);
-                    return;
-                }
-                recordNearConnectError(error, 'manifest_unavailable');
-                setInitError(getErrorMessage(error));
-            })
+            .catch(() => {})
             .finally(() => {
-                if (mounted) {
-                    setIsReady(true);
-                }
+                if (mounted) setIsReady(true);
             });
 
         return () => {
             mounted = false;
             connector.removeAllListeners();
-            if (connectorRef.current === connector) {
-                connectorRef.current = null;
-            }
+            if (connectorRef.current === connector) connectorRef.current = null;
         };
-    }, [applyConnectedWallet, applyStoredManagedAccount]);
+    }, [applyWallet, clearAuth]);
 
     const getWallet = useCallback(async (): Promise<WalletInstance> => {
-        const managedKind = managedAccountKindRef.current;
-        const activeAccountId = accountIdRef.current;
-        if (managedKind && activeAccountId) {
-            return new TrialWallet(activeAccountId, managedKind) as WalletInstance;
-        }
-
         const connector = connectorRef.current;
-        if (!connector) {
-            throw new Error('Wallet connector is not ready');
-        }
-
+        if (!connector) throw new Error('Wallet connector is not ready');
         const wallet = walletRef.current ?? await connector.wallet();
         walletRef.current = wallet;
         return createWalletAdapter(wallet);
     }, []);
 
-    const signOut = useCallback(async (): Promise<void> => {
-        const previousAccountId = accountIdRef.current;
-        if (previousAccountId) {
-            await clearWalletAuthCaches(previousAccountId);
-        }
-
-        if (managedAccountKindRef.current && previousAccountId) {
-            await new TrialWallet(previousAccountId).signOut();
-        } else {
-            const connector = connectorRef.current;
-            try {
-                await connector?.disconnect(walletRef.current ?? undefined);
-            } catch (error) {
-                recordNearConnectError(error, 'sign_out_failed');
-            }
-        }
-
-        walletRef.current = null;
-        accountIdRef.current = null;
-        managedAccountKindRef.current = null;
-        setAccountId(null);
-        setManagedAccountKindState(null);
-        setWalletType(null);
-    }, []);
-
-    const connect = useCallback(async (): Promise<void> => {
+    const connect = useCallback(async () => {
         const connector = connectorRef.current;
-        if (!connector) {
-            setInitError('Wallet connector is not ready.');
-            return;
-        }
-
+        if (!connector) return;
         try {
-            const canProvisionSignlessKey = connector.availableWallets.some(
+            const supportsSignless = connector.availableWallets.some(
                 (wallet) => wallet.manifest.features?.signInWithFunctionCallKey,
             );
-            const signlessKeyPair = canProvisionSignlessKey ? createSignlessAccessKey() : null;
-            const wallet = await connector.connect(signlessKeyPair
-                ? { addFunctionCallKey: buildSignlessAccessKeyRequest(signlessKeyPair) }
-                : undefined);
-            const accounts = await wallet.getAccounts({ network: getNearConnectNetwork() });
-            const connectedAccountId = accounts[0]?.accountId;
-            if (signlessKeyPair && connectedAccountId) {
-                await persistSignlessAccessKey(connectedAccountId, signlessKeyPair);
-                // Some wallets ignore the addFunctionCallKey request; verify in the
-                // background and drop the local secret if the key never lands on-chain.
-                void reconcileSignlessAccessKey(connectedAccountId, signlessKeyPair).catch(() => {});
+            const keyPair = supportsSignless ? createSignlessAccessKey() : null;
+            const wallet = await connector.connect(
+                keyPair ? { addFunctionCallKey: buildSignlessAccessKeyRequest(keyPair) } : undefined,
+            );
+            const accounts = await wallet.getAccounts({ network: NEAR_NETWORK });
+            const id = accounts[0]?.accountId;
+            if (keyPair && id) {
+                await persistSignlessAccessKey(id, keyPair);
+                void reconcileSignlessAccessKey(id, keyPair).catch(() => {});
             }
-            applyConnectedWallet(wallet, accounts);
-            setInitError(null);
-        } catch (error) {
-            recordNearConnectError(error, 'connect_failed');
-            setInitError(getErrorMessage(error));
+            applyWallet(wallet, accounts);
+            setError(null);
+        } catch (reason) {
+            setError(reason instanceof Error ? reason.message : 'Wallet connection failed');
         }
-    }, [applyConnectedWallet]);
+    }, [applyWallet]);
 
-    const setEvmLinkedAccount = useCallback((nextAccountId: string) => {
-        writeManagedNearAccount(nextAccountId, 'evm');
-        applyManagedAccount(nextAccountId, 'evm');
-    }, [applyManagedAccount]);
-
-    const setManagedAccount = useCallback((nextAccountId: string, kind: ManagedNearAccountKind) => {
-        writeManagedNearAccount(nextAccountId, kind);
-        applyManagedAccount(nextAccountId, kind);
-    }, [applyManagedAccount]);
+    const signOut = useCallback(async () => {
+        await clearAuth(accountIdRef.current);
+        try {
+            await connectorRef.current?.disconnect(walletRef.current ?? undefined);
+        } finally {
+            walletRef.current = null;
+            accountIdRef.current = null;
+            setAccountId(null);
+        }
+    }, [clearAuth]);
 
     return (
-        <WalletContext.Provider value={{
-            accountId,
-            isTrial: managedAccountKind === 'guest' || managedAccountKind === 'trial',
-            managedAccountKind,
-            walletType,
-            getWallet,
-            signOut,
-            connect,
-            setEvmLinkedAccount,
-            setManagedAccount,
-            isReady,
-        }}>
-            {initError && (
-                <div
-                    role="alert"
-                    className="fixed left-1/2 top-4 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-lg border border-near-red/40 bg-zinc-950/95 px-4 py-3 text-sm text-near-red shadow-lg"
-                >
-                    Wallet connection is temporarily unavailable. {initError}
-                </div>
-            )}
+        <WalletContext.Provider value={{ accountId, getWallet, signOut, connect, isReady }}>
+            {error && <p role="alert" className="fixed inset-x-4 top-4 z-50 mx-auto max-w-md rounded-lg border border-red-500/40 bg-black p-3 text-sm text-red-300">{error}</p>}
             {children}
         </WalletContext.Provider>
     );
-};
+}
 
-export function useWallet() {
+export function useWallet(): WalletContextValue {
     const context = useContext(WalletContext);
-    if (!context) {
-        throw new Error('useWallet must be used within a WalletProvider');
-    }
+    if (!context) throw new Error('useWallet must be used within WalletProvider');
     return context;
 }

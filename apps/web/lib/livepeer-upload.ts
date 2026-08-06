@@ -10,6 +10,7 @@ import {
     GAS_CONSTANTS,
     MEDIA_UPLOAD_POLICY,
     NEAR_CONFIG,
+    NEAR_NETWORK,
 } from '@/lib/constants';
 import { base64Encode, hexEncode } from '@/lib/crypto/codec';
 import { getProvider, viewContract } from '@/lib/near';
@@ -347,7 +348,7 @@ async function parseNearCreatorFeeQuote(
         ))
         || input.domain !== 'youtick.creator-fee-quote'
         || input.version !== '1'
-        || input.network !== NEAR_CONFIG.networkId
+        || input.network !== NEAR_NETWORK
         || input.contract_id !== NEAR_CONFIG.marketContractId
         || input.creator_id !== expected.accountId
         || input.job_id !== expected.jobId
@@ -449,7 +450,7 @@ export async function requestLivepeerUploadIntent(input: {
         version: '2',
         method: 'POST',
         route,
-        network: NEAR_CONFIG.networkId,
+        network: NEAR_NETWORK,
         contract_id: NEAR_CONFIG.marketContractId,
         account_id: input.accountId,
         resource: `job:${input.jobId}:${input.generation}`,

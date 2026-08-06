@@ -1,6 +1,6 @@
 import { KeyPair } from 'near-api-js';
 import { getCachedSessionGrant, isSessionGrantVisible } from '@/lib/access-grants';
-import { APP_CONFIG, FEATURE_FLAGS, NEAR_CONFIG } from '@/lib/constants';
+import { APP_CONFIG, FEATURE_FLAGS, NEAR_CONFIG, NEAR_NETWORK } from '@/lib/constants';
 import { base64Encode } from '@/lib/crypto/codec';
 
 const PLAYBACK_ROUTE = '/v1/playback-tokens';
@@ -51,7 +51,7 @@ export async function requestLivepeerPlaybackToken(
         version: '2',
         method: 'POST',
         route: PLAYBACK_ROUTE,
-        network: NEAR_CONFIG.networkId,
+        network: NEAR_NETWORK,
         contract_id: NEAR_CONFIG.marketContractId,
         account_id: input.accountId,
         resource: `playback:${input.jobId}:${input.generation}:${input.playbackId}`,
