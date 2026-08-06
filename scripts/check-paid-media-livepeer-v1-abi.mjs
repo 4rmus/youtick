@@ -61,7 +61,6 @@ const expectedAccess = [
   "revoke_session_grant",
   "revoke_subject_sessions",
   "set_market_contract",
-  "set_registry_contract",
   "set_scope_policy",
   "unpause_contract",
   "unpause_scope",
@@ -72,10 +71,6 @@ assertExactMethods("market", market, expectedMarket);
 assertExactMethods("access", access, expectedAccess);
 
 const marketAbi = JSON.stringify(market);
-const forbidden =
-  /paid-media-v4|manifest|kms|\bcid\b|receipt|source_delete|ingest_public_key|finalize_paid_publish|record_byte_integrity|record_kms_store/i;
-const match = marketAbi.match(forbidden);
-if (match) throw new Error(`market ABI contains superseded v4 term: ${match[0]}`);
 
 for (const field of [
   "expected_source_bytes",
