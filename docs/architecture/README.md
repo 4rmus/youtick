@@ -1,156 +1,39 @@
-# YouTick System Architecture
+# Architecture
 
-> Current live runtime: browser encryption, NEAR entitlements, access grants, registry-enforced operators, share-based playback, and hybrid decentralized operations
+> Status: source implementation present; runtime gates disabled; not deployed by
+> this cleanup.
 
----
+```text
+Creator browser -- job/payment --> NEAR market
+Creator browser -- signed intent --> Livepeer Bridge
+Creator browser -- TUS video bytes --> Livepeer Studio
+Livepeer Studio -- signed webhook --> Livepeer Bridge
+Livepeer Bridge -- finalize/suspend --> NEAR market
 
-> Target, testnet evidence only and no product runtime:
-> [NEAR + Livepeer Paid Media v1 Plan](./near-livepeer-paid-media-implementation-plan.md)
-
-## Summary
-
-Today, YouTick runs through five active layers:
-
-| Layer | Responsibility |
-|-------|----------------|
-| Web app | Encrypts media, uploads manifests and segments, and manages purchase/watch UX |
-| Market contract | Stores events, tickets, purchase logs, and creator ownership |
-| Access contract | Stores short-lived session grants used by off-chain authorization |
-| Registry contract | Stores active decryption operators and relayers |
-| KMS operators | Store encrypted key shares and release them only after authorization checks |
-
-IPFS storage stores encrypted media assets and manifests. Lighthouse is the
-primary write provider through `workers/storage-api`; the legacy Crust runtime
-fallback has been removed. The browser is still the
-place where the final playback key is reconstructed and media is decrypted.
-
-This page describes the current public-alpha model. It is hybrid decentralized:
-ownership and policy live on NEAR, encrypted media lives on IPFS storage, while
-KMS operators currently run on Cloudflare Workers with KV-backed share storage.
-
----
-
-## High-Level Flow
-
-```mermaid
-flowchart LR
-    Browser["Browser App"] --> IPFS["IPFS Storage"]
-    Browser --> Market["Market Contract"]
-    Browser --> Access["Access Contract"]
-    Browser --> Registry["Registry Contract"]
-
-    Browser --> OpA["KMS Operator A"]
-    Browser --> OpB["KMS Operator B"]
-    Browser --> OpC["KMS Operator C"]
-    Browser --> OpD["KMS Operator D"]
-    Browser --> OpE["KMS Operator E"]
-
-    OpA --> Registry
-    OpB --> Registry
-    OpC --> Registry
-    OpD --> Registry
-    OpE --> Registry
-
-    OpA --> Market
-    OpB --> Market
-    OpC --> Market
-    OpD --> Market
-    OpE --> Market
+Buyer browser -- purchase --> NEAR market
+Buyer browser -- signed token request --> Livepeer Bridge
+Livepeer Bridge -- final-block checks --> NEAR market + access
+Livepeer Bridge -- short-lived JWT --> Buyer browser
+Buyer browser -- authenticated HLS --> Livepeer Studio
 ```
 
-### Upload
+## Boundaries
 
-1. The browser generates an AES key and encrypts media locally.
-2. Encrypted segments and manifests are uploaded to IPFS.
-3. The AES key is split into shares.
-4. Shares are stored across active operators.
-5. The market contract records the event and NFT metadata.
+- NEAR owns paid job, publication, settlement, entitlement and Play-grant truth.
+- Livepeer receives plaintext video and owns ingest, processing, storage and
+  HLS delivery.
+- The Bridge handles control and authorization only. It must reject media
+  request bodies.
+- Durable Objects persist idempotent job, admission and operator state.
+- The operator key is a finite-allowance FunctionCall key restricted to the
+  approved market methods. FullAccess keys are forbidden.
+- Playback tokens are short-lived ES256 bearer tokens sent in the
+  `Livepeer-Jwt` header and kept in browser memory.
+- Fresh market and access contract IDs are required; old state is not migrated.
 
-### Watch
+## Activation
 
-1. The app reads active operators from the registry.
-2. It ensures a short-lived `Play` grant in the access contract.
-3. It requests shares from the active operators in parallel.
-4. Operators check registry status, access grants, and on-chain entitlement.
-5. The browser reconstructs the AES key after enough shares arrive and starts playback.
-
-### Gift and Trial
-
-1. Gift and trial flows continue to use the market contract as the entitlement source of truth.
-2. Trial relayer usage is now constrained by the registry.
-
----
-
-## Active Code Surfaces
-
-### Web
-
-- `apps/web/components/UploadForm.tsx`
-- `apps/web/components/IpfsPlayer.tsx`
-- `apps/web/components/TrialOnboarding.tsx`, `TrialUpgradeDialog.tsx`
-- `apps/web/components/providers/WalletProvider.tsx` (HOT Connect)
-- `apps/web/lib/access-grants.ts` — 10-min Play / 5-min Publish session grants
-- `apps/web/lib/signless-access-key.ts` — limited-allowance ed25519 key scoped to `issue_session_grant`
-- `apps/web/lib/managed-near-account.ts`, `lib/guest-account.ts`, `lib/trial-wallet.ts`
-- `apps/web/lib/registry.ts`
-- `apps/web/lib/kms/*` (`client.ts`, `encryption.ts`, `shares.ts`)
-- `apps/web/lib/ipfs/*` — multi-gateway read failover
-- `apps/web/lib/storage/storage-api.ts`, `storage/provider.ts` — Lighthouse client
-- `apps/web/lib/upload-session-manager.ts`
-
-### Workers
-
-- `workers/youtick-kms/src/index.ts`
-- `workers/storage-api/src/index.ts` — NEP-413 upload challenge + guarded Lighthouse upload
-- `workers/media-delivery/src/index.ts`
-- `workers/web4-proxy/` — Web4 + same-origin `/api/*` proxy
-
-### Contracts
-
-Verify live contract hashes against chain state before relying on any deploy
-claim operationally.
-
-- `contracts/nft-ticket/src/` — split across `lib.rs`, `nft.rs`, `market.rs`,
-  `gift.rs`, `onboarding.rs`, `treasury.rs`, `views.rs`, `web4.rs`,
-  `moderation.rs`, `timelock.rs`, `events.rs`, `migrate.rs`, `tests.rs`
-- `contracts/access-control/src/lib.rs`
-- `contracts/operator-registry/src/lib.rs`
-
----
-
-## Important Design Choices
-
-### 1. Media is still encrypted in the browser
-
-Raw video is never uploaded in plaintext. The browser encrypts first, then uploads.
-
-### 2. Upload keeps the low-friction session-key path
-
-Upload uses the narrow upload session key path because it preserves the single-approval UX. We intentionally did not replace upload with session grants.
-
-### 3. Playback moved to share-based decryption
-
-The playback key is no longer treated as a single KMS secret. It is split into shares and reconstructed in the browser.
-
-### 4. Registry is now an enforcement layer
-
-The registry no longer acts as a passive address book. Operators and relayers must be active in the registry to participate.
-
-### 5. Access grants standardize off-chain authorization
-
-The access contract standardizes short-lived `Play`, `Publish`, `ClaimGift`, and `ClaimTrial` authorization checks without replacing the upload session model.
-
-### 6. Governance is owner-controlled in public alpha
-
-Emergency takedown and owner governance remain owner-controlled in V1 public
-alpha. DAO/multisig governance is a target, not an implemented guarantee.
-
----
-
-## Related Pages
-
-- [Storage & Delivery](./storage.md)
-- [Session Keys & Upload Sessions](./session-keys.md)
-- [Wallet Integration](./wallet-integration.md)
-- [Smart Contract](./smart-contract.md)
-- [Security](../security.md)
+`NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1` and
+`LIVEPEER_BRIDGE_ENABLED` are independent gates and default to false.
+The native-NEAR creator-fee gates also remain false. Initial activation is
+USDC-first until its separate price-source gate is approved.

@@ -15,138 +15,9 @@ permissions:
   contents: read
 
 jobs:
-  changes:
-    name: Detect Changes
-    runs-on: ubuntu-latest
-    outputs:
-      web: ${{ steps.filter.outputs.web }}
-      kms: ${{ steps.filter.outputs.kms }}
-      web4: ${{ steps.filter.outputs.web4 }}
-      storage: ${{ steps.filter.outputs.storage }}
-      media: ${{ steps.filter.outputs.media }}
-      livepeer_bridge: ${{ steps.filter.outputs.livepeer_bridge }}
-      contracts: ${{ steps.filter.outputs.contracts }}
-      docs: ${{ steps.filter.outputs.docs }}
-      livepeer_protocol: ${{ steps.filter.outputs.livepeer_protocol }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Detect changed areas
-        id: filter
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            base="${{ github.event.pull_request.base.sha }}"
-            head="HEAD"
-          else
-            base="${{ github.event.before }}"
-            head="HEAD"
-          fi
-
-          if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
-            git ls-tree -r --name-only "${head}" > /tmp/changed-files
-          else
-            git diff --name-only "${base}" "${head}" > /tmp/changed-files
-          fi
-
-          web=false
-          kms=false
-          web4=false
-          storage=false
-          media=false
-          livepeer_bridge=false
-          contracts=false
-          docs=false
-          livepeer_protocol=false
-
-          if grep -Eq '^\.github/workflows/' /tmp/changed-files; then
-            web=true
-            kms=true
-            web4=true
-            storage=true
-            media=true
-            livepeer_bridge=true
-            contracts=true
-            docs=true
-            livepeer_protocol=true
-          fi
-
-          if grep -Eq '^apps/web/' /tmp/changed-files; then
-            web=true
-          fi
-
-          if grep -Eq '^(workers/youtick-kms/|workers/shared/)' /tmp/changed-files; then
-            kms=true
-          fi
-
-          if grep -Eq '^(workers/web4-proxy/|workers/shared/)' /tmp/changed-files; then
-            web4=true
-          fi
-
-          if grep -Eq '^(workers/storage-api/|workers/shared/)' /tmp/changed-files; then
-            storage=true
-          fi
-
-          if grep -Eq '^(workers/media-delivery/|workers/shared/)' /tmp/changed-files; then
-            media=true
-          fi
-
-          if grep -Eq '^(workers/livepeer-bridge/|protocol/paid-media-livepeer-v1/)' /tmp/changed-files; then
-            livepeer_bridge=true
-          fi
-
-          if grep -Eq '^protocol/(storage-manifest-v2|pack-range-v3)/' /tmp/changed-files; then
-            web=true
-            kms=true
-            storage=true
-            media=true
-            contracts=true
-          fi
-
-          if grep -Eq '^(protocol/paid-media-v4/|scripts/check-paid-media-v4-abi\.mjs$)' /tmp/changed-files; then
-            web=true
-            storage=true
-            contracts=true
-          fi
-
-          if grep -Eq '^(contracts/|scripts/check-paid-media-livepeer-v1-abi\.mjs$)' /tmp/changed-files; then
-            contracts=true
-          fi
-
-          if grep -Eq '^docs/' /tmp/changed-files; then
-            docs=true
-          fi
-
-          if grep -Eq '^near-livepeer-serverless-paid-media-evaluation\.md$' /tmp/changed-files; then
-            docs=true
-          fi
-
-          if grep -Eq '^(protocol/paid-media-livepeer-v1/|scripts/check-paid-media-livepeer-v1\.mjs$|docs/README\.md$|docs/architecture/(README|decentralized-paid-media-v4-plan|near-livepeer-paid-media-implementation-plan)\.md$|docs/adr/adr-010-livepeer-paid-media\.md$|contracts/(nft-ticket|access-control)/README\.md$|near-livepeer-serverless-paid-media-evaluation\.md$)' /tmp/changed-files; then
-            livepeer_protocol=true
-          fi
-
-          {
-            echo "web=${web}"
-            echo "kms=${kms}"
-            echo "web4=${web4}"
-            echo "storage=${storage}"
-            echo "media=${media}"
-            echo "livepeer_bridge=${livepeer_bridge}"
-            echo "contracts=${contracts}"
-            echo "docs=${docs}"
-            echo "livepeer_protocol=${livepeer_protocol}"
-          } >> "${GITHUB_OUTPUT}"
-
   web:
     name: Web
     runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.web == 'true'
     env:
       NEXT_PUBLIC_NEAR_NETWORK: testnet
       NEXT_PUBLIC_MARKET_CONTRACT_ID: market.testnet
@@ -157,237 +28,46 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test -- --run
+      - run: npm run build
 
-      - name: Restore Next.js cache
-        uses: actions/cache@v5
-        with:
-          path: apps/web/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('apps/web/package-lock.json') }}-${{ hashFiles('apps/web/**/*.[jt]s', 'apps/web/**/*.[jt]sx', 'apps/web/**/*.css', 'apps/web/**/*.mjs', 'apps/web/**/*.json') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('apps/web/package-lock.json') }}-
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Test
-        run: npm test -- --run
-
-      - name: Build
-        run: npm run build
-
-  docs:
-    name: Docs
+  livepeer-bridge:
+    name: Livepeer Bridge
     runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.docs == 'true'
-    defaults:
-      run:
-        working-directory: docs
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: docs/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build docs
-        run: npm run build
-
-  livepeer-protocol:
-    name: Livepeer Protocol
-    runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.livepeer_protocol == 'true'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-
-      - name: Check schema, vectors and documentation truth
-        run: node scripts/check-paid-media-livepeer-v1.mjs
-
-  kms-worker:
-    name: KMS Worker
-    runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.kms == 'true'
-    defaults:
-      run:
-        working-directory: workers/youtick-kms
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: workers/youtick-kms/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Test
-        run: npm test -- --run
-
-      - name: Type check
-        run: npm run check
-
-  web4-proxy-worker:
-    name: Web4 Proxy Worker
-    runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.web4 == 'true'
-    defaults:
-      run:
-        working-directory: workers/web4-proxy
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: workers/web4-proxy/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Test
-        run: npm test -- --run
-
-      - name: Type check
-        run: npm run check
-
-  storage-api-worker:
-    name: Storage API Worker
-    runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.storage == 'true'
-    defaults:
-      run:
-        working-directory: workers/storage-api
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: workers/storage-api/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Test
-        run: npm test -- --run
-
-      - name: Type check
-        run: npm run check
-
-  media-delivery-worker:
-    name: Media Delivery Worker
-    runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.media == 'true'
-    defaults:
-      run:
-        working-directory: workers/media-delivery
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: workers/media-delivery/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Test
-        run: npm test -- --run
-
-      - name: Type check
-        run: npm run check
-
-  livepeer-bridge-worker:
-    name: Livepeer Bridge Worker
-    runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.livepeer_bridge == 'true'
     defaults:
       run:
         working-directory: workers/livepeer-bridge
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: workers/livepeer-bridge/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Test
-        run: npm test -- --run
-
-      - name: Type check
-        run: npm run check
+      - run: npm ci
+      - run: npm test -- --run
+      - run: npm run test:provider-canary
+      - run: npm run check
+      - run: npx wrangler deploy --dry-run
 
   contracts:
-    name: Contracts
+    name: Market and Access Contracts
     runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.contracts == 'true'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.86.0
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.86.0
         with:
           components: rustfmt, clippy
-
-      - name: Install wasm target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Restore Cargo cache
-        uses: actions/cache@v5
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -395,7 +75,6 @@ jobs:
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('contracts/**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
-
       - name: Install pinned cargo-near binary
         env:
           CARGO_NEAR_SHA256: b6cdf1548ed598553dec52dbe9e50e1826537ba7e81a4f95bed5b869274170bc
@@ -409,76 +88,68 @@ jobs:
           install \
             "${RUNNER_TEMP}/cargo-near-x86_64-unknown-linux-gnu/cargo-near" \
             "${HOME}/.cargo/bin/cargo-near"
-
-      - name: Test nft-ticket unit tests
-        run: cargo test --lib
+      - name: Test market
         working-directory: contracts/nft-ticket
-
-      - name: Test paid-media Livepeer v1 contract
-        run: cargo test --test paid_media_livepeer_v1
-        working-directory: contracts/nft-ticket
-
-      - name: Test nft-ticket sandbox tests
-        run: cargo test --test sandbox
-        working-directory: contracts/nft-ticket
-
-      - name: Check nft-ticket format and lints
         run: |
+          cargo test --lib
+          cargo test --test paid_media_livepeer_v1
+          cargo test --test sandbox
           cargo fmt --all --check
           cargo clippy --all-targets -- -D warnings
-        working-directory: contracts/nft-ticket
-
-      - name: Test access-control
-        run: cargo test
+      - name: Test access control
         working-directory: contracts/access-control
-
-      - name: Build paid-only contract ABIs
+        run: |
+          cargo test
+          cargo fmt --all --check
+          cargo clippy --all-targets
+      - name: Build contract ABIs
         run: |
           (cd contracts/nft-ticket && cargo near build non-reproducible-wasm)
           (cd contracts/access-control && cargo near build non-reproducible-wasm)
-
-      - name: Enforce paid-media Livepeer v1 ABI
+      - name: Check exact ABI
         run: node scripts/check-paid-media-livepeer-v1-abi.mjs
+
+  protocol:
+    name: Livepeer Protocol
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/check-paid-media-livepeer-v1.mjs
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - run: npm ci
+      - run: npm run build
 
   ci-gate:
     name: CI Gate
     runs-on: ubuntu-latest
     needs:
-      - changes
       - web
-      - kms-worker
-      - web4-proxy-worker
-      - storage-api-worker
-      - media-delivery-worker
-      - livepeer-bridge-worker
+      - livepeer-bridge
       - contracts
+      - protocol
       - docs
-      - livepeer-protocol
     if: always()
     steps:
       - name: Check required CI results
-        shell: bash
         env:
-          CHANGES_RESULT: ${{ needs.changes.result }}
-          WEB_RESULT: ${{ needs.web.result }}
-          KMS_RESULT: ${{ needs.kms-worker.result }}
-          WEB4_RESULT: ${{ needs.web4-proxy-worker.result }}
-          STORAGE_RESULT: ${{ needs.storage-api-worker.result }}
-          MEDIA_RESULT: ${{ needs.media-delivery-worker.result }}
-          LIVEPEER_BRIDGE_RESULT: ${{ needs.livepeer-bridge-worker.result }}
-          CONTRACTS_RESULT: ${{ needs.contracts.result }}
-          DOCS_RESULT: ${{ needs.docs.result }}
-          LIVEPEER_PROTOCOL_RESULT: ${{ needs.livepeer-protocol.result }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          set -euo pipefail
-
-          for result in "${CHANGES_RESULT}" "${WEB_RESULT}" "${KMS_RESULT}" "${WEB4_RESULT}" "${STORAGE_RESULT}" "${MEDIA_RESULT}" "${LIVEPEER_BRIDGE_RESULT}" "${CONTRACTS_RESULT}" "${DOCS_RESULT}" "${LIVEPEER_PROTOCOL_RESULT}"; do
-            case "${result}" in
-              success|skipped)
-                ;;
-              *)
-                echo "CI dependency result is ${result}"
-                exit 1
-                ;;
-            esac
+          for result in ${RESULTS}; do
+            test "${result}" = success
           done

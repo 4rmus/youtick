@@ -28,7 +28,7 @@ body:
     id: area
     attributes:
       label: Area
-      placeholder: web, contracts, kms, docs
+      placeholder: web, contracts, Livepeer Bridge, protocol, docs
   - type: textarea
     id: logs
     attributes:

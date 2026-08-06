@@ -3,13 +3,9 @@
 
 # Security-sensitive areas — require maintainer review.
 /contracts/ @4rmus
-/workers/youtick-kms/ @4rmus
-/workers/storage-api/ @4rmus
-/workers/media-delivery/ @4rmus
-/workers/web4-proxy/ @4rmus
+/workers/livepeer-bridge/ @4rmus
+/protocol/ @4rmus
 /scripts/ @4rmus
-/apps/web/app/api/onboarding-key/ @4rmus
-/apps/web/lib/kms/ @4rmus
-/apps/web/lib/storage/ @4rmus
+/apps/web/ @4rmus
 /.github/ @4rmus
 SECURITY.md @4rmus
