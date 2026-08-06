@@ -11,13 +11,33 @@ const NEAR_RPC_UPSTREAMS = {
     ],
 } as const;
 
-const CORS_HEADERS = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'content-type',
-};
+const MAX_RPC_BODY_BYTES = 64 * 1024;
+
+const ALLOWED_RPC_METHODS = new Set([
+    'EXPERIMENTAL_changes',
+    'EXPERIMENTAL_changes_in_block',
+    'EXPERIMENTAL_light_client_proof',
+    'EXPERIMENTAL_protocol_config',
+    'EXPERIMENTAL_receipt',
+    'EXPERIMENTAL_tx_status',
+    'block',
+    'broadcast_tx_async',
+    'broadcast_tx_commit',
+    'chunk',
+    'gas_price',
+    'network_info',
+    'next_light_client_block',
+    'query',
+    'send_tx',
+    'status',
+    'tx',
+    'validators',
+]);
 
 const STRIPPED_UPSTREAM_HEADERS = [
+    'access-control-allow-headers',
+    'access-control-allow-methods',
+    'access-control-allow-origin',
     'content-encoding',
     'content-length',
     'transfer-encoding',
@@ -31,20 +51,84 @@ function getUpstreamUrls(): readonly string[] {
 export async function OPTIONS(): Promise<Response> {
     return new Response(null, {
         status: 204,
-        headers: CORS_HEADERS,
+        headers: { Allow: 'POST, OPTIONS' },
+    });
+}
+
+async function readLimitedBody(request: Request): Promise<Uint8Array | null> {
+    const declaredLength = request.headers.get('content-length');
+    if (declaredLength && (!/^\d+$/.test(declaredLength) || Number(declaredLength) > MAX_RPC_BODY_BYTES)) {
+        return null;
+    }
+
+    if (!request.body) return new Uint8Array();
+
+    const reader = request.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_RPC_BODY_BYTES) {
+            await reader.cancel();
+            return null;
+        }
+        chunks.push(value);
+    }
+
+    const body = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+        body.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    return body;
+}
+
+function errorResponse(status: number, error: string): Response {
+    return Response.json({ error }, {
+        status,
+        headers: { 'Cache-Control': 'no-store' },
     });
 }
 
 export async function POST(request: Request): Promise<Response> {
-    const body = await request.text();
-    const contentType = request.headers.get('content-type') || 'application/json';
+    const contentType = request.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().startsWith('application/json')) {
+        return errorResponse(415, 'application/json required');
+    }
+
+    const bodyBytes = await readLimitedBody(request);
+    if (!bodyBytes) return errorResponse(413, 'NEAR RPC body too large');
+
+    let payload: unknown;
+    try {
+        payload = JSON.parse(new TextDecoder().decode(bodyBytes));
+    } catch {
+        return errorResponse(400, 'Invalid JSON-RPC request');
+    }
+
+    if (
+        !payload
+        || typeof payload !== 'object'
+        || Array.isArray(payload)
+        || (payload as { jsonrpc?: unknown }).jsonrpc !== '2.0'
+        || typeof (payload as { method?: unknown }).method !== 'string'
+        || !ALLOWED_RPC_METHODS.has((payload as { method: string }).method)
+    ) {
+        return errorResponse(400, 'Unsupported JSON-RPC request');
+    }
+
+    const body = JSON.stringify(payload);
     let upstream: Response | null = null;
 
     for (const upstreamUrl of getUpstreamUrls()) {
         try {
             upstream = await fetch(upstreamUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': contentType },
+                headers: { 'Content-Type': 'application/json' },
                 body,
             });
             if (upstream.status !== 429 && upstream.status < 500) break;
@@ -54,18 +138,12 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     if (!upstream) {
-        return Response.json({ error: 'NEAR RPC unavailable' }, {
-            status: 502,
-            headers: CORS_HEADERS,
-        });
+        return errorResponse(502, 'NEAR RPC unavailable');
     }
 
     const headers = new Headers(upstream.headers);
     for (const header of STRIPPED_UPSTREAM_HEADERS) {
         headers.delete(header);
-    }
-    for (const [key, value] of Object.entries(CORS_HEADERS)) {
-        headers.set(key, value);
     }
     headers.set('Cache-Control', 'no-store');
 

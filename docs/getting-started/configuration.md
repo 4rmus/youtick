@@ -11,11 +11,13 @@ NEXT_PUBLIC_ACCESS_CONTRACT_ID=<fresh-access-account>
 NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1=false
 NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE=false
 NEXT_PUBLIC_LIVEPEER_BRIDGE_URL=https://<bridge-host>
+NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO=<approved-positive-yoctonear>
 ```
 
 `NEXT_PUBLIC_USDC_CONTRACT_ID` may override the network's known USDC
-contract. Missing or invalid market/access IDs fail closed. A true web gate
-does not enable the Worker.
+contract. Missing or invalid market/access IDs fail closed. The gas reserve is
+required by the upload transaction and must be an approved positive integer.
+A true web gate does not enable the Worker.
 
 ## Livepeer Bridge
 
