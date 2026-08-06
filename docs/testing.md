@@ -6,6 +6,7 @@
 cd apps/web
 npm ci
 npm test -- --run
+npm run test:livepeer-canary
 npm run lint
 npm run build
 ```

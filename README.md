@@ -23,6 +23,7 @@ Video request bodies do not pass through the web application or the Worker.
 cd apps/web
 npm ci
 npm test -- --run
+npm run test:livepeer-canary
 npm run lint
 npm run build
 
