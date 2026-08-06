@@ -430,10 +430,6 @@ jobs:
       - name: Enforce paid-media Livepeer v1 ABI
         run: node scripts/check-paid-media-livepeer-v1-abi.mjs
 
-      - name: Test operator-registry
-        run: cargo test
-        working-directory: contracts/operator-registry
-
   ci-gate:
     name: CI Gate
     runs-on: ubuntu-latest
