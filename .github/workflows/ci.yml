@@ -395,9 +395,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            contracts/nft-ticket/target
-            contracts/access-control/target
-            contracts/operator-registry/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/**/Cargo.lock') }}-${{ hashFiles('contracts/**/Cargo.toml', 'contracts/**/*.rs') }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('contracts/**/Cargo.lock') }}-
