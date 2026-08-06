@@ -12,7 +12,7 @@ const ACCESS_GRANT_SKEW_MS = 30_000;
 const inMemoryGrants = new Map<string, BrowserSessionGrant>();
 const pendingGrantPromises = new Map<string, Promise<BrowserSessionGrant | null>>();
 
-export type SessionGrantScope = 'Play' | 'Publish' | 'ClaimGift' | 'ClaimTrial';
+export type SessionGrantScope = 'Play';
 
 export interface BrowserSessionGrant {
     accountId: string;
@@ -54,16 +54,8 @@ function cacheKey(accountId: string, scope: SessionGrantScope, resourceId?: stri
     return `${ACCESS_GRANT_CACHE_PREFIX}${accountId}:${scope}:${resourceId || '*'}`;
 }
 
-function getScopeTtlMs(scope: SessionGrantScope): number {
-    switch (scope) {
-        case 'Play':
-            return 10 * 60 * 1000;
-        case 'Publish':
-            return 10 * 60 * 1000;
-        case 'ClaimGift':
-        case 'ClaimTrial':
-            return 5 * 60 * 1000;
-    }
+function getScopeTtlMs(): number {
+    return 10 * 60 * 1000;
 }
 
 function textToHex(value: string): string {
@@ -74,17 +66,8 @@ function optionalTextToHex(value: string | null | undefined): string {
     return value == null ? '-' : textToHex(value);
 }
 
-function scopeToContractKey(scope: SessionGrantScope): string {
-    switch (scope) {
-        case 'Play':
-            return 'play';
-        case 'Publish':
-            return 'publish';
-        case 'ClaimGift':
-            return 'claim_gift';
-        case 'ClaimTrial':
-            return 'claim_trial';
-    }
+function scopeToContractKey(): string {
+    return 'play';
 }
 
 export function buildSessionGrantPokMessage(params: {
@@ -104,7 +87,7 @@ export function buildSessionGrantPokMessage(params: {
         `caller=${textToHex(params.caller)}`,
         `target_owner=${textToHex(params.targetOwnerId)}`,
         `session_pk=${textToHex(params.sessionPublicKey)}`,
-        `scope=${scopeToContractKey(params.scope)}`,
+        `scope=${scopeToContractKey()}`,
         `resource_id=${optionalTextToHex(params.resourceId)}`,
         `ttl_ms=${params.ttlMs}`,
         `origin_hash=${optionalTextToHex(params.originHash)}`,
@@ -334,7 +317,7 @@ async function tryWalletGrantWithSignlessProvision(
     wallet: WalletInstance,
     transaction: PreparedSessionGrant['transaction'],
 ): Promise<boolean> {
-    if (wallet.managedAccountKind || typeof wallet.signAndSendTransactions !== 'function') {
+    if (typeof wallet.signAndSendTransactions !== 'function') {
         return false;
     }
 
@@ -391,10 +374,10 @@ export async function prepareSessionGrant(params: {
 }): Promise<PreparedSessionGrant> {
     const keyPair = KeyPair.fromRandom('ed25519');
     const sessionPublicKey = keyPair.getPublicKey().toString();
-    const ttlMs = getScopeTtlMs(params.scope);
+    const ttlMs = getScopeTtlMs();
     const originHash = await getOriginHash();
     const deviceHash = await getDeviceHash();
-    if ((params.scope === 'Play' || params.scope === 'Publish') && (!originHash || !deviceHash)) {
+    if (!originHash || !deviceHash) {
         throw new Error('Secure browser hashing is required for this session grant');
     }
     const resourceId = params.resourceId || null;

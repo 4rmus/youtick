@@ -33,9 +33,9 @@ vi.mock('@/lib/constants', () => ({
     },
     FEATURE_FLAGS: { enablePaidMediaLivepeerV1: true },
     NEAR_CONFIG: {
-        networkId: 'testnet',
         marketContractId: 'paid-media-livepeer-v1.testnet',
     },
+    NEAR_NETWORK: 'testnet',
 }));
 
 vi.mock('hls.js', () => ({

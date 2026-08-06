@@ -1,6 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 describe('RPC failover endpoints', () => {
+    beforeEach(() => {
+        process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID = 'market.testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access.testnet';
+    });
     afterEach(() => {
         delete (globalThis.window as { location?: unknown }).location;
         vi.resetModules();

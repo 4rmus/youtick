@@ -1,5 +1,5 @@
 import { KeyPair, PublicKey, actions } from 'near-api-js';
-import { GAS_CONSTANTS, NEAR_CONFIG } from './constants';
+import { GAS_CONSTANTS, NEAR_CONFIG, NEAR_NETWORK } from './constants';
 import { BrowserKeyStore } from './keystore-v7';
 import { getProvider } from './near';
 import { nearAmountToYocto } from './near-amount';
@@ -10,9 +10,8 @@ const SIGNLESS_ACCESS_KEY_ALLOWANCE_YOCTO = nearAmountToYocto(GAS_CONSTANTS.sess
 // Below this remaining allowance a grant call may no longer fit; reprovision.
 const SIGNLESS_ACCESS_KEY_MIN_ALLOWANCE_YOCTO = nearAmountToYocto(0.01);
 
-// Dedicated namespace: the default `near-api-js:keystore:` prefix is shared by
-// trial/guest full-access keys and KMS local signing. The signless FC key must
-// never shadow or get deleted with those.
+// Dedicated namespace keeps the signless function-call key isolated from
+// wallet key material.
 const signlessKeyStore = new BrowserKeyStore('youtick:signless-keystore:');
 
 export function createSignlessAccessKey(): KeyPair {
@@ -20,15 +19,15 @@ export function createSignlessAccessKey(): KeyPair {
 }
 
 export async function persistSignlessAccessKey(accountId: string, keyPair: KeyPair): Promise<void> {
-    await signlessKeyStore.setKey(NEAR_CONFIG.networkId, accountId, keyPair);
+    await signlessKeyStore.setKey(NEAR_NETWORK, accountId, keyPair);
 }
 
 export async function getSignlessAccessKey(accountId: string): Promise<KeyPair | null> {
-    return await signlessKeyStore.getKey(NEAR_CONFIG.networkId, accountId);
+    return await signlessKeyStore.getKey(NEAR_NETWORK, accountId);
 }
 
 export async function clearSignlessAccessKey(accountId: string): Promise<void> {
-    await signlessKeyStore.removeKey(NEAR_CONFIG.networkId, accountId);
+    await signlessKeyStore.removeKey(NEAR_NETWORK, accountId);
 }
 
 export function buildSignlessAccessKeyRequest(keyPair: KeyPair) {
@@ -161,8 +160,7 @@ export async function prepareSignlessKeyProvision(accountId: string): Promise<Si
 
 /**
  * Send wallet transactions, opportunistically batching a signless-key AddKey
- * into the same approval when the account is missing one. Managed wallets
- * (guest/trial/evm) sign locally without prompts, so they are left untouched.
+ * into the same wallet approval when the account is missing one.
  */
 export async function signAndSendWithSignlessProvision(
     wallet: WalletInstance,
@@ -170,7 +168,7 @@ export async function signAndSendWithSignlessProvision(
     transactions: Array<{ receiverId: string; actions: unknown[] }>,
 ): Promise<unknown> {
     let provision: SignlessKeyProvision | null = null;
-    if (!wallet.managedAccountKind && typeof wallet.signAndSendTransactions === 'function') {
+    if (typeof wallet.signAndSendTransactions === 'function') {
         try {
             provision = await prepareSignlessKeyProvision(accountId);
         } catch {

@@ -26,7 +26,11 @@ import {
     buyLivepeerTicket,
     hasLivepeerEntitlement,
     parseLivepeerPublication,
+    readCreatorBalance,
+    readLivepeerMediaJob,
+    readLivepeerPublications,
     readLivepeerPublication,
+    withdrawCreatorBalance,
     type LivepeerPublication,
 } from '@/lib/livepeer-publication';
 
@@ -101,5 +105,40 @@ describe('Livepeer publication UI boundary', () => {
             'has_entitlement',
             { account_id: 'buyer.testnet', publication_id: 'job-001' },
         );
+    });
+
+    it('reads processing state and direct publication pages', async () => {
+        state.viewContract
+            .mockResolvedValueOnce({ job_id: 'job-001', status: 'Authorized' })
+            .mockResolvedValueOnce([PUBLICATION]);
+
+        await expect(readLivepeerMediaJob('job-001')).resolves.toEqual({
+            job_id: 'job-001',
+            status: 'Authorized',
+        });
+        await expect(readLivepeerPublications(0, 24)).resolves.toEqual([PUBLICATION]);
+        expect(state.viewContract).toHaveBeenLastCalledWith(
+            { id: 'provider' },
+            'paid-media-livepeer-v1.testnet',
+            'get_publications',
+            { from_index: '0', limit: 24 },
+        );
+    });
+
+    it('reads and withdraws the creator USDC balance', async () => {
+        state.viewContract.mockResolvedValueOnce('1960000');
+        const wallet = { signAndSendTransaction: vi.fn().mockResolvedValue({}) };
+
+        await expect(readCreatorBalance('creator.testnet')).resolves.toBe('1960000');
+        await withdrawCreatorBalance(wallet as never);
+
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledWith({
+            receiverId: 'paid-media-livepeer-v1.testnet',
+            actions: [expect.objectContaining({
+                methodName: 'withdraw_creator_balance',
+                args: {},
+                deposit: 0n,
+            })],
+        });
     });
 });

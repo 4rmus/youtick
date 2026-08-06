@@ -4,6 +4,8 @@ import { clearMockKeyStore } from '../setup';
 describe('access-grants', () => {
     beforeEach(() => {
         clearMockKeyStore();
+        process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID = 'market.testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access.testnet';
         Object.assign(window, {
             crypto: globalThis.crypto,
             location: { origin: 'https://app.test' },
@@ -27,7 +29,6 @@ describe('access-grants', () => {
         delete process.env.NEXT_PUBLIC_NEAR_NETWORK;
         delete process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID;
         delete process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID;
-        delete process.env.NEXT_PUBLIC_REGISTRY_CONTRACT_ID;
     });
 
     it('issues and caches a testnet session grant', async () => {
@@ -210,32 +211,8 @@ describe('access-grants', () => {
         await persistSignlessAccessKey('alice.testnet', KeyPair.fromRandom('ed25519'));
 
         expect(await getSignlessAccessKey('alice.testnet')).not.toBeNull();
-        // Trial/guest full-access keys and KMS local signing use the default
-        // store; the signless key must not be visible there, and clearing it
-        // must not touch their slot.
+        // The dedicated signless namespace must not leak into the default store.
         expect(await new BrowserKeyStore().getKey('testnet', 'alice.testnet')).toBeNull();
-    });
-
-    it('skips signless provisioning for managed wallets', async () => {
-        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
-        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';
-
-        const wallet = {
-            managedAccountKind: 'guest',
-            signAndSendTransaction: vi.fn(async () => ({})),
-            signAndSendTransactions: vi.fn(async () => []),
-        };
-
-        const { ensureSessionGrant } = await import('@/lib/access-grants');
-        await ensureSessionGrant({
-            accountId: 'guest-1.testnet',
-            scope: 'Play',
-            resourceId: 'video-1',
-            wallet: wallet as never,
-        });
-
-        expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
-        expect(wallet.signAndSendTransaction).toHaveBeenCalledTimes(1);
     });
 
     it('clears grants by account prefix', async () => {
