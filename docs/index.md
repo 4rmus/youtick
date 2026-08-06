@@ -3,39 +3,24 @@ layout: home
 
 hero:
   name: YouTick
-  text: Public-Alpha Digital Ticketed Publishing
-  tagline: Hybrid NEAR video platform with digital tickets, client-side encryption and share-based playback
+  text: Paid video on NEAR and Livepeer
+  tagline: Direct TUS upload, USDC settlement and short-lived JWT playback
   actions:
     - theme: brand
-      text: Get Started
-      link: /getting-started/prerequisites
-    - theme: alt
       text: Architecture
       link: /architecture/
+    - theme: alt
+      text: Configuration
+      link: /getting-started/configuration
 
 features:
-  - title: NFT-Gated Access
-    details: Viewers buy on-chain NFT tickets for content access. Transfers and resale are outside the V1 public alpha scope.
-  - title: Client-Side Encryption
-    details: Paid videos are encrypted in the browser with AES-CTR before upload.
-  - title: Share-Based Playback
-    details: Playback keys are reconstructed from multiple active operator shares instead of a single full-key release.
-  - title: Registry Enforcement
-    details: Operators and relayers must be active in the registry before they can participate.
-  - title: Lighthouse + IPFS Storage
-    details: Encrypted blobs are uploaded through the Storage API and read with multi-gateway playback failover.
+  - title: NEAR source of truth
+    details: Jobs, publications, payments, entitlements and Play grants are verified on-chain.
+  - title: Direct Livepeer upload
+    details: Video bytes travel from the creator browser to Livepeer, not through YouTick services.
+  - title: Fail-closed access
+    details: Playback requires current entitlement, grant and publication state before a short-lived token is issued.
 ---
 
-## Quick Navigation
-
-- [Prerequisites](getting-started/prerequisites.md) -- System requirements
-- [Installation](getting-started/installation.md) -- Clone, install, configure
-- [Quick Start](quick-start.md) -- Run the app locally
-- [System Architecture](architecture/README.md) -- Live architecture overview
-- [Storage & Delivery](architecture/storage.md) -- Encryption, IPFS uploads, share-based playback
-- [Smart Contract](architecture/smart-contract.md) -- Contract surfaces and invariants
-- [Contract Methods](api/contract-methods.md) -- Contract API reference
-- [Security](security.md) -- Threat model and security notes
-- [Public Alpha User Guide](public/alpha-user-guide.md) — end-user onboarding/claim/wallet flows
-- [Transparency](public/transparency.md) — what is decentralized today vs. centralized
-- [Economics](public/economics.md) — creator payout, platform fee, payment rails
+The source contains disabled runtime gates. Follow the [release
+runbook](release-runbook.md) before any deployment or activation.

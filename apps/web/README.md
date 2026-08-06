@@ -15,6 +15,7 @@ Media bytes never pass through Next.js or the Bridge Worker.
 ```bash
 npm ci
 npm test -- --run
+npm run test:livepeer-canary
 npm run lint
 NEXT_PUBLIC_NEAR_NETWORK=testnet \
 NEXT_PUBLIC_MARKET_CONTRACT_ID=market.testnet \

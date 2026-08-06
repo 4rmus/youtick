@@ -1,4 +1,4 @@
-import { base58Decode } from '../../shared/src/base58';
+import { base58Decode } from './base58';
 import {
     KeyPairSigner,
     actions,

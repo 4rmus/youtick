@@ -1,20 +1,14 @@
-# Contributing to YouTick
+# Contributing
 
-Thanks for taking a look at YouTick.
+Keep changes inside the Livepeer-only product boundary and avoid compatibility
+layers for removed flows.
 
-The main contribution guide lives in [`docs/contributing.md`](docs/contributing.md).
-Start there for setup, commands and code areas.
+Before opening a pull request, run the checks for each changed area:
 
-Before opening a PR:
+- web: `npm ci && npm test -- --run && npm run test:livepeer-canary && npm run lint && npm run build`
+- Livepeer Bridge: `npm ci && npm test -- --run && npm run test:provider-canary && npm run check && npx wrangler deploy --dry-run`
+- contracts and protocol: see [docs/testing.md](docs/testing.md)
+- docs: `npm ci && npm run build` in `docs`
 
-- run `npm run lint`, `npm test -- --run` and `npm run build` in `apps/web`
-- (optional, for wallet/trial changes) run `npm run test:smoke` in `apps/web` (Playwright guest+trial smoke)
-- run `npm test -- --run` and `npm run check` in `workers/youtick-kms`
-- run `npm test -- --run` and `npm run check` in `workers/storage-api`
-- run `npm test -- --run` and `npm run check` in `workers/media-delivery`
-- run `npm test -- --run` and `npm run check` in `workers/web4-proxy`
-- run `cargo test --lib` and `cargo test --test sandbox` when contract code changes
-- update docs when behavior changes
-- never commit private keys, `.env.local`, `.near-credentials` or real operator configs
-
-Security issues should follow [`SECURITY.md`](SECURITY.md), not public issues.
+Never commit wallet keys, Worker secrets, `.env.local`, `.dev.vars` or
+`.near-credentials`. Security reports follow [SECURITY.md](SECURITY.md).
