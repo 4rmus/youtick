@@ -386,19 +386,29 @@ jobs:
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
 
-      - name: Install cargo-near
-        run: cargo install cargo-near --version 0.17.0 --locked --no-default-features
-
       - name: Restore Cargo cache
         uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/**/Cargo.lock') }}-${{ hashFiles('contracts/**/Cargo.toml', 'contracts/**/*.rs') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('contracts/**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-${{ hashFiles('contracts/**/Cargo.lock') }}-
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Install pinned cargo-near binary
+        env:
+          CARGO_NEAR_SHA256: b6cdf1548ed598553dec52dbe9e50e1826537ba7e81a4f95bed5b869274170bc
+        run: |
+          archive="${RUNNER_TEMP}/cargo-near.tar.gz"
+          curl --fail --location --silent --show-error \
+            https://github.com/near/cargo-near/releases/download/cargo-near-v0.17.0/cargo-near-x86_64-unknown-linux-gnu.tar.gz \
+            --output "${archive}"
+          echo "${CARGO_NEAR_SHA256} *${archive}" | sha256sum --check -
+          tar --extract --gzip --file "${archive}" --directory "${RUNNER_TEMP}"
+          install \
+            "${RUNNER_TEMP}/cargo-near-x86_64-unknown-linux-gnu/cargo-near" \
+            "${HOME}/.cargo/bin/cargo-near"
 
       - name: Test nft-ticket unit tests
         run: cargo test --lib
