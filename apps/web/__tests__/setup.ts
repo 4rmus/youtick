@@ -1,472 +1,104 @@
-/**
- * Vitest Global Setup File
- * Provides comprehensive mocks for browser-only modules and NEAR APIs
- */
-
-import { vi, beforeEach, afterEach } from 'vitest';
+import { beforeEach, vi } from 'vitest';
 import * as nacl from 'tweetnacl';
-import nodeCrypto from 'node:crypto';
-
-// ============================================================================
-// Mock KeyPair Implementation (used across modules)
-// ============================================================================
 
 export class MockKeyPair {
-  private keypair: nacl.SignKeyPair;
+    constructor(private keypair = nacl.sign.keyPair()) {}
 
-  constructor(keypair?: nacl.SignKeyPair) {
-    this.keypair = keypair || nacl.sign.keyPair();
-  }
-
-  static fromRandom(): MockKeyPair {
-    return new MockKeyPair();
-  }
-
-  static fromString(secretKey: string): MockKeyPair {
-    const parts = secretKey.split(':');
-    if (parts.length === 2 && parts[0] === 'ed25519') {
-      try {
-        const keyBytes = Buffer.from(parts[1], 'base64');
-        if (keyBytes.length === 64) {
-          return new MockKeyPair({
-            publicKey: keyBytes.slice(32),
-            secretKey: keyBytes
-          } as nacl.SignKeyPair);
-        }
-      } catch {
-        // Fall through to create new keypair
-      }
+    static fromRandom(): MockKeyPair { return new MockKeyPair(); }
+    static fromString(secretKey: string): MockKeyPair {
+        const bytes = Buffer.from(secretKey.replace(/^ed25519:/, ''), 'base64');
+        return bytes.length === 64
+            ? new MockKeyPair({ publicKey: bytes.slice(32), secretKey: bytes } as nacl.SignKeyPair)
+            : new MockKeyPair();
     }
-    return new MockKeyPair();
-  }
-
-  getPublicKey(): { toString: () => string; data: Uint8Array } {
-    const base64 = Buffer.from(this.keypair.publicKey).toString('base64');
-    return {
-      toString: () => `ed25519:${base64}`,
-      data: this.keypair.publicKey
-    };
-  }
-
-  sign(message: Uint8Array): { signature: Uint8Array } {
-    const signature = nacl.sign.detached(message, this.keypair.secretKey);
-    return { signature };
-  }
-
-  toString(): string {
-    const secretKeyBase64 = Buffer.from(this.keypair.secretKey).toString('base64');
-    return `ed25519:${secretKeyBase64}`;
-  }
+    getPublicKey() {
+        const data = this.keypair.publicKey;
+        return { data, toString: () => `ed25519:${Buffer.from(data).toString('base64')}` };
+    }
+    sign(message: Uint8Array) { return { signature: nacl.sign.detached(message, this.keypair.secretKey) }; }
+    toString() { return `ed25519:${Buffer.from(this.keypair.secretKey).toString('base64')}`; }
 }
 
 class MockKeyPairSigner {
-  keyPair: MockKeyPair;
-
-  constructor(keyPair: MockKeyPair) {
-    this.keyPair = keyPair;
-  }
-
-  sign(message: Uint8Array) {
-    return this.keyPair.sign(message);
-  }
-
-  getPublicKey() {
-    return this.keyPair.getPublicKey();
-  }
+    constructor(private keyPair: MockKeyPair) {}
+    sign(message: Uint8Array) { return this.keyPair.sign(message); }
+    getPublicKey() { return this.keyPair.getPublicKey(); }
 }
 
 class MockPublicKey {
-  data: Uint8Array;
-
-  constructor(data?: Uint8Array) {
-    this.data = data || new Uint8Array(32);
-  }
-
-  static fromString(value: string): MockPublicKey {
-    const payload = value.replace(/^ed25519:/, '');
-    try {
-      const bytes = Buffer.from(payload, 'base64');
-      if (bytes.length > 0) {
-        return new MockPublicKey(new Uint8Array(bytes.slice(0, 32)));
-      }
-    } catch {
-      // Fall through to zero bytes
-    }
-
-    return new MockPublicKey(new Uint8Array(32));
-  }
-
-  toString(): string {
-    return `ed25519:${Buffer.from(this.data).toString('base64')}`;
-  }
+    static fromString(value: string) { return new MockPublicKey(value); }
+    constructor(private value = 'ed25519:mock') {}
+    toString() { return this.value; }
 }
 
 class MockAccount {
-  accountId: string;
-  rpcUrl?: string;
-  signer?: unknown;
-
-  constructor(accountId: string, rpcUrl?: string, signer?: unknown) {
-    this.accountId = accountId;
-    this.rpcUrl = rpcUrl;
-    this.signer = signer;
-  }
-
-  async getAccessKeyList() {
-    return {
-      keys: [{
-        public_key: 'ed25519:mock_public_key',
-        access_key: { permission: 'FullAccess' }
-      }]
-    };
-  }
-
-  async signAndSendTransaction() {
-    return {
-      status: { SuccessValue: '' },
-      receipts_outcome: []
-    };
-  }
+    constructor(public accountId: string, public rpcUrl?: string, public signer?: unknown) {}
+    async signAndSendTransaction() { return { status: { SuccessValue: '' }, receipts_outcome: [] }; }
 }
 
 class MockJsonRpcProvider {
-  url: string;
-
-  constructor(options: { url: string }) {
-    this.url = options.url;
-  }
-
-  query = vi.fn().mockResolvedValue({
-    result: Buffer.from('"1000000000000000000000000"').toJSON().data
-  });
+    constructor(public options: { url: string }) {}
+    query = vi.fn().mockResolvedValue({ result: Array.from(Buffer.from('null')) });
 }
 
 class MockFailoverRpcProvider {
-  providers: unknown[];
-
-  constructor(providers: unknown[]) {
-    this.providers = providers;
-  }
-
-  query = vi.fn().mockResolvedValue({
-    result: Buffer.from('"1000000000000000000000000"').toJSON().data
-  });
+    constructor(public providers: unknown[]) {}
+    query = vi.fn().mockResolvedValue({ result: Array.from(Buffer.from('null')) });
 }
-
-// ============================================================================
-// Mock near-api-js
-// ============================================================================
 
 vi.mock('near-api-js', () => ({
-  KeyPair: MockKeyPair,
-  PublicKey: MockPublicKey,
-  Account: MockAccount,
-  KeyPairSigner: MockKeyPairSigner,
-  FailoverRpcProvider: MockFailoverRpcProvider,
-  JsonRpcProvider: MockJsonRpcProvider,
-  actions: {
-    functionCall: vi.fn((methodName, args, gas, deposit) => ({
-      type: 'FunctionCall', methodName, args, gas, deposit
-    })),
-    addKey: vi.fn((publicKey, accessKey) => ({
-      type: 'AddKey', publicKey, accessKey
-    })),
-    addFunctionCallAccessKey: vi.fn((publicKey, receiverId, methodNames, allowance) => ({
-      type: 'AddKey', publicKey, receiverId, methodNames, allowance
-    })),
-    deleteKey: vi.fn((publicKey) => ({
-      type: 'DeleteKey', publicKey
-    })),
-    transfer: vi.fn((amount) => ({
-      type: 'Transfer', amount
-    }))
-  },
-  nearToYocto: (near: number) => (BigInt(Math.floor(near * 1e24))).toString(),
-  yoctoToNear: (yocto: string) => (Number(BigInt(yocto)) / 1e24).toFixed(5)
-}));
-
-// ============================================================================
-// Mock BrowserKeyStore
-// ============================================================================
-
-const mockKeyStore = new Map<string, MockKeyPair>();
-
-// Mirrors the production prefix behavior: stores constructed with different
-// prefixes (e.g. the signless keystore) must not see each other's keys.
-const DEFAULT_MOCK_KEYSTORE_PREFIX = 'near-api-js:keystore:';
-
-class MockBrowserKeyStore {
-  private prefix: string;
-
-  constructor(prefix: string = DEFAULT_MOCK_KEYSTORE_PREFIX) {
-    this.prefix = prefix;
-  }
-
-  getKey = vi.fn(async (networkId: string, accountId: string) => {
-    const key = `${this.prefix}${accountId}:${networkId}`;
-    return mockKeyStore.get(key) || null;
-  });
-
-  setKey = vi.fn(async (networkId: string, accountId: string, keyPair: MockKeyPair) => {
-    const key = `${this.prefix}${accountId}:${networkId}`;
-    mockKeyStore.set(key, keyPair);
-  });
-
-  removeKey = vi.fn(async (networkId: string, accountId: string) => {
-    const key = `${this.prefix}${accountId}:${networkId}`;
-    mockKeyStore.delete(key);
-  });
-
-  getSigner = vi.fn(async (networkId: string, accountId: string) => {
-    const keyPair = mockKeyStore.get(`${this.prefix}${accountId}:${networkId}`);
-    if (!keyPair) return null;
-    return { keyPair, sign: (msg: Uint8Array) => keyPair.sign(msg) };
-  });
-
-  clear = vi.fn(async () => mockKeyStore.clear());
-
-  getAccounts = vi.fn(async (networkId: string) => {
-    const accounts: string[] = [];
-    for (const key of mockKeyStore.keys()) {
-      if (key.startsWith(this.prefix) && key.endsWith(`:${networkId}`)) {
-        accounts.push(key.slice(this.prefix.length, key.length - `:${networkId}`.length));
-      }
-    }
-    return accounts;
-  });
-}
-
-class MockInMemoryKeyStore {
-  keys = new Map();
-  getKey = vi.fn().mockResolvedValue(null);
-  setKey = vi.fn().mockResolvedValue(undefined);
-  removeKey = vi.fn().mockResolvedValue(undefined);
-  getSigner = vi.fn().mockResolvedValue(null);
-  clear = vi.fn().mockResolvedValue(undefined);
-  getAccounts = vi.fn().mockResolvedValue([]);
-}
-
-vi.mock('@/lib/keystore-v7', () => ({
-  BrowserKeyStore: MockBrowserKeyStore,
-  InMemoryKeyStore: MockInMemoryKeyStore,
-  browserKeyStore: new MockBrowserKeyStore(),
-  inMemoryKeyStore: new MockInMemoryKeyStore()
-}));
-
-// ============================================================================
-// Mock localStorage
-// ============================================================================
-
-const mockLocalStorage = new Map<string, string>();
-
-const localStorageMock = {
-  getItem: vi.fn((key: string) => mockLocalStorage.get(key) || null),
-  setItem: vi.fn((key: string, value: string) => mockLocalStorage.set(key, value)),
-  removeItem: vi.fn((key: string) => mockLocalStorage.delete(key)),
-  clear: vi.fn(() => mockLocalStorage.clear()),
-  get length() {
-    return mockLocalStorage.size;
-  },
-  key: vi.fn((index: number) => {
-    const keys = Array.from(mockLocalStorage.keys());
-    return keys[index] || null;
-  })
-};
-
-const mockSessionStorage = new Map<string, string>();
-
-const sessionStorageMock = {
-  getItem: vi.fn((key: string) => mockSessionStorage.get(key) || null),
-  setItem: vi.fn((key: string, value: string) => mockSessionStorage.set(key, value)),
-  removeItem: vi.fn((key: string) => mockSessionStorage.delete(key)),
-  clear: vi.fn(() => mockSessionStorage.clear()),
-  get length() {
-    return mockSessionStorage.size;
-  },
-  key: vi.fn((index: number) => {
-    const keys = Array.from(mockSessionStorage.keys());
-    return keys[index] || null;
-  })
-};
-
-Object.defineProperty(globalThis, 'localStorage', {
-  value: localStorageMock,
-  writable: true,
-});
-
-Object.defineProperty(globalThis, 'sessionStorage', {
-  value: sessionStorageMock,
-  writable: true,
-});
-
-// ============================================================================
-// Mock window (for browser-only checks like "typeof window !== 'undefined'")
-// ============================================================================
-
-Object.defineProperty(globalThis, 'window', {
-  value: {
-  localStorage: localStorageMock,
-  sessionStorage: sessionStorageMock,
-  },
-  writable: true,
-});
-
-// ============================================================================
-// Mock crypto
-// ============================================================================
-
-if (typeof globalThis.crypto === 'undefined') {
-  Object.defineProperty(globalThis, 'crypto', {
-    value: {
-      randomUUID: () => nodeCrypto.randomUUID(),
-      getRandomValues: <T extends ArrayBufferView | null>(arr: T): T => {
-        if (!arr) {
-          return arr;
-        }
-        return nodeCrypto.getRandomValues(arr as ArrayBufferView) as T;
-      },
-      subtle: {} as SubtleCrypto,
+    Account: MockAccount,
+    FailoverRpcProvider: MockFailoverRpcProvider,
+    JsonRpcProvider: MockJsonRpcProvider,
+    KeyPair: MockKeyPair,
+    KeyPairSigner: MockKeyPairSigner,
+    PublicKey: MockPublicKey,
+    actions: {
+        functionCall: vi.fn((methodName, args, gas, deposit) => ({ type: 'FunctionCall', methodName, args, gas, deposit })),
+        addFunctionCallAccessKey: vi.fn((publicKey, receiverId, methodNames, allowance) => ({ type: 'AddKey', publicKey, receiverId, methodNames, allowance })),
     },
-    writable: true,
-  });
+}));
+
+const keyStore = new Map<string, MockKeyPair>();
+class MockBrowserKeyStore {
+    constructor(private prefix = 'near-api-js:keystore:') {}
+    async getKey(networkId: string, accountId: string) { return keyStore.get(`${this.prefix}${accountId}:${networkId}`) || null; }
+    async setKey(networkId: string, accountId: string, key: MockKeyPair) { keyStore.set(`${this.prefix}${accountId}:${networkId}`, key); }
+    async removeKey(networkId: string, accountId: string) { keyStore.delete(`${this.prefix}${accountId}:${networkId}`); }
 }
 
-// ============================================================================
-// Mock fetch (for RPC calls)
-// ============================================================================
+vi.mock('@/lib/keystore-v7', () => ({ BrowserKeyStore: MockBrowserKeyStore }));
 
-global.fetch = vi.fn().mockImplementation(async (_url: string, options?: { body?: string }) => {
-  const body = options?.body ? JSON.parse(options.body) as { method?: string; params?: { method_name?: string } } : {};
+function storageMock() {
+    const values = new Map<string, string>();
+    return {
+        getItem: vi.fn((key: string) => values.get(key) || null),
+        setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+        removeItem: vi.fn((key: string) => values.delete(key)),
+        clear: vi.fn(() => values.clear()),
+        key: vi.fn((index: number) => Array.from(values.keys())[index] || null),
+        get length() { return values.size; },
+    };
+}
 
-  // Mock RPC responses
-  if (body.method === 'query') {
-    const methodName = body.params?.method_name;
-
-    if (methodName === 'get_user_balance') {
-      return {
-        ok: true,
-        json: async () => ({
-          result: {
-            result: Array.from(Buffer.from('"1000000000000000000000000"'))
-          }
-        })
-      };
-    }
-
-    if (methodName === 'get_event') {
-      return {
-        ok: true,
-        json: async () => ({
-          result: {
-            result: Array.from(Buffer.from(JSON.stringify({
-              title: 'Test Event',
-              description: 'Test Description',
-              creator_id: 'creator.testnet',
-              price: '0',
-              access_mode: 'free_collectible',
-            })))
-          }
-        })
-      };
-    }
-
-    if (methodName === 'get_trial_pool_balance') {
-      return {
-        ok: true,
-        json: async () => ({
-          result: {
-            result: Array.from(Buffer.from('"10000000000000000000000000"'))
-          }
-        })
-      };
-    }
-  }
-
-  // Default response
-  return {
-    ok: true,
-    json: async () => ({ result: {} })
-  };
-}) as unknown as typeof fetch;
-
-// ============================================================================
-// Mock environment variables
-// ============================================================================
+const local = storageMock();
+const session = storageMock();
+Object.defineProperty(globalThis, 'localStorage', { value: local, writable: true });
+Object.defineProperty(globalThis, 'sessionStorage', { value: session, writable: true });
+Object.defineProperty(globalThis, 'window', {
+    value: { localStorage: local, sessionStorage: session, crypto: globalThis.crypto },
+    writable: true,
+});
 
 process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
-process.env.NEXT_PUBLIC_NFT_CONTRACT_ID = 'test-contract.testnet';
+process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID = 'market.testnet';
+process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access.testnet';
 
-// ============================================================================
-// Test utilities
-// ============================================================================
-
-export function setupMockSessionKey(accountId: string, networkId: string = 'testnet'): MockKeyPair {
-  const keyPair = new MockKeyPair();
-  mockKeyStore.set(`${DEFAULT_MOCK_KEYSTORE_PREFIX}${accountId}:${networkId}`, keyPair);
-  return keyPair;
-}
-
-export function clearMockKeyStore(): void {
-  mockKeyStore.clear();
-}
-
-export function clearMockLocalStorage(): void {
-  mockLocalStorage.clear();
-}
-
-export function setMockLocalStorage(key: string, value: string): void {
-  mockLocalStorage.set(key, value);
-}
-
-export function getMockLocalStorage(key: string): string | null {
-  return mockLocalStorage.get(key) || null;
-}
-
-export function clearMockSessionStorage(): void {
-  mockSessionStorage.clear();
-}
-
-export function setMockSessionStorage(key: string, value: string): void {
-  mockSessionStorage.set(key, value);
-}
-
-export function getMockSessionStorage(key: string): string | null {
-  return mockSessionStorage.get(key) || null;
-}
-
-// ============================================================================
-// Test lifecycle hooks
-// ============================================================================
+export function clearMockKeyStore() { keyStore.clear(); }
 
 beforeEach(() => {
-  // Clear mocks before each test
-  vi.clearAllMocks();
-  mockKeyStore.clear();
-  mockLocalStorage.clear();
-  mockSessionStorage.clear();
-
-  // Restore default localStorage mock behavior after tests that override implementations
-  localStorageMock.getItem.mockImplementation((key: string) => mockLocalStorage.get(key) || null);
-  localStorageMock.setItem.mockImplementation((key: string, value: string) => mockLocalStorage.set(key, value));
-  localStorageMock.removeItem.mockImplementation((key: string) => mockLocalStorage.delete(key));
-  localStorageMock.clear.mockImplementation(() => mockLocalStorage.clear());
-  localStorageMock.key.mockImplementation((index: number) => {
-    const keys = Array.from(mockLocalStorage.keys());
-    return keys[index] || null;
-  });
-
-  sessionStorageMock.getItem.mockImplementation((key: string) => mockSessionStorage.get(key) || null);
-  sessionStorageMock.setItem.mockImplementation((key: string, value: string) => mockSessionStorage.set(key, value));
-  sessionStorageMock.removeItem.mockImplementation((key: string) => mockSessionStorage.delete(key));
-  sessionStorageMock.clear.mockImplementation(() => mockSessionStorage.clear());
-  sessionStorageMock.key.mockImplementation((index: number) => {
-    const keys = Array.from(mockSessionStorage.keys());
-    return keys[index] || null;
-  });
+    vi.clearAllMocks();
+    keyStore.clear();
+    local.clear();
+    session.clear();
 });
-
-afterEach(() => {
-  // Cleanup after each test
-});
-
-console.log('[Test Setup] Vitest mocks initialized successfully');

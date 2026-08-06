@@ -6,7 +6,7 @@
  * import { getCurrentRpcUrl, withRpcFailover, RPC_ENDPOINTS } from '@/lib/rpc-failover';
  */
 
-import { APP_CONFIG, NEAR_CONFIG } from './constants';
+import { APP_CONFIG, NEAR_NETWORK } from './constants';
 
 export const NEAR_RPC_PROXY_PATH = '/api/near-rpc';
 
@@ -24,7 +24,7 @@ export const TESTNET_RPC_ENDPOINTS = [
 ];
 
 // Select endpoints based on network
-export const RPC_ENDPOINTS = NEAR_CONFIG.networkId === 'mainnet'
+export const RPC_ENDPOINTS = NEAR_NETWORK === 'mainnet'
     ? MAINNET_RPC_ENDPOINTS
     : TESTNET_RPC_ENDPOINTS;
 

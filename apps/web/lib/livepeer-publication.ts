@@ -18,6 +18,88 @@ export type LivepeerPublication = {
     published_at_ms: number;
 };
 
+export type LivepeerMediaJob = {
+    job_id: string;
+    status: 'Authorized' | 'Published';
+};
+
+export async function readLivepeerMediaJob(jobId: string): Promise<LivepeerMediaJob | null> {
+    requireJobId(jobId);
+    const value = await viewContract<unknown>(
+        getProvider(),
+        NEAR_CONFIG.marketContractId,
+        'get_media_job',
+        { job_id: jobId },
+    );
+    if (value === null) return null;
+    if (!value || typeof value !== 'object') throw new Error('invalid_livepeer_media_job');
+    const job = value as Record<string, unknown>;
+    if (job.job_id !== jobId || !['Authorized', 'Published'].includes(String(job.status))) {
+        throw new Error('invalid_livepeer_media_job');
+    }
+    return { job_id: jobId, status: job.status as LivepeerMediaJob['status'] };
+}
+
+export async function readLivepeerPublications(
+    fromIndex: number,
+    limit: number,
+): Promise<LivepeerPublication[]> {
+    if (!Number.isSafeInteger(fromIndex) || fromIndex < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+        throw new Error('invalid_livepeer_publication_page');
+    }
+    const values = await viewContract<unknown[]>(
+        getProvider(),
+        NEAR_CONFIG.marketContractId,
+        'get_publications',
+        { from_index: String(fromIndex), limit },
+    );
+    if (!Array.isArray(values)) throw new Error('invalid_livepeer_publication_page');
+    return values.map((value) => {
+        const id = value && typeof value === 'object'
+            ? (value as Record<string, unknown>).publication_id
+            : null;
+        if (typeof id !== 'string') throw new Error('invalid_livepeer_publication');
+        return parseLivepeerPublication(value, id);
+    });
+}
+
+export async function readLivepeerPublicationsCount(): Promise<number> {
+    const value = await viewContract<unknown>(
+        getProvider(),
+        NEAR_CONFIG.marketContractId,
+        'get_publications_count',
+        {},
+    );
+    const count = Number(value);
+    if (!Number.isSafeInteger(count) || count < 0) throw new Error('invalid_livepeer_publication_count');
+    return count;
+}
+
+export async function readCreatorBalance(accountId: string): Promise<string> {
+    const value = await viewContract<unknown>(
+        getProvider(),
+        NEAR_CONFIG.marketContractId,
+        'get_creator_balance',
+        { creator_id: accountId },
+    );
+    if (typeof value !== 'string' || !/^[0-9]{1,20}$/.test(value)) {
+        throw new Error('invalid_creator_balance');
+    }
+    return value;
+}
+
+export async function withdrawCreatorBalance(wallet: WalletInstance): Promise<unknown> {
+    return wallet.signAndSendTransaction({
+        receiverId: NEAR_CONFIG.marketContractId,
+        actions: [actions.functionCall(
+            'withdraw_creator_balance',
+            {},
+            GAS_CONSTANTS.mediumGas,
+            0n,
+        )],
+    });
+}
+
 export async function readLivepeerPublication(jobId: string): Promise<LivepeerPublication | null> {
     requireJobId(jobId);
     const value = await viewContract<unknown>(

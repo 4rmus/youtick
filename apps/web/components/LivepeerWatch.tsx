@@ -1,14 +1,14 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Lock, Video } from 'lucide-react';
-import { useLanguage } from '@/components/providers/LanguageContext';
+import { ArrowLeft, Loader2, Lock, Video } from 'lucide-react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
 import { PageShell } from '@/components/PageShell';
 import { ScreenState } from '@/components/ScreenState';
-import { VideoPlayer } from '@/components/VideoPlayer';
+import { LivepeerPlayer } from '@/components/LivepeerPlayer';
 import {
     buyLivepeerTicket,
     formatUsdc,
@@ -17,7 +17,6 @@ import {
 } from '@/lib/livepeer-publication';
 
 export function LivepeerWatch({ jobId }: { jobId: string }) {
-    const { t } = useLanguage();
     const { accountId, connect, getWallet, isReady } = useWallet();
     const queryClient = useQueryClient();
     const [busy, setBusy] = React.useState(false);
@@ -41,18 +40,16 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
         setError(null);
         try {
             await buyLivepeerTicket(await getWallet(), accountId, publication);
-            let entitled = false;
             for (const delay of [1_000, 2_000, 4_000, 8_000]) {
                 await new Promise((resolve) => setTimeout(resolve, delay));
                 if (await hasLivepeerEntitlement(accountId, jobId)) {
-                    entitled = true;
-                    break;
+                    await queryClient.invalidateQueries({
+                        queryKey: ['livepeerEntitlement', accountId, jobId],
+                    });
+                    return;
                 }
             }
-            if (!entitled) throw new Error('livepeer_entitlement_pending');
-            await queryClient.invalidateQueries({
-                queryKey: ['livepeerEntitlement', accountId, jobId],
-            });
+            throw new Error('livepeer_entitlement_pending');
         } catch (reason) {
             setError(reason instanceof Error ? reason.message : 'livepeer_purchase_failed');
         } finally {
@@ -61,11 +58,7 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
     };
 
     if (publicationQuery.isLoading) {
-        return (
-            <PageShell className="flex items-center justify-center">
-                <Loader2 role="status" className="h-10 w-10 animate-spin text-zinc-500" />
-            </PageShell>
-        );
+        return <PageShell className="flex items-center justify-center"><Loader2 role="status" className="h-10 w-10 animate-spin" /></PageShell>;
     }
 
     const publication = publicationQuery.data;
@@ -73,9 +66,10 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
         return (
             <PageShell className="flex items-center justify-center">
                 <ScreenState
-                    icon={<Video className="h-8 w-8" />}
-                    title={t.discover_page?.no_videos || 'No Releases Found'}
-                    description={t.watch_page.select_video_desc}
+                    icon={<Video className="h-7 w-7" />}
+                    title="Publication unavailable"
+                    description="The job is not published or the identifier is invalid."
+                    actions={<Button asChild variant="outline"><Link href="/discover">Back to discover</Link></Button>}
                 />
             </PageShell>
         );
@@ -86,47 +80,43 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
 
     return (
         <PageShell className="max-w-5xl">
+            <Link href="/discover" className="mb-6 inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-white">
+                <ArrowLeft className="h-4 w-4" /> Discover
+            </Link>
             <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold text-white md:text-3xl">{publication.title}</h1>
+                    <h1 className="text-3xl font-bold">{publication.title}</h1>
                     <p className="mt-2 text-sm text-zinc-400">{publication.creator_id}</p>
                 </div>
-                <div className="text-right">
-                    <p className="text-xs uppercase tracking-wider text-zinc-500">{t.watch_page.price}</p>
-                    <p className="text-xl font-bold text-white">{formatUsdc(publication.price_usdc)} USDC</p>
-                </div>
+                <p className="text-xl font-bold">{formatUsdc(publication.price_usdc)} USDC</p>
             </div>
 
             {canPlay && accountId ? (
-                <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 shadow-2xl">
-                    <VideoPlayer livepeer={{
-                        accountId,
-                        jobId,
-                        generation: publication.generation,
-                        playbackId: publication.playback_id,
-                    }} />
+                <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-black">
+                    <LivepeerPlayer
+                        accountId={accountId}
+                        jobId={jobId}
+                        generation={publication.generation}
+                        playbackId={publication.playback_id}
+                    />
                 </div>
             ) : (
                 <div className="mx-auto max-w-lg rounded-2xl border border-zinc-800 bg-zinc-950 p-8 text-center">
                     <Lock className="mx-auto mb-4 h-10 w-10 text-zinc-500" />
-                    <h2 className="text-lg font-semibold text-white">{t.watch_page.locked_preview_title}</h2>
+                    <h2 className="text-lg font-semibold">Protected playback</h2>
                     <p className="mt-2 text-sm text-zinc-400">
                         {publication.availability === 'TAKEDOWN'
-                            ? t.watch_page.select_video_desc
-                            : t.watch_page.locked_preview_desc}
+                            ? 'This publication is unavailable.'
+                            : publication.availability === 'SALES_SUSPENDED'
+                                ? 'Sales are suspended. Existing entitlement remains valid.'
+                                : 'Connect a wallet and buy access with USDC.'}
                     </p>
                     {!accountId ? (
-                        <Button className="mt-6" onClick={() => void connect()} disabled={!isReady}>
-                            {t.upload_page.connect_wallet}
-                        </Button>
+                        <Button className="mt-6" onClick={() => void connect()} disabled={!isReady}>Connect wallet</Button>
                     ) : (
-                        <Button
-                            className="mt-6"
-                            disabled={!salesOpen || busy || entitlementQuery.isLoading}
-                            onClick={() => void purchase()}
-                        >
+                        <Button className="mt-6" disabled={!salesOpen || busy || entitlementQuery.isLoading} onClick={() => void purchase()}>
                             {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            {t.ticket_purchase.buy_ticket} · {formatUsdc(publication.price_usdc)} USDC
+                            Buy access · {formatUsdc(publication.price_usdc)} USDC
                         </Button>
                     )}
                     {error && <p role="alert" className="mt-4 text-sm text-red-400">{error}</p>}

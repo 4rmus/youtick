@@ -51,10 +51,10 @@ vi.mock('@/lib/constants', () => ({
     },
     GAS_CONSTANTS: { mediumGas: 100_000_000_000_000n },
     NEAR_CONFIG: {
-        networkId: 'testnet',
         marketContractId: 'paid-media-livepeer-v1.testnet',
         usdcContractId: 'usdc.testnet',
     },
+    NEAR_NETWORK: 'testnet',
 }));
 
 import {
