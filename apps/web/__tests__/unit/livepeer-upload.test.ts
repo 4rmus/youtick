@@ -79,6 +79,7 @@ const INTENT: LivepeerUploadIntent = {
     job_id: 'job-001',
     generation: 1,
     expected_source_bytes: String(SOURCE_BYTES),
+    source_type: 'mp4',
     chunk_bytes: 32 * 1024 * 1024,
     tus_endpoint: 'https://origin.livepeer.com/api/asset/upload/tus/upload-123',
     created: true,
@@ -133,6 +134,7 @@ describe('Livepeer browser upload', () => {
             jobId: 'job-001',
             generation: 1,
             expectedSourceBytes: SOURCE_BYTES,
+            sourceType: 'mp4',
         })).resolves.toEqual(INTENT);
 
         const [url, init] = fetchMock.mock.calls[0];
@@ -144,6 +146,7 @@ describe('Livepeer browser upload', () => {
             envelope: Record<string, unknown>;
         };
         expect(request.body.expected_source_bytes).toBe(String(SOURCE_BYTES));
+        expect(request.body.source_type).toBe('mp4');
         expect(request.body.profile_config_sha256)
             .toBe('96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77');
         expect(request.envelope).toMatchObject({
@@ -160,6 +163,7 @@ describe('Livepeer browser upload', () => {
             jobId: 'job-001',
             generation: 1,
             expectedSourceBytes: SOURCE_BYTES,
+            sourceType: 'mp4',
         })).rejects.toThrow('livepeer_session_key_missing');
         expect(fetchMock).toHaveBeenCalledOnce();
     });
@@ -178,6 +182,7 @@ describe('Livepeer browser upload', () => {
                 jobId: 'job-001',
                 generation: 1,
                 expectedSourceBytes: SOURCE_BYTES,
+                sourceType: 'mp4',
             });
 
             const request = JSON.parse(fetchMock.mock.calls[0][1].body as string);
@@ -207,23 +212,38 @@ describe('Livepeer browser upload', () => {
             jobId: 'job-max',
             generation: 1,
             expectedSourceBytes: 20_000_000_000,
+            sourceType: 'mp4',
         })).resolves.toEqual(exactIntent);
         await expect(requestLivepeerUploadIntent({
             accountId: 'creator.testnet',
             jobId: 'job-too-large',
             generation: 1,
             expectedSourceBytes: 20_000_000_001,
+            sourceType: 'mp4',
         })).rejects.toThrow('source_limit_exceeded');
         expect(fetchMock).toHaveBeenCalledOnce();
     });
 
-    it('accepts only bounded MP4 input and exact micro-USDC prices', () => {
-        expect(validateLivepeerSourceFile({ size: 1, type: 'video/mp4' })).toEqual({ ok: true });
+    it('accepts the bounded Livepeer source formats and exact micro-USDC prices', () => {
+        const formats = [
+            ['video.mp4', 'video/mp4', 'mp4'],
+            ['video.mov', 'video/quicktime', 'mov'],
+            ['video.avi', 'video/x-msvideo', 'avi'],
+            ['video.webm', 'video/webm', 'webm'],
+            ['video.wmv', 'video/x-ms-wmv', 'wmv'],
+            ['video.mkv', 'video/x-matroska', 'mkv'],
+            ['video.flv', 'video/x-flv', 'flv'],
+        ] as const;
+        for (const [name, type, sourceType] of formats) {
+            expect(validateLivepeerSourceFile({ name, size: 1, type })).toEqual({ ok: true, sourceType });
+        }
         expect(validateLivepeerSourceFile({ size: 0, type: 'video/mp4' }))
             .toEqual({ ok: false, error: 'empty_file' });
         expect(validateLivepeerSourceFile({ size: 20_000_000_001, type: 'video/mp4' }))
             .toEqual({ ok: false, error: 'source_limit_exceeded' });
-        expect(validateLivepeerSourceFile({ size: 1, type: 'video/quicktime' }))
+        expect(validateLivepeerSourceFile({ name: 'video.mp4', size: 1, type: 'video/quicktime' }))
+            .toEqual({ ok: false, error: 'unsupported_video_type' });
+        expect(validateLivepeerSourceFile({ name: 'video.mpeg', size: 1, type: 'video/mpeg' }))
             .toEqual({ ok: false, error: 'unsupported_video_type' });
         expect(parseLivepeerPriceUsdc('2')).toBe('2000000');
         expect(parseLivepeerPriceUsdc('2.000001')).toBe('2000001');
@@ -275,6 +295,11 @@ describe('Livepeer browser upload', () => {
         });
         expect(shouldRetry(error(409))).toBe(false);
         expect(shouldRetry(error(503))).toBe(true);
+
+        await expect(uploadLivepeerSource(
+            new File(['video'], 'video.mov', { type: 'video/quicktime' }),
+            { ...INTENT, expected_source_bytes: '5' },
+        )).rejects.toThrow('invalid_livepeer_upload');
     });
 
     it('creates one USDC-paid job transaction without adding an access key', async () => {
@@ -399,6 +424,7 @@ describe('Livepeer browser upload', () => {
             jobId: 'job-001',
             generation: 1,
             expectedSourceBytes: SOURCE_BYTES,
+            sourceType: 'mp4' as const,
         };
         await expect(requestLivepeerUploadIntent(request)).resolves.toEqual(INTENT);
         await expect(requestLivepeerUploadIntent(request)).rejects.toThrow('livepeer_session_key_missing');

@@ -615,6 +615,36 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(fetchStub).toHaveBeenCalledOnce();
     });
 
+    it.each([
+        ['mp4', 'source.mp4', 'video/mp4'],
+        ['mov', 'source.mov', 'video/quicktime'],
+        ['avi', 'source.avi', 'video/x-msvideo'],
+        ['webm', 'source.webm', 'video/webm'],
+        ['wmv', 'source.wmv', 'video/x-ms-wmv'],
+        ['mkv', 'source.mkv', 'video/x-matroska'],
+        ['flv', 'source.flv', 'video/x-flv'],
+    ])('binds %s metadata to the provider TUS resource', async (sourceType, filename, mime) => {
+        const fetchMock = backendFetch();
+        vi.stubGlobal('fetch', fetchMock);
+        const control = new LivepeerControl(createState().state, createEnv());
+
+        const response = await control.fetch(await controlRequest({ body: { source_type: sourceType } }));
+
+        expect(response.status).toBe(201);
+        const tusCreate = fetchMock.mock.calls.find(([url]) => String(url) === TUS_ENDPOINT);
+        expect((tusCreate?.[1]?.headers as Record<string, string>)['Upload-Metadata'])
+            .toBe(`filename ${btoa(filename)},filetype ${btoa(mime)}`);
+    });
+
+    it('rejects a source type outside the Livepeer Studio allowlist', async () => {
+        const response = await forwardUploadIntent(await controlRequest({
+            body: { source_type: 'mpeg' },
+        }), createEnv());
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'invalid_upload_intent' });
+    });
+
     it('accepts one concurrent reservation winner after final NEAR reads', async () => {
         const testState = createState();
         const control = new LivepeerControl(testState.state, createEnv());

@@ -24,11 +24,27 @@ const LIVEPEER_DRAFT_STORAGE_PREFIX = 'youtick:livepeer-ui-draft:';
 const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
+const LIVEPEER_SOURCE_FORMATS = {
+    mp4: { extension: 'mp4', mimeTypes: ['video/mp4'] },
+    mov: { extension: 'mov', mimeTypes: ['video/quicktime'] },
+    avi: { extension: 'avi', mimeTypes: ['video/x-msvideo', 'video/avi', 'video/msvideo'] },
+    webm: { extension: 'webm', mimeTypes: ['video/webm'] },
+    wmv: { extension: 'wmv', mimeTypes: ['video/x-ms-wmv', 'video/wmv'] },
+    mkv: { extension: 'mkv', mimeTypes: ['video/x-matroska', 'video/mkv'] },
+    flv: { extension: 'flv', mimeTypes: ['video/x-flv', 'video/flv'] },
+} as const;
+
+export type LivepeerSourceType = keyof typeof LIVEPEER_SOURCE_FORMATS;
+export const LIVEPEER_SOURCE_ACCEPT = Object.values(LIVEPEER_SOURCE_FORMATS)
+    .map(({ extension }) => `.${extension}`)
+    .join(',');
+
 export type LivepeerUploadIntent = {
     schema: 'youtick.livepeer-upload-intent.v1';
     job_id: string;
     generation: number;
     expected_source_bytes: string;
+    source_type: LivepeerSourceType;
     chunk_bytes: number;
     tus_endpoint: string;
     created: boolean;
@@ -44,7 +60,7 @@ export type LivepeerUploadDraft = {
 };
 
 export type LivepeerSourceValidation =
-    | { ok: true }
+    | { ok: true; sourceType: LivepeerSourceType }
     | { ok: false; error: 'empty_file' | 'source_limit_exceeded' | 'unsupported_video_type' };
 
 export type CreatorFeeAsset = 'USDC' | 'NEAR';
@@ -92,13 +108,39 @@ export function selectCreatorFeeAsset(input: {
     return { selected: usdcUsable ? 'USDC' : nearUsable ? 'NEAR' : null, usable };
 }
 
-export function validateLivepeerSourceFile(file: Pick<File, 'size' | 'type'>): LivepeerSourceValidation {
+export function validateLivepeerSourceFile(
+    file: Pick<File, 'size' | 'type'> & Partial<Pick<File, 'name'>>,
+): LivepeerSourceValidation {
     if (!Number.isSafeInteger(file.size) || file.size < 1) return { ok: false, error: 'empty_file' };
     if (file.size > MEDIA_UPLOAD_POLICY.paidSourceMaxBytes) {
         return { ok: false, error: 'source_limit_exceeded' };
     }
-    if (file.type !== 'video/mp4') return { ok: false, error: 'unsupported_video_type' };
-    return { ok: true };
+    const sourceType = livepeerSourceType(file);
+    return sourceType
+        ? { ok: true, sourceType }
+        : { ok: false, error: 'unsupported_video_type' };
+}
+
+export function livepeerSourceType(
+    file: Pick<File, 'type'> & Partial<Pick<File, 'name'>>,
+): LivepeerSourceType | null {
+    const extension = file.name?.trim().toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+    const mime = file.type.trim().toLowerCase();
+    const entries = Object.entries(LIVEPEER_SOURCE_FORMATS) as Array<[
+        LivepeerSourceType,
+        (typeof LIVEPEER_SOURCE_FORMATS)[LivepeerSourceType],
+    ]>;
+    const byExtension = extension
+        ? entries.find(([, format]) => format.extension === extension)?.[0]
+        : undefined;
+    const byMime = mime
+        ? entries.find(([, format]) => (format.mimeTypes as readonly string[]).includes(mime))?.[0]
+        : undefined;
+
+    if ((extension && !byExtension) || (mime && !byMime) || (byExtension && byMime && byExtension !== byMime)) {
+        return null;
+    }
+    return byExtension || byMime || null;
 }
 
 export function parseLivepeerPriceUsdc(value: string): string {
@@ -424,6 +466,7 @@ export async function requestLivepeerUploadIntent(input: {
     jobId: string;
     generation: number;
     expectedSourceBytes: number;
+    sourceType: LivepeerSourceType;
 }): Promise<LivepeerUploadIntent> {
     requireFeature();
     if (!Number.isSafeInteger(input.expectedSourceBytes)
@@ -441,6 +484,7 @@ export async function requestLivepeerUploadIntent(input: {
         job_id: input.jobId,
         generation: input.generation,
         expected_source_bytes: String(input.expectedSourceBytes),
+        source_type: input.sourceType,
         profile_id: PROFILE_ID,
         profile_config_sha256: PROFILE_CONFIG_SHA256,
     };
@@ -528,11 +572,13 @@ function parseIntent(value: Record<string, unknown>, expected: {
     jobId: string;
     generation: number;
     expectedSourceBytes: number;
+    sourceType: LivepeerSourceType;
 }): LivepeerUploadIntent {
     if (value.schema !== 'youtick.livepeer-upload-intent.v1'
         || value.job_id !== expected.jobId
         || value.generation !== expected.generation
         || value.expected_source_bytes !== String(expected.expectedSourceBytes)
+        || value.source_type !== expected.sourceType
         || value.chunk_bytes !== MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes
         || typeof value.tus_endpoint !== 'string'
         || !isLivepeerTusUrl(value.tus_endpoint)
@@ -543,10 +589,12 @@ function parseIntent(value: Record<string, unknown>, expected: {
 }
 
 function validateUpload(file: File, intent: LivepeerUploadIntent): void {
+    const sourceType = livepeerSourceType(file);
     if (!Number.isSafeInteger(file.size)
         || file.size < 1
         || file.size > MEDIA_UPLOAD_POLICY.paidSourceMaxBytes
         || String(file.size) !== intent.expected_source_bytes
+        || sourceType !== intent.source_type
         || intent.chunk_bytes !== MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes
         || !isLivepeerTusUrl(intent.tus_endpoint)) {
         throw new Error('invalid_livepeer_upload');

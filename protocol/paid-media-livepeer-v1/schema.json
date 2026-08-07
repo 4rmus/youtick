@@ -149,6 +149,7 @@
         "job_id",
         "generation",
         "expected_source_bytes",
+        "source_type",
         "profile_id",
         "profile_config_sha256"
       ],
@@ -162,6 +163,9 @@
         },
         "expected_source_bytes": {
           "$ref": "#/$defs/decimal_u64"
+        },
+        "source_type": {
+          "enum": ["mp4", "mov", "avi", "webm", "wmv", "mkv", "flv"]
         },
         "profile_id": {
           "const": "paid-media-livepeer-v1"
