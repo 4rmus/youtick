@@ -15,6 +15,7 @@ import {
     clearLivepeerUploadDraft,
     configuredCreatorFeeGasReserveYocto,
     createLivepeerJobId,
+    LIVEPEER_SOURCE_ACCEPT,
     livepeerUploadFeeUsdc,
     parseLivepeerPriceUsdc,
     prepareCreatorFeePaymentOptions,
@@ -91,7 +92,7 @@ export function LivepeerPaidUploadForm() {
         setPaymentAsset(null);
         if (!selected) return setFileError(null);
         const validation = validateLivepeerSourceFile(selected);
-        setFileError(validation.ok ? null : validation.error.replaceAll('_', ' '));
+        setFileError(validation.ok ? null : fileValidationMessage(validation.error));
         const draft = accountId ? readLivepeerUploadDraft(accountId, selected) : null;
         setJobId(draft?.jobId || null);
         if (draft) {
@@ -139,6 +140,8 @@ export function LivepeerPaidUploadForm() {
         setBusy(true);
         setError(null);
         try {
+            const source = validateLivepeerSourceFile(file);
+            if (!source.ok) throw new Error(source.error);
             if (!payment.usable.includes(paymentAsset)) throw new Error('creator_fee_asset_unavailable');
             if (paymentAsset === 'NEAR' && (!payment.nearQuote || BigInt(payment.nearQuote.quote.expires_at_ms) <= BigInt(Date.now()))) {
                 setPayment(null);
@@ -161,6 +164,7 @@ export function LivepeerPaidUploadForm() {
                 jobId,
                 generation: 1,
                 expectedSourceBytes: file.size,
+                sourceType: source.sourceType,
             });
             setStatus('Uploading directly to Livepeer…');
             await uploadLivepeerSource(file, intent, {
@@ -196,10 +200,10 @@ export function LivepeerPaidUploadForm() {
             <Card>
                 <CardHeader>
                     <CardTitle>Publication</CardTitle>
-                    <CardDescription>MP4 only, maximum 20 GB, minimum ticket price 2 USDC.</CardDescription>
+                    <CardDescription>MP4, MOV, AVI, WebM, WMV, MKV or FLV; maximum 20 GB and minimum ticket price 2 USDC.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-5">
-                    <Input type="file" accept="video/mp4" disabled={busy || uploaded} onChange={selectFile} />
+                    <Input type="file" accept={LIVEPEER_SOURCE_ACCEPT} disabled={busy || uploaded} onChange={selectFile} />
                     {fileError && <p role="alert" className="text-sm text-red-400">{fileError}</p>}
                     <Input aria-label="Title" placeholder="Title" maxLength={200} value={title} disabled={busy || uploaded} onChange={(event) => setTitle(event.target.value)} />
                     <Input aria-label="Ticket price in USDC" type="number" min="2" step="0.000001" value={price} disabled={busy || uploaded} onChange={(event) => setPrice(event.target.value)} />
@@ -244,6 +248,12 @@ function formatMicroUsdc(value: string): string {
     const amount = BigInt(value);
     const fraction = (amount % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
     return fraction ? `${amount / 1_000_000n}.${fraction}` : String(amount / 1_000_000n);
+}
+
+function fileValidationMessage(error: 'empty_file' | 'source_limit_exceeded' | 'unsupported_video_type'): string {
+    if (error === 'empty_file') return 'Choose a non-empty video file.';
+    if (error === 'source_limit_exceeded') return 'Choose a video file no larger than 20 GB.';
+    return 'Choose an MP4, MOV, AVI, WebM, WMV, MKV or FLV video file.';
 }
 
 function formatYoctoNear(value: string): string {

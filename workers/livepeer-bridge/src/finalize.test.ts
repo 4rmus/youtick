@@ -94,6 +94,7 @@ function jobRecord() {
         generation: 1,
         creator: 'creator.testnet',
         expectedSourceBytes: EXPECTED_BYTES,
+        sourceType: 'mp4' as const,
         profileId: 'paid-media-livepeer-v1',
         profileConfigSha256: '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77',
         createdAtMs: Date.now(),
@@ -562,6 +563,33 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(response.status).toBe(409);
         expect(await response.json()).toEqual({ error: code });
         expect(testState.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_READY' });
+    });
+
+    it('finalizes an HLS-only asset', async () => {
+        const testState = createState();
+        testState.values.set('job:v1', jobRecord());
+        const operatorFetch = vi.fn(async () => Response.json({ accepted: true, finalized: true }));
+        const control = new LivepeerControl(testState.state, createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                get: vi.fn(() => ({ fetch: operatorFetch })),
+            } as unknown as DurableObjectNamespace,
+        }));
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
+            if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback({ source: [{
+                type: 'html5/application/vnd.apple.mpegurl',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/index.m3u8`,
+            }] }));
+            if (url.endsWith('.m3u8')) return new Response(HLS_ERROR, { status: 200 });
+            return new Response(null, { status: 403 });
+        }));
+
+        const response = await control.fetch(internalWebhookRequest());
+
+        expect(response.status).toBe(200);
+        expect(testState.values.get('job:v1')).toMatchObject({ state: 'ONCHAIN_PUBLISHED' });
     });
 
     it('deduplicates ready transitions, proves private playback, and clears the TUS capability', async () => {

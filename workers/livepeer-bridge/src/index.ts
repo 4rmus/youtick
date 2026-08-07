@@ -38,10 +38,12 @@ export interface Env {
 }
 
 type JsonObject = Record<string, unknown>;
+type LivepeerSourceType = 'mp4' | 'mov' | 'avi' | 'webm' | 'wmv' | 'mkv' | 'flv';
 type UploadIntentBody = {
     job_id: string;
     generation: number;
     expected_source_bytes: string;
+    source_type: LivepeerSourceType;
     profile_id: 'paid-media-livepeer-v1';
     profile_config_sha256: string;
 };
@@ -103,6 +105,7 @@ type JobRecord = {
     generation: number;
     creator: string;
     expectedSourceBytes: string;
+    sourceType: LivepeerSourceType;
     profileId: 'paid-media-livepeer-v1';
     profileConfigSha256: string;
     createdAtMs: number;
@@ -242,6 +245,15 @@ const LIVEPEER_TUS_VERSION = '1.0.0';
 const LIVEPEER_HLS_SOURCE_TYPE = 'html5/application/vnd.apple.mpegurl';
 const LIVEPEER_MP4_SOURCE_TYPE = 'html5/video/mp4';
 const LIVEPEER_VTT_SOURCE_TYPE = 'text/vtt';
+const LIVEPEER_SOURCE_FORMATS: Record<LivepeerSourceType, { filename: string; mime: string }> = {
+    mp4: { filename: 'source.mp4', mime: 'video/mp4' },
+    mov: { filename: 'source.mov', mime: 'video/quicktime' },
+    avi: { filename: 'source.avi', mime: 'video/x-msvideo' },
+    webm: { filename: 'source.webm', mime: 'video/webm' },
+    wmv: { filename: 'source.wmv', mime: 'video/x-ms-wmv' },
+    mkv: { filename: 'source.mkv', mime: 'video/x-matroska' },
+    flv: { filename: 'source.flv', mime: 'video/x-flv' },
+};
 const MAX_PROVIDER_PLAYBACK_OUTPUTS = 16;
 const MAX_THUMBNAIL_REFERENCE_PROBES = 32;
 const PROFILE_CONFIG_SHA256 = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
@@ -1794,6 +1806,7 @@ function parseUploadBody(value: unknown): UploadIntentBody {
         'job_id',
         'generation',
         'expected_source_bytes',
+        'source_type',
         'profile_id',
         'profile_config_sha256',
     ], 'invalid_upload_intent');
@@ -1804,11 +1817,16 @@ function parseUploadBody(value: unknown): UploadIntentBody {
         || typeof body.expected_source_bytes !== 'string'
         || !/^[1-9][0-9]{0,19}$/.test(body.expected_source_bytes)
         || BigInt(body.expected_source_bytes) > MAX_SOURCE_BYTES
+        || !isLivepeerSourceType(body.source_type)
         || body.profile_id !== 'paid-media-livepeer-v1'
         || body.profile_config_sha256 !== PROFILE_CONFIG_SHA256) {
         throw new Error('invalid_upload_intent');
     }
     return body as UploadIntentBody;
+}
+
+function isLivepeerSourceType(value: unknown): value is LivepeerSourceType {
+    return typeof value === 'string' && Object.hasOwn(LIVEPEER_SOURCE_FORMATS, value);
 }
 
 function parseControlEnvelope(value: unknown): ControlEnvelope {
@@ -1993,6 +2011,7 @@ async function createProviderUpload(env: Env, job: JobRecord): Promise<ProviderU
     const tusEndpoint = await createBoundTusResource(
         value.tusEndpoint,
         job.expectedSourceBytes,
+        job.sourceType,
     );
     return {
         assetId: asset.id,
@@ -2002,13 +2021,18 @@ async function createProviderUpload(env: Env, job: JobRecord): Promise<ProviderU
     };
 }
 
-async function createBoundTusResource(endpoint: string, expectedBytes: string): Promise<string> {
+async function createBoundTusResource(
+    endpoint: string,
+    expectedBytes: string,
+    sourceType: LivepeerSourceType,
+): Promise<string> {
+    const source = LIVEPEER_SOURCE_FORMATS[sourceType];
     const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
             'Tus-Resumable': LIVEPEER_TUS_VERSION,
             'Upload-Length': expectedBytes,
-            'Upload-Metadata': 'filename c291cmNlLm1wNA==,filetype dmlkZW8vbXA0',
+            'Upload-Metadata': `filename ${bytesToBase64(new TextEncoder().encode(source.filename))},filetype ${bytesToBase64(new TextEncoder().encode(source.mime))}`,
         },
         signal: AbortSignal.timeout(20_000),
     });
@@ -2039,6 +2063,7 @@ function uploadIntentResponse(record: JobRecord, created: boolean): Response {
         job_id: record.jobId,
         generation: record.generation,
         expected_source_bytes: record.expectedSourceBytes,
+        source_type: record.sourceType,
         chunk_bytes: LIVEPEER_TUS_CHUNK_BYTES,
         tus_endpoint: record.tusEndpoint,
         created,
@@ -2076,6 +2101,7 @@ function jobRecord(input: UploadIntentRequest, env: Env): JobRecord {
         generation: input.body.generation,
         creator: input.envelope.account_id,
         expectedSourceBytes: input.body.expected_source_bytes,
+        sourceType: input.body.source_type,
         profileId: input.body.profile_id,
         profileConfigSha256: input.body.profile_config_sha256,
         createdAtMs: Date.now(),
@@ -2248,6 +2274,7 @@ function sameJob(left: JobRecord, right: JobRecord): boolean {
         && left.generation === right.generation
         && left.creator === right.creator
         && left.expectedSourceBytes === right.expectedSourceBytes
+        && left.sourceType === right.sourceType
         && left.profileId === right.profileId
         && left.profileConfigSha256 === right.profileConfigSha256;
 }
@@ -2451,18 +2478,17 @@ async function verifyReadyProviderAsset(env: Env, job: JobRecord): Promise<Final
     const mp4Urls = [...new Set(mp4Sources.map((source) => String(source.url)))];
     const vttUrls = [...new Set(vttSources.map((source) => String(source.url)))];
     if (hlsUrls.length === 0
-        || mp4Urls.length === 0
         || sources.some((source) => (
             source.type !== LIVEPEER_HLS_SOURCE_TYPE
             && source.type !== LIVEPEER_MP4_SOURCE_TYPE
             && source.type !== LIVEPEER_VTT_SOURCE_TYPE
         ))
-        || !mp4Sources.some((source) => (
+        || (mp4Sources.length > 0 && !mp4Sources.some((source) => (
             source.width === 1280
             && source.height === 720
             && typeof source.bitrate === 'number'
             && source.bitrate > 0
-        ))
+        )))
         || hlsUrls.some((url) => !validPlaybackUrl(url))
         || mp4Urls.some((url) => !validPlaybackUrl(url))
         || vttUrls.some((url) => !validPlaybackUrl(url))

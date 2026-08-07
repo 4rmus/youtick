@@ -15,6 +15,7 @@ evidence; no Worker, web, staging or production runtime is enabled.
   `96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77`
   for the canonical 720p H.264 Baseline configuration;
 - maximum declared source size: decimal `20_000_000_000` bytes;
+- accepted source containers: MP4, MOV, AVI, WebM, WMV, MKV and FLV;
 - browser upload chunks: fixed `33_554_432` bytes (32 MiB), one sequential
   PATCH at a time; only the final PATCH may be smaller;
 - creator upload fee: `ceil(source_bytes / 1_000_000_000 * 300_000)` micro-USDC,
@@ -72,8 +73,9 @@ and rotation; the runtime never holds a FullAccess key.
 
 Every job, provider and playback message binds the network, contract, job ID,
 generation, creator, profile ID, profile configuration SHA-256 and expected
-source byte count. Provider identities additionally bind the Livepeer project,
-asset ID hash and playback ID.
+source byte count. Upload intents additionally bind the accepted source type.
+Provider identities additionally bind the Livepeer project, asset ID hash and
+playback ID.
 
 Asset ID and playback ID uniqueness is global within the v1 contract, not only
 within one job. An old generation cannot publish. Exact finalize replay is

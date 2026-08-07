@@ -75,6 +75,7 @@ async function createEnv(): Promise<{ env: Env; verifyKey: CryptoKey; testState:
         generation: 1,
         creator: 'creator.testnet',
         expectedSourceBytes: '20000000',
+        sourceType: 'mp4',
         profileId: 'paid-media-livepeer-v1',
         profileConfigSha256: '9'.repeat(64),
         createdAtMs: Date.now(),
