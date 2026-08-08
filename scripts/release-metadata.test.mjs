@@ -26,8 +26,10 @@ function publicEnv(environment) {
     NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: bridgeOrigin,
     NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: "false",
     NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: "false",
+    NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: "off",
     NEXT_PUBLIC_USDC_CONTRACT_ID: "usdc.testnet",
     NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO: "1",
+    NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO: "1",
     ALLOWED_ORIGINS: webOrigin,
     NEAR_NETWORK: "testnet",
     MARKET_CONTRACT_ID: "paid-media-v1.testnet",
@@ -45,6 +47,8 @@ function publicEnv(environment) {
     CREATOR_FEE_QUOTE_KEY_VERSION: "1",
     LIVEPEER_BRIDGE_ENABLED: "false",
     LIVEPEER_NEAR_CREATOR_FEE_ENABLED: "false",
+    MULTI_ASSET_PAYMENTS_MODE: "off",
+    MULTI_ASSET_PAYMENT_ASSET_IDS: "",
   };
   return Object.fromEntries(Object.entries(values).map(([name, value]) => [`${prefix}_${name}`, value]));
 }
@@ -121,6 +125,8 @@ test("workflows keep cumulative Preview release provenance", () => {
   assert.match(preview, /git diff --name-only -z "\$\{baseline\}" "\$\{SHA\}"/);
   assert.match(preview, /apps\/web\/\*\|workers\/livepeer-bridge\/\*/);
   assert.match(preview, /contracts\/\*\|scripts\/check-paid-media-livepeer-v1-abi\.mjs\|docs\/\*/);
+  assert.match(preview, /cloudflare-release\.mjs write-bridge-wrangler/);
+  assert.doesNotMatch(preview, /cp workers\/livepeer-bridge\/wrangler\.toml/);
 });
 
 test("config emits only canonical public values", () => {
@@ -140,6 +146,7 @@ test("config emits only canonical public values", () => {
   assert.equal(config.targets.bridge.domain, "bridge-preview.youtick.net");
   assert.equal(config.web.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1, "false");
   assert.equal(config.bridge.LIVEPEER_BRIDGE_ENABLED, "false");
+  assert.equal(config.web.NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE, "off");
   assert.equal(text, `${JSON.stringify(config, null, 2)}\n`);
   assert.doesNotMatch(text, /API_KEY|NEAR_RPC_URL|secret-rpc/);
   assert.ok(!text.includes(secret));
@@ -215,6 +222,73 @@ test("config rejects placeholders and enabled release flags", async (t) => {
     assert.match(result.stderr, /exactly false/);
   });
 
+  await t.test("production payment preview mode", () => {
+    const env = publicEnv("production");
+    env.PRODUCTION_NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE = "preview";
+    env.PRODUCTION_MULTI_ASSET_PAYMENTS_MODE = "preview";
+    env.PRODUCTION_MULTI_ASSET_PAYMENT_ASSET_IDS = "nep141:wrap.near";
+    const result = run(
+      ["config", "--environment", "production", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /mode is not allowed/);
+  });
+
+  await t.test("preview payment mode without assets", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE = "preview";
+    env.PREVIEW_MULTI_ASSET_PAYMENTS_MODE = "preview";
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /ASSET_IDS is required/);
+  });
+
+  await t.test("valid mainnet dry-quote preview", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE = "preview";
+    env.PREVIEW_MULTI_ASSET_PAYMENTS_MODE = "preview";
+    env.PREVIEW_NEXT_PUBLIC_NEAR_NETWORK = "mainnet";
+    env.PREVIEW_NEAR_NETWORK = "mainnet";
+    env.PREVIEW_NEXT_PUBLIC_USDC_CONTRACT_ID =
+      "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
+    env.PREVIEW_MULTI_ASSET_PAYMENT_ASSET_IDS =
+      "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near";
+    assertSuccess(run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "payment-preview.json")],
+      env,
+    ));
+  });
+
+  await t.test("payment preview on testnet", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE = "preview";
+    env.PREVIEW_MULTI_ASSET_PAYMENTS_MODE = "preview";
+    env.PREVIEW_MULTI_ASSET_PAYMENT_ASSET_IDS = "nep141:wrap.near";
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /require mainnet/);
+  });
+
+  await t.test("unsupported payment asset", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE = "preview";
+    env.PREVIEW_MULTI_ASSET_PAYMENTS_MODE = "preview";
+    env.PREVIEW_MULTI_ASSET_PAYMENT_ASSET_IDS = "nep141:unknown.near";
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /supported canonical IDs/);
+  });
+
   await t.test("public target", () => {
     const env = publicEnv("preview");
     env.PREVIEW_NEXT_PUBLIC_APP_URL = "https://youtick.net";
@@ -230,6 +304,17 @@ test("config rejects placeholders and enabled release flags", async (t) => {
 });
 
 test("config rejects invalid networks and unsafe environment text", async (t) => {
+  await t.test("missing payment gas reserve while quote creation is off", () => {
+    const env = publicEnv("preview");
+    delete env.PREVIEW_NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO;
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /PREVIEW_NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO must not be empty/);
+  });
+
   for (const name of ["PREVIEW_NEXT_PUBLIC_NEAR_NETWORK", "PREVIEW_NEAR_NETWORK"]) {
     await t.test(`${name} outside the exact allowlist`, () => {
       const env = publicEnv("preview");

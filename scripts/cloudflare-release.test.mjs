@@ -15,7 +15,7 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
-import { deployRelease } from './cloudflare-release.mjs';
+import { deployRelease, writeBridgeArtifactWrangler } from './cloudflare-release.mjs';
 
 const SHA = 'a'.repeat(40);
 const ACCOUNT_ID = '1'.repeat(32);
@@ -23,6 +23,7 @@ const ZONE_ID = '2'.repeat(32);
 const API_TOKEN = 'fixture-api-token';
 const NEAR_RPC_URL = 'https://rpc.fastnear.com/v1/release-test-secret';
 const NEAR_RPC_SHA256 = createHash('sha256').update(NEAR_RPC_URL).digest('hex');
+const ONECLICK_API_KEY = 'release-test-partner-key';
 const TARGETS = {
     preview: {
         web: { worker: 'youtick-web-preview', domain: 'preview.youtick.net' },
@@ -64,6 +65,7 @@ function makeConfig(target) {
             NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: `https://${expected.bridge.domain}`,
             NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: 'false',
             NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: 'false',
+            NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: 'off',
         },
         bridge: {
             ACCESS_CONTRACT_ID: 'access.testnet',
@@ -83,6 +85,8 @@ function makeConfig(target) {
             NEAR_NETWORK: 'testnet',
             NEAR_OPERATOR_ACCOUNT_ID: 'bridge.testnet',
             NEAR_OPERATOR_KEY_EPOCH: '1',
+            MULTI_ASSET_PAYMENTS_MODE: 'off',
+            MULTI_ASSET_PAYMENT_ASSET_IDS: '',
         },
     };
 }
@@ -130,6 +134,8 @@ function makeRelease(t, target = 'preview') {
         '[vars]',
         'LIVEPEER_BRIDGE_ENABLED = "false"',
         'LIVEPEER_NEAR_CREATOR_FEE_ENABLED = "false"',
+        'MULTI_ASSET_PAYMENTS_MODE = "off"',
+        'MULTI_ASSET_PAYMENT_ASSET_IDS = ""',
         '',
         '[version_metadata]',
         'binding = "CF_VERSION_METADATA"',
@@ -203,8 +209,15 @@ if (secretsIndex >= 0) {
   const mode = fs.statSync(secretsPath).mode & 0o777;
   const keys = Object.keys(parsed);
   const hash = crypto.createHash('sha256').update(parsed.NEAR_RPC_URL || '').digest('hex');
-  if (mode !== 0o600 || keys.length !== 1 || keys[0] !== 'NEAR_RPC_URL'
-      || hash !== process.env.FAKE_NEAR_RPC_SHA256 || process.env.NEAR_RPC_URL) {
+  const oneClickHash = crypto.createHash('sha256').update(parsed.ONECLICK_API_KEY || '').digest('hex');
+  const expectedKeys = process.env.FAKE_ONECLICK_API_KEY_SHA256
+    ? ['NEAR_RPC_URL', 'ONECLICK_API_KEY']
+    : ['NEAR_RPC_URL'];
+  if (mode !== 0o600 || JSON.stringify(keys) !== JSON.stringify(expectedKeys)
+      || hash !== process.env.FAKE_NEAR_RPC_SHA256
+      || (process.env.FAKE_ONECLICK_API_KEY_SHA256
+        && oneClickHash !== process.env.FAKE_ONECLICK_API_KEY_SHA256)
+      || process.env.NEAR_RPC_URL || process.env.ONECLICK_API_KEY) {
     throw new Error('invalid fake Wrangler secret contract');
   }
   fs.appendFileSync(process.env.FAKE_WRANGLER_SECRET_LOG, JSON.stringify({
@@ -397,17 +410,27 @@ function makeFakeWrangler(release, state) {
     return { binary, statePath, logPath, secretLogPath, apiCalls, apiFetch };
 }
 
-async function withFakeEnvironment(fake, callback) {
+async function withFakeEnvironment(fake, callback, oneClickApiKey = null) {
     const previousState = process.env.FAKE_WRANGLER_STATE;
     const previousLog = process.env.FAKE_WRANGLER_LOG;
     const previousSecretLog = process.env.FAKE_WRANGLER_SECRET_LOG;
     const previousNearRpcHash = process.env.FAKE_NEAR_RPC_SHA256;
+    const previousOneClickHash = process.env.FAKE_ONECLICK_API_KEY_SHA256;
     const previousNearRpcUrl = process.env.NEAR_RPC_URL;
+    const previousOneClickApiKey = process.env.ONECLICK_API_KEY;
     process.env.FAKE_WRANGLER_STATE = fake.statePath;
     process.env.FAKE_WRANGLER_LOG = fake.logPath;
     process.env.FAKE_WRANGLER_SECRET_LOG = fake.secretLogPath;
     process.env.FAKE_NEAR_RPC_SHA256 = NEAR_RPC_SHA256;
     process.env.NEAR_RPC_URL = NEAR_RPC_URL;
+    if (oneClickApiKey) {
+        process.env.FAKE_ONECLICK_API_KEY_SHA256 = createHash('sha256')
+            .update(oneClickApiKey)
+            .digest('hex');
+    } else {
+        delete process.env.FAKE_ONECLICK_API_KEY_SHA256;
+    }
+    delete process.env.ONECLICK_API_KEY;
     try {
         return await callback();
     } finally {
@@ -419,8 +442,12 @@ async function withFakeEnvironment(fake, callback) {
         else process.env.FAKE_WRANGLER_SECRET_LOG = previousSecretLog;
         if (previousNearRpcHash === undefined) delete process.env.FAKE_NEAR_RPC_SHA256;
         else process.env.FAKE_NEAR_RPC_SHA256 = previousNearRpcHash;
+        if (previousOneClickHash === undefined) delete process.env.FAKE_ONECLICK_API_KEY_SHA256;
+        else process.env.FAKE_ONECLICK_API_KEY_SHA256 = previousOneClickHash;
         if (previousNearRpcUrl === undefined) delete process.env.NEAR_RPC_URL;
         else process.env.NEAR_RPC_URL = previousNearRpcUrl;
+        if (previousOneClickApiKey === undefined) delete process.env.ONECLICK_API_KEY;
+        else process.env.ONECLICK_API_KEY = previousOneClickApiKey;
     }
 }
 
@@ -438,7 +465,7 @@ function deployFixture(
     smokeFn = async () => ({ ok: true }),
     {
         target = 'preview', rollbackTest = 'false', zoneId = ZONE_ID,
-        nearRpcUrl = NEAR_RPC_URL,
+        nearRpcUrl = NEAR_RPC_URL, oneClickApiKey = ONECLICK_API_KEY,
     } = {},
 ) {
     return withFakeEnvironment(fake, () => deployRelease({
@@ -456,8 +483,24 @@ function deployFixture(
         cloudflareApiToken: API_TOKEN,
         cloudflareZoneId: zoneId,
         nearRpcUrl,
-    }));
+        oneClickApiKey,
+    }), oneClickApiKey);
 }
+
+test('Bridge artifact writer emits the exact disabled release config once', async (t) => {
+    const root = mkdtempSync(join(tmpdir(), 'bridge-artifact-wrangler-test-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const output = join(root, 'wrangler.toml');
+
+    await writeBridgeArtifactWrangler(output);
+
+    const text = readFileSync(output, 'utf8');
+    assert.match(text, /MULTI_ASSET_PAYMENTS_MODE = "off"/);
+    assert.match(text, /MULTI_ASSET_PAYMENT_ASSET_IDS = ""/);
+    assert.doesNotMatch(text, /NEAR_RPC_URL|ALLOWED_ORIGINS|MARKET_CONTRACT_ID/);
+    assert.equal(statSync(output).mode & 0o777, 0o600);
+    await assert.rejects(writeBridgeArtifactWrangler(output), /EEXIST/);
+});
 
 test('only structured error 10007 permits workers.dev bootstrap before safe domain attach', async (t) => {
     const release = makeRelease(t);
@@ -507,7 +550,7 @@ test('only structured error 10007 permits workers.dev bootstrap before safe doma
         command: args.slice(0, 2),
         worker: TARGETS.preview.bridge.worker,
         mode: 0o600,
-        keys: ['NEAR_RPC_URL'],
+        keys: ['NEAR_RPC_URL', 'ONECLICK_API_KEY'],
     })));
     const secretPaths = secretCommands.map((args) => args[args.indexOf('--secrets-file') + 1]);
     assert.equal(new Set(secretPaths).size, 1);
@@ -588,6 +631,66 @@ test('invalid NEAR_RPC_URL fails before Cloudflare API or Wrangler mutation', as
     }
 });
 
+test('1Click secret is required for quote-disabled status recovery', async (t) => {
+    await t.test('off mode forwards an available key for status polling', async (subtest) => {
+        const release = makeRelease(subtest);
+        const fake = makeFakeWrangler(release, {
+            workers: {
+                [TARGETS.preview.web.worker]: {
+                    traffic: [{ version_id: 'web-old', percentage: 100 }],
+                },
+                [TARGETS.preview.bridge.worker]: {
+                    traffic: [{ version_id: 'bridge-old', percentage: 100 }],
+                },
+            },
+            uploadFailures: {},
+        });
+
+        await deployFixture(release, fake, undefined, { oneClickApiKey: ONECLICK_API_KEY });
+
+        assert.ok(secretCalls(fake).length > 0);
+        assert.ok(secretCalls(fake).every((call) => (
+            JSON.stringify(call.keys) === JSON.stringify(['NEAR_RPC_URL', 'ONECLICK_API_KEY'])
+        )));
+        for (const path of [fake.logPath, fake.secretLogPath, release.receipt]) {
+            assert.ok(!readFileSync(path, 'utf8').includes(ONECLICK_API_KEY));
+        }
+    });
+
+    await t.test('off mode rejects a missing key before mutation', async (subtest) => {
+        const release = makeRelease(subtest);
+        const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+
+        await assert.rejects(
+            deployFixture(release, fake, undefined, { oneClickApiKey: null }),
+            /cloudflare_release_oneclick_api_key_missing/,
+        );
+        assert.deepEqual(fake.apiCalls, []);
+        assert.deepEqual(calls(fake), []);
+        assert.deepEqual(secretCalls(fake), []);
+    });
+
+    await t.test('preview mode rejects a missing key before mutation', async (subtest) => {
+        const release = makeRelease(subtest);
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.web.NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE = 'preview';
+        config.bridge.MULTI_ASSET_PAYMENTS_MODE = 'preview';
+        config.bridge.MULTI_ASSET_PAYMENT_ASSET_IDS = 'nep141:wrap.near';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.preview = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+
+        await assert.rejects(
+            deployFixture(release, fake, undefined, { oneClickApiKey: null }),
+            /cloudflare_release_oneclick_api_key_missing/,
+        );
+        assert.deepEqual(fake.apiCalls, []);
+        assert.deepEqual(calls(fake), []);
+        assert.deepEqual(secretCalls(fake), []);
+    });
+});
+
 test('target allowlist and disabled release flags are fail closed', async (t) => {
     await t.test('rejects a forbidden manifest target', async (subtest) => {
         const release = makeRelease(subtest);
@@ -595,7 +698,7 @@ test('target allowlist and disabled release flags are fail closed', async (t) =>
         writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
         await assert.rejects(deployRelease({
             target: 'preview', sha: SHA, artifactDir: release.artifactDir, receiptOutput: release.receipt,
-            nearRpcUrl: NEAR_RPC_URL,
+            nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY,
         }), /manifest_targets_invalid|forbidden_target/);
     });
 
@@ -608,7 +711,7 @@ test('target allowlist and disabled release flags are fail closed', async (t) =>
         writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
         await assert.rejects(deployRelease({
             target: 'preview', sha: SHA, artifactDir: release.artifactDir, receiptOutput: release.receipt,
-            nearRpcUrl: NEAR_RPC_URL,
+            nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY,
         }), /livepeer_bridge_enabled_not_false/);
     });
 
@@ -629,7 +732,7 @@ test('target allowlist and disabled release flags are fail closed', async (t) =>
         writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
         await assert.rejects(deployRelease({
             target: 'preview', sha: SHA, artifactDir: release.artifactDir, receiptOutput: release.receipt,
-            nearRpcUrl: NEAR_RPC_URL,
+            nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY,
         }), /bridge_wrangler_config_invalid/);
     });
 });

@@ -60,6 +60,7 @@ vi.mock('@/lib/constants', () => ({
 import {
     authorizeLivepeerPaidJob,
     clearLivepeerUploadDraft,
+    configuredCreatorFeeGasReserveYocto,
     parseLivepeerPriceUsdc,
     preflightLivepeerUpload,
     prepareCreatorFeePaymentOptions,
@@ -119,6 +120,8 @@ describe('Livepeer browser upload', () => {
         featureFlags.enableLivepeerNearCreatorFee = true;
         near.viewContract.mockReset().mockResolvedValue(null);
         sessionStorage.clear();
+        delete process.env.NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO;
+        delete process.env.NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO;
     });
 
     it('signs the locked upload-intent envelope and removes the single-job key', async () => {
@@ -506,6 +509,13 @@ describe('Livepeer browser upload', () => {
             usdcBalance: '300000', nearBalanceYocto: '100', usdcFee: '300000',
             gasReserveYocto: '100',
         })).toEqual({ selected: 'USDC', usable: ['USDC'] });
+    });
+
+    it('uses the shared payment gas reserve when the legacy upload value is absent', () => {
+        process.env.NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO = '123';
+        expect(configuredCreatorFeeGasReserveYocto()).toBe('123');
+        process.env.NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO = '456';
+        expect(configuredCreatorFeeGasReserveYocto()).toBe('456');
     });
 
     it('requests and validates the exact server-signed NEAR creator-fee quote', async () => {

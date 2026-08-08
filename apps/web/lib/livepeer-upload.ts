@@ -395,7 +395,9 @@ export async function prepareCreatorFeePaymentOptions(input: {
 }
 
 export function configuredCreatorFeeGasReserveYocto(): string {
-    const value = process.env.NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO || '';
+    const value = process.env.NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO
+        || process.env.NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO
+        || '';
     if (!/^[1-9][0-9]*$/.test(value)) {
         throw new Error('creator_fee_gas_reserve_not_configured');
     }

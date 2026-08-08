@@ -118,6 +118,7 @@ jobs:
       NEXT_PUBLIC_ACCESS_CONTRACT_ID: access.testnet
       NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: "false"
       NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: "false"
+      NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: "off"
     defaults:
       run:
         working-directory: apps/web

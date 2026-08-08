@@ -6,6 +6,13 @@ import {
     baseEncode,
     createTransaction,
 } from 'near-api-js';
+import {
+    paymentAssets,
+    paymentOptions,
+    paymentQuote,
+    paymentRateLimit,
+    paymentStatus,
+} from './payments';
 
 export interface Env {
     CF_VERSION_METADATA: WorkerVersionMetadata;
@@ -34,6 +41,9 @@ export interface Env {
     NEAR_OPERATOR_KEY_EPOCH?: string;
     CREATOR_FEE_QUOTE_PRIVATE_KEY?: string;
     CREATOR_FEE_QUOTE_KEY_VERSION?: string;
+    MULTI_ASSET_PAYMENTS_MODE?: string;
+    MULTI_ASSET_PAYMENT_ASSET_IDS?: string;
+    ONECLICK_API_KEY?: string;
     LIVEPEER_CONTROL?: DurableObjectNamespace;
 }
 
@@ -401,6 +411,21 @@ export default {
             });
         }
 
+        if (request.method === 'OPTIONS'
+            && ['/v1/payments/assets', '/v1/payments/quote', '/v1/payments/status']
+                .includes(url.pathname)) {
+            return paymentOptions(request, env);
+        }
+        if (request.method === 'GET' && url.pathname === '/v1/payments/assets') {
+            return paymentAssets(request, env);
+        }
+        if (request.method === 'POST' && url.pathname === '/v1/payments/quote') {
+            return paymentQuote(request, env);
+        }
+        if (request.method === 'GET' && url.pathname === '/v1/payments/status') {
+            return paymentStatus(request, env);
+        }
+
         const coverRoute = publicationCoverRoute(url.pathname);
         if (request.method === 'GET' && coverRoute) {
             if (env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
@@ -565,6 +590,9 @@ export class LivepeerControl {
             }
             if (request.method === 'POST' && url.pathname === '/internal/creator-fee-quote') {
                 return await issueCreatorFeeQuote(this.state, this.env, request);
+            }
+            if (request.method === 'POST' && url.pathname === '/internal/payment-rate-limit') {
+                return await paymentRateLimit(this.state, request);
             }
             if (request.method === 'POST' && url.pathname === '/internal/admission/reopen') {
                 return await reopenAdmission(this.state, await readJsonObject(request));

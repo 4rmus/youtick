@@ -10,6 +10,13 @@ const GIT_SHA_RE = /^[a-f0-9]{40}$/;
 const DECIMAL_RE = /^[1-9][0-9]*$/;
 const PLACEHOLDER_RE = /<[^>]+>|(^|[-_\s])(placeholder|replace|change[-_\s]?me|todo|dummy)($|[-_\s])/i;
 const GENERIC_VALUE_RE = /^(?:example|sample|test)(?:[._:-].*)?$/i;
+const MAINNET_USDC_CONTRACT_ID = "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
+const PAYMENT_ASSET_IDS = new Set([
+  "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+  "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+  "nep141:wrap.near",
+  "nep141:usdt.tether-token.near",
+]);
 
 const TARGETS = Object.freeze({
   preview: Object.freeze({
@@ -33,8 +40,10 @@ const WEB_KEYS = Object.freeze([
   "NEXT_PUBLIC_LIVEPEER_BRIDGE_URL",
   "NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1",
   "NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE",
+  "NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE",
   "NEXT_PUBLIC_USDC_CONTRACT_ID",
   "NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO",
+  "NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO",
 ]);
 
 const BRIDGE_KEYS = Object.freeze([
@@ -55,6 +64,8 @@ const BRIDGE_KEYS = Object.freeze([
   "CREATOR_FEE_QUOTE_KEY_VERSION",
   "LIVEPEER_BRIDGE_ENABLED",
   "LIVEPEER_NEAR_CREATOR_FEE_ENABLED",
+  "MULTI_ASSET_PAYMENTS_MODE",
+  "MULTI_ASSET_PAYMENT_ASSET_IDS",
 ]);
 
 const OPTIONAL_KEYS = new Set([
@@ -63,6 +74,7 @@ const OPTIONAL_KEYS = new Set([
   "LIVEPEER_CREATOR_ALLOWLIST",
   "LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS",
   "LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS",
+  "MULTI_ASSET_PAYMENT_ASSET_IDS",
 ]);
 
 const FALSE_FLAGS = Object.freeze([
@@ -204,11 +216,40 @@ function buildConfig(environment) {
     if (value !== "false") fail(`${environment.toUpperCase()}_${flag} must be exactly false`);
   }
 
+  const paymentMode = web.NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE;
+  if (paymentMode !== bridge.MULTI_ASSET_PAYMENTS_MODE) {
+    fail("web and Bridge multi-asset payment modes must match");
+  }
+  const allowedPaymentModes = environment === "preview" ? ["off", "preview"] : ["off"];
+  if (!allowedPaymentModes.includes(paymentMode)) {
+    fail(`${environment.toUpperCase()} multi-asset payment mode is not allowed`);
+  }
+  const paymentAssetIds = bridge.MULTI_ASSET_PAYMENT_ASSET_IDS
+    .split(",")
+    .filter(Boolean);
+  if (paymentMode !== "off" && paymentAssetIds.length === 0) {
+    fail("MULTI_ASSET_PAYMENT_ASSET_IDS is required when multi-asset payments are enabled");
+  }
+  if (paymentAssetIds.some((id) => !PAYMENT_ASSET_IDS.has(id))
+      || new Set(paymentAssetIds).size !== paymentAssetIds.length) {
+    fail("MULTI_ASSET_PAYMENT_ASSET_IDS must use unique supported canonical IDs");
+  }
+
   for (const [name, value] of [
     ["NEXT_PUBLIC_NEAR_NETWORK", web.NEXT_PUBLIC_NEAR_NETWORK],
     ["NEAR_NETWORK", bridge.NEAR_NETWORK],
   ]) {
     if (!["testnet", "mainnet"].includes(value)) fail(`${name} must be exactly testnet or mainnet`);
+  }
+  if (paymentMode !== "off"
+      && (web.NEXT_PUBLIC_NEAR_NETWORK !== "mainnet" || bridge.NEAR_NETWORK !== "mainnet")) {
+    fail("multi-asset payments require mainnet");
+  }
+  if (paymentMode !== "off" && web.NEXT_PUBLIC_USDC_CONTRACT_ID !== MAINNET_USDC_CONTRACT_ID) {
+    fail("multi-asset payments require the mainnet Circle USDC contract");
+  }
+  if (!DECIMAL_RE.test(web.NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO)) {
+    fail("NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO must be positive");
   }
 
   const expectedWebOrigin = `https://${TARGETS[environment].web.domain}`;
@@ -249,6 +290,7 @@ function buildConfig(environment) {
 
   for (const key of [
     "NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO",
+    "NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO",
     "LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS",
     "LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS",
   ]) {

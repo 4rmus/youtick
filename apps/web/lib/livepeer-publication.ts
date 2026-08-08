@@ -20,7 +20,9 @@ export type LivepeerPublication = {
 
 export type LivepeerMediaJob = {
     job_id: string;
+    creator_id: string;
     status: 'Authorized' | 'Published';
+    upload_public_key: string;
 };
 
 export async function readLivepeerMediaJob(jobId: string): Promise<LivepeerMediaJob | null> {
@@ -34,10 +36,20 @@ export async function readLivepeerMediaJob(jobId: string): Promise<LivepeerMedia
     if (value === null) return null;
     if (!value || typeof value !== 'object') throw new Error('invalid_livepeer_media_job');
     const job = value as Record<string, unknown>;
-    if (job.job_id !== jobId || !['Authorized', 'Published'].includes(String(job.status))) {
+    if (job.job_id !== jobId
+        || typeof job.creator_id !== 'string'
+        || !job.creator_id
+        || !['Authorized', 'Published'].includes(String(job.status))
+        || typeof job.upload_public_key !== 'string'
+        || !job.upload_public_key.startsWith('ed25519:')) {
         throw new Error('invalid_livepeer_media_job');
     }
-    return { job_id: jobId, status: job.status as LivepeerMediaJob['status'] };
+    return {
+        job_id: jobId,
+        creator_id: job.creator_id,
+        status: job.status as LivepeerMediaJob['status'],
+        upload_public_key: job.upload_public_key,
+    };
 }
 
 export async function readLivepeerPublications(

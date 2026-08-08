@@ -27,6 +27,7 @@
         "wrangler": "4.90.0"
     },
     "dependencies": {
+        "@defuse-protocol/one-click-sdk-typescript": "0.1.25",
         "near-api-js": "7.3.0"
     }
 }

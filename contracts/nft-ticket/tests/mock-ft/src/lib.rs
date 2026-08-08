@@ -1,10 +1,25 @@
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::U128;
 use near_sdk::serde_json::json;
-use near_sdk::{env, near, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseResult};
+use near_sdk::{
+    env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseResult,
+};
 
 const FT_ON_TRANSFER_GAS: Gas = Gas::from_tgas(30);
 const FT_RESOLVE_GAS: Gas = Gas::from_tgas(10);
+const STORAGE_MIN_YOCTO: u128 = 1_250_000_000_000_000_000_000;
+
+#[near(serializers = [json])]
+pub struct StorageBalance {
+    total: U128,
+    available: U128,
+}
+
+#[near(serializers = [json])]
+pub struct StorageBalanceBounds {
+    min: U128,
+    max: Option<U128>,
+}
 
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
@@ -19,6 +34,45 @@ impl MockFt {
         let mut balances = LookupMap::new(b"b");
         balances.insert(&owner_id, &total_supply.0);
         Self { balances }
+    }
+
+    pub fn storage_balance_bounds(&self) -> StorageBalanceBounds {
+        StorageBalanceBounds {
+            min: U128(STORAGE_MIN_YOCTO),
+            max: Some(U128(STORAGE_MIN_YOCTO)),
+        }
+    }
+
+    pub fn storage_balance_of(&self, account_id: AccountId) -> Option<StorageBalance> {
+        self.is_registered(&account_id).then_some(StorageBalance {
+            total: U128(STORAGE_MIN_YOCTO),
+            available: U128(0),
+        })
+    }
+
+    #[payable]
+    pub fn storage_deposit(
+        &mut self,
+        account_id: Option<AccountId>,
+        registration_only: Option<bool>,
+    ) -> StorageBalance {
+        let account_id = account_id.unwrap_or_else(env::predecessor_account_id);
+        let attached = env::attached_deposit().as_yoctonear();
+        let required = if self.is_registered(&account_id) {
+            0
+        } else {
+            STORAGE_MIN_YOCTO
+        };
+        require!(attached >= required, "Insufficient storage deposit");
+        if required > 0 {
+            self.balances.insert(&account_id, &0);
+        }
+        let refund = attached - required;
+        if refund > 0 {
+            Promise::new(env::predecessor_account_id()).transfer(NearToken::from_yoctonear(refund));
+        }
+        let _ = registration_only;
+        self.storage_balance_of(account_id).unwrap()
     }
 
     #[payable]
@@ -91,6 +145,11 @@ impl MockFt {
 
     fn transfer(&mut self, sender_id: &AccountId, receiver_id: &AccountId, amount: u128) {
         assert!(amount > 0, "amount must be positive");
+        require!(self.is_registered(sender_id), "Sender is not registered");
+        require!(
+            self.is_registered(receiver_id),
+            "Receiver is not registered"
+        );
         let sender_balance = self.balance(sender_id);
         assert!(sender_balance >= amount, "insufficient balance");
         self.balances.insert(sender_id, &(sender_balance - amount));
@@ -103,5 +162,9 @@ impl MockFt {
 
     fn balance(&self, account_id: &AccountId) -> u128 {
         self.balances.get(account_id).unwrap_or(0)
+    }
+
+    fn is_registered(&self, account_id: &AccountId) -> bool {
+        self.balances.contains_key(account_id)
     }
 }
