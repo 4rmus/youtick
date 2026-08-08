@@ -1,7 +1,10 @@
 # Livepeer Bridge Worker
 
 This Worker is the control plane for direct browser-to-Livepeer upload and
-authenticated playback. Video bytes must never be sent through its routes.
+authenticated playback. Source video and HLS bytes must never be sent through
+its routes. The public publication-cover route is the only exception: after a
+final NEAR check, it returns a cached, size-limited first-frame image without
+exposing the upstream JWT or private thumbnail URL.
 
 ## Safety state
 

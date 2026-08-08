@@ -6,6 +6,21 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 LIVEPEER_BRIDGE_ENABLED = "false"
 LIVEPEER_NEAR_CREATOR_FEE_ENABLED = "false"
+ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
+NEAR_NETWORK = "testnet"
+NEAR_RPC_URL = "<replace-with-dedicated-near-rpc-url>"
+MARKET_CONTRACT_ID = "<replace-with-paid-media-livepeer-v1-contract-id>"
+ACCESS_CONTRACT_ID = "<replace-with-access-contract-id>"
+LIVEPEER_PROJECT_ID = "<replace-with-livepeer-project-id>"
+LIVEPEER_API_TOKEN_NAME = "<replace-with-livepeer-api-token-name>"
+LIVEPEER_CREATOR_ALLOWLIST = ""
+LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS = ""
+LIVEPEER_PAID_MEDIA_OPERATOR_ID = "<replace-with-paid-media-operator-id>"
+LIVEPEER_JWT_PUBLIC_KEY = "<replace-with-livepeer-jwt-public-key>"
+LIVEPEER_JWT_ISSUER = "https://youtick.net"
+NEAR_OPERATOR_ACCOUNT_ID = "<replace-with-livepeer-bridge-account-id>"
+NEAR_OPERATOR_KEY_EPOCH = "1"
+CREATOR_FEE_QUOTE_KEY_VERSION = "1"
 
 [version_metadata]
 binding = "CF_VERSION_METADATA"

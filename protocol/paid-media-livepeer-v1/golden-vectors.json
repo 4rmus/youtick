@@ -7,7 +7,8 @@
     "parallel_uploads": 1,
     "min_ticket_price_usdc": "2000000",
     "upload_fee_usdc_per_decimal_gb": "300000",
-    "monthly_operation_budget": "D6_REQUIRED_FAIL_CLOSED",
+    "min_upload_fee_usdc": "500000",
+    "monthly_operation_budget": "UNLIMITED",
     "initial_browser_matrix": ["desktop-chrome", "desktop-edge"]
   },
   "operator": {
@@ -27,19 +28,19 @@
       "creator_id": "creator.testnet",
       "job_id": "job-near",
       "expected_source_bytes": "1000000000",
-      "fee_usd_micro": "300000",
+      "fee_usd_micro": "500000",
       "near_usd_micro": "5000000",
-      "fee_near_yocto": "60000000000000000000000",
+      "fee_near_yocto": "100000000000000000000000",
       "rate_source": "approved-source-v1",
       "rate_timestamp_ms": "1785589300000",
       "expires_at_ms": "1785589420000",
       "quote_key_version": 1,
-      "quote_id": "b28676b3d0999a8f9e5cb34b2dca86ebb09f253c9e2c3fb0e85f987c85b72b4b"
+      "quote_id": "f2486e711ff88fe95aee073dce768a658212ad447d1e0c8aa5098c80099e4423"
     },
-    "canonical_message": "youtick.creator-fee-quote\n1\ntestnet\nmarket.testnet\ncreator.testnet\njob-near\n1000000000\n300000\n5000000\n60000000000000000000000\napproved-source-v1\n1785589300000\n1785589420000\n1",
-    "quote_id": "b28676b3d0999a8f9e5cb34b2dca86ebb09f253c9e2c3fb0e85f987c85b72b4b",
-    "signature_base64": "JPMvknPFG4Ppk5+q+KjvYUqpGXwvnhHyr6q+DLouO/5KMh/b91q2r9x/DCvNORzeiPwOJ5d8jTa6IBldeaGKDg==",
-    "public_key_base64": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw="
+    "canonical_message": "youtick.creator-fee-quote\n1\ntestnet\nmarket.testnet\ncreator.testnet\njob-near\n1000000000\n500000\n5000000\n100000000000000000000000\napproved-source-v1\n1785589300000\n1785589420000\n1",
+    "quote_id": "f2486e711ff88fe95aee073dce768a658212ad447d1e0c8aa5098c80099e4423",
+    "signature_base64": "vmaGB44seQPPbKLsUzI5F4DkCvArBL2wv2KrCklnrlD+YuTJdRp4jnyK+coj9jK7cQnZ/DVa2pMJuyGsDCdHCg==",
+    "public_key_base64": "voZmn64iuQRN4TXfnXxvnf1WDQqjvz3m1kmHfOEoSJo="
   },
   "upload_intent": {
     "body": {

@@ -23,6 +23,7 @@ const LIVEPEER_SESSION_STORAGE_PREFIX = 'youtick:livepeer-job-session:';
 const LIVEPEER_DRAFT_STORAGE_PREFIX = 'youtick:livepeer-ui-draft:';
 const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+const MIN_CREATOR_UPLOAD_FEE_USDC = 500_000n;
 
 const LIVEPEER_SOURCE_FORMATS = {
     mp4: { extension: 'mp4', mimeTypes: ['video/mp4'] },
@@ -188,7 +189,10 @@ export function livepeerUploadFeeUsdc(sourceBytes: number): string {
         || sourceBytes > MEDIA_UPLOAD_POLICY.paidSourceMaxBytes) {
         throw new Error('source_limit_exceeded');
     }
-    return ((BigInt(sourceBytes) * 3n + 9_999n) / 10_000n).toString();
+    const byteFee = (BigInt(sourceBytes) * 3n + 9_999n) / 10_000n;
+    return (byteFee < MIN_CREATOR_UPLOAD_FEE_USDC
+        ? MIN_CREATOR_UPLOAD_FEE_USDC
+        : byteFee).toString();
 }
 
 export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
@@ -260,9 +264,41 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
 
     const existingChainJob = await reconcilePaidJob(input.jobId);
     if (existingChainJob) {
-        if (!existingSession) throw new Error('livepeer_upload_key_recovery_required');
         if (exactPaidJob(existingChainJob, request, asset)) return publicKey;
-        throw new Error('livepeer_paid_job_conflict');
+        if (!samePaidJob(existingChainJob, request, asset)) {
+            throw new Error('livepeer_paid_job_conflict');
+        }
+        if (!existingSession) {
+            persistLivepeerJobSessionKey(
+                input.accountId,
+                input.jobId,
+                keyPair,
+                uploadKeyExpiresAtMs,
+            );
+        }
+        try {
+            await wallet.signAndSendTransaction({
+                receiverId: NEAR_CONFIG.marketContractId,
+                actions: [actions.functionCall(
+                    'replace_upload_key',
+                    {
+                        job_id: input.jobId,
+                        new_public_key: publicKey,
+                        expires_at_ms: uploadKeyExpiresAtMs,
+                    },
+                    GAS_CONSTANTS.mediumGas,
+                    0n,
+                )],
+            });
+            return publicKey;
+        } catch (error) {
+            const chainJob = await reconcilePaidJob(input.jobId).catch(() => undefined);
+            if (chainJob && exactPaidJob(chainJob, request, asset)) return publicKey;
+            if (chainJob && !samePaidJob(chainJob, request, asset)) {
+                throw new Error('livepeer_paid_job_conflict');
+            }
+            throw error;
+        }
     }
     if (!existingSession) {
         persistLivepeerJobSessionKey(
@@ -449,6 +485,16 @@ function exactPaidJob(
     request: Record<string, string>,
     asset: CreatorFeeAsset,
 ): boolean {
+    return samePaidJob(job, request, asset)
+        && job.upload_public_key === request.upload_public_key
+        && job.upload_key_expires_at_ms === request.upload_key_expires_at_ms;
+}
+
+function samePaidJob(
+    job: Record<string, unknown>,
+    request: Record<string, string>,
+    asset: CreatorFeeAsset,
+): boolean {
     return job.job_id === request.job_id
         && job.creator_id === request.creator_id
         && job.title === request.title
@@ -456,9 +502,8 @@ function exactPaidJob(
         && job.expected_source_bytes === request.expected_source_bytes
         && job.profile_id === request.profile_id
         && job.profile_config_sha256 === request.profile_config_sha256
-        && job.upload_public_key === request.upload_public_key
-        && job.upload_key_expires_at_ms === request.upload_key_expires_at_ms
-        && job.fee_asset === asset;
+        && job.fee_asset === asset
+        && job.status === 'Authorized';
 }
 
 export async function requestLivepeerUploadIntent(input: {
@@ -523,6 +568,41 @@ export async function requestLivepeerUploadIntent(input: {
     const intent = parseIntent(value, input);
     clearLivepeerJobSessionKey(input.accountId, input.jobId);
     return intent;
+}
+
+export async function preflightLivepeerUpload(input: {
+    accountId: string;
+    jobId: string;
+    generation: number;
+    expectedSourceBytes: number;
+}): Promise<void> {
+    requireFeature();
+    validateJobSessionIdentity(input.accountId, input.jobId);
+    if (!Number.isSafeInteger(input.generation)
+        || input.generation < 1
+        || !Number.isSafeInteger(input.expectedSourceBytes)
+        || input.expectedSourceBytes < 1
+        || input.expectedSourceBytes > MEDIA_UPLOAD_POLICY.paidSourceMaxBytes) {
+        throw new Error('invalid_upload_preflight');
+    }
+    const response = await fetch(bridgeRoute('/v1/upload-preflight'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            creator_id: input.accountId,
+            job_id: input.jobId,
+            generation: input.generation,
+            expected_source_bytes: String(input.expectedSourceBytes),
+        }),
+        cache: 'no-store',
+    });
+    const value = await readJson(response);
+    if (!response.ok) {
+        throw new Error(typeof value.error === 'string'
+            ? value.error
+            : `livepeer_control_http_${response.status}`);
+    }
+    if (value.available !== true) throw new Error('invalid_upload_preflight');
 }
 
 export async function uploadLivepeerSource(
@@ -712,7 +792,7 @@ function browserOrigin(): string {
     try {
         const url = new URL(origin);
         if (url.protocol !== 'https:'
-            && !(url.protocol === 'http:' && url.hostname === 'localhost')) {
+            && !(url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))) {
             throw new Error('invalid_livepeer_origin');
         }
         return url.origin;

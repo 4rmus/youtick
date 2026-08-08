@@ -1,16 +1,25 @@
-import Link from 'next/link';
-import { Button } from '@/components/ui/button';
+import type { Metadata } from 'next';
+import { LandingPage } from '@/components/landing/LandingPage';
+import { FEATURE_FLAGS } from '@/lib/constants';
+
+export const metadata: Metadata = {
+    title: 'Ticketed screenings for independent film and music',
+    description: 'Sell a film or concert recording directly to your audience with a digital ticket and Livepeer video playback.',
+    alternates: {
+        canonical: '/',
+        languages: { en: '/', tr: '/tr', 'x-default': '/' },
+    },
+    openGraph: {
+        type: 'website',
+        url: '/',
+        locale: 'en_US',
+        alternateLocale: ['tr_TR'],
+        title: 'YouTick — Ticketed digital screenings',
+        description: 'Upload the work, set the ticket price, and sell directly to your audience.',
+        images: [{ url: '/hero-concert.webp', width: 1024, height: 1024, alt: 'A concert stage facing a live audience' }],
+    },
+};
 
 export default function Home() {
-    return (
-        <div className="container mx-auto flex min-h-[calc(100vh-4rem)] max-w-5xl flex-col items-start justify-center px-4 py-20">
-            <p className="text-sm uppercase tracking-[0.3em] text-emerald-300">NEAR + Livepeer</p>
-            <h1 className="mt-5 max-w-3xl text-5xl font-bold tracking-tight sm:text-7xl">Paid video, with access settled onchain.</h1>
-            <p className="mt-6 max-w-2xl text-lg text-zinc-400">Creators upload directly to Livepeer. NEAR records publications, USDC payments and playback entitlement.</p>
-            <div className="mt-8 flex gap-3">
-                <Button asChild><Link href="/discover">Discover</Link></Button>
-                <Button asChild variant="outline"><Link href="/upload">Publish</Link></Button>
-            </div>
-        </div>
-    );
+    return <LandingPage locale="en" enabled={FEATURE_FLAGS.enablePaidMediaLivepeerV1} />;
 }

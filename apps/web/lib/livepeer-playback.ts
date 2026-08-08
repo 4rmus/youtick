@@ -21,6 +21,19 @@ type LivepeerPlaybackToken = {
     hls_url: string;
 };
 
+export type LivepeerPlaybackAccess = {
+    token: string;
+    hlsUrl: string;
+    playbackId: string;
+    expiresAtMs: number;
+};
+
+type LivepeerPlaybackSessionCallbacks = {
+    onAccess: (access: LivepeerPlaybackAccess) => void;
+    onError?: (error: Error) => void;
+    renewGrant?: () => Promise<void>;
+};
+
 export async function requestLivepeerPlaybackToken(
     input: LivepeerPlaybackInput,
     signal?: AbortSignal,
@@ -82,47 +95,77 @@ export async function requestLivepeerPlaybackToken(
     return parsePlaybackToken(value, input.playbackId);
 }
 
-export async function startLivepeerPlayback(
-    video: HTMLVideoElement,
+export async function startLivepeerPlaybackSession(
     input: LivepeerPlaybackInput,
-    onError?: (error: Error) => void,
+    callbacks: LivepeerPlaybackSessionCallbacks,
 ): Promise<{ destroy: () => void }> {
     const controller = new AbortController();
     await waitForPlayGrantVisibility(input);
     let access = await requestPlaybackTokenWithRetry(input, controller.signal);
-    const { default: Hls } = await import('hls.js');
-    if (!Hls.isSupported()) {
-        controller.abort();
-        throw new Error('livepeer_playback_unsupported');
-    }
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    const hls = new Hls({
-        xhrSetup: (xhr, url) => {
-            if (!isLivepeerPlaybackUrl(url)) throw new Error('livepeer_playback_url_invalid');
-            xhr.setRequestHeader('Livepeer-Jwt', access.token);
-        },
-    });
+    callbacks.onAccess(toPlaybackAccess(access));
+
     const scheduleRefresh = () => {
         const delay = Math.max(1_000, Number(access.expires_at_ms) - Date.now() - TOKEN_REFRESH_SKEW_MS);
         refreshTimer = setTimeout(async () => {
             try {
-                access = await requestLivepeerPlaybackToken(input, controller.signal);
+                access = await refreshPlaybackAccess(input, controller.signal, callbacks.renewGrant);
+                if (controller.signal.aborted) return;
+                callbacks.onAccess(toPlaybackAccess(access));
                 scheduleRefresh();
             } catch (error) {
                 if (controller.signal.aborted) return;
-                onError?.(error instanceof Error ? error : new Error('livepeer_playback_failed'));
+                callbacks.onError?.(error instanceof Error ? error : new Error('livepeer_playback_failed'));
             }
         }, delay);
     };
-    hls.loadSource(access.hls_url);
-    hls.attachMedia(video);
     scheduleRefresh();
+
     return {
         destroy: () => {
             controller.abort();
             if (refreshTimer) clearTimeout(refreshTimer);
-            hls.destroy();
         },
+    };
+}
+
+export function createLivepeerHlsConfig(readToken: () => string | null) {
+    return {
+        capLevelToPlayerSize: true,
+        xhrSetup(xhr: XMLHttpRequest, url: string) {
+            if (!isLivepeerPlaybackUrl(url)) throw new Error('livepeer_playback_url_invalid');
+            const token = readToken();
+            if (!token) throw new Error('livepeer_playback_token_missing');
+            xhr.setRequestHeader('Livepeer-Jwt', token);
+        },
+    };
+}
+
+async function refreshPlaybackAccess(
+    input: LivepeerPlaybackInput,
+    signal: AbortSignal,
+    renewGrant?: () => Promise<void>,
+): Promise<LivepeerPlaybackToken> {
+    try {
+        return await requestLivepeerPlaybackToken(input, signal);
+    } catch (error) {
+        const playbackError = error instanceof Error ? error : new Error('livepeer_playback_failed');
+        if (playbackError.message !== 'livepeer_play_grant_missing' || !renewGrant) {
+            throw playbackError;
+        }
+        await renewGrant();
+        if (signal.aborted) throw new Error('livepeer_playback_cancelled');
+        await waitForPlayGrantVisibility(input);
+        return requestPlaybackTokenWithRetry(input, signal);
+    }
+}
+
+function toPlaybackAccess(access: LivepeerPlaybackToken): LivepeerPlaybackAccess {
+    return {
+        token: access.token,
+        hlsUrl: access.hls_url,
+        playbackId: access.playback_id,
+        expiresAtMs: Number(access.expires_at_ms),
     };
 }
 

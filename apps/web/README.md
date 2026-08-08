@@ -8,7 +8,9 @@ The web app supports one paid-media path:
 - Livepeer Bridge for upload intents and short-lived playback tokens;
 - USDC for creator upload fees, ticket purchases and creator withdrawals.
 
-Media bytes never pass through Next.js or the Bridge Worker.
+Source video and playback bytes never pass through Next.js or the Bridge Worker.
+The Bridge serves only the public, size-limited first-frame JPEG derived for
+publication covers after checking the current on-chain publication state.
 
 ## Local checks
 

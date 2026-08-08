@@ -18,6 +18,7 @@ import {
     LIVEPEER_SOURCE_ACCEPT,
     livepeerUploadFeeUsdc,
     parseLivepeerPriceUsdc,
+    preflightLivepeerUpload,
     prepareCreatorFeePaymentOptions,
     readLivepeerUploadDraft,
     requestLivepeerUploadIntent,
@@ -27,6 +28,19 @@ import {
     type CreatorFeeAsset,
     type SignedNearCreatorFeeQuote,
 } from '@/lib/livepeer-upload';
+
+type UploadStage = 'idle' | 'payment' | 'payment_ready' | 'authorization' | 'upload' | 'processing' | 'published';
+
+const UPLOAD_STEPS = ['Payment options', 'Wallet approval', 'Upload', 'Processing', 'Published'] as const;
+const UPLOAD_STAGE_STATE: Record<UploadStage, { active: number; completeThrough: number }> = {
+    idle: { active: -1, completeThrough: -1 },
+    payment: { active: 0, completeThrough: -1 },
+    payment_ready: { active: -1, completeThrough: 0 },
+    authorization: { active: 1, completeThrough: 0 },
+    upload: { active: 2, completeThrough: 1 },
+    processing: { active: 3, completeThrough: 2 },
+    published: { active: -1, completeThrough: 4 },
+};
 
 export function LivepeerPaidUploadForm() {
     const { accountId, connect, getWallet, isReady } = useWallet();
@@ -41,6 +55,10 @@ export function LivepeerPaidUploadForm() {
     const [busy, setBusy] = React.useState(false);
     const [uploaded, setUploaded] = React.useState(false);
     const [publicationReady, setPublicationReady] = React.useState(false);
+    const [uploadStage, setUploadStage] = React.useState<UploadStage>('idle');
+    const [failedStep, setFailedStep] = React.useState<number | null>(null);
+    const [uploadProgress, setUploadProgress] = React.useState(0);
+    const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
     const [payment, setPayment] = React.useState<{
         usable: CreatorFeeAsset[];
         usdcFee: string;
@@ -49,6 +67,24 @@ export function LivepeerPaidUploadForm() {
     const [paymentAsset, setPaymentAsset] = React.useState<CreatorFeeAsset | null>(null);
 
     React.useEffect(() => {
+        if (!file) {
+            setPreviewUrl(null);
+            return;
+        }
+        const url = URL.createObjectURL(file);
+        setPreviewUrl(url);
+        return () => URL.revokeObjectURL(url);
+    }, [file]);
+
+    React.useEffect(() => {
+        setJobId(null);
+        setStatus(null);
+        setError(null);
+        setUploaded(false);
+        setPublicationReady(false);
+        setUploadStage('idle');
+        setFailedStep(null);
+        setUploadProgress(0);
         setPayment(null);
         setPaymentAsset(null);
     }, [accountId]);
@@ -66,6 +102,7 @@ export function LivepeerPaidUploadForm() {
                 if (publication) {
                     clearLivepeerUploadDraft(accountId);
                     setPublicationReady(true);
+                    setUploadStage('published');
                     setStatus('Publication ready.');
                     return;
                 }
@@ -88,8 +125,12 @@ export function LivepeerPaidUploadForm() {
         setError(null);
         setUploaded(false);
         setPublicationReady(false);
+        setUploadStage('idle');
+        setFailedStep(null);
+        setUploadProgress(0);
         setPayment(null);
         setPaymentAsset(null);
+        setJobId(null);
         if (!selected) return setFileError(null);
         const validation = validateLivepeerSourceFile(selected);
         setFileError(validation.ok ? null : fileValidationMessage(validation.error));
@@ -105,6 +146,8 @@ export function LivepeerPaidUploadForm() {
         if (!accountId || !file || fileError || !title.trim() || !rightsAccepted) return;
         setBusy(true);
         setError(null);
+        setFailedStep(null);
+        setUploadStage('payment');
         setStatus('Checking payment options…');
         try {
             parseLivepeerPriceUsdc(price);
@@ -127,8 +170,10 @@ export function LivepeerPaidUploadForm() {
             if (!options.selected) throw new Error('creator_fee_balance_or_gas_insufficient');
             setPayment(options);
             setPaymentAsset(options.selected);
+            setUploadStage('payment_ready');
             setStatus(null);
         } catch (reason) {
+            setFailedStep(0);
             setError(reason instanceof Error ? reason.message : 'Payment options could not be loaded.');
         } finally {
             setBusy(false);
@@ -139,6 +184,9 @@ export function LivepeerPaidUploadForm() {
         if (!accountId || !file || fileError || !title.trim() || !rightsAccepted || !jobId || !payment || !paymentAsset) return;
         setBusy(true);
         setError(null);
+        setFailedStep(null);
+        let activeStep = 1;
+        let availabilityConfirmed = false;
         try {
             const source = validateLivepeerSourceFile(file);
             if (!source.ok) throw new Error(source.error);
@@ -148,8 +196,26 @@ export function LivepeerPaidUploadForm() {
                 setPaymentAsset(null);
                 throw new Error('near_creator_fee_quote_expired');
             }
-            const wallet = await getWallet();
+            const existingJob = await readLivepeerMediaJob(jobId);
+            if (existingJob?.status === 'Published') {
+                clearLivepeerUploadDraft(accountId);
+                setUploaded(true);
+                setPublicationReady(true);
+                setUploadStage('published');
+                setStatus('Publication ready.');
+                return;
+            }
+            setUploadStage('authorization');
+            setStatus('Checking upload availability…');
+            await preflightLivepeerUpload({
+                accountId,
+                jobId,
+                generation: 1,
+                expectedSourceBytes: file.size,
+            });
+            availabilityConfirmed = true;
             setStatus('Authorizing the paid job…');
+            const wallet = await getWallet();
             await authorizeLivepeerPaidJob(wallet, {
                 accountId,
                 jobId,
@@ -159,6 +225,10 @@ export function LivepeerPaidUploadForm() {
                 asset: paymentAsset,
                 nearQuote: payment.nearQuote,
             });
+            activeStep = 2;
+            setUploadStage('upload');
+            setUploadProgress(0);
+            setStatus('Preparing the Livepeer upload…');
             const intent = await requestLivepeerUploadIntent({
                 accountId,
                 jobId,
@@ -168,12 +238,18 @@ export function LivepeerPaidUploadForm() {
             });
             setStatus('Uploading directly to Livepeer…');
             await uploadLivepeerSource(file, intent, {
-                onProgress: (sent, total) => setStatus(`Uploading directly to Livepeer… ${sent}/${total}`),
+                onProgress: (sent, total) => setUploadProgress(
+                    total > 0 ? Math.min(99, Math.max(0, Math.floor((sent / total) * 100))) : 0,
+                ),
             });
+            setUploadProgress(100);
             setUploaded(true);
+            setUploadStage('processing');
             setStatus('Livepeer is processing the upload…');
         } catch (reason) {
-            setError(reason instanceof Error ? reason.message : 'Upload failed.');
+            setFailedStep(activeStep);
+            setStatus(null);
+            setError(uploadErrorMessage(reason, availabilityConfirmed));
         } finally {
             setBusy(false);
         }
@@ -205,6 +281,25 @@ export function LivepeerPaidUploadForm() {
                 <CardContent className="space-y-5">
                     <Input type="file" accept={LIVEPEER_SOURCE_ACCEPT} disabled={busy || uploaded} onChange={selectFile} />
                     {fileError && <p role="alert" className="text-sm text-red-400">{fileError}</p>}
+                    {previewUrl && !fileError && (
+                        <div className="relative overflow-hidden rounded-xl border border-zinc-800 bg-black">
+                            <video
+                                aria-label="Selected video cover preview"
+                                className="aspect-video w-full object-cover"
+                                muted
+                                playsInline
+                                preload="metadata"
+                                src={previewUrl}
+                                onLoadedMetadata={(event) => {
+                                    const duration = event.currentTarget.duration;
+                                    if (Number.isFinite(duration) && duration > 0) {
+                                        event.currentTarget.currentTime = Math.min(1, duration / 2);
+                                    }
+                                }}
+                            />
+                            <span className="absolute bottom-3 left-3 rounded-full bg-black/70 px-3 py-1 text-xs text-white">Cover preview</span>
+                        </div>
+                    )}
                     <Input aria-label="Title" placeholder="Title" maxLength={200} value={title} disabled={busy || uploaded} onChange={(event) => setTitle(event.target.value)} />
                     <Input aria-label="Ticket price in USDC" type="number" min="2" step="0.000001" value={price} disabled={busy || uploaded} onChange={(event) => setPrice(event.target.value)} />
                     <label className="flex items-start gap-3 text-sm">
@@ -212,7 +307,7 @@ export function LivepeerPaidUploadForm() {
                         <span>I own the rights required to publish this video.</span>
                     </label>
 
-                    {file && !fileError && <p className="text-sm">Creator upload fee: {formatMicroUsdc(livepeerUploadFeeUsdc(file.size))} USDC</p>}
+                    {file && !fileError && <p className="text-sm">Creator upload fee: {formatMicroUsdc(livepeerUploadFeeUsdc(file.size))} USDC (minimum 0.50)</p>}
                     {payment && (
                         <div className="space-y-2 text-sm">
                             {payment.usable.map((asset) => (
@@ -222,6 +317,45 @@ export function LivepeerPaidUploadForm() {
                                 </label>
                             ))}
                             {FEATURE_FLAGS.enableLivepeerNearCreatorFee && !payment.nearQuote && <p className="text-xs text-zinc-400">NEAR payment is unavailable; USDC remains available.</p>}
+                        </div>
+                    )}
+
+                    {file && !fileError && (
+                        <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
+                            <ol aria-label="Publication progress" className="grid gap-3 sm:grid-cols-5">
+                                {UPLOAD_STEPS.map((label, index) => {
+                                    const state = UPLOAD_STAGE_STATE[uploadStage];
+                                    const failed = failedStep === index;
+                                    const complete = !failed && index <= state.completeThrough;
+                                    const active = !failed && index === state.active;
+                                    return (
+                                        <li
+                                            key={label}
+                                            aria-current={active ? 'step' : undefined}
+                                            className={`flex items-center gap-2 text-xs ${failed ? 'text-red-400' : active || complete ? 'text-white' : 'text-zinc-500'}`}
+                                        >
+                                            <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${failed ? 'border-red-400' : complete ? 'border-emerald-400 bg-emerald-400 text-black' : active ? 'border-emerald-400 text-emerald-300' : 'border-zinc-700'}`}>
+                                                {complete ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> : index + 1}
+                                            </span>
+                                            <span>{label}</span>
+                                        </li>
+                                    );
+                                })}
+                            </ol>
+                            {uploadStage === 'upload' && (
+                                <div className="mt-4">
+                                    <div className="mb-2 flex justify-between text-sm text-zinc-300">
+                                        <span>Uploading</span>
+                                        <span>{uploadProgress}%</span>
+                                    </div>
+                                    <progress
+                                        aria-label="Video upload progress"
+                                        className="h-2 w-full accent-emerald-400"
+                                        max={100}
+                                        value={uploadProgress}
+                                    />
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -247,13 +381,23 @@ export function LivepeerPaidUploadForm() {
 function formatMicroUsdc(value: string): string {
     const amount = BigInt(value);
     const fraction = (amount % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
-    return fraction ? `${amount / 1_000_000n}.${fraction}` : String(amount / 1_000_000n);
+    return `${amount / 1_000_000n}.${fraction.padEnd(2, '0')}`;
 }
 
 function fileValidationMessage(error: 'empty_file' | 'source_limit_exceeded' | 'unsupported_video_type'): string {
     if (error === 'empty_file') return 'Choose a non-empty video file.';
     if (error === 'source_limit_exceeded') return 'Choose a video file no larger than 20 GB.';
     return 'Choose an MP4, MOV, AVI, WebM, WMV, MKV or FLV video file.';
+}
+
+function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): string {
+    const code = reason instanceof Error ? reason.message : '';
+    if (code === 'admission_closed' || code === 'admission_denied') {
+        return availabilityConfirmed
+            ? 'Upload availability changed after authorization. Retry this same upload job.'
+            : 'Upload is not available for this account right now. No wallet approval was requested.';
+    }
+    return code || 'Upload failed.';
 }
 
 function formatYoctoNear(value: string): string {

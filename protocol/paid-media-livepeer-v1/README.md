@@ -18,8 +18,8 @@ evidence; no Worker, web, staging or production runtime is enabled.
 - accepted source containers: MP4, MOV, AVI, WebM, WMV, MKV and FLV;
 - browser upload chunks: fixed `33_554_432` bytes (32 MiB), one sequential
   PATCH at a time; only the final PATCH may be smaller;
-- creator upload fee: `ceil(source_bytes / 1_000_000_000 * 300_000)` micro-USDC,
-  charged once when a new job is created;
+- creator upload fee: `max(500_000, ceil(source_bytes / 1_000_000_000 * 300_000))`
+  micro-USDC, charged once when a new job is created;
 - ticket minimum: `2_000_000` micro-USDC; larger integer micro-USDC values are
   allowed and the existing 98/2 creator/platform split is unchanged;
 - initial browser claim: desktop Chrome and desktop Edge only;
@@ -34,10 +34,9 @@ contract reject `20_000_000_001` before provider mutation. One exact decimal
 provider upload is neither required nor allowed.
 
 The 20 GB value is a per-file product limit, not a monthly source-byte quota.
-Monthly admission uses a separate provider-operation budget. Its production
-value is a D6 decision and the Worker fails closed while it is unset. Provider
-transcode, storage and delivery costs remain minute-based and are not used to
-add a duration fee to the creator's byte-based upload fee.
+Admission has no monthly operation cap. Provider transcode, storage and delivery
+costs remain minute-based and are not used to add a duration fee to the creator's
+byte-based upload fee.
 
 Upload is bound to the bridge-issued opaque TUS resource URL. The client reads
 `Upload-Offset` and `Upload-Length` with HEAD before resuming, never creates a
@@ -45,6 +44,12 @@ second asset for a retry, never retries a 409 blindly and never sends parallel
 PATCH requests to one resource. Pause, resume, reconciliation and a same-job
 retry do not charge again. A new job is a new charge. No automatic refund is
 defined.
+
+Before requesting wallet approval, the browser calls the non-mutating
+`/v1/upload-preflight` route. It checks the current creator allowlist and
+admission capacity with the same rules used by upload-intent reservation, but
+does not reserve capacity. The signed upload intent remains the authoritative
+post-payment check, so a same-job retry is required if availability changes.
 
 Creator upload authorization v2 uses one job-bound application Ed25519 key.
 The browser creates it before payment, stores its secret only under the exact

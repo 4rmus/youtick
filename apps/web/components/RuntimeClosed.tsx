@@ -7,8 +7,8 @@ export function RuntimeClosed() {
         <PageShell className="flex items-center justify-center">
             <ScreenState
                 icon={<Lock className="h-7 w-7" />}
-                title="Livepeer runtime is closed"
-                description="Publishing, discovery and playback stay disabled until the Livepeer release gates are approved."
+                title="Publishing is not open yet"
+                description="Video publishing, discovery and ticketed viewing will be available after launch."
             />
         </PageShell>
     );

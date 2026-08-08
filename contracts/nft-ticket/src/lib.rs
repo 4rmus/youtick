@@ -11,6 +11,7 @@ const MAINNET_USDC: &str = "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad
 const PROFILE: &str = "paid-media-livepeer-v1";
 const PAID_SOURCE_MAX_BYTES: u128 = 20_000_000_000;
 const MIN_TICKET_PRICE_USDC: u128 = 2_000_000;
+const MIN_UPLOAD_FEE_USDC: u128 = 500_000;
 const UPLOAD_FEE_NUMERATOR: u128 = 3;
 const UPLOAD_FEE_DENOMINATOR: u128 = 10_000;
 const FT_TRANSFER_GAS: Gas = Gas::from_tgas(20);
@@ -1173,6 +1174,7 @@ fn upload_fee_usdc(source_bytes: u128) -> u128 {
             .expect("Upload fee overflow"),
         UPLOAD_FEE_DENOMINATOR,
     )
+    .max(MIN_UPLOAD_FEE_USDC)
 }
 
 fn div_ceil(numerator: u128, denominator: u128) -> u128 {
