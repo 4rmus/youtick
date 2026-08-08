@@ -1181,6 +1181,7 @@ export async function deployRelease({
             await smokeFn(smokeInput(target, candidateWebUrl, {
                 bridgeUrl: candidateBridgeUrl,
                 expectedBridgeVersion: prepared.bridge.previous,
+                bridgeBootstrap: prepared.bridge.bootstrap,
             }));
             await smokeFn(smokeInput(target, candidateWebUrl, {
                 bridgeUrl: candidateBridgeUrl,
