@@ -231,13 +231,18 @@ const output = (entry) => fs.appendFileSync(
   JSON.stringify({ ...entry, timestamp: new Date(0).toISOString() }) + '\n',
 );
 const save = () => fs.writeFileSync(statePath, JSON.stringify(state));
-const failed = (code) => {
-  output({ type: 'command-failed', version: 1, code, message: 'fixture failure' });
+const failed = (code, message = 'fixture failure') => {
+  output({ type: 'command-failed', version: 1, ...(code === undefined ? {} : { code }), message });
   process.exit(1);
 };
 if (args[0] === 'deployments' && args[1] === 'status') {
+  const statusCode = state.statusFailures?.[worker];
+  if (statusCode) failed(statusCode);
+  if (state.noDeployments?.includes(worker)) {
+    failed(undefined, 'The Worker ' + worker + ' has no deployments.');
+  }
   const current = state.workers[worker];
-  if (!current) failed(10090);
+  if (!current) failed(10007);
   process.stdout.write(JSON.stringify({ versions: current.traffic }));
   process.exit(0);
 }
@@ -264,6 +269,7 @@ if (args[0] === 'versions' && args[1] === 'upload') {
 }
 if (args[0] === 'deploy') {
   const id = worker.includes('web') ? 'web-bootstrap' : 'bridge-bootstrap';
+  state.noDeployments = state.noDeployments?.filter((name) => name !== worker);
   state.workers[worker] = { traffic: [{ version_id: id, percentage: 100 }] };
   save();
   output({
@@ -282,6 +288,7 @@ if (args[0] === 'versions' && args[1] === 'deploy') {
       const [version_id, percentage] = entry.split('@');
       return { version_id, percentage: Number(percentage) };
     });
+  state.noDeployments = state.noDeployments?.filter((name) => name !== worker);
   state.workers[worker] = { traffic };
   save();
   output({ type: 'version-deploy', version: 1, worker_name: worker });
@@ -500,6 +507,44 @@ test('Bridge artifact writer emits the exact disabled release config once', asyn
     assert.doesNotMatch(text, /NEAR_RPC_URL|ALLOWED_ORIGINS|MARKET_CONTRACT_ID/);
     assert.equal(statSync(output).mode & 0o777, 0o600);
     await assert.rejects(writeBridgeArtifactWrangler(output), /EEXIST/);
+});
+
+test('a successful first upload without traffic is bootstrapped before its candidate', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, {
+        workers: {},
+        noDeployments: [TARGETS.preview.web.worker, TARGETS.preview.bridge.worker],
+        uploadFailures: {},
+    });
+    const receipt = await deployFixture(release, fake, async () => ({ ok: true }));
+
+    assert.equal(receipt.web.bootstrap, true);
+    assert.equal(receipt.bridge.bootstrap, true);
+    assert.equal(receipt.web.previousVersionId, 'web-bootstrap');
+    assert.equal(receipt.bridge.previousVersionId, 'bridge-bootstrap');
+    for (const worker of [TARGETS.preview.web.worker, TARGETS.preview.bridge.worker]) {
+        const bootstrapCalls = calls(fake).filter((args) => (
+            args.includes(worker)
+            && (args[0] === 'deploy' || (args[0] === 'versions' && args[1] === 'upload'))
+        ));
+        assert.deepEqual(bootstrapCalls.map((args) => (
+            args[0] === 'deploy' ? 'deploy' : 'versions upload'
+        )), ['versions upload', 'deploy', 'versions upload']);
+    }
+});
+
+test('an unverified deployment status fails before upload or deploy', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, {
+        workers: {},
+        statusFailures: { [TARGETS.preview.web.worker]: 10090 },
+        uploadFailures: {},
+    });
+
+    await assert.rejects(deployFixture(release, fake), /web_previous_deployment_unverified/);
+    assert.equal(calls(fake).some((args) => (
+        args[0] === 'deploy' || (args[0] === 'versions' && args[1] === 'upload')
+    )), false);
 });
 
 test('only structured error 10007 permits workers.dev bootstrap before safe domain attach', async (t) => {

@@ -532,6 +532,13 @@ function exactBootstrapFailure(result) {
     return result.code !== 0 && failures.length === 1 && failures[0].code === 10007;
 }
 
+function exactNoDeploymentsFailure(result, worker) {
+    const failures = result.events.filter((event) => event.type === 'command-failed');
+    return result.code !== 0 && failures.length === 1
+        && failures[0].code === undefined
+        && failures[0].message === `The Worker ${worker} has no deployments.`;
+}
+
 function outputEvent(result, type) {
     const events = result.events.filter((event) => event.type === type);
     if (result.code !== 0 || events.length !== 1) fail(`${type.replaceAll('-', '_')}_output_invalid`);
@@ -611,6 +618,9 @@ async function prepareComponent({ component, target, sha, run, args, bootstrapAl
         if (before.traffic.length !== 1 || before.traffic[0].percentage !== 100) {
             fail(`${component}_existing_deployment_not_stable`);
         }
+    } else if (!bootstrapAllowed || (!exactBootstrapFailure(before.result)
+        && !exactNoDeploymentsFailure(before.result, args.expected.worker))) {
+        fail(`${component}_previous_deployment_unverified`);
     }
 
     const uploadVersion = (message, allowFailure) => run([
@@ -620,19 +630,18 @@ async function prepareComponent({ component, target, sha, run, args, bootstrapAl
     const upload = await uploadVersion(`YouTick ${target} ${sha}`, true);
 
     if (upload.code === 0) {
-        if (!before.traffic) fail(`${component}_previous_deployment_unverified`);
         const event = outputEvent(upload, 'version-upload');
         if (event.worker_name !== args.expected.worker) fail(`${component}_uploaded_worker_invalid`);
-        return {
-            component,
-            previous: before.traffic[0].version,
-            candidate: versionId(event.version_id, component),
-            previewUrl: event.preview_url,
-            bootstrap: false,
-        };
-    }
-
-    if (!exactBootstrapFailure(upload) || before.traffic || !bootstrapAllowed) {
+        if (before.traffic) {
+            return {
+                component,
+                previous: before.traffic[0].version,
+                candidate: versionId(event.version_id, component),
+                previewUrl: event.preview_url,
+                bootstrap: false,
+            };
+        }
+    } else if (!exactBootstrapFailure(upload) || before.traffic || !bootstrapAllowed) {
         const code = upload.events.find((event) => event.type === 'command-failed')?.code ?? 'unknown';
         fail(`${component}_upload_failed_${code}`);
     }
