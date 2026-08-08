@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const VERSION_RE = /^[A-Za-z0-9-]+$/;
-const VERSION_IDENTITY_RETRY_DELAYS_MS = [0, 1_000, 2_000];
+const VERSION_IDENTITY_RETRY_DELAYS_MS = [0, 1_000, 2_000, 4_000, 8_000, 15_000];
 const BOOTSTRAP_HEALTH_RETRY_DELAYS_MS = [0, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 const BOOTSTRAP_PROPAGATION_STATUSES = new Set([404, 523]);
 const STABLE_HEADERS = [
@@ -144,6 +144,7 @@ async function bridgeHealth(
     const delays = bridgeBootstrap
         ? BOOTSTRAP_HEALTH_RETRY_DELAYS_MS
         : expectedVersion ? VERSION_IDENTITY_RETRY_DELAYS_MS : [0];
+    let observedVersion;
     for (let attempt = 0; attempt < delays.length; attempt += 1) {
         const delay = delays[attempt];
         if (delay) await sleepFn(delay);
@@ -163,9 +164,12 @@ async function bridgeHealth(
         if (!VERSION_RE.test(healthJson.versionId || '')) {
             throw new Error('release_smoke_bridge_version_invalid');
         }
+        observedVersion = healthJson.versionId;
         if (!expectedVersion || healthJson.versionId === expectedVersion) return healthJson;
     }
-    throw new Error('release_smoke_bridge_version_mismatch');
+    throw new Error(
+        `release_smoke_bridge_version_mismatch expected=${expectedVersion} observed=${observedVersion}`,
+    );
 }
 
 async function runChromeSmoke({ webUrl, headers }) {
