@@ -72,11 +72,11 @@ canlı market sonucu ile eşleştirilmelidir.
 4. Preview candidate sürümleri smoke edilir, ardından yüzde 100 terfi ettirilir.
 5. Production için Actions içinden `Dark Production` workflow'u tam SHA ve typed confirmation ile çalıştırılır.
 
-İlk Worker sürümü `versions upload` ile yaratılamaz. Otomasyon yalnız Cloudflare structured output'taki
-exact `10007` hatasında, custom domain bağlamadan `workers.dev` üzerinde bir defalık bootstrap deploy
-yapar ve smoke eder. Domain ancak smoke sonrasında, sabit zone/hostname/Worker üçlüsü boş veya exact
-eşleşiyorsa bağlanır. Bu run'ın yeni domain bağı sonraki adımda hata verirse geri kaldırılır; Worker ve
-Durable Object kaynağı otomatik silinmez. Diğer bütün hatalar fail-closed kalır.
+İlk aktif Worker deployment'ı yalnız `versions upload` ile kurulamaz. Otomasyon, deployment bulunmadığını
+exact `10007` veya sabit Worker adına bağlı `no deployments` sonucu ile doğruladıktan sonra bir defalık
+bootstrap deploy yapar. Bridge'in doğrulanmış ilk `v1` Durable Object migration'ı `versions upload`
+yapılmadan bu deploy ile uygulanır. Custom domain bootstrap smoke sonrasında bağlanır; yeni domain bağı sonraki adımda
+hata verirse geri kaldırılır. Worker ve Durable Object kaynağı otomatik silinmez; diğer hatalar fail-closed kalır.
 
 ## Smoke ve rollback
 

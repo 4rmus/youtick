@@ -627,23 +627,25 @@ async function prepareComponent({ component, target, sha, run, args, bootstrapAl
         'versions', 'upload', args.entry, ...args.uploadMode, ...args.base, ...args.vars, ...args.secrets,
         '--tag', sha, '--message', message,
     ], { cwd: dirname(args.config), allowFailure });
-    const upload = await uploadVersion(`YouTick ${target} ${sha}`, true);
+    if (component !== 'bridge' || before.traffic) {
+        const upload = await uploadVersion(`YouTick ${target} ${sha}`, true);
 
-    if (upload.code === 0) {
-        const event = outputEvent(upload, 'version-upload');
-        if (event.worker_name !== args.expected.worker) fail(`${component}_uploaded_worker_invalid`);
-        if (before.traffic) {
-            return {
-                component,
-                previous: before.traffic[0].version,
-                candidate: versionId(event.version_id, component),
-                previewUrl: event.preview_url,
-                bootstrap: false,
-            };
+        if (upload.code === 0) {
+            const event = outputEvent(upload, 'version-upload');
+            if (event.worker_name !== args.expected.worker) fail(`${component}_uploaded_worker_invalid`);
+            if (before.traffic) {
+                return {
+                    component,
+                    previous: before.traffic[0].version,
+                    candidate: versionId(event.version_id, component),
+                    previewUrl: event.preview_url,
+                    bootstrap: false,
+                };
+            }
+        } else if (!exactBootstrapFailure(upload) || before.traffic || !bootstrapAllowed) {
+            const code = upload.events.find((event) => event.type === 'command-failed')?.code ?? 'unknown';
+            fail(`${component}_upload_failed_${code}`);
         }
-    } else if (!exactBootstrapFailure(upload) || before.traffic || !bootstrapAllowed) {
-        const code = upload.events.find((event) => event.type === 'command-failed')?.code ?? 'unknown';
-        fail(`${component}_upload_failed_${code}`);
     }
     const deployed = await run([
         'deploy',

@@ -527,10 +527,127 @@ test('a successful first upload without traffic is bootstrapped before its candi
             args.includes(worker)
             && (args[0] === 'deploy' || (args[0] === 'versions' && args[1] === 'upload'))
         ));
+        const expectedCalls = worker.includes('bridge')
+            ? ['deploy', 'versions upload']
+            : ['versions upload', 'deploy', 'versions upload'];
         assert.deepEqual(bootstrapCalls.map((args) => (
             args[0] === 'deploy' ? 'deploy' : 'versions upload'
-        )), ['versions upload', 'deploy', 'versions upload']);
+        )), expectedCalls);
     }
+});
+
+test('a proven first Bridge deployment applies its Durable Object migration before candidate upload', async (t) => {
+    for (const [name, noDeployments] of [
+        ['missing Worker', []],
+        ['Worker without deployments', [TARGETS.preview.bridge.worker]],
+    ]) {
+        await t.test(name, async (subtest) => {
+            const release = makeRelease(subtest);
+            const fake = makeFakeWrangler(release, {
+                workers: {
+                    [TARGETS.preview.web.worker]: {
+                        traffic: [{ version_id: 'web-old', percentage: 100 }],
+                    },
+                },
+                noDeployments,
+                uploadFailures: {},
+            });
+
+            const receipt = await deployFixture(release, fake);
+
+            assert.equal(receipt.bridge.bootstrap, true);
+            assert.equal(receipt.bridge.previousVersionId, 'bridge-bootstrap');
+            assert.equal(receipt.bridge.versionId, 'bridge-new');
+            const bridgeMutations = calls(fake).filter((args) => (
+                args.includes(TARGETS.preview.bridge.worker)
+                && (args[0] === 'deploy' || (args[0] === 'versions' && args[1] === 'upload'))
+            ));
+            assert.deepEqual(bridgeMutations.map((args) => (
+                args[0] === 'deploy' ? 'deploy' : 'versions upload'
+            )), ['deploy', 'versions upload']);
+            const bootstrap = bridgeMutations[0];
+            assert.ok(bootstrap.includes('--no-bundle'));
+            assert.ok(bootstrap.includes('LIVEPEER_BRIDGE_ENABLED:false'));
+            assert.ok(bootstrap.includes('LIVEPEER_NEAR_CREATOR_FEE_ENABLED:false'));
+            assert.ok(!bootstrap.includes('--domain'));
+        });
+    }
+});
+
+test('Durable Object bootstrap fallback is limited to a proven first Bridge deployment', async (t) => {
+    await t.test('stable Bridge traffic never falls back to deploy', async (subtest) => {
+        const release = makeRelease(subtest);
+        const fake = makeFakeWrangler(release, {
+            workers: {
+                [TARGETS.preview.web.worker]: {
+                    traffic: [{ version_id: 'web-old', percentage: 100 }],
+                },
+                [TARGETS.preview.bridge.worker]: {
+                    traffic: [{ version_id: 'bridge-old', percentage: 100 }],
+                },
+            },
+            uploadFailures: { [TARGETS.preview.bridge.worker]: 10211 },
+        });
+
+        await assert.rejects(deployFixture(release, fake), /bridge_upload_failed_10211/);
+        assert.equal(calls(fake).filter((args) => args[0] === 'deploy').length, 0);
+    });
+
+    await t.test('Web never treats 10211 as a bootstrap signal', async (subtest) => {
+        const release = makeRelease(subtest);
+        const fake = makeFakeWrangler(release, {
+            workers: {},
+            uploadFailures: { [TARGETS.preview.web.worker]: 10211 },
+        });
+
+        await assert.rejects(deployFixture(release, fake), /web_upload_failed_10211/);
+        assert.equal(calls(fake).filter((args) => args[0] === 'deploy').length, 0);
+    });
+
+    await t.test('a candidate upload error never triggers a second Bridge deploy', async (subtest) => {
+        const release = makeRelease(subtest);
+        const fake = makeFakeWrangler(release, {
+            workers: {
+                [TARGETS.preview.web.worker]: {
+                    traffic: [{ version_id: 'web-old', percentage: 100 }],
+                },
+            },
+            uploadFailures: { [TARGETS.preview.bridge.worker]: 10212 },
+        });
+
+        await assert.rejects(deployFixture(release, fake), /wrangler_command_failed/);
+        assert.equal(calls(fake).filter((args) => args[0] === 'deploy').length, 1);
+        const state = JSON.parse(readFileSync(fake.statePath, 'utf8'));
+        assert.deepEqual(state.workers[TARGETS.preview.bridge.worker].traffic, [
+            { version_id: 'bridge-bootstrap', percentage: 100 },
+        ]);
+        assert.equal(state.domains[TARGETS.preview.bridge.domain], undefined);
+    });
+});
+
+test('a failed first Bridge candidate resumes from its bootstrap without another direct deploy', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, {
+        workers: {
+            [TARGETS.preview.web.worker]: {
+                traffic: [{ version_id: 'web-old', percentage: 100 }],
+            },
+        },
+        domains: {},
+        uploadFailures: { [TARGETS.preview.bridge.worker]: 10212 },
+    });
+
+    await assert.rejects(deployFixture(release, fake), /wrangler_command_failed/);
+    const receipt = await deployFixture(release, fake);
+
+    assert.equal(receipt.bridge.bootstrap, false);
+    assert.equal(receipt.bridge.previousVersionId, 'bridge-bootstrap');
+    assert.equal(calls(fake).filter((args) => (
+        args[0] === 'deploy' && args.includes(TARGETS.preview.bridge.worker)
+    )).length, 1);
+    const state = JSON.parse(readFileSync(fake.statePath, 'utf8'));
+    assert.equal(state.domains[TARGETS.preview.web.domain].service, TARGETS.preview.web.worker);
+    assert.equal(state.domains[TARGETS.preview.bridge.domain].service, TARGETS.preview.bridge.worker);
 });
 
 test('an unverified deployment status fails before upload or deploy', async (t) => {
@@ -547,13 +664,30 @@ test('an unverified deployment status fails before upload or deploy', async (t) 
     )), false);
 });
 
+test('an unverified Bridge status cannot enter the direct bootstrap path', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, {
+        workers: {
+            [TARGETS.preview.web.worker]: {
+                traffic: [{ version_id: 'web-old', percentage: 100 }],
+            },
+        },
+        statusFailures: { [TARGETS.preview.bridge.worker]: 10090 },
+        uploadFailures: {},
+    });
+
+    await assert.rejects(deployFixture(release, fake), /bridge_previous_deployment_unverified/);
+    assert.equal(calls(fake).some((args) => (
+        args[0] === 'deploy' && args.includes(TARGETS.preview.bridge.worker)
+    )), false);
+});
+
 test('only structured error 10007 permits workers.dev bootstrap before safe domain attach', async (t) => {
     const release = makeRelease(t);
     const fake = makeFakeWrangler(release, {
         workers: {},
         uploadFailures: {
             [TARGETS.preview.web.worker]: 10007,
-            [TARGETS.preview.bridge.worker]: 10007,
         },
     });
     const smokeInputs = [];
@@ -587,7 +721,7 @@ test('only structured error 10007 permits workers.dev bootstrap before safe doma
         args.includes(TARGETS.preview.bridge.worker)
         && (args[0] === 'deploy' || (args[0] === 'versions' && args[1] === 'upload'))
     ));
-    assert.equal(secretCommands.length, 3);
+    assert.equal(secretCommands.length, 2);
     assert.ok(secretCommands.every((args) => args.includes('--secrets-file')));
     assert.ok(calls(fake).filter((args) => args.includes(TARGETS.preview.web.worker))
         .every((args) => !args.includes('--secrets-file')));
@@ -618,7 +752,6 @@ test('a Domains API response may omit its deprecated environment field', async (
         workers: {},
         uploadFailures: {
             [TARGETS.preview.web.worker]: 10007,
-            [TARGETS.preview.bridge.worker]: 10007,
         },
         omitDomainEnvironment: true,
     });
@@ -872,7 +1005,6 @@ test('a partial first domain attach is detached before the failed release return
         workers: {},
         uploadFailures: {
             [TARGETS.preview.web.worker]: 10007,
-            [TARGETS.preview.bridge.worker]: 10007,
         },
         failAttachService: TARGETS.preview.web.worker,
     });
@@ -890,7 +1022,6 @@ test('a committed domain with a lost PUT response is reconciled and later detach
         workers: {},
         uploadFailures: {
             [TARGETS.preview.web.worker]: 10007,
-            [TARGETS.preview.bridge.worker]: 10007,
         },
         commitThenThrowService: TARGETS.preview.bridge.worker,
         failAttachService: TARGETS.preview.web.worker,
@@ -911,7 +1042,6 @@ test('production bootstrap creates v1 previous and promotes v2 with rollback pro
         workers: {},
         uploadFailures: {
             [TARGETS.production.web.worker]: 10007,
-            [TARGETS.production.bridge.worker]: 10007,
         },
     });
     const receipt = await deployFixture(
@@ -960,7 +1090,6 @@ test('bootstrap fails before attach when Web v2 has no preview URL', async (t) =
         workers: {},
         uploadFailures: {
             [TARGETS.preview.web.worker]: 10007,
-            [TARGETS.preview.bridge.worker]: 10007,
         },
         omitWebPreview: true,
     });
@@ -975,7 +1104,6 @@ test('Web v2 preview URL must match the candidate, worker, and account', async (
         workers: {},
         uploadFailures: {
             [TARGETS.preview.web.worker]: 10007,
-            [TARGETS.preview.bridge.worker]: 10007,
         },
         badWebPreview: 'https://web-new-another-worker.account.workers.dev',
     });
