@@ -3,7 +3,7 @@ import type { NextConfig } from 'next';
 const isDevelopment = process.env.NODE_ENV !== 'production';
 const csp = [
     "default-src 'self'",
-    `script-src 'self' 'unsafe-inline'${isDevelopment ? " 'unsafe-eval'" : ''}`,
+    `script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com/beacon.min.js${isDevelopment ? " 'unsafe-eval'" : ''}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
