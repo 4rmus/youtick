@@ -309,7 +309,7 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
     }
 });
 
-test('release smoke rejects an override that still serves the old Bridge version', async () => {
+test('release smoke bounds and diagnoses override version propagation', async () => {
     const delays = [];
     let healthRequests = 0;
     const fetchImpl = async (value) => {
@@ -342,7 +342,7 @@ test('release smoke rejects an override that still serves the old Bridge version
         fetchImpl,
         browserRunner: async () => ({ channel: 'fixture', routes: ['/', '/tr'] }),
         sleepFn: async (milliseconds) => delays.push(milliseconds),
-    }), /release_smoke_bridge_version_mismatch/);
-    assert.equal(healthRequests, 3);
-    assert.deepEqual(delays, [1_000, 2_000]);
+    }), /release_smoke_bridge_version_mismatch expected=bridge-candidate observed=bridge-old/);
+    assert.equal(healthRequests, 6);
+    assert.deepEqual(delays, [1_000, 2_000, 4_000, 8_000, 15_000]);
 });
