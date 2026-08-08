@@ -134,7 +134,7 @@ function validateOneClickApiKey(value, required) {
         if (required) fail('oneclick_api_key_missing');
         return null;
     }
-    if (typeof value !== 'string' || value.length < 16 || value.length > 512 || value !== value.trim()
+    if (typeof value !== 'string' || value.length < 16 || value.length > 4096 || value !== value.trim()
         || /\s/u.test(value) || /\p{Cc}/u.test(value) || RPC_PLACEHOLDER_RE.test(value)) {
         fail('oneclick_api_key_invalid');
     }

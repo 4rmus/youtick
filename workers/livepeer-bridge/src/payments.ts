@@ -642,7 +642,7 @@ function validStatusConfig(env: PaymentEnv): boolean {
     return Boolean(env.LIVEPEER_CONTROL)
         && typeof env.ONECLICK_API_KEY === 'string'
         && env.ONECLICK_API_KEY.length >= 16
-        && env.ONECLICK_API_KEY.length <= 512
+        && env.ONECLICK_API_KEY.length <= 4096
         && !/\s/u.test(env.ONECLICK_API_KEY);
 }
 
