@@ -8,7 +8,14 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { MultiAssetPaymentPanel } from '@/components/MultiAssetPaymentPanel';
 import { FEATURE_FLAGS } from '@/lib/constants';
+import {
+    loadActivePaymentCheckout,
+    multiAssetPaymentsEnabled,
+    updateActivePaymentCheckoutState,
+    verifyConvertedUsdcReady,
+} from '@/lib/multi-asset-payments';
 import { readLivepeerMediaJob, readLivepeerPublication } from '@/lib/livepeer-publication';
 import {
     authorizeLivepeerPaidJob,
@@ -167,7 +174,9 @@ export function LivepeerPaidUploadForm() {
                 expectedSourceBytes: file.size,
                 gasReserveYocto: configuredCreatorFeeGasReserveYocto(),
             });
-            if (!options.selected) throw new Error('creator_fee_balance_or_gas_insufficient');
+            if (!options.selected && !multiAssetPaymentsEnabled) {
+                throw new Error('creator_fee_balance_or_gas_insufficient');
+            }
             setPayment(options);
             setPaymentAsset(options.selected);
             setUploadStage('payment_ready');
@@ -187,6 +196,7 @@ export function LivepeerPaidUploadForm() {
         setFailedStep(null);
         let activeStep = 1;
         let availabilityConfirmed = false;
+        let convertedCheckout = false;
         try {
             const source = validateLivepeerSourceFile(file);
             if (!source.ok) throw new Error(source.error);
@@ -216,7 +226,35 @@ export function LivepeerPaidUploadForm() {
             availabilityConfirmed = true;
             setStatus('Authorizing the paid job…');
             const wallet = await getWallet();
-            await authorizeLivepeerPaidJob(wallet, {
+            const conversionExpectation = {
+                purpose: { type: 'upload' as const, expected_source_bytes: String(file.size) },
+                requiredUsdcMicro: payment.usdcFee,
+            };
+            const activeCheckout = paymentAsset === 'USDC'
+                ? loadActivePaymentCheckout(accountId)
+                : null;
+            const matchingCheckout = activeCheckout
+                && activeCheckout.required_usdc_micro === payment.usdcFee
+                && activeCheckout.quote.purpose.type === 'upload'
+                && activeCheckout.quote.purpose.expected_source_bytes === String(file.size)
+                ? activeCheckout
+                : null;
+            if (matchingCheckout?.state === 'usdc_final') {
+                const ready = await verifyConvertedUsdcReady({
+                    accountId,
+                    requiredUsdcMicro: payment.usdcFee,
+                    status: 'SUCCESS',
+                });
+                if (!ready) throw new Error('payment_converted_usdc_not_ready');
+                convertedCheckout = updateActivePaymentCheckoutState(
+                    accountId,
+                    conversionExpectation,
+                    'core_pending',
+                ) !== null;
+            } else if (matchingCheckout?.state === 'core_pending') {
+                convertedCheckout = true;
+            }
+            const uploadPublicKey = await authorizeLivepeerPaidJob(wallet, {
                 accountId,
                 jobId,
                 title: title.trim(),
@@ -225,6 +263,12 @@ export function LivepeerPaidUploadForm() {
                 asset: paymentAsset,
                 nearQuote: payment.nearQuote,
             });
+            setStatus('Waiting for the payment to finalize…');
+            await waitForAuthorizedLivepeerJob(jobId, accountId, uploadPublicKey);
+            if (convertedCheckout) {
+                updateActivePaymentCheckoutState(accountId, conversionExpectation, 'complete');
+                convertedCheckout = false;
+            }
             activeStep = 2;
             setUploadStage('upload');
             setUploadProgress(0);
@@ -247,6 +291,12 @@ export function LivepeerPaidUploadForm() {
             setUploadStage('processing');
             setStatus('Livepeer is processing the upload…');
         } catch (reason) {
+            if (convertedCheckout && accountId && file && payment) {
+                updateActivePaymentCheckoutState(accountId, {
+                    purpose: { type: 'upload', expected_source_bytes: String(file.size) },
+                    requiredUsdcMicro: payment.usdcFee,
+                }, 'usdc_final');
+            }
             setFailedStep(activeStep);
             setStatus(null);
             setError(uploadErrorMessage(reason, availabilityConfirmed));
@@ -313,11 +363,21 @@ export function LivepeerPaidUploadForm() {
                             {payment.usable.map((asset) => (
                                 <label key={asset} className="flex items-center gap-2">
                                     <input type="radio" name="creator-fee" checked={paymentAsset === asset} disabled={busy} onChange={() => setPaymentAsset(asset)} />
-                                    <span>{asset === 'USDC' ? `${formatMicroUsdc(payment.usdcFee)} USDC` : `${formatYoctoNear(payment.nearQuote!.quote.fee_near_yocto)} NEAR`}</span>
+                                    <span>{asset === 'USDC' ? `${formatMicroUsdc(payment.usdcFee)} USDC · 1 payment approval` : `${formatYoctoNear(payment.nearQuote!.quote.fee_near_yocto)} NEAR · 1 payment approval`}</span>
                                 </label>
                             ))}
                             {FEATURE_FLAGS.enableLivepeerNearCreatorFee && !payment.nearQuote && <p className="text-xs text-zinc-400">NEAR payment is unavailable; USDC remains available.</p>}
                         </div>
+                    )}
+                    {accountId && jobId && file && !fileError && (
+                        <MultiAssetPaymentPanel
+                            accountId={accountId}
+                            getWallet={getWallet}
+                            purpose={{ type: 'upload', expected_source_bytes: String(file.size) }}
+                            requiredUsdcMicro={livepeerUploadFeeUsdc(file.size)}
+                            disabled={busy}
+                            onUsdcReady={() => void preparePayment()}
+                        />
                     )}
 
                     {file && !fileError && (
@@ -368,7 +428,7 @@ export function LivepeerPaidUploadForm() {
                     ) : !payment ? (
                         <Button className="w-full" disabled={!formReady || busy} onClick={() => void preparePayment()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Check payment options</Button>
                     ) : (
-                        <Button className="w-full" disabled={!formReady || busy} onClick={() => void start()}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />} Upload</Button>
+                        <Button className="w-full" disabled={!formReady || busy || !paymentAsset} onClick={() => void start()}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />} Pay and upload</Button>
                     )}
                     {status && <p role="status" className="text-sm text-zinc-400">{status}</p>}
                     {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
@@ -376,6 +436,25 @@ export function LivepeerPaidUploadForm() {
             </Card>
         </div>
     );
+}
+
+async function waitForAuthorizedLivepeerJob(
+    jobId: string,
+    accountId: string,
+    uploadPublicKey: string,
+): Promise<void> {
+    for (const delay of [0, 1_000, 2_000, 4_000, 8_000]) {
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        try {
+            const job = await readLivepeerMediaJob(jobId);
+            if (job
+                && job.creator_id === accountId
+                && job.upload_public_key === uploadPublicKey) return;
+        } catch {
+            // Final state can lag briefly after the wallet returns.
+        }
+    }
+    throw new Error('livepeer_job_pending');
 }
 
 function formatMicroUsdc(value: string): string {
@@ -396,6 +475,12 @@ function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): st
         return availabilityConfirmed
             ? 'Upload availability changed after authorization. Retry this same upload job.'
             : 'Upload is not available for this account right now. No wallet approval was requested.';
+    }
+    if (code === 'livepeer_job_pending') {
+        return 'The payment was sent, but the exact upload key is still finalizing. Retry this upload job.';
+    }
+    if (code === 'payment_converted_usdc_not_ready') {
+        return 'The converted USDC balance or NEAR gas reserve is no longer sufficient.';
     }
     return code || 'Upload failed.';
 }

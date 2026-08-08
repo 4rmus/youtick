@@ -215,6 +215,7 @@ fn creator_upload_fee_uses_exact_bytes_and_replay_is_refunded() {
         );
         assert!(matches!(first, PromiseOrValue::Value(U128(0))));
         assert_eq!(contract.get_platform_balance(), U128(expected_fee));
+        let job_before_replay = contract.get_media_job(job_id.clone()).unwrap();
 
         let replay = create_job_with(
             &mut contract,
@@ -225,6 +226,10 @@ fn creator_upload_fee_uses_exact_bytes_and_replay_is_refunded() {
         );
         assert!(matches!(replay, PromiseOrValue::Value(U128(value)) if value == expected_fee));
         assert_eq!(contract.get_platform_balance(), U128(expected_fee));
+        assert_eq!(
+            contract.get_media_job(job_id.clone()).unwrap(),
+            job_before_replay
+        );
 
         let new_job = create_job_with(
             &mut contract,
@@ -236,6 +241,57 @@ fn creator_upload_fee_uses_exact_bytes_and_replay_is_refunded() {
         assert!(matches!(new_job, PromiseOrValue::Value(U128(0))));
         assert_eq!(contract.get_platform_balance(), U128(expected_fee * 2));
     }
+}
+
+#[test]
+fn ft_sender_is_authoritative_for_creator_and_buyer_rights() {
+    let mut contract = contract();
+    testing_env!(context(TESTNET_USDC).build());
+    let created = contract.ft_on_transfer(
+        account("actual-creator.testnet"),
+        U128(500_000),
+        near_sdk::serde_json::json!({
+            "action": "create_paid_job",
+            "creator_id": "claimed-creator.testnet",
+            "job_id": "job-sender",
+            "title": "Paid video",
+            "price_usdc": "2000000",
+            "expected_source_bytes": "1000000",
+            "profile_id": PROFILE,
+            "profile_config_sha256": PROFILE_HASH,
+            "upload_public_key": UPLOAD_KEY,
+            "upload_key_expires_at_ms": "1785589900000",
+        })
+        .to_string(),
+    );
+    assert!(matches!(created, PromiseOrValue::Value(U128(0))));
+    assert_eq!(
+        contract
+            .get_media_job("job-sender".to_string())
+            .unwrap()
+            .creator_id,
+        account("actual-creator.testnet")
+    );
+
+    finalize(
+        &mut contract,
+        "job-sender",
+        1,
+        "actual-creator.testnet",
+        ASSET_HASH,
+        "playback_sender",
+    );
+    testing_env!(context(TESTNET_USDC).build());
+    let purchased = contract.ft_on_transfer(
+        account("actual-buyer.testnet"),
+        U128(2_000_000),
+        r#"{"action":"buy_ticket","publication_id":"job-sender","buyer_id":"claimed-buyer.testnet"}"#
+            .to_string(),
+    );
+    assert!(matches!(purchased, PromiseOrValue::Value(U128(0))));
+    assert!(contract.has_entitlement(account("actual-buyer.testnet"), "job-sender".to_string()));
+    assert!(!contract.has_entitlement(account("claimed-buyer.testnet"), "job-sender".to_string()));
+    assert!(!contract.has_entitlement(account("claimed-creator.testnet"), "job-sender".to_string()));
 }
 
 #[test]
@@ -571,7 +627,7 @@ fn asset_and_playback_identities_are_global() {
 }
 
 #[test]
-fn sales_suspension_refunds_new_purchase_and_keeps_entitlement() {
+fn rejected_ticket_payments_refund_without_mutating_ledger() {
     let mut contract = contract();
     create_job(&mut contract, "job-1", "creator.testnet");
     finalize(
@@ -584,12 +640,43 @@ fn sales_suspension_refunds_new_purchase_and_keeps_entitlement() {
     );
 
     testing_env!(context(TESTNET_USDC).build());
+    let upload_balance = contract.get_platform_balance();
+    let wrong_amount = contract.ft_on_transfer(
+        account("wrong-amount.testnet"),
+        U128(1_999_999),
+        r#"{"publication_id":"job-1"}"#.to_string(),
+    );
+    assert!(matches!(
+        wrong_amount,
+        PromiseOrValue::Value(U128(1_999_999))
+    ));
+    assert_eq!(contract.get_platform_balance(), upload_balance);
+    assert_eq!(
+        contract.get_creator_balance(account("creator.testnet")),
+        U128(0)
+    );
+    assert!(!contract.has_entitlement(account("wrong-amount.testnet"), "job-1".to_string()));
+
     let accepted = contract.ft_on_transfer(
         account("buyer.testnet"),
         U128(2_000_000),
         r#"{"publication_id":"job-1"}"#.to_string(),
     );
     assert!(matches!(accepted, PromiseOrValue::Value(U128(0))));
+    let platform_after_purchase = contract.get_platform_balance();
+    let creator_after_purchase = contract.get_creator_balance(account("creator.testnet"));
+
+    let duplicate = contract.ft_on_transfer(
+        account("buyer.testnet"),
+        U128(2_000_000),
+        r#"{"publication_id":"job-1"}"#.to_string(),
+    );
+    assert!(matches!(duplicate, PromiseOrValue::Value(U128(2_000_000))));
+    assert_eq!(contract.get_platform_balance(), platform_after_purchase);
+    assert_eq!(
+        contract.get_creator_balance(account("creator.testnet")),
+        creator_after_purchase
+    );
 
     testing_env!(context("bridge.testnet").build());
     contract.suspend_livepeer_sales("job-1".to_string());
@@ -613,7 +700,13 @@ fn sales_suspension_refunds_new_purchase_and_keeps_entitlement() {
         r#"{"publication_id":"job-1"}"#.to_string(),
     );
     assert!(matches!(refunded, PromiseOrValue::Value(U128(2_000_000))));
+    assert_eq!(contract.get_platform_balance(), platform_after_purchase);
+    assert_eq!(
+        contract.get_creator_balance(account("creator.testnet")),
+        creator_after_purchase
+    );
     assert!(contract.has_entitlement(account("buyer.testnet"), "job-1".to_string()));
+    assert!(!contract.has_entitlement(account("second-buyer.testnet"), "job-1".to_string()));
 }
 
 #[test]

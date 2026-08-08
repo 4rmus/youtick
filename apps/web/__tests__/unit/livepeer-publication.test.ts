@@ -117,12 +117,19 @@ describe('Livepeer publication UI boundary', () => {
 
     it('reads processing state and direct publication pages', async () => {
         state.viewContract
-            .mockResolvedValueOnce({ job_id: 'job-001', status: 'Authorized' })
+            .mockResolvedValueOnce({
+                job_id: 'job-001',
+                creator_id: 'creator.testnet',
+                status: 'Authorized',
+                upload_public_key: 'ed25519:11111111111111111111111111111111',
+            })
             .mockResolvedValueOnce([PUBLICATION]);
 
         await expect(readLivepeerMediaJob('job-001')).resolves.toEqual({
             job_id: 'job-001',
+            creator_id: 'creator.testnet',
             status: 'Authorized',
+            upload_public_key: 'ed25519:11111111111111111111111111111111',
         });
         await expect(readLivepeerPublications(0, 24)).resolves.toEqual([PUBLICATION]);
         expect(state.viewContract).toHaveBeenLastCalledWith(

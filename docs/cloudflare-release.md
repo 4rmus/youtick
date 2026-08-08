@@ -20,6 +20,7 @@ Bu akış yalnız dark Preview/Production hedeflerini yönetir. `youtick.net`, N
 - Environment variable: `CLOUDFLARE_ZONE_ID`
 - Environment secret: `CLOUDFLARE_API_TOKEN`
 - Environment secret: `NEAR_RPC_URL`
+- Environment secret: `ONECLICK_API_KEY`
 
 İki environment yalnız korumalı branch'lerden deployment kabul etmelidir. Token'lar ortam bazlı;
 Workers Scripts Read/Write ve `youtick.net` zone'u için Workers Routes Read yetkileriyle sınırlı
@@ -35,6 +36,8 @@ değişkenler:
 - `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_LIVEPEER_BRIDGE_URL`
 - `NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1=false`
 - `NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE=false`
+- `NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE=off`
+- `NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO`
 - `ALLOWED_ORIGINS`, `NEAR_NETWORK`, `MARKET_CONTRACT_ID`, `ACCESS_CONTRACT_ID`
 - `LIVEPEER_PROJECT_ID`, `LIVEPEER_API_TOKEN_NAME`, `LIVEPEER_PAID_MEDIA_OPERATOR_ID`
 - `LIVEPEER_JWT_PUBLIC_KEY`, `LIVEPEER_JWT_ISSUER`
@@ -42,12 +45,22 @@ değişkenler:
 - `CREATOR_FEE_QUOTE_KEY_VERSION`
 - `LIVEPEER_BRIDGE_ENABLED=false`
 - `LIVEPEER_NEAR_CREATOR_FEE_ENABLED=false`
+- `MULTI_ASSET_PAYMENTS_MODE=off`
+- `MULTI_ASSET_PAYMENT_ASSET_IDS`
 
 USDC, creator allowlist, ücret rezervi ve operasyon bütçesi değişkenleri opsiyoneldir. Placeholder,
 `localhost`, `workers.dev`, kök `youtick.net` hedefi ve açık feature flag build öncesinde reddedilir.
 `NEAR_RPC_URL` zorunlu environment secret'ıdır; artifact/config/manifest içine yazılmaz ve yalnız
 Bridge version upload sırasında geçici `0600` secrets file üzerinden Wrangler'a aktarılır. Eksik,
 placeholder/example, genel public NEAR RPC, HTTP, credentials veya whitespace içeren değer reddedilir.
+
+Preview ortamı çoklu ödeme için yalnız `off` veya `preview` kabul eder;
+Production bu kod diliminde yalnız `off` kabul eder. Web ve Bridge modları aynı
+olmalıdır. `ONECLICK_API_KEY` veya pozitif ödeme gaz rezervi eksikse Cloudflare
+mutasyonu başlamadan işlem durur. Bu değerler `off` modunda da önceden başlamış
+dönüşümlerin status/refund ve final USDC kontrolleri için korunur.
+Mainnet dry quote açılmadan önce web/Bridge network ve Circle USDC kimlikleri
+canlı market sonucu ile eşleştirilmelidir.
 
 ## Akış
 

@@ -60,6 +60,8 @@ const BRIDGE_PUBLIC_KEYS = Object.freeze([
     'LIVEPEER_JWT_PUBLIC_KEY',
     'LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS',
     'LIVEPEER_NEAR_CREATOR_FEE_ENABLED',
+    'MULTI_ASSET_PAYMENTS_MODE',
+    'MULTI_ASSET_PAYMENT_ASSET_IDS',
     'LIVEPEER_PAID_MEDIA_OPERATOR_ID',
     'LIVEPEER_PROJECT_ID',
     'MARKET_CONTRACT_ID',
@@ -74,6 +76,31 @@ const FALSE_FLAGS = Object.freeze([
     ['bridge', 'LIVEPEER_BRIDGE_ENABLED'],
     ['bridge', 'LIVEPEER_NEAR_CREATOR_FEE_ENABLED'],
 ]);
+
+const BRIDGE_ARTIFACT_WRANGLER = [
+    'name = "youtick-livepeer-bridge"',
+    'main = "src/index.ts"',
+    'compatibility_date = "2024-09-23"',
+    'compatibility_flags = ["nodejs_compat"]',
+    '',
+    '[vars]',
+    'LIVEPEER_BRIDGE_ENABLED = "false"',
+    'LIVEPEER_NEAR_CREATOR_FEE_ENABLED = "false"',
+    'MULTI_ASSET_PAYMENTS_MODE = "off"',
+    'MULTI_ASSET_PAYMENT_ASSET_IDS = ""',
+    '',
+    '[version_metadata]',
+    'binding = "CF_VERSION_METADATA"',
+    '',
+    '[[durable_objects.bindings]]',
+    'name = "LIVEPEER_CONTROL"',
+    'class_name = "LivepeerControl"',
+    '',
+    '[[migrations]]',
+    'tag = "v1"',
+    'new_sqlite_classes = ["LivepeerControl"]',
+    '',
+].join('\n');
 
 function fail(message) {
     throw new Error(`cloudflare_release_${message}`);
@@ -98,6 +125,18 @@ function validateNearRpcUrl(value) {
         || hostname.endsWith('.example') || hostname.endsWith('.invalid')
         || GENERIC_NEAR_RPC_HOSTS.has(hostname)) {
         fail('near_rpc_url_invalid');
+    }
+    return value;
+}
+
+function validateOneClickApiKey(value, required) {
+    if (!value) {
+        if (required) fail('oneclick_api_key_missing');
+        return null;
+    }
+    if (typeof value !== 'string' || value.length < 16 || value.length > 512 || value !== value.trim()
+        || /\s/u.test(value) || /\p{Cc}/u.test(value) || RPC_PLACEHOLDER_RE.test(value)) {
+        fail('oneclick_api_key_invalid');
     }
     return value;
 }
@@ -227,6 +266,12 @@ async function readRelease(artifactDir, target, sha) {
     for (const [section, flag] of FALSE_FLAGS) {
         if (config[section]?.[flag] !== 'false') fail(`${flag.toLowerCase()}_not_false`);
     }
+    const paymentMode = config.web?.NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE;
+    if (paymentMode !== config.bridge?.MULTI_ASSET_PAYMENTS_MODE
+        || !['off', 'preview'].includes(paymentMode)
+        || (target === 'production' && paymentMode !== 'off')) {
+        fail('multi_asset_payments_mode_invalid');
+    }
     assertExactKeys(config.bridge, BRIDGE_PUBLIC_KEYS, 'bridge_public_config');
     for (const [key, value] of Object.entries(config.bridge)) {
         if (typeof value !== 'string' || /[\0\r\n]/.test(value)) fail(`bridge_var_${key.toLowerCase()}_invalid`);
@@ -279,30 +324,12 @@ async function validateWebWrangler(configPath, extractedRoot, target) {
 
 async function validateBridgeWrangler(configPath, extractedRoot) {
     const text = await readFile(configPath, 'utf8');
-    const expected = [
-        'name = "youtick-livepeer-bridge"',
-        'main = "src/index.ts"',
-        'compatibility_date = "2024-09-23"',
-        'compatibility_flags = ["nodejs_compat"]',
-        '',
-        '[vars]',
-        'LIVEPEER_BRIDGE_ENABLED = "false"',
-        'LIVEPEER_NEAR_CREATOR_FEE_ENABLED = "false"',
-        '',
-        '[version_metadata]',
-        'binding = "CF_VERSION_METADATA"',
-        '',
-        '[[durable_objects.bindings]]',
-        'name = "LIVEPEER_CONTROL"',
-        'class_name = "LivepeerControl"',
-        '',
-        '[[migrations]]',
-        'tag = "v1"',
-        'new_sqlite_classes = ["LivepeerControl"]',
-        '',
-    ].join('\n');
-    if (text !== expected) fail('bridge_wrangler_config_invalid');
+    if (text !== BRIDGE_ARTIFACT_WRANGLER) fail('bridge_wrangler_config_invalid');
     await assertRegularFile(join(extractedRoot, 'index.js'), 'bridge_worker');
+}
+
+export async function writeBridgeArtifactWrangler(outputPath) {
+    await writeFile(resolve(outputPath), BRIDGE_ARTIFACT_WRANGLER, { flag: 'wx', mode: 0o600 });
 }
 
 async function writeSanitizedConfigs(extracted, target) {
@@ -329,6 +356,8 @@ async function writeSanitizedConfigs(extracted, target) {
         '[vars]',
         'LIVEPEER_BRIDGE_ENABLED = "false"',
         'LIVEPEER_NEAR_CREATOR_FEE_ENABLED = "false"',
+        'MULTI_ASSET_PAYMENTS_MODE = "off"',
+        'MULTI_ASSET_PAYMENT_ASSET_IDS = ""',
         '',
         '[version_metadata]',
         'binding = "CF_VERSION_METADATA"',
@@ -477,6 +506,7 @@ async function makeWranglerRunner(binary, tempRoot, { echo, label }) {
             WRANGLER_SEND_METRICS: 'false',
         };
         delete childEnvironment.NEAR_RPC_URL;
+        delete childEnvironment.ONECLICK_API_KEY;
         const result = await runProcess(binary, args, {
             cwd,
             echo,
@@ -1030,6 +1060,7 @@ export async function deployRelease({
     cloudflareApiToken = process.env.CLOUDFLARE_API_TOKEN,
     cloudflareZoneId = process.env.CLOUDFLARE_ZONE_ID,
     nearRpcUrl: nearRpcUrlValue = process.env.NEAR_RPC_URL,
+    oneClickApiKey: oneClickApiKeyValue = process.env.ONECLICK_API_KEY,
 } = {}) {
     if (!Object.hasOwn(TARGETS, target)) fail('target_invalid');
     if (!GIT_SHA_RE.test(sha || '')) fail('sha_invalid');
@@ -1039,13 +1070,17 @@ export async function deployRelease({
     const receiptOutput = resolve(receiptValue || '');
     const repoRoot = await realpath(resolve(repoValue));
     const release = await readRelease(artifactDir, target, sha);
+    const oneClickApiKey = validateOneClickApiKey(oneClickApiKeyValue, true);
 
     const tempRoot = await mkdtemp(join(tmpdir(), 'youtick-cloudflare-release-'));
     try {
         const bridgeSecretsFile = join(tempRoot, 'bridge-secrets.json');
         await writeFile(
             bridgeSecretsFile,
-            canonicalJson({ NEAR_RPC_URL: nearRpcUrl }),
+            canonicalJson({
+                NEAR_RPC_URL: nearRpcUrl,
+                ...(oneClickApiKey ? { ONECLICK_API_KEY: oneClickApiKey } : {}),
+            }),
             { flag: 'wx', mode: 0o600 },
         );
         if (((await stat(bridgeSecretsFile)).mode & 0o777) !== 0o600) {
@@ -1263,8 +1298,12 @@ export async function deployRelease({
 }
 
 async function main(args = process.argv.slice(2)) {
+    if (args.length === 2 && args[0] === 'write-bridge-wrangler') {
+        await writeBridgeArtifactWrangler(args[1]);
+        return;
+    }
     if (args.length !== 5 || args[0] !== 'deploy') {
-        throw new Error('usage: cloudflare-release.mjs deploy <preview|production> <sha> <artifact-dir> <receipt-output>');
+        throw new Error('usage: cloudflare-release.mjs <write-bridge-wrangler <output>|deploy <preview|production> <sha> <artifact-dir> <receipt-output>>');
     }
     await deployRelease({
         target: args[1],

@@ -87,6 +87,35 @@ async fn init() -> anyhow::Result<(Contract, Account, Account, Contract)> {
 #[tokio::test]
 async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
     let (contract, bridge, creator, usdc) = init().await?;
+    let storage_before: Option<serde_json::Value> = usdc
+        .view("storage_balance_of")
+        .args_json(json!({ "account_id": contract.id() }))
+        .await?
+        .json()?;
+    assert!(storage_before.is_none());
+    let storage_bounds: serde_json::Value = usdc.view("storage_balance_bounds").await?.json()?;
+    let storage_min = storage_bounds["min"]
+        .as_str()
+        .expect("storage min must be a decimal string")
+        .parse()?;
+    creator
+        .call(usdc.id(), "storage_deposit")
+        .args_json(json!({
+            "account_id": contract.id(),
+            "registration_only": true,
+        }))
+        .deposit(NearToken::from_yoctonear(storage_min))
+        .transact()
+        .await?
+        .into_result()?;
+    let storage_after: serde_json::Value = usdc
+        .view("storage_balance_of")
+        .args_json(json!({ "account_id": contract.id() }))
+        .await?
+        .json()?;
+    assert_eq!(storage_after["total"], storage_bounds["min"]);
+    assert_eq!(storage_after["available"], "0");
+
     let create_message = json!({
         "action": "create_paid_job",
         "job_id": "job-1",
