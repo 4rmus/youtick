@@ -84,6 +84,9 @@ jobs:
                   protocol=true
                   docs=true
                   ;;
+                scripts/cloudflare-release.mjs|scripts/cloudflare-release.test.mjs|scripts/release-metadata.mjs|scripts/release-metadata.test.mjs|scripts/release-smoke.mjs|scripts/release-smoke.test.mjs)
+                  : # Release tooling is tested by the required CI Gate.
+                  ;;
                 .github/workflows/*)
                   set_all
                   ;;

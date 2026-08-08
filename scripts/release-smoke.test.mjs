@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import {
+    browserOverrideHeaders,
     canonicalJson,
     compareFingerprints,
     fingerprintUrl,
@@ -94,6 +95,26 @@ test('fingerprint comparison is key-order independent and rejects drift', () => 
         () => compareFingerprints(base, { ...base, status: 201 }),
         /release_smoke_fingerprints_differ/,
     );
+});
+
+test('browser override header is limited to the exact Preview web origin', () => {
+    const headers = { 'Cloudflare-Workers-Version-Overrides': 'bridge="candidate"' };
+    assert.deepEqual(
+        browserOverrideHeaders('https://preview.example/tr', 'https://preview.example', headers),
+        headers,
+    );
+    for (const requestUrl of [
+        'https://raw.githubusercontent.com/hot-dao/near-selector/manifest.json',
+        'https://cdn.jsdelivr.net/gh/azbang/hot-connector/manifest.json',
+        'https://preview.example.evil.test/',
+        'data:text/plain,fixture',
+        'not-a-url',
+    ]) {
+        assert.deepEqual(
+            browserOverrideHeaders(requestUrl, 'https://preview.example', headers),
+            {},
+        );
+    }
 });
 
 test('release smoke retries workers.dev propagation and proves disabled Bridge contracts', async () => {
