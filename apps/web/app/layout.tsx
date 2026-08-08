@@ -9,13 +9,13 @@ const geist = Geist({ subsets: ['latin'], variable: '--font-geist-sans' });
 
 export const metadata: Metadata = {
     title: { default: 'YouTick', template: '%s | YouTick' },
-    description: 'Paid Livepeer video publications with NEAR access control and USDC settlement.',
+    description: 'Ticketed digital screenings for independent film and music.',
     metadataBase: new URL('https://youtick.net'),
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
     return (
-        <html lang="en">
+        <html lang="en" data-scroll-behavior="smooth">
             <body className={`${geist.variable} min-h-screen bg-black text-white antialiased`}>
                 <QueryProvider>
                     <WalletProvider>

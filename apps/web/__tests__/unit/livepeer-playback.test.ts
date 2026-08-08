@@ -12,12 +12,6 @@ const state = vi.hoisted(() => ({
         originHash: string;
         deviceHash: string;
     },
-    hlsInstances: [] as Array<{
-        config: { xhrSetup: (xhr: XMLHttpRequest, url: string) => void };
-        source?: string;
-        media?: HTMLVideoElement;
-        destroyed: boolean;
-    }>,
     isSessionGrantVisible: vi.fn(),
 }));
 
@@ -38,39 +32,10 @@ vi.mock('@/lib/constants', () => ({
     NEAR_NETWORK: 'testnet',
 }));
 
-vi.mock('hls.js', () => ({
-    default: class {
-        static isSupported() {
-            return true;
-        }
-
-        config: { xhrSetup: (xhr: XMLHttpRequest, url: string) => void };
-        source?: string;
-        media?: HTMLVideoElement;
-        destroyed = false;
-
-        constructor(config: { xhrSetup: (xhr: XMLHttpRequest, url: string) => void }) {
-            this.config = config;
-            state.hlsInstances.push(this);
-        }
-
-        loadSource(source: string) {
-            this.source = source;
-        }
-
-        attachMedia(media: HTMLVideoElement) {
-            this.media = media;
-        }
-
-        destroy() {
-            this.destroyed = true;
-        }
-    },
-}));
-
 import {
+    createLivepeerHlsConfig,
     requestLivepeerPlaybackToken,
-    startLivepeerPlayback,
+    startLivepeerPlaybackSession,
 } from '@/lib/livepeer-playback';
 
 const INPUT = {
@@ -112,12 +77,12 @@ async function sha256(value: string): Promise<string> {
 describe('Livepeer browser playback', () => {
     beforeEach(async () => {
         vi.restoreAllMocks();
-        state.hlsInstances.length = 0;
+        vi.unstubAllGlobals();
         state.isSessionGrantVisible.mockReset().mockResolvedValue(true);
         await installGrant();
     });
 
-    it('refreshes with the in-memory Play grant and never persists the JWT', async () => {
+    it('requests tokens with the in-memory Play grant and never persists the JWT', async () => {
         const fetchMock = vi.fn().mockImplementation(async () => Response.json(tokenResponse()));
         vi.stubGlobal('fetch', fetchMock);
 
@@ -167,8 +132,7 @@ describe('Livepeer browser playback', () => {
         }
     });
 
-    it('adds Livepeer-Jwt to HLS requests and rotates it before expiry', async () => {
-        await installGrant();
+    it('adds the latest in-memory JWT only to allowlisted HLS requests', async () => {
         let refresh: (() => Promise<void>) | undefined;
         vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback) => {
             refresh = callback as () => Promise<void>;
@@ -178,44 +142,63 @@ describe('Livepeer browser playback', () => {
             .mockResolvedValueOnce(Response.json(tokenResponse('first.token.signature', Date.now() + 31_000)))
             .mockResolvedValueOnce(Response.json(tokenResponse('second.token.signature', Date.now() + 180_000)));
         vi.stubGlobal('fetch', fetchMock);
-        const video = {} as HTMLVideoElement;
-
-        const session = await startLivepeerPlayback(video, INPUT);
-        const hls = state.hlsInstances[0];
+        let token: string | null = null;
+        let playbackId: string | null = null;
+        let expiresAtMs = 0;
+        const config = createLivepeerHlsConfig(() => token);
+        const session = await startLivepeerPlaybackSession(INPUT, {
+            onAccess: (access) => {
+                token = access.token;
+                playbackId = access.playbackId;
+                expiresAtMs = access.expiresAtMs;
+            },
+        });
         const setRequestHeader = vi.fn();
+        const xhr = { setRequestHeader } as unknown as XMLHttpRequest;
+
+        expect(config.capLevelToPlayerSize).toBe(true);
+        expect(playbackId).toBe(INPUT.playbackId);
+        expect(expiresAtMs).toBeGreaterThan(Date.now());
         for (const url of [
             'https://livepeercdn.com:8443/segment.ts',
             'https://user:password@livepeercdn.com/segment.ts',
+            'https://example.com/segment.ts',
         ]) {
-            expect(() => hls.config.xhrSetup(
-                { setRequestHeader } as unknown as XMLHttpRequest,
-                url,
-            )).toThrow('livepeer_playback_url_invalid');
+            expect(() => config.xhrSetup(xhr, url)).toThrow('livepeer_playback_url_invalid');
         }
-        expect(setRequestHeader).not.toHaveBeenCalled();
-        for (const url of [
-            'https://asset-cdn.lp-playback.studio/hls/playback_001/segment.ts',
-            'https://asset-cdn.lp-playback.com/hls/recording-001/segment.ts',
-        ]) {
-            hls.config.xhrSetup(
-                { setRequestHeader } as unknown as XMLHttpRequest,
-                url,
-            );
-        }
-        expect(setRequestHeader).toHaveBeenCalledWith('Livepeer-Jwt', 'first.token.signature');
-        expect(hls.source).toBe(tokenResponse().hls_url);
-        expect(hls.media).toBe(video);
+        config.xhrSetup(xhr, 'https://asset-cdn.lp-playback.studio/hls/playback_001/segment.ts');
+        expect(setRequestHeader).toHaveBeenLastCalledWith('Livepeer-Jwt', 'first.token.signature');
 
-        expect(refresh).toBeTypeOf('function');
         await refresh?.();
+
         expect(fetchMock).toHaveBeenCalledTimes(2);
-        hls.config.xhrSetup(
-            { setRequestHeader } as unknown as XMLHttpRequest,
-            'https://playback.livepeer.studio/asset/hls/playback_001/index.m3u8',
-        );
+        config.xhrSetup(xhr, 'https://playback.livepeer.studio/asset/hls/playback_001/index.m3u8');
         expect(setRequestHeader).toHaveBeenLastCalledWith('Livepeer-Jwt', 'second.token.signature');
         session.destroy();
-        expect(hls.destroyed).toBe(true);
+    });
+
+    it('refuses an allowlisted request when the in-memory JWT is missing', () => {
+        const config = createLivepeerHlsConfig(() => null);
+        expect(() => config.xhrSetup(
+            { setRequestHeader: vi.fn() } as unknown as XMLHttpRequest,
+            'https://playback.livepeer.studio/asset/hls/playback_001/index.m3u8',
+        )).toThrow('livepeer_playback_token_missing');
+    });
+
+    it('aborts requests and clears token refresh when playback is destroyed', async () => {
+        vi.spyOn(globalThis, 'setTimeout').mockReturnValue(17 as unknown as ReturnType<typeof setTimeout>);
+        const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+        let requestSignal: AbortSignal | undefined;
+        vi.stubGlobal('fetch', vi.fn().mockImplementation(async (_url, init: RequestInit) => {
+            requestSignal = init.signal as AbortSignal;
+            return Response.json(tokenResponse());
+        }));
+
+        const session = await startLivepeerPlaybackSession(INPUT, { onAccess: vi.fn() });
+        session.destroy();
+
+        expect(requestSignal?.aborted).toBe(true);
+        expect(clearTimeoutSpy).toHaveBeenCalledWith(17);
     });
 
     it('retries the same Play grant while finality catches up', async () => {
@@ -232,7 +215,7 @@ describe('Livepeer browser playback', () => {
             .mockResolvedValueOnce(Response.json(tokenResponse()));
         vi.stubGlobal('fetch', fetchMock);
 
-        const session = await startLivepeerPlayback({} as HTMLVideoElement, INPUT);
+        const session = await startLivepeerPlaybackSession(INPUT, { onAccess: vi.fn() });
 
         expect(fetchMock).toHaveBeenCalledTimes(2);
         const firstRequest = JSON.parse(fetchMock.mock.calls[0][1].body as string);
@@ -257,7 +240,7 @@ describe('Livepeer browser playback', () => {
         const fetchMock = vi.fn().mockResolvedValue(Response.json(tokenResponse()));
         vi.stubGlobal('fetch', fetchMock);
 
-        const session = await startLivepeerPlayback({} as HTMLVideoElement, INPUT);
+        const session = await startLivepeerPlaybackSession(INPUT, { onAccess: vi.fn() });
 
         expect(state.isSessionGrantVisible).toHaveBeenCalledTimes(2);
         expect(fetchMock).toHaveBeenCalledOnce();
@@ -273,9 +256,86 @@ describe('Livepeer browser playback', () => {
         const fetchMock = vi.fn();
         vi.stubGlobal('fetch', fetchMock);
 
-        await expect(startLivepeerPlayback({} as HTMLVideoElement, INPUT))
+        await expect(startLivepeerPlaybackSession(INPUT, { onAccess: vi.fn() }))
             .rejects.toThrow('livepeer_play_grant_pending');
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('renews only an expired local grant before rotating the token', async () => {
+        let refresh: (() => Promise<void>) | undefined;
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback) => {
+            refresh = callback as () => Promise<void>;
+            return 1 as unknown as ReturnType<typeof setTimeout>;
+        });
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(Response.json(tokenResponse('first.token.signature', Date.now() + 31_000)))
+            .mockResolvedValueOnce(Response.json(tokenResponse('second.token.signature')));
+        vi.stubGlobal('fetch', fetchMock);
+        const onAccess = vi.fn();
+        const renewGrant = vi.fn(async () => { await installGrant(); });
+        const session = await startLivepeerPlaybackSession(INPUT, { onAccess, renewGrant });
+        state.grant = null;
+
+        await refresh?.();
+
+        expect(renewGrant).toHaveBeenCalledOnce();
+        expect(state.isSessionGrantVisible).toHaveBeenCalledTimes(2);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(onAccess).toHaveBeenLastCalledWith(expect.objectContaining({
+            playbackId: INPUT.playbackId,
+            token: 'second.token.signature',
+        }));
+        session.destroy();
+    });
+
+    it('does not renew a grant when playback is denied', async () => {
+        let refresh: (() => Promise<void>) | undefined;
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback) => {
+            refresh = callback as () => Promise<void>;
+            return 1 as unknown as ReturnType<typeof setTimeout>;
+        });
+        vi.stubGlobal('fetch', vi.fn()
+            .mockResolvedValueOnce(Response.json(tokenResponse('first.token.signature', Date.now() + 31_000)))
+            .mockResolvedValueOnce(Response.json({ error: 'playback_denied' }, { status: 403 })));
+        const renewGrant = vi.fn();
+        const onError = vi.fn();
+        const session = await startLivepeerPlaybackSession(INPUT, {
+            onAccess: vi.fn(),
+            onError,
+            renewGrant,
+        });
+
+        await refresh?.();
+
+        expect(renewGrant).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'playback_denied' }));
+        session.destroy();
+    });
+
+    it('does not renew a mismatched grant', async () => {
+        let refresh: (() => Promise<void>) | undefined;
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback) => {
+            refresh = callback as () => Promise<void>;
+            return 1 as unknown as ReturnType<typeof setTimeout>;
+        });
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(Response.json(tokenResponse('first.token.signature', Date.now() + 31_000)));
+        vi.stubGlobal('fetch', fetchMock);
+        const renewGrant = vi.fn();
+        const onError = vi.fn();
+        const session = await startLivepeerPlaybackSession(INPUT, {
+            onAccess: vi.fn(),
+            onError,
+            renewGrant,
+        });
+        if (state.grant) state.grant.originHash = 'b'.repeat(64);
+
+        await refresh?.();
+
+        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(renewGrant).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'livepeer_play_grant_mismatch' }));
+        session.destroy();
     });
 
     it('fails before bridge use when the Play grant binding is missing', async () => {
@@ -287,10 +347,9 @@ describe('Livepeer browser playback', () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('rejects a malformed bridge token instead of loading HLS', async () => {
+    it('rejects a malformed bridge token', async () => {
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(tokenResponse('malformed'))));
 
         await expect(requestLivepeerPlaybackToken(INPUT)).rejects.toThrow('invalid_livepeer_playback_token');
-        expect(state.hlsInstances).toHaveLength(0);
     });
 });

@@ -21,8 +21,8 @@ function WatchContent() {
             <PageShell className="flex items-center justify-center">
                 <ScreenState
                     icon={<Video className="h-7 w-7" />}
-                    title="Select a publication"
-                    description="Playback requires a valid Livepeer job link."
+                    title="Choose a video"
+                    description="Open a release from Discover to start watching."
                 />
             </PageShell>
         );

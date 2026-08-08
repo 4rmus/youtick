@@ -30,6 +30,7 @@
         "parallel_uploads",
         "min_ticket_price_usdc",
         "upload_fee_usdc_per_decimal_gb",
+        "min_upload_fee_usdc",
         "monthly_operation_budget",
         "initial_browser_matrix"
       ],
@@ -49,8 +50,11 @@
         "upload_fee_usdc_per_decimal_gb": {
           "const": "300000"
         },
+        "min_upload_fee_usdc": {
+          "const": "500000"
+        },
         "monthly_operation_budget": {
-          "const": "D6_REQUIRED_FAIL_CLOSED"
+          "const": "UNLIMITED"
         },
         "initial_browser_matrix": {
           "const": ["desktop-chrome", "desktop-edge"]

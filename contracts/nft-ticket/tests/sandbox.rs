@@ -103,7 +103,7 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
         .call(usdc.id(), "ft_transfer_call")
         .args_json(json!({
             "receiver_id": contract.id(),
-            "amount": "300",
+            "amount": "500000",
             "memo": "paid-media-livepeer-v1 sandbox",
             "msg": create_message,
         }))
@@ -130,14 +130,14 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
         .args_json(json!({ "account_id": contract.id() }))
         .await?
         .json()?;
-    assert_eq!(creator_after_create, "19999700");
-    assert_eq!(market_after_create, "300");
+    assert_eq!(creator_after_create, "19500000");
+    assert_eq!(market_after_create, "500000");
 
     creator
         .call(usdc.id(), "ft_transfer_call")
         .args_json(json!({
             "receiver_id": contract.id(),
-            "amount": "300",
+            "amount": "500000",
             "memo": "paid-media-livepeer-v1 replay",
             "msg": json!({
                 "action": "create_paid_job",
@@ -199,6 +199,8 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
         .transact()
         .await?
         .json()?;
+    let publication_count: u64 = contract.view("get_publications_count").await?.json()?;
+    assert_eq!(publication_count, 1);
     assert_eq!(first, second);
     assert_eq!(first["publication_id"], "job-1");
     Ok(())

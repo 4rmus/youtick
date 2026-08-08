@@ -1,5 +1,5 @@
 import { actions } from 'near-api-js';
-import { GAS_CONSTANTS, NEAR_CONFIG } from '@/lib/constants';
+import { APP_CONFIG, GAS_CONSTANTS, NEAR_CONFIG } from '@/lib/constants';
 import { getProvider, viewContract } from '@/lib/near';
 import { signAndSendWithSignlessProvision } from '@/lib/signless-access-key';
 import type { WalletInstance } from '@/lib/types';
@@ -177,6 +177,21 @@ export function formatUsdc(value: string): string {
     const whole = amount / 1_000_000n;
     const fraction = (amount % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
     return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
+export function livepeerPublicationCoverUrl(
+    publication: Pick<LivepeerPublication, 'publication_id' | 'generation'>,
+): string | null {
+    try {
+        const url = new URL(
+            `/v1/publication-covers/${encodeURIComponent(publication.publication_id)}/${publication.generation}`,
+            APP_CONFIG.livepeerBridgeUrl,
+        );
+        if (url.protocol !== 'https:' || url.username || url.password) return null;
+        return url.toString();
+    } catch {
+        return null;
+    }
 }
 
 function requireJobId(jobId: string): void {

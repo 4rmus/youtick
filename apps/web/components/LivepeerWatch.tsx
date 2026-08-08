@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Loader2, Lock, Video } from 'lucide-react';
 import { useWallet } from '@/components/providers/WalletProvider';
@@ -13,6 +14,7 @@ import {
     buyLivepeerTicket,
     formatUsdc,
     hasLivepeerEntitlement,
+    livepeerPublicationCoverUrl,
     readLivepeerPublication,
 } from '@/lib/livepeer-publication';
 
@@ -51,7 +53,7 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
             }
             throw new Error('livepeer_entitlement_pending');
         } catch (reason) {
-            setError(reason instanceof Error ? reason.message : 'livepeer_purchase_failed');
+            setError(purchaseErrorMessage(reason));
         } finally {
             setBusy(false);
         }
@@ -67,8 +69,8 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
             <PageShell className="flex items-center justify-center">
                 <ScreenState
                     icon={<Video className="h-7 w-7" />}
-                    title="Publication unavailable"
-                    description="The job is not published or the identifier is invalid."
+                    title="Video unavailable"
+                    description="This video may still be processing, or the link may be invalid."
                     actions={<Button asChild variant="outline"><Link href="/discover">Back to discover</Link></Button>}
                 />
             </PageShell>
@@ -77,6 +79,7 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
 
     const canPlay = entitlementQuery.data === true && publication.availability !== 'TAKEDOWN';
     const salesOpen = publication.availability === 'ACTIVE';
+    const coverUrl = livepeerPublicationCoverUrl(publication);
 
     return (
         <PageShell className="max-w-5xl">
@@ -98,30 +101,58 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
                         jobId={jobId}
                         generation={publication.generation}
                         playbackId={publication.playback_id}
+                        title={publication.title}
+                        poster={coverUrl ?? undefined}
                     />
                 </div>
             ) : (
-                <div className="mx-auto max-w-lg rounded-2xl border border-zinc-800 bg-zinc-950 p-8 text-center">
-                    <Lock className="mx-auto mb-4 h-10 w-10 text-zinc-500" />
-                    <h2 className="text-lg font-semibold">Protected playback</h2>
-                    <p className="mt-2 text-sm text-zinc-400">
-                        {publication.availability === 'TAKEDOWN'
-                            ? 'This publication is unavailable.'
-                            : publication.availability === 'SALES_SUSPENDED'
-                                ? 'Sales are suspended. Existing entitlement remains valid.'
-                                : 'Connect a wallet and buy access with USDC.'}
-                    </p>
-                    {!accountId ? (
-                        <Button className="mt-6" onClick={() => void connect()} disabled={!isReady}>Connect wallet</Button>
-                    ) : (
-                        <Button className="mt-6" disabled={!salesOpen || busy || entitlementQuery.isLoading} onClick={() => void purchase()}>
-                            {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            Buy access · {formatUsdc(publication.price_usdc)} USDC
-                        </Button>
+                <div className="relative mx-auto flex aspect-video max-w-3xl items-center justify-center overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950 p-4 text-center sm:p-8">
+                    {coverUrl && (
+                        <Image
+                            fill
+                            priority
+                            unoptimized
+                            src={coverUrl}
+                            alt=""
+                            sizes="(min-width: 768px) 768px, 100vw"
+                            className="object-cover"
+                            onError={(event) => { event.currentTarget.hidden = true; }}
+                        />
                     )}
-                    {error && <p role="alert" className="mt-4 text-sm text-red-400">{error}</p>}
+                    <div aria-hidden="true" className="absolute inset-0 bg-black/70" />
+                    <div className="relative max-w-lg">
+                        <Lock className="mx-auto mb-3 h-8 w-8 text-zinc-300 sm:mb-4 sm:h-10 sm:w-10" />
+                        <h2 className="text-lg font-semibold">Ticket required</h2>
+                        <p className="mt-2 text-sm text-zinc-300">
+                            {publication.availability === 'TAKEDOWN'
+                                ? 'This video is unavailable.'
+                                : publication.availability === 'SALES_SUSPENDED'
+                                    ? 'Ticket sales are paused. Existing ticket holders can still watch.'
+                                    : 'Connect your wallet to buy a ticket with USDC.'}
+                        </p>
+                        {!accountId ? (
+                            <Button className="mt-4 sm:mt-6" onClick={() => void connect()} disabled={!isReady}>Connect wallet</Button>
+                        ) : (
+                            <Button className="mt-4 sm:mt-6" disabled={!salesOpen || busy || entitlementQuery.isLoading} onClick={() => void purchase()}>
+                                {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                Buy ticket · {formatUsdc(publication.price_usdc)} USDC
+                            </Button>
+                        )}
+                        {error && <p role="alert" className="mt-4 text-sm text-red-400">{error}</p>}
+                    </div>
                 </div>
             )}
         </PageShell>
     );
+}
+
+function purchaseErrorMessage(reason: unknown): string {
+    const message = reason instanceof Error ? reason.message : '';
+    if (message === 'livepeer_entitlement_pending') {
+        return 'Your ticket is still syncing. Try again shortly.';
+    }
+    if (message === 'livepeer_sales_closed') {
+        return 'Ticket sales are paused for this video.';
+    }
+    return 'The ticket could not be purchased. Check your wallet and try again.';
 }

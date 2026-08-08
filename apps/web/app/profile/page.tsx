@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, User, Wallet } from 'lucide-react';
+import { ArrowLeft, Loader2, User, Wallet } from 'lucide-react';
 import { PageShell } from '@/components/PageShell';
 import { RuntimeClosed } from '@/components/RuntimeClosed';
 import { ScreenState } from '@/components/ScreenState';
@@ -53,28 +54,47 @@ export default function ProfilePage() {
     };
 
     return (
-        <PageShell className="max-w-3xl">
-            <h1 className="text-3xl font-bold">Profile</h1>
-            <div className="mt-8 grid gap-6 md:grid-cols-2">
-                <Card className="p-6">
-                    <Wallet className="h-5 w-5 text-zinc-400" />
-                    <p className="mt-4 text-xs uppercase tracking-wider text-zinc-500">Connected wallet</p>
-                    <p className="mt-2 break-all font-mono text-sm">{accountId}</p>
-                </Card>
-                <Card className="p-6">
-                    <p className="text-xs uppercase tracking-wider text-zinc-500">Creator USDC balance</p>
-                    {balanceQuery.isLoading ? (
-                        <Loader2 role="status" className="mt-4 h-6 w-6 animate-spin" />
-                    ) : balanceQuery.error ? (
-                        <p role="alert" className="mt-4 text-sm text-red-400">Balance could not be loaded.</p>
-                    ) : (
-                        <p className="mt-4 text-3xl font-bold">{formatUsdc(balanceQuery.data || '0')} USDC</p>
-                    )}
-                    <Button className="mt-6 w-full" disabled={busy || !balanceQuery.data || BigInt(balanceQuery.data) === 0n} onClick={() => void withdraw()}>
-                        {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Withdraw
+        <PageShell>
+            <div className="mx-auto max-w-7xl space-y-8">
+                <div className="flex items-center gap-4">
+                    <Button asChild variant="ghost" size="icon">
+                        <Link href="/discover" aria-label="Back to discover"><ArrowLeft /></Link>
                     </Button>
-                    {error && <p role="alert" className="mt-3 text-sm text-red-400">{error}</p>}
-                </Card>
+                    <div>
+                        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Profile</h1>
+                        <p className="mt-1 text-sm text-zinc-400">Manage your publishing account and withdraw ticket revenue.</p>
+                    </div>
+                </div>
+
+                <div className="grid max-w-4xl gap-6 md:grid-cols-2">
+                    <Card className="bg-zinc-900 p-6">
+                        <div className="mb-4 flex items-center gap-3">
+                            <div className="rounded-lg bg-zinc-800 p-2"><User className="h-5 w-5 text-zinc-400" /></div>
+                            <h2 className="font-semibold text-zinc-200">Account</h2>
+                        </div>
+                        <p className="text-xs uppercase tracking-wider text-zinc-500">Account ID</p>
+                        <p className="mt-2 break-all font-mono text-sm text-white">{accountId}</p>
+                    </Card>
+
+                    <Card className="border-near-green/20 bg-zinc-900 p-6">
+                        <div className="mb-4 flex items-center gap-3">
+                            <div className="rounded-lg bg-zinc-800 p-2"><Wallet className="h-5 w-5 text-zinc-400" /></div>
+                            <h2 className="font-semibold text-zinc-200">Creator balance</h2>
+                        </div>
+                        <p className="text-xs uppercase tracking-wider text-zinc-500">Available to withdraw</p>
+                        {balanceQuery.isLoading ? (
+                            <Loader2 role="status" aria-label="Loading balance" className="mt-4 h-6 w-6 animate-spin text-zinc-500" />
+                        ) : balanceQuery.error ? (
+                            <p role="alert" className="mt-4 text-sm text-red-400">Balance could not be loaded.</p>
+                        ) : (
+                            <p className="mt-4 text-3xl font-bold text-white">{formatUsdc(balanceQuery.data || '0')} <span className="text-sm font-normal text-zinc-400">USDC</span></p>
+                        )}
+                        <Button variant="near" className="mt-6 w-full" disabled={busy || !balanceQuery.data || BigInt(balanceQuery.data) === 0n} onClick={() => void withdraw()}>
+                            {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Withdraw
+                        </Button>
+                        {error && <p role="alert" className="mt-3 text-sm text-red-400">{error}</p>}
+                    </Card>
+                </div>
             </div>
         </PageShell>
     );

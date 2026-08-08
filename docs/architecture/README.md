@@ -15,6 +15,9 @@ Buyer browser -- signed token request --> Livepeer Bridge
 Livepeer Bridge -- final-block checks --> NEAR market + access
 Livepeer Bridge -- short-lived JWT --> Buyer browser
 Buyer browser -- authenticated HLS --> Livepeer Studio
+Buyer browser -- public cover request --> Livepeer Bridge
+Livepeer Bridge -- final publication check --> NEAR market
+Livepeer Bridge -- protected VTT/first JPEG --> Livepeer Studio
 ```
 
 ## Boundaries
@@ -22,8 +25,10 @@ Buyer browser -- authenticated HLS --> Livepeer Studio
 - NEAR owns paid job, publication, settlement, entitlement and Play-grant truth.
 - Livepeer receives plaintext video and owns ingest, processing, storage and
   HLS delivery.
-- The Bridge handles control and authorization only. It must reject media
-  request bodies.
+- The Bridge handles control and authorization and must reject media request
+  bodies. Its only deliberate media response is a public, 2 MiB-limited
+  first-frame JPEG for an active publication; source video and HLS bytes never
+  pass through it.
 - Durable Objects persist idempotent job, admission and operator state.
 - The operator key is a finite-allowance FunctionCall key restricted to the
   approved market methods. FullAccess keys are forbidden.

@@ -14,14 +14,14 @@ const FINGERPRINT: &str = "ddddddddddddddddddddddddddddddddddddddddddddddddddddd
 const TESTNET_USDC: &str = "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af";
 const UPLOAD_KEY: &str = "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF";
 const QUOTE_PUBLIC_KEY: [u8; 32] = [
-    234, 74, 108, 99, 226, 156, 82, 10, 190, 245, 80, 123, 19, 46, 197, 249, 149, 71, 118, 174,
-    190, 190, 123, 146, 66, 30, 234, 105, 20, 70, 210, 44,
+    190, 134, 102, 159, 174, 34, 185, 4, 77, 225, 53, 223, 157, 124, 111, 157, 253, 86, 13, 10,
+    163, 191, 61, 230, 214, 73, 135, 124, 225, 40, 72, 154,
 ];
 const QUOTE_SIGNATURE: [u8; 64] = [
-    36, 243, 47, 146, 115, 197, 27, 131, 233, 147, 159, 170, 248, 168, 239, 97, 74, 169, 25, 124,
-    47, 158, 17, 242, 175, 170, 190, 12, 186, 46, 59, 254, 74, 50, 31, 219, 247, 90, 182, 175, 220,
-    127, 12, 43, 205, 57, 28, 222, 136, 252, 14, 39, 151, 124, 141, 54, 186, 32, 25, 93, 121, 161,
-    138, 14,
+    190, 102, 134, 7, 142, 44, 121, 3, 207, 108, 162, 236, 83, 50, 57, 23, 128, 228, 10, 240, 43,
+    4, 189, 176, 191, 98, 171, 10, 73, 103, 174, 80, 254, 98, 228, 201, 117, 26, 120, 142, 124,
+    138, 249, 202, 35, 246, 50, 187, 113, 9, 217, 252, 53, 90, 218, 147, 9, 187, 33, 172, 12, 39,
+    71, 10,
 ];
 
 fn account(value: &str) -> AccountId {
@@ -71,14 +71,14 @@ fn near_quote() -> CreatorFeeQuote {
         creator_id: account("creator.testnet"),
         job_id: "job-near".to_string(),
         expected_source_bytes: U128(1_000_000_000),
-        fee_usd_micro: U128(300_000),
+        fee_usd_micro: U128(500_000),
         near_usd_micro: U128(5_000_000),
-        fee_near_yocto: U128(60_000_000_000_000_000_000_000),
+        fee_near_yocto: U128(100_000_000_000_000_000_000_000),
         rate_source: "approved-source-v1".to_string(),
         rate_timestamp_ms: U64(1_785_589_300_000),
         expires_at_ms: U64(1_785_589_420_000),
         quote_key_version: 1,
-        quote_id: "b28676b3d0999a8f9e5cb34b2dca86ebb09f253c9e2c3fb0e85f987c85b72b4b".to_string(),
+        quote_id: "f2486e711ff88fe95aee073dce768a658212ad447d1e0c8aa5098c80099e4423".to_string(),
     }
 }
 
@@ -87,7 +87,7 @@ fn native_near_quote_creates_once_and_binds_upload_key() {
     let mut contract = contract();
     let mut builder = context("creator.testnet");
     builder.attached_deposit(near_sdk::NearToken::from_yoctonear(
-        60_000_000_000_000_000_000_000,
+        100_000_000_000_000_000_000_000,
     ));
     testing_env!(builder.build());
     let created = contract.create_paid_job_near(
@@ -102,7 +102,7 @@ fn native_near_quote_creates_once_and_binds_upload_key() {
     assert_eq!(job.upload_public_key, UPLOAD_KEY);
     assert_eq!(
         contract.get_platform_near_balance(),
-        U128(60_000_000_000_000_000_000_000)
+        U128(100_000_000_000_000_000_000_000)
     );
     assert!(matches!(
         contract.create_paid_job_near(
@@ -114,7 +114,7 @@ fn native_near_quote_creates_once_and_binds_upload_key() {
     ));
     assert_eq!(
         contract.get_platform_near_balance(),
-        U128(60_000_000_000_000_000_000_000)
+        U128(100_000_000_000_000_000_000_000)
     );
 }
 
@@ -123,7 +123,7 @@ fn wrong_or_stale_near_quote_fails_closed() {
     let mut contract = contract();
     let mut builder = context("creator.testnet");
     builder.attached_deposit(near_sdk::NearToken::from_yoctonear(
-        60_000_000_000_000_000_000_000,
+        100_000_000_000_000_000_000_000,
     ));
     testing_env!(builder.build());
     must_fail(|| {
@@ -139,7 +139,7 @@ fn create_job(contract: &mut Contract, job_id: &str, creator: &str) {
 }
 
 fn upload_fee(source_bytes: u128) -> u128 {
-    source_bytes * 3 / 10_000 + u128::from(source_bytes * 3 % 10_000 != 0)
+    (source_bytes * 3 / 10_000 + u128::from(source_bytes * 3 % 10_000 != 0)).max(500_000)
 }
 
 fn create_job_with(
@@ -195,9 +195,9 @@ fn accepts_exact_source_limit_and_rejects_one_byte_more() {
 #[test]
 fn creator_upload_fee_uses_exact_bytes_and_replay_is_refunded() {
     let cases = [
-        (1, 1),
-        (83_886_080, 25_166),
-        (1_000_000_000, 300_000),
+        (1, 500_000),
+        (83_886_080, 500_000),
+        (1_000_000_000, 500_000),
         (5_000_000_000, 1_500_000),
         (10_000_000_000, 3_000_000),
         (20_000_000_000, 6_000_000),
@@ -309,7 +309,7 @@ fn ticket_minimum_is_two_usdc_and_existing_two_percent_split_is_unchanged() {
         contract.get_creator_balance(account("creator.testnet")),
         U128(1_960_001),
     );
-    assert_eq!(contract.get_platform_balance(), U128(40_300));
+    assert_eq!(contract.get_platform_balance(), U128(540_000));
 }
 
 #[test]

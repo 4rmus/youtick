@@ -61,6 +61,7 @@ import {
     authorizeLivepeerPaidJob,
     clearLivepeerUploadDraft,
     parseLivepeerPriceUsdc,
+    preflightLivepeerUpload,
     prepareCreatorFeePaymentOptions,
     livepeerUploadFeeUsdc,
     requestLivepeerUploadIntent,
@@ -168,29 +169,61 @@ describe('Livepeer browser upload', () => {
         expect(fetchMock).toHaveBeenCalledOnce();
     });
 
-    it('signs the exact localhost origin used by the configured local runtime', async () => {
-        const originalWindow = globalThis.window;
-        globalThis.window = { location: { origin: 'http://localhost:3000' } } as Window & typeof globalThis;
-        try {
-            const wallet = createWallet();
-            await provisionJobSession(wallet);
-            const fetchMock = vi.fn().mockResolvedValue(Response.json(INTENT, { status: 201 }));
-            vi.stubGlobal('fetch', fetchMock);
+    it.each(['http://localhost:3000', 'http://127.0.0.1:3000'])(
+        'signs the exact local origin %s used by the configured runtime',
+        async (origin) => {
+            const originalWindow = globalThis.window;
+            globalThis.window = { location: { origin } } as Window & typeof globalThis;
+            try {
+                const wallet = createWallet();
+                await provisionJobSession(wallet);
+                const fetchMock = vi.fn().mockResolvedValue(Response.json(INTENT, { status: 201 }));
+                vi.stubGlobal('fetch', fetchMock);
 
-            await requestLivepeerUploadIntent({
-                accountId: 'creator.testnet',
-                jobId: 'job-001',
-                generation: 1,
-                expectedSourceBytes: SOURCE_BYTES,
-                sourceType: 'mp4',
-            });
+                await requestLivepeerUploadIntent({
+                    accountId: 'creator.testnet',
+                    jobId: 'job-001',
+                    generation: 1,
+                    expectedSourceBytes: SOURCE_BYTES,
+                    sourceType: 'mp4',
+                });
 
-            const request = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-            expect(request.envelope.origin).toBe('http://localhost:3000');
-        } finally {
-            globalThis.window = originalWindow;
-            vi.unstubAllGlobals();
-        }
+                const request = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+                expect(request.envelope.origin).toBe(origin);
+            } finally {
+                globalThis.window = originalWindow;
+                vi.unstubAllGlobals();
+            }
+        },
+    );
+
+    it('checks upload admission without creating a reservation', async () => {
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(Response.json({ available: true }))
+            .mockResolvedValueOnce(Response.json({ error: 'admission_closed' }, { status: 503 }));
+        vi.stubGlobal('fetch', fetchMock);
+        const input = {
+            accountId: 'creator.testnet',
+            jobId: 'job-preflight',
+            generation: 1,
+            expectedSourceBytes: SOURCE_BYTES,
+        };
+
+        await expect(preflightLivepeerUpload(input)).resolves.toBeUndefined();
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            1,
+            'https://bridge.youtick.net/v1/upload-preflight',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({
+                    creator_id: 'creator.testnet',
+                    job_id: 'job-preflight',
+                    generation: 1,
+                    expected_source_bytes: String(SOURCE_BYTES),
+                }),
+            }),
+        );
+        await expect(preflightLivepeerUpload(input)).rejects.toThrow('admission_closed');
     });
 
     it('accepts exact 20 GB and rejects one byte more before bridge use', async () => {
@@ -275,11 +308,12 @@ describe('Livepeer browser upload', () => {
     it('uses one sequential 32 MiB TUS stream and does not retry an offset conflict', async () => {
         const sourceBytes = 80 * 1024 * 1024;
         const file = new File([new Uint8Array(sourceBytes)], 'video.mp4', { type: 'video/mp4' });
+        const onProgress = vi.fn();
 
         await uploadLivepeerSource(file, {
             ...INTENT,
             expected_source_bytes: String(sourceBytes),
-        });
+        }, { onProgress });
 
         const instance = tus.instances[0];
         expect(instance.started).toBe(true);
@@ -289,6 +323,8 @@ describe('Livepeer browser upload', () => {
         expect(instance.options.chunkSize).toBe(32 * 1024 * 1024);
         expect(instance.options.parallelUploads).toBe(1);
         expect(file.size % Number(instance.options.chunkSize)).toBe(16 * 1024 * 1024);
+        (instance.options.onProgress as (uploaded: number, total: number) => void)(12, 34);
+        expect(onProgress).toHaveBeenCalledWith(12, 34);
         const shouldRetry = instance.options.onShouldRetry as (error: unknown) => boolean;
         const error = (status: number) => ({
             originalResponse: { getStatus: () => status },
@@ -303,8 +339,8 @@ describe('Livepeer browser upload', () => {
     });
 
     it('creates one USDC-paid job transaction without adding an access key', async () => {
-        expect(livepeerUploadFeeUsdc(83_886_080)).toBe('25166');
-        expect(livepeerUploadFeeUsdc(1_000_000_000)).toBe('300000');
+        expect(livepeerUploadFeeUsdc(83_886_080)).toBe('500000');
+        expect(livepeerUploadFeeUsdc(1_000_000_000)).toBe('500000');
         expect(livepeerUploadFeeUsdc(5_000_000_000)).toBe('1500000');
         expect(livepeerUploadFeeUsdc(10_000_000_000)).toBe('3000000');
         expect(livepeerUploadFeeUsdc(20_000_000_000)).toBe('6000000');
@@ -336,7 +372,7 @@ describe('Livepeer browser upload', () => {
             methodName: 'ft_transfer_call',
             args: expect.objectContaining({
                 receiver_id: 'paid-media-livepeer-v1.testnet',
-                amount: '25166',
+                amount: '500000',
             }),
             deposit: 1n,
         });
@@ -377,7 +413,7 @@ describe('Livepeer browser upload', () => {
             (wallet.signAndSendTransaction.mock.calls[0][0].actions[0] as { args: { msg: string } })
                 .args.msg,
         );
-        near.viewContract.mockResolvedValue({ ...request, fee_asset: 'USDC' });
+        near.viewContract.mockResolvedValue({ ...request, fee_asset: 'USDC', status: 'Authorized' });
 
         await expect(provisionJobSession(wallet)).resolves.toBe(publicKey);
         expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce();
@@ -399,15 +435,37 @@ describe('Livepeer browser upload', () => {
         expect(messages[0].upload_key_expires_at_ms).toBe(messages[1].upload_key_expires_at_ms);
     });
 
-    it('requires explicit recovery when the on-chain job exists but the local key is missing', async () => {
-        near.viewContract.mockResolvedValue({ job_id: 'job-001' });
+    it('replaces only the missing upload key for the matching on-chain job', async () => {
+        near.viewContract.mockResolvedValue({
+            job_id: 'job-001',
+            creator_id: 'creator.testnet',
+            title: 'Paid video',
+            price_usdc: '2000001',
+            expected_source_bytes: String(SOURCE_BYTES),
+            profile_id: 'paid-media-livepeer-v1',
+            profile_config_sha256: '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77',
+            upload_public_key: 'ed25519:lost-browser-key',
+            upload_key_expires_at_ms: '1785675700000',
+            fee_asset: 'USDC',
+            status: 'Authorized',
+        });
         const wallet = createWallet();
 
-        await expect(provisionJobSession(wallet))
-            .rejects.toThrow('livepeer_upload_key_recovery_required');
-        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+        await expect(provisionJobSession(wallet)).resolves.toMatch(/^ed25519:/);
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce();
         expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
-        expect(sessionStorage.length).toBe(0);
+        expect(wallet.signAndSendTransaction.mock.calls[0][0]).toMatchObject({
+            receiverId: 'paid-media-livepeer-v1.testnet',
+            actions: [{
+                methodName: 'replace_upload_key',
+                args: expect.objectContaining({
+                    job_id: 'job-001',
+                    new_public_key: expect.stringMatching(/^ed25519:/),
+                }),
+                deposit: 0n,
+            }],
+        });
+        expect(sessionStorage.length).toBe(1);
     });
 
     it('clears only the local key after an accepted intent', async () => {
@@ -461,9 +519,9 @@ describe('Livepeer browser upload', () => {
             creator_id: 'creator.testnet',
             job_id: 'job-near',
             expected_source_bytes: '1000000000',
-            fee_usd_micro: '300000',
+            fee_usd_micro: '500000',
             near_usd_micro: '5000000',
-            fee_near_yocto: '60000000000000000000000',
+            fee_near_yocto: '100000000000000000000000',
             rate_source: 'outlayer-price-oracle-wrap-near-v1',
             rate_timestamp_ms: '1785589300000',
             expires_at_ms: '1785589420000',
@@ -516,9 +574,9 @@ describe('Livepeer browser upload', () => {
                 creator_id: 'other.testnet',
                 job_id: 'job-near',
                 expected_source_bytes: '1000000000',
-                fee_usd_micro: '300000',
+                fee_usd_micro: '500000',
                 near_usd_micro: '5000000',
-                fee_near_yocto: '60000000000000000000000',
+                fee_near_yocto: '100000000000000000000000',
                 rate_source: 'outlayer-price-oracle-wrap-near-v1',
                 rate_timestamp_ms: '1785589300000',
                 expires_at_ms: '1785589420000',
@@ -537,7 +595,7 @@ describe('Livepeer browser upload', () => {
     });
 
     it('keeps USDC usable when the NEAR rate source is unavailable', async () => {
-        near.viewContract.mockResolvedValue('300000');
+        near.viewContract.mockResolvedValue('500000');
         near.query.mockResolvedValue({ amount: '100' });
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(
             { error: 'rate_source_unavailable' }, { status: 503 },
@@ -551,14 +609,14 @@ describe('Livepeer browser upload', () => {
         })).resolves.toEqual({
             selected: 'USDC',
             usable: ['USDC'],
-            usdcFee: '300000',
+            usdcFee: '500000',
             nearQuote: undefined,
         });
     });
 
     it('keeps the NEAR creator-fee rail disabled without requesting a quote', async () => {
         featureFlags.enableLivepeerNearCreatorFee = false;
-        near.viewContract.mockResolvedValue('300000');
+        near.viewContract.mockResolvedValue('500000');
         near.query.mockResolvedValue({ amount: '100' });
         const fetchMock = vi.fn();
         vi.stubGlobal('fetch', fetchMock);
@@ -571,7 +629,7 @@ describe('Livepeer browser upload', () => {
         })).resolves.toEqual({
             selected: 'USDC',
             usable: ['USDC'],
-            usdcFee: '300000',
+            usdcFee: '500000',
             nearQuote: undefined,
         });
         await expect(requestNearCreatorFeeQuote({
@@ -610,9 +668,9 @@ describe('Livepeer browser upload', () => {
                     creator_id: 'creator.testnet',
                     job_id: 'job-near',
                     expected_source_bytes: '1000000000',
-                    fee_usd_micro: '300000',
+                    fee_usd_micro: '500000',
                     near_usd_micro: '5000000',
-                    fee_near_yocto: '60000000000000000000000',
+                    fee_near_yocto: '100000000000000000000000',
                     rate_source: 'outlayer-price-oracle-wrap-near-v1',
                     rate_timestamp_ms: '1785589300000',
                     expires_at_ms: '1785589420000',
@@ -629,10 +687,10 @@ describe('Livepeer browser upload', () => {
             actions: [{
                 type: 'FunctionCall',
                 methodName: 'create_paid_job_near',
-                deposit: 60_000_000_000_000_000_000_000n,
+                    deposit: 100_000_000_000_000_000_000_000n,
                 args: {
                     quote: expect.objectContaining({
-                        fee_near_yocto: '60000000000000000000000',
+                        fee_near_yocto: '100000000000000000000000',
                     }),
                     quote_signature: 'signed-quote',
                     request: expect.objectContaining({

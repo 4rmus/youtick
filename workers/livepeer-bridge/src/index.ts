@@ -15,7 +15,6 @@ export interface Env {
     LIVEPEER_PROJECT_ID?: string;
     LIVEPEER_API_TOKEN_NAME?: string;
     LIVEPEER_CREATOR_ALLOWLIST?: string;
-    LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS?: string;
     LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS?: string;
     LIVEPEER_PAID_MEDIA_OPERATOR_ID?: string;
     LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN?: string;
@@ -83,6 +82,12 @@ type PlaybackTokenRequest = {
 type CreatorFeeQuoteRequest = {
     creator_id: string;
     job_id: string;
+    expected_source_bytes: string;
+};
+type UploadPreflightRequest = {
+    creator_id: string;
+    job_id: string;
+    generation: number;
     expected_source_bytes: string;
 };
 type OnChainJob = {
@@ -210,6 +215,12 @@ type AdmissionRecord = {
     monthly: { utcMonth: string; reservedBudgetUsdMicros: string };
     closure?: { code: string; observedAtMs: number };
 };
+type AdmissionCandidate = {
+    jobId: string;
+    generation: number;
+    creator: string;
+    expectedSourceBytes: string;
+};
 type AdmissionResolutionCode = 'PROVIDER_ABSENCE_CONFIRMED'
     | 'TUS_TERMINATION_CONFIRMED'
     | 'INVENTORY_RECONCILED'
@@ -233,6 +244,7 @@ type AdmissionReopenRecord = AdmissionReopenInput & {
 const PUBLIC_CONTROL_REQUESTS_IMPLEMENTED = true;
 const MAX_CONTROL_BODY_BYTES = 64 * 1024;
 const MAX_SOURCE_BYTES = 20_000_000_000n;
+const MIN_CREATOR_UPLOAD_FEE_USD_MICROS = 500_000n;
 const CREATOR_FEE_RATE_SOURCE = 'outlayer-price-oracle-wrap-near-v1';
 const OUTLAYER_NEAR_ASSET_ID = 'wrap.near';
 const CREATOR_FEE_MAX_SOURCE_AGE_MS = 60_000;
@@ -257,6 +269,8 @@ const LIVEPEER_SOURCE_FORMATS: Record<LivepeerSourceType, { filename: string; mi
 };
 const MAX_PROVIDER_PLAYBACK_OUTPUTS = 16;
 const MAX_THUMBNAIL_REFERENCE_PROBES = 32;
+const MAX_PUBLICATION_COVER_BYTES = 2 * 1024 * 1024;
+const PUBLICATION_COVER_CACHE_SECONDS = 24 * 60 * 60;
 const PROFILE_CONFIG_SHA256 = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
 const CONTROL_MAX_FUTURE_MS = 5 * 60 * 1000;
 const WEBHOOK_TOLERANCE_MS = 5 * 60 * 1000;
@@ -324,6 +338,7 @@ const SAFE_ERROR_CODES = new Set([
     'invalid_admission_reopen',
     'invalid_outbox',
     'invalid_playback_request',
+    'invalid_upload_preflight',
     'invalid_upload_intent',
     'invalid_webhook',
     'invalid_webhook_signature',
@@ -343,6 +358,12 @@ const SAFE_ERROR_CODES = new Set([
     'provider_playback_missing',
     'provider_playback_exposed',
     'provider_playback_mismatch',
+    'publication_cover_image_denied',
+    'publication_cover_image_redirected',
+    'publication_cover_image_status',
+    'publication_cover_image_type',
+    'publication_cover_image_size',
+    'publication_cover_image_invalid',
     'provider_state_invalid',
     'provider_unavailable',
     'rate_source_invalid',
@@ -380,8 +401,19 @@ export default {
             });
         }
 
+        const coverRoute = publicationCoverRoute(url.pathname);
+        if (request.method === 'GET' && coverRoute) {
+            if (env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
+                return json({ error: 'control_plane_disabled' }, 503);
+            }
+            if (!validApiKey(env.LIVEPEER_API_KEY) || !validPlaybackConfig(env)) {
+                return json({ error: 'runtime_not_configured' }, 503);
+            }
+            return publicationCover(request, env, coverRoute.jobId, coverRoute.generation);
+        }
+
         if (request.method === 'OPTIONS'
-            && ['/v1/upload-intents', '/v1/playback-tokens', '/v1/creator-fee-quotes/near']
+            && ['/v1/upload-preflight', '/v1/upload-intents', '/v1/playback-tokens', '/v1/creator-fee-quotes/near']
                 .includes(url.pathname)) {
             const origin = request.headers.get('Origin') || '';
             if (!allowedOrigins(env).has(origin)) return json({ error: 'origin_denied' }, 403);
@@ -406,6 +438,28 @@ export default {
                 return json({ error: 'runtime_not_configured' }, 503);
             }
             return forwardAdmissionReopen(request, env);
+        }
+
+        if (request.method === 'GET' && url.pathname === '/v1/operations/admission-status') {
+            if (env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
+                return json({ error: 'control_plane_disabled' }, 503);
+            }
+            if (!env.LIVEPEER_CONTROL || !validAdmissionReopenConfig(env)) {
+                return json({ error: 'runtime_not_configured' }, 503);
+            }
+            return forwardAdmissionStatus(request, env);
+        }
+
+        if (request.method === 'POST' && url.pathname === '/v1/upload-preflight') {
+            const origin = request.headers.get('Origin') || '';
+            const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
+            if (!PUBLIC_CONTROL_REQUESTS_IMPLEMENTED || env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
+                return withCors(json({ error: 'control_plane_disabled' }, 503), corsOrigin);
+            }
+            if (!env.LIVEPEER_CONTROL || !validAdmissionConfig(env)) {
+                return withCors(json({ error: 'runtime_not_configured' }, 503), corsOrigin);
+            }
+            return forwardUploadPreflight(request, env);
         }
 
         if (request.method === 'POST' && url.pathname === '/v1/upload-intents') {
@@ -503,6 +557,9 @@ export class LivepeerControl {
             if (request.method === 'POST' && url.pathname === '/internal/admission/reserve') {
                 return await reserveAdmission(this.state, this.env, await readJsonObject(request));
             }
+            if (request.method === 'POST' && url.pathname === '/internal/admission/preflight') {
+                return await preflightAdmission(this.state, this.env, await readJsonObject(request));
+            }
             if (request.method === 'POST' && url.pathname === '/internal/admission/mark') {
                 return await markAdmission(this.state, await readJsonObject(request));
             }
@@ -511,6 +568,9 @@ export class LivepeerControl {
             }
             if (request.method === 'POST' && url.pathname === '/internal/admission/reopen') {
                 return await reopenAdmission(this.state, await readJsonObject(request));
+            }
+            if (request.method === 'GET' && url.pathname === '/internal/admission/status') {
+                return await readAdmissionStatus(this.state, this.env);
             }
             return json({ error: 'not_found' }, 404);
         } catch (error) {
@@ -802,12 +862,86 @@ async function tryAutoCloseAdmission(env: Env, job: JobRecord): Promise<void> {
     }
 }
 
+async function preflightAdmission(
+    state: DurableObjectState,
+    env: Env,
+    input: JsonObject,
+): Promise<Response> {
+    const candidate = parseAdmissionCandidate(input, 'invalid_upload_preflight');
+    if (!creatorAllowlist(env).has(candidate.creator) || !operationReservation(env)) {
+        throw new Error('admission_closed');
+    }
+    const now = Date.now();
+    const record = await state.storage.get<AdmissionRecord>(ADMISSION_KEY);
+    try {
+        planAdmission(record, candidate, now);
+    } catch (error) {
+        const utcDay = new Date(now).toISOString().slice(0, 10);
+        console.warn(formatLog('livepeer_upload_preflight_rejected', {
+            code: safeErrorCode(error),
+            admissionStatus: record?.status || 'OPEN',
+            activeReservations: Object.keys(record?.reservations || {}).length,
+            dailyGlobalAttempts: record?.daily.utcDay === utcDay ? record.daily.globalAttempts : 0,
+        }));
+        throw error;
+    }
+    return json({ available: true });
+}
+
 async function reserveAdmission(
     state: DurableObjectState,
     env: Env,
     input: JsonObject,
 ): Promise<Response> {
-    requireExactKeys(input, ['jobId', 'generation', 'creator', 'expectedSourceBytes'], 'invalid_outbox');
+    const candidate = parseAdmissionCandidate(input, 'invalid_outbox');
+    if (!creatorAllowlist(env).has(candidate.creator)) throw new Error('admission_closed');
+    const jobReservationUsdMicros = operationReservation(env);
+    if (!jobReservationUsdMicros) throw new Error('admission_closed');
+    const now = Date.now();
+    const result = await state.storage.transaction(async (transaction) => {
+        const stored = await transaction.get<AdmissionRecord>(ADMISSION_KEY);
+        const plan = planAdmission(stored, candidate, now);
+        if (!plan.created) {
+            if (stored?.status === 'AUTO_CLOSED') {
+                await transaction.put(ADMISSION_KEY, plan.record);
+            }
+            return { record: plan.record, created: false };
+        }
+        const reservedBudgetUsdMicros = BigInt(plan.monthly.reservedBudgetUsdMicros)
+            + jobReservationUsdMicros;
+        const next: AdmissionRecord = {
+            ...plan.record,
+            reservations: {
+                ...plan.record.reservations,
+                [plan.reservationKey]: {
+                    creator: candidate.creator,
+                    expectedSourceBytes: candidate.expectedSourceBytes,
+                    estimatedProviderCostUsdMicros: String(jobReservationUsdMicros),
+                    state: 'CREATE_PENDING',
+                    createdAtMs: now,
+                },
+            },
+            daily: {
+                ...plan.daily,
+                globalAttempts: plan.daily.globalAttempts + 1,
+                creatorAttempts: {
+                    ...plan.daily.creatorAttempts,
+                    [candidate.creator]: (plan.daily.creatorAttempts[candidate.creator] || 0) + 1,
+                },
+            },
+            monthly: {
+                utcMonth: plan.monthly.utcMonth,
+                reservedBudgetUsdMicros: String(reservedBudgetUsdMicros),
+            },
+        };
+        await transaction.put(ADMISSION_KEY, next);
+        return { record: next, created: true };
+    });
+    return json({ accepted: true, created: result.created });
+}
+
+function parseAdmissionCandidate(input: JsonObject, code: string): AdmissionCandidate {
+    requireExactKeys(input, ['jobId', 'generation', 'creator', 'expectedSourceBytes'], code);
     if (typeof input.jobId !== 'string'
         || !JOB_ID_PATTERN.test(input.jobId)
         || !Number.isSafeInteger(input.generation)
@@ -816,81 +950,70 @@ async function reserveAdmission(
         || !ACCOUNT_ID_PATTERN.test(input.creator)
         || typeof input.expectedSourceBytes !== 'string'
         || !/^[1-9][0-9]{0,19}$/.test(input.expectedSourceBytes)) {
-        throw new Error('invalid_outbox');
+        throw new Error(code);
     }
-    const creator = input.creator as string;
-    const expectedSourceBytes = input.expectedSourceBytes as string;
-    const allowlist = creatorAllowlist(env);
-    if (!allowlist.has(creator)) throw new Error('admission_closed');
-    const budget = operationBudget(env);
-    if (!budget) throw new Error('admission_closed');
-    const now = Date.now();
+    return {
+        jobId: input.jobId,
+        generation: input.generation as number,
+        creator: input.creator,
+        expectedSourceBytes: input.expectedSourceBytes,
+    };
+}
+
+function planAdmission(
+    stored: AdmissionRecord | undefined,
+    candidate: AdmissionCandidate,
+    now: number,
+): {
+    record: AdmissionRecord;
+    reservationKey: string;
+    created: boolean;
+    daily: AdmissionRecord['daily'];
+    monthly: AdmissionRecord['monthly'];
+} {
     const utcDay = new Date(now).toISOString().slice(0, 10);
     const utcMonth = utcDay.slice(0, 7);
-    const reservationKey = `${input.jobId}:${input.generation}`;
-    const result = await state.storage.transaction(async (transaction) => {
-        const stored = await transaction.get<AdmissionRecord>(ADMISSION_KEY);
-        const record = stored || emptyAdmissionRecord(utcDay, utcMonth);
-        if (record.status === 'AUTO_CLOSED') throw new Error('admission_closed');
-        const existing = record.reservations[reservationKey];
-        if (existing) {
-            if (existing.creator !== creator
-                || existing.expectedSourceBytes !== expectedSourceBytes) {
-                throw new Error('admission_denied');
-            }
-            return { record, created: false, closed: false };
+    let record = stored || emptyAdmissionRecord(utcDay, utcMonth);
+    if (record.status === 'AUTO_CLOSED') {
+        if (record.closure?.code !== 'monthly_budget_exceeded') {
+            throw new Error('admission_closed');
         }
-        const daily = record.daily.utcDay === utcDay
-            ? record.daily
-            : { utcDay, globalAttempts: 0, creatorAttempts: {} };
-        const monthly = record.monthly.utcMonth === utcMonth
-            ? record.monthly
-            : { utcMonth, reservedBudgetUsdMicros: '0' };
-        const active = Object.values(record.reservations);
-        if (active.length >= 1
-            || active.some((reservation) => reservation.creator === creator)
-            || daily.globalAttempts >= 2
-            || (daily.creatorAttempts[creator] || 0) >= 2) {
+        record = {
+            schema: record.schema,
+            status: 'OPEN',
+            reservations: record.reservations,
+            daily: record.daily,
+            monthly: record.monthly,
+        };
+    }
+    const reservationKey = `${candidate.jobId}:${candidate.generation}`;
+    const existing = record.reservations[reservationKey];
+    if (existing) {
+        if (existing.creator !== candidate.creator
+            || existing.expectedSourceBytes !== candidate.expectedSourceBytes) {
             throw new Error('admission_denied');
         }
-        const reservedBudgetUsdMicros = BigInt(monthly.reservedBudgetUsdMicros)
-            + budget.jobReservationUsdMicros;
-        if (reservedBudgetUsdMicros > budget.monthlyBudgetUsdMicros) {
-            const closed: AdmissionRecord = {
-                ...record,
-                status: 'AUTO_CLOSED',
-                closure: { code: 'monthly_budget_exceeded', observedAtMs: now },
-            };
-            await transaction.put(ADMISSION_KEY, closed);
-            return { record: closed, created: false, closed: true };
-        }
-        const next: AdmissionRecord = {
-            ...record,
-            reservations: {
-                ...record.reservations,
-                [reservationKey]: {
-                    creator,
-                    expectedSourceBytes,
-                    estimatedProviderCostUsdMicros: String(budget.jobReservationUsdMicros),
-                    state: 'CREATE_PENDING',
-                    createdAtMs: now,
-                },
-            },
-            daily: {
-                ...daily,
-                globalAttempts: daily.globalAttempts + 1,
-                creatorAttempts: {
-                    ...daily.creatorAttempts,
-                    [creator]: (daily.creatorAttempts[creator] || 0) + 1,
-                },
-            },
-            monthly: { utcMonth, reservedBudgetUsdMicros: String(reservedBudgetUsdMicros) },
+        return {
+            record,
+            reservationKey,
+            created: false,
+            daily: record.daily,
+            monthly: record.monthly,
         };
-        await transaction.put(ADMISSION_KEY, next);
-        return { record: next, created: true, closed: false };
-    });
-    if (result.closed) throw new Error('admission_closed');
-    return json({ accepted: true, created: result.created });
+    }
+    const daily = record.daily.utcDay === utcDay
+        ? record.daily
+        : { utcDay, globalAttempts: 0, creatorAttempts: {} };
+    const monthly = record.monthly.utcMonth === utcMonth
+        ? record.monthly
+        : { utcMonth, reservedBudgetUsdMicros: '0' };
+    const active = Object.values(record.reservations);
+    if (active.length >= 1
+        || active.some((reservation) => reservation.creator === candidate.creator)
+        || (daily.creatorAttempts[candidate.creator] || 0) >= 2) {
+        throw new Error('admission_denied');
+    }
+    return { record, reservationKey, created: true, daily, monthly };
 }
 
 async function markAdmission(state: DurableObjectState, input: JsonObject): Promise<Response> {
@@ -1007,6 +1130,23 @@ async function reopenAdmission(state: DurableObjectState, input: JsonObject): Pr
     return json({ accepted: true, reopened: true, replayed: result.replayed }, result.replayed ? 200 : 201);
 }
 
+async function readAdmissionStatus(state: DurableObjectState, env: Env): Promise<Response> {
+    const record = await state.storage.get<AdmissionRecord>(ADMISSION_KEY);
+    const jobReservationUsdMicros = operationReservation(env);
+    return json({
+        schema: 'youtick.livepeer-admission-status.v1',
+        status: record?.status || 'UNINITIALIZED',
+        closure: record?.closure || null,
+        reservations: record?.reservations || {},
+        daily: record?.daily || null,
+        monthly: {
+            current: record?.monthly || null,
+            configuredBudgetUsdMicros: null,
+            configuredJobReservationUsdMicros: String(jobReservationUsdMicros || ''),
+        },
+    });
+}
+
 function parseAdmissionReopenInput(input: JsonObject): AdmissionReopenInput {
     requireExactKeys(input, [
         'idempotencyKey',
@@ -1084,18 +1224,9 @@ function creatorAllowlist(env: Env): Set<string> {
         : new Set();
 }
 
-function operationBudget(env: Env): {
-    monthlyBudgetUsdMicros: bigint;
-    jobReservationUsdMicros: bigint;
-} | null {
-    const monthly = env.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS || '';
+function operationReservation(env: Env): bigint | null {
     const job = env.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS || '';
-    if (!/^[1-9][0-9]{0,19}$/.test(monthly) || !/^[1-9][0-9]{0,19}$/.test(job)) return null;
-    const monthlyBudgetUsdMicros = BigInt(monthly);
-    const jobReservationUsdMicros = BigInt(job);
-    return jobReservationUsdMicros <= monthlyBudgetUsdMicros
-        ? { monthlyBudgetUsdMicros, jobReservationUsdMicros }
-        : null;
+    return /^[1-9][0-9]{0,19}$/.test(job) ? BigInt(job) : null;
 }
 
 async function ensureReconcileScheduled(state: DurableObjectState): Promise<void> {
@@ -1331,6 +1462,56 @@ export async function forwardUploadIntent(request: Request, env: Env): Promise<R
     }
 }
 
+export async function forwardUploadPreflight(request: Request, env: Env): Promise<Response> {
+    const origin = request.headers.get('Origin') || '';
+    const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
+    try {
+        if (!allowedOrigins(env).has(origin)) throw new Error('origin_denied');
+        if (!env.LIVEPEER_CONTROL || !validAdmissionConfig(env)) {
+            throw new Error('runtime_not_configured');
+        }
+        const input = parseUploadPreflightRequest(await readJsonObject(request));
+        const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(admissionObjectName(
+            env.NEAR_NETWORK!,
+            env.MARKET_CONTRACT_ID!,
+        )));
+        return withCors(await object.fetch(new Request('https://object/internal/admission/preflight', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jobId: input.job_id,
+                generation: input.generation,
+                creator: input.creator_id,
+                expectedSourceBytes: input.expected_source_bytes,
+            }),
+        })), corsOrigin);
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('livepeer_upload_preflight_failed', { code }));
+        return withCors(json({ error: code }, errorStatus(code)), corsOrigin);
+    }
+}
+
+function parseUploadPreflightRequest(input: JsonObject): UploadPreflightRequest {
+    requireExactKeys(
+        input,
+        ['creator_id', 'job_id', 'generation', 'expected_source_bytes'],
+        'invalid_upload_preflight',
+    );
+    if (typeof input.creator_id !== 'string'
+        || !ACCOUNT_ID_PATTERN.test(input.creator_id)
+        || typeof input.job_id !== 'string'
+        || !JOB_ID_PATTERN.test(input.job_id)
+        || !Number.isSafeInteger(input.generation)
+        || (input.generation as number) < 1
+        || typeof input.expected_source_bytes !== 'string'
+        || !/^[1-9][0-9]{0,19}$/.test(input.expected_source_bytes)
+        || BigInt(input.expected_source_bytes) > MAX_SOURCE_BYTES) {
+        throw new Error('invalid_upload_preflight');
+    }
+    return input as UploadPreflightRequest;
+}
+
 export async function forwardCreatorFeeQuote(request: Request, env: Env): Promise<Response> {
     const origin = request.headers.get('Origin') || '';
     const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
@@ -1366,7 +1547,10 @@ async function issueCreatorFeeQuote(
         const now = Date.now();
         const rate = await readOutlayerNearUsd(env, now);
         const sourceBytes = BigInt(input.expected_source_bytes);
-        const feeUsdMicro = (sourceBytes * 3n + 9_999n) / 10_000n;
+        const byteFeeUsdMicro = (sourceBytes * 3n + 9_999n) / 10_000n;
+        const feeUsdMicro = byteFeeUsdMicro < MIN_CREATOR_UPLOAD_FEE_USD_MICROS
+            ? MIN_CREATOR_UPLOAD_FEE_USD_MICROS
+            : byteFeeUsdMicro;
         const feeNearYocto = (feeUsdMicro * YOCTO_NEAR + rate.nearUsdMicro - 1n)
             / rate.nearUsdMicro;
         const quoteKeyVersion = Number(env.CREATOR_FEE_QUOTE_KEY_VERSION);
@@ -1597,6 +1781,24 @@ export async function forwardAdmissionReopen(request: Request, env: Env): Promis
     } catch (error) {
         const code = safeErrorCode(error);
         console.error(formatLog('livepeer_admission_reopen_failed', { code }));
+        return json({ error: code }, errorStatus(code));
+    }
+}
+
+export async function forwardAdmissionStatus(request: Request, env: Env): Promise<Response> {
+    try {
+        if (!env.LIVEPEER_CONTROL || !validAdmissionReopenConfig(env)) {
+            throw new Error('runtime_not_configured');
+        }
+        await requireOperatorAuthorization(request, env);
+        const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(admissionObjectName(
+            env.NEAR_NETWORK!,
+            env.MARKET_CONTRACT_ID!,
+        )));
+        return await object.fetch(new Request('https://object/internal/admission/status'));
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('livepeer_admission_status_failed', { code }));
         return json({ error: code }, errorStatus(code));
     }
 }
@@ -2572,6 +2774,218 @@ async function providerJson(env: Env, path: string): Promise<JsonObject> {
     }
 }
 
+function publicationCoverRoute(pathname: string): { jobId: string; generation: number } | null {
+    const match = /^\/v1\/publication-covers\/([^/]+)\/([1-9][0-9]*)$/.exec(pathname);
+    if (!match) return null;
+    let jobId: string;
+    try {
+        jobId = decodeURIComponent(match[1]);
+    } catch {
+        return null;
+    }
+    const generation = Number(match[2]);
+    if (!JOB_ID_PATTERN.test(jobId) || !Number.isSafeInteger(generation)) return null;
+    return { jobId, generation };
+}
+
+async function publicationCover(
+    request: Request,
+    env: Env,
+    jobId: string,
+    generation: number,
+): Promise<Response> {
+    try {
+        const publication = await readFinalPublicationById(env, jobId);
+        if (publication?.publication_id !== jobId
+            || publication.generation !== generation
+            || !['ACTIVE', 'SALES_SUSPENDED'].includes(String(publication.availability))
+            || typeof publication.playback_id !== 'string'
+            || !PLAYBACK_ID_PATTERN.test(publication.playback_id)) {
+            return json({ error: 'not_found' }, 404);
+        }
+
+        const cacheKey = publicationCoverCacheKey(request, env, jobId, generation);
+        const cached = await caches.default.match(cacheKey);
+        if (cached) {
+            const cachedBytes = new Uint8Array(await cached.arrayBuffer());
+            const cachedContentType = publicationCoverContentType(cachedBytes);
+            if (cachedBytes.byteLength <= MAX_PUBLICATION_COVER_BYTES && cachedContentType) {
+                return publicCoverResponse(cachedBytes, cachedContentType);
+            }
+        }
+
+        const playback = await providerJson(
+            env,
+            `/playback/${encodeURIComponent(publication.playback_id)}`,
+        );
+        const meta = requireObject(playback.meta, 'provider_playback_mismatch');
+        const policy = requireObject(meta.playbackPolicy, 'provider_playback_mismatch');
+        if (playback.type !== 'vod'
+            || policy.type !== 'jwt'
+            || !Array.isArray(meta.source)
+            || meta.source.length > MAX_PROVIDER_PLAYBACK_OUTPUTS) {
+            throw new Error('provider_playback_mismatch');
+        }
+        const sources = meta.source.map((source) => requireObject(source, 'provider_playback_mismatch'));
+        const vttUrls = [...new Set(sources
+            .filter((source) => source.type === LIVEPEER_VTT_SOURCE_TYPE)
+            .map((source) => String(source.url)))];
+        if (vttUrls.length === 0 || vttUrls.some((url) => !validPlaybackUrl(url))) {
+            throw new Error('provider_playback_mismatch');
+        }
+
+        const token = await signLivepeerJwt(
+            env,
+            publication.playback_id,
+            Math.floor(Date.now() / 1_000),
+            PLAYBACK_MIN_TTL_SECONDS,
+        );
+        const thumbnailUrl = await firstVttThumbnailUrl(vttUrls, token);
+        if (!thumbnailUrl) throw new Error('provider_playback_mismatch');
+        const cover = await fetchPublicationCover(thumbnailUrl, token, [
+            env.LIVEPEER_API_KEY!,
+            ...vttUrls,
+            thumbnailUrl,
+        ]);
+        const internal = new Response(cover.bytes, {
+            headers: {
+                'Cache-Control': `public, max-age=${PUBLICATION_COVER_CACHE_SECONDS}`,
+                'Content-Length': String(cover.bytes.byteLength),
+                'Content-Type': cover.contentType,
+            },
+        });
+        await caches.default.put(cacheKey, internal.clone()).catch(() => undefined);
+        return publicCoverResponse(cover.bytes, cover.contentType);
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('publication_cover_failed', { code }));
+        const status = code.startsWith('near_') || code === 'provider_unavailable' ? 503 : 502;
+        return json({ error: 'publication_cover_unavailable' }, status);
+    }
+}
+
+function publicationCoverCacheKey(
+    request: Request,
+    env: Env,
+    jobId: string,
+    generation: number,
+): Request {
+    const origin = new URL(request.url).origin;
+    const scope = `${encodeURIComponent(env.NEAR_NETWORK!)}:${encodeURIComponent(env.MARKET_CONTRACT_ID!)}`;
+    return new Request(`${origin}/__cache/publication-covers/${scope}/${encodeURIComponent(jobId)}/${generation}`);
+}
+
+async function fetchPublicationCover(
+    url: string,
+    token: string,
+    sensitiveValues: string[],
+): Promise<{ bytes: Uint8Array; contentType: PublicationCoverContentType }> {
+    let response: Response;
+    try {
+        response = await fetch(url, {
+            method: 'GET',
+            headers: { 'Livepeer-Jwt': token },
+            redirect: 'manual',
+            signal: AbortSignal.timeout(5_000),
+        });
+    } catch {
+        throw new Error('provider_unavailable');
+    }
+    if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
+    if ([401, 403].includes(response.status)) throw new Error('publication_cover_image_denied');
+    if (response.status >= 300 && response.status < 400) {
+        throw new Error('publication_cover_image_redirected');
+    }
+    if (response.status !== 200) throw new Error('publication_cover_image_status');
+    const contentLength = response.headers.get('Content-Length');
+    const declaredContentType = response.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
+    if (declaredContentType !== 'image/jpeg' && declaredContentType !== 'image/png') {
+        throw new Error('publication_cover_image_type');
+    }
+    if (contentLength !== null && (!/^[0-9]+$/.test(contentLength)
+        || Number(contentLength) > MAX_PUBLICATION_COVER_BYTES)) {
+        throw new Error('publication_cover_image_size');
+    }
+    if (!response.body) throw new Error('provider_playback_mismatch');
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_PUBLICATION_COVER_BYTES) {
+            await reader.cancel();
+            throw new Error('publication_cover_image_size');
+        }
+        chunks.push(value);
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    const contentType = publicationCoverContentType(bytes);
+    if (!contentType) throw new Error('publication_cover_image_invalid');
+    if (contentType !== declaredContentType) throw new Error('publication_cover_image_type');
+    if ([token, ...sensitiveValues].some((value) => containsBytes(bytes, new TextEncoder().encode(value)))) {
+        throw new Error('provider_playback_mismatch');
+    }
+    return { bytes, contentType };
+}
+
+function containsBytes(body: Uint8Array, needle: Uint8Array): boolean {
+    if (needle.byteLength === 0 || needle.byteLength > body.byteLength) return false;
+    outer: for (let offset = 0; offset <= body.byteLength - needle.byteLength; offset += 1) {
+        for (let index = 0; index < needle.byteLength; index += 1) {
+            if (body[offset + index] !== needle[index]) continue outer;
+        }
+        return true;
+    }
+    return false;
+}
+
+function validJpeg(bytes: Uint8Array): boolean {
+    return bytes.byteLength >= 4
+        && bytes[0] === 0xff
+        && bytes[1] === 0xd8
+        && bytes[2] === 0xff
+        && bytes[bytes.byteLength - 2] === 0xff
+        && bytes[bytes.byteLength - 1] === 0xd9;
+}
+
+type PublicationCoverContentType = 'image/jpeg' | 'image/png';
+
+function validPng(bytes: Uint8Array): boolean {
+    const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    const ihdr = [0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52];
+    const iend = [0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+    return bytes.byteLength >= 45
+        && signature.every((byte, index) => bytes[index] === byte)
+        && ihdr.every((byte, index) => bytes[signature.length + index] === byte)
+        && iend.every((byte, index) => bytes[bytes.byteLength - iend.length + index] === byte);
+}
+
+function publicationCoverContentType(bytes: Uint8Array): PublicationCoverContentType | null {
+    if (validJpeg(bytes)) return 'image/jpeg';
+    if (validPng(bytes)) return 'image/png';
+    return null;
+}
+
+function publicCoverResponse(body: ArrayBuffer | Uint8Array, contentType: PublicationCoverContentType): Response {
+    const byteLength = body.byteLength;
+    return new Response(body, {
+        headers: {
+            'Cache-Control': 'no-store',
+            'Content-Length': String(byteLength),
+            'Content-Type': contentType,
+            'Cross-Origin-Resource-Policy': 'cross-origin',
+            'X-Content-Type-Options': 'nosniff',
+        },
+    });
+}
+
 function hlsManifestKind(body: string): 'error' | 'playable' | 'unknown' {
     const lines = body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     if (lines[0] !== '#EXTM3U') return 'unknown';
@@ -2669,27 +3083,7 @@ function vttReferenceUrl(parentUrl: string, reference: string): string {
 async function vttThumbnailUrls(vttUrls: string[], token: string): Promise<string[]> {
     const thumbnails = new Set<string>();
     for (const vttUrl of vttUrls) {
-        let response: Response;
-        try {
-            response = await fetch(vttUrl, {
-                method: 'GET',
-                headers: { 'Livepeer-Jwt': token },
-                redirect: 'manual',
-                signal: AbortSignal.timeout(5_000),
-            });
-        } catch {
-            throw new Error('provider_unavailable');
-        }
-        if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
-        if (response.status !== 200) throw new Error('provider_playback_mismatch');
-        let references: string[] | null;
-        try {
-            references = vttReferences(await response.text());
-        } catch {
-            throw new Error('provider_playback_mismatch');
-        }
-        if (!references) throw new Error('provider_playback_mismatch');
-        for (const reference of references) {
+        for (const reference of await fetchVttReferences(vttUrl, token)) {
             thumbnails.add(vttReferenceUrl(vttUrl, reference));
             if (thumbnails.size > MAX_THUMBNAIL_REFERENCE_PROBES) {
                 throw new Error('provider_playback_mismatch');
@@ -2697,6 +3091,37 @@ async function vttThumbnailUrls(vttUrls: string[], token: string): Promise<strin
         }
     }
     return [...thumbnails];
+}
+
+async function firstVttThumbnailUrl(vttUrls: string[], token: string): Promise<string | null> {
+    for (const vttUrl of vttUrls) {
+        const [reference] = await fetchVttReferences(vttUrl, token);
+        if (reference) return vttReferenceUrl(vttUrl, reference);
+    }
+    return null;
+}
+
+async function fetchVttReferences(vttUrl: string, token: string): Promise<string[]> {
+    let response: Response;
+    try {
+        response = await fetch(vttUrl, {
+            method: 'GET',
+            headers: { 'Livepeer-Jwt': token },
+            redirect: 'manual',
+            signal: AbortSignal.timeout(5_000),
+        });
+    } catch {
+        throw new Error('provider_unavailable');
+    }
+    if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
+    if (response.status !== 200) throw new Error('provider_playback_mismatch');
+    try {
+        const references = vttReferences(await response.text());
+        if (references) return references;
+    } catch {
+        // Fall through to the stable provider mismatch below.
+    }
+    throw new Error('provider_playback_mismatch');
 }
 
 function validPlaybackUrl(value: unknown): boolean {
@@ -3131,7 +3556,10 @@ function validWebhookConfig(env: Env): boolean {
 }
 
 function validAdmissionConfig(env: Env): boolean {
-    return creatorAllowlist(env).size > 0;
+    return creatorAllowlist(env).size > 0
+        && operationReservation(env) !== null
+        && ['testnet', 'mainnet'].includes(env.NEAR_NETWORK || '')
+        && ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '');
 }
 
 function validAdmissionReopenConfig(env: Env): boolean {

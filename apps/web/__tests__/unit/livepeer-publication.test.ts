@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/constants', () => ({
+    APP_CONFIG: { livepeerBridgeUrl: 'https://bridge.youtick.net' },
     GAS_CONSTANTS: { mediumGas: 100_000_000_000_000n },
     NEAR_CONFIG: {
         marketContractId: 'paid-media-livepeer-v1.testnet',
@@ -25,6 +26,7 @@ vi.mock('@/lib/signless-access-key', () => ({
 import {
     buyLivepeerTicket,
     hasLivepeerEntitlement,
+    livepeerPublicationCoverUrl,
     parseLivepeerPublication,
     readCreatorBalance,
     readLivepeerMediaJob,
@@ -64,6 +66,12 @@ describe('Livepeer publication UI boundary', () => {
             .toThrow('invalid_livepeer_publication');
         expect(() => parseLivepeerPublication({ ...PUBLICATION, availability: 'UNKNOWN' }, 'job-001'))
             .toThrow('invalid_livepeer_publication');
+    });
+
+    it('derives the public cover route from publication identity and generation', () => {
+        expect(livepeerPublicationCoverUrl(PUBLICATION)).toBe(
+            'https://bridge.youtick.net/v1/publication-covers/job-001/1',
+        );
     });
 
     it('buys the exact publication with NEAR-native USDC and provisions playback access', async () => {

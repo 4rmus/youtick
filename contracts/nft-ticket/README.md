@@ -9,7 +9,8 @@ The contract supports:
 
 - creator-owned, generation-bound paid media jobs;
 - atomic job creation through Circle USDC `ft_transfer_call`, charging
-  `ceil(source_bytes / 1_000_000_000 * 300_000)` micro-USDC once per new job;
+  `max(500_000, ceil(source_bytes / 1_000_000_000 * 300_000))` micro-USDC once
+  per new job;
 - native NEAR job creation through a short-lived, server-signed quote with
   checked integer conversion and a separate NEAR platform ledger;
 - an immutable job-bound upload public key with creator-only unpublished-key
