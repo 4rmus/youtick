@@ -55,6 +55,11 @@ async function jwtKeys(): Promise<{ privatePem: string; publicKey: string; verif
 async function createEnv(): Promise<{ env: Env; verifyKey: CryptoKey; testState: TestState }> {
     const keys = await jwtKeys();
     const env: Env = {
+        CF_VERSION_METADATA: {
+            id: 'worker-version-test',
+            tag: 'test',
+            timestamp: '2026-08-08T00:00:00.000Z',
+        },
         LIVEPEER_BRIDGE_ENABLED: 'true',
         ALLOWED_ORIGINS: ORIGIN,
         NEAR_NETWORK: 'testnet',

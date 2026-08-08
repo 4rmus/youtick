@@ -50,6 +50,11 @@ function createState(): TestState {
 function createEnv(overrides?: Partial<Env>): Env {
     const key = KeyPair.fromRandom('ed25519');
     return {
+        CF_VERSION_METADATA: {
+            id: 'worker-version-test',
+            tag: 'test',
+            timestamp: '2026-08-08T00:00:00.000Z',
+        },
         LIVEPEER_BRIDGE_ENABLED: 'true',
         LIVEPEER_API_KEY: API_KEY,
         LIVEPEER_PROJECT_ID: PROJECT_ID,

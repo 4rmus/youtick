@@ -8,6 +8,7 @@ import {
 } from 'near-api-js';
 
 export interface Env {
+    CF_VERSION_METADATA: WorkerVersionMetadata;
     LIVEPEER_BRIDGE_ENABLED?: string;
     LIVEPEER_NEAR_CREATOR_FEE_ENABLED?: string;
     LIVEPEER_API_KEY?: string;
@@ -364,6 +365,7 @@ export default {
             return json({
                 status: 'ok',
                 service: 'livepeer-bridge',
+                versionId: env.CF_VERSION_METADATA.id,
                 stage: env.LIVEPEER_BRIDGE_ENABLED === 'true' ? 'ENABLED' : 'DISABLED',
                 publicControlImplemented: PUBLIC_CONTROL_REQUESTS_IMPLEMENTED,
                 providerMutationEnabled: env.LIVEPEER_BRIDGE_ENABLED === 'true',

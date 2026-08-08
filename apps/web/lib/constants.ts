@@ -3,8 +3,11 @@ export type NetworkId = 'testnet' | 'mainnet';
 export const NEAR_NETWORK: NetworkId =
     process.env.NEXT_PUBLIC_NEAR_NETWORK === 'testnet' ? 'testnet' : 'mainnet';
 
-function requiredPublicEnv(name: 'NEXT_PUBLIC_MARKET_CONTRACT_ID' | 'NEXT_PUBLIC_ACCESS_CONTRACT_ID'): string {
-    const value = process.env[name]?.trim();
+function requiredPublicEnv(
+    name: 'NEXT_PUBLIC_MARKET_CONTRACT_ID' | 'NEXT_PUBLIC_ACCESS_CONTRACT_ID',
+    rawValue: string | undefined,
+): string {
+    const value = rawValue?.trim();
     if (!value) throw new Error(`${name} is required`);
     return value;
 }
@@ -15,8 +18,14 @@ const USDC_CONTRACT_IDS: Record<NetworkId, string> = {
 };
 
 export const NEAR_CONFIG = {
-    marketContractId: requiredPublicEnv('NEXT_PUBLIC_MARKET_CONTRACT_ID'),
-    accessContractId: requiredPublicEnv('NEXT_PUBLIC_ACCESS_CONTRACT_ID'),
+    marketContractId: requiredPublicEnv(
+        'NEXT_PUBLIC_MARKET_CONTRACT_ID',
+        process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID,
+    ),
+    accessContractId: requiredPublicEnv(
+        'NEXT_PUBLIC_ACCESS_CONTRACT_ID',
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID,
+    ),
     usdcContractId: process.env.NEXT_PUBLIC_USDC_CONTRACT_ID?.trim() || USDC_CONTRACT_IDS[NEAR_NETWORK],
 } as const;
 

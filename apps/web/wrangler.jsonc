@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "youtick-web",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-03-25",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "preview_urls": true,
+  "env": {
+    "preview": {
+      "name": "youtick-web-preview",
+      "routes": [
+        {
+          "pattern": "preview.youtick.net",
+          "custom_domain": true
+        }
+      ]
+    },
+    "production": {
+      "name": "youtick-web",
+      "routes": [
+        {
+          "pattern": "app.youtick.net",
+          "custom_domain": true
+        }
+      ]
+    }
+  }
+}

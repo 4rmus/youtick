@@ -7,6 +7,10 @@ async function exists(path: string): Promise<boolean> {
 }
 
 describe('Livepeer-only routes', () => {
+    it('keeps the Turkish dark-release smoke route available', async () => {
+        await expect(exists('app/tr/page.tsx')).resolves.toBe(true);
+    });
+
     it('removes claim, trial and onboarding endpoints so Next returns 404', async () => {
         await expect(Promise.all([
             exists('app/claim/page.tsx'),

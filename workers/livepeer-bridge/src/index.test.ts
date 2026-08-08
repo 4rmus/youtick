@@ -61,6 +61,11 @@ function createState(): TestState {
 
 function createEnv(overrides?: Partial<Env>): Env {
     return {
+        CF_VERSION_METADATA: {
+            id: 'worker-version-test',
+            tag: 'test',
+            timestamp: '2026-08-08T00:00:00.000Z',
+        },
         LIVEPEER_BRIDGE_ENABLED: 'false',
         ALLOWED_ORIGINS: ORIGIN,
         NEAR_NETWORK: 'testnet',
@@ -336,6 +341,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             createEnv(),
         );
         expect(await health.json()).toMatchObject({
+            versionId: 'worker-version-test',
             stage: 'DISABLED',
             publicControlImplemented: true,
             providerMutationEnabled: false,
