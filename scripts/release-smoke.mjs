@@ -56,6 +56,14 @@ function overrideHeaders(worker, version) {
     return { 'Cloudflare-Workers-Version-Overrides': `${worker}="${version}"` };
 }
 
+export function browserOverrideHeaders(requestUrl, webUrl, headers) {
+    try {
+        return new URL(requestUrl).origin === webUrl ? headers : {};
+    } catch {
+        return {};
+    }
+}
+
 async function fetchBody(url, init, fetchImpl) {
     const response = await fetchImpl(url, {
         redirect: 'follow',
@@ -167,7 +175,14 @@ async function runChromeSmoke({ webUrl, headers }) {
     ));
     const browser = await chromium.launch({ channel: 'chrome', headless: true });
     try {
-        const page = await browser.newPage({ extraHTTPHeaders: headers });
+        const page = await browser.newPage();
+        await page.route('**/*', async (route) => {
+            const requestHeaders = route.request().headers();
+            for (const [name, value] of Object.entries(
+                browserOverrideHeaders(route.request().url(), webUrl, headers),
+            )) requestHeaders[name.toLowerCase()] = value;
+            await route.continue({ headers: requestHeaders });
+        });
         let route = '/';
         const errors = [];
         page.on('console', (message) => {
