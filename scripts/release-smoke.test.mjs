@@ -96,7 +96,7 @@ test('fingerprint comparison is key-order independent and rejects drift', () => 
     );
 });
 
-test('release smoke proves web, disabled bridge, CORS, and version override contracts', async () => {
+test('release smoke retries workers.dev propagation and proves disabled Bridge contracts', async () => {
     const override = 'bridge-worker="version-123"';
     const mutationCors = new Map([
         ['/v1/livepeer-webhooks', false],
@@ -127,10 +127,17 @@ test('release smoke proves web, disabled bridge, CORS, and version override cont
     });
     const allowedOrigin = 'https://preview.youtick.net';
     const deniedOrigin = 'https://denied.example';
+    const delays = [];
+    let healthRequests = 0;
     const bridge = await serve((request, response) => {
         seen.push(`bridge:${request.method}:${request.url}`);
         assert.equal(request.headers['cloudflare-workers-version-overrides'], override);
         if (request.method === 'GET' && request.url === '/__health') {
+            healthRequests += 1;
+            if (healthRequests === 1) {
+                json(response, 404, { error: 'not_found' });
+                return;
+            }
             json(response, 200, {
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
@@ -167,10 +174,12 @@ test('release smoke proves web, disabled bridge, CORS, and version override cont
             deniedOrigin,
             overrideWorker: 'bridge-worker',
             overrideVersion: 'version-123',
+            bridgeBootstrap: true,
             browserRunner: async (input) => {
                 browserInput = input;
                 return { channel: 'fixture', routes: ['/', '/tr'] };
             },
+            sleepFn: async (milliseconds) => delays.push(milliseconds),
         });
         assert.deepEqual(browserInput, {
             webUrl: web.origin,
@@ -200,6 +209,7 @@ test('release smoke proves web, disabled bridge, CORS, and version override cont
             'web:GET:/tr',
             'web:POST:/api/near-rpc',
             'bridge:GET:/__health',
+            'bridge:GET:/__health',
             'bridge:POST:/v1/livepeer-webhooks',
             'bridge:POST:/v1/operations/admission-reopen',
             'bridge:POST:/v1/upload-intents',
@@ -208,8 +218,73 @@ test('release smoke proves web, disabled bridge, CORS, and version override cont
             'bridge:OPTIONS:/v1/upload-intents',
             'bridge:OPTIONS:/v1/upload-intents',
         ]);
+        assert.deepEqual(delays, [1_000]);
     } finally {
         await Promise.all([web.close(), bridge.close()]);
+    }
+});
+
+test('Bridge bootstrap propagation retry is bounded and status scoped', async (t) => {
+    const retryDelays = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
+    for (const fixture of [
+        { name: 'bootstrap 404', status: 404, bootstrap: true, requests: 7, delays: retryDelays },
+        { name: 'bootstrap 523', status: 523, bootstrap: true, requests: 7, delays: retryDelays },
+        { name: 'existing Worker 404', status: 404, bootstrap: false, requests: 1, delays: [] },
+        { name: 'bootstrap 403', status: 403, bootstrap: true, requests: 1, delays: [] },
+        { name: 'bootstrap 500', status: 500, bootstrap: true, requests: 1, delays: [] },
+        {
+            name: 'bootstrap old version',
+            status: 200,
+            bootstrap: true,
+            requests: 7,
+            delays: retryDelays,
+            body: { stage: 'DISABLED', providerMutationEnabled: false, versionId: 'bridge-old' },
+            error: 'release_smoke_bridge_version_mismatch',
+        },
+        {
+            name: 'bootstrap invalid policy',
+            status: 200,
+            bootstrap: true,
+            requests: 1,
+            delays: [],
+            body: { stage: 'ENABLED', providerMutationEnabled: true, versionId: 'bridge-bootstrap' },
+            error: 'release_smoke_bridge_not_disabled',
+        },
+    ]) {
+        await t.test(fixture.name, async () => {
+            const delays = [];
+            let healthRequests = 0;
+            const fetchImpl = async (value) => {
+                const url = new URL(value);
+                if (url.hostname === 'web.test') {
+                    if (url.pathname === '/api/near-rpc') {
+                        return Response.json({ jsonrpc: '2.0', result: { chain_id: 'testnet' } });
+                    }
+                    return new Response('<!doctype html><main>ok</main>', {
+                        headers: { 'Content-Type': 'text/html' },
+                    });
+                }
+                if (url.hostname === 'bridge.test' && url.pathname === '/__health') {
+                    healthRequests += 1;
+                    return Response.json(fixture.body || { error: 'not_ready' }, { status: fixture.status });
+                }
+                throw new Error('unexpected fixture request');
+            };
+
+            await assert.rejects(runReleaseSmoke({
+                webUrl: 'https://web.test',
+                bridgeUrl: 'https://bridge.test',
+                allowedOrigin: 'https://allowed.test',
+                deniedOrigin: 'https://denied.test',
+                expectedBridgeVersion: 'bridge-bootstrap',
+                bridgeBootstrap: fixture.bootstrap,
+                fetchImpl,
+                browserRunner: async () => ({ channel: 'fixture', routes: ['/', '/tr'] }),
+                sleepFn: async (milliseconds) => delays.push(milliseconds),
+            }), new RegExp(fixture.error || `release_smoke_bridge_health_status_${fixture.status}`));
+            assert.equal(healthRequests, fixture.requests);
+            assert.deepEqual(delays, fixture.delays);
+        });
     }
 });
 
