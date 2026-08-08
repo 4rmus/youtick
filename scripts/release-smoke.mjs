@@ -1,0 +1,307 @@
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+
+const REQUEST_TIMEOUT_MS = 30_000;
+const VERSION_RE = /^[A-Za-z0-9-]+$/;
+const VERSION_IDENTITY_RETRY_DELAYS_MS = [0, 1_000, 2_000];
+const STABLE_HEADERS = [
+    'cache-control',
+    'content-security-policy',
+    'content-type',
+    'location',
+    'server',
+    'x-proxy',
+    'x-web4-origin',
+];
+const DISABLED_BRIDGE_MUTATIONS = [
+    { path: '/v1/livepeer-webhooks', cors: false },
+    { path: '/v1/operations/admission-reopen', cors: false },
+    { path: '/v1/upload-intents', cors: true },
+    { path: '/v1/playback-tokens', cors: true },
+    { path: '/v1/creator-fee-quotes/near', cors: true },
+];
+
+export function canonicalJson(value) {
+    const sort = (entry) => {
+        if (Array.isArray(entry)) return entry.map(sort);
+        if (!entry || typeof entry !== 'object') return entry;
+        return Object.fromEntries(Object.keys(entry).sort().map((key) => [key, sort(entry[key])]));
+    };
+    return `${JSON.stringify(sort(value), null, 2)}\n`;
+}
+
+function httpUrl(value, label, originOnly = false) {
+    let url;
+    try {
+        url = new URL(value);
+    } catch {
+        throw new Error(`release_smoke_${label}_invalid`);
+    }
+    if (!['http:', 'https:'].includes(url.protocol)
+        || url.username
+        || url.password
+        || (originOnly && (url.pathname !== '/' || url.search || url.hash))) {
+        throw new Error(`release_smoke_${label}_invalid`);
+    }
+    return originOnly ? url.origin : url.toString();
+}
+
+function overrideHeaders(worker, version) {
+    if (!worker && !version) return {};
+    if (!/^[A-Za-z0-9_-]+$/.test(worker || '') || !VERSION_RE.test(version || '')) {
+        throw new Error('release_smoke_version_override_invalid');
+    }
+    return { 'Cloudflare-Workers-Version-Overrides': `${worker}="${version}"` };
+}
+
+async function fetchBody(url, init, fetchImpl) {
+    const response = await fetchImpl(url, {
+        redirect: 'follow',
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        ...init,
+    });
+    return { response, body: new Uint8Array(await response.arrayBuffer()) };
+}
+
+export async function fingerprintUrl(value, { fetchImpl = fetch } = {}) {
+    const url = httpUrl(value, 'fingerprint_url');
+    const { response, body } = await fetchBody(url, {}, fetchImpl);
+    return {
+        status: response.status,
+        final_url: response.url || url,
+        body_sha256: createHash('sha256').update(body).digest('hex'),
+        headers: Object.fromEntries(STABLE_HEADERS.map((name) => [name, response.headers.get(name)])),
+    };
+}
+
+function validFingerprint(value) {
+    return value
+        && typeof value === 'object'
+        && Number.isInteger(value.status)
+        && typeof value.final_url === 'string'
+        && /^[0-9a-f]{64}$/.test(value.body_sha256 || '')
+        && value.headers
+        && STABLE_HEADERS.every((name) => value.headers[name] === null
+            || typeof value.headers[name] === 'string');
+}
+
+export function compareFingerprints(before, after) {
+    if (!validFingerprint(before) || !validFingerprint(after)) {
+        throw new Error('release_smoke_fingerprint_invalid');
+    }
+    if (canonicalJson(before) !== canonicalJson(after)) {
+        throw new Error(`release_smoke_fingerprints_differ\n${canonicalJson({ before, after })}`);
+    }
+    return { equal: true };
+}
+
+function text(body) {
+    return new TextDecoder().decode(body);
+}
+
+function parseJson(body, label) {
+    try {
+        const value = JSON.parse(text(body));
+        if (!value || typeof value !== 'object') throw new Error();
+        return value;
+    } catch {
+        throw new Error(`release_smoke_${label}_json_invalid`);
+    }
+}
+
+function expectStatus(response, expected, label) {
+    if (response.status !== expected) {
+        throw new Error(`release_smoke_${label}_status_${response.status}`);
+    }
+}
+
+function expectJson(response, body, label) {
+    if (!(response.headers.get('content-type') || '').toLowerCase().includes('application/json')) {
+        throw new Error(`release_smoke_${label}_content_type_invalid`);
+    }
+    return parseJson(body, label);
+}
+
+async function request(baseUrl, path, init, headers, fetchImpl) {
+    const merged = new Headers(init.headers);
+    for (const [name, value] of Object.entries(headers)) merged.set(name, value);
+    return fetchBody(new URL(path, `${baseUrl}/`), { ...init, headers: merged }, fetchImpl);
+}
+
+async function bridgeHealth(
+    bridgeUrl, headers, expectedVersion, fetchImpl, sleepFn,
+) {
+    const delays = expectedVersion ? VERSION_IDENTITY_RETRY_DELAYS_MS : [0];
+    for (const delay of delays) {
+        if (delay) await sleepFn(delay);
+        const health = await request(bridgeUrl, '/__health', {}, headers, fetchImpl);
+        expectStatus(health.response, 200, 'bridge_health');
+        const healthJson = expectJson(health.response, health.body, 'bridge_health');
+        if (healthJson.stage !== 'DISABLED' || healthJson.providerMutationEnabled !== false) {
+            throw new Error('release_smoke_bridge_not_disabled');
+        }
+        if (!VERSION_RE.test(healthJson.versionId || '')) {
+            throw new Error('release_smoke_bridge_version_invalid');
+        }
+        if (!expectedVersion || healthJson.versionId === expectedVersion) return healthJson;
+    }
+    throw new Error('release_smoke_bridge_version_mismatch');
+}
+
+async function runChromeSmoke({ webUrl, headers }) {
+    const { chromium } = await import(new URL(
+        '../apps/web/node_modules/@playwright/test/index.mjs',
+        import.meta.url,
+    ));
+    const browser = await chromium.launch({ channel: 'chrome', headless: true });
+    try {
+        const page = await browser.newPage({ extraHTTPHeaders: headers });
+        let route = '/';
+        const errors = [];
+        page.on('console', (message) => {
+            const value = message.text();
+            if (message.type() === 'error'
+                || /hydration (?:failed|error)|server rendered html.*(?:didn't|did not) match|text content does not match/i.test(value)) {
+                errors.push(`${route}:console:${value.slice(0, 240)}`);
+            }
+        });
+        page.on('pageerror', (error) => errors.push(`${route}:pageerror:${error.message.slice(0, 240)}`));
+        for (route of ['/', '/tr']) {
+            await page.goto(new URL(route, `${webUrl}/`).toString(), {
+                waitUntil: 'networkidle',
+                timeout: REQUEST_TIMEOUT_MS,
+            });
+        }
+        if (errors.length) throw new Error(`release_smoke_browser_errors\n${errors.join('\n')}`);
+        return { channel: 'chrome', routes: ['/', '/tr'] };
+    } finally {
+        await browser.close();
+    }
+}
+
+export async function runReleaseSmoke({
+    webUrl: webValue,
+    bridgeUrl: bridgeValue,
+    allowedOrigin: allowedValue,
+    deniedOrigin: deniedValue,
+    overrideWorker,
+    overrideVersion,
+    expectedBridgeVersion,
+    fetchImpl = fetch,
+    browserRunner = runChromeSmoke,
+    sleepFn = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
+}) {
+    const webUrl = httpUrl(webValue, 'web_url', true);
+    const bridgeUrl = httpUrl(bridgeValue, 'bridge_url', true);
+    const allowedOrigin = httpUrl(allowedValue, 'allowed_origin', true);
+    const deniedOrigin = httpUrl(deniedValue, 'denied_origin', true);
+    if (allowedOrigin === deniedOrigin) throw new Error('release_smoke_origins_not_distinct');
+    const headers = overrideHeaders(overrideWorker, overrideVersion);
+    if (expectedBridgeVersion !== undefined && !VERSION_RE.test(expectedBridgeVersion)) {
+        throw new Error('release_smoke_bridge_version_invalid');
+    }
+    if (overrideVersion && expectedBridgeVersion && overrideVersion !== expectedBridgeVersion) {
+        throw new Error('release_smoke_bridge_version_expectation_conflict');
+    }
+    const expectedVersion = expectedBridgeVersion ?? overrideVersion;
+
+    const root = await request(webUrl, '/', {}, headers, fetchImpl);
+    expectStatus(root.response, 200, 'web_root');
+    const tr = await request(webUrl, '/tr', {}, headers, fetchImpl);
+    expectStatus(tr.response, 200, 'web_tr');
+    const rpc = await request(webUrl, '/api/near-rpc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 'release-smoke', method: 'status', params: [] }),
+    }, headers, fetchImpl);
+    expectStatus(rpc.response, 200, 'near_rpc');
+    expectJson(rpc.response, rpc.body, 'near_rpc');
+    const browser = await browserRunner({ webUrl, headers });
+
+    const healthJson = await bridgeHealth(
+        bridgeUrl, headers, expectedVersion, fetchImpl, sleepFn,
+    );
+
+    const mutationStatuses = {};
+    for (const mutation of DISABLED_BRIDGE_MUTATIONS) {
+        const result = await request(bridgeUrl, mutation.path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Origin: allowedOrigin },
+            body: '{}',
+        }, headers, fetchImpl);
+        expectStatus(result.response, 503, 'bridge_mutation');
+        const resultJson = expectJson(result.response, result.body, 'bridge_mutation');
+        const corsOrigin = result.response.headers.get('access-control-allow-origin');
+        if (resultJson.error !== 'control_plane_disabled'
+            || corsOrigin !== (mutation.cors ? allowedOrigin : null)) {
+            throw new Error('release_smoke_bridge_mutation_contract_invalid');
+        }
+        mutationStatuses[mutation.path] = 503;
+    }
+
+    const preflightHeaders = {
+        Origin: allowedOrigin,
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'Content-Type, X-Youtick-Signature',
+    };
+    const allowed = await request(bridgeUrl, '/v1/upload-intents', {
+        method: 'OPTIONS', headers: preflightHeaders,
+    }, headers, fetchImpl);
+    expectStatus(allowed.response, 204, 'bridge_allowed_preflight');
+    if (allowed.response.headers.get('access-control-allow-origin') !== allowedOrigin) {
+        throw new Error('release_smoke_bridge_allowed_origin_invalid');
+    }
+    const denied = await request(bridgeUrl, '/v1/upload-intents', {
+        method: 'OPTIONS', headers: { ...preflightHeaders, Origin: deniedOrigin },
+    }, headers, fetchImpl);
+    expectStatus(denied.response, 403, 'bridge_denied_preflight');
+    if (denied.response.headers.has('access-control-allow-origin')) {
+        throw new Error('release_smoke_bridge_denied_origin_reflected');
+    }
+
+    return {
+        schema: 'youtick.release-smoke.v1',
+        web: { root_status: 200, tr_status: 200, near_rpc_status: 200, browser },
+        bridge: {
+            health_status: 200,
+            stage: 'DISABLED',
+            version_id: healthJson.versionId,
+            mutation_statuses: mutationStatuses,
+            allowed_preflight_status: 204,
+            denied_preflight_status: 403,
+        },
+    };
+}
+
+async function main(args = process.argv.slice(2)) {
+    const [command, ...values] = args;
+    if (command === 'fingerprint' && values.length === 1) {
+        process.stdout.write(canonicalJson(await fingerprintUrl(values[0])));
+        return;
+    }
+    if (command === 'compare' && values.length === 2) {
+        const [before, after] = await Promise.all(values.map(async (path) => JSON.parse(await readFile(path, 'utf8'))));
+        process.stdout.write(canonicalJson(compareFingerprints(before, after)));
+        return;
+    }
+    if (command === 'run' && [4, 6].includes(values.length)) {
+        const [webUrl, bridgeUrl, allowedOrigin, deniedOrigin, overrideWorker, overrideVersion] = values;
+        process.stdout.write(canonicalJson(await runReleaseSmoke({
+            webUrl,
+            bridgeUrl,
+            allowedOrigin,
+            deniedOrigin,
+            overrideWorker,
+            overrideVersion,
+        })));
+        return;
+    }
+    throw new Error('usage: release-smoke.mjs fingerprint <url> | compare <before.json> <after.json> | run <web-url> <bridge-url> <allowed-origin> <denied-origin> [override-worker override-version]');
+}
+
+if (import.meta.main) {
+    main().catch((error) => {
+        process.stderr.write(`${error instanceof Error ? error.message : 'release_smoke_failed'}\n`);
+        process.exitCode = 1;
+    });
+}

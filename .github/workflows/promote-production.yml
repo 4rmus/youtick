@@ -1,0 +1,217 @@
+name: Dark Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full main commit SHA
+        required: true
+        type: string
+      confirmation:
+        description: Type DEPLOY_DARK_PRODUCTION
+        required: true
+        type: string
+
+concurrency:
+  group: dark-production
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  PREVIEW_NEXT_PUBLIC_NEAR_NETWORK: ${{ vars.PREVIEW_NEXT_PUBLIC_NEAR_NETWORK }}
+  PREVIEW_NEXT_PUBLIC_MARKET_CONTRACT_ID: ${{ vars.PREVIEW_NEXT_PUBLIC_MARKET_CONTRACT_ID }}
+  PREVIEW_NEXT_PUBLIC_ACCESS_CONTRACT_ID: ${{ vars.PREVIEW_NEXT_PUBLIC_ACCESS_CONTRACT_ID }}
+  PREVIEW_NEXT_PUBLIC_APP_URL: ${{ vars.PREVIEW_NEXT_PUBLIC_APP_URL }}
+  PREVIEW_NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: ${{ vars.PREVIEW_NEXT_PUBLIC_LIVEPEER_BRIDGE_URL }}
+  PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: ${{ vars.PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 }}
+  PREVIEW_NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: ${{ vars.PREVIEW_NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE }}
+  PREVIEW_NEXT_PUBLIC_USDC_CONTRACT_ID: ${{ vars.PREVIEW_NEXT_PUBLIC_USDC_CONTRACT_ID }}
+  PREVIEW_NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO: ${{ vars.PREVIEW_NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO }}
+  PREVIEW_ALLOWED_ORIGINS: ${{ vars.PREVIEW_ALLOWED_ORIGINS }}
+  PREVIEW_NEAR_NETWORK: ${{ vars.PREVIEW_NEAR_NETWORK }}
+  PREVIEW_MARKET_CONTRACT_ID: ${{ vars.PREVIEW_MARKET_CONTRACT_ID }}
+  PREVIEW_ACCESS_CONTRACT_ID: ${{ vars.PREVIEW_ACCESS_CONTRACT_ID }}
+  PREVIEW_LIVEPEER_PROJECT_ID: ${{ vars.PREVIEW_LIVEPEER_PROJECT_ID }}
+  PREVIEW_LIVEPEER_API_TOKEN_NAME: ${{ vars.PREVIEW_LIVEPEER_API_TOKEN_NAME }}
+  PREVIEW_LIVEPEER_CREATOR_ALLOWLIST: ${{ vars.PREVIEW_LIVEPEER_CREATOR_ALLOWLIST }}
+  PREVIEW_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: ${{ vars.PREVIEW_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS }}
+  PREVIEW_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: ${{ vars.PREVIEW_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS }}
+  PREVIEW_LIVEPEER_PAID_MEDIA_OPERATOR_ID: ${{ vars.PREVIEW_LIVEPEER_PAID_MEDIA_OPERATOR_ID }}
+  PREVIEW_LIVEPEER_JWT_PUBLIC_KEY: ${{ vars.PREVIEW_LIVEPEER_JWT_PUBLIC_KEY }}
+  PREVIEW_LIVEPEER_JWT_ISSUER: ${{ vars.PREVIEW_LIVEPEER_JWT_ISSUER }}
+  PREVIEW_NEAR_OPERATOR_ACCOUNT_ID: ${{ vars.PREVIEW_NEAR_OPERATOR_ACCOUNT_ID }}
+  PREVIEW_NEAR_OPERATOR_KEY_EPOCH: ${{ vars.PREVIEW_NEAR_OPERATOR_KEY_EPOCH }}
+  PREVIEW_CREATOR_FEE_QUOTE_KEY_VERSION: ${{ vars.PREVIEW_CREATOR_FEE_QUOTE_KEY_VERSION }}
+  PREVIEW_LIVEPEER_BRIDGE_ENABLED: ${{ vars.PREVIEW_LIVEPEER_BRIDGE_ENABLED }}
+  PREVIEW_LIVEPEER_NEAR_CREATOR_FEE_ENABLED: ${{ vars.PREVIEW_LIVEPEER_NEAR_CREATOR_FEE_ENABLED }}
+  PRODUCTION_NEXT_PUBLIC_NEAR_NETWORK: ${{ vars.PRODUCTION_NEXT_PUBLIC_NEAR_NETWORK }}
+  PRODUCTION_NEXT_PUBLIC_MARKET_CONTRACT_ID: ${{ vars.PRODUCTION_NEXT_PUBLIC_MARKET_CONTRACT_ID }}
+  PRODUCTION_NEXT_PUBLIC_ACCESS_CONTRACT_ID: ${{ vars.PRODUCTION_NEXT_PUBLIC_ACCESS_CONTRACT_ID }}
+  PRODUCTION_NEXT_PUBLIC_APP_URL: ${{ vars.PRODUCTION_NEXT_PUBLIC_APP_URL }}
+  PRODUCTION_NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: ${{ vars.PRODUCTION_NEXT_PUBLIC_LIVEPEER_BRIDGE_URL }}
+  PRODUCTION_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: ${{ vars.PRODUCTION_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 }}
+  PRODUCTION_NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: ${{ vars.PRODUCTION_NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE }}
+  PRODUCTION_NEXT_PUBLIC_USDC_CONTRACT_ID: ${{ vars.PRODUCTION_NEXT_PUBLIC_USDC_CONTRACT_ID }}
+  PRODUCTION_NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO: ${{ vars.PRODUCTION_NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO }}
+  PRODUCTION_ALLOWED_ORIGINS: ${{ vars.PRODUCTION_ALLOWED_ORIGINS }}
+  PRODUCTION_NEAR_NETWORK: ${{ vars.PRODUCTION_NEAR_NETWORK }}
+  PRODUCTION_MARKET_CONTRACT_ID: ${{ vars.PRODUCTION_MARKET_CONTRACT_ID }}
+  PRODUCTION_ACCESS_CONTRACT_ID: ${{ vars.PRODUCTION_ACCESS_CONTRACT_ID }}
+  PRODUCTION_LIVEPEER_PROJECT_ID: ${{ vars.PRODUCTION_LIVEPEER_PROJECT_ID }}
+  PRODUCTION_LIVEPEER_API_TOKEN_NAME: ${{ vars.PRODUCTION_LIVEPEER_API_TOKEN_NAME }}
+  PRODUCTION_LIVEPEER_CREATOR_ALLOWLIST: ${{ vars.PRODUCTION_LIVEPEER_CREATOR_ALLOWLIST }}
+  PRODUCTION_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: ${{ vars.PRODUCTION_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS }}
+  PRODUCTION_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: ${{ vars.PRODUCTION_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS }}
+  PRODUCTION_LIVEPEER_PAID_MEDIA_OPERATOR_ID: ${{ vars.PRODUCTION_LIVEPEER_PAID_MEDIA_OPERATOR_ID }}
+  PRODUCTION_LIVEPEER_JWT_PUBLIC_KEY: ${{ vars.PRODUCTION_LIVEPEER_JWT_PUBLIC_KEY }}
+  PRODUCTION_LIVEPEER_JWT_ISSUER: ${{ vars.PRODUCTION_LIVEPEER_JWT_ISSUER }}
+  PRODUCTION_NEAR_OPERATOR_ACCOUNT_ID: ${{ vars.PRODUCTION_NEAR_OPERATOR_ACCOUNT_ID }}
+  PRODUCTION_NEAR_OPERATOR_KEY_EPOCH: ${{ vars.PRODUCTION_NEAR_OPERATOR_KEY_EPOCH }}
+  PRODUCTION_CREATOR_FEE_QUOTE_KEY_VERSION: ${{ vars.PRODUCTION_CREATOR_FEE_QUOTE_KEY_VERSION }}
+  PRODUCTION_LIVEPEER_BRIDGE_ENABLED: ${{ vars.PRODUCTION_LIVEPEER_BRIDGE_ENABLED }}
+  PRODUCTION_LIVEPEER_NEAR_CREATOR_FEE_ENABLED: ${{ vars.PRODUCTION_LIVEPEER_NEAR_CREATOR_FEE_ENABLED }}
+
+jobs:
+  promote:
+    name: Promote dark Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: Production
+      url: https://app.youtick.net
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - id: authorize
+        name: Verify typed approval, main history and CI Gate
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "${REQUESTED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${CONFIRMATION}" == "DEPLOY_DARK_PRODUCTION" ]]
+
+          git fetch --no-tags origin main
+          git cat-file -e "${REQUESTED_SHA}^{commit}"
+          git merge-base --is-ancestor "${REQUESTED_SHA}" origin/main
+
+          runs_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&head_sha=${REQUESTED_SHA}&per_page=100")"
+          ci_run_id="$(jq -er --arg sha "${REQUESTED_SHA}" \
+            '[.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success")] | sort_by(.updated_at) | last | .id' \
+            <<< "${runs_json}")"
+          jobs_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}/jobs?filter=latest&per_page=100")"
+          jq -e \
+            '[.jobs[] | select(.name == "CI Gate" and .conclusion == "success")] | length == 1' \
+            <<< "${jobs_json}" > /dev/null
+
+          artifacts_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=release-${REQUESTED_SHA}&per_page=100")"
+          artifact_json="$(jq -cer --arg sha "${REQUESTED_SHA}" \
+            '[.artifacts[]
+              | select(.expired == false and .workflow_run.head_sha == $sha)
+              | select((now - (.created_at | fromdateiso8601)) <= 2592000)]
+             | sort_by(.created_at) | last' \
+            <<< "${artifacts_json}")"
+          preview_run_id="$(jq -r .workflow_run.id <<< "${artifact_json}")"
+          preview_run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${preview_run_id}")"
+          jq -e \
+            --arg sha "${REQUESTED_SHA}" \
+            '.conclusion == "success"
+              and .event == "workflow_run"
+              and .head_sha == $sha
+              and .path == ".github/workflows/deploy-preview.yml"' \
+            <<< "${preview_run_json}" > /dev/null
+
+          preview_artifacts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${preview_run_id}/artifacts?per_page=100")"
+          jq -e --arg name "preview-deployment-${REQUESTED_SHA}" \
+            '[.artifacts[] | select(.name == $name and .expired == false)] | length == 1' \
+            <<< "${preview_artifacts}" > /dev/null
+
+          gh run download "${preview_run_id}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "release-${REQUESTED_SHA}" \
+            --dir "${RUNNER_TEMP}/release"
+          gh run download "${preview_run_id}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "preview-deployment-${REQUESTED_SHA}" \
+            --dir "${RUNNER_TEMP}/preview-evidence"
+
+          git show "${REQUESTED_SHA}:apps/web/package-lock.json" > "${RUNNER_TEMP}/web-package-lock.json"
+          git show "${REQUESTED_SHA}:workers/livepeer-bridge/package-lock.json" > "${RUNNER_TEMP}/bridge-package-lock.json"
+          node scripts/release-metadata.mjs verify \
+            --artifact-dir "${RUNNER_TEMP}/release" \
+            --sha "${REQUESTED_SHA}" \
+            --web-lock "${RUNNER_TEMP}/web-package-lock.json" \
+            --bridge-lock "${RUNNER_TEMP}/bridge-package-lock.json"
+          jq -e \
+            --arg sha "${REQUESTED_SHA}" \
+            --arg ci_run_id "${ci_run_id}" \
+            '.sha == $sha and .ci.runId == $ci_run_id' \
+            "${RUNNER_TEMP}/release/manifest.json" > /dev/null
+          manifest_sha="$(sha256sum "${RUNNER_TEMP}/release/manifest.json" | cut -d ' ' -f 1)"
+          jq -e \
+            --arg sha "${REQUESTED_SHA}" \
+            --arg manifest_sha "${manifest_sha}" \
+            '.schemaVersion == 1
+              and .sha == $sha
+              and .environment == "preview"
+              and .manifestSha256 == $manifest_sha' \
+            "${RUNNER_TEMP}/preview-evidence/preview-deployment.json" > /dev/null
+
+          node scripts/release-metadata.mjs config \
+            --environment production \
+            --output "${RUNNER_TEMP}/current-production-config.json"
+          cmp "${RUNNER_TEMP}/release/production-config.json" "${RUNNER_TEMP}/current-production-config.json"
+
+          echo "sha=${REQUESTED_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "ci_run_id=${ci_run_id}" >> "${GITHUB_OUTPUT}"
+          echo "preview_run_id=${preview_run_id}" >> "${GITHUB_OUTPUT}"
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
+        working-directory: apps/web
+      - name: Verify pinned Wrangler policy runtime
+        run: |
+          [[ "$(apps/web/node_modules/.bin/wrangler --version)" == "4.90.0" ]]
+      - name: Record unchanged root origin
+        run: node scripts/release-smoke.mjs fingerprint https://youtick.net > "${RUNNER_TEMP}/root-before.json"
+      - name: Upload, smoke, promote and rollback-test dark versions
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          NEAR_RPC_URL: ${{ secrets.NEAR_RPC_URL }}
+          RELEASE_ROLLBACK_TEST: "true"
+          SHA: ${{ steps.authorize.outputs.sha }}
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${SHA}" origin/main
+          node scripts/cloudflare-release.mjs deploy production "${SHA}" \
+            "${RUNNER_TEMP}/release" \
+            "${RUNNER_TEMP}/production-deployment.json"
+      - name: Prove root origin stayed unchanged
+        run: |
+          node scripts/release-smoke.mjs fingerprint https://youtick.net > "${RUNNER_TEMP}/root-after.json"
+          node scripts/release-smoke.mjs compare \
+            "${RUNNER_TEMP}/root-before.json" \
+            "${RUNNER_TEMP}/root-after.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-deployment-${{ steps.authorize.outputs.sha }}
+          path: |
+            ${{ runner.temp }}/production-deployment.json
+            ${{ runner.temp }}/root-before.json
+            ${{ runner.temp }}/root-after.json
+          retention-days: 30
+          overwrite: true
+          if-no-files-found: error

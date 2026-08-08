@@ -1,0 +1,470 @@
+name: Deploy Preview
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+
+concurrency:
+  group: deploy-preview
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  PREVIEW_NEXT_PUBLIC_NEAR_NETWORK: ${{ vars.PREVIEW_NEXT_PUBLIC_NEAR_NETWORK }}
+  PREVIEW_NEXT_PUBLIC_MARKET_CONTRACT_ID: ${{ vars.PREVIEW_NEXT_PUBLIC_MARKET_CONTRACT_ID }}
+  PREVIEW_NEXT_PUBLIC_ACCESS_CONTRACT_ID: ${{ vars.PREVIEW_NEXT_PUBLIC_ACCESS_CONTRACT_ID }}
+  PREVIEW_NEXT_PUBLIC_APP_URL: ${{ vars.PREVIEW_NEXT_PUBLIC_APP_URL }}
+  PREVIEW_NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: ${{ vars.PREVIEW_NEXT_PUBLIC_LIVEPEER_BRIDGE_URL }}
+  PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: ${{ vars.PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 }}
+  PREVIEW_NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: ${{ vars.PREVIEW_NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE }}
+  PREVIEW_NEXT_PUBLIC_USDC_CONTRACT_ID: ${{ vars.PREVIEW_NEXT_PUBLIC_USDC_CONTRACT_ID }}
+  PREVIEW_NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO: ${{ vars.PREVIEW_NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO }}
+  PREVIEW_ALLOWED_ORIGINS: ${{ vars.PREVIEW_ALLOWED_ORIGINS }}
+  PREVIEW_NEAR_NETWORK: ${{ vars.PREVIEW_NEAR_NETWORK }}
+  PREVIEW_MARKET_CONTRACT_ID: ${{ vars.PREVIEW_MARKET_CONTRACT_ID }}
+  PREVIEW_ACCESS_CONTRACT_ID: ${{ vars.PREVIEW_ACCESS_CONTRACT_ID }}
+  PREVIEW_LIVEPEER_PROJECT_ID: ${{ vars.PREVIEW_LIVEPEER_PROJECT_ID }}
+  PREVIEW_LIVEPEER_API_TOKEN_NAME: ${{ vars.PREVIEW_LIVEPEER_API_TOKEN_NAME }}
+  PREVIEW_LIVEPEER_CREATOR_ALLOWLIST: ${{ vars.PREVIEW_LIVEPEER_CREATOR_ALLOWLIST }}
+  PREVIEW_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: ${{ vars.PREVIEW_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS }}
+  PREVIEW_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: ${{ vars.PREVIEW_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS }}
+  PREVIEW_LIVEPEER_PAID_MEDIA_OPERATOR_ID: ${{ vars.PREVIEW_LIVEPEER_PAID_MEDIA_OPERATOR_ID }}
+  PREVIEW_LIVEPEER_JWT_PUBLIC_KEY: ${{ vars.PREVIEW_LIVEPEER_JWT_PUBLIC_KEY }}
+  PREVIEW_LIVEPEER_JWT_ISSUER: ${{ vars.PREVIEW_LIVEPEER_JWT_ISSUER }}
+  PREVIEW_NEAR_OPERATOR_ACCOUNT_ID: ${{ vars.PREVIEW_NEAR_OPERATOR_ACCOUNT_ID }}
+  PREVIEW_NEAR_OPERATOR_KEY_EPOCH: ${{ vars.PREVIEW_NEAR_OPERATOR_KEY_EPOCH }}
+  PREVIEW_CREATOR_FEE_QUOTE_KEY_VERSION: ${{ vars.PREVIEW_CREATOR_FEE_QUOTE_KEY_VERSION }}
+  PREVIEW_LIVEPEER_BRIDGE_ENABLED: ${{ vars.PREVIEW_LIVEPEER_BRIDGE_ENABLED }}
+  PREVIEW_LIVEPEER_NEAR_CREATOR_FEE_ENABLED: ${{ vars.PREVIEW_LIVEPEER_NEAR_CREATOR_FEE_ENABLED }}
+  PRODUCTION_NEXT_PUBLIC_NEAR_NETWORK: ${{ vars.PRODUCTION_NEXT_PUBLIC_NEAR_NETWORK }}
+  PRODUCTION_NEXT_PUBLIC_MARKET_CONTRACT_ID: ${{ vars.PRODUCTION_NEXT_PUBLIC_MARKET_CONTRACT_ID }}
+  PRODUCTION_NEXT_PUBLIC_ACCESS_CONTRACT_ID: ${{ vars.PRODUCTION_NEXT_PUBLIC_ACCESS_CONTRACT_ID }}
+  PRODUCTION_NEXT_PUBLIC_APP_URL: ${{ vars.PRODUCTION_NEXT_PUBLIC_APP_URL }}
+  PRODUCTION_NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: ${{ vars.PRODUCTION_NEXT_PUBLIC_LIVEPEER_BRIDGE_URL }}
+  PRODUCTION_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: ${{ vars.PRODUCTION_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 }}
+  PRODUCTION_NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: ${{ vars.PRODUCTION_NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE }}
+  PRODUCTION_NEXT_PUBLIC_USDC_CONTRACT_ID: ${{ vars.PRODUCTION_NEXT_PUBLIC_USDC_CONTRACT_ID }}
+  PRODUCTION_NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO: ${{ vars.PRODUCTION_NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO }}
+  PRODUCTION_ALLOWED_ORIGINS: ${{ vars.PRODUCTION_ALLOWED_ORIGINS }}
+  PRODUCTION_NEAR_NETWORK: ${{ vars.PRODUCTION_NEAR_NETWORK }}
+  PRODUCTION_MARKET_CONTRACT_ID: ${{ vars.PRODUCTION_MARKET_CONTRACT_ID }}
+  PRODUCTION_ACCESS_CONTRACT_ID: ${{ vars.PRODUCTION_ACCESS_CONTRACT_ID }}
+  PRODUCTION_LIVEPEER_PROJECT_ID: ${{ vars.PRODUCTION_LIVEPEER_PROJECT_ID }}
+  PRODUCTION_LIVEPEER_API_TOKEN_NAME: ${{ vars.PRODUCTION_LIVEPEER_API_TOKEN_NAME }}
+  PRODUCTION_LIVEPEER_CREATOR_ALLOWLIST: ${{ vars.PRODUCTION_LIVEPEER_CREATOR_ALLOWLIST }}
+  PRODUCTION_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: ${{ vars.PRODUCTION_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS }}
+  PRODUCTION_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: ${{ vars.PRODUCTION_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS }}
+  PRODUCTION_LIVEPEER_PAID_MEDIA_OPERATOR_ID: ${{ vars.PRODUCTION_LIVEPEER_PAID_MEDIA_OPERATOR_ID }}
+  PRODUCTION_LIVEPEER_JWT_PUBLIC_KEY: ${{ vars.PRODUCTION_LIVEPEER_JWT_PUBLIC_KEY }}
+  PRODUCTION_LIVEPEER_JWT_ISSUER: ${{ vars.PRODUCTION_LIVEPEER_JWT_ISSUER }}
+  PRODUCTION_NEAR_OPERATOR_ACCOUNT_ID: ${{ vars.PRODUCTION_NEAR_OPERATOR_ACCOUNT_ID }}
+  PRODUCTION_NEAR_OPERATOR_KEY_EPOCH: ${{ vars.PRODUCTION_NEAR_OPERATOR_KEY_EPOCH }}
+  PRODUCTION_CREATOR_FEE_QUOTE_KEY_VERSION: ${{ vars.PRODUCTION_CREATOR_FEE_QUOTE_KEY_VERSION }}
+  PRODUCTION_LIVEPEER_BRIDGE_ENABLED: ${{ vars.PRODUCTION_LIVEPEER_BRIDGE_ENABLED }}
+  PRODUCTION_LIVEPEER_NEAR_CREATOR_FEE_ENABLED: ${{ vars.PRODUCTION_LIVEPEER_NEAR_CREATOR_FEE_ENABLED }}
+
+jobs:
+  authorize:
+    name: Authorize current main
+    if: >
+      vars.DEPLOY_PREVIEW_ENABLED == 'true' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      deploy: ${{ steps.authorize.outputs.deploy }}
+      sha: ${{ steps.authorize.outputs.sha }}
+      ci_run_id: ${{ steps.authorize.outputs.ci_run_id }}
+      ci_run_attempt: ${{ steps.authorize.outputs.ci_run_attempt }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - id: authorize
+        name: Verify CI provenance and cumulative release changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]]
+
+          run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}")"
+          jq -e \
+            --arg sha "${SHA}" \
+            --arg repo "${GITHUB_REPOSITORY}" \
+            '.conclusion == "success"
+              and .event == "push"
+              and .head_branch == "main"
+              and .head_sha == $sha
+              and .head_repository.full_name == $repo
+              and .path == ".github/workflows/ci.yml"' \
+            <<< "${run_json}" > /dev/null
+
+          jobs_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/jobs?filter=latest&per_page=100")"
+          jq -e \
+            '[.jobs[] | select(.name == "CI Gate" and .conclusion == "success")] | length == 1' \
+            <<< "${jobs_json}" > /dev/null
+
+          git fetch --no-tags origin main
+          [[ "$(git rev-parse HEAD)" == "${SHA}" ]]
+          if [[ "$(git rev-parse origin/main)" != "${SHA}" ]]; then
+            echo "deploy=false" >> "${GITHUB_OUTPUT}"
+            echo "Skipping stale Preview SHA ${SHA}."
+            exit 0
+          fi
+
+          artifact_pages="${RUNNER_TEMP}/repository-artifacts.json"
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+            > "${artifact_pages}"
+          jq -e 'all(.[]; (.artifacts | type == "array"))' "${artifact_pages}" > /dev/null
+
+          baseline=""
+          while IFS=$'\t' read -r candidate_name candidate_run_id candidate_head_sha; do
+            if [[ ! "${candidate_name}" =~ ^preview-deployment-([0-9a-f]{40})$ ]]; then
+              continue
+            fi
+            candidate_sha="${BASH_REMATCH[1]}"
+            if [[ ! "${candidate_run_id}" =~ ^[1-9][0-9]*$ ]] \
+              || [[ "${candidate_head_sha}" != "${candidate_sha}" ]] \
+              || ! git cat-file -e "${candidate_sha}^{commit}" 2>/dev/null \
+              || ! git merge-base --is-ancestor "${candidate_sha}" "${SHA}"; then
+              continue
+            fi
+
+            if ! candidate_run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_run_id}" 2>/dev/null)"; then
+              continue
+            fi
+            if ! jq -e \
+              --arg repo "${GITHUB_REPOSITORY}" \
+              --arg sha "${candidate_sha}" \
+              --argjson run_id "${candidate_run_id}" \
+              '.id == $run_id
+                and .conclusion == "success"
+                and .event == "workflow_run"
+                and .head_branch == "main"
+                and .head_sha == $sha
+                and .head_repository.full_name == $repo
+                and .path == ".github/workflows/deploy-preview.yml"' \
+              <<< "${candidate_run_json}" > /dev/null; then
+              continue
+            fi
+
+            baseline="${candidate_sha}"
+            break
+          done < <(
+            jq -r '
+              [.[] | .artifacts[]
+                | select(.expired == false)
+                | select((.name | type) == "string")
+                | select(.name | test("^preview-deployment-[0-9a-f]{40}$"))
+                | select((.created_at | type) == "string")
+                | select((.workflow_run.id | type) == "number")
+                | select((.workflow_run.head_sha | type) == "string")]
+              | sort_by(.created_at)
+              | reverse[]
+              | [.name, (.workflow_run.id | tostring), .workflow_run.head_sha]
+              | @tsv' \
+              "${artifact_pages}"
+          )
+
+          deploy=false
+          if [[ -z "${baseline}" ]]; then
+            deploy=true
+            echo "No trusted Preview baseline found; building current main ${SHA}."
+          else
+            changed_file="${RUNNER_TEMP}/release-changes"
+            git diff --name-only -z "${baseline}" "${SHA}" > "${changed_file}"
+            while IFS= read -r -d '' path; do
+              case "${path}" in
+                apps/web/*|workers/livepeer-bridge/*|protocol/paid-media-livepeer-v1/*|scripts/check-paid-media-livepeer-v1.mjs|.nvmrc|.github/workflows/*)
+                  deploy=true
+                  break
+                  ;;
+                contracts/*|scripts/check-paid-media-livepeer-v1-abi.mjs|docs/*)
+                  ;;
+                *)
+                  deploy=true
+                  break
+                  ;;
+              esac
+            done < "${changed_file}"
+            echo "Trusted Preview baseline ${baseline}; deploy-relevant changes: ${deploy}."
+          fi
+
+          echo "deploy=${deploy}" >> "${GITHUB_OUTPUT}"
+          if [[ "${deploy}" != "true" ]]; then
+            exit 0
+          fi
+
+          echo "sha=${SHA}" >> "${GITHUB_OUTPUT}"
+          echo "ci_run_id=${CI_RUN_ID}" >> "${GITHUB_OUTPUT}"
+          echo "ci_run_attempt=$(jq -r .run_attempt <<< "${run_json}")" >> "${GITHUB_OUTPUT}"
+
+  build-web:
+    name: Build Web (${{ matrix.target }})
+    needs: authorize
+    if: needs.authorize.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: preview
+          - target: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci --no-audit --no-fund --prefer-offline
+        working-directory: apps/web
+      - name: Validate and export canonical Web config
+        run: |
+          config="${RUNNER_TEMP}/${{ matrix.target }}-config.json"
+          node scripts/release-metadata.mjs config \
+            --environment "${{ matrix.target }}" \
+            --output "${config}"
+          jq -r '.web | to_entries[] | "\(.key)=\(.value)"' "${config}" >> "${GITHUB_ENV}"
+      - name: Build OpenNext bundle
+        working-directory: apps/web
+        run: npm run build:cloudflare -- --env "${{ matrix.target }}"
+      - name: Pack exact Web bundle
+        run: |
+          tar \
+            --sort=name \
+            --mtime='UTC 1970-01-01' \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            --create \
+            --file=- \
+            --directory=apps/web \
+            .open-next wrangler.jsonc \
+            | gzip -n > "${RUNNER_TEMP}/web-${{ matrix.target }}.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-${{ matrix.target }}-${{ needs.authorize.outputs.sha }}
+          path: |
+            ${{ runner.temp }}/web-${{ matrix.target }}.tar.gz
+            ${{ runner.temp }}/${{ matrix.target }}-config.json
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: error
+
+  build-bridge:
+    name: Build Bridge bundle
+    needs: authorize
+    if: needs.authorize.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: workers/livepeer-bridge/package-lock.json
+      - run: npm ci --no-audit --no-fund --prefer-offline
+        working-directory: workers/livepeer-bridge
+      - name: Build one prebuilt Bridge module
+        working-directory: workers/livepeer-bridge
+        run: >
+          npx --no-install wrangler deploy
+          --dry-run
+          --outdir "${RUNNER_TEMP}/bridge-output"
+          --metafile "${RUNNER_TEMP}/bridge-output/metafile.json"
+      - name: Pack exact Bridge bundle
+        run: |
+          cp workers/livepeer-bridge/wrangler.toml "${RUNNER_TEMP}/bridge-output/wrangler.toml"
+          tar \
+            --sort=name \
+            --mtime='UTC 1970-01-01' \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            --create \
+            --file=- \
+            --directory="${RUNNER_TEMP}/bridge-output" \
+            index.js wrangler.toml \
+            | gzip -n > "${RUNNER_TEMP}/bridge.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-${{ needs.authorize.outputs.sha }}
+          path: ${{ runner.temp }}/bridge.tar.gz
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: error
+
+  assemble:
+    name: Assemble release artifact
+    needs:
+      - authorize
+      - build-web
+      - build-bridge
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-preview-${{ needs.authorize.outputs.sha }}
+          path: ${{ runner.temp }}/components/preview
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-production-${{ needs.authorize.outputs.sha }}
+          path: ${{ runner.temp }}/components/production
+      - uses: actions/download-artifact@v4
+        with:
+          name: bridge-${{ needs.authorize.outputs.sha }}
+          path: ${{ runner.temp }}/components/bridge
+      - name: Create and verify manifest
+        run: |
+          mkdir -p "${RUNNER_TEMP}/release"
+          cp "${RUNNER_TEMP}/components/preview/web-preview.tar.gz" "${RUNNER_TEMP}/release/web-preview.tar.gz"
+          cp "${RUNNER_TEMP}/components/preview/preview-config.json" "${RUNNER_TEMP}/release/preview-config.json"
+          cp "${RUNNER_TEMP}/components/production/web-production.tar.gz" "${RUNNER_TEMP}/release/web-production.tar.gz"
+          cp "${RUNNER_TEMP}/components/production/production-config.json" "${RUNNER_TEMP}/release/production-config.json"
+          cp "${RUNNER_TEMP}/components/bridge/bridge.tar.gz" "${RUNNER_TEMP}/release/bridge.tar.gz"
+
+          node scripts/release-metadata.mjs manifest \
+            --sha "${{ needs.authorize.outputs.sha }}" \
+            --run-id "${{ needs.authorize.outputs.ci_run_id }}" \
+            --run-attempt "${{ needs.authorize.outputs.ci_run_attempt }}" \
+            --web-lock apps/web/package-lock.json \
+            --bridge-lock workers/livepeer-bridge/package-lock.json \
+            --web-preview "${RUNNER_TEMP}/release/web-preview.tar.gz" \
+            --web-production "${RUNNER_TEMP}/release/web-production.tar.gz" \
+            --bridge "${RUNNER_TEMP}/release/bridge.tar.gz" \
+            --preview-config "${RUNNER_TEMP}/release/preview-config.json" \
+            --production-config "${RUNNER_TEMP}/release/production-config.json" \
+            --output-dir "${RUNNER_TEMP}/release"
+
+          node scripts/release-metadata.mjs verify \
+            --artifact-dir "${RUNNER_TEMP}/release" \
+            --sha "${{ needs.authorize.outputs.sha }}" \
+            --web-lock apps/web/package-lock.json \
+            --bridge-lock workers/livepeer-bridge/package-lock.json
+          (cd "${RUNNER_TEMP}/release" && sha256sum --check SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ needs.authorize.outputs.sha }}
+          path: ${{ runner.temp }}/release
+          retention-days: 30
+          overwrite: true
+          if-no-files-found: error
+
+  deploy-preview:
+    name: Deploy Preview
+    needs:
+      - authorize
+      - assemble
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: Preview
+      url: https://preview.youtick.net
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - id: current
+        name: Skip stale SHA before Cloudflare
+        env:
+          SHA: ${{ needs.authorize.outputs.sha }}
+        run: |
+          git fetch --no-tags origin main
+          if [[ "$(git rev-parse origin/main)" == "${SHA}" ]]; then
+            echo "deploy=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "deploy=false" >> "${GITHUB_OUTPUT}"
+            echo "Skipping stale Preview SHA ${SHA}."
+          fi
+      - if: steps.current.outputs.deploy == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - if: steps.current.outputs.deploy == 'true'
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
+        working-directory: apps/web
+      - if: steps.current.outputs.deploy == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-${{ needs.authorize.outputs.sha }}
+          path: ${{ runner.temp }}/release
+      - if: steps.current.outputs.deploy == 'true'
+        name: Verify bytes and Preview config drift
+        env:
+          SHA: ${{ needs.authorize.outputs.sha }}
+        run: |
+          node scripts/release-metadata.mjs verify \
+            --artifact-dir "${RUNNER_TEMP}/release" \
+            --sha "${SHA}" \
+            --web-lock apps/web/package-lock.json \
+            --bridge-lock workers/livepeer-bridge/package-lock.json
+          node scripts/release-metadata.mjs config \
+            --environment preview \
+            --output "${RUNNER_TEMP}/current-preview-config.json"
+          cmp "${RUNNER_TEMP}/release/preview-config.json" "${RUNNER_TEMP}/current-preview-config.json"
+      - if: steps.current.outputs.deploy == 'true'
+        name: Record unchanged root origin
+        run: node scripts/release-smoke.mjs fingerprint https://youtick.net > "${RUNNER_TEMP}/root-before.json"
+      - if: steps.current.outputs.deploy == 'true'
+        name: Upload, smoke and promote Preview versions
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          NEAR_RPC_URL: ${{ secrets.NEAR_RPC_URL }}
+          SHA: ${{ needs.authorize.outputs.sha }}
+        run: |
+          git fetch --no-tags origin main
+          [[ "$(git rev-parse origin/main)" == "${SHA}" ]]
+          node scripts/cloudflare-release.mjs deploy preview "${SHA}" \
+            "${RUNNER_TEMP}/release" \
+            "${RUNNER_TEMP}/preview-deployment.json"
+      - if: steps.current.outputs.deploy == 'true'
+        name: Prove root origin stayed unchanged
+        run: |
+          node scripts/release-smoke.mjs fingerprint https://youtick.net > "${RUNNER_TEMP}/root-after.json"
+          node scripts/release-smoke.mjs compare \
+            "${RUNNER_TEMP}/root-before.json" \
+            "${RUNNER_TEMP}/root-after.json"
+      - if: steps.current.outputs.deploy == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-deployment-${{ needs.authorize.outputs.sha }}
+          path: |
+            ${{ runner.temp }}/preview-deployment.json
+            ${{ runner.temp }}/root-before.json
+            ${{ runner.temp }}/root-after.json
+          retention-days: 30
+          overwrite: true
+          if-no-files-found: error
