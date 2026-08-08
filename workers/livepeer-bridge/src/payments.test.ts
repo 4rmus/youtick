@@ -12,7 +12,7 @@ import { paymentRateLimit } from './payments';
 const ORIGIN = 'https://app.youtick.net';
 const RPC_URL = 'https://rpc.mainnet.near.org';
 const CONTRACT_ID = 'paid-media.near';
-const API_KEY = 'oneclick-test-api-key-32-bytes';
+const API_KEY = `eyJx${'a'.repeat(266)}.${'b'.repeat(266)}.sig`;
 const BASE_USDC = 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near';
 const ARB_USDC = 'nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near';
 const USDC_CONTRACT = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';

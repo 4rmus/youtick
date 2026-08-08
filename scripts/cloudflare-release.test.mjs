@@ -23,7 +23,7 @@ const ZONE_ID = '2'.repeat(32);
 const API_TOKEN = 'fixture-api-token';
 const NEAR_RPC_URL = 'https://rpc.fastnear.com/v1/release-test-secret';
 const NEAR_RPC_SHA256 = createHash('sha256').update(NEAR_RPC_URL).digest('hex');
-const ONECLICK_API_KEY = 'release-test-partner-key';
+const ONECLICK_API_KEY = `eyJx${'a'.repeat(266)}.${'b'.repeat(266)}.sig`;
 const TARGETS = {
     preview: {
         web: { worker: 'youtick-web-preview', domain: 'preview.youtick.net' },
