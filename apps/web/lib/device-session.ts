@@ -3,9 +3,9 @@ import { APP_CONFIG, NEAR_CONFIG, NEAR_NETWORK } from './constants';
 import { base64Encode } from './crypto/codec';
 import type { WalletInstance } from './types';
 
-const DEVICE_SESSION_STORAGE_PREFIX = 'youtick:device-session:';
 const DEVICE_SESSION_LIFETIME_MS = 8 * 60 * 60 * 1000;
 const PUBLIC_KEY_PATTERN = /^ed25519:[1-9A-HJ-NP-Za-km-z]{32,64}$/;
+const deviceSessions = new Map<string, DeviceSession>();
 
 export type DeviceSessionCertificate = {
     domain: 'youtick.device-session';
@@ -30,7 +30,7 @@ export type DeviceSession = {
 };
 
 function storageKey(accountId: string): string {
-    return `${DEVICE_SESSION_STORAGE_PREFIX}${accountId}:${NEAR_NETWORK}`;
+    return `${accountId}:${NEAR_NETWORK}`;
 }
 
 export async function ensureDeviceSession(
@@ -78,17 +78,16 @@ export async function ensureDeviceSession(
         },
         secret_key: keyPair.toString(),
     };
-    window.sessionStorage.setItem(storageKey(accountId), JSON.stringify(session));
+    deviceSessions.set(storageKey(accountId), session);
     return session;
 }
 
 export async function getDeviceSession(accountId: string): Promise<DeviceSession | null> {
     if (typeof window === 'undefined') return null;
     const key = storageKey(accountId);
-    const raw = window.sessionStorage.getItem(key);
-    if (!raw) return null;
+    const session = deviceSessions.get(key);
+    if (!session) return null;
     try {
-        const session = JSON.parse(raw) as DeviceSession;
         const keyPair = KeyPair.fromString(session.secret_key as `ed25519:${string}`);
         if (session.certificate.domain !== 'youtick.device-session'
             || session.certificate.version !== '1'
@@ -108,14 +107,14 @@ export async function getDeviceSession(accountId: string): Promise<DeviceSession
         }
         return session;
     } catch {
-        window.sessionStorage.removeItem(key);
+        deviceSessions.delete(key);
         return null;
     }
 }
 
 export async function clearDeviceSession(accountId: string): Promise<void> {
     if (typeof window === 'undefined') return;
-    window.sessionStorage.removeItem(storageKey(accountId));
+    deviceSessions.delete(storageKey(accountId));
 }
 
 export function canonicalDeviceCertificate(certificate: DeviceSessionCertificate): string {

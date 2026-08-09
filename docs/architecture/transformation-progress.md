@@ -125,7 +125,7 @@ Evidence classes remain separate:
 | Persistent write per token is zero | PASS_LOCAL | V2 invokes the authorizer directly without `LIVEPEER_CONTROL`; success and same-request replay tests prove no DO access while final reads repeat. V1 remains an independently closed fallback. `LOCAL_TEST`. |
 | Cold and cache-hit NEAR reads meet approved bounds | PASS_LOCAL | Cold v2 performs three final NEAR reads plus one provider-policy read. The bounded 1,024-record cache makes a fully warm replay use zero NEAR/provider reads. Publication/provider expire at 30 seconds, wallet proof at 60 seconds, positive entitlement at five minutes and negative at three seconds. Takedown and removed-key boundary tests pass. `LOCAL_TEST`; deployed latency is absent. |
 | Legacy/v2 shadow mismatch below approved threshold | PARTIAL | The accepted mismatch ratio is exactly 0. A separately gated source path embeds an independently signed v2 proof in a legacy request, fixes and returns only the legacy result, then runs the existing v2 decision without JWT or durable writes through `waitUntil`. A mismatch regression logs only bounded ALLOW/DENY/UNAVAILABLE and reason codes. Both shadow flags default false and are not release-wired. Deployed samples and a pass result remain `EXTERNAL_EVIDENCE_REQUIRED`. `LOCAL_TEST`. |
-| Device-certificate UX and revoke/clear verified | PASS_LOCAL | Web creates an eight-hour wallet-authorized certificate, stores its secret only in sessionStorage and clears it on disconnect. Wrong origin, expired certificate, invalid/removed/non-FullAccess wallet key and invalid device signature fail closed locally. A stolen certificate remains usable until expiry unless its wallet key is removed; deployed wallet UX is `UNPROVEN`. `LOCAL_TEST`. |
+| Device-certificate UX and revoke/clear verified | PASS_LOCAL | Web creates an eight-hour wallet-authorized certificate, keeps its secret only in memory and clears it on disconnect or page reload. Wrong origin, expired certificate, invalid/removed/non-FullAccess wallet key and invalid device signature fail closed locally. A stolen in-memory certificate remains usable until expiry unless its wallet key is removed; deployed wallet UX is `UNPROVEN`. `LOCAL_TEST`. |
 | Access grant issuance can be disabled | PASS_LOCAL | Fresh Access v2 has an independent, readable issuance flag behind the existing owner timelock. One regression proves the exact 24-hour decommission sequence: a grant issued during the delay remains verifiable, execution rejects new issuance, and subject revoke plus bounded cleanup still work. Testnet execution remains absent. `LOCAL_TEST`. |
 | DO retention/cleanup proven automatically | PARTIAL | Creator-fee/payment rate-limit objects alarm and `deleteAll()` at window expiry; signed control nonces expire with their at-most-five-minute request and purge in 128-record batches; normal/ambiguous admission leases release at 30/15 minutes, webhook dedup purges at 30 days and admission-reopen audit at 90 days. Independent default-off UploadJob and operator outbox D1 archive sources persist bounded summaries, commit/retry metadata and 14/90-day eligibility boundaries locally. Real D1 commits, both destructive deletes and a complete class-wide max-record contract remain absent. `LOCAL_TEST`. |
 
@@ -190,7 +190,7 @@ Evidence classes remain separate:
 | GOV-002 | 1 | ACCEPTED_PILOT_EXCEPTION | Fresh Market/Access v2 IDs were deployed and old IDs were not overwritten. Mainnet uses an accepted fresh ID plus independently audited snapshot/import; implementation remains later work. |
 | AUTH-003 | 1 | PASS_TESTNET | Required resource, pause semantics, field/per-owner bounds, cleanup and independent issuance control pass locally; a grant issue/verify/revoke/cleanup drill succeeded on the fresh Access v2 testnet ID. The source-only issuance-decommission sequence now passes; its testnet execution is absent. |
 | RPC-001 | 1 | PASS_LOCAL | Separate bounded read/broadcast paths, deadlines, response caps, rate maps and no-replay broadcast pass locally. Dedicated provider and distributed edge quota evidence remain external. |
-| PLAY-001 | 2 | PASS_LOCAL | Eight-hour NEP-413 device certificate, session-only device key, signed request binding and disconnect clear pass locally; deployed wallet proof is absent. |
+| PLAY-001 | 2 | PASS_LOCAL | Eight-hour NEP-413 device certificate, memory-only device key, signed request binding and disconnect/page-reload clear pass locally; deployed wallet proof is absent. |
 | PLAY-002 | 2 | PASS_LOCAL | V2 verifies final publication/entitlement and returns a 180-second playback-bound JWT without Access grant or DO writes. The all-playback issuance gate closes both legacy and v2 routes before RPC use; staging/load and deployed-gate proof are absent. |
 | PLAY-003 | 2 | PARTIAL | Bounded TTL cache, cold/hit read counts, provider JWT-policy check and 30/60-second takedown/key-removal bounds pass locally. Default-off legacy/v2 shadow execution returns only the legacy response, reuses the v2 decision without another JWT/write and emits bounded decision/reason-code comparison. The accepted mismatch ratio is 0; event-driven invalidation and deployed cache/shadow/latency samples remain absent. |
 | DO-001 | 2 | PARTIAL | Shared transactional enforcement rejects record 257 and permits existing-key replay at the accepted 256-record ceiling. Rate-limit `deleteAll()`, 30-day webhook dedup and 90-day admission audit cleanup pass automatically. Independent default-off UploadJob and confirmed operator D1 archives enforce bounded summaries plus 14/90-day eligibility locally without deletion. Real archive commits, operator/UploadJob destructive cleanup and deployed metrics remain absent. |
@@ -3033,3 +3033,20 @@ Evidence classes remain separate:
     active target.
 - KANIT: `LOCAL_STATIC` + protocol checker. No D1, Cloudflare, provider,
   contract, deploy, traffic, secret, payment, deletion or runtime mutation.
+
+### CHECKPOINT 95 — Keep the device-session secret out of browser storage
+
+- DURUM: `CODEQL_FINDING_FIXED_LOCAL / REVALIDATION_PENDING / RUNTIME_CLOSED`
+- BASELINE: `agent/youtick-architecture-loop-20260809@73a221a`
+- BULGU: GitHub CodeQL reported high-severity clear-text storage of the
+  device-session authority in `sessionStorage`.
+- UYGULAMA:
+  - the device session is kept only in module memory;
+  - explicit disconnect and page reload clear the authority;
+  - no encryption key or replacement secret is added to browser storage;
+  - protocol and active architecture evidence now match this boundary.
+- DOĞRULAMA: The focused web test proves same-page reuse without any
+  `sessionStorage`/`localStorage` write and proves module reload loses the
+  session. Full web and CodeQL revalidation are pending the follow-up SHA.
+- KANIT: `LOCAL_STATIC`. No wallet, provider, contract, D1, deploy, traffic,
+  secret or runtime mutation.

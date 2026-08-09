@@ -13,7 +13,7 @@ describe('device session', () => {
         vi.resetModules();
     });
 
-    it('keeps one eight-hour wallet-certified device key in sessionStorage only', async () => {
+    it('keeps one eight-hour wallet-certified device key in memory only', async () => {
         const walletKey = 'ed25519:11111111111111111111111111111111';
         const wallet = {
             signMessage: vi.fn().mockResolvedValue({
@@ -47,8 +47,12 @@ describe('device session', () => {
         expect(first.certificate_proof.public_key).toBe(walletKey);
         expect(first.secret_key).toMatch(/^ed25519:/);
         expect(await getDeviceSession('buyer.testnet')).toEqual(first);
-        expect(sessionStorage.setItem).toHaveBeenCalled();
+        expect(sessionStorage.setItem).not.toHaveBeenCalled();
         expect(localStorage.setItem).not.toHaveBeenCalled();
+
+        vi.resetModules();
+        const reloaded = await import('@/lib/device-session');
+        expect(await reloaded.getDeviceSession('buyer.testnet')).toBeNull();
     });
 
     it('rejects a wallet proof for another account without persisting the device key', async () => {

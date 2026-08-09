@@ -247,8 +247,8 @@ positive entitlement for five minutes and negative entitlement for three
 seconds. A fully warm authorization uses zero NEAR/provider calls. Takedown and
 wallet-key removal are rechecked at their 30/60-second bounds respectively.
 
-The browser stores the generated device secret only in `sessionStorage` and
-clears it on explicit disconnect. V1 remains an independent closed fallback;
+The browser keeps the generated device secret only in memory and clears it on
+explicit disconnect or page reload. V1 remains an independent closed fallback;
 v2 has no deployment evidence. The local opt-in abuse test rejects 100,000
 wrong-origin requests without external calls, Durable Object access or cache
 growth.

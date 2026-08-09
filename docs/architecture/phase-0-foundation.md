@@ -231,7 +231,7 @@ value.
 | Legacy Play grant | Access contract | Grant plus per-owner vector; expiry does not delete; no pagination/cleanup bound | Removed from playback hot path | Stop issuance, bounded cleanup after approved transition | MISSING |
 | Signless secret | Browser sessionStorage | Current-tab session; legacy localStorage entry is removed on access | Browser session | Session end or explicit clear | PASS (LOCAL_TEST) |
 | Upload job key | Browser sessionStorage | Per account/job; retained for signed lease heartbeat and removed after upload success | Browser session | Same-job recovery or expiry | PARTIAL |
-| Device certificate | Browser sessionStorage/request | Eight-hour wallet proof plus session-only device key | Browser/request | Expiry or explicit disconnect; no server persistence | PASS_LOCAL |
+| Device certificate | Browser memory/request | Eight-hour wallet proof plus memory-only device key | Browser/request | Expiry, page reload or explicit disconnect; no browser/server persistence | PASS_LOCAL |
 | Playback nonce | V1 job DO; none in V2 | V1 persists one key per token request; V2 uses short signed expiry without a write | None after V1 retirement | No persistent state | PARTIAL |
 | Upload job | Cloudflare job DO | Job record, webhook dedup, reconcile/finalize and default-off terminal archive metadata; no destructive terminal cleanup | UploadJob DO per generation | Real D1 archive proof plus guarded `deleteAll()` after v1 independence | PARTIAL |
 | Admission | Shared Cloudflare DO | Two global/one per creator; 30-minute normal lease, five-minute heartbeat, 15-minute ambiguity; published/expired reservation removed | Coordinator DO | Lease expiry alarms and rolling counters | PARTIAL |
