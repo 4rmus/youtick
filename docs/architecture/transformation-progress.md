@@ -115,7 +115,7 @@ Evidence classes remain separate:
 | Access pause/resource semantics fixed | PASS | Fresh Access v2 requires a bounded Play resource, applies global/scope pause during verification, caps each owner at 16 active grants, paginates list/cleanup and can disable new issuance. Contract 14/14 and web call-shape 11/11 pass. On testnet one session-only grant verified, revoked and cleaned to empty. `LOCAL_TEST` + `TESTNET_MUTATION`. |
 | RPC abuse test proves bounded resources | PASS_LOCAL | Read/broadcast routes are separate; experimental methods are absent; 64 KiB request and 2 MiB response caps, 2.5-second upstream and six-second read deadlines, bounded rate maps, IP/account limits, read-only fallback, broadcast no-replay, safe provider metrics and a three-failure circuit breaker have 15/15 route regressions, including proof that an open circuit skips the failed upstream. Dedicated authenticated primary is supported but not deployed; per-instance rate limiting is not a distributed edge guarantee. `LOCAL_TEST`. |
 | No open P0 except controlled legacy playback grant | PASS_LOCAL | Nonce CSP and secure revoke/clear UX now pass locally. Bridge governance, fresh-v2 state choice, AUTH-001 and Access bounds pass locally/testnet as recorded. The controlled legacy playback path remains closed by runtime gates; deployed verification is `UNPROVEN`. |
-| Security regressions are mandatory CI gates | PASS_CI | Relevant CSP, signless, Access and governance tests run in the Web/Contracts jobs. All tracked third-party Actions are commit-SHA pinned; runtime npm advisories, RustSec and the reusable JavaScript/TypeScript plus Rust CodeQL workflow are explicit dependencies of the ruleset-required `CI Gate`. Run `31335719993` passed both CodeQL languages before `CI Gate` passed for exact PR head `ddd401583bfc09d04f0a58f736b5b2091836ffc7`; the branch has zero open code-scanning alerts. `CI`. |
+| Security regressions are mandatory CI gates | PASS_CI | Relevant CSP, signless, Access and governance tests run in the Web/Contracts jobs. All tracked third-party Actions are commit-SHA pinned; runtime npm advisories, RustSec and the reusable JavaScript/TypeScript plus Rust CodeQL workflow are explicit dependencies of the ruleset-required `CI Gate`. Run `31339883888` passed both CodeQL languages and the independent CodeQL PR check before `CI Gate` passed for exact PR head `319f23fdf8f068f8ef38cb6a2ed96a6fc7f47313`; the PR merge ref has zero open code-scanning alerts. `CI`. |
 
 ### Phase 2 — stateless playback and bounded state
 
@@ -165,8 +165,8 @@ Evidence classes remain separate:
 | Upload-resume success above approved threshold | EXTERNAL_EVIDENCE_REQUIRED | The accepted gate is at least 99% same-resource resume with exactly zero second payments and zero second provider assets. Local recovery/canary regressions pass, but no deployed pilot sample or payment/provider receipt aggregation exists. |
 | RPC/provider fault injection degrades safely | PARTIAL | The report's eight chaos scenarios now map to deterministic local regressions: bounded NEAR failures/circuit, Livepeer 429/5xx/timeout admission behavior, duplicate/out-of-order webhook, Queue retry/redelivery, ambiguous broadcast reuse, exact-version rejection, early/delayed alarm timing and bounded D1/API/Web fallback. This is complete source-matrix coverage, not a real chaos run. Provider, Cloudflare Queue/D1, mixed deployed versions and staging evidence remain `EXTERNAL_EVIDENCE_REQUIRED`. `LOCAL_TEST`. |
 | Cost model and budget alarm defined | PARTIAL | Approved pilot monthly/per-job reservation values fail closed locally and provider 402/429 closes admission. Actual Livepeer billed-usage/invoice reconciliation and delivered budget alerts remain external. `LOCAL_TEST`. |
-| Security/supply-chain gates mandatory | PARTIAL | All tracked third-party Actions are commit-SHA pinned; runtime npm high-severity advisories, RustSec and the reusable CodeQL matrix are explicit dependencies of the ruleset-required `CI Gate`. Run `31335719993` passed all jobs and produced non-expired contract SBOM artifact `contract-sbom-3e0653163c17f296b2f8330b3d2e4b36e5ddee8b` for the exact PR merge-candidate SHA with digest `sha256:b82852b167218a04ae59d59b15fbe912f61c998143a7736377356b217321c095`. Both CodeQL languages passed and the branch has zero open alerts. Release provenance and Web/Bridge runtime SPDX attestations remain absent; test/dev `time` remains informational. `CI`. |
-| Exact-SHA mainnet release candidate reproducible | PARTIAL | Release/security/SLO tooling tests 101/101; no mainnet candidate artifact or activation evidence. `LOCAL_TEST`. |
+| Security/supply-chain gates mandatory | PARTIAL | All tracked third-party Actions are commit-SHA pinned; runtime npm high-severity advisories, RustSec and the reusable CodeQL matrix are explicit dependencies of the ruleset-required `CI Gate`. Run `31339883888` passed both CodeQL languages, the independent CodeQL PR check and `CI Gate`, and produced non-expired artifact `contract-sbom-d7947f59bb9f7003901fd3dd6531a28e537b24eb` with digest `sha256:5006691a99113b788520e11e886b32d52d323e34509b9eb4a3e0115fa8b66729`. The exact PR head is `319f23fdf8f068f8ef38cb6a2ed96a6fc7f47313`, its merge ref has zero open alerts, and `main` remains at the pre-remediation SHA. Release provenance and Web/Bridge runtime SPDX attestations remain absent; test/dev `time` remains informational. `CI`. |
+| Exact-SHA mainnet release candidate reproducible | PARTIAL | Release/security/SLO tooling tests 102/102 locally and in the latest required `CI Gate`; no mainnet candidate artifact or activation evidence. `LOCAL_TEST` + `CI`. |
 
 ### Phase 6 — resilience, audit and mainnet
 
@@ -3298,3 +3298,274 @@ Evidence classes remain separate:
   to source-ready. Phase 0/2/5 remain `PARTIAL`: storage bytes, operation counts,
   active-object/platform aggregation, real archive cleanup and dashboards are
   still external evidence.
+
+### CHECKPOINT 105 — Phase 0/2/5 / telemetry exact-SHA CI proof
+
+- DURUM: `PASS_CI / TELEMETRY_SOURCE_VERIFIED / RUNTIME_UNPROVEN`
+- BASELINE: `agent/youtick-architecture-loop-20260809@57fac33`
+- AMAÇ: Bind the cold-start and projected DO-record sources to a terminal
+  exact-revision CI result without presenting CI as deployed telemetry.
+- DOĞRULAMA:
+  - explicit-path commit `57fac33cb575ec6d4d42c74a9178d19ca4763be8`
+    was pushed to existing draft PR #91; no new PR was created;
+  - CI run `31337101078` and all 13 PR checks passed. JavaScript/TypeScript
+    CodeQL completed at `21:33:44Z`, Rust CodeQL at `21:34:08Z`, contract tests
+    at `21:40:50Z`, then `CI Gate` job `93305542771` ran from `21:40:54Z` to
+    `21:41:11Z` and passed the mandatory 102-test tooling package;
+  - branch-scoped code scanning reports zero open alerts;
+  - artifact `9044660786`, named
+    `contract-sbom-e787f9860bc484efc586c5487e0251e28e7e5646`, is non-expired,
+    has digest
+    `sha256:03628d40acc71f6a059ca2d2f3454e1e1d929819a6bdfd3f826afb86836f2309`
+    and expires at `2026-09-08T21:32:58Z`;
+  - `refs/pull/91/head` resolves to `57fac33`; `refs/pull/91/merge` resolves to
+    the artifact SHA `e787f9860bc484efc586c5487e0251e28e7e5646`.
+- KANIT: `CI` + read-only GitHub run/check/artifact/code-scanning metadata.
+  The PR remains open, draft and mergeable; local HEAD equals upstream.
+- FAZ KAPISI: Checkpoints 103–104 are source- and CI-proven for this revision.
+  Phase 0/2/5 remain `PARTIAL` until deployed logs, platform aggregation,
+  storage byte/operation/active-object metrics and dashboards exist.
+- RİSK/BLOCKER: No merge, deploy, traffic, runtime flag, ruleset, secret,
+  provider, D1, Queue, contract, wallet or payment mutation occurred.
+
+### CHECKPOINT 106 — Cross-phase / PR review boundary opened
+
+- DURUM: `READY_FOR_REVIEW / UNMERGED / RUNTIME_CLOSED`
+- BASELINE: `agent/youtick-architecture-loop-20260809@57fac33`
+- AMAÇ: Open the human review boundary after explicit approval without
+  silently widening that authority to merge or deployment.
+- DOĞRULAMA:
+  - PR #91 changed from draft to ready-for-review after explicit user approval;
+  - it remains open and mergeable at exact head
+    `57fac33cb575ec6d4d42c74a9178d19ca4763be8`;
+  - all 13 checks remain successful and `reviewDecision` is still empty;
+  - repository variable `DEPLOY_PREVIEW_ENABLED` remains `false`.
+- KANIT: Read-only PR/check/variable metadata after the approved PR-state
+  mutation. No reviewer was requested automatically.
+- FAZ KAPISI: Source review may now begin. Merge, main-branch push, canonical
+  Preview deployment and any temporary deploy-gate enablement remain separate
+  explicit approval boundaries.
+- RİSK/BLOCKER: No merge, deploy, traffic, runtime flag, secret, provider, D1,
+  Queue, contract, wallet or payment mutation occurred.
+
+### CHECKPOINT 107 — Cross-phase / independent review gate
+
+- DURUM: `DECISION_REQUIRED / HUMAN_REVIEW_MISSING / UNMERGED / RUNTIME_CLOSED`
+- BASELINE: `agent/youtick-architecture-loop-20260809@57fac33`
+- AMAÇ: Verify the independent review gate before applying the approved merge
+  boundary, without treating repository permissiveness as architectural
+  approval.
+- DOĞRULAMA:
+  - PR #91 remains open, ready-for-review and mergeable at exact head
+    `57fac33cb575ec6d4d42c74a9178d19ca4763be8`;
+  - `reviewDecision` is empty and no user or team reviewer is requested;
+  - the only review is an outdated GitHub Advanced Security comment on
+    `73a221a`; its single CodeQL thread is resolved and outdated;
+  - active ruleset `main-pr-ci` requires the successful `CI Gate` check but
+    requires zero approving reviews and permits only squash or rebase merge;
+  - all 13 checks remain successful, so CI is not the blocking condition.
+- KANIT: Read-only PR review-thread, ruleset and check metadata. Repository
+  policy technically permits merge, but independent human source review is
+  absent.
+- FAZ KAPISI: Merge is intentionally not performed. A named independent
+  reviewer and completed approval, or an explicit decision to waive that gate,
+  is required before choosing a permitted merge method.
+- RİSK/BLOCKER: No merge, deploy, traffic, runtime flag, ruleset, secret,
+  provider, D1, Queue, contract, wallet or payment mutation occurred.
+
+### CHECKPOINT 108 — Cross-phase / approved squash merge and main scan result
+
+- DURUM: `MERGED / PASS_MAIN_CI / CODEQL_ALERTS_OPEN / RUNTIME_CLOSED`
+- BASELINE: PR #91 head `57fac33cb575ec6d4d42c74a9178d19ca4763be8`.
+- AMAÇ: Apply the explicitly approved merge boundary while keeping Preview and
+  runtime mutation gates closed, then verify the exact main revision.
+- UYGULAMA:
+  - GitHub Copilot review was requested through the documented REST reviewer
+    identity, but no request or review appeared after a bounded 50-second poll;
+  - because the user's conditional instruction selected option 2 when Copilot
+    review was unavailable, the independent-review gate was explicitly waived;
+  - PR #91 was squash-merged with exact-head matching to main commit
+    `074e6a66aaf385097b710c74af373cecc5fe3c09`.
+- DOĞRULAMA:
+  - exact-main CI run `31338204428` completed successfully; both CodeQL
+    languages, Web, Bridge, Docs, both contract jobs and final `CI Gate` passed;
+  - artifact `9044981905`, named
+    `contract-sbom-074e6a66aaf385097b710c74af373cecc5fe3c09`, has digest
+    `sha256:a1501489c7914256f90ca4281f66aab2adf90214c97b718dc48fb6c4a564f555`
+    and expires at `2026-09-08T21:58:57Z`;
+  - the exact-SHA `Deploy Preview` run `31338573573` was skipped,
+    `DEPLOY_PREVIEW_ENABLED=false` and the deployment API returned no records;
+  - main CodeQL analysis opened three high-severity alerts at the merge SHA:
+    `js/xss-through-dom` in the local video preview plus
+    `js/insufficient-password-hash` and
+    `js/incomplete-url-substring-sanitization` in release tests.
+- KANIT: `MERGE` + `CI` + read-only run, artifact, code-scanning, variable and
+  deployment metadata. CI success did not suppress or conceal the three alerts.
+- FAZ KAPISI: PR #91 is merged, but the security gate is reopened until an
+  exact revision proves that all three main alerts are fixed or deliberately
+  triaged. Preview/runtime activation remains closed.
+
+### CHECKPOINT 109 — Cross-phase / bounded main CodeQL remediation
+
+- DURUM: `PASS_LOCAL / FIX_COMMITTED / UNPUBLISHED / CI_UNPROVEN`
+- BASELINE: `main@074e6a66aaf385097b710c74af373cecc5fe3c09`.
+- AMAÇ: Resolve the three new main alerts with the smallest source-faithful
+  change, without dismissing alerts or adding a dependency.
+- UYGULAMA:
+  - the selected-file preview now assigns its browser-created object URL
+    directly to an `HTMLVideoElement` ref and revokes it during cleanup instead
+    of carrying DOM-derived text through a JSX `src` prop;
+  - the release fixture verifies the test API key with Node's built-in `scrypt`
+    rather than a fast SHA-256 password-like hash;
+  - the release non-leak assertion searches for the unique secret path token,
+    not an entire URL substring that could be mistaken for host validation.
+- DOĞRULAMA: Release tests pass 45/45; complete mandatory release/security/SLO
+  tooling passes 136/136; Web lint and 132/132 tests pass; Livepeer browser
+  canary passes 5/5; CI-equivalent testnet production build passes; diff check
+  passes.
+- KANIT: `LOCAL_TEST` + local branch
+  `agent/codeql-main-alerts-20260810@65d4be2`. Only
+  `apps/web/components/LivepeerPaidUploadForm.tsx` and
+  `scripts/cloudflare-release.test.mjs` are in the commit.
+- FAZ KAPISI: The source fix is locally ready but GitHub CodeQL closure remains
+  `UNPROVEN` until explicit authority publishes the branch and opens a draft
+  PR. No push, PR, alert dismissal, merge, deploy or runtime mutation occurred.
+
+### CHECKPOINT 110 — Cross-phase / CodeQL remediation draft PR
+
+- DURUM: `PUBLISHED / DRAFT_PR / CI_RUNNING / RUNTIME_CLOSED`
+- BASELINE: local remediation
+  `agent/codeql-main-alerts-20260810@65d4be2`.
+- AMAÇ: Publish the bounded two-file remediation for GitHub CodeQL analysis
+  after explicit user approval, without widening authority to merge or deploy.
+- UYGULAMA:
+  - branch `agent/codeql-main-alerts-20260810` was pushed at exact commit
+    `65d4be2c78ea1d22b2f1fd38d396f1a125f3c450`;
+  - draft PR #92 targets exact base
+    `main@074e6a66aaf385097b710c74af373cecc5fe3c09`;
+  - the PR contains only
+    `apps/web/components/LivepeerPaidUploadForm.tsx` and
+    `scripts/cloudflare-release.test.mjs` with 33 additions and 23 deletions.
+- DOĞRULAMA: PR #92 is open, draft and mergeable at the exact head; CI run
+  `31338939463` has started, including both CodeQL languages; repository
+  variable `DEPLOY_PREVIEW_ENABLED` remains `false`.
+- KANIT: `GIT_REMOTE` + read-only PR/check/variable metadata. Local validation
+  remains Checkpoint 109 evidence; in-progress CI is not recorded as PASS.
+- FAZ KAPISI: Wait for terminal exact-SHA CI and confirm the three main CodeQL
+  alerts are fixed on the PR revision. No ready-for-review transition, alert
+  dismissal, merge, deploy or runtime mutation occurred.
+
+### CHECKPOINT 111 — Cross-phase / exact-SHA CodeQL remediation proof
+
+- DURUM: `PASS_CI / PR_CODEQL_CLEAR / MAIN_CLOSURE_PENDING / RUNTIME_CLOSED`
+- BASELINE: draft PR #92 at
+  `agent/codeql-main-alerts-20260810@319f23fdf8f068f8ef38cb6a2ed96a6fc7f47313`.
+- AMAÇ: Close the branch-level security gate with a terminal exact-revision
+  analysis while keeping merge, deployment and alert triage outside the
+  approved boundary.
+- UYGULAMA:
+  - the DOM file selection is accepted into preview state only after a native
+    `File`/object boundary check, preserving the local preview and object-URL
+    cleanup without suppressing CodeQL;
+  - explicit-path commit `319f23fdf8f068f8ef38cb6a2ed96a6fc7f47313`
+    was pushed to the existing draft PR; no additional file or dependency was
+    added.
+- DOĞRULAMA:
+  - CI run `31339883888` completed successfully for the exact PR head; Web,
+    Runtime Dependency Audit, Production WASM Dependency Audit, both CodeQL
+    languages and the final `CI Gate` passed;
+  - the independent CodeQL PR check passed;
+  - JavaScript/TypeScript and Rust analyses for merge ref
+    `d7947f59bb9f7003901fd3dd6531a28e537b24eb` report zero results and the PR
+    merge ref has zero open alerts;
+  - the intermediate PR-only alert #6 is `fixed` and was not dismissed;
+  - artifact `9045490983`, named
+    `contract-sbom-d7947f59bb9f7003901fd3dd6531a28e537b24eb`, is non-expired,
+    has digest
+    `sha256:5006691a99113b788520e11e886b32d52d323e34509b9eb4a3e0115fa8b66729`
+    and expires at `2026-09-08T22:38:24Z`.
+- KANIT: `LOCAL_TEST` + `CI` + read-only PR, analysis, alert and artifact
+  metadata. Local lint, 132 web tests, five browser-canary tests and the
+  CI-equivalent production build also pass.
+- FAZ KAPISI: The three original findings are absent from the PR revision, so
+  the branch remediation is proven. Alerts #3–#5 remain open on
+  `main@074e6a66aaf385097b710c74af373cecc5fe3c09`; formal default-branch closure
+  requires separate merge authority and a successful exact-main CodeQL scan.
+  PR #92 remains draft. No ready-for-review transition, merge, deploy, feature
+  gate, alert dismissal, secret, provider, contract, wallet or runtime
+  mutation occurred.
+
+### CHECKPOINT 112 — Cross-phase / post-remediation remaining-gate audit
+
+- DURUM: `DECISION_REQUIRED / SAFE_LOCAL_QUEUE_EXHAUSTED / DRAFT_PR / RUNTIME_CLOSED`
+- BASELINE: architecture branch
+  `agent/youtick-architecture-loop-20260809@57fac33cb575ec6d4d42c74a9178d19ca4763be8`
+  plus the uncommitted progress record; remediation draft PR #92 is external
+  to this worktree at exact head
+  `319f23fdf8f068f8ef38cb6a2ed96a6fc7f47313`.
+- AMAÇ: Re-evaluate the full Phase 0–6 plan after the CodeQL remediation and
+  avoid replacing missing external evidence with duplicate source scaffolds.
+- DENETİM:
+  - Phase 0 remains open only on independent threat review, named specialist
+    ownership, protected configuration backup and deployed metric aggregation;
+  - Phase 1 first requires PR #92 review/merge and a successful exact-main
+    CodeQL scan for formal alert closure, then deployed browser/wallet evidence,
+    independent review and the accepted mainnet governance implementation;
+  - Phase 2 requires production-like staging, real shadow/cache samples and D1
+    archive/lifecycle proof; no trusted final-event purge authority is deployed;
+  - Phase 3 requires real multi-creator browser/provider/TUS/Queue evidence,
+    provider billing reconciliation and both external preconditions before
+    destructive UploadJob cleanup;
+  - Phase 4 requires deployed D1/final-event ingestion and rebuild, testnet
+    economic receipts and mainnet product/legal/finance approval;
+  - Phase 5 release provenance plus Web/Bridge SPDX attestation source already
+    exists and is mandatory by regression test. `DEPLOY_PREVIEW_ENABLED=false`
+    keeps its canonical workflow skipped, so real attestations, platform
+    dashboards/alerts, load/soak evidence, provider cost receipts and the ABR
+    economics decision remain external or decision-bearing;
+  - Phase 6 still requires named humans, independent audits, approved drills,
+    dark deployment and separately approved mainnet canaries/activation.
+- DOĞRULAMA: The complete source report, current phase-gate/backlog matrices,
+  security regression and guarded Preview release workflow were re-read.
+  Release source contains npm SPDX generation, exact checksum provenance and
+  GitHub attestations for Web/Bridge bundles; the latest canonical Preview run
+  is skipped and the deployment variable remains false. PR #92 is draft,
+  mergeable, has no requested reviewer and has no approving review.
+- KANIT: `LOCAL_STATIC` + read-only GitHub PR/run/variable metadata. No source
+  gap above can be truthfully closed by another speculative local abstraction;
+  the existing release source must be exercised, not duplicated.
+- FAZ KAPISI: The next dependency is an explicit decision for the PR #92 review
+  boundary. Ready-for-review, reviewer request, merge, main scan, Preview
+  enablement and every deployment/runtime mutation remain separate authority
+  gates. No PR-state, merge, deploy, feature flag, secret, provider, contract,
+  wallet, D1, Queue or runtime mutation occurred.
+
+### CHECKPOINT 113 — Cross-phase / automated review boundary
+
+- DURUM: `READY_FOR_REVIEW / PR_CODEQL_CLEAR / HUMAN_APPROVAL_ABSENT / RUNTIME_CLOSED`
+- BASELINE: PR #92 exact head
+  `319f23fdf8f068f8ef38cb6a2ed96a6fc7f47313` against
+  `main@074e6a66aaf385097b710c74af373cecc5fe3c09`.
+- AMAÇ: Exercise the explicitly approved automated-review path without
+  widening authority to merge, deploy or dismiss main alerts.
+- UYGULAMA:
+  - the PR description was refreshed with the native `File` boundary, terminal
+    exact-SHA CI, zero PR CodeQL results and explicit runtime/merge limits;
+  - PR #92 was changed from draft to ready-for-review;
+  - the documented Copilot reviewer identity was requested through the REST
+    API, then checked in the signed-in GitHub reviewer UI. No Copilot reviewer,
+    request event or review became available;
+  - GitHub Advanced Security remains the available automated reviewer. Its
+    earlier comment is fixed/outdated, while the latest exact PR head is
+    covered by successful JavaScript/TypeScript and Rust CodeQL analyses with
+    zero merge-ref alerts.
+- DOĞRULAMA: PR #92 is open, non-draft, mergeable and still points to exact head
+  `319f23fdf8f068f8ef38cb6a2ed96a6fc7f47313`; all required checks pass. The
+  reviewer request list is empty, no approving review exists and no Copilot
+  review appeared after a bounded poll or in the GitHub reviewer selector.
+- KANIT: `CI` + GitHub PR, review, timeline and signed-in UI metadata. GitHub's
+  automated security analysis is current; an independent human approval is
+  still absent.
+- FAZ KAPISI: Merge and the following exact-main CodeQL closure remain separate
+  decisions. No merge, deployment, alert dismissal, feature gate, secret,
+  provider, contract, wallet, D1, Queue or runtime mutation occurred.
