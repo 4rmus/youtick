@@ -1,6 +1,6 @@
 # YouTick paid media market contract
 
-Status: `LIVEPEER_V1 / CODE_ONLY / BLOCKED_BY_P0_DECISIONS / NOT_DEPLOYED`
+Status: `LIVEPEER_V1 / MARKET_V2_CODE_ONLY / RUNTIME_DISABLED / NOT_DEPLOYED`
 
 This crate builds the paid-only Livepeer v1 market contract. It is intended for
 fresh contract IDs; no deployed public-alpha contract is migrated in place.
@@ -17,18 +17,34 @@ The contract supports:
   replacement;
 - the exact `paid-media-livepeer-v1` profile and configuration hash;
 - bridge-only, idempotent Livepeer publication finalization;
+- versioned governance state with a separate guardian-only emergency freeze,
+  admin-only unfreeze and an auditable pending bridge rotation;
+- a layout-preserving global new-purchase pause: guardian closes immediately,
+  admin alone reopens, and both transitions emit governance events;
 - globally unique asset hash and playback ID bindings;
 - mutable sale availability separated from immutable publication identity;
 - Circle USDC tickets at 2 USDC or more with a 98% creator / 2% platform split;
 - durable entitlement history and withdrawal liability restoration.
 - NEAR withdrawal bounded by its recorded liability, storage staking and the
-  configured operational reserve.
+  configured operational reserve, with `get_storage_reserve_status` exposing
+  the exact shared guard calculation without adding contract state.
+- NEP-297 economic, publication, withdrawal and governance events with bounded
+  idempotency fields and no upload/provider capabilities.
 
-The ABI contains only the Livepeer job, publication, entitlement, takedown and
-payment surfaces. Pause/resume, reconciliation and an exact same-job replay
+The ABI contains only the Livepeer job, publication, entitlement, governance,
+takedown and payment surfaces. Upload pause/resume, reconciliation and an exact same-job replay
 cannot charge the creator again; a conflicting replay fails. A new job is a new
 charge and no automatic provider-failure refund is implemented. The MediaJob
-Borsh layout has no migration entrypoint and must use a fresh contract ID.
+Borsh layout has no migration entrypoint and Market v2 must use a fresh contract
+ID. The purchase pause uses a dedicated namespaced storage key and does not
+change that Borsh layout. The accepted technical-pilot governance has no multisig or timelock;
+`propose_bridge` and `execute_bridge_rotation` are both admin-only. Multisig and
+timelock remain mandatory before mainnet general access.
+
+The event catalog is source-complete except `contract_migrated`, which cannot be
+truthfully emitted by this fresh-ID/no-migration design. Receipt ID and event
+index are attached by the final-block indexer; the contract emits contract ID,
+block height/time and the business idempotency key.
 
 Protocol details and exact bindings are in
 [`protocol/paid-media-livepeer-v1`](../../protocol/paid-media-livepeer-v1/README.md).

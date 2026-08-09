@@ -14,6 +14,49 @@ Source video and playback bytes never pass through Next.js or the Bridge Worker.
 The Bridge serves only the public, size-limited first-frame JPEG derived for
 publication covers after checking the current on-chain publication state.
 
+The wallet-redirect upload draft is versioned and kept only in
+`sessionStorage`. Recovery requires the same file name, byte length,
+`lastModified` value and a SHA-256 fingerprint of bounded first/last source
+blocks. Upload-intent control v3 signs that fingerprint; the job object binds
+its first value and rejects a different fingerprint during recovery. The draft
+never stores the TUS endpoint or a persistent browser key.
+
+The same v2 draft records only monotonic recovery progress:
+`payment_pending → authorized → upload_ready → uploading → provider_processing`.
+Retries cannot move this stored stage backwards; the record is cleared after a
+publication is observed.
+
+Publication completion polling uses the existing TanStack Query provider with
+bounded 5/10/20/30-second backoff, does not retry immediately, pauses interval
+work while the tab is hidden and refreshes when the window regains focus.
+
+The separate default-off playback-shadow flag embeds an independently signed
+v2 certificate request inside a legacy token request. Failure to create that
+optional proof never blocks the legacy request; the Worker returns only the
+legacy token.
+
+The canonical in-memory UI stage follows the actual call order:
+`draft → preflight → payment_required → payment_pending → authorized →`
+`intent_pending → upload_ready → uploading → provider_processing → published`.
+The initial preflight runs before payment options; a second fresh preflight
+still runs immediately before wallet authorization.
+
+One pure predecessor table enforces those UI transitions. It additionally
+allows only idempotent repeats, explicit retry edges back to `payment_pending`,
+new-file/account reset to `draft`, and an authoritative on-chain jump to
+terminal `published`.
+
+After the user reselects a fingerprint-matching file, the stored stage restores
+the safest UI projection: payment resumes from payment options, an interrupted
+upload returns to `upload_ready`, and `provider_processing` immediately resumes
+publication polling without reopening payment.
+
+A fingerprint-verified restored `authorized` draft exposes an explicit
+`Cancel job (no refund)` action. It signs the cancellation with the same
+session-only job key, clears that key and draft only after the bridge confirms
+terminal cancellation, and then resets the UI for a new job. Provider-pending
+and later work cannot be cancelled through this action.
+
 ## Local checks
 
 ```bash
@@ -25,6 +68,7 @@ NEXT_PUBLIC_NEAR_NETWORK=testnet \
 NEXT_PUBLIC_MARKET_CONTRACT_ID=market.testnet \
 NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.testnet \
 NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1=false \
+NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2=false \
 NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE=off \
 npm run build
 ```

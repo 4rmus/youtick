@@ -44,12 +44,34 @@ User NEAR account -- existing ft_transfer_call --> NEAR market
   approved market methods. FullAccess keys are forbidden.
 - Playback tokens are short-lived ES256 bearer tokens sent in the
   `Livepeer-Jwt` header and kept in browser memory.
-- Fresh market and access contract IDs are required; old state is not migrated.
+- The testnet pilot uses fresh market and access IDs with empty state. Mainnet
+  also uses a fresh ID, but requires an independently audited snapshot/import
+  and invariant verification rather than an in-place overwrite.
+- Accepted closed-gate policy is zero legacy/v2 authorization mismatch, at
+  least 99% same-resource upload resume, zero second payment/provider asset and
+  at most 256 persistent records per Durable Object.
+- YouTick does not keep a platform source-media backup. Creators retain their
+  source files; provider asset loss suspends sales/playback and requires creator
+  re-upload or takedown. D1 remains the rebuildable derived read model.
 
 ## Activation
 
 `NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1` and
 `LIVEPEER_BRIDGE_ENABLED` are independent gates and default to false.
+New upload intents and all playback-token issuance also require the independent
+`LIVEPEER_NEW_UPLOADS_ENABLED` and `LIVEPEER_PLAYBACK_ISSUANCE_ENABLED` gates;
+both default to false while existing upload recovery remains available.
+Provider creates and NEAR operator broadcasts additionally require the separate
+`LIVEPEER_PROVIDER_MUTATIONS_ENABLED` and
+`LIVEPEER_OPERATOR_MUTATIONS_ENABLED` gates; both default to false.
+Stateless playback additionally requires
+`NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2` and
+`LIVEPEER_PLAYBACK_V2_ENABLED`; both also default to false and are not yet
+release-wired.
+Legacy/v2 shadow measurement has its own
+`NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2` and
+`LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED` pair. Both default to false and are not
+release-wired; shadow never changes the legacy response or issues a v2 token.
 The native-NEAR creator-fee gates also remain false. Initial activation is
 USDC-first until its separate price-source gate is approved.
 
