@@ -80,7 +80,7 @@ export function LivepeerPaidUploadForm() {
     const [uploadStage, setUploadStage] = React.useState<UploadStage>('draft');
     const [failedStep, setFailedStep] = React.useState<number | null>(null);
     const [uploadProgress, setUploadProgress] = React.useState(0);
-    const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
+    const previewRef = React.useRef<HTMLVideoElement>(null);
     const [payment, setPayment] = React.useState<{
         usable: CreatorFeeAsset[];
         usdcFee: string;
@@ -112,13 +112,15 @@ export function LivepeerPaidUploadForm() {
     });
 
     React.useEffect(() => {
-        if (!file) {
-            setPreviewUrl(null);
-            return;
-        }
+        const preview = previewRef.current;
+        if (!file || !preview) return;
         const url = URL.createObjectURL(file);
-        setPreviewUrl(url);
-        return () => URL.revokeObjectURL(url);
+        preview.src = url;
+        return () => {
+            preview.removeAttribute('src');
+            preview.load();
+            URL.revokeObjectURL(url);
+        };
     }, [file]);
 
     React.useEffect(() => {
@@ -151,7 +153,6 @@ export function LivepeerPaidUploadForm() {
     const selectFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const selectionVersion = ++fileSelectionVersion.current;
         const selected = event.target.files?.[0] || null;
-        setFile(selected);
         setError(null);
         moveUploadStage('draft');
         setFailedStep(null);
@@ -159,7 +160,11 @@ export function LivepeerPaidUploadForm() {
         setPayment(null);
         setPaymentAsset(null);
         setJobId(null);
-        if (!selected) return setFileError(null);
+        if (typeof selected !== 'object' || !(selected instanceof File)) {
+            setFile(null);
+            return setFileError(null);
+        }
+        setFile(selected);
         const validation = validateLivepeerSourceFile(selected);
         if (!validation.ok) return setFileError(fileValidationMessage(validation.error));
         setFileError(null);
@@ -396,15 +401,15 @@ export function LivepeerPaidUploadForm() {
                 <CardContent className="space-y-5">
                     <Input type="file" accept={LIVEPEER_SOURCE_ACCEPT} disabled={busy || uploaded} onChange={selectFile} />
                     {fileError && <p role="alert" className="text-sm text-red-400">{fileError}</p>}
-                    {previewUrl && !fileError && (
+                    {file && !fileError && (
                         <div className="relative overflow-hidden rounded-xl border border-zinc-800 bg-black">
                             <video
+                                ref={previewRef}
                                 aria-label="Selected video cover preview"
                                 className="aspect-video w-full object-cover"
                                 muted
                                 playsInline
                                 preload="metadata"
-                                src={previewUrl}
                                 onLoadedMetadata={(event) => {
                                     const duration = event.currentTarget.duration;
                                     if (Number.isFinite(duration) && duration > 0) {
