@@ -3,6 +3,7 @@ import {
     verifyQuoteSignature,
     type OneClickQuoteResponse,
 } from '@defuse-protocol/one-click-sdk-typescript';
+import { assertDurableObjectRecordCapacity } from './durable-object-capacity';
 
 export interface PaymentEnv {
     ALLOWED_ORIGINS?: string;
@@ -136,6 +137,7 @@ const PAYMENT_ERROR_STATUS: Record<string, number> = {
     origin_denied: 403,
     payment_asset_denied: 400,
     payment_contract_mismatch: 503,
+    durable_object_record_limit: 503,
     payment_live_disabled: 503,
     payment_market_invalid: 502,
     payment_market_unavailable: 503,
@@ -152,7 +154,7 @@ const PAYMENT_ERROR_STATUS: Record<string, number> = {
 };
 
 export async function paymentAssets(request: Request, env: PaymentEnv): Promise<Response> {
-    return paymentRoute(request, env, async () => {
+    return paymentRoute(request, env, 'assets', async () => {
         const mode = paymentMode(env);
         if (!mode) throw new Error('runtime_not_configured');
         const assets = configuredAssets(env, mode === 'off');
@@ -167,7 +169,7 @@ export async function paymentAssets(request: Request, env: PaymentEnv): Promise<
 }
 
 export async function paymentQuote(request: Request, env: PaymentEnv): Promise<Response> {
-    return paymentRoute(request, env, async () => {
+    return paymentRoute(request, env, 'quote', async () => {
         const mode = paymentMode(env);
         if (mode === 'off') throw new Error('payment_quotes_disabled');
         if (!mode || !validQuoteConfig(env)) throw new Error('runtime_not_configured');
@@ -223,7 +225,7 @@ export async function paymentQuote(request: Request, env: PaymentEnv): Promise<R
 }
 
 export async function paymentStatus(request: Request, env: PaymentEnv): Promise<Response> {
-    return paymentRoute(request, env, async () => {
+    return paymentRoute(request, env, 'status', async () => {
         if (!validStatusConfig(env)) throw new Error('runtime_not_configured');
         const { depositAddress, depositMemo } = parseStatusInput(new URL(request.url));
         await enforceRemoteRateLimit(env, 'status', `${depositAddress}:${depositMemo || ''}`);
@@ -244,6 +246,10 @@ export async function paymentStatus(request: Request, env: PaymentEnv): Promise<
             throw new Error('oneclick_response_invalid');
         }
         const swapDetails = requireObject(response.swapDetails, 'oneclick_response_invalid');
+        console.info(JSON.stringify({
+            event: 'payment_status_observed',
+            details: { status: response.status },
+        }));
         return paymentJson({
             schema: 'youtick.payment-status.v1',
             status: response.status,
@@ -272,7 +278,7 @@ export async function paymentRateLimit(
         }
         const now = Date.now();
         const kind = input.kind;
-        await state.storage.transaction(async (transaction) => {
+        const expiresAtMs = await state.storage.transaction(async (transaction) => {
             const key = `payment-rate:${kind}:v1`;
             const current = await transaction.get<{ window_started_at_ms: number; count: number }>(key);
             const windowMs = kind === 'quote' ? QUOTE_RATE_WINDOW_MS : STATUS_RATE_WINDOW_MS;
@@ -284,26 +290,66 @@ export async function paymentRateLimit(
                     ? 'payment_quote_rate_limited'
                     : 'payment_status_rate_limited');
             }
+            await assertDurableObjectRecordCapacity(transaction, [key]);
             await transaction.put(key, next);
+            return next.window_started_at_ms + windowMs;
         });
+        await state.storage.setAlarm(expiresAtMs);
         return paymentJson({ accepted: true });
     } catch (error) {
         return paymentError(error);
     }
 }
 
+export async function expirePaymentRateLimit(state: DurableObjectState): Promise<boolean> {
+    const records = await Promise.all([
+        state.storage.get<{ window_started_at_ms: number }>('payment-rate:quote:v1'),
+        state.storage.get<{ window_started_at_ms: number }>('payment-rate:status:v1'),
+    ]);
+    const expiries = records.flatMap((record, index) => record
+        ? [record.window_started_at_ms + (index === 0 ? QUOTE_RATE_WINDOW_MS : STATUS_RATE_WINDOW_MS)]
+        : []);
+    if (expiries.length === 0) return false;
+    const next = Math.max(...expiries);
+    if (Date.now() < next) {
+        await state.storage.setAlarm(next);
+        return true;
+    }
+    await state.storage.deleteAll();
+    return true;
+}
+
 async function paymentRoute(
     request: Request,
     env: PaymentEnv,
+    operation: 'assets' | 'quote' | 'status',
     handler: () => Promise<Response>,
 ): Promise<Response> {
+    const startedAtMs = Date.now();
     const origin = request.headers.get('Origin') || '';
     try {
         if (!allowedOrigins(env).has(origin)) throw new Error('origin_denied');
-        return withPaymentCors(await handler(), origin);
+        const response = withPaymentCors(await handler(), origin);
+        console.info(JSON.stringify({
+            event: 'payment_route_completed',
+            details: {
+                operation,
+                httpCode: response.status,
+                latencyMs: Math.max(0, Date.now() - startedAtMs),
+            },
+        }));
+        return response;
     } catch (error) {
         const response = paymentError(error);
-        console.error(JSON.stringify({ event: 'payment_route_failed', code: paymentErrorCode(error) }));
+        console.error(JSON.stringify({
+            event: 'payment_route_failed',
+            details: {
+                operation,
+                code: paymentErrorCode(error),
+                httpCode: response.status,
+                latencyMs: Math.max(0, Date.now() - startedAtMs),
+            },
+        }));
         return withPaymentCors(response, allowedOrigins(env).has(origin) ? origin : '');
     }
 }
