@@ -153,7 +153,6 @@ export function LivepeerPaidUploadForm() {
     const selectFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const selectionVersion = ++fileSelectionVersion.current;
         const selected = event.target.files?.[0] || null;
-        setFile(selected);
         setError(null);
         moveUploadStage('draft');
         setFailedStep(null);
@@ -161,7 +160,11 @@ export function LivepeerPaidUploadForm() {
         setPayment(null);
         setPaymentAsset(null);
         setJobId(null);
-        if (!selected) return setFileError(null);
+        if (typeof selected !== 'object' || !(selected instanceof File)) {
+            setFile(null);
+            return setFileError(null);
+        }
+        setFile(selected);
         const validation = validateLivepeerSourceFile(selected);
         if (!validation.ok) return setFileError(fileValidationMessage(validation.error));
         setFileError(null);
