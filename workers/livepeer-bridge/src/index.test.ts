@@ -547,9 +547,27 @@ describe('Livepeer bridge PR-3 upload intent', () => {
                 method: 'GET',
                 httpCode: 200,
                 latencyMs: 12,
+                coldStart: true,
             },
         });
         expect(info.mock.calls[0][0]).not.toContain('secret');
+    });
+
+    it('marks only the first edge request in a fresh isolate as a cold start', async () => {
+        vi.resetModules();
+        const { default: freshHandler } = await import('./index');
+        const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const requests = [1, 2].map((suffix) => {
+            const request = new Request(`https://bridge.youtick.net/__health?request=${suffix}`);
+            Object.defineProperty(request, 'cf', { value: {} });
+            return request;
+        });
+
+        expect((await freshHandler.fetch(requests[0], createEnv())).status).toBe(200);
+        expect((await freshHandler.fetch(requests[1], createEnv())).status).toBe(200);
+
+        const logs = info.mock.calls.map(([value]) => JSON.parse(String(value)));
+        expect(logs.map((entry) => entry.details.coldStart)).toEqual([true, false]);
     });
 
     it('logs bounded NEAR and Livepeer dependency completion fields', async () => {

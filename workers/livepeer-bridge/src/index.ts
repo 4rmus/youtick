@@ -487,6 +487,7 @@ const OUTBOX_METHODS = new Set<OutboxMethod>([
     'suspend_livepeer_sales',
 ]);
 const playbackAuthorizationCache = new Map<string, { value: unknown; expiresAtMs: number }>();
+let edgeColdStartPending = true;
 
 export function playbackAuthorizationCacheRecordCount(): number {
     return playbackAuthorizationCache.size;
@@ -772,6 +773,8 @@ const bridgeWorker = {
 export default {
     async fetch(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
         const startedAtMs = Date.now();
+        const coldStart = request.cf ? edgeColdStartPending : false;
+        if (request.cf) edgeColdStartPending = false;
         let status = 500;
         try {
             const response = await bridgeWorker.fetch(request, env, context);
@@ -787,6 +790,7 @@ export default {
                     method: request.method,
                     httpCode: status,
                     latencyMs: Date.now() - startedAtMs,
+                    coldStart,
                 }));
             }
         }
@@ -980,6 +984,7 @@ export class LivepeerControl {
                 existing
                     ? [nonceKey, RECONCILE_KEY]
                     : [nonceKey, JOB_KEY, RECONCILE_KEY],
+                'upload_job',
             );
             if (existing) {
                 if (!sameJob(existing, candidate)) throw new Error('reservation_conflict');
@@ -1124,7 +1129,11 @@ export class LivepeerControl {
                 || !['UPLOAD_READY', 'UPLOADING'].includes(current.state)) {
                 throw new Error('admission_denied');
             }
-            await assertDurableObjectRecordCapacity(transaction, [nonceKey, RECONCILE_KEY]);
+            await assertDurableObjectRecordCapacity(
+                transaction,
+                [nonceKey, RECONCILE_KEY],
+                'upload_job',
+            );
             await transaction.put(nonceKey, { expiresAtMs: Number(input.envelope.expires_at_ms) });
             return current;
         });
@@ -1174,7 +1183,11 @@ export class LivepeerControl {
                 || current.creator !== input.envelope.account_id) {
                 throw new Error('upload_cancel_denied');
             }
-            await assertDurableObjectRecordCapacity(transaction, [nonceKey, RECONCILE_KEY]);
+            await assertDurableObjectRecordCapacity(
+                transaction,
+                [nonceKey, RECONCILE_KEY],
+                'upload_job',
+            );
             if (current.state === 'CANCELLED') {
                 await transaction.put(nonceKey, { expiresAtMs: Number(input.envelope.expires_at_ms) });
                 return { record: current, duplicate: true, fromState: current.state };
@@ -1212,7 +1225,11 @@ export class LivepeerControl {
         await this.state.storage.transaction(async (transaction) => {
             const nonceKey = `nonce:${input.envelope.device_nonce}`;
             if (await transaction.get(nonceKey)) throw new Error('device_nonce_replayed');
-            await assertDurableObjectRecordCapacity(transaction, [nonceKey, RECONCILE_KEY]);
+            await assertDurableObjectRecordCapacity(
+                transaction,
+                [nonceKey, RECONCILE_KEY],
+                'upload_job',
+            );
             await transaction.put(nonceKey, { expiresAtMs: Number(input.envelope.expires_at_ms) });
         });
         await scheduleAlarmNoLaterThan(this.state, Number(input.envelope.expires_at_ms));
@@ -1253,7 +1270,11 @@ export class LivepeerControl {
                 if (!sameOutbox(existing, candidate)) throw new Error('outbox_conflict');
                 return { record: existing, created: false };
             }
-            await assertDurableObjectRecordCapacity(transaction, [key, RECONCILE_KEY]);
+            await assertDurableObjectRecordCapacity(
+                transaction,
+                [key, RECONCILE_KEY],
+                'upload_job',
+            );
             await transaction.put(key, candidate);
             return { record: candidate, created: true };
         });
@@ -1324,7 +1345,11 @@ export class LivepeerControl {
         const seen = await this.state.storage.transaction(async (transaction) => {
             const duplicate = await transaction.get(dedupKey);
             if (!duplicate) {
-                await assertDurableObjectRecordCapacity(transaction, [dedupKey, RECONCILE_KEY]);
+                await assertDurableObjectRecordCapacity(
+                    transaction,
+                    [dedupKey, RECONCILE_KEY],
+                    'upload_job',
+                );
                 await transaction.put(dedupKey, {
                     state: 'PROCESSING',
                     event: webhook.event,
@@ -1458,7 +1483,11 @@ async function advanceOperatorArchiveScan(
         if (retryAtMs !== null) {
             earliestRetryAtMs = Math.min(earliestRetryAtMs ?? retryAtMs, retryAtMs);
         }
-        await assertDurableObjectRecordCapacity(state.storage, [OPERATOR_ARCHIVE_SCAN_KEY]);
+        await assertDurableObjectRecordCapacity(
+            state.storage,
+            [OPERATOR_ARCHIVE_SCAN_KEY],
+            'operator',
+        );
         await state.storage.put(OPERATOR_ARCHIVE_SCAN_KEY, {
             after: key,
             ...(earliestRetryAtMs === undefined ? {} : { earliestRetryAtMs }),
@@ -1469,7 +1498,11 @@ async function advanceOperatorArchiveScan(
 
     const after = [...records.keys()].at(-1)!;
     if (records.size === OPERATOR_ARCHIVE_SCAN_BATCH) {
-        await assertDurableObjectRecordCapacity(state.storage, [OPERATOR_ARCHIVE_SCAN_KEY]);
+        await assertDurableObjectRecordCapacity(
+            state.storage,
+            [OPERATOR_ARCHIVE_SCAN_KEY],
+            'operator',
+        );
         await state.storage.put(OPERATOR_ARCHIVE_SCAN_KEY, {
             after,
             ...(earliestRetryAtMs === undefined ? {} : { earliestRetryAtMs }),
@@ -1815,7 +1848,7 @@ async function reserveAdmission(
     const now = Date.now();
     const result = await state.storage.transaction(async (transaction) => {
         const stored = await transaction.get<AdmissionRecord>(ADMISSION_KEY);
-        await assertDurableObjectRecordCapacity(transaction, [ADMISSION_KEY]);
+        await assertDurableObjectRecordCapacity(transaction, [ADMISSION_KEY], 'admission');
         const plan = planAdmission(
             stored,
             candidate,
@@ -2188,7 +2221,7 @@ async function reopenAdmission(state: DurableObjectState, input: JsonObject): Pr
             || record.closure.observedAtMs !== reopen.closureObservedAtMs) {
             throw new Error('admission_reopen_denied');
         }
-        await assertDurableObjectRecordCapacity(transaction, [auditKey]);
+        await assertDurableObjectRecordCapacity(transaction, [auditKey], 'admission');
         const reservations = { ...record.reservations };
         if (reopen.jobId !== null && reopen.generation !== null) {
             const reservationKey = `${reopen.jobId}:${reopen.generation}`;
@@ -2349,7 +2382,7 @@ async function ensureReconcileScheduled(state: DurableObjectState): Promise<void
     const existing = await state.storage.get<ReconcileRecord>(RECONCILE_KEY);
     if (!existing) {
         const now = Date.now();
-        await assertDurableObjectRecordCapacity(state.storage, [RECONCILE_KEY]);
+        await assertDurableObjectRecordCapacity(state.storage, [RECONCILE_KEY], 'upload_job');
         await state.storage.put(RECONCILE_KEY, {
             schema: 'youtick.livepeer-reconcile.v1',
             status: 'PROVIDER_UNKNOWN',
@@ -2534,7 +2567,11 @@ async function enqueueSalesSuspension(
     await state.storage.transaction(async (transaction) => {
         const existing = await transaction.get<OutboxRecord>(key);
         if (existing) return;
-        await assertDurableObjectRecordCapacity(transaction, [key, RECONCILE_KEY]);
+        await assertDurableObjectRecordCapacity(
+            transaction,
+            [key, RECONCILE_KEY],
+            'upload_job',
+        );
         await transaction.put(key, {
             schema: 'youtick.livepeer-control-outbox.v1',
             state: 'PENDING',
@@ -2764,7 +2801,7 @@ async function enforceCreatorFeeQuoteRateLimit(state: DurableObjectState): Promi
             ? { windowStartedAtMs: now, count: 1 }
             : { ...current, count: current.count + 1 };
         if (next.count > CREATOR_FEE_RATE_LIMIT) throw new Error('creator_fee_quote_rate_limited');
-        await assertDurableObjectRecordCapacity(transaction, ['quote-rate:v1']);
+        await assertDurableObjectRecordCapacity(transaction, ['quote-rate:v1'], 'rate_limit');
         await transaction.put('quote-rate:v1', next);
         return next.windowStartedAtMs + CREATOR_FEE_RATE_WINDOW_MS;
     });
@@ -4838,7 +4875,7 @@ async function processOperatorOutbox(
             key,
             'operator:last-nonce',
             OPERATOR_ARCHIVE_SCAN_KEY,
-        ]);
+        ], 'operator');
         const created: OperatorRecord = {
             schema: 'youtick.livepeer-operator-outbox.v1',
             state: 'PENDING',
@@ -4888,7 +4925,11 @@ async function processOperatorOutbox(
                     nonce: String(nonce),
                     blockHash: accessKey.blockHash,
                 };
-                await assertDurableObjectRecordCapacity(transaction, ['operator:last-nonce']);
+                await assertDurableObjectRecordCapacity(
+                    transaction,
+                    ['operator:last-nonce'],
+                    'operator',
+                );
                 await transaction.put('operator:last-nonce', String(nonce));
                 await transaction.put(key, reserved);
                 return reserved;

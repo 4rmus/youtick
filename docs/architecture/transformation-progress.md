@@ -102,7 +102,7 @@ Evidence classes remain separate:
 | Every P0 has owner and test strategy | PARTIAL | Role owner and `@4rmus` repository owner are mapped; named specialist/reviewer assignment is not confirmed. `LOCAL_STATIC`. |
 | Runtime gates closed | PASS | Tracked defaults and guarded Preview/Production release inputs force new upload, all-playback issuance, provider mutation and operator mutation false alongside the existing false/off gates. The serving Preview Worker reports `stage=DISABLED`, `providerMutationEnabled=false`, `controlPlaneReady=false`, `playbackReady=false`; it predates the new source fields and is not presented as their deploy proof. Production Bridge/app DNS did not resolve. `LOCAL_STATIC` + prior `DEPLOY`; production capability remains absent rather than activated. |
 | Staging/testnet configuration backed up | PARTIAL | Sanitized file hashes, GitHub gate variables, deployed Preview version/binding names and public health are recorded in `phase-0-foundation.md`. Secret values were intentionally not copied; a full secret-store backup is `UNPROVEN`. |
-| Base metrics and structured log schema active | PARTIAL | Edge requests, every direct NEAR/Livepeer API/TUS/media fetch, persisted UploadJob transitions, upload-intent control, verified Queue ACK/delivery lag, payment quote/status routes, bounded legacy/v2 shadow decisions, playback internal errors, takedown-token attempts, pending operator nonce age and bounded read-model routes emit events. Market exposes the exact storage/reserve guard; a read-only probe computes final-to-optimistic RPC lag; exact-SHA release manifests record verified bundle/config/lockfile byte counts. URLs, payloads, credentials, nonce values and job/provider identifiers are omitted. A source-only policy locks five report thresholds to those sources. DO storage, Queue depth, cold-start metrics and deployed aggregation remain missing. `LOCAL_TEST`; deployed activation `UNPROVEN`. |
+| Base metrics and structured log schema active | PARTIAL | Edge requests, every direct NEAR/Livepeer API/TUS/media fetch, persisted UploadJob transitions, upload-intent control, verified Queue ACK/delivery lag, payment quote/status routes, bounded legacy/v2 shadow decisions, playback internal errors, takedown-token attempts, pending operator nonce age and bounded read-model routes emit events. The first real request per Worker isolate marks `coldStart=true`; later requests mark `false`. Capacity checks emit bounded current/pending/projected DO record counts with one of four state kinds and no extra storage read. Market exposes the exact storage/reserve guard; a read-only probe computes final-to-optimistic RPC lag; exact-SHA release manifests record verified bundle/config/lockfile byte counts. URLs, payloads, credentials, nonce values and job/provider identifiers are omitted. A source-only policy locks report thresholds to those sources. DO bytes/read/write/active-object metrics, Queue depth and deployed aggregation remain missing. `LOCAL_TEST`; deployed activation and observations are `UNPROVEN`. |
 
 ### Phase 1 — P0 security and governance
 
@@ -115,7 +115,7 @@ Evidence classes remain separate:
 | Access pause/resource semantics fixed | PASS | Fresh Access v2 requires a bounded Play resource, applies global/scope pause during verification, caps each owner at 16 active grants, paginates list/cleanup and can disable new issuance. Contract 14/14 and web call-shape 11/11 pass. On testnet one session-only grant verified, revoked and cleaned to empty. `LOCAL_TEST` + `TESTNET_MUTATION`. |
 | RPC abuse test proves bounded resources | PASS_LOCAL | Read/broadcast routes are separate; experimental methods are absent; 64 KiB request and 2 MiB response caps, 2.5-second upstream and six-second read deadlines, bounded rate maps, IP/account limits, read-only fallback, broadcast no-replay, safe provider metrics and a three-failure circuit breaker have 15/15 route regressions, including proof that an open circuit skips the failed upstream. Dedicated authenticated primary is supported but not deployed; per-instance rate limiting is not a distributed edge guarantee. `LOCAL_TEST`. |
 | No open P0 except controlled legacy playback grant | PASS_LOCAL | Nonce CSP and secure revoke/clear UX now pass locally. Bridge governance, fresh-v2 state choice, AUTH-001 and Access bounds pass locally/testnet as recorded. The controlled legacy playback path remains closed by runtime gates; deployed verification is `UNPROVEN`. |
-| Security regressions are mandatory CI gates | PARTIAL_LOCAL | Relevant CSP, signless, Access and governance tests run in the Web/Contracts jobs. All tracked third-party Actions are commit-SHA pinned; runtime npm advisories, RustSec and the reusable JavaScript/TypeScript plus Rust CodeQL workflow are explicit dependencies of the ruleset-required `CI Gate`. The prior PR revision passed CI/CodeQL with zero open alerts; exact CI execution of the new dependency wiring is `UNPROVEN`. `LOCAL_TEST` + prior `CI`. |
+| Security regressions are mandatory CI gates | PASS_CI | Relevant CSP, signless, Access and governance tests run in the Web/Contracts jobs. All tracked third-party Actions are commit-SHA pinned; runtime npm advisories, RustSec and the reusable JavaScript/TypeScript plus Rust CodeQL workflow are explicit dependencies of the ruleset-required `CI Gate`. Run `31335719993` passed both CodeQL languages before `CI Gate` passed for exact PR head `ddd401583bfc09d04f0a58f736b5b2091836ffc7`; the branch has zero open code-scanning alerts. `CI`. |
 
 ### Phase 2 — stateless playback and bounded state
 
@@ -161,11 +161,11 @@ Evidence classes remain separate:
 |---|---|---|
 | SLO dashboards and alerts active | PARTIAL | `observability/slo-policy.json` locks five report thresholds, binds all nine alert classes to a primary role/action and inventories the report's six domain controls. All six controls are source-ready, including guardian pause/admin unpause for global new purchases. The policy is `SOURCE_ONLY`: no named on-call, deployed aggregation, dashboard, notification route, delivered alert or drill receipt exists. `LOCAL_TEST`. |
 | Hot-publication latency/error target met | EXTERNAL_EVIDENCE_REQUIRED | No approved load target execution exists. |
-| DO growth bounded and cleanup verified | PARTIAL | The accepted ceiling is 256 persistent records per Durable Object; shared transactional source rejects record 257 and permits existing-key replay at the ceiling. Control nonce, webhook dedup, rate-limit and admission-audit cleanup pass locally; confirmed operator records are minimized and have a default-off bounded D1 archive/90-day eligibility source. Real operator archive commit/delete, UploadJob destructive cleanup and deployed record metrics remain absent. `LOCAL_TEST`. |
+| DO growth bounded and cleanup verified | PARTIAL | The accepted ceiling is 256 persistent records per Durable Object; shared transactional source emits state-kind/current/pending/projected counts from the existing bounded capacity read, rejects record 257 and permits existing-key replay at the ceiling. Control nonce, webhook dedup, rate-limit and admission-audit cleanup pass locally; confirmed operator records are minimized and have a default-off bounded D1 archive/90-day eligibility source. Real operator archive commit/delete, UploadJob destructive cleanup and deployed record/byte/active-object metrics remain absent. `LOCAL_TEST`. |
 | Upload-resume success above approved threshold | EXTERNAL_EVIDENCE_REQUIRED | The accepted gate is at least 99% same-resource resume with exactly zero second payments and zero second provider assets. Local recovery/canary regressions pass, but no deployed pilot sample or payment/provider receipt aggregation exists. |
 | RPC/provider fault injection degrades safely | PARTIAL | The report's eight chaos scenarios now map to deterministic local regressions: bounded NEAR failures/circuit, Livepeer 429/5xx/timeout admission behavior, duplicate/out-of-order webhook, Queue retry/redelivery, ambiguous broadcast reuse, exact-version rejection, early/delayed alarm timing and bounded D1/API/Web fallback. This is complete source-matrix coverage, not a real chaos run. Provider, Cloudflare Queue/D1, mixed deployed versions and staging evidence remain `EXTERNAL_EVIDENCE_REQUIRED`. `LOCAL_TEST`. |
 | Cost model and budget alarm defined | PARTIAL | Approved pilot monthly/per-job reservation values fail closed locally and provider 402/429 closes admission. Actual Livepeer billed-usage/invoice reconciliation and delivered budget alerts remain external. `LOCAL_TEST`. |
-| Security/supply-chain gates mandatory | PARTIAL | All tracked third-party Actions are commit-SHA pinned; runtime npm high-severity advisories, RustSec and the reusable CodeQL matrix are explicit dependencies of the ruleset-required `CI Gate`. CI run `31334340394` produced non-expired 30-day contract SBOM artifact `contract-sbom-682cda20774f9f18c058ab048bfa92fb2b9d6ff4` for the exact PR merge-candidate SHA; artifact digest is `sha256:6d64b995b5d16a0c8a0c6e8cd7261ebc14dd89d53995306a54008d391334f1f1`. The prior CodeQL run passed with zero open alerts; exact execution of the new required dependency is unproven. Release provenance and Web/Bridge runtime SPDX attestations remain absent; test/dev `time` remains informational. `LOCAL_TEST` + prior `CI`. |
+| Security/supply-chain gates mandatory | PARTIAL | All tracked third-party Actions are commit-SHA pinned; runtime npm high-severity advisories, RustSec and the reusable CodeQL matrix are explicit dependencies of the ruleset-required `CI Gate`. Run `31335719993` passed all jobs and produced non-expired contract SBOM artifact `contract-sbom-3e0653163c17f296b2f8330b3d2e4b36e5ddee8b` for the exact PR merge-candidate SHA with digest `sha256:b82852b167218a04ae59d59b15fbe912f61c998143a7736377356b217321c095`. Both CodeQL languages passed and the branch has zero open alerts. Release provenance and Web/Bridge runtime SPDX attestations remain absent; test/dev `time` remains informational. `CI`. |
 | Exact-SHA mainnet release candidate reproducible | PARTIAL | Release/security/SLO tooling tests 101/101; no mainnet candidate artifact or activation evidence. `LOCAL_TEST`. |
 
 ### Phase 6 — resilience, audit and mainnet
@@ -193,7 +193,7 @@ Evidence classes remain separate:
 | PLAY-001 | 2 | PASS_LOCAL | Eight-hour NEP-413 device certificate, memory-only device key, signed request binding and disconnect/page-reload clear pass locally; deployed wallet proof is absent. |
 | PLAY-002 | 2 | PASS_LOCAL | V2 verifies final publication/entitlement and returns a 180-second playback-bound JWT without Access grant or DO writes. The all-playback issuance gate closes both legacy and v2 routes before RPC use; staging/load and deployed-gate proof are absent. |
 | PLAY-003 | 2 | PARTIAL | Bounded TTL cache, cold/hit read counts, provider JWT-policy check and 30/60-second takedown/key-removal bounds pass locally. Default-off legacy/v2 shadow execution returns only the legacy response, reuses the v2 decision without another JWT/write and emits bounded decision/reason-code comparison. The accepted mismatch ratio is 0; event-driven invalidation and deployed cache/shadow/latency samples remain absent. |
-| DO-001 | 2 | PARTIAL | Shared transactional enforcement rejects record 257 and permits existing-key replay at the accepted 256-record ceiling. Rate-limit `deleteAll()`, 30-day webhook dedup and 90-day admission audit cleanup pass automatically. Independent default-off UploadJob and confirmed operator D1 archives enforce bounded summaries plus 14/90-day eligibility locally without deletion. Real archive commits, operator/UploadJob destructive cleanup and deployed metrics remain absent. |
+| DO-001 | 2 | PARTIAL | Shared transactional enforcement emits a bounded `durable_object_storage_observed` event for `upload_job`, `admission`, `operator` or `rate_limit`, rejects record 257 and permits existing-key replay at the accepted 256-record ceiling. Rate-limit `deleteAll()`, 30-day webhook dedup and 90-day admission audit cleanup pass automatically. Independent default-off UploadJob and confirmed operator D1 archives enforce bounded summaries plus 14/90-day eligibility locally without deletion. Real archive commits, operator/UploadJob destructive cleanup and deployed metrics remain absent. |
 | UP-001 | 3 | PASS_LOCAL | Coordinator limits, budgets, 30-minute lease, five-minute heartbeat, wrong-token rejection, alarm release and 15-minute ambiguity isolation pass locally. A default-off new-upload gate rejects unrecorded intents while recorded intent/heartbeat/TUS recovery remains available. Real browser/large-upload/staging evidence is absent. |
 | UP-002 | 3 | PARTIAL | One allowed-predecessor table and timestamps cover real `AUTHORIZED → LEASED → PROVIDER_CREATE_PENDING → UPLOAD_READY → UPLOADING → PROCESSING → READY_VERIFIED → FINALIZE_RETRY/QUEUED → ONCHAIN_PUBLISHED` signals plus cancel/expiry/provider-failure terminals. Creator cancellation is pre-provider-only and non-refundable. Provider create uses one fail-closed `RECONCILE_ONLY` attempt; finalize retry uses capped 60–900-second backoff. Default-off terminal D1 archive/14-day eligibility passes locally, but real commit, v1 playback independence and deletion are absent. `LOCAL_TEST`. |
 | UP-003 | 3 | PARTIAL | Authenticated retry after browser-key replacement/object restart and after `UPLOADING` recovers the same TUS URL with no second provider create. The accepted gate is at least 99% resume success with zero second payments/assets. The v2 session draft rejects same-metadata/different-content files; upload-intent control v3 signs its bounded SHA-256 and UploadJob v2 rejects a conflicting retry. Deployed samples and payment/provider receipts remain absent. `LOCAL_TEST`. |
@@ -203,7 +203,7 @@ Evidence classes remain separate:
 | EVENT-001 | 4 | PARTIAL | Market v2 locally emits job, rebuild-complete publication, entitlement, withdrawal, bridge and quote-key events with common context/idempotency fields and no capabilities. The fresh testnet v2 has zero publications, but the updated artifact is not deployed; `contract_migrated`, testnet economic-event proof and final receipt/event indexing remain absent. |
 | DATA-001 | 4 | PARTIAL | Source-only D1 schema, deterministic rebuild, complete-block atomic writer, bounded Neardata adapter, testnet-only scheduled entrypoint, contiguous cursor, >16-event fail-closed policy, structured lag telemetry, GET-only API and closed Discover/profile client pass locally. D1 query/ingestion exceptions are reduced to bounded 503/error codes and initial Discover fallback never mixes cursors. Start block is 263118001; no Worker/cron deployment, D1 binding/alert delivery or deployed RTO drill exists. |
 | PAY-001 | 4 | PARTIAL | Technical pilot is non-refundable; source-only exact sale ledger, creator aggregate and withdrawal audit pass locally. Mainnet policy approval, deployed D1 and accounting reconciliation remain absent. |
-| SRE-001 | 0–5 | PARTIAL | Redacted request/dependency/Queue/payment telemetry, Market reserve/RPC-finality sources and a machine-readable `SOURCE_ONLY` policy exist. All nine alerts have a role/action and all six domain controls are source-ready. Guarded release inputs remain closed; the contract purchase control requires a separately approved on-chain pause receipt. Queue depth, DO storage, cold-start/platform aggregation, named on-call, deployed control exercise, dashboard, delivered alerts and drills are absent. |
+| SRE-001 | 0–5 | PARTIAL | Redacted request/dependency/Queue/payment telemetry, a one-shot per-isolate cold-start field, bounded state-kind/projected DO record telemetry, Market reserve/RPC-finality sources and a machine-readable `SOURCE_ONLY` policy exist. All nine alerts have a role/action and all six domain controls are source-ready. Guarded release inputs remain closed; the contract purchase control requires a separately approved on-chain pause receipt. Queue depth, DO byte/read/write/active-object metrics, platform aggregation, named on-call, deployed control exercise, dashboard, delivered alerts and drills are absent. |
 | PERF-001 | 5 | PARTIAL | Opt-in local runs reject 100,000 wrong-origin requests with zero growth and serve 1,000 authorized warm requests at 9.15 ms p95 with zero errors, no warm external/DO calls and bounded cache. Mocked local latency is not deployed evidence. |
 | PERF-002 | 5 | EXTERNAL_EVIDENCE_REQUIRED | No current multi-creator/20 GB load evidence. |
 | MEDIA-001 | 5 | DECISION_REQUIRED | Current protocol locks one 720p profile; ABR/provider economics need approval. |
@@ -3182,3 +3182,119 @@ Evidence classes remain separate:
 - FAZ KAPISI: The goal remains active and incomplete. The next safe dependency
   is explicit-path commit/push authorization for the five Checkpoint 99 files,
   followed by exact-SHA CI/CodeQL observation on draft PR #91.
+
+### CHECKPOINT 101 — Phase 1/5 / required CodeQL exact-SHA CI proof
+
+- DURUM: `PASS_CI / CODEQL_REQUIRED / CODE_SCANNING_CLEAR / RUNTIME_CLOSED`
+- BASELINE: `agent/youtick-architecture-loop-20260809@ddd4015`
+- AMAÇ: Prove that the ruleset-required `CI Gate` cannot pass before both
+  reusable CodeQL languages complete successfully.
+- DOĞRULAMA:
+  - explicit-path commit `ddd401583bfc09d04f0a58f736b5b2091836ffc7`
+    was pushed to existing draft PR #91; no new PR was created;
+  - CI run `31335719993` passed 13/13 checks. JavaScript/TypeScript CodeQL
+    completed at `21:01:46Z`, Rust CodeQL at `21:02:54Z`, and `CI Gate` started
+    only at `21:09:16Z` after both CodeQL and all component jobs succeeded;
+  - `CI Gate` job `93302050369` passed its required-result check and mandatory
+    102-test release/security/SLO package;
+  - the branch-scoped code-scanning query returned zero open alerts;
+  - artifact `9044257636`, named
+    `contract-sbom-3e0653163c17f296b2f8330b3d2e4b36e5ddee8b`, is non-expired,
+    has digest
+    `sha256:b82852b167218a04ae59d59b15fbe912f61c998143a7736377356b217321c095`
+    and expires after 30 days at `2026-09-08T21:01:12Z`;
+  - `refs/pull/91/head` resolves to `ddd4015`; `refs/pull/91/merge` resolves to
+    the artifact SHA `3e0653163c17f296b2f8330b3d2e4b36e5ddee8b`.
+- KANIT: `CI` + read-only GitHub run/artifact/code-scanning metadata. Local
+  pre-publish validation was security 4/4, mandatory tooling 102/102, YAML
+  parse, docs build and `git diff --check`.
+- FAZ KAPISI: The Phase 1 mandatory-security-regression gate passes for this
+  exact revision. Phase 5 supply-chain remains `PARTIAL` only on missing
+  release/runtime attestations and external audit evidence; CI is not deploy,
+  staging, provider, testnet or production proof.
+- RİSK/BLOCKER: The PR remains draft and unmerged. No deploy, traffic, runtime
+  flag, ruleset, secret, provider, D1, Queue, contract, wallet or payment
+  mutation occurred.
+
+### CHECKPOINT 102 — Phase 0/6 / canonical dark Preview activation boundary
+
+- DURUM: `NEEDS_APPROVAL / PR_ONLY_CANNOT_DEPLOY / RUNTIME_CLOSED`
+- BASELINE: `agent/youtick-architecture-loop-20260809@ddd4015`
+- AMAÇ: Determine whether the passing draft revision can produce canonical
+  dark Preview evidence without silently widening merge or runtime authority.
+- DOĞRULAMA:
+  - `deploy-preview.yml` has no pull-request or manual trigger; it runs only
+    after the `CI` workflow completes on `main`;
+  - its authorization job additionally requires a successful `push` event,
+    `head_branch == 'main'`, the same repository and exact `origin/main` SHA;
+  - current repository variable `DEPLOY_PREVIEW_ENABLED` remains `false`;
+  - Preview paid-media, Livepeer bridge, creator-fee and multi-asset modes
+    remain disabled.
+- KANIT: `LOCAL_STATIC` + read-only GitHub variable metadata. No PR state,
+  branch, merge, variable, environment, deploy, traffic, secret, provider,
+  D1, Queue, contract, wallet or payment mutation occurred.
+- FAZ KAPISI: Draft PR #91 cannot truthfully close the dark Preview gate. The
+  next canonical deployment requires separate explicit authority for the
+  review/merge boundary and for temporary Preview deployment enablement; CI
+  success alone grants neither.
+
+### CHECKPOINT 103 — Phase 0/5 / bounded Worker cold-start signal
+
+- DURUM: `PASS_LOCAL / COLD_START_SOURCE_READY / RUNTIME_UNPROVEN`
+- BASELINE: `agent/youtick-architecture-loop-20260809@ddd4015` plus uncommitted
+  Checkpoints 101–102.
+- AMAÇ: Close the missing cold-start source signal without adding storage,
+  bindings, dependencies or changing a runtime feature gate.
+- BASELINE_FAILURE: A fresh-module regression observed two
+  `edge_request_completed` events with `coldStart` absent instead of the
+  required `[true, false]` sequence.
+- UYGULAMA:
+  - a module-local one-shot flag is consumed only by real edge requests carrying
+    Cloudflare request metadata;
+  - the first such request in an isolate logs `coldStart=true`; later requests
+    log `false` through the existing redacted completion event;
+  - the flag is not persisted and does not read or write a Durable Object.
+- DOĞRULAMA: Focused regression passes 1/1; `index.test.ts` passes 69/69; the
+  complete Bridge suite passes 191 tests with two skipped; TypeScript check
+  passes; Wrangler dry-run produces 720.56 KiB / gzip 152.24 KiB with every
+  upload, playback, provider, operator, archive and Queue gate still false.
+- KANIT: `LOCAL_TEST` + `LOCAL_STATIC`. No deploy, PR state, branch, variable,
+  environment, traffic, secret, provider, D1, Queue, contract, wallet or
+  payment mutation occurred.
+- FAZ KAPISI: Cold-start telemetry advances from missing to source-ready.
+  Phase 0/5 metrics remain `PARTIAL` until a deployed revision emits the field
+  and platform aggregation/dashboard evidence exists; DO storage and Queue
+  depth remain separate gaps.
+
+### CHECKPOINT 104 — Phase 0/2/5 / bounded DO record telemetry
+
+- DURUM: `PASS_LOCAL / PROJECTED_RECORD_SOURCE_READY / RUNTIME_UNPROVEN`
+- BASELINE: `agent/youtick-architecture-loop-20260809@ddd4015` plus uncommitted
+  Checkpoints 101–103.
+- AMAÇ: Expose the accepted 256-record Durable Object invariant as a bounded
+  source signal without adding another storage operation or logging a key.
+- BASELINE_FAILURE: The existing record-257 regression still failed closed,
+  but emitted zero capacity events; the new focused test observed no log.
+- UYGULAMA:
+  - the shared capacity guard now requires one of four report-aligned state
+    kinds: `upload_job`, `admission`, `operator` or `rate_limit`;
+  - only when a new key is needed, the guard reuses its existing bounded
+    `list(limit: 256)` result to emit current, pending and projected record
+    counts before accepting or rejecting the write;
+  - the event contains no object name, storage key, account, job, provider or
+    capability value;
+  - `observability/slo-policy.json` binds the 256-record acceptance gate to
+    `durable_object_storage_observed.projectedRecordCount`.
+- DOĞRULAMA: Focused capacity regression passes 1/1; the complete Bridge suite
+  passes 192 tests with two skipped; mock provider canary passes 68/68;
+  TypeScript check passes; the SLO policy regression passes 1/1; mandatory
+  release/security/SLO tooling passes 102/102; docs build and `git diff --check`
+  pass; Wrangler dry-run produces 721.40 KiB / gzip 152.40 KiB with all
+  runtime and mutation gates false/off.
+- KANIT: `LOCAL_TEST` + `LOCAL_STATIC`. No deploy, PR state, branch, variable,
+  environment, traffic, secret, provider, D1, Queue, contract, wallet or
+  payment mutation occurred.
+- FAZ KAPISI: Projected record count and state-kind tags advance from missing
+  to source-ready. Phase 0/2/5 remain `PARTIAL`: storage bytes, operation counts,
+  active-object/platform aggregation, real archive cleanup and dashboards are
+  still external evidence.

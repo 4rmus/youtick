@@ -91,6 +91,8 @@
     {
       "id": "durable_object_max_persistent_records",
       "source_status": "SOURCE_READY",
+      "source_event": "durable_object_storage_observed",
+      "field": "projectedRecordCount",
       "operator": "<=",
       "threshold": 256,
       "unit": "records_per_object",

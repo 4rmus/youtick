@@ -14,6 +14,7 @@ test('SLO policy locks report thresholds to emitted bounded events', async () =>
         'workers/livepeer-bridge/scripts/near-finality-canary.mjs',
         'workers/livepeer-bridge/scripts/tus-resume-canary.mjs',
         'workers/livepeer-bridge/wrangler.toml',
+        'workers/livepeer-bridge/src/durable-object-capacity.ts',
     ].map((path) => readFile(new URL(path, root), 'utf8')));
     const source = sources.join('\n');
     assert.equal(policy.schema, 'youtick.slo-policy.v1');
@@ -78,6 +79,13 @@ test('SLO policy locks report thresholds to emitted bounded events', async () =>
     );
     assert.ok(source.includes(`'${policy.acceptance_gates[0].source_event}'`));
     assert.ok(source.includes(policy.acceptance_gates[1].source_receipt));
+    const durableObjectGate = policy.acceptance_gates.find(
+        ({ id }) => id === 'durable_object_max_persistent_records',
+    );
+    assert.equal(durableObjectGate.source_event, 'durable_object_storage_observed');
+    assert.equal(durableObjectGate.field, 'projectedRecordCount');
+    assert.ok(source.includes(`'${durableObjectGate.source_event}'`));
+    assert.ok(source.includes(durableObjectGate.field));
     assert.deepEqual(
         Object.fromEntries(policy.objectives.map(({ id, threshold }) => [id, threshold])),
         {

@@ -290,7 +290,7 @@ export async function paymentRateLimit(
                     ? 'payment_quote_rate_limited'
                     : 'payment_status_rate_limited');
             }
-            await assertDurableObjectRecordCapacity(transaction, [key]);
+            await assertDurableObjectRecordCapacity(transaction, [key], 'rate_limit');
             await transaction.put(key, next);
             return next.window_started_at_ms + windowMs;
         });

@@ -133,6 +133,9 @@ node --test scripts/slo-policy.test.mjs
 This locks only the report-defined starting thresholds to bounded source event
 names. `SOURCE_ONLY` is not a dashboard, delivered alert or runtime SLO result;
 missing and provider-owned signals remain explicit in the policy.
+The 256-record Durable Object gate is bound to the bounded
+`durable_object_storage_observed.projectedRecordCount` source; this is not a
+deployed storage-byte, operation-count or active-object metric.
 
 Local, mocked and CI results must be reported separately from provider,
 testnet, staging, deployment and production evidence.

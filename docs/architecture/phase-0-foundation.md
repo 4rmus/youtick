@@ -411,6 +411,8 @@ backup operation can mutate or expose protected data.
 - `/__health` exposes version and closed readiness flags.
 - Real Cloudflare requests emit `edge_request_completed` with request ID,
   environment, release version, path-only route, method, HTTP code and latency.
+- The first real edge request in each Worker isolate marks `coldStart=true`;
+  later requests in that isolate mark `false`, without persistent state.
 - All direct NEAR RPC and Livepeer API/TUS/media fetches emit
   `dependency_request_completed` with only dependency, bounded operation,
   HTTP code and latency. URLs, request bodies and credentials are not logged.
@@ -427,11 +429,11 @@ backup operation can mutate or expose protected data.
 | p50/p95/p99 latency | PARTIAL | Per-request latency exists and `observability/slo-policy.json` locks the five report-defined pilot thresholds to source events; histogram aggregation, dashboard and runtime results are unproven |
 | NEAR RPC count/latency/finality lag | PARTIAL | Per-call operation/status/latency events exist; a read-only bounded probe computes final-to-optimistic lag outside hot paths. Approved lag threshold, deployed schedule/aggregation and delivery are unproven |
 | Provider call count/latency/429/5xx | PARTIAL | Livepeer API/TUS/media operation/status/latency events exist; deployed aggregation/dashboard is unproven |
-| DO read/write/storage bytes and active objects | PARTIAL | Shared source rejects record 257 while preserving existing-key replay at the accepted 256-record ceiling; Cloudflare metric query/dashboard and state-kind tags remain missing |
+| DO read/write/storage bytes and active objects | PARTIAL | Shared source rejects record 257 while preserving existing-key replay at the accepted 256-record ceiling. The same bounded list emits state-kind, current, pending and projected record counts without another storage read. Storage bytes, read/write counts, active objects and deployed aggregation/dashboard remain missing |
 | State transition count | PARTIAL | UploadJob transition events exist; deployed aggregation and admission/operator/reconcile transition coverage remain unproven |
 | Queue depth/webhook lag | MISSING | Source handler exists; no Queue binding, traffic or dashboard exists |
 | Contract storage/reserve runway | PARTIAL | Market `get_storage_reserve_status` shares the withdrawal guard calculation and exposes usage, stake, configured reserve, balance, headroom/runway and coverage locally; deployed polling/dashboard/alert delivery are unproven |
-| Artifact size/cold start/release SHA | PARTIAL | Exact-SHA release manifest records and verifies byte counts for both Web bundles, Bridge bundle, configs and lockfiles; current-branch artifact output and cold-start runtime metric are absent |
+| Artifact size/cold start/release SHA | PARTIAL | Exact-SHA release manifest records and verifies byte counts for both Web bundles, Bridge bundle, configs and lockfiles. A one-shot per-isolate `coldStart` field passes locally; current-branch runtime observation and deployed aggregation are absent |
 
 Proposed base log fields are the report's allowlist: `request_id`, `trace_id`,
 `environment`, `release_sha`, `route`, hashed account/provider identifiers,
@@ -443,8 +445,10 @@ raw authorization headers remain forbidden.
 
 - PASS: state inventory; repository/config/runtime gate evidence.
 - PARTIAL: threat review; role ownership; sanitized config snapshot.
-- PARTIAL: request and dependency metrics/structured logging; state, Queue,
-  contract-storage, cold-start metrics and dashboards remain missing.
+- PARTIAL: request and dependency metrics/structured logging; cold-start and
+  projected DO record count are source-ready, while DO bytes/read/write/active
+  objects, Queue depth, deployed contract polling/aggregation and dashboards
+  remain missing.
 - PASS: pilot ADR decisions, bounded parameters and role accounts.
 - NEEDS_APPROVAL: named reviewers, protected configuration backup, deployed
   metric/dashboard evidence and mainnet financial confirmation. Mainnet
