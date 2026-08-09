@@ -115,7 +115,7 @@ Evidence classes remain separate:
 | Access pause/resource semantics fixed | PASS | Fresh Access v2 requires a bounded Play resource, applies global/scope pause during verification, caps each owner at 16 active grants, paginates list/cleanup and can disable new issuance. Contract 14/14 and web call-shape 11/11 pass. On testnet one session-only grant verified, revoked and cleaned to empty. `LOCAL_TEST` + `TESTNET_MUTATION`. |
 | RPC abuse test proves bounded resources | PASS_LOCAL | Read/broadcast routes are separate; experimental methods are absent; 64 KiB request and 2 MiB response caps, 2.5-second upstream and six-second read deadlines, bounded rate maps, IP/account limits, read-only fallback, broadcast no-replay, safe provider metrics and a three-failure circuit breaker have 15/15 route regressions, including proof that an open circuit skips the failed upstream. Dedicated authenticated primary is supported but not deployed; per-instance rate limiting is not a distributed edge guarantee. `LOCAL_TEST`. |
 | No open P0 except controlled legacy playback grant | PASS_LOCAL | Nonce CSP and secure revoke/clear UX now pass locally. Bridge governance, fresh-v2 state choice, AUTH-001 and Access bounds pass locally/testnet as recorded. The controlled legacy playback path remains closed by runtime gates; deployed verification is `UNPROVEN`. |
-| Security regressions are mandatory CI gates | PASS_CI | Relevant CSP, signless, Access and governance tests run in the Web/Contracts jobs. All tracked third-party Actions are commit-SHA pinned; runtime npm advisories, RustSec and the reusable JavaScript/TypeScript plus Rust CodeQL workflow are explicit dependencies of the ruleset-required `CI Gate`. Run `31339883888` passed both CodeQL languages and the independent CodeQL PR check before `CI Gate` passed for exact PR head `319f23fdf8f068f8ef38cb6a2ed96a6fc7f47313`; the PR merge ref has zero open code-scanning alerts. `CI`. |
+| Security regressions are mandatory CI gates | PASS_CI | Relevant CSP, signless, Access and governance tests run in the Web/Contracts jobs. All tracked third-party Actions are commit-SHA pinned; runtime npm advisories, RustSec and the reusable JavaScript/TypeScript plus Rust CodeQL workflow are explicit dependencies of the ruleset-required `CI Gate`. Exact-main run `31340805068` passed both CodeQL languages and `CI Gate` for `df381b0f5b263870128b911768de616169ddeb97`; both main analyses report zero results and alerts #3–#5 are `fixed` without dismissal. `CI`. |
 
 ### Phase 2 — stateless playback and bounded state
 
@@ -165,7 +165,7 @@ Evidence classes remain separate:
 | Upload-resume success above approved threshold | EXTERNAL_EVIDENCE_REQUIRED | The accepted gate is at least 99% same-resource resume with exactly zero second payments and zero second provider assets. Local recovery/canary regressions pass, but no deployed pilot sample or payment/provider receipt aggregation exists. |
 | RPC/provider fault injection degrades safely | PARTIAL | The report's eight chaos scenarios now map to deterministic local regressions: bounded NEAR failures/circuit, Livepeer 429/5xx/timeout admission behavior, duplicate/out-of-order webhook, Queue retry/redelivery, ambiguous broadcast reuse, exact-version rejection, early/delayed alarm timing and bounded D1/API/Web fallback. This is complete source-matrix coverage, not a real chaos run. Provider, Cloudflare Queue/D1, mixed deployed versions and staging evidence remain `EXTERNAL_EVIDENCE_REQUIRED`. `LOCAL_TEST`. |
 | Cost model and budget alarm defined | PARTIAL | Approved pilot monthly/per-job reservation values fail closed locally and provider 402/429 closes admission. Actual Livepeer billed-usage/invoice reconciliation and delivered budget alerts remain external. `LOCAL_TEST`. |
-| Security/supply-chain gates mandatory | PARTIAL | All tracked third-party Actions are commit-SHA pinned; runtime npm high-severity advisories, RustSec and the reusable CodeQL matrix are explicit dependencies of the ruleset-required `CI Gate`. Run `31339883888` passed both CodeQL languages, the independent CodeQL PR check and `CI Gate`, and produced non-expired artifact `contract-sbom-d7947f59bb9f7003901fd3dd6531a28e537b24eb` with digest `sha256:5006691a99113b788520e11e886b32d52d323e34509b9eb4a3e0115fa8b66729`. The exact PR head is `319f23fdf8f068f8ef38cb6a2ed96a6fc7f47313`, its merge ref has zero open alerts, and `main` remains at the pre-remediation SHA. Release provenance and Web/Bridge runtime SPDX attestations remain absent; test/dev `time` remains informational. `CI`. |
+| Security/supply-chain gates mandatory | PARTIAL | All tracked third-party Actions are commit-SHA pinned; runtime npm high-severity advisories, RustSec and the reusable CodeQL matrix are explicit dependencies of the ruleset-required `CI Gate`. Exact-main run `31340805068` passed both CodeQL languages and `CI Gate` for `df381b0f5b263870128b911768de616169ddeb97`; both analyses report zero results and alerts #3–#5 are fixed without dismissal. Non-expired artifact `contract-sbom-df381b0f5b263870128b911768de616169ddeb97` has digest `sha256:6f34b9cce99e733739e8bf979e9d5129a6c160d3fe103a01af94c62ec32a76cd`. Release provenance and Web/Bridge runtime SPDX attestations remain absent because guarded Preview stayed disabled and skipped; test/dev `time` remains informational. `CI`. |
 | Exact-SHA mainnet release candidate reproducible | PARTIAL | Release/security/SLO tooling tests 102/102 locally and in the latest required `CI Gate`; no mainnet candidate artifact or activation evidence. `LOCAL_TEST` + `CI`. |
 
 ### Phase 6 — resilience, audit and mainnet
@@ -3569,3 +3569,42 @@ Evidence classes remain separate:
 - FAZ KAPISI: Merge and the following exact-main CodeQL closure remain separate
   decisions. No merge, deployment, alert dismissal, feature gate, secret,
   provider, contract, wallet, D1, Queue or runtime mutation occurred.
+
+### CHECKPOINT 114 — Cross-phase / exact-main CodeQL closure
+
+- DURUM: `MERGED / PASS_MAIN_CI / CODEQL_ALERTS_FIXED / RUNTIME_CLOSED`
+- BASELINE: PR #92 exact head
+  `319f23fdf8f068f8ef38cb6a2ed96a6fc7f47313` against
+  `main@074e6a66aaf385097b710c74af373cecc5fe3c09`.
+- AMAÇ: Apply the explicitly approved exact-head squash merge, then prove the
+  default-branch security result without opening Preview or runtime gates.
+- UYGULAMA:
+  - PR #92 was squash-merged only after its head, base, mergeability and
+    terminal checks were revalidated;
+  - `main` advanced to exact merge commit
+    `df381b0f5b263870128b911768de616169ddeb97`;
+  - no branch deletion, alert dismissal, deploy rerun, feature-gate change or
+    runtime/provider mutation was performed.
+- DOĞRULAMA:
+  - exact-main CI run `31340805068` completed successfully; Runtime Dependency
+    Audit, Production WASM Dependency Audit, Web, JavaScript/TypeScript CodeQL,
+    Rust CodeQL and final `CI Gate` passed;
+  - main JavaScript/TypeScript analysis `1592847986` and Rust analysis
+    `1592848753` both report zero results for the exact merge SHA;
+  - alerts #3 (`js/incomplete-url-substring-sanitization`), #4
+    (`js/xss-through-dom`) and #5 (`js/insufficient-password-hash`) became
+    `fixed` at `2026-08-09T23:01:36Z`; none was dismissed;
+  - artifact `9045758184`, named
+    `contract-sbom-df381b0f5b263870128b911768de616169ddeb97`, is non-expired,
+    has digest
+    `sha256:6f34b9cce99e733739e8bf979e9d5129a6c160d3fe103a01af94c62ec32a76cd`
+    and expires at `2026-09-08T23:00:50Z`;
+  - exact-SHA Deploy Preview run `31340909645` completed as `skipped`, repository
+    variable `DEPLOY_PREVIEW_ENABLED=false` and the deployment API returned no
+    records for the merge SHA.
+- KANIT: `MERGE` + `CI` + GitHub exact-SHA analysis, alert, artifact, variable,
+  workflow and deployment metadata.
+- FAZ KAPISI: The reopened main CodeQL remediation gate is closed. Phase 1 and
+  Phase 5 remain incomplete on their separately recorded deployed browser,
+  independent audit, runtime attestation, observability and mainnet governance
+  evidence. Preview and every runtime activation gate remain closed.
