@@ -15,6 +15,84 @@ permissions:
   contents: read
 
 jobs:
+  dependency-audit:
+    name: Runtime Dependency Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+      - name: Reject high-severity runtime dependency advisories
+        run: |
+          npm --prefix apps/web audit --omit=dev --audit-level=high
+          npm --prefix workers/livepeer-bridge audit --omit=dev --audit-level=high
+          npm --prefix docs audit --omit=dev --audit-level=high
+
+  rust-wasm-audit:
+    name: Production WASM Dependency Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@52699249a776424c51ebc9ee197baf0f9dbf0d8a # 1.86.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+      - name: Install pinned cargo-audit binary
+        env:
+          CARGO_AUDIT_SHA256: 7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428
+        run: |
+          archive="${RUNNER_TEMP}/cargo-audit.tar.gz"
+          curl --fail --location --silent --show-error \
+            https://github.com/rustsec/rustsec/releases/download/cargo-audit/v0.22.2/cargo-audit-x86_64-unknown-linux-musl-v0.22.2.tgz \
+            --output "${archive}"
+          echo "${CARGO_AUDIT_SHA256} *${archive}" | sha256sum --check -
+          tar --extract --gzip --file "${archive}" --directory "${RUNNER_TEMP}"
+          install \
+            "${RUNNER_TEMP}/cargo-audit-x86_64-unknown-linux-musl-v0.22.2/cargo-audit" \
+            "${HOME}/.cargo/bin/cargo-audit"
+      - name: Audit and inventory production WASM graphs
+        run: |
+          mkdir -p "${RUNNER_TEMP}/contract-sboms"
+          created="$(git show -s --format=%cI "${GITHUB_SHA}")"
+          for contract in nft-ticket access-control; do
+            audit_json="${RUNNER_TEMP}/${contract}-audit.json"
+            metadata="${RUNNER_TEMP}/${contract}-metadata.json"
+            packages="${RUNNER_TEMP}/${contract}-wasm-packages.txt"
+            cargo audit --json --file "contracts/${contract}/Cargo.lock" > "${audit_json}" || true
+            cargo metadata \
+              --manifest-path "contracts/${contract}/Cargo.toml" \
+              --locked \
+              --format-version 1 \
+              --filter-platform wasm32-unknown-unknown > "${metadata}"
+            cargo tree \
+              --manifest-path "contracts/${contract}/Cargo.toml" \
+              --locked \
+              --target wasm32-unknown-unknown \
+              --edges normal \
+              --prefix none \
+              --format '{p}' > "${packages}"
+            node scripts/check-rust-wasm-advisories.mjs \
+              --audit-json "${audit_json}" \
+              --packages "${packages}" \
+              --label "${contract}"
+            node scripts/generate-contract-spdx.mjs \
+              --metadata "${metadata}" \
+              --packages "${packages}" \
+              --name "youtick-${contract}-wasm" \
+              --namespace "https://github.com/${GITHUB_REPOSITORY}/sbom/${GITHUB_SHA}/${contract}" \
+              --created "${created}" \
+              --output "${RUNNER_TEMP}/contract-sboms/${contract}.spdx.json"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: contract-sbom-${{ github.sha }}
+          path: ${{ runner.temp }}/contract-sboms
+          retention-days: 30
+          if-no-files-found: error
+
   detect-changes:
     name: Detect Changes
     runs-on: ubuntu-latest
@@ -26,7 +104,7 @@ jobs:
       protocol: ${{ steps.changes.outputs.protocol }}
       docs: ${{ steps.changes.outputs.docs }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
       - id: changes
@@ -121,13 +199,14 @@ jobs:
       NEXT_PUBLIC_ACCESS_CONTRACT_ID: access.testnet
       NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: "false"
       NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: "false"
+      NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: "false"
       NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: "off"
     defaults:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -148,8 +227,8 @@ jobs:
       run:
         working-directory: workers/livepeer-bridge
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -173,11 +252,11 @@ jobs:
           - tests
           - quality
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.86.0
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@52699249a776424c51ebc9ee197baf0f9dbf0d8a # 1.86.0
         with:
           components: rustfmt, clippy
-      - uses: actions/cache@v5
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -242,8 +321,8 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.protocol == 'true'
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: .nvmrc
       - run: node scripts/check-paid-media-livepeer-v1.mjs
@@ -258,8 +337,8 @@ jobs:
       run:
         working-directory: docs
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -272,6 +351,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs:
+      - dependency-audit
+      - rust-wasm-audit
       - detect-changes
       - web
       - livepeer-bridge
@@ -280,8 +361,8 @@ jobs:
       - docs
     if: always()
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: .nvmrc
       - name: Check required CI results
@@ -303,3 +384,7 @@ jobs:
           scripts/release-metadata.test.mjs
           scripts/release-smoke.test.mjs
           scripts/cloudflare-release.test.mjs
+          scripts/ci-security.test.mjs
+          scripts/check-rust-wasm-advisories.test.mjs
+          scripts/generate-contract-spdx.test.mjs
+          scripts/slo-policy.test.mjs

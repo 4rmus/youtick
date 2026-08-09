@@ -20,6 +20,7 @@ const DISABLED_BRIDGE_MUTATIONS = [
     { path: '/v1/operations/admission-reopen', cors: false },
     { path: '/v1/upload-intents', cors: true },
     { path: '/v1/playback-tokens', cors: true },
+    { path: '/v2/playback-tokens', cors: true },
     { path: '/v1/creator-fee-quotes/near', cors: true },
 ];
 
