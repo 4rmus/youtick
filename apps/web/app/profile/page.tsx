@@ -12,6 +12,10 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { FEATURE_FLAGS } from '@/lib/constants';
 import { formatUsdc, readCreatorBalance, withdrawCreatorBalance } from '@/lib/livepeer-publication';
+import {
+    readMarketCreatorPublicationPage,
+    readMarketCreatorSalesSummary,
+} from '@/lib/market-read-model';
 
 export default function ProfilePage() {
     const { accountId, connect, getWallet, isReady } = useWallet();
@@ -23,6 +27,23 @@ export default function ProfilePage() {
         queryFn: () => readCreatorBalance(accountId!),
         enabled: Boolean(accountId && FEATURE_FLAGS.enablePaidMediaLivepeerV1),
         staleTime: 15_000,
+    });
+    const activityQuery = useQuery({
+        queryKey: ['creatorReadModel', accountId],
+        queryFn: async () => {
+            const [publications, sales] = await Promise.all([
+                readMarketCreatorPublicationPage(accountId!, null, 50),
+                readMarketCreatorSalesSummary(accountId!),
+            ]);
+            if (publications.watermark.block_height !== sales.watermark.block_height
+                || publications.watermark.block_hash !== sales.watermark.block_hash) {
+                throw new Error('market_read_model_watermark_mismatch');
+            }
+            return { publications: publications.items, sales };
+        },
+        enabled: Boolean(accountId && FEATURE_FLAGS.enablePaidMediaLivepeerV1
+            && FEATURE_FLAGS.enableDerivedReadModel),
+        staleTime: 30_000,
     });
 
     if (!FEATURE_FLAGS.enablePaidMediaLivepeerV1) return <RuntimeClosed />;
@@ -95,6 +116,46 @@ export default function ProfilePage() {
                         {error && <p role="alert" className="mt-3 text-sm text-red-400">{error}</p>}
                     </Card>
                 </div>
+
+                {FEATURE_FLAGS.enableDerivedReadModel && (
+                    <Card className="max-w-4xl bg-zinc-900 p-6">
+                        <h2 className="font-semibold text-zinc-200">Publication activity</h2>
+                        <p className="mt-1 text-sm text-zinc-500">
+                            Rebuildable history; available balance above remains canonical NEAR state.
+                        </p>
+                        {activityQuery.isLoading ? (
+                            <Loader2 role="status" aria-label="Loading publication activity" className="mt-6 h-6 w-6 animate-spin text-zinc-500" />
+                        ) : activityQuery.error ? (
+                            <p role="alert" className="mt-6 text-sm text-red-400">Publication activity could not be loaded.</p>
+                        ) : activityQuery.data ? (
+                            <div className="mt-6 grid gap-6 md:grid-cols-2">
+                                <div>
+                                    <p className="text-xs uppercase tracking-wider text-zinc-500">Recorded sales</p>
+                                    <p className="mt-2 text-2xl font-bold text-white">{activityQuery.data.sales.saleCount}</p>
+                                    <p className="mt-2 text-sm text-zinc-400">
+                                        {formatUsdc(activityQuery.data.sales.grossUsdc)} USDC gross · {formatUsdc(activityQuery.data.sales.creatorUsdc)} USDC creator proceeds
+                                    </p>
+                                </div>
+                                <div>
+                                    <p className="text-xs uppercase tracking-wider text-zinc-500">Publications</p>
+                                    {activityQuery.data.publications.length === 0 ? (
+                                        <p className="mt-2 text-sm text-zinc-400">No publications yet.</p>
+                                    ) : (
+                                        <ul className="mt-2 space-y-2">
+                                            {activityQuery.data.publications.slice(0, 5).map((publication) => (
+                                                <li key={publication.publication_id}>
+                                                    <Link className="text-sm text-zinc-200 hover:text-emerald-300" href={`/watch?job=${encodeURIComponent(publication.publication_id)}`}>
+                                                        {publication.title} · {publication.availability.replaceAll('_', ' ').toLowerCase()}
+                                                    </Link>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                </div>
+                            </div>
+                        ) : null}
+                    </Card>
+                )}
             </div>
         </PageShell>
     );
