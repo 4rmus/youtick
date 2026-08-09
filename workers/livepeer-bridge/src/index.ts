@@ -505,7 +505,6 @@ const PROVIDER_INVENTORY_DRIFT_CODES = new Set([
     'provider_playback_missing',
     'provider_publication_mismatch',
 ]);
-const SENSITIVE_LOG_KEY = /authorization|secret|token|tus|upload.*url|signed.*transaction|private.*key/i;
 const SAFE_ERROR_CODES = new Set([
     'control_body_too_large',
     'control_request_expired',
@@ -3195,7 +3194,7 @@ export function admissionObjectName(network: string, contractId: string): string
 }
 
 export function sanitizeForLog(value: unknown, key = ''): unknown {
-    if (SENSITIVE_LOG_KEY.test(key)) return '[REDACTED]';
+    if (isSensitiveLogKey(key)) return '[REDACTED]';
     if (typeof value === 'string'
         && /^https?:\/\//i.test(value)
         && /(?:tus|upload)/i.test(value)) return '[REDACTED]';
@@ -3209,6 +3208,17 @@ export function sanitizeForLog(value: unknown, key = ''): unknown {
         );
     }
     return value;
+}
+
+function isSensitiveLogKey(key: string): boolean {
+    const normalized = key.toLowerCase();
+    return normalized.includes('authorization')
+        || normalized.includes('secret')
+        || normalized.includes('token')
+        || normalized.includes('tus')
+        || (normalized.includes('upload') && normalized.includes('url'))
+        || (normalized.includes('signed') && normalized.includes('transaction'))
+        || (normalized.includes('private') && normalized.includes('key'));
 }
 
 export function formatLog(event: string, details: JsonObject): string {

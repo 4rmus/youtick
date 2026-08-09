@@ -3050,3 +3050,20 @@ Evidence classes remain separate:
   session. Full web and CodeQL revalidation are pending the follow-up SHA.
 - KANIT: `LOCAL_STATIC`. No wallet, provider, contract, D1, deploy, traffic,
   secret or runtime mutation.
+
+### CHECKPOINT 96 — Remove polynomial log-redaction expressions
+
+- DURUM: `CODEQL_FINDING_FIXED_LOCAL / REVALIDATION_PENDING / RUNTIME_CLOSED`
+- BASELINE: `agent/youtick-architecture-loop-20260809@44da556`
+- BULGU: GitHub CodeQL reported high-severity polynomial regular-expression
+  behavior while sanitizing attacker-controlled log field names.
+- UYGULAMA:
+  - ambiguous `upload.*url`, `signed.*transaction` and `private.*key`
+    expressions are removed;
+  - bounded, linear substring checks preserve and slightly broaden redaction;
+  - the regression test includes a long repeated field name and proves its
+    value is still redacted.
+- DOĞRULAMA: Focused/full Worker and CodeQL revalidation are pending the
+  follow-up SHA.
+- KANIT: `LOCAL_STATIC`. No provider, contract, D1, deploy, traffic, secret or
+  runtime mutation.

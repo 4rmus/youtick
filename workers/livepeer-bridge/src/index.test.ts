@@ -1587,12 +1587,17 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             authorization: 'Bearer secret',
             url: 'https://tus.example/upload/1',
             signedTransaction: 'signed-bytes',
-            nested: { privateKey: 'key', jobId: 'job-001' },
+            nested: {
+                privateKey: 'key',
+                [`upload${'upload'.repeat(1_000)}Url`]: 'slow-pattern-secret',
+                jobId: 'job-001',
+            },
         });
         expect(log).not.toContain('Bearer secret');
         expect(log).not.toContain('tus.example');
         expect(log).not.toContain('signed-bytes');
         expect(log).not.toContain('"key"');
+        expect(log).not.toContain('slow-pattern-secret');
         expect(log).toContain('job-001');
     });
 
