@@ -115,7 +115,7 @@ Evidence classes remain separate:
 | Access pause/resource semantics fixed | PASS | Fresh Access v2 requires a bounded Play resource, applies global/scope pause during verification, caps each owner at 16 active grants, paginates list/cleanup and can disable new issuance. Contract 14/14 and web call-shape 11/11 pass. On testnet one session-only grant verified, revoked and cleaned to empty. `LOCAL_TEST` + `TESTNET_MUTATION`. |
 | RPC abuse test proves bounded resources | PASS_LOCAL | Read/broadcast routes are separate; experimental methods are absent; 64 KiB request and 2 MiB response caps, 2.5-second upstream and six-second read deadlines, bounded rate maps, IP/account limits, read-only fallback, broadcast no-replay, safe provider metrics and a three-failure circuit breaker have 15/15 route regressions, including proof that an open circuit skips the failed upstream. Dedicated authenticated primary is supported but not deployed; per-instance rate limiting is not a distributed edge guarantee. `LOCAL_TEST`. |
 | No open P0 except controlled legacy playback grant | PASS_LOCAL | Nonce CSP and secure revoke/clear UX now pass locally. Bridge governance, fresh-v2 state choice, AUTH-001 and Access bounds pass locally/testnet as recorded. The controlled legacy playback path remains closed by runtime gates; deployed verification is `UNPROVEN`. |
-| Security regressions are mandatory CI gates | PARTIAL | Relevant CSP, signless, Access and governance tests run in the Web/Contracts jobs. All tracked third-party Actions are commit-SHA pinned; runtime npm advisories and RustSec findings reachable from normal contract WASM graphs are required CI Gate dependencies; source-only CodeQL covers JavaScript/TypeScript and Rust. Current-branch CI and CodeQL execution remain `UNPROVEN`. `LOCAL_TEST`. |
+| Security regressions are mandatory CI gates | PARTIAL_LOCAL | Relevant CSP, signless, Access and governance tests run in the Web/Contracts jobs. All tracked third-party Actions are commit-SHA pinned; runtime npm advisories, RustSec and the reusable JavaScript/TypeScript plus Rust CodeQL workflow are explicit dependencies of the ruleset-required `CI Gate`. The prior PR revision passed CI/CodeQL with zero open alerts; exact CI execution of the new dependency wiring is `UNPROVEN`. `LOCAL_TEST` + prior `CI`. |
 
 ### Phase 2 — stateless playback and bounded state
 
@@ -165,7 +165,7 @@ Evidence classes remain separate:
 | Upload-resume success above approved threshold | EXTERNAL_EVIDENCE_REQUIRED | The accepted gate is at least 99% same-resource resume with exactly zero second payments and zero second provider assets. Local recovery/canary regressions pass, but no deployed pilot sample or payment/provider receipt aggregation exists. |
 | RPC/provider fault injection degrades safely | PARTIAL | The report's eight chaos scenarios now map to deterministic local regressions: bounded NEAR failures/circuit, Livepeer 429/5xx/timeout admission behavior, duplicate/out-of-order webhook, Queue retry/redelivery, ambiguous broadcast reuse, exact-version rejection, early/delayed alarm timing and bounded D1/API/Web fallback. This is complete source-matrix coverage, not a real chaos run. Provider, Cloudflare Queue/D1, mixed deployed versions and staging evidence remain `EXTERNAL_EVIDENCE_REQUIRED`. `LOCAL_TEST`. |
 | Cost model and budget alarm defined | PARTIAL | Approved pilot monthly/per-job reservation values fail closed locally and provider 402/429 closes admission. Actual Livepeer billed-usage/invoice reconciliation and delivered budget alerts remain external. `LOCAL_TEST`. |
-| Security/supply-chain gates mandatory | PARTIAL | All tracked third-party Actions are commit-SHA pinned and locally enforced; runtime npm high-severity advisories and RustSec vulnerabilities reachable from normal contract WASM graphs block the CI Gate. The same graph now produces source-verified SPDX 2.3 contract SBOMs and requires a 30-day exact-SHA CI artifact. Source-only CodeQL plus release provenance and Web/Bridge runtime SPDX SBOM attestations exist but have not run. `wee_alloc` is absent from production WASM; test/dev `time`, contract SBOM artifact/attestation, required-check protection and current-branch CI/attestation evidence remain open. `LOCAL_TEST`. |
+| Security/supply-chain gates mandatory | PARTIAL | All tracked third-party Actions are commit-SHA pinned; runtime npm high-severity advisories, RustSec and the reusable CodeQL matrix are explicit dependencies of the ruleset-required `CI Gate`. CI run `31334340394` produced non-expired 30-day contract SBOM artifact `contract-sbom-682cda20774f9f18c058ab048bfa92fb2b9d6ff4` for the exact PR merge-candidate SHA; artifact digest is `sha256:6d64b995b5d16a0c8a0c6e8cd7261ebc14dd89d53995306a54008d391334f1f1`. The prior CodeQL run passed with zero open alerts; exact execution of the new required dependency is unproven. Release provenance and Web/Bridge runtime SPDX attestations remain absent; test/dev `time` remains informational. `LOCAL_TEST` + prior `CI`. |
 | Exact-SHA mainnet release candidate reproducible | PARTIAL | Release/security/SLO tooling tests 101/101; no mainnet candidate artifact or activation evidence. `LOCAL_TEST`. |
 
 ### Phase 6 — resilience, audit and mainnet
@@ -3067,3 +3067,118 @@ Evidence classes remain separate:
   follow-up SHA.
 - KANIT: `LOCAL_STATIC`. No provider, contract, D1, deploy, traffic, secret or
   runtime mutation.
+
+### CHECKPOINT 97 — Phase 1 / exact-SHA CI and CodeQL closure
+
+- DURUM: `PARTIAL_CI / CODE_SCANNING_CLEAR / REQUIRED_CODEQL_MISSING / RUNTIME_CLOSED`
+- BASELINE: `agent/youtick-architecture-loop-20260809@0f65b84`
+- AMAÇ: Close the pending revalidation for Checkpoints 95 and 96 without
+  treating CI as deployment or runtime evidence.
+- DOĞRULAMA:
+  - GitHub Actions CI run `31334340394` passed all required jobs for PR head
+    `0f65b84218e88181ffc6679641b281484ed760d5`; Actions checked out exact merge
+    candidate `682cda20774f9f18c058ab048bfa92fb2b9d6ff4`;
+  - CodeQL run `31334340395` passed both JavaScript/TypeScript and Rust analysis
+    for the same SHA;
+  - the branch-scoped GitHub code-scanning query returned zero open alerts;
+  - draft PR #91 is open and mergeable; no review approval is recorded.
+- KANIT: `CI` + read-only GitHub metadata. No deploy, traffic, secret, runtime
+  flag, provider, wallet, D1, Queue, contract or testnet/mainnet mutation.
+- FAZ KAPISI: The current PR revision has passing CI/CodeQL evidence, but Phase
+  1 security gating remains `PARTIAL`: active ruleset `main-pr-ci` requires only
+  `CI Gate`, so CodeQL is not merge-mandatory. Making it required is a GitHub
+  configuration mutation and needs explicit approval. Deployed browser/wallet
+  evidence and independent security review remain separate external gates.
+
+### CHECKPOINT 98 — Phase 5 / ruleset and contract SBOM receipt
+
+- DURUM: `PARTIAL_CI / SBOM_ARTIFACT_PROVEN / CODEQL_RULESET_BLOCKER`
+- BASELINE: `agent/youtick-architecture-loop-20260809@0f65b84`
+- AMAÇ: Replace the remaining supply-chain assumptions with exact read-only
+  GitHub artifact and merge-policy evidence.
+- DOĞRULAMA:
+  - CI run `31334340394` produced artifact `9043861145`, named
+    `contract-sbom-682cda20774f9f18c058ab048bfa92fb2b9d6ff4`, with digest
+    `sha256:6d64b995b5d16a0c8a0c6e8cd7261ebc14dd89d53995306a54008d391334f1f1`;
+  - the artifact is not expired and records a 30-day expiry at
+    `2026-09-08T20:28:54Z`;
+  - `refs/pull/91/merge` resolves to the artifact SHA and
+    `refs/pull/91/head` resolves to `0f65b84218e88181ffc6679641b281484ed760d5`;
+  - active repository ruleset `main-pr-ci` applies to `main`, requires a pull
+    request and strict `CI Gate`, blocks deletion/non-fast-forward, but does
+    not require the passing `CodeQL` check.
+- KANIT: `CI` + read-only GitHub artifact/ruleset metadata. No ruleset, branch,
+  PR, deploy, runtime, secret, provider, D1, Queue or contract mutation.
+- FAZ KAPISI: The contract-SBOM CI artifact/retention gap is closed for this PR
+  merge candidate. Security/supply-chain remains `PARTIAL` until CodeQL is a
+  required check and release/runtime attestations exist.
+
+### CHECKPOINT 99 — Phase 1/5 / CodeQL inside the required CI Gate
+
+- DURUM: `PARTIAL_LOCAL / REQUIRED_GATE_SOURCE_READY / CI_UNPROVEN / RUNTIME_CLOSED`
+- BASELINE: `agent/youtick-architecture-loop-20260809@0f65b84` plus uncommitted
+  checkpoint changes.
+- AMAÇ: Make CodeQL merge-mandatory through the existing protected `CI Gate`
+  without mutating the repository ruleset or running duplicate PR analyses.
+- UYGULAMA:
+  - the existing CodeQL workflow exposes `workflow_call` and retains weekly
+    schedule plus manual execution;
+  - the CI workflow calls that same-file workflow once for pull requests and
+    pushes, passes only `actions:read`, `contents:read` and
+    `security-events:write`, and includes its aggregate result in `CI Gate`;
+  - the standalone CodeQL pull-request/push triggers are removed, preventing a
+    second JavaScript/Rust matrix for the same revision;
+  - one source regression locks the reusable call, security permission,
+    `CI Gate` dependency, schedule and absence of duplicate triggers.
+- BASELINE_FAILURE: Active ruleset `main-pr-ci` required only `CI Gate`, while
+  CodeQL ran in an independent workflow and could not block a merge.
+- DOĞRULAMA: Focused security regression passes 4/4; mandatory
+  release/security/SLO tooling passes 102/102; all tracked workflow files parse
+  as YAML; `git diff --check` passes. GitHub documents same-repository
+  `./.github/workflows/<file>` calls and `jobs.<job_id>.permissions` as supported
+  reusable-workflow syntax.
+- KANIT: `LOCAL_TEST` + official workflow-syntax documentation. No branch
+  ruleset, PR, commit, push, deploy, traffic, secret, provider, D1, Queue,
+  contract or runtime mutation occurred.
+- FAZ KAPISI: CodeQL is source-bound to the ruleset-required gate without an
+  external configuration change. Phase 1/5 remains `PARTIAL` until GitHub runs
+  this exact workflow revision successfully; release/runtime attestations and
+  independent security review remain separate external gates.
+
+### CHECKPOINT 100 — Cross-phase / current remaining-gate audit
+
+- DURUM: `NEEDS_APPROVAL / SAFE_LOCAL_QUEUE_EXHAUSTED / RUNTIME_CLOSED`
+- BASELINE: `agent/youtick-architecture-loop-20260809@0f65b84` plus uncommitted
+  Checkpoints 97–100.
+- AMAÇ: Reconfirm the exact boundary between completed source work and the
+  remaining Phase 0–6 external, destructive or decision-bearing gates.
+- DENETİM:
+  - Phase 0 remains open on independent threat review, named specialist owners,
+    protected configuration backup and deployed metric aggregation;
+  - Phase 1 first needs exact-revision CI for Checkpoint 99, then deployed
+    wallet/browser evidence, independent security review and the accepted
+    mainnet migration/governance implementation;
+  - Phase 2 requires production-like staging, deployed shadow/cache samples and
+    real archive/lifecycle evidence. Event-driven cache purge has no trusted
+    final-event delivery authority yet; inventing an unauthenticated purge
+    endpoint would add a new trust boundary;
+  - Phase 3 requires real browser/provider/TUS concurrency, Queue/D1 delivery,
+    billed-cost evidence and the two external preconditions before destructive
+    UploadJob cleanup;
+  - Phase 4 requires deployed final-event ingestion/rebuild, testnet economic
+    event receipts and mainnet product/legal/finance approval. The fresh-ID
+    pilot intentionally has no migration entrypoint, so it cannot truthfully
+    emit `contract_migrated`;
+  - Phase 5 requires deployed dashboards/alerts, load/soak/chaos, provider cost
+    reconciliation, release attestations and the unresolved ABR/economics
+    decision;
+  - Phase 6 requires named owners, external audits, approved drills, dark deploy
+    and separately approved mainnet canaries/activation.
+- DOĞRULAMA: The current progress gate/backlog matrices and implementation
+  sources were re-read; `git diff --check` remains clean. No missing item above
+  can be closed by another local test or speculative source scaffold.
+- KANIT: `LOCAL_STATIC`. No staging, deploy, provider, D1, Queue, contract,
+  wallet, secret, traffic, payment, ruleset, commit or push mutation occurred.
+- FAZ KAPISI: The goal remains active and incomplete. The next safe dependency
+  is explicit-path commit/push authorization for the five Checkpoint 99 files,
+  followed by exact-SHA CI/CodeQL observation on draft PR #91.

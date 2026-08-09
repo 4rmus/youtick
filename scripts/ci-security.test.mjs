@@ -47,3 +47,19 @@ test('normal-WASM contract SBOM artifacts stay mandatory', async () => {
     assert.match(audit, /name: contract-sbom-\$\{\{ github\.sha \}\}/);
     assert.match(audit, /retention-days: 30/);
 });
+
+test('required CI Gate waits for the reusable CodeQL workflow', async () => {
+    const [ci, codeql] = await Promise.all([
+        readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
+        readFile(new URL('../.github/workflows/codeql.yml', import.meta.url), 'utf8'),
+    ]);
+    const codeqlJob = ci.slice(ci.indexOf('  codeql:'), ci.indexOf('  ci-gate:'));
+    const ciGate = ci.slice(ci.indexOf('  ci-gate:'));
+
+    assert.match(codeqlJob, /uses: \.\/\.github\/workflows\/codeql\.yml/);
+    assert.match(codeqlJob, /security-events: write/);
+    assert.match(ciGate, /\n      - codeql\n/);
+    assert.match(codeql, /\n  workflow_call:\n/);
+    assert.doesNotMatch(codeql, /\n  pull_request:\n|\n  push:\n/);
+    assert.match(codeql, /\n  schedule:\n/);
+});
