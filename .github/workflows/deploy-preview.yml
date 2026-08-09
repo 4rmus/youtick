@@ -26,6 +26,7 @@ env:
   PREVIEW_NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: ${{ vars.PREVIEW_NEXT_PUBLIC_LIVEPEER_BRIDGE_URL }}
   PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: ${{ vars.PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 }}
   PREVIEW_NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: ${{ vars.PREVIEW_NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE }}
+  PREVIEW_NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: "false"
   PREVIEW_NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: ${{ vars.PREVIEW_NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE }}
   PREVIEW_NEXT_PUBLIC_USDC_CONTRACT_ID: ${{ vars.PREVIEW_NEXT_PUBLIC_USDC_CONTRACT_ID }}
   PREVIEW_NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO: ${{ vars.PREVIEW_NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO }}
@@ -46,6 +47,12 @@ env:
   PREVIEW_NEAR_OPERATOR_KEY_EPOCH: ${{ vars.PREVIEW_NEAR_OPERATOR_KEY_EPOCH }}
   PREVIEW_CREATOR_FEE_QUOTE_KEY_VERSION: ${{ vars.PREVIEW_CREATOR_FEE_QUOTE_KEY_VERSION }}
   PREVIEW_LIVEPEER_BRIDGE_ENABLED: ${{ vars.PREVIEW_LIVEPEER_BRIDGE_ENABLED }}
+  PREVIEW_LIVEPEER_NEW_UPLOADS_ENABLED: "false"
+  PREVIEW_LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: "false"
+  PREVIEW_LIVEPEER_PROVIDER_MUTATIONS_ENABLED: "false"
+  PREVIEW_LIVEPEER_OPERATOR_MUTATIONS_ENABLED: "false"
+  PREVIEW_UPLOAD_JOB_ARCHIVE_ENABLED: "false"
+  PREVIEW_OPERATOR_OUTBOX_ARCHIVE_ENABLED: "false"
   PREVIEW_LIVEPEER_NEAR_CREATOR_FEE_ENABLED: ${{ vars.PREVIEW_LIVEPEER_NEAR_CREATOR_FEE_ENABLED }}
   PREVIEW_MULTI_ASSET_PAYMENTS_MODE: ${{ vars.PREVIEW_MULTI_ASSET_PAYMENTS_MODE }}
   PREVIEW_MULTI_ASSET_PAYMENT_ASSET_IDS: ${{ vars.PREVIEW_MULTI_ASSET_PAYMENT_ASSET_IDS }}
@@ -56,6 +63,7 @@ env:
   PRODUCTION_NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: ${{ vars.PRODUCTION_NEXT_PUBLIC_LIVEPEER_BRIDGE_URL }}
   PRODUCTION_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: ${{ vars.PRODUCTION_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 }}
   PRODUCTION_NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: ${{ vars.PRODUCTION_NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE }}
+  PRODUCTION_NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: "false"
   PRODUCTION_NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: ${{ vars.PRODUCTION_NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE }}
   PRODUCTION_NEXT_PUBLIC_USDC_CONTRACT_ID: ${{ vars.PRODUCTION_NEXT_PUBLIC_USDC_CONTRACT_ID }}
   PRODUCTION_NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO: ${{ vars.PRODUCTION_NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO }}
@@ -76,6 +84,12 @@ env:
   PRODUCTION_NEAR_OPERATOR_KEY_EPOCH: ${{ vars.PRODUCTION_NEAR_OPERATOR_KEY_EPOCH }}
   PRODUCTION_CREATOR_FEE_QUOTE_KEY_VERSION: ${{ vars.PRODUCTION_CREATOR_FEE_QUOTE_KEY_VERSION }}
   PRODUCTION_LIVEPEER_BRIDGE_ENABLED: ${{ vars.PRODUCTION_LIVEPEER_BRIDGE_ENABLED }}
+  PRODUCTION_LIVEPEER_NEW_UPLOADS_ENABLED: "false"
+  PRODUCTION_LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: "false"
+  PRODUCTION_LIVEPEER_PROVIDER_MUTATIONS_ENABLED: "false"
+  PRODUCTION_LIVEPEER_OPERATOR_MUTATIONS_ENABLED: "false"
+  PRODUCTION_UPLOAD_JOB_ARCHIVE_ENABLED: "false"
+  PRODUCTION_OPERATOR_OUTBOX_ARCHIVE_ENABLED: "false"
   PRODUCTION_LIVEPEER_NEAR_CREATOR_FEE_ENABLED: ${{ vars.PRODUCTION_LIVEPEER_NEAR_CREATOR_FEE_ENABLED }}
   PRODUCTION_MULTI_ASSET_PAYMENTS_MODE: ${{ vars.PRODUCTION_MULTI_ASSET_PAYMENTS_MODE }}
   PRODUCTION_MULTI_ASSET_PAYMENT_ASSET_IDS: ${{ vars.PRODUCTION_MULTI_ASSET_PAYMENT_ASSET_IDS }}
@@ -97,7 +111,7 @@ jobs:
       ci_run_id: ${{ steps.authorize.outputs.ci_run_id }}
       ci_run_attempt: ${{ steps.authorize.outputs.ci_run_attempt }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
@@ -237,16 +251,19 @@ jobs:
           - target: preview
           - target: production
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.authorize.outputs.sha }}
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - run: npm ci --no-audit --no-fund --prefer-offline
         working-directory: apps/web
+      - name: Generate Web runtime SBOM
+        working-directory: apps/web
+        run: npm sbom --omit=dev --sbom-format=spdx > "${RUNNER_TEMP}/web.spdx.json"
       - name: Validate and export canonical Web config
         run: |
           config="${RUNNER_TEMP}/${{ matrix.target }}-config.json"
@@ -270,12 +287,13 @@ jobs:
             --directory=apps/web \
             .open-next wrangler.jsonc \
             | gzip -n > "${RUNNER_TEMP}/web-${{ matrix.target }}.tar.gz"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: web-${{ matrix.target }}-${{ needs.authorize.outputs.sha }}
           path: |
             ${{ runner.temp }}/web-${{ matrix.target }}.tar.gz
             ${{ runner.temp }}/${{ matrix.target }}-config.json
+            ${{ runner.temp }}/web.spdx.json
           retention-days: 1
           overwrite: true
           if-no-files-found: error
@@ -287,16 +305,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.authorize.outputs.sha }}
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: workers/livepeer-bridge/package-lock.json
       - run: npm ci --no-audit --no-fund --prefer-offline
         working-directory: workers/livepeer-bridge
+      - name: Generate Bridge runtime SBOM
+        working-directory: workers/livepeer-bridge
+        run: npm sbom --omit=dev --sbom-format=spdx > "${RUNNER_TEMP}/bridge.spdx.json"
       - name: Build one prebuilt Bridge module
         working-directory: workers/livepeer-bridge
         run: >
@@ -319,10 +340,12 @@ jobs:
             --directory="${RUNNER_TEMP}/bridge-output" \
             index.js wrangler.toml \
             | gzip -n > "${RUNNER_TEMP}/bridge.tar.gz"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bridge-${{ needs.authorize.outputs.sha }}
-          path: ${{ runner.temp }}/bridge.tar.gz
+          path: |
+            ${{ runner.temp }}/bridge.tar.gz
+            ${{ runner.temp }}/bridge.spdx.json
           retention-days: 1
           overwrite: true
           if-no-files-found: error
@@ -335,19 +358,24 @@ jobs:
       - build-bridge
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.authorize.outputs.sha }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: web-preview-${{ needs.authorize.outputs.sha }}
           path: ${{ runner.temp }}/components/preview
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: web-production-${{ needs.authorize.outputs.sha }}
           path: ${{ runner.temp }}/components/production
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: bridge-${{ needs.authorize.outputs.sha }}
           path: ${{ runner.temp }}/components/bridge
@@ -379,7 +407,23 @@ jobs:
             --web-lock apps/web/package-lock.json \
             --bridge-lock workers/livepeer-bridge/package-lock.json
           (cd "${RUNNER_TEMP}/release" && sha256sum --check SHA256SUMS)
-      - uses: actions/upload-artifact@v4
+      - name: Attest exact release provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/release/SHA256SUMS
+      - name: Attest Web runtime SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/release/web-preview.tar.gz
+            ${{ runner.temp }}/release/web-production.tar.gz
+          sbom-path: ${{ runner.temp }}/components/preview/web.spdx.json
+      - name: Attest Bridge runtime SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/release/bridge.tar.gz
+          sbom-path: ${{ runner.temp }}/components/bridge/bridge.spdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-${{ needs.authorize.outputs.sha }}
           path: ${{ runner.temp }}/release
@@ -398,7 +442,7 @@ jobs:
       name: Preview
       url: https://preview.youtick.net
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: main
           fetch-depth: 0
@@ -415,7 +459,7 @@ jobs:
             echo "Skipping stale Preview SHA ${SHA}."
           fi
       - if: steps.current.outputs.deploy == 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -424,7 +468,7 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
         working-directory: apps/web
       - if: steps.current.outputs.deploy == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-${{ needs.authorize.outputs.sha }}
           path: ${{ runner.temp }}/release
@@ -468,7 +512,7 @@ jobs:
             "${RUNNER_TEMP}/root-before.json" \
             "${RUNNER_TEMP}/root-after.json"
       - if: steps.current.outputs.deploy == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: preview-deployment-${{ needs.authorize.outputs.sha }}
           path: |

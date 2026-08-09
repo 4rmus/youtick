@@ -9,6 +9,7 @@ control-plane Worker.
 - [Contract methods](api/contract-methods.md)
 - [Security](security.md)
 - [Testing](testing.md)
+- [Testnet pilot](testnet-pilot-runbook.md)
 - [Release](release-runbook.md)
 - [Contributing](contributing.md)
 - [Acceptable use](legal/acceptable-use-policy.md)

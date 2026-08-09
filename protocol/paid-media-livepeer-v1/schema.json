@@ -153,6 +153,7 @@
         "job_id",
         "generation",
         "expected_source_bytes",
+        "source_fingerprint_sha256",
         "source_type",
         "profile_id",
         "profile_config_sha256"
@@ -167,6 +168,9 @@
         },
         "expected_source_bytes": {
           "$ref": "#/$defs/decimal_u64"
+        },
+        "source_fingerprint_sha256": {
+          "$ref": "#/$defs/sha256"
         },
         "source_type": {
           "enum": ["mp4", "mov", "avi", "webm", "wmv", "mkv", "flv"]
@@ -202,13 +206,18 @@
           "const": "youtick.paid-media-livepeer-v1.control"
         },
         "version": {
-          "const": "2"
+          "enum": ["2", "3"]
         },
         "method": {
           "const": "POST"
         },
         "route": {
-          "enum": ["/v1/upload-intents", "/v1/playback-tokens"]
+          "enum": [
+            "/v1/upload-intents",
+            "/v1/upload-heartbeats",
+            "/v1/upload-cancellations",
+            "/v1/playback-tokens"
+          ]
         },
         "network": {
           "enum": ["testnet", "mainnet"]

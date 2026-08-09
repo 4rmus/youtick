@@ -1,6 +1,5 @@
 import { KeyPair, PublicKey, actions } from 'near-api-js';
 import { GAS_CONSTANTS, NEAR_CONFIG, NEAR_NETWORK } from './constants';
-import { BrowserKeyStore } from './keystore-v7';
 import { getProvider } from './near';
 import { nearAmountToYocto } from './near-amount';
 import type { WalletInstance } from './types';
@@ -10,24 +9,85 @@ const SIGNLESS_ACCESS_KEY_ALLOWANCE_YOCTO = nearAmountToYocto(GAS_CONSTANTS.sess
 // Below this remaining allowance a grant call may no longer fit; reprovision.
 const SIGNLESS_ACCESS_KEY_MIN_ALLOWANCE_YOCTO = nearAmountToYocto(0.01);
 
-// Dedicated namespace keeps the signless function-call key isolated from
-// wallet key material.
-const signlessKeyStore = new BrowserKeyStore('youtick:signless-keystore:');
+const SIGNLESS_KEY_STORAGE_PREFIX = 'youtick:signless-keystore:';
+
+function signlessKeyStorageKey(accountId: string): string {
+    return `${SIGNLESS_KEY_STORAGE_PREFIX}${accountId}:${NEAR_NETWORK}`;
+}
+
+function clearLegacyPersistentKey(accountId: string): void {
+    if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(signlessKeyStorageKey(accountId));
+    }
+}
+
+if (typeof window !== 'undefined') {
+    const legacyKeys: string[] = [];
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+        const key = window.localStorage.key(index);
+        if (key?.startsWith(SIGNLESS_KEY_STORAGE_PREFIX)) legacyKeys.push(key);
+    }
+    for (const key of legacyKeys) window.localStorage.removeItem(key);
+}
 
 export function createSignlessAccessKey(): KeyPair {
     return KeyPair.fromRandom('ed25519');
 }
 
 export async function persistSignlessAccessKey(accountId: string, keyPair: KeyPair): Promise<void> {
-    await signlessKeyStore.setKey(NEAR_NETWORK, accountId, keyPair);
+    if (typeof window === 'undefined') return;
+    clearLegacyPersistentKey(accountId);
+    window.sessionStorage.setItem(signlessKeyStorageKey(accountId), keyPair.toString());
 }
 
 export async function getSignlessAccessKey(accountId: string): Promise<KeyPair | null> {
-    return await signlessKeyStore.getKey(NEAR_NETWORK, accountId);
+    if (typeof window === 'undefined') return null;
+    clearLegacyPersistentKey(accountId);
+    const storageKey = signlessKeyStorageKey(accountId);
+    const value = window.sessionStorage.getItem(storageKey);
+    if (!value) return null;
+    try {
+        return KeyPair.fromString(value as `ed25519:${string}`);
+    } catch {
+        window.sessionStorage.removeItem(storageKey);
+        return null;
+    }
 }
 
 export async function clearSignlessAccessKey(accountId: string): Promise<void> {
-    await signlessKeyStore.removeKey(NEAR_NETWORK, accountId);
+    if (typeof window === 'undefined') return;
+    clearLegacyPersistentKey(accountId);
+    window.sessionStorage.removeItem(signlessKeyStorageKey(accountId));
+}
+
+export async function revokeBrowserAuthority(
+    wallet: Pick<WalletInstance, 'signAndSendTransactions'>,
+    accountId: string,
+): Promise<void> {
+    const keyPair = await getSignlessAccessKey(accountId);
+    const transactions: Array<{ receiverId: string; actions: unknown[] }> = [
+        {
+            receiverId: NEAR_CONFIG.accessContractId,
+            actions: [
+                actions.functionCall(
+                    'revoke_subject_sessions',
+                    { owner_id: accountId },
+                    GAS_CONSTANTS.mediumGas,
+                    BigInt(0),
+                ),
+            ],
+        },
+    ];
+
+    if (keyPair) {
+        transactions.push({
+            receiverId: accountId,
+            actions: [actions.deleteKey(PublicKey.fromString(keyPair.getPublicKey().toString()))],
+        });
+    }
+
+    await wallet.signAndSendTransactions({ transactions });
+    await clearSignlessAccessKey(accountId);
 }
 
 export function buildSignlessAccessKeyRequest(keyPair: KeyPair) {
@@ -56,7 +116,7 @@ export interface SignlessKeyProvision {
     rollback(): Promise<void>;
 }
 
-type OnChainKeyState = 'usable' | 'missing' | 'unknown';
+type OnChainKeyState = 'usable' | 'missing' | 'invalid' | 'unknown';
 
 interface ViewAccessKeyResult {
     error?: string;
@@ -74,7 +134,7 @@ async function getSignlessKeyOnChainState(accountId: string, publicKey: string):
     try {
         result = await getProvider().query({
             request_type: 'view_access_key',
-            finality: 'optimistic',
+            finality: 'final',
             account_id: accountId,
             public_key: publicKey,
         }) as ViewAccessKeyResult;
@@ -92,25 +152,45 @@ async function getSignlessKeyOnChainState(accountId: string, publicKey: string):
         return 'unknown';
     }
     if (permission === 'FullAccess') {
-        return 'usable';
+        return 'invalid';
     }
 
     const functionCall = permission.FunctionCall;
     if (!functionCall) {
-        return 'unknown';
+        return 'invalid';
     }
     if (functionCall.receiver_id !== NEAR_CONFIG.accessContractId) {
-        return 'missing';
+        return 'invalid';
     }
     const methodNames = functionCall.method_names ?? [];
-    if (methodNames.length > 0 && !methodNames.includes('issue_session_grant')) {
-        return 'missing';
+    if (methodNames.length !== 1 || methodNames[0] !== SIGNLESS_ACCESS_KEY_METHODS[0]) {
+        return 'invalid';
     }
-    if (typeof functionCall.allowance === 'string'
-        && BigInt(functionCall.allowance) < SIGNLESS_ACCESS_KEY_MIN_ALLOWANCE_YOCTO) {
-        return 'missing';
+    if (typeof functionCall.allowance !== 'string') {
+        return 'invalid';
+    }
+    try {
+        const allowance = BigInt(functionCall.allowance);
+        if (allowance < SIGNLESS_ACCESS_KEY_MIN_ALLOWANCE_YOCTO
+            || allowance > SIGNLESS_ACCESS_KEY_ALLOWANCE_YOCTO) {
+            return 'invalid';
+        }
+    } catch {
+        return 'invalid';
     }
     return 'usable';
+}
+
+export async function getUsableSignlessAccessKey(accountId: string): Promise<KeyPair | null> {
+    const keyPair = await getSignlessAccessKey(accountId);
+    if (!keyPair) return null;
+
+    const state = await getSignlessKeyOnChainState(accountId, keyPair.getPublicKey().toString());
+    if (state === 'usable') return keyPair;
+    if (state === 'missing' || state === 'invalid') {
+        await clearSignlessAccessKey(accountId);
+    }
+    return null;
 }
 
 export function buildAddSignlessKeyTransaction(accountId: string, keyPair: KeyPair) {
@@ -138,7 +218,7 @@ export async function prepareSignlessKeyProvision(accountId: string): Promise<Si
     const localKey = await getSignlessAccessKey(accountId);
     if (localKey) {
         const state = await getSignlessKeyOnChainState(accountId, localKey.getPublicKey().toString());
-        if (state !== 'missing') {
+        if (state === 'usable' || state === 'unknown') {
             return null;
         }
         await clearSignlessAccessKey(accountId);
@@ -209,9 +289,10 @@ export async function reconcileSignlessAccessKey(
     const publicKey = keyPair.getPublicKey().toString();
     for (let attempt = 0; attempt < attempts; attempt += 1) {
         const state = await getSignlessKeyOnChainState(accountId, publicKey);
-        if (state !== 'missing') {
+        if (state === 'usable' || state === 'unknown') {
             return;
         }
+        if (state === 'invalid') break;
         await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
 

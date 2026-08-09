@@ -39,15 +39,28 @@ function createState(): TestState {
     const put = async (key: string, value: unknown) => {
         values.set(key, structuredClone(value));
     };
+    const remove = async (key: string | string[]) => {
+        const keys = Array.isArray(key) ? key : [key];
+        return keys.reduce((count, entry) => count + Number(values.delete(entry)), 0);
+    };
+    const list = async (options?: { prefix?: string; limit?: number }) => new Map(
+        [...values.entries()]
+            .filter(([key]) => !options?.prefix || key.startsWith(options.prefix))
+            .slice(0, options?.limit ?? values.size),
+    );
     const storage = {
         get,
         put,
+        delete: remove,
+        deleteAll: async () => values.clear(),
+        list,
         setAlarm: async (at: number | Date) => alarms.push(Number(at)),
         transaction: async <T>(callback: (transaction: {
             get: typeof get;
             put: typeof put;
+            list: typeof list;
         }) => Promise<T>) => {
-            const run = transactionTail.then(() => callback({ get, put }));
+            const run = transactionTail.then(() => callback({ get, put, list }));
             transactionTail = run.then(() => undefined, () => undefined);
             return run;
         },
@@ -67,6 +80,9 @@ function createEnv(overrides?: Partial<Env>): Env {
             timestamp: '2026-08-08T00:00:00.000Z',
         },
         LIVEPEER_BRIDGE_ENABLED: 'false',
+        LIVEPEER_NEW_UPLOADS_ENABLED: 'true',
+        LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'true',
+        LIVEPEER_OPERATOR_MUTATIONS_ENABLED: 'true',
         ALLOWED_ORIGINS: ORIGIN,
         NEAR_NETWORK: 'testnet',
         NEAR_RPC_URL: RPC_URL,
@@ -74,12 +90,58 @@ function createEnv(overrides?: Partial<Env>): Env {
         LIVEPEER_API_KEY: API_KEY,
         LIVEPEER_API_TOKEN_NAME: 'paid-media-test',
         LIVEPEER_CREATOR_ALLOWLIST: String(vectors.upload_intent.envelope.account_id),
+        LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '1000000000',
         LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '100000000',
+        LIVEPEER_WEBHOOK_QUEUE_BATCH_SIZE: '10',
+        LIVEPEER_WEBHOOK_QUEUE_BATCH_TIMEOUT_SECONDS: '5',
+        LIVEPEER_WEBHOOK_QUEUE_MAX_RETRIES: '3',
+        LIVEPEER_WEBHOOK_QUEUE_MAX_CONCURRENCY: '1',
+        LIVEPEER_WEBHOOK_QUEUE_RETENTION_SECONDS: '345600',
+        LIVEPEER_WEBHOOK_QUEUE_DLQ: 'youtick-livepeer-events-dlq-testnet',
         LIVEPEER_CONTROL: {
             idFromName: (name: string) => ({ toString: () => name }),
-            get: () => ({ fetch: async () => Response.json({ accepted: true }) }),
+            get: () => ({ fetch: async () => Response.json({
+                accepted: true,
+                lease_id: '00000000-0000-4000-8000-000000000001',
+                expires_at_ms: '999999999999999',
+                heartbeat_interval_ms: 5 * 60 * 1000,
+            }) }),
         } as unknown as DurableObjectNamespace,
         ...overrides,
+    };
+}
+
+function createArchiveDatabase(): {
+    database: D1Database;
+    rows: Map<string, Record<string, unknown>>;
+} {
+    const rows = new Map<string, Record<string, unknown>>();
+    const statement = (sql: string, values: unknown[] = []): D1PreparedStatement => ({
+        bind: (...next: unknown[]) => statement(sql, next),
+        run: async () => {
+            if (!sql.includes('INSERT INTO upload_job_archives')) throw new Error('unexpected_d1_run');
+            const key = JSON.stringify(values.slice(0, 4));
+            if (!rows.has(key)) {
+                rows.set(key, {
+                    creator_id: values[4],
+                    terminal_state: values[5],
+                    terminal_at_ms: values[6],
+                    expected_source_bytes: values[7],
+                    source_fingerprint_sha256: values[8],
+                    asset_id_sha256: values[9],
+                    project_id_sha256: values[10],
+                    archive_requested_at_ms: values[11],
+                    cleanup_eligible_at_ms: values[12],
+                    archive_sha256: values[13],
+                });
+            }
+            return { success: true } as D1Result;
+        },
+        first: async <T>() => rows.get(JSON.stringify(values)) as T | undefined || null,
+    }) as unknown as D1PreparedStatement;
+    return {
+        database: { prepare: (sql: string) => statement(sql) } as D1Database,
+        rows,
     };
 }
 
@@ -156,6 +218,7 @@ async function controlRequest(overrides?: {
     body?: Record<string, unknown>;
     envelope?: Record<string, unknown>;
     signature?: Uint8Array;
+    keyPair?: CryptoKeyPair;
 }): Promise<Request> {
     const input = structuredClone(vectors.upload_intent) as {
         body: Record<string, unknown>;
@@ -163,10 +226,14 @@ async function controlRequest(overrides?: {
     };
     const body = { ...input.body, ...overrides?.body };
     const bodyHash = await sha256Hex(canonicalJson(body));
+    const keyPair = overrides?.keyPair ?? requestKey;
+    const rawPublicKey = new Uint8Array(
+        await crypto.subtle.exportKey('raw', keyPair.publicKey) as ArrayBuffer,
+    );
     nonceCounter += 1;
     const envelope: Record<string, unknown> = {
         ...input.envelope,
-        session_public_key: requestPublicKey,
+        session_public_key: `ed25519:${base58Encode(rawPublicKey)}`,
         device_nonce: base64UrlEncode(new Uint8Array(32).fill(nonceCounter)),
         expires_at_ms: String(Date.now() + 5 * 60 * 1000),
         body_sha256: bodyHash,
@@ -174,10 +241,73 @@ async function controlRequest(overrides?: {
     };
     const signature = overrides?.signature ?? new Uint8Array(await crypto.subtle.sign(
         'Ed25519',
-        requestKey.privateKey,
+        keyPair.privateKey,
         new TextEncoder().encode(canonicalControlMessage(envelope)),
     ));
     return new Request('https://bridge.youtick.net/v1/upload-intents', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Origin: String(envelope.origin),
+            'X-Youtick-Signature': base64Encode(signature),
+        },
+        body: JSON.stringify({ body, envelope }),
+    });
+}
+
+async function uploadHeartbeatRequest(leaseId: string): Promise<Request> {
+    const body = {
+        job_id: vectors.upload_intent.body.job_id,
+        generation: vectors.upload_intent.body.generation,
+        lease_id: leaseId,
+    };
+    nonceCounter += 1;
+    const envelope = {
+        ...vectors.upload_intent.envelope,
+        version: '2',
+        route: '/v1/upload-heartbeats',
+        session_public_key: requestPublicKey,
+        device_nonce: base64UrlEncode(new Uint8Array(32).fill(nonceCounter)),
+        expires_at_ms: String(Date.now() + 5 * 60 * 1000),
+        body_sha256: await sha256Hex(canonicalJson(body)),
+    };
+    const signature = new Uint8Array(await crypto.subtle.sign(
+        'Ed25519',
+        requestKey.privateKey,
+        new TextEncoder().encode(canonicalControlMessage(envelope)),
+    ));
+    return new Request('https://bridge.youtick.net/v1/upload-heartbeats', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Origin: String(envelope.origin),
+            'X-Youtick-Signature': base64Encode(signature),
+        },
+        body: JSON.stringify({ body, envelope }),
+    });
+}
+
+async function uploadCancellationRequest(): Promise<Request> {
+    const body = {
+        job_id: vectors.upload_intent.body.job_id,
+        generation: vectors.upload_intent.body.generation,
+    };
+    nonceCounter += 1;
+    const envelope = {
+        ...vectors.upload_intent.envelope,
+        version: '2',
+        route: '/v1/upload-cancellations',
+        session_public_key: requestPublicKey,
+        device_nonce: base64UrlEncode(new Uint8Array(32).fill(nonceCounter)),
+        expires_at_ms: String(Date.now() + 5 * 60 * 1000),
+        body_sha256: await sha256Hex(canonicalJson(body)),
+    };
+    const signature = new Uint8Array(await crypto.subtle.sign(
+        'Ed25519',
+        requestKey.privateKey,
+        new TextEncoder().encode(canonicalControlMessage(envelope)),
+    ));
+    return new Request('https://bridge.youtick.net/v1/upload-cancellations', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -224,10 +354,12 @@ function providerResponse(tusEndpoint = TUS_ENDPOINT): Response {
 function backendFetch(options?: {
     providerGate?: Promise<void>;
     providerFailure?: boolean;
+    providerThrows?: boolean;
     providerStatus?: number;
     jobPublicKey?: string;
     uploadKeyExpiresAtMs?: string;
     tusLengthMismatch?: boolean;
+    tusOffset?: string;
     tusEndpoint?: string;
 }) {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -241,6 +373,7 @@ function backendFetch(options?: {
         }
         if (url === 'https://livepeer.studio/api/asset/request-upload') {
             await options?.providerGate;
+            if (options?.providerThrows) throw new Error('provider timeout');
             if (options?.providerStatus) {
                 return Response.json({ error: 'closed' }, { status: options.providerStatus });
             }
@@ -260,7 +393,7 @@ function backendFetch(options?: {
                     'Upload-Length': options?.tusLengthMismatch
                         ? '20000000001'
                         : String(vectors.upload_intent.body.expected_source_bytes),
-                    'Upload-Offset': '0',
+                    'Upload-Offset': options?.tusOffset ?? '0',
                 },
             });
         }
@@ -269,7 +402,7 @@ function backendFetch(options?: {
 }
 
 function admissionRequest(
-    path: 'preflight' | 'reserve' | 'mark' | 'reopen',
+    path: 'preflight' | 'reserve' | 'mark' | 'heartbeat' | 'reopen',
     body: Record<string, unknown>,
 ): Request {
     return new Request(`https://object/internal/admission/${path}`, {
@@ -361,7 +494,12 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             stage: 'DISABLED',
             publicControlImplemented: true,
             providerMutationEnabled: false,
+            operatorMutationEnabled: false,
+            newUploadReady: false,
             controlPlaneReady: false,
+            playbackShadowV2Ready: false,
+            uploadJobArchiveReady: false,
+            operatorOutboxArchiveReady: false,
         });
 
         const response = await handler.fetch(
@@ -386,6 +524,155 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             expect(preflight.status).toBe(204);
             expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN);
         }
+    });
+
+    it('logs bounded request completion fields without the query string', async () => {
+        vi.spyOn(Date, 'now').mockReturnValueOnce(1_000).mockReturnValueOnce(1_012);
+        const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const request = new Request('https://bridge.youtick.net/__health?token=secret', {
+            headers: { 'CF-Ray': 'ray-test' },
+        });
+        Object.defineProperty(request, 'cf', { value: {} });
+
+        expect((await handler.fetch(request, createEnv())).status).toBe(200);
+        expect(info).toHaveBeenCalledOnce();
+        const log = JSON.parse(String(info.mock.calls[0][0]));
+        expect(log).toEqual({
+            event: 'edge_request_completed',
+            details: {
+                requestId: 'ray-test',
+                environment: 'testnet',
+                releaseVersion: 'worker-version-test',
+                route: '/__health',
+                method: 'GET',
+                httpCode: 200,
+                latencyMs: 12,
+                coldStart: true,
+            },
+        });
+        expect(info.mock.calls[0][0]).not.toContain('secret');
+    });
+
+    it('marks only the first edge request in a fresh isolate as a cold start', async () => {
+        vi.resetModules();
+        const { default: freshHandler } = await import('./index');
+        const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const requests = [1, 2].map((suffix) => {
+            const request = new Request(`https://bridge.youtick.net/__health?request=${suffix}`);
+            Object.defineProperty(request, 'cf', { value: {} });
+            return request;
+        });
+
+        expect((await freshHandler.fetch(requests[0], createEnv())).status).toBe(200);
+        expect((await freshHandler.fetch(requests[1], createEnv())).status).toBe(200);
+
+        const logs = info.mock.calls.map(([value]) => JSON.parse(String(value)));
+        expect(logs.map((entry) => entry.details.coldStart)).toEqual([true, false]);
+    });
+
+    it('logs bounded NEAR and Livepeer dependency completion fields', async () => {
+        const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        vi.stubGlobal('fetch', backendFetch());
+        const control = new LivepeerControl(createState().state, createEnv());
+
+        expect((await control.fetch(await controlRequest())).status).toBe(201);
+
+        const logs = info.mock.calls.map(([value]) => JSON.parse(String(value)));
+        expect(logs).toEqual(expect.arrayContaining([
+            {
+                event: 'dependency_request_completed',
+                details: {
+                    dependency: 'near_rpc',
+                    operation: 'get_media_job',
+                    httpCode: 200,
+                    latencyMs: expect.any(Number),
+                },
+            },
+            {
+                event: 'dependency_request_completed',
+                details: {
+                    dependency: 'livepeer_api',
+                    operation: 'request_upload',
+                    httpCode: 200,
+                    latencyMs: expect.any(Number),
+                },
+            },
+            {
+                event: 'upload_intent_control_completed',
+                details: {
+                    outcome: 'CREATE_PENDING',
+                    providerCalls: 0,
+                    latencyMs: expect.any(Number),
+                },
+            },
+        ]));
+        expect(JSON.stringify(logs)).not.toContain(API_KEY);
+        expect(JSON.stringify(logs)).not.toContain(RPC_URL);
+        expect(JSON.stringify(logs)).not.toContain(TUS_ENDPOINT);
+
+        info.mockClear();
+        vi.stubGlobal('fetch', backendFetch({ providerFailure: true }));
+        const failed = await new LivepeerControl(createState().state, createEnv())
+            .fetch(await controlRequest());
+        expect(failed.status).toBe(503);
+        expect(info.mock.calls.map(([value]) => JSON.parse(String(value))))
+            .toContainEqual({
+                event: 'dependency_request_completed',
+                details: {
+                    dependency: 'livepeer_api',
+                    operation: 'request_upload',
+                    httpCode: 503,
+                    latencyMs: expect.any(Number),
+                },
+            });
+    });
+
+    it('logs upload job state transitions without job or provider identifiers', async () => {
+        const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        vi.stubGlobal('fetch', backendFetch());
+
+        expect((await new LivepeerControl(createState().state, createEnv())
+            .fetch(await controlRequest())).status).toBe(201);
+
+        const transitions = info.mock.calls
+            .map(([value]) => JSON.parse(String(value)))
+            .filter((entry) => entry.event === 'state_transition');
+        expect(transitions).toEqual([
+            {
+                event: 'state_transition',
+                details: {
+                    stateKind: 'upload_job',
+                    fromState: 'NONE',
+                    toState: 'AUTHORIZED',
+                },
+            },
+            {
+                event: 'state_transition',
+                details: {
+                    stateKind: 'upload_job',
+                    fromState: 'AUTHORIZED',
+                    toState: 'LEASED',
+                },
+            },
+            {
+                event: 'state_transition',
+                details: {
+                    stateKind: 'upload_job',
+                    fromState: 'LEASED',
+                    toState: 'PROVIDER_CREATE_PENDING',
+                },
+            },
+            {
+                event: 'state_transition',
+                details: {
+                    stateKind: 'upload_job',
+                    fromState: 'PROVIDER_CREATE_PENDING',
+                    toState: 'UPLOAD_READY',
+                },
+            },
+        ]);
+        expect(JSON.stringify(transitions)).not.toContain('job-001');
+        expect(JSON.stringify(transitions)).not.toContain('asset-123');
     });
 
     it('returns a signed integer-only Outlayer NEAR creator-fee quote', async () => {
@@ -564,7 +851,8 @@ describe('Livepeer bridge PR-3 upload intent', () => {
     });
 
     it('rate-limits quote requests without storing quote or wallet data', async () => {
-        vi.spyOn(Date, 'now').mockReturnValue(1_785_589_310_000);
+        const now = 1_785_589_310_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
         vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => oracleRpcResponse(
             { multiplier: '500000000', decimals: 8 },
         )));
@@ -578,9 +866,14 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(await limited.json()).toEqual({ error: 'creator_fee_quote_rate_limited' });
         expect([...state.values.keys()]).toEqual(['quote-rate:v1']);
         expect(state.values.get('quote-rate:v1')).toEqual({
-            windowStartedAtMs: 1_785_589_310_000,
+            windowStartedAtMs: now,
             count: 5,
         });
+        expect(state.alarms.at(-1)).toBe(now + 60_000);
+
+        vi.spyOn(Date, 'now').mockReturnValue(now + 60_000);
+        await new LivepeerControl(state.state, env).alarm();
+        expect(state.values.size).toBe(0);
     });
 
     it('routes the locked identity to one named job object', async () => {
@@ -683,7 +976,15 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         await vi.waitFor(() => expect(fetchMock.mock.calls.some(([url]) => (
             String(url).includes('/asset/request-upload')
         ))).toBe(true));
-        expect(testState.values.get('job:v1')).toMatchObject({ state: 'CREATE_PENDING' });
+        expect(testState.values.get('job:v1')).toMatchObject({
+            state: 'PROVIDER_CREATE_PENDING',
+            stateChangedAtMs: expect.any(Number),
+            providerCreate: {
+                attempts: 1,
+                lastAttemptAtMs: expect.any(Number),
+                retryPolicy: 'RECONCILE_ONLY',
+            },
+        });
         expect(testState.values.get('job:v1')).toMatchObject({ apiTokenName: 'paid-media-test' });
 
         const second = await control.fetch(await controlRequest());
@@ -694,9 +995,18 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         const created = await first;
         expect(created.status).toBe(201);
         expect(await created.json()).toMatchObject({
-            schema: 'youtick.livepeer-upload-intent.v1',
+            schema: 'youtick.livepeer-upload-intent.v2',
             chunk_bytes: 32 * 1024 * 1024,
             created: true,
+        });
+        expect(testState.values.get('job:v1')).toMatchObject({
+            state: 'UPLOAD_READY',
+            stateChangedAtMs: expect.any(Number),
+            providerCreate: {
+                attempts: 1,
+                retryPolicy: 'RECONCILE_ONLY',
+                completedAtMs: expect.any(Number),
+            },
         });
         const providerCalls = fetchMock.mock.calls.filter(([url]) => (
             String(url).includes('/asset/request-upload')
@@ -724,7 +1034,12 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         const fetchMock = backendFetch();
         vi.stubGlobal('fetch', fetchMock);
         const testState = createState();
-        const admissionFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true }));
+        const admissionFetch = vi.fn(async (_request: Request) => Response.json({
+            accepted: true,
+            lease_id: '00000000-0000-4000-8000-000000000002',
+            expires_at_ms: '999999999999999',
+            heartbeat_interval_ms: 5 * 60 * 1000,
+        }));
         const env = createEnv({
             LIVEPEER_CONTROL: {
                 idFromName: (name: string) => ({ toString: () => name }),
@@ -756,6 +1071,358 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         ))).toHaveLength(1);
     });
 
+    it('closes new upload intents while preserving an existing TUS recovery', async () => {
+        const fetchMock = backendFetch();
+        vi.stubGlobal('fetch', fetchMock);
+        const env = createEnv({ LIVEPEER_BRIDGE_ENABLED: 'true' });
+        const state = createState();
+        const control = new LivepeerControl(state.state, env);
+
+        expect((await control.fetch(await controlRequest())).status).toBe(201);
+        env.LIVEPEER_NEW_UPLOADS_ENABLED = 'false';
+        env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED = 'false';
+
+        const preflight = await handler.fetch(uploadPreflightRequest(), env);
+        expect(preflight.status).toBe(503);
+        expect(await preflight.json()).toEqual({ error: 'admission_closed' });
+
+        const recovered = await control.fetch(await controlRequest());
+        expect(recovered.status).toBe(200);
+        expect(await recovered.json()).toMatchObject({
+            tus_endpoint: TUS_UPLOAD_URL,
+            created: false,
+        });
+
+        const freshState = createState();
+        const denied = await new LivepeerControl(freshState.state, env)
+            .fetch(await controlRequest());
+        expect(denied.status).toBe(503);
+        expect(await denied.json()).toEqual({ error: 'admission_closed' });
+        expect(freshState.values.has('job:v1')).toBe(false);
+        expect(fetchMock.mock.calls.filter(([url]) => (
+            String(url).includes('/asset/request-upload')
+        ))).toHaveLength(1);
+    });
+
+    it('blocks provider create while keeping the authorized job recoverable', async () => {
+        const fetchMock = backendFetch();
+        vi.stubGlobal('fetch', fetchMock);
+        const env = createEnv({ LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'false' });
+        const state = createState();
+        const control = new LivepeerControl(state.state, env);
+
+        const denied = await control.fetch(await controlRequest());
+        expect(denied.status).toBe(503);
+        expect(await denied.json()).toEqual({ error: 'provider_mutations_disabled' });
+        expect(state.values.get('job:v1')).toMatchObject({ state: 'AUTHORIZED' });
+        expect(fetchMock.mock.calls.filter(([url]) => (
+            String(url).includes('/asset/request-upload')
+        ))).toHaveLength(0);
+
+        env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED = 'true';
+        const resumed = await control.fetch(await controlRequest());
+        expect(resumed.status).toBe(201);
+        expect(fetchMock.mock.calls.filter(([url]) => (
+            String(url).includes('/asset/request-upload')
+        ))).toHaveLength(1);
+    });
+
+    it('binds recovery to the first signed source fingerprint', async () => {
+        const fetchMock = backendFetch();
+        vi.stubGlobal('fetch', fetchMock);
+        const state = createState();
+        const admissionFetch = vi.fn(async (_request: Request) => Response.json({
+            accepted: true,
+            lease_id: '00000000-0000-4000-8000-000000000009',
+            expires_at_ms: '999999999999999',
+            heartbeat_interval_ms: 5 * 60 * 1000,
+        }));
+        const env = createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: (name: string) => ({ toString: () => name }),
+                get: () => ({ fetch: admissionFetch }),
+            } as unknown as DurableObjectNamespace,
+        });
+        const control = new LivepeerControl(state.state, env);
+
+        expect((await control.fetch(await controlRequest())).status).toBe(201);
+        const conflict = await control.fetch(await controlRequest({
+            body: { source_fingerprint_sha256: 'b'.repeat(64) },
+        }));
+
+        expect(conflict.status).toBe(409);
+        expect(await conflict.json()).toEqual({ error: 'reservation_conflict' });
+        expect(state.values.get('job:v1')).toMatchObject({
+            sourceFingerprintSha256: 'a'.repeat(64),
+        });
+        expect(fetchMock.mock.calls.filter(([url]) => (
+            String(url).includes('/asset/request-upload')
+        ))).toHaveLength(1);
+    });
+
+    it('requires upload control v3 while keeping other control routes on v2', async () => {
+        const fetchMock = backendFetch();
+        vi.stubGlobal('fetch', fetchMock);
+        const control = new LivepeerControl(createState().state, createEnv());
+
+        const response = await control.fetch(await controlRequest({ envelope: { version: '2' } }));
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'protocol_binding_mismatch' });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('reacquires an expired lease without creating another provider resource', async () => {
+        let now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const fetchMock = backendFetch();
+        vi.stubGlobal('fetch', fetchMock);
+        const state = createState();
+        let reserveCount = 0;
+        const admissionFetch = vi.fn(async (request: Request) => {
+            if (new URL(request.url).pathname !== '/internal/admission/reserve') {
+                return Response.json({ accepted: true });
+            }
+            reserveCount += 1;
+            return Response.json({
+                accepted: true,
+                lease_id: `00000000-0000-4000-8000-${String(reserveCount).padStart(12, '0')}`,
+                expires_at_ms: String(now + 30 * 60 * 1000),
+                heartbeat_interval_ms: 5 * 60 * 1000,
+            });
+        });
+        const env = createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: (name: string) => ({ toString: () => name }),
+                get: () => ({ fetch: admissionFetch }),
+            } as unknown as DurableObjectNamespace,
+        });
+        const control = new LivepeerControl(state.state, env);
+        const created = await control.fetch(await controlRequest());
+        const first = await created.json() as { lease_id: string };
+
+        now += 31 * 60 * 1000;
+        const recovered = await control.fetch(await controlRequest());
+        const second = await recovered.json() as { lease_id: string; tus_endpoint: string };
+
+        expect(recovered.status).toBe(200);
+        expect(second.tus_endpoint).toBe(TUS_UPLOAD_URL);
+        expect(second.lease_id).not.toBe(first.lease_id);
+        expect(reserveCount).toBe(2);
+        expect(fetchMock.mock.calls.filter(([url]) => (
+            String(url).includes('/asset/request-upload')
+        ))).toHaveLength(1);
+    });
+
+    it('recovers the same TUS resource after browser key replacement and object restart', async () => {
+        const state = createState();
+        const backendOptions = { jobPublicKey: requestPublicKey };
+        const fetchMock = backendFetch(backendOptions);
+        vi.stubGlobal('fetch', fetchMock);
+        const admissionFetch = vi.fn(async (_request: Request) => Response.json({
+            accepted: true,
+            lease_id: '00000000-0000-4000-8000-000000000003',
+            expires_at_ms: '999999999999999',
+            heartbeat_interval_ms: 5 * 60 * 1000,
+        }));
+        const env = createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: (name: string) => ({ toString: () => name }),
+                get: () => ({ fetch: admissionFetch }),
+            } as unknown as DurableObjectNamespace,
+        });
+
+        const created = await new LivepeerControl(state.state, env).fetch(await controlRequest());
+        expect(created.status).toBe(201);
+        const replacementKey = await crypto.subtle.generateKey(
+            'Ed25519',
+            true,
+            ['sign', 'verify'],
+        ) as CryptoKeyPair;
+        const replacementPublicKey = `ed25519:${base58Encode(new Uint8Array(
+            await crypto.subtle.exportKey('raw', replacementKey.publicKey) as ArrayBuffer,
+        ))}`;
+        backendOptions.jobPublicKey = replacementPublicKey;
+
+        const recovered = await new LivepeerControl(state.state, env).fetch(await controlRequest({
+            keyPair: replacementKey,
+        }));
+
+        expect(recovered.status).toBe(200);
+        expect(await recovered.json()).toMatchObject({
+            schema: 'youtick.livepeer-upload-intent.v2',
+            tus_endpoint: TUS_UPLOAD_URL,
+            created: false,
+        });
+        expect(fetchMock.mock.calls.filter(([url]) => (
+            String(url).includes('/asset/request-upload')
+        ))).toHaveLength(1);
+        expect(admissionFetch.mock.calls.filter(([request]) => (
+            new URL(request.url).pathname === '/internal/admission/reserve'
+        ))).toHaveLength(1);
+    });
+
+    it('uses the first signed heartbeat as UPLOADING and keeps the same TUS recovery URL', async () => {
+        const leaseId = '00000000-0000-4000-8000-000000000004';
+        const fetchMock = backendFetch();
+        vi.stubGlobal('fetch', fetchMock);
+        const state = createState();
+        const admissionFetch = vi.fn(async (_request: Request) => Response.json({
+            accepted: true,
+            lease_id: leaseId,
+            expires_at_ms: '999999999999999',
+            heartbeat_interval_ms: 5 * 60 * 1000,
+        }));
+        const env = createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: (name: string) => ({ toString: () => name }),
+                get: () => ({ fetch: admissionFetch }),
+            } as unknown as DurableObjectNamespace,
+        });
+        const control = new LivepeerControl(state.state, env);
+        expect((await control.fetch(await controlRequest())).status).toBe(201);
+
+        const heartbeatRequest = await uploadHeartbeatRequest(leaseId);
+        const replayRequest = heartbeatRequest.clone();
+        const heartbeat = await control.fetch(heartbeatRequest);
+
+        expect(heartbeat.status).toBe(200);
+        expect(state.values.get('job:v1')).toMatchObject({
+            state: 'UPLOADING',
+            stateChangedAtMs: expect.any(Number),
+        });
+        const replay = await control.fetch(replayRequest);
+        expect(replay.status).toBe(409);
+        expect(await replay.json()).toEqual({ error: 'device_nonce_replayed' });
+        expect(admissionFetch.mock.calls.filter(([request]) => (
+            new URL(request.url).pathname === '/internal/admission/heartbeat'
+        ))).toHaveLength(1);
+        const recovered = await control.fetch(await controlRequest());
+        expect(recovered.status).toBe(200);
+        expect(await recovered.json()).toMatchObject({
+            tus_endpoint: TUS_UPLOAD_URL,
+            created: false,
+        });
+        expect(fetchMock.mock.calls.filter(([url]) => (
+            String(url).includes('/asset/request-upload')
+        ))).toHaveLength(1);
+    });
+
+    it('purges expired control nonces without deleting the upload job', async () => {
+        vi.stubGlobal('fetch', backendFetch());
+        const state = createState();
+        const control = new LivepeerControl(state.state, createEnv());
+        const legacyCreatedAtMs = Date.now();
+
+        expect((await control.fetch(await controlRequest())).status).toBe(201);
+        state.values.set('nonce:legacy', legacyCreatedAtMs);
+        const nonceKeys = [...state.values.keys()].filter((key) => key.startsWith('nonce:'));
+        const expiry = Math.max(...nonceKeys.map((key) => {
+            const value = state.values.get(key) as number | { expiresAtMs: number };
+            return typeof value === 'number' ? value + 5 * 60 * 1000 : value.expiresAtMs;
+        }));
+        vi.spyOn(Date, 'now').mockReturnValue(expiry);
+
+        await control.alarm();
+
+        expect([...state.values.keys()].filter((key) => key.startsWith('nonce:'))).toEqual([]);
+        expect(state.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_READY' });
+    });
+
+    it('continues expired control nonce cleanup in bounded 128-record batches', async () => {
+        const now = Date.now();
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const state = createState();
+        for (let index = 0; index < 129; index += 1) {
+            state.values.set(`nonce:${String(index).padStart(3, '0')}`, { expiresAtMs: now });
+        }
+        const control = new LivepeerControl(state.state, createEnv());
+
+        await control.alarm();
+        expect([...state.values.keys()].filter((key) => key.startsWith('nonce:'))).toHaveLength(1);
+        expect(state.alarms.at(-1)).toBe(now);
+
+        await control.alarm();
+        expect([...state.values.keys()].filter((key) => key.startsWith('nonce:'))).toEqual([]);
+    });
+
+    it('marks an upload expired only after the coordinator denies its valid lease heartbeat', async () => {
+        const leaseId = '00000000-0000-4000-8000-000000000005';
+        const fetchMock = backendFetch();
+        vi.stubGlobal('fetch', fetchMock);
+        const state = createState();
+        const admissionFetch = vi.fn(async (request: Request) => {
+            const path = new URL(request.url).pathname;
+            if (path === '/internal/admission/heartbeat') {
+                return Response.json({ error: 'admission_denied' }, { status: 409 });
+            }
+            return Response.json({
+                accepted: true,
+                lease_id: leaseId,
+                expires_at_ms: '999999999999999',
+                heartbeat_interval_ms: 5 * 60 * 1000,
+            });
+        });
+        const env = createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: (name: string) => ({ toString: () => name }),
+                get: () => ({ fetch: admissionFetch }),
+            } as unknown as DurableObjectNamespace,
+        });
+        const control = new LivepeerControl(state.state, env);
+        expect((await control.fetch(await controlRequest())).status).toBe(201);
+
+        const heartbeat = await control.fetch(await uploadHeartbeatRequest(leaseId));
+
+        expect(heartbeat.status).toBe(409);
+        expect(await heartbeat.json()).toEqual({ error: 'admission_denied' });
+        expect(state.values.get('job:v1')).toMatchObject({
+            state: 'UPLOAD_EXPIRED',
+            stateChangedAtMs: expect.any(Number),
+            terminalAtMs: expect.any(Number),
+        });
+        expect(admissionFetch.mock.calls.map(([request]) => new URL(request.url).pathname))
+            .toContain('/internal/admission/mark');
+        expect(fetchMock.mock.calls.filter(([url]) => (
+            String(url).includes('/asset/request-upload')
+        ))).toHaveLength(1);
+    });
+
+    it('does not expire an upload when its heartbeat coordinator is unavailable', async () => {
+        const leaseId = '00000000-0000-4000-8000-000000000006';
+        vi.stubGlobal('fetch', backendFetch());
+        const state = createState();
+        const admissionFetch = vi.fn(async (request: Request) => (
+            new URL(request.url).pathname === '/internal/admission/heartbeat'
+                ? Response.json({ error: 'admission_closed' }, { status: 503 })
+                : Response.json({
+                    accepted: true,
+                    lease_id: leaseId,
+                    expires_at_ms: '999999999999999',
+                    heartbeat_interval_ms: 5 * 60 * 1000,
+                })
+        ));
+        const env = createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: (name: string) => ({ toString: () => name }),
+                get: () => ({ fetch: admissionFetch }),
+            } as unknown as DurableObjectNamespace,
+        });
+        const control = new LivepeerControl(state.state, env);
+        expect((await control.fetch(await controlRequest())).status).toBe(201);
+
+        const heartbeat = await control.fetch(await uploadHeartbeatRequest(leaseId));
+
+        expect(heartbeat.status).toBe(503);
+        expect(await heartbeat.json()).toEqual({ error: 'admission_closed' });
+        expect(state.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_READY' });
+        const marks = admissionFetch.mock.calls.filter(([request]) => (
+            new URL(request.url).pathname === '/internal/admission/mark'
+        ));
+        expect(marks).toHaveLength(1);
+        expect(await marks[0][0].clone().json()).toMatchObject({ state: 'UPLOAD_READY' });
+    });
+
     it('fails closed on invalid device proof and ambiguous provider create', async () => {
         const testState = createState();
         const control = new LivepeerControl(testState.state, createEnv());
@@ -784,17 +1451,65 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         const failed = await control.fetch(await controlRequest());
         expect(failed.status).toBe(503);
         expect(await failed.json()).toEqual({ error: 'provider_create_ambiguous' });
+        expect(testState.values.get('job:v1')).toMatchObject({
+            state: 'CREATE_AMBIGUOUS',
+            providerCreate: {
+                attempts: 1,
+                retryPolicy: 'RECONCILE_ONLY',
+                lastErrorCode: 'provider_unavailable',
+                ambiguousAtMs: expect.any(Number),
+            },
+        });
 
-        vi.stubGlobal('fetch', backendFetch());
+        const retryFetch = backendFetch();
+        vi.stubGlobal('fetch', retryFetch);
         const retry = await control.fetch(await controlRequest());
         expect(retry.status).toBe(503);
         expect(await retry.json()).toEqual({ error: 'provider_create_ambiguous' });
+        expect(testState.values.get('job:v1')).toMatchObject({
+            providerCreate: { attempts: 1 },
+        });
+        expect(retryFetch.mock.calls.some(([url]) => String(url).includes('/asset/request-upload'))).toBe(false);
+    });
+
+    it('classifies a provider transport timeout without retrying create', async () => {
+        const state = createState();
+        const control = new LivepeerControl(state.state, createEnv());
+        const fetchMock = backendFetch({ providerThrows: true });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const response = await control.fetch(await controlRequest());
+
+        expect(response.status).toBe(503);
+        expect(state.values.get('job:v1')).toMatchObject({
+            state: 'CREATE_AMBIGUOUS',
+            providerCreate: {
+                attempts: 1,
+                retryPolicy: 'RECONCILE_ONLY',
+                lastErrorCode: 'provider_unavailable',
+            },
+        });
+        expect(fetchMock.mock.calls.filter(([url]) => (
+            String(url).includes('/asset/request-upload')
+        ))).toHaveLength(1);
     });
 
     it('fails closed when the provider does not bind the requested upload length', async () => {
         const testState = createState();
         const control = new LivepeerControl(testState.state, createEnv());
         vi.stubGlobal('fetch', backendFetch({ tusLengthMismatch: true }));
+
+        const response = await control.fetch(await controlRequest());
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'provider_create_ambiguous' });
+        expect(testState.values.get('job:v1')).toMatchObject({ state: 'CREATE_AMBIGUOUS' });
+    });
+
+    it('fails closed when a newly created TUS resource has a nonzero offset', async () => {
+        const testState = createState();
+        const control = new LivepeerControl(testState.state, createEnv());
+        vi.stubGlobal('fetch', backendFetch({ tusOffset: '1' }));
 
         const response = await control.fetch(await controlRequest());
 
@@ -841,6 +1556,43 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(await conflict.json()).toEqual({ error: 'outbox_conflict' });
     });
 
+    it('rejects a new persistent record above the 256-record object ceiling', async () => {
+        const testState = createState();
+        for (let index = 0; index < 256; index += 1) {
+            testState.values.set(`existing:${String(index).padStart(3, '0')}`, { index });
+        }
+        const control = new LivepeerControl(testState.state, createEnv());
+        const payload = {
+            idempotencyKey: 'job-001:1:finalize',
+            method: 'finalize_livepeer_publication',
+            jobId: 'job-001',
+            generation: 1,
+            payloadSha256: 'b'.repeat(64),
+        };
+        const request = () => new Request('https://object/internal/outbox', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+        const response = await control.fetch(request());
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'durable_object_record_limit' });
+        expect(testState.values.size).toBe(256);
+        expect(testState.values.has('outbox:job-001:1:finalize')).toBe(false);
+
+        testState.values.delete('existing:000');
+        testState.values.set('outbox:job-001:1:finalize', {
+            schema: 'youtick.livepeer-control-outbox.v1',
+            state: 'PENDING',
+            ...payload,
+            createdAtMs: Date.now(),
+        });
+        const replay = await control.fetch(request());
+        expect(replay.status).toBe(200);
+        expect(await replay.json()).toMatchObject({ created: false, state: 'PENDING' });
+        expect(testState.values.size).toBe(256);
+    });
+
     it('rejects protocol drift and redacts sensitive log fields', async () => {
         const invalid = await forwardUploadIntent(await controlRequest({
             envelope: { body_sha256: '0'.repeat(64) },
@@ -853,12 +1605,17 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             authorization: 'Bearer secret',
             url: 'https://tus.example/upload/1',
             signedTransaction: 'signed-bytes',
-            nested: { privateKey: 'key', jobId: 'job-001' },
+            nested: {
+                privateKey: 'key',
+                [`upload${'upload'.repeat(1_000)}Url`]: 'slow-pattern-secret',
+                jobId: 'job-001',
+            },
         });
         expect(log).not.toContain('Bearer secret');
         expect(log).not.toContain('tus.example');
         expect(log).not.toContain('signed-bytes');
         expect(log).not.toContain('"key"');
+        expect(log).not.toContain('slow-pattern-secret');
         expect(log).toContain('job-001');
     });
 
@@ -871,7 +1628,8 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         } as unknown as DurableObjectNamespace;
         const env = createEnv({ LIVEPEER_CREATOR_ALLOWLIST: '', LIVEPEER_CONTROL: namespace });
         admission = new LivepeerControl(admissionState.state, env);
-        const control = new LivepeerControl(createState().state, env);
+        const controlState = createState();
+        const control = new LivepeerControl(controlState.state, env);
         const fetchMock = backendFetch();
         vi.stubGlobal('fetch', fetchMock);
 
@@ -879,7 +1637,152 @@ describe('Livepeer bridge PR-3 upload intent', () => {
 
         expect(response.status).toBe(503);
         expect(await response.json()).toEqual({ error: 'admission_closed' });
+        expect(controlState.values.get('job:v1')).toMatchObject({
+            state: 'AUTHORIZED',
+            stateChangedAtMs: expect.any(Number),
+        });
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/asset/request-upload'))).toBe(false);
+
+        env.LIVEPEER_CREATOR_ALLOWLIST = 'creator.testnet';
+        const retry = await control.fetch(await controlRequest());
+        expect(retry.status).toBe(201);
+        expect(controlState.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_READY' });
+    });
+
+    it('lets the creator cancel an authorized job without a refund before provider creation', async () => {
+        const admissionState = createState();
+        let admission!: LivepeerControl;
+        const namespace = {
+            idFromName: (name: string) => ({ toString: () => name }),
+            get: () => ({ fetch: (request: Request) => admission.fetch(request) }),
+        } as unknown as DurableObjectNamespace;
+        const env = createEnv({ LIVEPEER_CREATOR_ALLOWLIST: '', LIVEPEER_CONTROL: namespace });
+        admission = new LivepeerControl(admissionState.state, env);
+        const controlState = createState();
+        const control = new LivepeerControl(controlState.state, env);
+        const fetchMock = backendFetch();
+        vi.stubGlobal('fetch', fetchMock);
+
+        expect((await control.fetch(await controlRequest())).status).toBe(503);
+        const cancellationRequest = await uploadCancellationRequest();
+        const replayRequest = cancellationRequest.clone();
+        const cancelled = await control.fetch(cancellationRequest);
+
+        expect(cancelled.status).toBe(200);
+        expect(await cancelled.json()).toEqual({
+            cancelled: true,
+            duplicate: false,
+            refundable: false,
+        });
+        expect(controlState.values.get('job:v1')).toMatchObject({
+            state: 'CANCELLED',
+            terminalAtMs: expect.any(Number),
+        });
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/asset/request-upload'))).toBe(false);
+
+        const replay = await control.fetch(replayRequest);
+        expect(replay.status).toBe(409);
+        expect(await replay.json()).toEqual({ error: 'device_nonce_replayed' });
+
+        const duplicate = await control.fetch(await uploadCancellationRequest());
+        expect(duplicate.status).toBe(200);
+        expect(await duplicate.json()).toEqual({
+            cancelled: true,
+            duplicate: true,
+            refundable: false,
+        });
+    });
+
+    it('rejects cancellation after provider creation has started', async () => {
+        vi.stubGlobal('fetch', backendFetch());
+        const state = createState();
+        const control = new LivepeerControl(state.state, createEnv());
+
+        expect((await control.fetch(await controlRequest())).status).toBe(201);
+        const cancelled = await control.fetch(await uploadCancellationRequest());
+
+        expect(cancelled.status).toBe(409);
+        expect(await cancelled.json()).toEqual({ error: 'upload_cancel_denied' });
+        expect(state.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_READY' });
+    });
+
+    it('archives a terminal job in D1 without scheduling destructive cleanup', async () => {
+        const admissionState = createState();
+        let admission!: LivepeerControl;
+        const namespace = {
+            idFromName: (name: string) => ({ toString: () => name }),
+            get: () => ({ fetch: (request: Request) => admission.fetch(request) }),
+        } as unknown as DurableObjectNamespace;
+        const archive = createArchiveDatabase();
+        const env = createEnv({
+            LIVEPEER_CREATOR_ALLOWLIST: '',
+            LIVEPEER_CONTROL: namespace,
+            UPLOAD_JOB_ARCHIVE_ENABLED: 'true',
+            MARKET_READ_MODEL: archive.database,
+        });
+        admission = new LivepeerControl(admissionState.state, env);
+        const state = createState();
+        const control = new LivepeerControl(state.state, env);
+        vi.stubGlobal('fetch', backendFetch());
+
+        expect((await control.fetch(await controlRequest())).status).toBe(503);
+        expect((await control.fetch(await uploadCancellationRequest())).status).toBe(200);
+        await control.alarm();
+
+        const job = state.values.get('job:v1') as {
+            terminalAtMs: number;
+            terminalArchive: Record<string, unknown>;
+        };
+        expect(job.terminalArchive).toMatchObject({
+            status: 'COMMITTED',
+            attempts: 1,
+            archiveSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+            committedAtMs: expect.any(Number),
+            cleanupEligibleAtMs: job.terminalAtMs + 14 * 24 * 60 * 60 * 1000,
+        });
+        expect(archive.rows.size).toBe(1);
+        expect([...archive.rows.values()][0]).toMatchObject({
+            terminal_state: 'CANCELLED',
+            cleanup_eligible_at_ms: job.terminalAtMs + 14 * 24 * 60 * 60 * 1000,
+        });
+        expect(JSON.stringify([...archive.rows.values()][0])).not.toContain(requestPublicKey);
+        expect(state.values.has('job:v1')).toBe(true);
+        await control.alarm();
+        expect(archive.rows.size).toBe(1);
+        expect(state.values.has('job:v1')).toBe(true);
+    });
+
+    it('keeps a terminal job and backs off when the D1 archive is unavailable', async () => {
+        const admissionState = createState();
+        let admission!: LivepeerControl;
+        const namespace = {
+            idFromName: (name: string) => ({ toString: () => name }),
+            get: () => ({ fetch: (request: Request) => admission.fetch(request) }),
+        } as unknown as DurableObjectNamespace;
+        const env = createEnv({
+            LIVEPEER_CREATOR_ALLOWLIST: '',
+            LIVEPEER_CONTROL: namespace,
+            UPLOAD_JOB_ARCHIVE_ENABLED: 'true',
+        });
+        admission = new LivepeerControl(admissionState.state, env);
+        const state = createState();
+        const control = new LivepeerControl(state.state, env);
+        vi.stubGlobal('fetch', backendFetch());
+
+        expect((await control.fetch(await controlRequest())).status).toBe(503);
+        expect((await control.fetch(await uploadCancellationRequest())).status).toBe(200);
+        await control.alarm();
+
+        const job = state.values.get('job:v1') as {
+            terminalArchive: { status: string; attempts: number; nextAttemptAtMs: number };
+        };
+        expect(job.terminalArchive).toMatchObject({
+            status: 'RETRY',
+            attempts: 1,
+            nextAttemptAtMs: expect.any(Number),
+        });
+        expect(state.alarms.at(-1)).toBe(job.terminalArchive.nextAttemptAtMs);
+        expect(state.values.has('job:v1')).toBe(true);
     });
 
     it('rejects a non-allowlisted preflight without state or provider mutation', async () => {
@@ -984,10 +1887,98 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(response.status).toBe(503);
         expect(await response.json()).toEqual({ error: 'provider_create_ambiguous' });
         expect(jobState.values.get('job:v1')).toMatchObject({ state: 'CREATE_AMBIGUOUS' });
+        expect(jobState.values.get('job:v1')).toMatchObject({
+            providerCreate: {
+                attempts: 1,
+                retryPolicy: 'RECONCILE_ONLY',
+                lastErrorCode: 'provider_admission_closed',
+                ambiguousAtMs: expect.any(Number),
+            },
+        });
         expect(admissionState.values.get('admission:v1')).toMatchObject({
             status: 'AUTO_CLOSED',
             closure: { code: 'provider_budget_or_inventory' },
         });
+    });
+
+    it('opens the provider circuit only after two independent transient failures', async () => {
+        const now = 1_785_589_310_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const creators = ['creator-a.testnet', 'creator-b.testnet', 'creator-c.testnet'];
+        const state = createState();
+        const control = new LivepeerControl(state.state, createEnv({
+            LIVEPEER_CREATOR_ALLOWLIST: creators.join(','),
+        }));
+        const reserve = (jobId: string, creator: string) => control.fetch(admissionRequest('reserve', {
+            jobId,
+            generation: 1,
+            creator,
+            expectedSourceBytes: '1000',
+        }));
+        const markUnavailable = (jobId: string) => control.fetch(admissionRequest('mark', {
+            jobId,
+            generation: 1,
+            state: 'PROVIDER_UNAVAILABLE',
+        }));
+
+        expect((await reserve('job-provider-a', creators[0])).status).toBe(200);
+        expect((await markUnavailable('job-provider-a')).status).toBe(200);
+        expect((await markUnavailable('job-provider-a')).status).toBe(200);
+        expect(state.values.get('admission:v1')).toMatchObject({
+            status: 'OPEN',
+            providerFailures: { count: 1 },
+        });
+        expect((await control.fetch(admissionRequest('preflight', {
+            jobId: 'job-provider-b',
+            generation: 1,
+            creator: creators[1],
+            expectedSourceBytes: '1000',
+        }))).status).toBe(200);
+
+        expect((await reserve('job-provider-b', creators[1])).status).toBe(200);
+        expect((await markUnavailable('job-provider-b')).status).toBe(200);
+        expect(state.values.get('admission:v1')).toMatchObject({
+            status: 'AUTO_CLOSED',
+            providerFailures: {
+                count: 2,
+                firstObservedAtMs: now,
+                lastObservedAtMs: now,
+            },
+            closure: { code: 'provider_unavailable', observedAtMs: now },
+        });
+        const blocked = await control.fetch(admissionRequest('preflight', {
+            jobId: 'job-provider-c',
+            generation: 1,
+            creator: creators[2],
+            expectedSourceBytes: '1000',
+        }));
+        expect(blocked.status).toBe(503);
+        expect(await blocked.json()).toEqual({ error: 'admission_closed' });
+
+        const reopen = {
+            idempotencyKey: 'provider-circuit-reopen-001',
+            operatorId: 'operator-v1',
+            closureCode: 'provider_unavailable',
+            closureObservedAtMs: now,
+            incidentId: 'provider-incident-001',
+            evidenceSha256: 'a'.repeat(64),
+            resolutionCode: 'INVENTORY_RECONCILED',
+            jobId: null,
+            generation: null,
+        };
+        const wrongResolution = await control.fetch(admissionRequest('reopen', {
+            ...reopen,
+            resolutionCode: 'BUDGET_WINDOW_ROLLED',
+        }));
+        expect(wrongResolution.status).toBe(400);
+        expect(await wrongResolution.json()).toEqual({ error: 'invalid_admission_reopen' });
+        const reopened = await control.fetch(admissionRequest('reopen', reopen));
+        expect(reopened.status).toBe(201);
+        expect(state.values.get('admission:v1')).toMatchObject({
+            status: 'OPEN',
+            reservations: {},
+        });
+        expect((await reserve('job-provider-c', creators[2])).status).toBe(200);
     });
 
     it('enforces one active job and two UTC-day attempts per creator', async () => {
@@ -999,23 +1990,110 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             creator,
             expectedSourceBytes: '1000',
         }));
-        const release = (jobId: string) => control.fetch(admissionRequest('mark', {
+        const release = (jobId: string, state = 'ONCHAIN_PUBLISHED') => control.fetch(admissionRequest('mark', {
             jobId,
             generation: 1,
-            state: 'ONCHAIN_PUBLISHED',
+            state,
         }));
 
         expect((await reserve('job-a')).status).toBe(200);
         const activeLimit = await reserve('job-b');
         expect(activeLimit.status).toBe(409);
         expect(await activeLimit.json()).toEqual({ error: 'admission_denied' });
-        expect((await release('job-a')).status).toBe(200);
-        expect((await release('job-a')).status).toBe(200);
+        expect((await release('job-a', 'UPLOAD_EXPIRED')).status).toBe(200);
+        expect((await release('job-a', 'UPLOAD_EXPIRED')).status).toBe(200);
         expect((await reserve('job-b')).status).toBe(200);
-        expect((await release('job-b')).status).toBe(200);
+        expect((await release('job-b', 'PROVIDER_FAILED')).status).toBe(200);
+        expect((await release('job-b', 'PROVIDER_FAILED')).status).toBe(200);
         const dailyLimit = await reserve('job-c');
         expect(dailyLimit.status).toBe(409);
         expect(await dailyLimit.json()).toEqual({ error: 'admission_denied' });
+    });
+
+    it('admits two different creators concurrently and rejects a third', async () => {
+        let now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const creators = [
+            String(vectors.upload_intent.envelope.account_id),
+            'soteri.testnet',
+            'terenti.testnet',
+        ];
+        const state = createState();
+        const control = new LivepeerControl(state.state, createEnv({
+            LIVEPEER_CREATOR_ALLOWLIST: creators.join(','),
+        }));
+        const reserve = (jobId: string, creator: string) => control.fetch(admissionRequest('reserve', {
+            jobId,
+            generation: 1,
+            creator,
+            expectedSourceBytes: '1000',
+        }));
+
+        expect((await reserve('job-concurrent-a', creators[0])).status).toBe(200);
+        now += 5 * 60 * 1000;
+        expect((await reserve('job-concurrent-b', creators[1])).status).toBe(200);
+        const third = await reserve('job-concurrent-c', creators[2]);
+
+        expect(third.status).toBe(409);
+        expect(await third.json()).toEqual({ error: 'admission_denied' });
+        expect(Object.keys((state.values.get('admission:v1') as {
+            reservations: Record<string, unknown>;
+        }).reservations)).toHaveLength(2);
+        expect(state.alarms.at(-1)).toBe(1_785_600_000_000 + 30 * 60 * 1000);
+    });
+
+    it('renews a normal lease every five minutes and releases it after thirty', async () => {
+        let now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const creator = String(vectors.upload_intent.envelope.account_id);
+        const state = createState();
+        const control = new LivepeerControl(state.state, createEnv());
+        const reserved = await control.fetch(admissionRequest('reserve', {
+            jobId: 'job-leased', generation: 1, creator, expectedSourceBytes: '1000',
+        }));
+        const lease = await reserved.json() as {
+            lease_id: string;
+            expires_at_ms: string;
+            heartbeat_interval_ms: number;
+        };
+        expect(lease.lease_id).toMatch(/^[0-9a-f-]{36}$/);
+        expect(lease.expires_at_ms).toBe(String(now + 30 * 60 * 1000));
+        expect(lease.heartbeat_interval_ms).toBe(5 * 60 * 1000);
+
+        now += 5 * 60 * 1000;
+        const wrongLease = await control.fetch(admissionRequest('heartbeat', {
+            jobId: 'job-leased', generation: 1,
+            leaseId: '00000000-0000-4000-8000-000000000099',
+        }));
+        expect(wrongLease.status).toBe(409);
+        const heartbeat = await control.fetch(admissionRequest('heartbeat', {
+            jobId: 'job-leased', generation: 1, leaseId: lease.lease_id,
+        }));
+        expect(await heartbeat.json()).toMatchObject({
+            lease_id: lease.lease_id,
+            expires_at_ms: String(now + 30 * 60 * 1000),
+            heartbeat_interval_ms: 5 * 60 * 1000,
+        });
+        expect(state.values.get('admission:v1')).toMatchObject({
+            reservations: {
+                'job-leased:1': {
+                    state: 'UPLOADING',
+                    expiresAtMs: now + 30 * 60 * 1000,
+                    lastHeartbeatAtMs: now,
+                },
+            },
+        });
+
+        now += 29 * 60 * 1000;
+        await control.alarm();
+        expect((state.values.get('admission:v1') as { reservations: object }).reservations)
+            .toHaveProperty('job-leased:1');
+        now += 60 * 1000;
+        await control.alarm();
+        expect(state.values.get('admission:v1')).toMatchObject({ reservations: {} });
+        expect((await control.fetch(admissionRequest('reserve', {
+            jobId: 'job-after-lease', generation: 1, creator, expectedSourceBytes: '1000',
+        }))).status).toBe(200);
     });
 
     it('does not let one allowlisted creator exhaust another creator daily quota', async () => {
@@ -1052,11 +2130,10 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect((await reserve('job-second-a', secondCreator)).status).toBe(200);
     });
 
-    it('fails closed without a job reservation and recovers the legacy monthly closure', async () => {
+    it('fails closed without budgets and enforces the monthly provider cap', async () => {
         const creator = String(vectors.upload_intent.envelope.account_id);
         let now = 1_785_600_000_000;
         vi.spyOn(Date, 'now').mockImplementation(() => now);
-        const admissionState = createState();
         const missingReservation = new LivepeerControl(createState().state, createEnv({
             LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '',
         }));
@@ -1067,16 +2144,24 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             expectedSourceBytes: '1',
         }))).status).toBe(503);
 
-        const utcDay = new Date(now).toISOString().slice(0, 10);
-        admissionState.values.set('admission:v1', {
-            schema: 'youtick.livepeer-admission.v2',
-            status: 'AUTO_CLOSED',
-            reservations: {},
-            daily: { utcDay, globalAttempts: 0, creatorAttempts: {} },
-            monthly: { utcMonth: utcDay.slice(0, 7), reservedBudgetUsdMicros: '100000000' },
-            closure: { code: 'monthly_budget_exceeded', observedAtMs: now - 1 },
+        const missingMonthlyBudget = new LivepeerControl(createState().state, createEnv({
+            LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '',
+        }));
+        expect((await missingMonthlyBudget.fetch(admissionRequest('reserve', {
+            jobId: 'job-no-monthly-budget',
+            generation: 1,
+            creator,
+            expectedSourceBytes: '1',
+        }))).status).toBe(503);
+        expect(await (await missingMonthlyBudget.fetch(new Request(
+            'https://object/internal/admission/status',
+        ))).json()).toMatchObject({
+            monthly: { configuredBudgetUsdMicros: null },
         });
+
+        const admissionState = createState();
         const admissionControl = new LivepeerControl(admissionState.state, createEnv({
+            LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '100000000',
             LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '60000000',
         }));
         const reserve = (control: LivepeerControl, jobId: string, expectedSourceBytes: string) => (
@@ -1092,11 +2177,38 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect((await admissionControl.fetch(admissionRequest('mark', {
             jobId: 'job-budget-a', generation: 1, state: 'ONCHAIN_PUBLISHED',
         }))).status).toBe(200);
-        expect((await reserve(admissionControl, 'job-budget-b', '1')).status).toBe(200);
+        expect((await reserve(admissionControl, 'job-budget-b', '1')).status).toBe(503);
+        expect(admissionState.values.get('admission:v1')).toMatchObject({
+            status: 'AUTO_CLOSED',
+            monthly: { reservedBudgetUsdMicros: '60000000' },
+            closure: { code: 'monthly_budget_exceeded' },
+        });
+        const status = await admissionControl.fetch(new Request('https://object/internal/admission/status'));
+        expect(await status.json()).toMatchObject({
+            limits: {
+                globalConcurrency: 2,
+                creatorConcurrency: 1,
+                creatorDailyAttempts: 2,
+                ambiguousTimeoutMs: 15 * 60 * 1000,
+                leaseTtlMs: 30 * 60 * 1000,
+                leaseHeartbeatMs: 5 * 60 * 1000,
+            },
+            monthly: {
+                configuredBudgetUsdMicros: '100000000',
+                configuredJobReservationUsdMicros: '60000000',
+            },
+        });
+
+        now += 32 * 24 * 60 * 60 * 1000;
+        expect((await reserve(admissionControl, 'job-budget-c', '1')).status).toBe(200);
         expect(admissionState.values.get('admission:v1')).toMatchObject({
             status: 'OPEN',
-            monthly: { reservedBudgetUsdMicros: '220000000' },
+            monthly: { reservedBudgetUsdMicros: '60000000' },
         });
+
+        expect((await admissionControl.fetch(admissionRequest('mark', {
+            jobId: 'job-budget-c', generation: 1, state: 'ONCHAIN_PUBLISHED',
+        }))).status).toBe(200);
 
         const ambiguousState = createState();
         const ambiguousControl = new LivepeerControl(ambiguousState.state, createEnv());
@@ -1116,12 +2228,15 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         now += 5 * 60 * 1000;
         await ambiguousControl.alarm();
         expect(ambiguousState.values.get('admission:v1')).toMatchObject({
-            status: 'AUTO_CLOSED',
-            closure: { code: 'create_ambiguous_timeout' },
+            status: 'OPEN',
+            reservations: {},
         });
+        expect((await reserve(ambiguousControl, 'job-after-ambiguous', '1000')).status).toBe(200);
     });
 
     it('reopens AUTO_CLOSED only with operator auth, matching closure evidence and idempotency', async () => {
+        const now = 1_785_589_310_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
         const creator = String(vectors.upload_intent.envelope.account_id);
         const admissionState = createState();
         let admission!: LivepeerControl;
@@ -1195,6 +2310,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             incidentId: 'incident-001',
             evidenceSha256: 'a'.repeat(64),
         });
+        expect(admissionState.alarms.at(-1)).toBe(now + 90 * 24 * 60 * 60 * 1000);
 
         const replay = await handler.fetch(request(body, OPERATOR_TOKEN), env);
         expect(replay.status).toBe(200);
@@ -1205,6 +2321,11 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         }, OPERATOR_TOKEN), env);
         expect(conflict.status).toBe(409);
         expect(await conflict.json()).toEqual({ error: 'admission_reopen_conflict' });
+
+        vi.spyOn(Date, 'now').mockReturnValue(now + 90 * 24 * 60 * 60 * 1000);
+        await admission.alarm();
+        expect(admissionState.values.has('admission:reopen:reopen-incident-001')).toBe(false);
+        expect(admissionState.values.has('admission:v1')).toBe(true);
     });
 
     it('exposes read-only admission status only to the operator', async () => {
@@ -1257,7 +2378,18 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(body).toEqual({
             schema: 'youtick.livepeer-admission-status.v1',
             status: 'AUTO_CLOSED',
+            limits: {
+                globalConcurrency: 2,
+                creatorConcurrency: 1,
+                creatorDailyAttempts: 2,
+                ambiguousTimeoutMs: 15 * 60 * 1000,
+                leaseTtlMs: 30 * 60 * 1000,
+                leaseHeartbeatMs: 5 * 60 * 1000,
+                providerFailureLimit: 2,
+                providerFailureWindowMs: 60 * 1000,
+            },
             closure: { code: 'create_ambiguous_timeout', observedAtMs: now },
+            providerFailures: null,
             reservations: {
                 'job-status:1': {
                     creator: 'creator.testnet',
@@ -1275,7 +2407,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             },
             monthly: {
                 current: { utcMonth: '2026-08', reservedBudgetUsdMicros: '100000000' },
-                configuredBudgetUsdMicros: null,
+                configuredBudgetUsdMicros: '1000000000',
                 configuredJobReservationUsdMicros: '100000000',
             },
         });

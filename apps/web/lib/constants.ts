@@ -29,10 +29,15 @@ export const NEAR_CONFIG = {
     usdcContractId: process.env.NEXT_PUBLIC_USDC_CONTRACT_ID?.trim() || USDC_CONTRACT_IDS[NEAR_NETWORK],
 } as const;
 
+const enableDerivedReadModel = process.env.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL === 'true';
+
 export const FEATURE_FLAGS = {
     enablePaidMediaLivepeerV1: process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 === 'true',
+    enablePlaybackAuthorizerV2: process.env.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2 === 'true',
+    enablePlaybackShadowV2: process.env.NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2 === 'true',
     enableLivepeerNearCreatorFee:
         process.env.NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE === 'true',
+    enableDerivedReadModel,
 } as const;
 
 export const MEDIA_UPLOAD_POLICY = {
@@ -47,7 +52,29 @@ export const APP_CONFIG = {
             ? window.location.origin
             : 'https://youtick.net'),
     livepeerBridgeUrl: process.env.NEXT_PUBLIC_LIVEPEER_BRIDGE_URL || '',
+    marketReadModelUrl: readModelOrigin(
+        process.env.NEXT_PUBLIC_MARKET_READ_MODEL_URL,
+        enableDerivedReadModel,
+    ),
 } as const;
+
+function readModelOrigin(rawValue: string | undefined, required: boolean): string {
+    const value = rawValue?.trim();
+    if (!value) {
+        if (required) throw new Error('NEXT_PUBLIC_MARKET_READ_MODEL_URL is required');
+        return '';
+    }
+    try {
+        const url = new URL(value);
+        if (url.protocol !== 'https:' || url.username || url.password
+            || url.pathname !== '/' || url.search || url.hash || url.origin !== value) {
+            throw new Error('invalid');
+        }
+        return url.origin;
+    } catch {
+        throw new Error('NEXT_PUBLIC_MARKET_READ_MODEL_URL must be an HTTPS origin');
+    }
+}
 
 export const GAS_CONSTANTS = {
     mediumGas: 100_000_000_000_000n,

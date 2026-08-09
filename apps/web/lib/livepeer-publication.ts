@@ -52,6 +52,34 @@ export async function readLivepeerMediaJob(jobId: string): Promise<LivepeerMedia
     };
 }
 
+export async function waitForAuthorizedLivepeerJob(
+    jobId: string,
+    accountId: string,
+    uploadPublicKey: string,
+): Promise<void> {
+    for (const delay of [0, 1_000, 2_000, 4_000, 8_000]) {
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        try {
+            const job = await readLivepeerMediaJob(jobId);
+            if (job
+                && job.creator_id === accountId
+                && job.upload_public_key === uploadPublicKey) return;
+        } catch {
+            // Final state can lag briefly after the wallet returns.
+        }
+    }
+    throw new Error('livepeer_job_pending');
+}
+
+export async function readLivepeerUploadProgress(jobId: string): Promise<{
+    job: LivepeerMediaJob;
+    publication: LivepeerPublication | null;
+}> {
+    const job = await readLivepeerMediaJob(jobId);
+    if (!job) throw new Error('livepeer_job_missing');
+    return { job, publication: await readLivepeerPublication(jobId) };
+}
+
 export async function readLivepeerPublications(
     fromIndex: number,
     limit: number,

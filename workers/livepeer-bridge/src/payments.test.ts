@@ -7,7 +7,7 @@ vi.mock('@defuse-protocol/one-click-sdk-typescript', async (importOriginal) => (
 }));
 
 import handler, { type Env } from './index';
-import { paymentRateLimit } from './payments';
+import { expirePaymentRateLimit, paymentRateLimit } from './payments';
 
 const ORIGIN = 'https://app.youtick.net';
 const RPC_URL = 'https://rpc.mainnet.near.org';
@@ -23,26 +23,35 @@ const DEPOSIT_ADDRESS = '0x1111111111111111111111111111111111111111';
 type TestState = {
     state: DurableObjectState;
     values: Map<string, unknown>;
+    alarms: number[];
 };
 
 function createState(): TestState {
     const values = new Map<string, unknown>();
+    const alarms: number[] = [];
     let transactionTail = Promise.resolve();
     const get = async <T>(key: string) => structuredClone(values.get(key)) as T | undefined;
     const put = async (key: string, value: unknown) => values.set(key, structuredClone(value));
+    const list = async (options?: { limit?: number }) => new Map(
+        [...values.entries()].slice(0, options?.limit ?? values.size),
+    );
     const storage = {
         get,
         put,
+        list,
+        deleteAll: async () => values.clear(),
+        setAlarm: async (at: number | Date) => alarms.push(Number(at)),
         transaction: async <T>(callback: (transaction: {
             get: typeof get;
             put: typeof put;
+            list: typeof list;
         }) => Promise<T>) => {
-            const run = transactionTail.then(() => callback({ get, put }));
+            const run = transactionTail.then(() => callback({ get, put, list }));
             transactionTail = run.then(() => undefined, () => undefined);
             return run;
         },
     };
-    return { state: { storage } as unknown as DurableObjectState, values };
+    return { state: { storage } as unknown as DurableObjectState, values, alarms };
 }
 
 function createEnv(overrides?: Partial<Env>): Env {
@@ -389,6 +398,7 @@ describe('multi-asset payment routes', () => {
     });
 
     it('keeps status lookup available while new quotes are off', async () => {
+        const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
         const quoteRequestValue = {
             dry: false,
             swapType: 'EXACT_OUTPUT',
@@ -426,6 +436,22 @@ describe('multi-asset payment routes', () => {
             `https://1click.chaindefuser.com/v0/status?depositAddress=${DEPOSIT_ADDRESS}`,
         );
         expect(verifyQuoteSignature).toHaveBeenCalledOnce();
+        const logs = info.mock.calls.map(([value]) => JSON.parse(String(value)));
+        expect(logs).toContainEqual({
+            event: 'payment_status_observed',
+            details: { status: 'SUCCESS' },
+        });
+        expect(logs).toContainEqual({
+            event: 'payment_route_completed',
+            details: {
+                operation: 'status',
+                httpCode: 200,
+                latencyMs: expect.any(Number),
+            },
+        });
+        expect(JSON.stringify(logs)).not.toContain(DEPOSIT_ADDRESS);
+        expect(JSON.stringify(logs)).not.toContain(REFUND_ADDRESS);
+        expect(JSON.stringify(logs)).not.toContain(API_KEY);
     });
 
     it('rejects a status response bound to another deposit address', async () => {
@@ -475,7 +501,9 @@ describe('multi-asset payment routes', () => {
 
 describe('payment Durable Object rate limits', () => {
     it('limits quotes to five per minute', async () => {
-        const { state } = createState();
+        const now = 1_785_589_310_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const { state, values, alarms } = createState();
         const responses = [];
         for (let index = 0; index < 6; index += 1) {
             responses.push(await paymentRateLimit(state, new Request(
@@ -487,10 +515,17 @@ describe('payment Durable Object rate limits', () => {
         expect(responses.slice(0, 5).every(({ status }) => status === 200)).toBe(true);
         expect(responses[5].status).toBe(429);
         expect(await responses[5].json()).toEqual({ error: 'payment_quote_rate_limited' });
+        expect(alarms.at(-1)).toBe(now + 60_000);
+
+        vi.spyOn(Date, 'now').mockReturnValue(now + 60_000);
+        expect(await expirePaymentRateLimit(state)).toBe(true);
+        expect(values.size).toBe(0);
     });
 
     it('limits status polling to once per five seconds', async () => {
-        const { state } = createState();
+        const now = 1_785_589_310_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const { state, values, alarms } = createState();
         const first = await paymentRateLimit(state, new Request(
             'https://object/internal/payment-rate-limit',
             { method: 'POST', body: JSON.stringify({ kind: 'status' }) },
@@ -503,5 +538,27 @@ describe('payment Durable Object rate limits', () => {
         expect(first.status).toBe(200);
         expect(second.status).toBe(429);
         expect(await second.json()).toEqual({ error: 'payment_status_rate_limited' });
+        expect(alarms.at(-1)).toBe(now + 5_000);
+
+        vi.spyOn(Date, 'now').mockReturnValue(now + 5_000);
+        expect(await expirePaymentRateLimit(state)).toBe(true);
+        expect(values.size).toBe(0);
+    });
+
+    it('does not create a rate-limit record above the object ceiling', async () => {
+        const { state, values } = createState();
+        for (let index = 0; index < 256; index += 1) {
+            values.set(`existing:${String(index).padStart(3, '0')}`, { index });
+        }
+
+        const response = await paymentRateLimit(state, new Request(
+            'https://object/internal/payment-rate-limit',
+            { method: 'POST', body: JSON.stringify({ kind: 'quote' }) },
+        ));
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'durable_object_record_limit' });
+        expect(values.size).toBe(256);
+        expect(values.has('payment-rate:quote:v1')).toBe(false);
     });
 });

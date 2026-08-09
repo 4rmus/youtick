@@ -22,6 +22,7 @@ describe('access-grants', () => {
     });
 
     afterEach(() => {
+        vi.doUnmock('@/lib/near');
         vi.restoreAllMocks();
         vi.resetModules();
         clearMockKeyStore();
@@ -61,13 +62,15 @@ describe('access-grants', () => {
         expect(action).toMatchObject({
             methodName: 'issue_session_grant',
             args: {
-                target_owner_id: 'alice.testnet',
-                scope: 'Play',
-                resource_id: 'video-1',
+                request: {
+                    target_owner_id: 'alice.testnet',
+                    scope: 'Play',
+                    resource_id: 'video-1',
+                },
             },
         });
-        expect(action.args.session_pk).toContain('ed25519:');
-        expect(action.args.session_pok).toMatch(/^[0-9a-f]{128}$/);
+        expect(action.args.request.session_pk).toContain('ed25519:');
+        expect(action.args.request.session_pok).toMatch(/^[0-9a-f]{128}$/);
 
         const secondGrant = await ensureSessionGrant({
             accountId: 'alice.testnet',
@@ -83,6 +86,20 @@ describe('access-grants', () => {
     it('uses a stored signless access key to issue a play grant without opening the wallet', async () => {
         process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
         process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access-1773606802388.v2-0.utick.testnet';
+        vi.doMock('@/lib/near', () => ({
+            getProvider: () => ({
+                query: vi.fn().mockResolvedValue({
+                    permission: {
+                        FunctionCall: {
+                            receiver_id: 'access-1773606802388.v2-0.utick.testnet',
+                            method_names: ['issue_session_grant'],
+                            allowance: '250000000000000000000000',
+                        },
+                    },
+                }),
+            }),
+            viewContract: vi.fn(),
+        }));
 
         const { Account, KeyPair } = await import('near-api-js');
         const { persistSignlessAccessKey } = await import('@/lib/signless-access-key');

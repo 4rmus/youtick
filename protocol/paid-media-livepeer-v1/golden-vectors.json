@@ -47,15 +47,16 @@
       "job_id": "job-001",
       "generation": 1,
       "expected_source_bytes": "20000000000",
+      "source_fingerprint_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "source_type": "mp4",
       "profile_id": "paid-media-livepeer-v1",
       "profile_config_sha256": "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77"
     },
-    "canonical_body": "{\"expected_source_bytes\":\"20000000000\",\"generation\":1,\"job_id\":\"job-001\",\"profile_config_sha256\":\"96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77\",\"profile_id\":\"paid-media-livepeer-v1\",\"source_type\":\"mp4\"}",
-    "body_sha256": "4eed6822db53f1937f0c01aa0b0a34a3f5722c67aa16bbee71cec198be88da4b",
+    "canonical_body": "{\"expected_source_bytes\":\"20000000000\",\"generation\":1,\"job_id\":\"job-001\",\"profile_config_sha256\":\"96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77\",\"profile_id\":\"paid-media-livepeer-v1\",\"source_fingerprint_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"source_type\":\"mp4\"}",
+    "body_sha256": "64a2a10649c605b6c87e696c823b3e2a328fc87b4fa7657914006081fcf40d6e",
     "envelope": {
       "domain": "youtick.paid-media-livepeer-v1.control",
-      "version": "2",
+      "version": "3",
       "method": "POST",
       "route": "/v1/upload-intents",
       "network": "testnet",
@@ -66,9 +67,9 @@
       "origin": "https://app.youtick.net",
       "device_nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
       "expires_at_ms": "1785585600000",
-      "body_sha256": "4eed6822db53f1937f0c01aa0b0a34a3f5722c67aa16bbee71cec198be88da4b"
+      "body_sha256": "64a2a10649c605b6c87e696c823b3e2a328fc87b4fa7657914006081fcf40d6e"
     },
-    "canonical_message": "youtick.paid-media-livepeer-v1.control\n2\nPOST\n/v1/upload-intents\ntestnet\npaid-media-livepeer-v1.testnet\ncreator.testnet\njob:job-001:1\ned25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF\nhttps://app.youtick.net\nAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n1785585600000\n4eed6822db53f1937f0c01aa0b0a34a3f5722c67aa16bbee71cec198be88da4b"
+    "canonical_message": "youtick.paid-media-livepeer-v1.control\n3\nPOST\n/v1/upload-intents\ntestnet\npaid-media-livepeer-v1.testnet\ncreator.testnet\njob:job-001:1\ned25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF\nhttps://app.youtick.net\nAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n1785585600000\n64a2a10649c605b6c87e696c823b3e2a328fc87b4fa7657914006081fcf40d6e"
   },
   "finalize_publication": {
     "job_id": "job-001",

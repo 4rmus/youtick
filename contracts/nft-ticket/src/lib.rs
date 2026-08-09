@@ -18,6 +18,10 @@ const FT_TRANSFER_GAS: Gas = Gas::from_tgas(20);
 const WITHDRAW_CALLBACK_GAS: Gas = Gas::from_tgas(10);
 const QUOTE_MAX_SOURCE_AGE_MS: u64 = 60_000;
 const QUOTE_MAX_LIFETIME_MS: u64 = 120_000;
+const MARKET_STATE_VERSION: u32 = 2;
+// Kept outside Contract so an emergency purchase control does not change the
+// deployed Market v2 Borsh layout or require a state migration.
+const NEW_PURCHASES_PAUSED_KEY: &[u8] = b"youtick:market:control:new-purchases-paused:v1";
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,6 +140,45 @@ pub struct TakedownRecord {
     pub recorded_at_ms: U64,
 }
 
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GovernanceState {
+    pub state_version: u32,
+    pub admin_account_id: AccountId,
+    pub guardian_account_id: AccountId,
+    pub active_bridge_account_id: AccountId,
+    pub pending_bridge_account_id: Option<AccountId>,
+    pub bridge_frozen: bool,
+    pub new_purchases_paused: bool,
+    pub bridge_rotation_proposed_at_ms: Option<U64>,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageReserveStatus {
+    pub storage_usage_bytes: U64,
+    pub storage_byte_cost_yocto: U128,
+    pub storage_stake_yocto: U128,
+    pub operational_reserve_yocto: U128,
+    pub account_balance_yocto: U128,
+    pub reserve_headroom_yocto: U128,
+    pub reserve_runway_bytes: U128,
+    pub reserve_covered: bool,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MarketInitConfig {
+    pub platform_account_id: AccountId,
+    pub bridge_account_id: AccountId,
+    pub takedown_authority_id: AccountId,
+    pub admin_account_id: AccountId,
+    pub guardian_account_id: AccountId,
+    pub quote_public_key: Base64VecU8,
+    pub quote_key_version: u32,
+    pub near_operational_reserve: U128,
+}
+
 #[derive(Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 struct TransferMessage {
@@ -198,6 +241,7 @@ struct FtTransferArgs {
 struct CreatorWithdrawCallbackArgs {
     creator_id: AccountId,
     amount: U128,
+    withdrawal_id: String,
 }
 
 #[derive(Serialize)]
@@ -215,10 +259,14 @@ struct NearWithdrawCallbackArgs {
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
+    state_version: u32,
     platform_account_id: AccountId,
-    // ponytail: immutable for code-only PR-1; add timelocked rotation only after
-    // the P0 rotation authority is decided and before any deployment.
-    bridge_account_id: AccountId,
+    admin_account_id: AccountId,
+    guardian_account_id: AccountId,
+    active_bridge_account_id: AccountId,
+    pending_bridge_account_id: Option<AccountId>,
+    bridge_frozen: bool,
+    bridge_rotation_proposed_at_ms: Option<u64>,
     takedown_authority_id: AccountId,
     media_jobs: LookupMap<String, MediaJob>,
     publications: LookupMap<String, Publication>,
@@ -239,14 +287,17 @@ pub struct Contract {
 #[near]
 impl Contract {
     #[init]
-    pub fn new(
-        platform_account_id: AccountId,
-        bridge_account_id: AccountId,
-        takedown_authority_id: AccountId,
-        quote_public_key: Base64VecU8,
-        quote_key_version: u32,
-        near_operational_reserve: U128,
-    ) -> Self {
+    pub fn new(config: MarketInitConfig) -> Self {
+        let MarketInitConfig {
+            platform_account_id,
+            bridge_account_id,
+            takedown_authority_id,
+            admin_account_id,
+            guardian_account_id,
+            quote_public_key,
+            quote_key_version,
+            near_operational_reserve,
+        } = config;
         require!(
             platform_account_id != bridge_account_id,
             "Platform and bridge accounts must differ"
@@ -257,13 +308,27 @@ impl Contract {
         );
         require!(quote_key_version > 0, "Quote key version must be positive");
         require!(
+            admin_account_id != guardian_account_id,
+            "Admin and guardian accounts must differ"
+        );
+        require!(
+            admin_account_id != bridge_account_id && guardian_account_id != bridge_account_id,
+            "Admin, guardian and bridge accounts must differ"
+        );
+        require!(
             takedown_authority_id != bridge_account_id
                 && takedown_authority_id != platform_account_id,
             "Takedown authority must be separate"
         );
         Self {
+            state_version: MARKET_STATE_VERSION,
             platform_account_id,
-            bridge_account_id,
+            admin_account_id,
+            guardian_account_id,
+            active_bridge_account_id: bridge_account_id,
+            pending_bridge_account_id: None,
+            bridge_frozen: false,
+            bridge_rotation_proposed_at_ms: None,
             takedown_authority_id,
             media_jobs: LookupMap::new(StorageKey::MEDIA_JOBS),
             publications: LookupMap::new(StorageKey::PUBLICATIONS),
@@ -280,6 +345,123 @@ impl Contract {
             quote_key_version,
             near_operational_reserve: near_operational_reserve.0,
         }
+    }
+
+    pub fn freeze_bridge(&mut self) {
+        self.assert_guardian();
+        if self.bridge_frozen {
+            return;
+        }
+        self.bridge_frozen = true;
+        emit_governance_event(
+            "bridge_frozen",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "active_bridge_account_id": self.active_bridge_account_id,
+            }),
+        );
+    }
+
+    pub fn unfreeze_bridge(&mut self) {
+        self.assert_admin();
+        if !self.bridge_frozen {
+            return;
+        }
+        self.bridge_frozen = false;
+        emit_governance_event(
+            "bridge_unfrozen",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "active_bridge_account_id": self.active_bridge_account_id,
+            }),
+        );
+    }
+
+    pub fn pause_new_purchases(&mut self) {
+        self.assert_guardian();
+        if self.new_purchases_paused() {
+            return;
+        }
+        env::storage_write(NEW_PURCHASES_PAUSED_KEY, &[1]);
+        emit_governance_event(
+            "new_purchases_paused",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+            }),
+        );
+    }
+
+    pub fn unpause_new_purchases(&mut self) {
+        self.assert_admin();
+        if !self.new_purchases_paused() {
+            return;
+        }
+        env::storage_remove(NEW_PURCHASES_PAUSED_KEY);
+        emit_governance_event(
+            "new_purchases_unpaused",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+            }),
+        );
+    }
+
+    pub fn propose_bridge(&mut self, next_bridge_account_id: AccountId) {
+        self.assert_admin();
+        self.assert_valid_bridge_account(&next_bridge_account_id);
+        if self.pending_bridge_account_id.as_ref() == Some(&next_bridge_account_id) {
+            return;
+        }
+        require!(
+            self.pending_bridge_account_id.is_none(),
+            "Bridge rotation already pending"
+        );
+        let proposed_at_ms = env::block_timestamp_ms();
+        self.pending_bridge_account_id = Some(next_bridge_account_id.clone());
+        self.bridge_rotation_proposed_at_ms = Some(proposed_at_ms);
+        emit_governance_event(
+            "bridge_rotation_proposed",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "active_bridge_account_id": self.active_bridge_account_id,
+                "pending_bridge_account_id": next_bridge_account_id,
+                "proposed_at_ms": proposed_at_ms.to_string(),
+            }),
+        );
+    }
+
+    pub fn cancel_bridge_rotation(&mut self) {
+        self.assert_admin_or_guardian();
+        let Some(pending_bridge_account_id) = self.pending_bridge_account_id.take() else {
+            return;
+        };
+        self.bridge_rotation_proposed_at_ms = None;
+        emit_governance_event(
+            "bridge_rotation_cancelled",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "active_bridge_account_id": self.active_bridge_account_id,
+                "pending_bridge_account_id": pending_bridge_account_id,
+            }),
+        );
+    }
+
+    pub fn execute_bridge_rotation(&mut self) {
+        self.assert_admin();
+        let next_bridge_account_id = self
+            .pending_bridge_account_id
+            .take()
+            .expect("Bridge rotation is not pending");
+        let previous_bridge_account_id =
+            std::mem::replace(&mut self.active_bridge_account_id, next_bridge_account_id);
+        self.bridge_rotation_proposed_at_ms = None;
+        emit_governance_event(
+            "bridge_rotated",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "previous_bridge_account_id": previous_bridge_account_id,
+                "active_bridge_account_id": self.active_bridge_account_id,
+            }),
+        );
     }
 
     pub fn create_paid_job(&mut self, request: PaidJobRequest) -> MediaJob {
@@ -333,6 +515,7 @@ impl Contract {
             fee_quote_hash: None,
         };
         self.media_jobs.insert(&job_id, &job);
+        emit_media_job_authorized(&job);
         job
     }
 
@@ -389,6 +572,7 @@ impl Contract {
             .platform_near_balance
             .checked_add(deposit)
             .expect("Platform NEAR balance overflow");
+        emit_media_job_authorized(&job);
         PromiseOrValue::Value(job)
     }
 
@@ -411,6 +595,21 @@ impl Contract {
         job.upload_public_key = new_public_key;
         job.upload_key_expires_at_ms = expires_at_ms;
         self.media_jobs.insert(&job_id, &job);
+        let upload_public_key_sha256 = hex_sha256(job.upload_public_key.as_bytes());
+        emit_market_event(
+            "media_job_upload_key_replaced",
+            &format!(
+                "job:{}:{}:upload-key:{}",
+                job.job_id, job.generation, upload_public_key_sha256
+            ),
+            near_sdk::serde_json::json!({
+                "account_id": job.creator_id,
+                "job_id": job.job_id,
+                "generation": job.generation,
+                "upload_public_key_sha256": upload_public_key_sha256,
+                "upload_key_expires_at_ms": job.upload_key_expires_at_ms,
+            }),
+        );
         job
     }
 
@@ -430,7 +629,15 @@ impl Contract {
         require!(public_key.0.len() == 32, "Quote public key must be Ed25519");
         self.quote_key_version = version;
         self.quote_public_key = public_key.0;
-        env::log_str(&format!("QUOTE_KEY_ROTATED:{version}"));
+        emit_market_event(
+            "quote_key_rotated",
+            &format!("quote-key:{version}"),
+            near_sdk::serde_json::json!({
+                "account_id": env::predecessor_account_id(),
+                "quote_key_version": version,
+                "quote_public_key_sha256": hex_sha256(&self.quote_public_key),
+            }),
+        );
     }
 
     pub fn restart_paid_job(
@@ -559,6 +766,25 @@ impl Contract {
             .insert(&submission.asset_id_hash, &submission.job_id);
         self.playback_bindings
             .insert(&submission.playback_id, &submission.job_id);
+        emit_market_event(
+            "publication_finalized",
+            &format!(
+                "publication:{}:{}:finalized",
+                publication.publication_id, publication.generation
+            ),
+            near_sdk::serde_json::json!({
+                "account_id": publication.creator_id,
+                "publication_id": publication.publication_id,
+                "job_id": submission.job_id,
+                "generation": publication.generation,
+                "title": publication.title,
+                "playback_id": publication.playback_id,
+                "published_at_ms": publication.published_at_ms,
+                "asset": "USDC",
+                "amount": publication.price_usdc,
+                "availability": publication.availability,
+            }),
+        );
         publication
     }
 
@@ -572,8 +798,21 @@ impl Contract {
             publication.availability != PublicationAvailability::Takedown,
             "Takedown publication cannot change through sales suspension"
         );
+        if publication.availability == PublicationAvailability::SalesSuspended {
+            return publication;
+        }
         publication.availability = PublicationAvailability::SalesSuspended;
         self.publications.insert(&publication_id, &publication);
+        emit_market_event(
+            "publication_sales_suspended",
+            &format!("publication:{publication_id}:sales-suspended"),
+            near_sdk::serde_json::json!({
+                "account_id": publication.creator_id,
+                "publication_id": publication_id,
+                "generation": publication.generation,
+                "availability": publication.availability,
+            }),
+        );
         publication
     }
 
@@ -638,6 +877,23 @@ impl Contract {
         publication.availability = PublicationAvailability::Takedown;
         self.publications.insert(&publication_id, &publication);
         self.takedowns.insert(&publication_id, &record);
+        emit_market_event(
+            "publication_takedown",
+            &format!(
+                "publication:{publication_id}:takedown:{}",
+                record.incident_id
+            ),
+            near_sdk::serde_json::json!({
+                "account_id": publication.creator_id,
+                "publication_id": publication_id,
+                "generation": publication.generation,
+                "reason_code": record.reason_code,
+                "incident_id": record.incident_id,
+                "evidence_sha256": record.evidence_sha256,
+                "effective_at_ms": record.effective_at_ms,
+                "availability": publication.availability,
+            }),
+        );
         publication
     }
 
@@ -713,6 +969,9 @@ impl Contract {
             message.action.as_deref().is_none() || message.action.as_deref() == Some("buy_ticket"),
             "Unsupported transfer action"
         );
+        if self.new_purchases_paused() {
+            return PromiseOrValue::Value(amount);
+        }
         let publication_id = message.publication_id.expect("publication_id is required");
         let publication = self
             .publications
@@ -742,6 +1001,19 @@ impl Contract {
             .checked_add(platform_amount)
             .expect("Platform balance overflow");
         self.entitlements.insert(&entitlement_key, &true);
+        emit_market_event(
+            "entitlement_purchased",
+            &format!("entitlement:{sender_id}:{publication_id}"),
+            near_sdk::serde_json::json!({
+                "account_id": sender_id,
+                "creator_id": publication.creator_id,
+                "publication_id": publication_id,
+                "asset": "USDC",
+                "amount": amount,
+                "creator_amount": creator_amount.to_string(),
+                "platform_amount": platform_amount.to_string(),
+            }),
+        );
 
         PromiseOrValue::Value(U128(0))
     }
@@ -751,6 +1023,20 @@ impl Contract {
         let amount = self.creator_balances.get(&creator_id).unwrap_or(0);
         require!(amount > 0, "No creator balance");
         self.creator_balances.insert(&creator_id, &0);
+        let withdrawal_id = format!(
+            "creator-withdrawal:{creator_id}:{amount}:{}",
+            env::block_timestamp_ms()
+        );
+        emit_market_event(
+            "creator_balance_withdrawal_started",
+            &withdrawal_id,
+            near_sdk::serde_json::json!({
+                "account_id": creator_id,
+                "asset": "USDC",
+                "amount": amount.to_string(),
+                "withdrawal_id": withdrawal_id,
+            }),
+        );
 
         self.ft_transfer(creator_id.clone(), amount, "creator payout")
             .then(
@@ -759,6 +1045,7 @@ impl Contract {
                     near_sdk::serde_json::to_vec(&CreatorWithdrawCallbackArgs {
                         creator_id,
                         amount: U128(amount),
+                        withdrawal_id,
                     })
                     .expect("Failed to serialize callback"),
                     NearToken::from_yoctonear(0),
@@ -775,6 +1062,20 @@ impl Contract {
         let amount = self.platform_balance;
         require!(amount > 0, "No platform balance");
         self.platform_balance = 0;
+        let withdrawal_id = format!(
+            "platform-withdrawal:USDC:{amount}:{}",
+            env::block_timestamp_ms()
+        );
+        emit_market_event(
+            "platform_withdrawal_started",
+            &withdrawal_id,
+            near_sdk::serde_json::json!({
+                "account_id": self.platform_account_id,
+                "asset": "USDC",
+                "amount": amount.to_string(),
+                "withdrawal_id": withdrawal_id,
+            }),
+        );
 
         self.ft_transfer(
             self.platform_account_id.clone(),
@@ -803,20 +1104,27 @@ impl Contract {
             amount.0 > 0 && amount.0 <= self.platform_near_balance,
             "Insufficient platform NEAR balance"
         );
-        let storage_stake = u128::from(env::storage_usage())
-            .checked_mul(env::storage_byte_cost().as_yoctonear())
-            .expect("Storage stake overflow");
-        let protected = storage_stake
-            .checked_add(self.near_operational_reserve)
-            .expect("Protected NEAR balance overflow");
-        let liquid = env::account_balance()
-            .as_yoctonear()
-            .saturating_sub(protected);
+        let liquid = self.storage_reserve_status().reserve_headroom_yocto.0;
         require!(
             amount.0 <= liquid,
             "Withdrawal would consume storage stake or reserve"
         );
         self.platform_near_balance -= amount.0;
+        let withdrawal_id = format!(
+            "platform-withdrawal:NEAR:{}:{}",
+            amount.0,
+            env::block_timestamp_ms()
+        );
+        emit_market_event(
+            "platform_withdrawal_started",
+            &withdrawal_id,
+            near_sdk::serde_json::json!({
+                "account_id": self.platform_account_id,
+                "asset": "NEAR",
+                "amount": amount,
+                "withdrawal_id": withdrawal_id,
+            }),
+        );
         Promise::new(self.platform_account_id.clone())
             .transfer(NearToken::from_yoctonear(amount.0))
             .then(
@@ -831,12 +1139,27 @@ impl Contract {
     }
 
     #[private]
-    pub fn on_creator_withdraw(&mut self, creator_id: AccountId, amount: U128) -> bool {
+    pub fn on_creator_withdraw(
+        &mut self,
+        creator_id: AccountId,
+        amount: U128,
+        withdrawal_id: String,
+    ) -> bool {
         require!(
             env::promise_results_count() == 1,
             "Expected one withdrawal result"
         );
         if matches!(env::promise_result(0), PromiseResult::Successful(_)) {
+            emit_market_event(
+                "creator_balance_withdrawal_succeeded",
+                &withdrawal_id,
+                near_sdk::serde_json::json!({
+                    "account_id": creator_id,
+                    "asset": "USDC",
+                    "amount": amount,
+                    "withdrawal_id": withdrawal_id,
+                }),
+            );
             return true;
         }
         let restored = self
@@ -846,6 +1169,17 @@ impl Contract {
             .checked_add(amount.0)
             .expect("Creator balance overflow");
         self.creator_balances.insert(&creator_id, &restored);
+        emit_market_event(
+            "creator_balance_withdrawal_failed",
+            &withdrawal_id,
+            near_sdk::serde_json::json!({
+                "account_id": creator_id,
+                "asset": "USDC",
+                "amount": amount,
+                "withdrawal_id": withdrawal_id,
+                "reason_code": "PROMISE_FAILED",
+            }),
+        );
         false
     }
 
@@ -948,12 +1282,56 @@ impl Contract {
         self.quote_key_version
     }
 
+    pub fn get_storage_reserve_status(&self) -> StorageReserveStatus {
+        self.storage_reserve_status()
+    }
+
+    pub fn get_governance_state(&self) -> GovernanceState {
+        GovernanceState {
+            state_version: self.state_version,
+            admin_account_id: self.admin_account_id.clone(),
+            guardian_account_id: self.guardian_account_id.clone(),
+            active_bridge_account_id: self.active_bridge_account_id.clone(),
+            pending_bridge_account_id: self.pending_bridge_account_id.clone(),
+            bridge_frozen: self.bridge_frozen,
+            new_purchases_paused: self.new_purchases_paused(),
+            bridge_rotation_proposed_at_ms: self.bridge_rotation_proposed_at_ms.map(U64),
+        }
+    }
+
     pub fn get_usdc_contract_id(&self) -> AccountId {
         self.usdc_contract_id()
     }
 }
 
 impl Contract {
+    fn new_purchases_paused(&self) -> bool {
+        env::storage_read(NEW_PURCHASES_PAUSED_KEY).as_deref() == Some(&[1])
+    }
+
+    fn storage_reserve_status(&self) -> StorageReserveStatus {
+        let storage_usage = env::storage_usage();
+        let storage_byte_cost = env::storage_byte_cost().as_yoctonear();
+        let storage_stake = u128::from(storage_usage)
+            .checked_mul(storage_byte_cost)
+            .expect("Storage stake overflow");
+        let protected = storage_stake
+            .checked_add(self.near_operational_reserve)
+            .expect("Protected NEAR balance overflow");
+        let account_balance = env::account_balance().as_yoctonear();
+        let reserve_headroom = account_balance.saturating_sub(protected);
+        StorageReserveStatus {
+            storage_usage_bytes: U64(storage_usage),
+            storage_byte_cost_yocto: U128(storage_byte_cost),
+            storage_stake_yocto: U128(storage_stake),
+            operational_reserve_yocto: U128(self.near_operational_reserve),
+            account_balance_yocto: U128(account_balance),
+            reserve_headroom_yocto: U128(reserve_headroom),
+            reserve_runway_bytes: U128(reserve_headroom / storage_byte_cost),
+            reserve_covered: account_balance >= protected,
+        }
+    }
+
     fn verify_creator_fee_quote(
         &self,
         request: &PaidJobRequest,
@@ -1045,8 +1423,42 @@ impl Contract {
     }
     fn assert_bridge(&self) {
         require!(
-            env::predecessor_account_id() == self.bridge_account_id,
+            env::predecessor_account_id() == self.active_bridge_account_id,
             "Only the configured Livepeer bridge can call this method"
+        );
+        require!(!self.bridge_frozen, "Livepeer bridge is frozen");
+    }
+
+    fn assert_admin(&self) {
+        require!(
+            env::predecessor_account_id() == self.admin_account_id,
+            "Only the admin account can call this method"
+        );
+    }
+
+    fn assert_guardian(&self) {
+        require!(
+            env::predecessor_account_id() == self.guardian_account_id,
+            "Only the guardian account can call this method"
+        );
+    }
+
+    fn assert_admin_or_guardian(&self) {
+        let predecessor = env::predecessor_account_id();
+        require!(
+            predecessor == self.admin_account_id || predecessor == self.guardian_account_id,
+            "Only the admin or guardian account can call this method"
+        );
+    }
+
+    fn assert_valid_bridge_account(&self, account_id: &AccountId) {
+        require!(
+            account_id != &self.active_bridge_account_id
+                && account_id != &self.platform_account_id
+                && account_id != &self.takedown_authority_id
+                && account_id != &self.admin_account_id
+                && account_id != &self.guardian_account_id,
+            "Bridge account must be a separate authority"
         );
     }
 
@@ -1252,6 +1664,77 @@ fn job_matches_request(job: &MediaJob, request: &PaidJobRequest, quote: &Creator
         && job.fee_quote_hash.as_deref() == Some(quote.quote_id.as_str())
 }
 
+fn emit_media_job_authorized(job: &MediaJob) {
+    emit_market_event(
+        "media_job_authorized",
+        &format!("job:{}:{}:authorized", job.job_id, job.generation),
+        near_sdk::serde_json::json!({
+            "account_id": job.creator_id,
+            "job_id": job.job_id,
+            "generation": job.generation,
+            "asset": fee_asset_name(&job.fee_asset),
+            "amount": job.fee_amount,
+            "fee_usd_micro": job.fee_usd_micro,
+            "expected_source_bytes": job.expected_source_bytes,
+            "price_usdc": job.price_usdc,
+            "upload_key_expires_at_ms": job.upload_key_expires_at_ms,
+            "fee_quote_hash": job.fee_quote_hash,
+        }),
+    );
+}
+
+fn fee_asset_name(asset: &FeeAsset) -> &'static str {
+    match asset {
+        FeeAsset::Usdc => "USDC",
+        FeeAsset::Near => "NEAR",
+    }
+}
+
+fn emit_market_event(event: &str, idempotency_key: &str, mut data: near_sdk::serde_json::Value) {
+    let fields = data.as_object_mut().expect("Event data must be an object");
+    fields.insert(
+        "contract_id".to_string(),
+        near_sdk::serde_json::json!(env::current_account_id()),
+    );
+    fields.insert(
+        "predecessor_account_id".to_string(),
+        near_sdk::serde_json::json!(env::predecessor_account_id()),
+    );
+    fields.insert(
+        "block_height".to_string(),
+        near_sdk::serde_json::json!(env::block_height().to_string()),
+    );
+    fields.insert(
+        "block_timestamp_ms".to_string(),
+        near_sdk::serde_json::json!(env::block_timestamp_ms().to_string()),
+    );
+    fields.insert(
+        "idempotency_key".to_string(),
+        near_sdk::serde_json::json!(idempotency_key),
+    );
+    env::log_str(&format!(
+        "EVENT_JSON:{}",
+        near_sdk::serde_json::json!({
+            "standard": "youtick_market",
+            "version": "1.0.0",
+            "event": event,
+            "data": [data],
+        })
+    ));
+}
+
+fn emit_governance_event(event: &str, data: near_sdk::serde_json::Value) {
+    emit_market_event(
+        event,
+        &format!(
+            "governance:{event}:{}:{}",
+            env::predecessor_account_id(),
+            env::block_timestamp_ms()
+        ),
+        data,
+    );
+}
+
 fn assert_profile(profile_id: &str, profile_config_sha256: &str) {
     require!(profile_id == PROFILE, "Unsupported paid-media profile");
     assert_sha256("profile_config_sha256", profile_config_sha256);
@@ -1270,7 +1753,7 @@ fn assert_sha256(label: &str, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use near_sdk::test_utils::VMContextBuilder;
+    use near_sdk::test_utils::{get_logs, VMContextBuilder};
     use near_sdk::{testing_env, PromiseResult};
 
     fn account(value: &str) -> AccountId {
@@ -1287,14 +1770,16 @@ mod tests {
 
     fn contract() -> Contract {
         testing_env!(context("market.testnet").build());
-        Contract::new(
-            account("platform.testnet"),
-            account("bridge.testnet"),
-            account("governance.testnet"),
-            Base64VecU8(vec![1; 32]),
-            1,
-            U128(1_000_000_000_000_000_000_000_000),
-        )
+        Contract::new(MarketInitConfig {
+            platform_account_id: account("platform.testnet"),
+            bridge_account_id: account("bridge.testnet"),
+            takedown_authority_id: account("governance.testnet"),
+            admin_account_id: account("admin.testnet"),
+            guardian_account_id: account("guardian.testnet"),
+            quote_public_key: Base64VecU8(vec![1; 32]),
+            quote_key_version: 1,
+            near_operational_reserve: U128(1_000_000_000_000_000_000_000_000),
+        })
     }
 
     #[test]
@@ -1314,6 +1799,10 @@ mod tests {
         contract.creator_balances.insert(&creator_id, &1_960_000);
         testing_env!(context("creator.testnet").build());
         contract.withdraw_creator_balance();
+        assert!(get_logs()
+            .last()
+            .unwrap()
+            .contains("creator_balance_withdrawal_started"));
         testing_env!(
             context("market.testnet").build(),
             near_sdk::test_vm_config(),
@@ -1321,8 +1810,58 @@ mod tests {
             Default::default(),
             vec![PromiseResult::Failed],
         );
-        assert!(!contract.on_creator_withdraw(creator_id.clone(), U128(1_960_000)));
+        assert!(!contract.on_creator_withdraw(
+            creator_id.clone(),
+            U128(1_960_000),
+            "creator-withdrawal:creator.testnet:1960000:1785589300000".to_string(),
+        ));
         assert_eq!(contract.get_creator_balance(creator_id), U128(1_960_000));
+        assert!(get_logs()
+            .last()
+            .unwrap()
+            .contains("creator_balance_withdrawal_failed"));
+    }
+
+    #[test]
+    fn successful_creator_withdraw_emits_completion_with_the_started_id() {
+        let mut contract = contract();
+        let creator_id = account("creator.testnet");
+        let withdrawal_id = "creator-withdrawal:creator.testnet:1960000:1785589300000".to_string();
+        contract.creator_balances.insert(&creator_id, &1_960_000);
+        testing_env!(context("creator.testnet").build());
+        contract.withdraw_creator_balance();
+        assert!(get_logs().last().unwrap().contains(&withdrawal_id));
+        testing_env!(
+            context("market.testnet").build(),
+            near_sdk::test_vm_config(),
+            near_sdk::RuntimeFeesConfig::test(),
+            Default::default(),
+            vec![PromiseResult::Successful(Vec::new())],
+        );
+
+        assert!(contract.on_creator_withdraw(
+            creator_id.clone(),
+            U128(1_960_000),
+            withdrawal_id.clone(),
+        ));
+        assert_eq!(contract.get_creator_balance(creator_id), U128(0));
+        let completed = get_logs().last().unwrap().to_owned();
+        assert!(completed.contains("creator_balance_withdrawal_succeeded"));
+        assert!(completed.contains(&withdrawal_id));
+    }
+
+    #[test]
+    fn platform_usdc_withdraw_emits_started_event() {
+        let mut contract = contract();
+        contract.platform_balance = 40_000;
+        testing_env!(context("platform.testnet").build());
+
+        contract.withdraw_platform_balance();
+
+        assert_eq!(contract.get_platform_balance(), U128(0));
+        let started = get_logs().last().unwrap().to_owned();
+        assert!(started.contains("platform_withdrawal_started"));
+        assert!(started.contains(r#""asset":"USDC""#));
     }
 
     #[test]
@@ -1336,6 +1875,7 @@ mod tests {
         testing_env!(context("platform.testnet").build());
         contract.rotate_quote_public_key(2, Base64VecU8(vec![2; 32]));
         assert_eq!(contract.get_quote_key_version(), 2);
+        assert!(get_logs().last().unwrap().contains("quote_key_rotated"));
     }
 
     #[test]
@@ -1362,5 +1902,52 @@ mod tests {
         testing_env!(allowed.build());
         contract.withdraw_platform_near(U128(100));
         assert_eq!(contract.get_platform_near_balance(), U128(0));
+        assert!(get_logs()
+            .last()
+            .unwrap()
+            .contains("platform_withdrawal_started"));
+    }
+
+    #[test]
+    fn storage_reserve_status_matches_the_withdrawal_guard() {
+        let contract = contract();
+        let storage_usage = 10;
+        let runway_bytes = 25u128;
+        let storage_byte_cost = env::storage_byte_cost().as_yoctonear();
+        let mut covered = context("market.testnet");
+        covered.storage_usage(storage_usage);
+        covered.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve
+                + (u128::from(storage_usage) + runway_bytes) * storage_byte_cost,
+        ));
+        testing_env!(covered.build());
+
+        let status = contract.get_storage_reserve_status();
+        assert_eq!(status.storage_usage_bytes, U64(storage_usage));
+        assert_eq!(
+            status.storage_stake_yocto,
+            U128(u128::from(storage_usage) * storage_byte_cost)
+        );
+        assert_eq!(
+            status.operational_reserve_yocto,
+            U128(contract.near_operational_reserve)
+        );
+        assert_eq!(
+            status.reserve_headroom_yocto,
+            U128(runway_bytes * storage_byte_cost)
+        );
+        assert_eq!(status.reserve_runway_bytes, U128(runway_bytes));
+        assert!(status.reserve_covered);
+
+        let mut uncovered = context("market.testnet");
+        uncovered.storage_usage(storage_usage);
+        uncovered.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve + u128::from(storage_usage) * storage_byte_cost - 1,
+        ));
+        testing_env!(uncovered.build());
+        let status = contract.get_storage_reserve_status();
+        assert!(!status.reserve_covered);
+        assert_eq!(status.reserve_headroom_yocto, U128(0));
+        assert_eq!(status.reserve_runway_bytes, U128(0));
     }
 }

@@ -1,0 +1,225 @@
+{
+  "schema": "youtick.slo-policy.v1",
+  "status": "SOURCE_ONLY",
+  "incident_response": {
+    "status": "SOURCE_ONLY",
+    "execution": "MANUAL_APPROVAL_REQUIRED",
+    "runbook": "docs/testnet-pilot-runbook.md#incident-ilk-mudahale",
+    "owner_assignment": "ROLE_ONLY",
+    "named_on_call": "EXTERNAL_EVIDENCE_REQUIRED",
+    "notification_delivery": "EXTERNAL_EVIDENCE_REQUIRED",
+    "drill_evidence": "EXTERNAL_EVIDENCE_REQUIRED"
+  },
+  "domain_controls": [
+    {
+      "id": "playback_issuance",
+      "source_status": "SOURCE_READY",
+      "control": "LIVEPEER_PLAYBACK_ISSUANCE_ENABLED",
+      "closed_value": "false"
+    },
+    {
+      "id": "new_purchases",
+      "source_status": "SOURCE_READY",
+      "contract_control": "pause_new_purchases",
+      "closed_value": "paused",
+      "reopen_control": "unpause_new_purchases",
+      "authority": "guardian_pause_admin_unpause",
+      "state_view": "get_governance_state.new_purchases_paused"
+    },
+    {
+      "id": "new_uploads",
+      "source_status": "SOURCE_READY",
+      "control": "LIVEPEER_NEW_UPLOADS_ENABLED",
+      "closed_value": "false"
+    },
+    {
+      "id": "provider_mutation",
+      "source_status": "SOURCE_READY",
+      "control": "LIVEPEER_PROVIDER_MUTATIONS_ENABLED",
+      "closed_value": "false"
+    },
+    {
+      "id": "multi_asset_quote",
+      "source_status": "SOURCE_READY",
+      "control": "MULTI_ASSET_PAYMENTS_MODE",
+      "closed_value": "off"
+    },
+    {
+      "id": "contract_operator_operations",
+      "source_status": "SOURCE_READY",
+      "control": "LIVEPEER_OPERATOR_MUTATIONS_ENABLED",
+      "closed_value": "false",
+      "contract_defense": "freeze_bridge"
+    }
+  ],
+  "acceptance_gates": [
+    {
+      "id": "legacy_v2_shadow_mismatch_ratio",
+      "source_status": "SOURCE_READY",
+      "source_event": "playback_shadow_authorization_compared",
+      "numerator_filter": { "decisionMatch": false },
+      "operator": "=",
+      "threshold": 0,
+      "unit": "ratio"
+    },
+    {
+      "id": "upload_resume_success_ratio",
+      "source_status": "SOURCE_PARTIAL",
+      "source_receipt": "youtick.livepeer-tus-resume-canary.v1",
+      "operator": ">=",
+      "threshold": 0.99,
+      "unit": "ratio",
+      "missing": "deployed_pilot_sample_aggregation"
+    },
+    {
+      "id": "upload_recovery_duplicate_payment_count",
+      "source_status": "EXTERNAL_EVIDENCE_REQUIRED",
+      "source_receipt": "pilot_evidence_packet",
+      "operator": "=",
+      "threshold": 0,
+      "unit": "count"
+    },
+    {
+      "id": "upload_recovery_duplicate_provider_asset_count",
+      "source_status": "SOURCE_PARTIAL",
+      "source_receipt": "pilot_evidence_packet",
+      "operator": "=",
+      "threshold": 0,
+      "unit": "count",
+      "missing": "deployed_provider_receipts"
+    },
+    {
+      "id": "durable_object_max_persistent_records",
+      "source_status": "SOURCE_READY",
+      "source_event": "durable_object_storage_observed",
+      "field": "projectedRecordCount",
+      "operator": "<=",
+      "threshold": 256,
+      "unit": "records_per_object",
+      "missing": "deployed_storage_metrics"
+    }
+  ],
+  "objectives": [
+    {
+      "id": "playback_cache_hit_p95_ms",
+      "source_event": "stateless_playback_authorization_completed",
+      "filter": { "cacheResult": "HIT" },
+      "field": "latencyMs",
+      "percentile": 95,
+      "operator": "<",
+      "threshold": 500,
+      "unit": "ms"
+    },
+    {
+      "id": "playback_internal_error_ratio",
+      "source_event": "stateless_playback_request_failed",
+      "filter": { "httpCodeMin": 500 },
+      "denominator_events": [
+        "stateless_playback_authorization_completed",
+        "stateless_playback_request_failed"
+      ],
+      "operator": "<",
+      "threshold": 0.005,
+      "unit": "ratio"
+    },
+    {
+      "id": "webhook_queue_ack_p95_ms",
+      "source_event": "webhook_ack_completed",
+      "filter": { "delivery": "QUEUE" },
+      "field": "latencyMs",
+      "percentile": 95,
+      "operator": "<",
+      "threshold": 500,
+      "unit": "ms"
+    },
+    {
+      "id": "upload_intent_control_p95_ms",
+      "source_event": "upload_intent_control_completed",
+      "filter": { "providerCalls": 0 },
+      "field": "latencyMs",
+      "percentile": 95,
+      "operator": "<",
+      "threshold": 750,
+      "unit": "ms"
+    },
+    {
+      "id": "read_model_discover_p95_ms",
+      "source_event": "read_model_request_completed",
+      "filter": { "route": "publications" },
+      "field": "latency_ms",
+      "percentile": 95,
+      "operator": "<",
+      "threshold": 300,
+      "unit": "ms"
+    }
+  ],
+  "alerts": [
+    {
+      "id": "bridge_config_mismatch",
+      "source_status": "SOURCE_PARTIAL",
+      "owner_role": "PLATFORM_SRE",
+      "first_action": "hold_activation_and_compare_exact_sha"
+    },
+    {
+      "id": "provider_public_playback_exposure",
+      "source_status": "SOURCE_READY",
+      "owner_role": "SECURITY",
+      "first_action": "close_playback_issuance_and_suspend_affected_sales",
+      "control": "LIVEPEER_PLAYBACK_ISSUANCE_ENABLED"
+    },
+    {
+      "id": "takedown_token_issuance_attempt",
+      "source_status": "SOURCE_READY",
+      "source_event": "takedown_playback_token_attempted",
+      "owner_role": "SECURITY",
+      "first_action": "keep_playback_closed_and_verify_takedown"
+    },
+    {
+      "id": "queue_backlog",
+      "source_status": "SOURCE_PARTIAL",
+      "source_event": "webhook_queue_delivery_completed",
+      "source_field": "queueLagMs",
+      "missing": "deployed_queue_depth_aggregation_approved_lag_threshold_and_alert_delivery",
+      "owner_role": "PLATFORM_SRE",
+      "first_action": "close_new_uploads_and_inspect_dlq",
+      "control": "LIVEPEER_NEW_UPLOADS_ENABLED"
+    },
+    {
+      "id": "operator_nonce_stuck",
+      "source_status": "SOURCE_PARTIAL",
+      "source_event": "operator_nonce_pending_observed",
+      "missing": "approved_stuck_age_threshold_and_deployed_aggregation",
+      "owner_role": "PLATFORM_SRE",
+      "first_action": "stop_replay_and_reconcile_chain"
+    },
+    {
+      "id": "admission_budget_threshold",
+      "source_status": "SOURCE_PARTIAL",
+      "owner_role": "PLATFORM_SRE",
+      "first_action": "verify_admission_auto_closed"
+    },
+    {
+      "id": "contract_storage_reserve_threshold",
+      "source_status": "SOURCE_PARTIAL",
+      "source_method": "get_storage_reserve_status",
+      "missing": "deployed_polling_aggregation_and_alert_delivery",
+      "owner_role": "CONTRACT_OPERATIONS",
+      "first_action": "hold_release_and_read_storage_reserve"
+    },
+    {
+      "id": "rpc_finality_lag",
+      "source_status": "SOURCE_PARTIAL",
+      "source_probe": "runNearFinalityProbe",
+      "missing": "approved_lag_threshold_deployed_schedule_aggregation_and_alert_delivery",
+      "owner_role": "PLATFORM_SRE",
+      "first_action": "hold_chain_mutations_and_verify_finality"
+    },
+    {
+      "id": "elevated_playback_error",
+      "source_status": "SOURCE_READY",
+      "owner_role": "PLATFORM_SRE",
+      "first_action": "close_playback_issuance_and_preserve_upload_recovery",
+      "control": "LIVEPEER_PLAYBACK_ISSUANCE_ENABLED"
+    }
+  ]
+}

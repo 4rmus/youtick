@@ -26,6 +26,7 @@ function publicEnv(environment) {
     NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: bridgeOrigin,
     NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: "false",
     NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: "false",
+    NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: "false",
     NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: "off",
     NEXT_PUBLIC_USDC_CONTRACT_ID: "usdc.testnet",
     NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO: "1",
@@ -46,6 +47,12 @@ function publicEnv(environment) {
     NEAR_OPERATOR_KEY_EPOCH: "1",
     CREATOR_FEE_QUOTE_KEY_VERSION: "1",
     LIVEPEER_BRIDGE_ENABLED: "false",
+    LIVEPEER_NEW_UPLOADS_ENABLED: "false",
+    LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: "false",
+    LIVEPEER_PROVIDER_MUTATIONS_ENABLED: "false",
+    LIVEPEER_OPERATOR_MUTATIONS_ENABLED: "false",
+    UPLOAD_JOB_ARCHIVE_ENABLED: "false",
+    OPERATOR_OUTBOX_ARCHIVE_ENABLED: "false",
     LIVEPEER_NEAR_CREATOR_FEE_ENABLED: "false",
     MULTI_ASSET_PAYMENTS_MODE: "off",
     MULTI_ASSET_PAYMENT_ASSET_IDS: "",
@@ -145,7 +152,14 @@ test("config emits only canonical public values", () => {
   assert.equal(config.targets.web.worker, "youtick-web-preview");
   assert.equal(config.targets.bridge.domain, "bridge-preview.youtick.net");
   assert.equal(config.web.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1, "false");
+  assert.equal(config.web.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL, "false");
   assert.equal(config.bridge.LIVEPEER_BRIDGE_ENABLED, "false");
+  assert.equal(config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED, "false");
+  assert.equal(config.bridge.LIVEPEER_PLAYBACK_ISSUANCE_ENABLED, "false");
+  assert.equal(config.bridge.LIVEPEER_PROVIDER_MUTATIONS_ENABLED, "false");
+  assert.equal(config.bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED, "false");
+  assert.equal(config.bridge.UPLOAD_JOB_ARCHIVE_ENABLED, "false");
+  assert.equal(config.bridge.OPERATOR_OUTBOX_ARCHIVE_ENABLED, "false");
   assert.equal(config.web.NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE, "off");
   assert.equal(text, `${JSON.stringify(config, null, 2)}\n`);
   assert.doesNotMatch(text, /API_KEY|NEAR_RPC_URL|secret-rpc/);
@@ -216,6 +230,72 @@ test("config rejects placeholders and enabled release flags", async (t) => {
     env.PRODUCTION_LIVEPEER_BRIDGE_ENABLED = "true";
     const result = run(
       ["config", "--environment", "production", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /exactly false/);
+  });
+
+  await t.test("true upload archive flag", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_UPLOAD_JOB_ARCHIVE_ENABLED = "true";
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /exactly false/);
+  });
+
+  await t.test("true new-upload flag", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_LIVEPEER_NEW_UPLOADS_ENABLED = "true";
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /exactly false/);
+  });
+
+  await t.test("true playback-issuance flag", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_LIVEPEER_PLAYBACK_ISSUANCE_ENABLED = "true";
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /exactly false/);
+  });
+
+  await t.test("true provider-mutation flag", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "true";
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /exactly false/);
+  });
+
+  await t.test("true operator-mutation flag", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "true";
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /exactly false/);
+  });
+
+  await t.test("true operator archive flag", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_OPERATOR_OUTBOX_ARCHIVE_ENABLED = "true";
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
       env,
     );
     assert.notEqual(result.status, 0);

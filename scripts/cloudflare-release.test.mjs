@@ -65,6 +65,7 @@ function makeConfig(target) {
             NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: `https://${expected.bridge.domain}`,
             NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: 'false',
             NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: 'false',
+            NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: 'false',
             NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: 'off',
         },
         bridge: {
@@ -73,6 +74,12 @@ function makeConfig(target) {
             CREATOR_FEE_QUOTE_KEY_VERSION: '1',
             LIVEPEER_API_TOKEN_NAME: 'release-token',
             LIVEPEER_BRIDGE_ENABLED: 'false',
+            LIVEPEER_NEW_UPLOADS_ENABLED: 'false',
+            LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: 'false',
+            LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'false',
+            LIVEPEER_OPERATOR_MUTATIONS_ENABLED: 'false',
+            UPLOAD_JOB_ARCHIVE_ENABLED: 'false',
+            OPERATOR_OUTBOX_ARCHIVE_ENABLED: 'false',
             LIVEPEER_CREATOR_ALLOWLIST: '',
             LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '',
             LIVEPEER_JWT_ISSUER: `https://${expected.web.domain}`,
@@ -133,6 +140,12 @@ function makeRelease(t, target = 'preview') {
         '',
         '[vars]',
         'LIVEPEER_BRIDGE_ENABLED = "false"',
+        'LIVEPEER_NEW_UPLOADS_ENABLED = "false"',
+        'LIVEPEER_PLAYBACK_ISSUANCE_ENABLED = "false"',
+        'LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "false"',
+        'LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "false"',
+        'UPLOAD_JOB_ARCHIVE_ENABLED = "false"',
+        'OPERATOR_OUTBOX_ARCHIVE_ENABLED = "false"',
         'LIVEPEER_NEAR_CREATOR_FEE_ENABLED = "false"',
         'MULTI_ASSET_PAYMENTS_MODE = "off"',
         'MULTI_ASSET_PAYMENT_ASSET_IDS = ""',
@@ -503,6 +516,10 @@ test('Bridge artifact writer emits the exact disabled release config once', asyn
 
     const text = readFileSync(output, 'utf8');
     assert.match(text, /MULTI_ASSET_PAYMENTS_MODE = "off"/);
+    assert.match(text, /LIVEPEER_NEW_UPLOADS_ENABLED = "false"/);
+    assert.match(text, /LIVEPEER_PLAYBACK_ISSUANCE_ENABLED = "false"/);
+    assert.match(text, /LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "false"/);
+    assert.match(text, /LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "false"/);
     assert.match(text, /MULTI_ASSET_PAYMENT_ASSET_IDS = ""/);
     assert.doesNotMatch(text, /NEAR_RPC_URL|ALLOWED_ORIGINS|MARKET_CONTRACT_ID/);
     assert.equal(statSync(output).mode & 0o777, 0o600);
@@ -568,6 +585,10 @@ test('a proven first Bridge deployment applies its Durable Object migration befo
             const bootstrap = bridgeMutations[0];
             assert.ok(bootstrap.includes('--no-bundle'));
             assert.ok(bootstrap.includes('LIVEPEER_BRIDGE_ENABLED:false'));
+            assert.ok(bootstrap.includes('LIVEPEER_NEW_UPLOADS_ENABLED:false'));
+            assert.ok(bootstrap.includes('LIVEPEER_PLAYBACK_ISSUANCE_ENABLED:false'));
+            assert.ok(bootstrap.includes('LIVEPEER_PROVIDER_MUTATIONS_ENABLED:false'));
+            assert.ok(bootstrap.includes('LIVEPEER_OPERATOR_MUTATIONS_ENABLED:false'));
             assert.ok(bootstrap.includes('LIVEPEER_NEAR_CREATOR_FEE_ENABLED:false'));
             assert.ok(!bootstrap.includes('--domain'));
         });
@@ -715,6 +736,10 @@ test('only structured error 10007 permits workers.dev bootstrap before safe doma
     assert.ok(deploys.every((args) => !args.includes('--domain')));
     assert.ok(deploys.every((args) => args.at(args.indexOf('--config') + 1).includes('bootstrap')));
     assert.ok(bridgeDeploy.includes('LIVEPEER_BRIDGE_ENABLED:false'));
+    assert.ok(bridgeDeploy.includes('LIVEPEER_NEW_UPLOADS_ENABLED:false'));
+    assert.ok(bridgeDeploy.includes('LIVEPEER_PLAYBACK_ISSUANCE_ENABLED:false'));
+    assert.ok(bridgeDeploy.includes('LIVEPEER_PROVIDER_MUTATIONS_ENABLED:false'));
+    assert.ok(bridgeDeploy.includes('LIVEPEER_OPERATOR_MUTATIONS_ENABLED:false'));
     assert.ok(bridgeDeploy.includes('LIVEPEER_NEAR_CREATOR_FEE_ENABLED:false'));
     assert.ok(bridgeDeploy.includes('--no-bundle'));
     assert.ok(!deploys.find((args) => args.includes(TARGETS.preview.web.worker)).includes('--no-bundle'));

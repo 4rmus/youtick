@@ -12,6 +12,7 @@ export default defineConfig({
       { text: 'Architecture', link: '/architecture/' },
       { text: 'Configuration', link: '/getting-started/configuration' },
       { text: 'Testing', link: '/testing' },
+      { text: 'Pilot', link: '/testnet-pilot-runbook' },
       { text: 'Release', link: '/release-runbook' },
     ],
 
@@ -24,6 +25,7 @@ export default defineConfig({
           { text: 'Contract Methods', link: '/api/contract-methods' },
           { text: 'Security', link: '/security' },
           { text: 'Testing', link: '/testing' },
+          { text: 'Testnet Pilot', link: '/testnet-pilot-runbook' },
           { text: 'Release', link: '/release-runbook' },
           { text: 'Contributing', link: '/contributing' },
           { text: 'Acceptable Use', link: '/legal/acceptable-use-policy' },

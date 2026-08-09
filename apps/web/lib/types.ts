@@ -12,5 +12,9 @@ export interface WalletInstance {
         recipient: string;
         nonce: Uint8Array;
         state?: string;
-    }): Promise<object>;
+    }): Promise<{
+        accountId: string;
+        publicKey: string;
+        signature: string;
+    }>;
 }

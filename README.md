@@ -12,6 +12,7 @@ control plane and short-lived playback tokens.
 - `contracts/nft-ticket` — paid job, publication and settlement contract
 - `contracts/access-control` — Play grant contract
 - `workers/livepeer-bridge` — upload, webhook and playback-token control plane
+- `read-model` — source-only D1 schema and deterministic final-event rebuild
 - `protocol/paid-media-livepeer-v1` — schemas and golden vectors
 - `docs` — current architecture, configuration, testing and release guidance
 

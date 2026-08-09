@@ -3,6 +3,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { NearConnector, type Account, type NearWalletBase } from '@hot-labs/near-connect';
 import { clearSessionGrantCache } from '@/lib/access-grants';
+import { clearDeviceSession } from '@/lib/device-session';
 import { NEAR_NETWORK } from '@/lib/constants';
 import { getRpcEndpoints } from '@/lib/rpc-failover';
 import {
@@ -11,6 +12,7 @@ import {
     createSignlessAccessKey,
     persistSignlessAccessKey,
     reconcileSignlessAccessKey,
+    revokeBrowserAuthority,
 } from '@/lib/signless-access-key';
 import type { WalletInstance } from '@/lib/types';
 
@@ -64,6 +66,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const clearAuth = useCallback(async (id: string | null) => {
         if (!id) return;
         clearSessionGrantCache(id);
+        await clearDeviceSession(id);
         await clearSignlessAccessKey(id);
     }, []);
 
@@ -158,15 +161,27 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }, [applyWallet]);
 
     const signOut = useCallback(async () => {
-        await clearAuth(accountIdRef.current);
+        const id = accountIdRef.current;
+        if (id) {
+            try {
+                await revokeBrowserAuthority(await getWallet(), id);
+            } catch {
+                setError('Secure disconnect was not approved. Your wallet remains connected.');
+                return;
+            }
+        }
+        await clearAuth(id);
         try {
             await connectorRef.current?.disconnect(walletRef.current ?? undefined);
-        } finally {
-            walletRef.current = null;
-            accountIdRef.current = null;
-            setAccountId(null);
+        } catch {
+            setError('Browser access was revoked, but the wallet could not be disconnected. Please retry.');
+            return;
         }
-    }, [clearAuth]);
+        walletRef.current = null;
+        accountIdRef.current = null;
+        setAccountId(null);
+        setError(null);
+    }, [clearAuth, getWallet]);
 
     return (
         <WalletContext.Provider value={{ accountId, getWallet, signOut, connect, isReady }}>

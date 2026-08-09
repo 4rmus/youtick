@@ -58,9 +58,14 @@ vi.mock('@/lib/constants', () => ({
 }));
 
 import {
+    advanceLivepeerUploadDraftStage,
     authorizeLivepeerPaidJob,
+    cancelLivepeerUpload,
+    clearLivepeerJobSessionKey,
     clearLivepeerUploadDraft,
     configuredCreatorFeeGasReserveYocto,
+    fingerprintLivepeerSource,
+    heartbeatLivepeerUploadLease,
     parseLivepeerPriceUsdc,
     preflightLivepeerUpload,
     prepareCreatorFeePaymentOptions,
@@ -76,14 +81,18 @@ import {
 } from '@/lib/livepeer-upload';
 
 const SOURCE_BYTES = 20 * 1024 * 1024;
+const SOURCE_FINGERPRINT = 'a'.repeat(64);
 const INTENT: LivepeerUploadIntent = {
-    schema: 'youtick.livepeer-upload-intent.v1',
+    schema: 'youtick.livepeer-upload-intent.v2',
     job_id: 'job-001',
     generation: 1,
     expected_source_bytes: String(SOURCE_BYTES),
     source_type: 'mp4',
     chunk_bytes: 32 * 1024 * 1024,
     tus_endpoint: 'https://origin.livepeer.com/api/asset/upload/tus/upload-123',
+    lease_id: '00000000-0000-4000-8000-000000000001',
+    lease_expires_at_ms: '999999999999999',
+    heartbeat_interval_ms: 5 * 60 * 1000,
     created: true,
 };
 
@@ -124,7 +133,7 @@ describe('Livepeer browser upload', () => {
         delete process.env.NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO;
     });
 
-    it('signs the locked upload-intent envelope and removes the single-job key', async () => {
+    it('signs the locked upload-intent envelope and retains its session key for heartbeats', async () => {
         const wallet = createWallet();
         const publicKey = await provisionJobSession(wallet);
         const fetchMock = vi.fn<(
@@ -138,6 +147,7 @@ describe('Livepeer browser upload', () => {
             jobId: 'job-001',
             generation: 1,
             expectedSourceBytes: SOURCE_BYTES,
+            sourceFingerprintSha256: SOURCE_FINGERPRINT,
             sourceType: 'mp4',
         })).resolves.toEqual(INTENT);
 
@@ -150,10 +160,12 @@ describe('Livepeer browser upload', () => {
             envelope: Record<string, unknown>;
         };
         expect(request.body.expected_source_bytes).toBe(String(SOURCE_BYTES));
+        expect(request.body.source_fingerprint_sha256).toBe(SOURCE_FINGERPRINT);
         expect(request.body.source_type).toBe('mp4');
         expect(request.body.profile_config_sha256)
             .toBe('96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77');
         expect(request.envelope).toMatchObject({
+            version: '3',
             account_id: 'creator.testnet',
             resource: 'job:job-001:1',
             session_public_key: publicKey,
@@ -167,9 +179,71 @@ describe('Livepeer browser upload', () => {
             jobId: 'job-001',
             generation: 1,
             expectedSourceBytes: SOURCE_BYTES,
+            sourceFingerprintSha256: SOURCE_FINGERPRINT,
             sourceType: 'mp4',
-        })).rejects.toThrow('livepeer_session_key_missing');
-        expect(fetchMock).toHaveBeenCalledOnce();
+        })).resolves.toEqual(INTENT);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('signs a lease heartbeat with the same session-only upload key', async () => {
+        const wallet = createWallet();
+        await provisionJobSession(wallet);
+        const fetchMock = vi.fn().mockResolvedValue(Response.json({
+            schema: 'youtick.livepeer-upload-lease.v1',
+            job_id: INTENT.job_id,
+            generation: INTENT.generation,
+            lease_id: INTENT.lease_id,
+            expires_at_ms: '999999999999999',
+            heartbeat_interval_ms: INTENT.heartbeat_interval_ms,
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        await expect(heartbeatLivepeerUploadLease({
+            accountId: 'creator.testnet',
+            intent: INTENT,
+        })).resolves.toBe('999999999999999');
+        const [url, init] = fetchMock.mock.calls[0];
+        expect(url).toBe('https://bridge.youtick.net/v1/upload-heartbeats');
+        const request = JSON.parse(String(init.body));
+        expect(request.body).toEqual({
+            job_id: INTENT.job_id,
+            generation: INTENT.generation,
+            lease_id: INTENT.lease_id,
+        });
+        expect(request.envelope).toMatchObject({
+            route: '/v1/upload-heartbeats',
+            resource: 'job:job-001:1',
+        });
+    });
+
+    it('signs a non-refundable pre-provider cancellation with the job session key', async () => {
+        const wallet = createWallet();
+        const publicKey = await provisionJobSession(wallet);
+        const fetchMock = vi.fn().mockResolvedValue(Response.json({
+            cancelled: true,
+            duplicate: false,
+            refundable: false,
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        await expect(cancelLivepeerUpload({
+            accountId: 'creator.testnet',
+            jobId: 'job-001',
+            generation: 1,
+        })).resolves.toBeUndefined();
+
+        const [url, init] = fetchMock.mock.calls[0];
+        expect(url).toBe('https://bridge.youtick.net/v1/upload-cancellations');
+        expect((init.headers as Record<string, string>)['X-Youtick-Signature'])
+            .toMatch(/^[A-Za-z0-9+/]+=*$/);
+        const request = JSON.parse(String(init.body));
+        expect(request.body).toEqual({ job_id: 'job-001', generation: 1 });
+        expect(request.envelope).toMatchObject({
+            version: '2',
+            route: '/v1/upload-cancellations',
+            resource: 'job:job-001:1',
+            session_public_key: publicKey,
+        });
     });
 
     it.each(['http://localhost:3000', 'http://127.0.0.1:3000'])(
@@ -188,6 +262,7 @@ describe('Livepeer browser upload', () => {
                     jobId: 'job-001',
                     generation: 1,
                     expectedSourceBytes: SOURCE_BYTES,
+                    sourceFingerprintSha256: SOURCE_FINGERPRINT,
                     sourceType: 'mp4',
                 });
 
@@ -248,6 +323,7 @@ describe('Livepeer browser upload', () => {
             jobId: 'job-max',
             generation: 1,
             expectedSourceBytes: 20_000_000_000,
+            sourceFingerprintSha256: SOURCE_FINGERPRINT,
             sourceType: 'mp4',
         })).resolves.toEqual(exactIntent);
         await expect(requestLivepeerUploadIntent({
@@ -255,8 +331,17 @@ describe('Livepeer browser upload', () => {
             jobId: 'job-too-large',
             generation: 1,
             expectedSourceBytes: 20_000_000_001,
+            sourceFingerprintSha256: SOURCE_FINGERPRINT,
             sourceType: 'mp4',
         })).rejects.toThrow('source_limit_exceeded');
+        await expect(requestLivepeerUploadIntent({
+            accountId: 'creator.testnet',
+            jobId: 'job-max',
+            generation: 1,
+            expectedSourceBytes: 20_000_000_000,
+            sourceFingerprintSha256: 'not-a-fingerprint',
+            sourceType: 'mp4',
+        })).rejects.toThrow('invalid_source_fingerprint');
         expect(fetchMock).toHaveBeenCalledOnce();
     });
 
@@ -287,25 +372,43 @@ describe('Livepeer browser upload', () => {
         expect(() => parseLivepeerPriceUsdc('2.0000001')).toThrow('invalid_ticket_price');
     });
 
-    it('restores only the same selected file and job after a wallet redirect', () => {
+    it('restores only the same fingerprinted file and job after a wallet redirect', async () => {
         const file = new File(['video'], 'video.mp4', { type: 'video/mp4', lastModified: 123 });
         const draft = {
+            schema: 'youtick.livepeer-ui-draft.v2' as const,
+            stage: 'payment_pending' as const,
             jobId: 'job-001',
             title: 'Paid video',
             price: '2.00',
             sourceBytes: file.size,
             sourceName: file.name,
             sourceLastModified: file.lastModified,
+            sourceFingerprintSha256: await fingerprintLivepeerSource(file),
         };
         writeLivepeerUploadDraft('creator.testnet', draft);
 
-        expect(readLivepeerUploadDraft('creator.testnet', file)).toEqual(draft);
-        expect(readLivepeerUploadDraft(
+        await expect(readLivepeerUploadDraft('creator.testnet', file)).resolves.toEqual(draft);
+        advanceLivepeerUploadDraftStage('creator.testnet', 'job-001', 'upload_ready');
+        advanceLivepeerUploadDraftStage('creator.testnet', 'job-001', 'authorized');
+        await expect(readLivepeerUploadDraft('creator.testnet', file)).resolves.toEqual({
+            ...draft,
+            stage: 'upload_ready',
+        });
+        writeLivepeerUploadDraft('creator.testnet', draft);
+        await expect(readLivepeerUploadDraft('creator.testnet', file)).resolves.toEqual({
+            ...draft,
+            stage: 'upload_ready',
+        });
+        await expect(readLivepeerUploadDraft(
             'creator.testnet',
             new File(['other'], 'other.mp4', { type: 'video/mp4', lastModified: 456 }),
-        )).toBeNull();
+        )).resolves.toBeNull();
+        await expect(readLivepeerUploadDraft(
+            'creator.testnet',
+            new File(['other'], 'video.mp4', { type: 'video/mp4', lastModified: 123 }),
+        )).resolves.toBeNull();
         clearLivepeerUploadDraft('creator.testnet');
-        expect(readLivepeerUploadDraft('creator.testnet', file)).toBeNull();
+        await expect(readLivepeerUploadDraft('creator.testnet', file)).resolves.toBeNull();
     });
 
     it('uses one sequential 32 MiB TUS stream and does not retry an offset conflict', async () => {
@@ -471,7 +574,7 @@ describe('Livepeer browser upload', () => {
         expect(sessionStorage.length).toBe(1);
     });
 
-    it('clears only the local key after an accepted intent', async () => {
+    it('clears only the selected local key after upload completion', async () => {
         const wallet = createWallet();
         await provisionJobSession(wallet);
         const fetchMock = vi.fn<(
@@ -485,9 +588,11 @@ describe('Livepeer browser upload', () => {
             jobId: 'job-001',
             generation: 1,
             expectedSourceBytes: SOURCE_BYTES,
+            sourceFingerprintSha256: SOURCE_FINGERPRINT,
             sourceType: 'mp4' as const,
         };
         await expect(requestLivepeerUploadIntent(request)).resolves.toEqual(INTENT);
+        clearLivepeerJobSessionKey(request.accountId, request.jobId);
         await expect(requestLivepeerUploadIntent(request)).rejects.toThrow('livepeer_session_key_missing');
         expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce();
     });

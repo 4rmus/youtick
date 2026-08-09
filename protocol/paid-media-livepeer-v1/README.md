@@ -43,7 +43,8 @@ Upload is bound to the bridge-issued opaque TUS resource URL. The client reads
 second asset for a retry, never retries a 409 blindly and never sends parallel
 PATCH requests to one resource. Pause, resume, reconciliation and a same-job
 retry do not charge again. A new job is a new charge. No automatic refund is
-defined.
+defined. The technical-pilot creator upload fee is explicitly non-refundable,
+including creator cancellation and provider failure.
 
 Before requesting wallet approval, the browser calls the non-mutating
 `/v1/upload-preflight` route. It checks the current creator allowlist and
@@ -71,14 +72,33 @@ oracle data disables only the native NEAR rail.
 
 The bridge operator uses a separate finite-allowance FunctionCall key for the
 exact market and only `finalize_livepeer_publication` and
-`suspend_livepeer_sales`. The platform governance account controls add/remove
-and rotation; the runtime never holds a FullAccess key.
+`suspend_livepeer_sales`. A separate guardian can freeze those bridge mutations
+immediately. The technical-pilot admin alone can unfreeze and execute an
+auditable pending bridge rotation; the runtime never holds a FullAccess key.
+Multisig and timelock remain mandatory before mainnet general access.
+
+Market v2 emits `youtick_market@1.0.0` NEP-297 events for job authorization and
+upload-key replacement; publication finalization, sales suspension and
+takedown; entitlement purchase; creator withdrawal start/success/failure;
+platform withdrawal start; bridge governance; and quote-key rotation. Each
+event contains contract/block context and a business idempotency key. Exact
+replays emit no duplicate economic event. Raw upload keys, TUS URLs and provider
+credentials are forbidden; key replacement includes only the public-key hash.
+The fresh-ID design has no migration entrypoint, so `contract_migrated` remains
+unimplemented rather than being emitted inaccurately.
+
+The legacy Access transition contract is bounded for the fresh pilot ID: Play
+grants require an exact resource, global/scope pause affects verification, each
+owner has at most 16 active grants, listing and cleanup are paginated, and new
+issuance can be disabled without deleting existing records. The v2 grant call
+uses one explicit `request` object.
 
 ## Bound identity
 
 Every job, provider and playback message binds the network, contract, job ID,
 generation, creator, profile ID, profile configuration SHA-256 and expected
-source byte count. Upload intents additionally bind the accepted source type.
+source byte count. Upload intents additionally bind the accepted source type
+and the browser's bounded first/last-block source fingerprint.
 Provider identities additionally bind the Livepeer project, asset ID hash and
 playback ID.
 
@@ -118,11 +138,38 @@ The browser sends the base64 Ed25519 signature of the canonical message in
 the media job at the same final NEAR block and atomically rejects a reused
 `device_nonce`.
 
-The initial routes are `POST /v1/upload-intents` and
-`POST /v1/playback-tokens`. Upload binds `job:<job_id>:<generation>`; playback
+The control routes are `POST /v1/upload-intents`,
+`POST /v1/upload-heartbeats`, `POST /v1/upload-cancellations` and
+`POST /v1/playback-tokens`. Upload intent, heartbeat and cancellation bind
+`job:<job_id>:<generation>`; playback
 binds `playback:<job_id>:<generation>:<playback_id>`. Expiry, nonce replay,
 origin, account, session key and final on-chain checks are implemented in the
 disabled Worker and remain mandatory at runtime.
+
+Upload intent, heartbeat, cancellation and legacy playback-token routes consume
+their signed `device_nonce` before downstream capacity/provider/authorization
+work. The persisted nonce expires with the request and is removed in bounded
+alarm batches; replay before expiry fails closed.
+
+Upload-intent requests use control envelope version `3` because their exact
+signed body requires `source_fingerprint_sha256`. Heartbeat, cancellation and
+legacy v1 playback-token requests remain envelope version `2`; routes reject
+the wrong version instead of silently accepting the changed body contract.
+
+Upload intent v2 returns a random lease ID, 30-minute expiry and five-minute
+heartbeat interval. Heartbeats use the same session-only upload key, recheck
+the final on-chain job/key and never create another provider resource. The web
+clears that local key after upload success and preserves it on failure/reload
+for same-resource recovery.
+
+The creator may use that same job-bound session key to cancel only while the
+durable job is `AUTHORIZED` or `LEASED`, before provider creation begins. The
+bridge records terminal `CANCELLED`, idempotently releases any lease and returns
+`refundable: false`. Provider-pending, uploaded and later states reject this
+route; it is not a provider deletion operation. The on-chain paid job remains
+the non-refundable audit record and a later upload requires a new job.
+Repeated cancellation with a fresh nonce is idempotent; replaying an already
+consumed nonce is rejected.
 
 ## Publication tuple
 
@@ -145,14 +192,14 @@ The accepted product policy is:
   playback;
 - `TAKEDOWN` rejects new purchases and playback while preserving entitlement
   history and an auditable action record;
-- closed-canary refunds for permanent provider loss or takedown are manual and
-  recorded; automatic refund logic is deferred until volume justifies it;
+- technical-pilot creator upload fees remain non-refundable after creator
+  cancellation, provider loss or takedown;
 - only the creator may restart an unpublished job; restart increments the
   generation and invalidates older intent, webhook and finalize work;
 - a published job cannot restart and requires a new publication job.
 
 The Worker now persists verified readiness and an idempotent NEAR finalize
-outbox. Remaining takedown, refund and operator runbook work belongs to PR-6;
+outbox. Remaining takedown and operator runbook work belongs to PR-6;
 this protocol text does not claim that those runtime paths are deployed.
 
 ## Playback token request
@@ -162,6 +209,56 @@ resource, job generation, grant, exact playback ID and the on-chain grant's
 origin and device hashes. The Worker must read entitlement and grant at one
 final block, issue short-lived ES256 JWTs, return `Cache-Control: no-store` and
 use the `Livepeer-Jwt` HLS header.
+
+## Stateless playback v2 transition
+
+The separately gated `POST /v2/playback-tokens` route removes the Access grant
+and Durable Object nonce from the playback hot path. It accepts exactly five
+top-level fields: `body`, `certificate`, `certificate_proof`, `request` and
+`request_signature`.
+
+- `body` binds `publication_id`, `generation` and the exact `playback_id`.
+- The `youtick.device-session` version-1 certificate binds network, account,
+  device public key, origin hash, the sole `play` scope, issue time and expiry.
+  Its lifetime is at most eight hours.
+- `certificate_proof` is a NEP-413 wallet signature whose recipient is the
+  configured Market contract. The signing key must still exist as a final
+  FullAccess key; removing it invalidates the certificate.
+- The `youtick.playback-request` version-1 envelope binds network, Market
+  contract, account, origin, request nonce, expiry and SHA-256 hashes of both
+  the canonical body and certificate. The device session key signs the ten
+  fields in their schema order, joined by newline.
+- The authorizer checks the exact final publication tuple and a same-block
+  entitlement. `ACTIVE` and `SALES_SUSPENDED` allow existing entitlement;
+  `TAKEDOWN` and every uncertain read fail closed.
+- The authorizer also checks Livepeer playback metadata and requires a `vod`
+  resource protected by the `jwt` policy. Provider uncertainty fails closed.
+
+The route issues an ES256 playback-ID-bound JWT lasting at most 180 seconds,
+returns `Cache-Control: no-store`, does not call a Durable Object and makes no
+persistent write. Replaying the same still-valid signed request does not expand
+authority: it repeats final checks for the same account/origin/publication and
+returns another bounded token. This is deliberate stateless behavior, not a
+claim of one-time request consumption.
+
+The bounded per-isolate cache holds at most 1,024 entries: publication and
+provider policy for 30 seconds, wallet-certificate verification for 60 seconds,
+positive entitlement for five minutes and negative entitlement for three
+seconds. A fully warm authorization uses zero NEAR/provider calls. Takedown and
+wallet-key removal are rechecked at their 30/60-second bounds respectively.
+
+The browser keeps the generated device secret only in memory and clears it on
+explicit disconnect or page reload. V1 remains an independent closed fallback;
+v2 has no deployment evidence. The local opt-in abuse test rejects 100,000
+wrong-origin requests without external calls, Durable Object access or cache
+growth.
+
+The default-off shadow transition permits one optional `shadow_v2` field on a
+legacy wire request. That field is the exact independently signed five-field v2
+request above and is not covered by, nor able to modify, the legacy envelope.
+The Worker removes it before Durable Object forwarding, returns only the legacy
+result, and evaluates the v2 decision in background without JWT issuance or
+persistent state. Logs contain only bounded decision and reason-code enums.
 
 ## Validation
 

@@ -14,9 +14,10 @@ describe('RPC failover endpoints', () => {
     it('uses the same-origin mainnet RPC proxy for browser calls', async () => {
         process.env.NEXT_PUBLIC_NEAR_NETWORK = 'mainnet';
 
-        const { getPrimaryRpcUrl, RPC_ENDPOINTS } = await import('@/lib/rpc-failover');
+        const { getBroadcastRpcUrl, getPrimaryRpcUrl, RPC_ENDPOINTS } = await import('@/lib/rpc-failover');
 
         expect(getPrimaryRpcUrl()).toBe('https://youtick.net/api/near-rpc');
+        expect(getBroadcastRpcUrl()).toBe('https://youtick.net/api/near-rpc/broadcast');
         expect(RPC_ENDPOINTS).toEqual(['/api/near-rpc']);
         expect(RPC_ENDPOINTS).not.toContain('https://free.rpc.fastnear.com');
         expect(RPC_ENDPOINTS).not.toContain('https://rpc.mainnet.near.org');
@@ -25,9 +26,10 @@ describe('RPC failover endpoints', () => {
     it('uses the same-origin testnet RPC proxy for browser calls', async () => {
         process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
 
-        const { getPrimaryRpcUrl, RPC_ENDPOINTS } = await import('@/lib/rpc-failover');
+        const { getBroadcastRpcUrl, getPrimaryRpcUrl, RPC_ENDPOINTS } = await import('@/lib/rpc-failover');
 
         expect(getPrimaryRpcUrl()).toBe('https://youtick.net/api/near-rpc');
+        expect(getBroadcastRpcUrl()).toBe('https://youtick.net/api/near-rpc/broadcast');
         expect(RPC_ENDPOINTS).toEqual(['/api/near-rpc']);
         expect(RPC_ENDPOINTS).not.toContain('https://test.rpc.fastnear.com');
         expect(RPC_ENDPOINTS).not.toContain('https://rpc.testnet.near.org');
@@ -39,9 +41,10 @@ describe('RPC failover endpoints', () => {
         };
         process.env.NEXT_PUBLIC_NEAR_NETWORK = 'mainnet';
 
-        const { getPrimaryRpcUrl } = await import('@/lib/rpc-failover');
+        const { getBroadcastRpcUrl, getPrimaryRpcUrl } = await import('@/lib/rpc-failover');
 
         expect(getPrimaryRpcUrl()).toBe('https://preview.youtick-static.pages.dev/api/near-rpc');
+        expect(getBroadcastRpcUrl()).toBe('https://preview.youtick-static.pages.dev/api/near-rpc/broadcast');
     });
 
     it('does not retry the same RPC proxy when no alternate endpoint exists', async () => {

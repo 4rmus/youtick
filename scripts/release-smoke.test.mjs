@@ -124,6 +124,7 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
         ['/v1/operations/admission-reopen', false],
         ['/v1/upload-intents', true],
         ['/v1/playback-tokens', true],
+        ['/v2/playback-tokens', true],
         ['/v1/creator-fee-quotes/near', true],
     ]);
     const seen = [];
@@ -235,6 +236,7 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
             'bridge:POST:/v1/operations/admission-reopen',
             'bridge:POST:/v1/upload-intents',
             'bridge:POST:/v1/playback-tokens',
+            'bridge:POST:/v2/playback-tokens',
             'bridge:POST:/v1/creator-fee-quotes/near',
             'bridge:OPTIONS:/v1/upload-intents',
             'bridge:OPTIONS:/v1/upload-intents',

@@ -22,12 +22,20 @@ function createState(): TestState {
     let transactionTail = Promise.resolve();
     const get = async <T>(key: string) => structuredClone(values.get(key)) as T | undefined;
     const put = async (key: string, value: unknown) => values.set(key, structuredClone(value));
+    const list = async (options?: { limit?: number }) => new Map(
+        [...values.entries()].slice(0, options?.limit ?? values.size),
+    );
     const storage = {
         get,
         put,
+        list,
         delete: async (key: string) => values.delete(key),
-        transaction: async <T>(callback: (transaction: { get: typeof get; put: typeof put }) => Promise<T>) => {
-            const run = transactionTail.then(() => callback({ get, put }));
+        transaction: async <T>(callback: (transaction: {
+            get: typeof get;
+            put: typeof put;
+            list: typeof list;
+        }) => Promise<T>) => {
+            const run = transactionTail.then(() => callback({ get, put, list }));
             transactionTail = run.then(() => undefined, () => undefined);
             return run;
         },
@@ -61,6 +69,7 @@ async function createEnv(): Promise<{ env: Env; verifyKey: CryptoKey; testState:
             timestamp: '2026-08-08T00:00:00.000Z',
         },
         LIVEPEER_BRIDGE_ENABLED: 'true',
+        LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: 'true',
         ALLOWED_ORIGINS: ORIGIN,
         NEAR_NETWORK: 'testnet',
         NEAR_RPC_URL: RPC_URL,
@@ -274,6 +283,20 @@ function decodePart(value: string): Record<string, unknown> {
 describe('Livepeer bridge PR-5 playback tokens', () => {
     beforeEach(() => vi.restoreAllMocks());
 
+    it('fails closed when playback issuance is disabled', async () => {
+        const { env } = await createEnv();
+        env.LIVEPEER_PLAYBACK_ISSUANCE_ENABLED = 'false';
+        const signed = await playbackRequest();
+        const rpc = vi.fn();
+        vi.stubGlobal('fetch', rpc);
+
+        const response = await handler.fetch(signed.request, env);
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'control_plane_disabled' });
+        expect(rpc).not.toHaveBeenCalled();
+    });
+
     it('uses one final block and returns a grant-bounded ES256 token with no-store', async () => {
         const { env, verifyKey } = await createEnv();
         const signed = await playbackRequest();
@@ -319,6 +342,42 @@ describe('Livepeer bridge PR-5 playback tokens', () => {
         expect(await replay.json()).toEqual({ error: 'device_nonce_replayed' });
     });
 
+    it('returns the legacy result before measuring a v2 shadow mismatch', async () => {
+        const { env } = await createEnv();
+        env.LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED = 'true';
+        env.LIVEPEER_API_KEY = 'livepeer-api-key-for-shadow-test';
+        const signed = await playbackRequest();
+        const payload = await signed.request.json() as Record<string, unknown>;
+        const request = new Request(signed.request.url, {
+            method: 'POST',
+            headers: signed.request.headers,
+            body: JSON.stringify({ ...payload, shadow_v2: { invalid: true } }),
+        });
+        vi.stubGlobal('fetch', playbackRpc(signed));
+        const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const pending: Promise<unknown>[] = [];
+        const context = {
+            waitUntil: (promise: Promise<unknown>) => pending.push(promise),
+        } as unknown as ExecutionContext;
+
+        const response = await handler.fetch(request, env, context);
+
+        expect(response.status).toBe(200);
+        expect(pending).toHaveLength(1);
+        await Promise.all(pending);
+        const events = info.mock.calls.map(([value]) => JSON.parse(String(value)));
+        expect(events).toContainEqual({
+            event: 'playback_shadow_authorization_compared',
+            details: {
+                legacyDecision: 'ALLOW',
+                legacyReasonCode: 'authorized',
+                v2Decision: 'DENY',
+                v2ReasonCode: 'invalid_playback_v2_request',
+                decisionMatch: false,
+            },
+        });
+    });
+
     it.each([
         ['account', { grant: { owner_id: 'other.testnet' } }],
         ['origin', { grant: { origin_hash: 'b'.repeat(64) } }],
@@ -329,14 +388,26 @@ describe('Livepeer bridge PR-5 playback tokens', () => {
         ['revoked', { grant: { revoked: true } }],
         ['expired', { grant: { expires_at_ms: Date.now() - 1 } }],
         ['entitlement', { entitlement: false }],
-    ])('fails closed on wrong %s binding', async (_name, override) => {
+    ])('fails closed on wrong %s binding', async (name, override) => {
         const { env } = await createEnv();
         const signed = await playbackRequest();
         vi.stubGlobal('fetch', playbackRpc({ ...signed, ...override }));
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
         const response = await handler.fetch(signed.request, env);
         expect(response.status).toBe(403);
         expect(await response.json()).toEqual({ error: 'playback_denied' });
+        const warnings = warning.mock.calls.map(([value]) => JSON.parse(String(value)));
+        if (name === 'takedown') {
+            expect(warnings).toContainEqual({
+                event: 'takedown_playback_token_attempted',
+                details: { protocol: 'LEGACY_SESSION_GRANT' },
+            });
+        } else {
+            expect(warnings).not.toContainEqual(expect.objectContaining({
+                event: 'takedown_playback_token_attempted',
+            }));
+        }
     });
 
     it('shortens the token to the remaining on-chain grant lifetime', async () => {

@@ -17,6 +17,7 @@ import {
 import { ensureSessionGrant } from '@/lib/access-grants';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
+import { FEATURE_FLAGS } from '@/lib/constants';
 import {
     createLivepeerHlsConfig,
     startLivepeerPlaybackSession,
@@ -64,9 +65,15 @@ export function LivepeerPlayer({
             if (!grant) throw new Error('livepeer_play_grant_missing');
         };
 
+        const preparePlayback = async () => {
+            const wallet = await getWallet();
+            if (!FEATURE_FLAGS.enablePlaybackAuthorizerV2) await ensurePlayGrant();
+            return wallet;
+        };
+
         void ensurePlaybackSupport()
-            .then(ensurePlayGrant)
-            .then(() => {
+            .then(preparePlayback)
+            .then((wallet) => {
                 if (disposed) throw new Error('livepeer_playback_cancelled');
                 return startLivepeerPlaybackSession({
                     accountId,
@@ -90,7 +97,7 @@ export function LivepeerPlayer({
                         setSrc(null);
                         setError(playbackErrorMessage(nextError));
                     },
-                });
+                }, wallet);
             })
             .then((session) => {
                 if (disposed) session.destroy();

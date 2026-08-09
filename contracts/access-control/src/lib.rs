@@ -2,6 +2,13 @@ use near_sdk::borsh::BorshSerialize;
 use near_sdk::collections::{LazyOption, LookupMap, UnorderedSet};
 use near_sdk::{env, near, require, AccountId, BorshStorageKey, PanicOnDefault, PublicKey};
 
+pub const ACCESS_STATE_VERSION: u8 = 2;
+pub const MAX_GRANTS_PER_OWNER: usize = 16;
+pub const MAX_GRANT_PAGE_SIZE: u32 = 16;
+pub const MAX_RESOURCE_ID_BYTES: usize = 128;
+pub const MAX_BINDING_BYTES: usize = 128;
+pub const MAX_SESSION_PUBLIC_KEY_BYTES: usize = 64;
+
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SessionScope {
@@ -38,10 +45,32 @@ pub struct SessionGrant {
 }
 
 #[near(serializers = [json])]
+pub struct SessionGrantRequest {
+    pub target_owner_id: AccountId,
+    pub session_pk: String,
+    pub scope: SessionScope,
+    pub resource_id: Option<String>,
+    pub ttl_ms: u64,
+    pub origin_hash: Option<String>,
+    pub device_hash: Option<String>,
+    pub session_pok: String,
+}
+
+#[near(serializers = [json])]
 pub struct SessionGrantVerification {
     pub valid: bool,
     pub owner_id: Option<AccountId>,
     pub reason: Option<String>,
+}
+
+#[near(serializers = [json])]
+pub struct AccessContractState {
+    pub state_version: u8,
+    pub owner_id: AccountId,
+    pub pending_owner_id: Option<AccountId>,
+    pub market_contract_id: AccountId,
+    pub paused: bool,
+    pub grant_issuance_enabled: bool,
 }
 
 #[derive(BorshSerialize, BorshStorageKey)]
@@ -78,6 +107,9 @@ pub enum TimelockAction {
     ProposeOwner {
         proposed_owner_id: AccountId,
     },
+    SetGrantIssuance {
+        enabled: bool,
+    },
 }
 
 #[near(serializers = [borsh, json])]
@@ -91,6 +123,7 @@ pub struct TimelockProposal {
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct AccessControlContract {
+    state_version: u8,
     owner_id: AccountId,
     pending_owner_id: Option<AccountId>,
     market_contract_id: AccountId,
@@ -101,6 +134,7 @@ pub struct AccessControlContract {
     paused: LazyOption<bool>,
     timelocks: LookupMap<u64, TimelockProposal>,
     timelock_counter: LazyOption<u64>,
+    grant_issuance_enabled: bool,
 }
 
 #[near]
@@ -108,6 +142,7 @@ impl AccessControlContract {
     #[init]
     pub fn new(owner_id: AccountId, market_contract_id: AccountId) -> Self {
         let mut contract = Self {
+            state_version: ACCESS_STATE_VERSION,
             owner_id,
             pending_owner_id: None,
             market_contract_id,
@@ -118,6 +153,7 @@ impl AccessControlContract {
             paused: LazyOption::new(StorageKey::ContractPaused, Some(&false)),
             timelocks: LookupMap::new(StorageKey::Timelocks),
             timelock_counter: LazyOption::new(StorageKey::TimelockCounter, Some(&0)),
+            grant_issuance_enabled: true,
         };
 
         contract.set_scope_policy_internal(
@@ -149,30 +185,21 @@ impl AccessControlContract {
         id
     }
 
-    pub fn issue_session_grant(
-        &mut self,
-        target_owner_id: AccountId,
-        session_pk: String,
-        scope: SessionScope,
-        resource_id: Option<String>,
-        ttl_ms: u64,
-        origin_hash: Option<String>,
-        device_hash: Option<String>,
-        session_pok: String,
-    ) -> SessionGrant {
+    pub fn issue_session_grant(&mut self, request: SessionGrantRequest) -> SessionGrant {
         self.assert_not_paused();
+        require!(self.grant_issuance_enabled, "Grant issuance is disabled");
 
         // Users can issue their own grants. Admin contracts can issue on behalf of
         // a user, but every path must prove control of the ephemeral session key.
         let caller = env::predecessor_account_id();
         require!(
-            caller == target_owner_id
+            caller == request.target_owner_id
                 || caller == self.owner_id
                 || caller == self.market_contract_id,
             "Unauthorized: caller cannot issue session grants",
         );
 
-        let scope_key = scope.as_key().to_string();
+        let scope_key = request.scope.as_key().to_string();
         require!(!self.paused_scopes.contains(&scope_key), "Scope is paused");
 
         let policy = self
@@ -180,33 +207,63 @@ impl AccessControlContract {
             .get(&scope_key)
             .expect("Scope policy not found");
 
-        require!(ttl_ms > 0, "TTL must be greater than zero");
-        require!(ttl_ms <= policy.max_ttl_ms, "TTL exceeds scope policy");
+        require!(request.ttl_ms > 0, "TTL must be greater than zero");
+        require!(
+            request.ttl_ms <= policy.max_ttl_ms,
+            "TTL exceeds scope policy"
+        );
+        require!(
+            !request.session_pk.is_empty()
+                && request.session_pk.len() <= MAX_SESSION_PUBLIC_KEY_BYTES,
+            "Session public key is too long"
+        );
+        let resource = request
+            .resource_id
+            .as_ref()
+            .expect("Play resource is required");
+        require!(!resource.is_empty(), "Play resource is required");
+        require!(
+            resource.len() <= MAX_RESOURCE_ID_BYTES,
+            "Resource ID is too long"
+        );
         if policy.require_origin {
-            require!(origin_hash.is_some(), "Origin binding is required");
+            require!(request.origin_hash.is_some(), "Origin binding is required");
         }
         if policy.require_device {
-            require!(device_hash.is_some(), "Device binding is required");
+            require!(request.device_hash.is_some(), "Device binding is required");
         }
+        Self::assert_bounded_binding(request.origin_hash.as_ref(), "Origin binding is too long");
+        Self::assert_bounded_binding(request.device_hash.as_ref(), "Device binding is too long");
 
-        self.assert_session_key_proof(
-            &caller,
-            &target_owner_id,
-            &session_pk,
-            &scope,
-            resource_id.as_ref(),
+        self.assert_session_key_proof(&caller, &request);
+
+        let SessionGrantRequest {
+            target_owner_id: owner_id,
+            session_pk,
+            scope,
+            resource_id,
             ttl_ms,
-            origin_hash.as_ref(),
-            device_hash.as_ref(),
-            &session_pok,
-        );
+            origin_hash,
+            device_hash,
+            session_pok: _,
+        } = request;
 
-        let owner_id = target_owner_id;
         if let Some(existing) = self.grants.get(&session_pk) {
             require!(
-                existing.owner_id == owner_id || caller == self.owner_id,
+                existing.owner_id == owner_id,
                 "Session key already belongs to another owner",
             );
+        }
+
+        self.cleanup_owner_grants(&owner_id, MAX_GRANTS_PER_OWNER);
+        let mut owner_grants = self.grants_by_owner.get(&owner_id).unwrap_or_default();
+        if !owner_grants.contains(&session_pk) {
+            require!(
+                owner_grants.len() < MAX_GRANTS_PER_OWNER,
+                "Active grant limit reached"
+            );
+            owner_grants.push(session_pk.clone());
+            self.grants_by_owner.insert(&owner_id, &owner_grants);
         }
 
         let grant = SessionGrant {
@@ -221,12 +278,6 @@ impl AccessControlContract {
         };
 
         self.grants.insert(&session_pk, &grant);
-
-        let mut owner_grants = self.grants_by_owner.get(&owner_id).unwrap_or_default();
-        if !owner_grants.contains(&session_pk) {
-            owner_grants.push(session_pk);
-            self.grants_by_owner.insert(&owner_id, &owner_grants);
-        }
 
         grant
     }
@@ -324,6 +375,15 @@ impl AccessControlContract {
         self.pending_owner_id = Some(proposed_owner_id);
     }
 
+    pub fn set_grant_issuance(&mut self, enabled: bool) {
+        let _ = enabled;
+        Self::panic_timelock_required()
+    }
+
+    fn set_grant_issuance_timelocked(&mut self, enabled: bool) {
+        self.grant_issuance_enabled = enabled;
+    }
+
     pub fn accept_ownership(&mut self) {
         let pending = self.pending_owner_id.take();
         require!(pending.is_some(), "No pending ownership transfer");
@@ -339,13 +399,41 @@ impl AccessControlContract {
         self.grants.get(&session_pk)
     }
 
-    pub fn list_session_grants(&self, owner_id: AccountId) -> Vec<SessionGrant> {
+    pub fn list_session_grants(
+        &self,
+        owner_id: AccountId,
+        from_index: Option<u32>,
+        limit: Option<u32>,
+    ) -> Vec<SessionGrant> {
+        let limit = limit.unwrap_or(MAX_GRANT_PAGE_SIZE);
+        require!(limit > 0, "Page size must be positive");
+        require!(limit <= MAX_GRANT_PAGE_SIZE, "Page size is too large");
         self.grants_by_owner
             .get(&owner_id)
             .unwrap_or_default()
             .into_iter()
+            .skip(from_index.unwrap_or(0) as usize)
+            .take(limit as usize)
             .filter_map(|session_pk| self.grants.get(&session_pk))
             .collect()
+    }
+
+    pub fn cleanup_session_grants(&mut self, owner_id: AccountId, limit: Option<u32>) -> u32 {
+        let limit = limit.unwrap_or(MAX_GRANT_PAGE_SIZE);
+        require!(limit > 0, "Cleanup limit must be positive");
+        require!(limit <= MAX_GRANT_PAGE_SIZE, "Cleanup limit is too large");
+        self.cleanup_owner_grants(&owner_id, limit as usize) as u32
+    }
+
+    pub fn get_contract_state(&self) -> AccessContractState {
+        AccessContractState {
+            state_version: self.state_version,
+            owner_id: self.owner_id.clone(),
+            pending_owner_id: self.pending_owner_id.clone(),
+            market_contract_id: self.market_contract_id.clone(),
+            paused: self.is_paused(),
+            grant_issuance_enabled: self.grant_issuance_enabled,
+        }
     }
 
     pub fn get_scope_policy(&self, scope: SessionScope) -> Option<ScopePolicy> {
@@ -360,6 +448,20 @@ impl AccessControlContract {
         origin_hash: Option<String>,
         device_hash: Option<String>,
     ) -> SessionGrantVerification {
+        if self.is_paused() {
+            return SessionGrantVerification {
+                valid: false,
+                owner_id: None,
+                reason: Some("Contract is paused".to_string()),
+            };
+        }
+        if self.paused_scopes.contains(&scope.as_key().to_string()) {
+            return SessionGrantVerification {
+                valid: false,
+                owner_id: None,
+                reason: Some("Scope is paused".to_string()),
+            };
+        }
         let Some(grant) = self.grants.get(&session_pk) else {
             return SessionGrantVerification {
                 valid: false,
@@ -429,12 +531,20 @@ impl AccessControlContract {
         scope: SessionScope,
         resource_id: Option<String>,
     ) -> bool {
-        self.list_session_grants(owner_id).into_iter().any(|grant| {
-            !grant.revoked
-                && current_time_ms() <= grant.expires_at_ms
-                && grant.scope == scope
-                && (grant.resource_id.is_none() || grant.resource_id == resource_id)
-        })
+        if self.is_paused() || self.paused_scopes.contains(&scope.as_key().to_string()) {
+            return false;
+        }
+        self.grants_by_owner
+            .get(&owner_id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|session_pk| self.grants.get(&session_pk))
+            .any(|grant| {
+                !grant.revoked
+                    && current_time_ms() <= grant.expires_at_ms
+                    && grant.scope == scope
+                    && grant.resource_id == resource_id
+            })
     }
 
     pub fn can_play(&self, owner_id: AccountId, resource_id: Option<String>) -> bool {
@@ -499,6 +609,9 @@ impl AccessControlContract {
             TimelockAction::ProposeOwner { proposed_owner_id } => {
                 self.propose_owner_timelocked(proposed_owner_id);
             }
+            TimelockAction::SetGrantIssuance { enabled } => {
+                self.set_grant_issuance_timelocked(enabled);
+            }
         }
         env::log_str(&format!("Timelock proposal {} executed", id));
     }
@@ -523,32 +636,46 @@ impl AccessControlContract {
             .insert(&scope.as_key().to_string(), &policy);
     }
 
-    fn assert_session_key_proof(
-        &self,
-        caller: &AccountId,
-        target_owner_id: &AccountId,
-        session_pk: &str,
-        scope: &SessionScope,
-        resource_id: Option<&String>,
-        ttl_ms: u64,
-        origin_hash: Option<&String>,
-        device_hash: Option<&String>,
-        session_pok: &str,
-    ) {
-        let public_key = Self::parse_ed25519_public_key(session_pk)
+    fn cleanup_owner_grants(&mut self, owner_id: &AccountId, limit: usize) -> usize {
+        let session_keys = self.grants_by_owner.get(owner_id).unwrap_or_default();
+        let mut kept = Vec::with_capacity(session_keys.len());
+        let mut removed = 0;
+
+        for session_pk in session_keys {
+            let cleanup_eligible = self
+                .grants
+                .get(&session_pk)
+                .map(|grant| grant.revoked || current_time_ms() > grant.expires_at_ms)
+                .unwrap_or(true);
+            if cleanup_eligible && removed < limit {
+                self.grants.remove(&session_pk);
+                removed += 1;
+            } else {
+                kept.push(session_pk);
+            }
+        }
+
+        if kept.is_empty() {
+            self.grants_by_owner.remove(owner_id);
+        } else {
+            self.grants_by_owner.insert(owner_id, &kept);
+        }
+        removed
+    }
+
+    fn assert_bounded_binding(value: Option<&String>, message: &str) {
+        if let Some(value) = value {
+            require!(!value.is_empty(), message);
+            require!(value.len() <= MAX_BINDING_BYTES, message);
+        }
+    }
+
+    fn assert_session_key_proof(&self, caller: &AccountId, request: &SessionGrantRequest) {
+        let public_key = Self::parse_ed25519_public_key(&request.session_pk)
             .unwrap_or_else(|| env::panic_str("Invalid session public key"));
-        let signature = Self::parse_hex_signature(session_pok)
+        let signature = Self::parse_hex_signature(&request.session_pok)
             .unwrap_or_else(|| env::panic_str("Invalid session proof"));
-        let message = Self::session_pok_message(
-            caller,
-            target_owner_id,
-            session_pk,
-            scope,
-            resource_id,
-            ttl_ms,
-            origin_hash,
-            device_hash,
-        );
+        let message = Self::session_pok_message(caller, request);
 
         require!(
             env::ed25519_verify(&signature, message.as_bytes(), &public_key),
@@ -556,16 +683,7 @@ impl AccessControlContract {
         );
     }
 
-    fn session_pok_message(
-        caller: &AccountId,
-        target_owner_id: &AccountId,
-        session_pk: &str,
-        scope: &SessionScope,
-        resource_id: Option<&String>,
-        ttl_ms: u64,
-        origin_hash: Option<&String>,
-        device_hash: Option<&String>,
-    ) -> String {
+    fn session_pok_message(caller: &AccountId, request: &SessionGrantRequest) -> String {
         [
             "youtick-session-grant-v1".to_string(),
             format!(
@@ -573,21 +691,24 @@ impl AccessControlContract {
                 Self::hex_field(env::current_account_id().as_str())
             ),
             format!("caller={}", Self::hex_field(caller.as_str())),
-            format!("target_owner={}", Self::hex_field(target_owner_id.as_str())),
-            format!("session_pk={}", Self::hex_field(session_pk)),
-            format!("scope={}", scope.as_key()),
+            format!(
+                "target_owner={}",
+                Self::hex_field(request.target_owner_id.as_str())
+            ),
+            format!("session_pk={}", Self::hex_field(&request.session_pk)),
+            format!("scope={}", request.scope.as_key()),
             format!(
                 "resource_id={}",
-                Self::hex_optional(resource_id.map(|value| value.as_str()))
+                Self::hex_optional(request.resource_id.as_deref())
             ),
-            format!("ttl_ms={}", ttl_ms),
+            format!("ttl_ms={}", request.ttl_ms),
             format!(
                 "origin_hash={}",
-                Self::hex_optional(origin_hash.map(|value| value.as_str()))
+                Self::hex_optional(request.origin_hash.as_deref())
             ),
             format!(
                 "device_hash={}",
-                Self::hex_optional(device_hash.map(|value| value.as_str()))
+                Self::hex_optional(request.device_hash.as_deref())
             ),
         ]
         .join("\n")
@@ -611,9 +732,9 @@ impl AccessControlContract {
         }
 
         let mut signature = [0u8; 64];
-        for index in 0..64 {
+        for (index, byte) in signature.iter_mut().enumerate() {
             let start = index * 2;
-            signature[index] = u8::from_str_radix(&value[start..start + 2], 16).ok()?;
+            *byte = u8::from_str_radix(&value[start..start + 2], 16).ok()?;
         }
         Some(signature)
     }
@@ -668,35 +789,34 @@ mod tests {
         output
     }
 
-    fn session_key_and_proof(
+    fn session_request(
         seed: &str,
         caller: &str,
         target_owner_id: &str,
-        scope: SessionScope,
-        resource_id: Option<&String>,
+        resource_id: Option<String>,
         ttl_ms: u64,
-        origin_hash: Option<&String>,
-        device_hash: Option<&String>,
-    ) -> (String, String) {
+        origin_hash: Option<String>,
+        device_hash: Option<String>,
+    ) -> SessionGrantRequest {
         let secret_key = SecretKey::from_seed(KeyType::ED25519, seed);
-        let session_pk = secret_key.public_key().to_string();
-        let message = AccessControlContract::session_pok_message(
-            &account(caller),
-            &account(target_owner_id),
-            &session_pk,
-            &scope,
+        let mut request = SessionGrantRequest {
+            target_owner_id: account(target_owner_id),
+            session_pk: secret_key.public_key().to_string(),
+            scope: SessionScope::Play,
             resource_id,
             ttl_ms,
             origin_hash,
             device_hash,
-        );
+            session_pok: String::new(),
+        };
+        let message = AccessControlContract::session_pok_message(&account(caller), &request);
         let signature = secret_key.sign(message.as_bytes());
         let signature_bytes = match signature {
             Signature::ED25519(signature) => signature.to_bytes(),
             Signature::SECP256K1(_) => unreachable!(),
         };
-
-        (session_pk, bytes_to_hex(&signature_bytes))
+        request.session_pok = bytes_to_hex(&signature_bytes);
+        request
     }
 
     #[test]
@@ -709,27 +829,17 @@ mod tests {
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
         let ttl_ms = 60_000;
-        let (session_pk, session_pok) = session_key_and_proof(
+        let request = session_request(
             "play-grant",
             "market.testnet",
             "market.testnet",
-            SessionScope::Play,
-            resource_id.as_ref(),
-            ttl_ms,
-            origin_hash.as_ref(),
-            device_hash.as_ref(),
-        );
-
-        let grant = contract.issue_session_grant(
-            account("market.testnet"),
-            session_pk,
-            SessionScope::Play,
             resource_id,
             ttl_ms,
             origin_hash,
             device_hash,
-            session_pok,
         );
+
+        let grant = contract.issue_session_grant(request);
 
         assert_eq!(grant.owner_id, account("market.testnet"));
         assert!(contract.can_play(account("market.testnet"), Some("job-1".to_string())));
@@ -745,27 +855,17 @@ mod tests {
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
         let ttl_ms = 11 * 60 * 1000;
-        let (session_pk, session_pok) = session_key_and_proof(
+        let request = session_request(
             "long-grant",
             "market.testnet",
             "market.testnet",
-            SessionScope::Play,
-            None,
-            ttl_ms,
-            origin_hash.as_ref(),
-            device_hash.as_ref(),
-        );
-
-        contract.issue_session_grant(
-            account("market.testnet"),
-            session_pk,
-            SessionScope::Play,
             None,
             ttl_ms,
             origin_hash,
             device_hash,
-            session_pok,
         );
+
+        contract.issue_session_grant(request);
     }
 
     #[test]
@@ -778,27 +878,18 @@ mod tests {
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
         let ttl_ms = 60_000;
-        let (session_pk, session_pok) = session_key_and_proof(
+        let request = session_request(
             "revoke-grant",
             "market.testnet",
             "market.testnet",
-            SessionScope::Play,
-            resource_id.as_ref(),
-            ttl_ms,
-            origin_hash.as_ref(),
-            device_hash.as_ref(),
-        );
-
-        contract.issue_session_grant(
-            account("market.testnet"),
-            session_pk.clone(),
-            SessionScope::Play,
             resource_id,
             ttl_ms,
             origin_hash,
             device_hash,
-            session_pok,
         );
+        let session_pk = request.session_pk.clone();
+
+        contract.issue_session_grant(request);
         contract.revoke_session_grant(session_pk);
         assert!(!contract.can_play(account("market.testnet"), Some("job-1".to_string())));
 
@@ -825,27 +916,17 @@ mod tests {
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
         let ttl_ms = 60_000;
-        let (session_pk, session_pok) = session_key_and_proof(
+        let request = session_request(
             "registry-grant",
             "registry.testnet",
             "alice.testnet",
-            SessionScope::Play,
-            resource_id.as_ref(),
-            ttl_ms,
-            origin_hash.as_ref(),
-            device_hash.as_ref(),
-        );
-
-        contract.issue_session_grant(
-            account("alice.testnet"),
-            session_pk,
-            SessionScope::Play,
             resource_id,
             ttl_ms,
             origin_hash,
             device_hash,
-            session_pok,
         );
+
+        contract.issue_session_grant(request);
     }
 
     #[test]
@@ -858,27 +939,17 @@ mod tests {
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
         let ttl_ms = 60_000;
-        let (session_pk, session_pok) = session_key_and_proof(
+        let request = session_request(
             "alice-grant",
             "alice.testnet",
             "alice.testnet",
-            SessionScope::Play,
-            resource_id.as_ref(),
-            ttl_ms,
-            origin_hash.as_ref(),
-            device_hash.as_ref(),
-        );
-
-        let grant = contract.issue_session_grant(
-            account("alice.testnet"),
-            session_pk,
-            SessionScope::Play,
             resource_id,
             ttl_ms,
             origin_hash,
             device_hash,
-            session_pok,
         );
+
+        let grant = contract.issue_session_grant(request);
 
         assert_eq!(grant.owner_id, account("alice.testnet"));
         assert!(contract.can_play(account("alice.testnet"), Some("job-1".to_string())));
@@ -895,37 +966,27 @@ mod tests {
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
         let ttl_ms = 60_000;
-        let (session_pk, _) = session_key_and_proof(
+        let mut request = session_request(
             "alice-grant",
             "alice.testnet",
             "alice.testnet",
-            SessionScope::Play,
-            resource_id.as_ref(),
+            resource_id.clone(),
             ttl_ms,
-            origin_hash.as_ref(),
-            device_hash.as_ref(),
+            origin_hash.clone(),
+            device_hash.clone(),
         );
-        let (_, wrong_pok) = session_key_and_proof(
+        let wrong_request = session_request(
             "other-grant",
             "alice.testnet",
             "alice.testnet",
-            SessionScope::Play,
-            resource_id.as_ref(),
-            ttl_ms,
-            origin_hash.as_ref(),
-            device_hash.as_ref(),
-        );
-
-        contract.issue_session_grant(
-            account("alice.testnet"),
-            session_pk,
-            SessionScope::Play,
             resource_id,
             ttl_ms,
             origin_hash,
             device_hash,
-            wrong_pok,
         );
+        request.session_pok = wrong_request.session_pok;
+
+        contract.issue_session_grant(request);
     }
 
     #[test]
@@ -948,9 +1009,21 @@ mod tests {
     #[test]
     fn contract_pause_blocks_session_grant() {
         let owner = account("owner.testnet");
-        testing_env!(context("owner.testnet", 1_000).build());
+        testing_env!(context("alice.testnet", 500).build());
         let mut contract = AccessControlContract::new(owner.clone(), account("market.testnet"));
+        let existing_request = session_request(
+            "existing-before-pause",
+            "alice.testnet",
+            "alice.testnet",
+            Some("job-1".to_string()),
+            60_000,
+            Some("origin".to_string()),
+            Some("device".to_string()),
+        );
+        let existing_pk = existing_request.session_pk.clone();
+        contract.issue_session_grant(existing_request);
 
+        testing_env!(context("owner.testnet", 1_000).build());
         let id = contract.propose_action(TimelockAction::PauseContract);
 
         let builder = context("owner.testnet", 1_000 + TIMELOCK_DELAY_NS / 1_000_000);
@@ -958,13 +1031,22 @@ mod tests {
         contract.execute_action(id);
 
         assert!(contract.is_paused());
+        let verification = contract.verify_session_grant(
+            existing_pk,
+            SessionScope::Play,
+            Some("job-1".to_string()),
+            Some("origin".to_string()),
+            Some("device".to_string()),
+        );
+        assert!(!verification.valid);
+        assert_eq!(verification.reason.as_deref(), Some("Contract is paused"));
+        assert!(!contract.can_play(account("alice.testnet"), Some("job-1".to_string())));
 
         testing_env!(context("alice.testnet", 2_000).build());
-        let (session_pk, session_pok) = session_key_and_proof(
+        let request = session_request(
             "paused-grant",
             "alice.testnet",
             "alice.testnet",
-            SessionScope::Play,
             None,
             60_000,
             None,
@@ -972,17 +1054,262 @@ mod tests {
         );
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            contract.issue_session_grant(
-                account("alice.testnet"),
-                session_pk,
-                SessionScope::Play,
-                None,
-                60_000,
-                None,
-                None,
-                session_pok,
-            );
+            contract.issue_session_grant(request);
         }));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn paused_scope_blocks_existing_grant_verification() {
+        let owner = account("owner.testnet");
+        testing_env!(context("alice.testnet", 1_000).build());
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let resource_id = Some("job-1".to_string());
+        let origin_hash = Some("origin".to_string());
+        let device_hash = Some("device".to_string());
+        let request = session_request(
+            "pause-verification",
+            "alice.testnet",
+            "alice.testnet",
+            resource_id.clone(),
+            60_000,
+            origin_hash.clone(),
+            device_hash.clone(),
+        );
+        let session_pk = request.session_pk.clone();
+        contract.issue_session_grant(request);
+
+        testing_env!(context("owner.testnet", 2_000).build());
+        let id = contract.propose_action(TimelockAction::PauseScope {
+            scope: SessionScope::Play,
+        });
+        testing_env!(context("owner.testnet", 2_000 + TIMELOCK_DELAY_NS / 1_000_000).build());
+        contract.execute_action(id);
+
+        let verification = contract.verify_session_grant(
+            session_pk,
+            SessionScope::Play,
+            resource_id.clone(),
+            origin_hash,
+            device_hash,
+        );
+        assert!(!verification.valid);
+        assert_eq!(verification.reason.as_deref(), Some("Scope is paused"));
+        assert!(!contract.can_play(account("alice.testnet"), resource_id));
+    }
+
+    #[test]
+    fn play_grant_requires_bounded_resource() {
+        let owner = account("owner.testnet");
+        testing_env!(context("alice.testnet", 1_000).build());
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let origin_hash = Some("origin".to_string());
+        let device_hash = Some("device".to_string());
+
+        for (seed, resource_id) in [
+            ("missing-resource", None),
+            ("empty-resource", Some(String::new())),
+            ("long-resource", Some("x".repeat(129))),
+        ] {
+            let request = session_request(
+                seed,
+                "alice.testnet",
+                "alice.testnet",
+                resource_id,
+                60_000,
+                origin_hash.clone(),
+                device_hash.clone(),
+            );
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                contract.issue_session_grant(request);
+            }));
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn play_grant_rejects_oversized_bindings() {
+        let owner = account("owner.testnet");
+        testing_env!(context("alice.testnet", 1_000).build());
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let resource_id = Some("job-1".to_string());
+
+        for (seed, origin_hash, device_hash) in [
+            (
+                "long-origin",
+                Some("x".repeat(MAX_BINDING_BYTES + 1)),
+                Some("device".to_string()),
+            ),
+            (
+                "long-device",
+                Some("origin".to_string()),
+                Some("x".repeat(MAX_BINDING_BYTES + 1)),
+            ),
+        ] {
+            let request = session_request(
+                seed,
+                "alice.testnet",
+                "alice.testnet",
+                resource_id.clone(),
+                60_000,
+                origin_hash,
+                device_hash,
+            );
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                contract.issue_session_grant(request);
+            }));
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Session public key is too long")]
+    fn play_grant_rejects_oversized_session_key() {
+        testing_env!(context("alice.testnet", 1_000).build());
+        let mut contract =
+            AccessControlContract::new(account("owner.testnet"), account("market.testnet"));
+        let mut request = session_request(
+            "long-session-key",
+            "alice.testnet",
+            "alice.testnet",
+            Some("job-1".to_string()),
+            60_000,
+            Some("origin".to_string()),
+            Some("device".to_string()),
+        );
+        request.session_pk = "x".repeat(MAX_SESSION_PUBLIC_KEY_BYTES + 1);
+        contract.issue_session_grant(request);
+    }
+
+    #[test]
+    fn grant_count_cleanup_and_pagination_are_bounded() {
+        let owner = account("owner.testnet");
+        testing_env!(context("alice.testnet", 1_000).build());
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let origin_hash = Some("origin".to_string());
+        let device_hash = Some("device".to_string());
+
+        for index in 0..MAX_GRANTS_PER_OWNER {
+            let resource_id = Some(format!("job-{index}"));
+            let seed = format!("bounded-grant-{index}");
+            let request = session_request(
+                &seed,
+                "alice.testnet",
+                "alice.testnet",
+                resource_id,
+                60_000,
+                origin_hash.clone(),
+                device_hash.clone(),
+            );
+            contract.issue_session_grant(request);
+        }
+
+        assert_eq!(
+            contract
+                .list_session_grants(account("alice.testnet"), Some(4), Some(3))
+                .len(),
+            3
+        );
+
+        let resource_id = Some("job-over-limit".to_string());
+        let request = session_request(
+            "over-limit",
+            "alice.testnet",
+            "alice.testnet",
+            resource_id,
+            60_000,
+            origin_hash,
+            device_hash,
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.issue_session_grant(request);
+        }));
+        assert!(result.is_err());
+
+        testing_env!(context("alice.testnet", 62_000).build());
+        assert_eq!(
+            contract.cleanup_session_grants(account("alice.testnet"), Some(5)),
+            5
+        );
+        assert_eq!(
+            contract
+                .list_session_grants(account("alice.testnet"), None, None)
+                .len(),
+            MAX_GRANTS_PER_OWNER - 5
+        );
+    }
+
+    #[test]
+    fn grant_issuance_decommission_preserves_existing_verification_and_cleanup() {
+        let owner = account("owner.testnet");
+        let proposed_at_ms = 1_000;
+        let execute_at_ms = proposed_at_ms + TIMELOCK_DELAY_NS / 1_000_000;
+        testing_env!(context("owner.testnet", proposed_at_ms).build());
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let id = contract.propose_action(TimelockAction::SetGrantIssuance { enabled: false });
+
+        testing_env!(context("alice.testnet", execute_at_ms - 60_000).build());
+        let existing_request = session_request(
+            "decommission-existing",
+            "alice.testnet",
+            "alice.testnet",
+            Some("job-existing".to_string()),
+            10 * 60 * 1_000,
+            Some("origin".to_string()),
+            Some("device".to_string()),
+        );
+        let existing_session_pk = existing_request.session_pk.clone();
+        contract.issue_session_grant(existing_request);
+
+        testing_env!(context("owner.testnet", execute_at_ms).build());
+        contract.execute_action(id);
+
+        let state = contract.get_contract_state();
+        assert_eq!(state.state_version, 2);
+        assert!(!state.grant_issuance_enabled);
+        assert_eq!(state.owner_id, account("owner.testnet"));
+        assert_eq!(state.market_contract_id, account("market.testnet"));
+
+        let existing = contract.verify_session_grant(
+            existing_session_pk.clone(),
+            SessionScope::Play,
+            Some("job-existing".to_string()),
+            Some("origin".to_string()),
+            Some("device".to_string()),
+        );
+        assert!(existing.valid);
+
+        testing_env!(context("alice.testnet", execute_at_ms).build());
+        let new_request = session_request(
+            "decommission-new",
+            "alice.testnet",
+            "alice.testnet",
+            Some("job-new".to_string()),
+            60_000,
+            Some("origin".to_string()),
+            Some("device".to_string()),
+        );
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.issue_session_grant(new_request);
+        }));
+        assert!(rejected.is_err());
+
+        contract.revoke_subject_sessions(account("alice.testnet"));
+        let revoked = contract.verify_session_grant(
+            existing_session_pk,
+            SessionScope::Play,
+            Some("job-existing".to_string()),
+            Some("origin".to_string()),
+            Some("device".to_string()),
+        );
+        assert!(!revoked.valid);
+        assert_eq!(revoked.reason.as_deref(), Some("Session grant is revoked"));
+        assert_eq!(
+            contract.cleanup_session_grants(account("alice.testnet"), Some(16)),
+            1
+        );
+        assert!(contract
+            .list_session_grants(account("alice.testnet"), None, None)
+            .is_empty());
     }
 }
