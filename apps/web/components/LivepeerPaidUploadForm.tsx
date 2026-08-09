@@ -3,6 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { CheckCircle2, Loader2, Upload } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -11,18 +12,33 @@ import { Input } from '@/components/ui/input';
 import { MultiAssetPaymentPanel } from '@/components/MultiAssetPaymentPanel';
 import { FEATURE_FLAGS } from '@/lib/constants';
 import {
+    publicationPollIntervalMs,
+    restoreUploadStage,
+    transitionUploadStage,
+    type UploadStage,
+} from '@/lib/livepeer-upload-state';
+import {
     loadActivePaymentCheckout,
     multiAssetPaymentsEnabled,
     updateActivePaymentCheckoutState,
     verifyConvertedUsdcReady,
 } from '@/lib/multi-asset-payments';
-import { readLivepeerMediaJob, readLivepeerPublication } from '@/lib/livepeer-publication';
 import {
+    readLivepeerMediaJob,
+    readLivepeerUploadProgress,
+    waitForAuthorizedLivepeerJob,
+} from '@/lib/livepeer-publication';
+import {
+    advanceLivepeerUploadDraftStage,
     authorizeLivepeerPaidJob,
+    cancelLivepeerUpload,
+    clearLivepeerJobSessionKey,
     clearLivepeerUploadDraft,
     configuredCreatorFeeGasReserveYocto,
     createLivepeerJobId,
+    fingerprintLivepeerSource,
     LIVEPEER_SOURCE_ACCEPT,
+    heartbeatLivepeerUploadLease,
     livepeerUploadFeeUsdc,
     parseLivepeerPriceUsdc,
     preflightLivepeerUpload,
@@ -36,16 +52,17 @@ import {
     type SignedNearCreatorFeeQuote,
 } from '@/lib/livepeer-upload';
 
-type UploadStage = 'idle' | 'payment' | 'payment_ready' | 'authorization' | 'upload' | 'processing' | 'published';
-
 const UPLOAD_STEPS = ['Payment options', 'Wallet approval', 'Upload', 'Processing', 'Published'] as const;
 const UPLOAD_STAGE_STATE: Record<UploadStage, { active: number; completeThrough: number }> = {
-    idle: { active: -1, completeThrough: -1 },
-    payment: { active: 0, completeThrough: -1 },
-    payment_ready: { active: -1, completeThrough: 0 },
-    authorization: { active: 1, completeThrough: 0 },
-    upload: { active: 2, completeThrough: 1 },
-    processing: { active: 3, completeThrough: 2 },
+    draft: { active: -1, completeThrough: -1 },
+    preflight: { active: 0, completeThrough: -1 },
+    payment_required: { active: -1, completeThrough: 0 },
+    payment_pending: { active: 1, completeThrough: 0 },
+    authorized: { active: 2, completeThrough: 1 },
+    intent_pending: { active: 2, completeThrough: 1 },
+    upload_ready: { active: 2, completeThrough: 1 },
+    uploading: { active: 2, completeThrough: 1 },
+    provider_processing: { active: 3, completeThrough: 2 },
     published: { active: -1, completeThrough: 4 },
 };
 
@@ -60,9 +77,7 @@ export function LivepeerPaidUploadForm() {
     const [status, setStatus] = React.useState<string | null>(null);
     const [error, setError] = React.useState<string | null>(null);
     const [busy, setBusy] = React.useState(false);
-    const [uploaded, setUploaded] = React.useState(false);
-    const [publicationReady, setPublicationReady] = React.useState(false);
-    const [uploadStage, setUploadStage] = React.useState<UploadStage>('idle');
+    const [uploadStage, setUploadStage] = React.useState<UploadStage>('draft');
     const [failedStep, setFailedStep] = React.useState<number | null>(null);
     const [uploadProgress, setUploadProgress] = React.useState(0);
     const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
@@ -72,6 +87,29 @@ export function LivepeerPaidUploadForm() {
         nearQuote?: SignedNearCreatorFeeQuote;
     } | null>(null);
     const [paymentAsset, setPaymentAsset] = React.useState<CreatorFeeAsset | null>(null);
+    const fileSelectionVersion = React.useRef(0);
+    const moveUploadStage = React.useCallback((next: UploadStage) => {
+        setUploadStage((current) => transitionUploadStage(current, next));
+    }, []);
+    const uploaded = uploadStage === 'provider_processing' || uploadStage === 'published';
+    const publicationReady = uploadStage === 'published';
+    const publicationPollingEnabled = Boolean(uploaded && jobId && accountId);
+    const publicationQuery = useQuery({
+        queryKey: ['livepeerUploadPublication', accountId, jobId],
+        queryFn: async () => {
+            if (!jobId) throw new Error('livepeer_job_missing');
+            return readLivepeerUploadProgress(jobId);
+        },
+        enabled: publicationPollingEnabled,
+        retry: false,
+        refetchInterval: (query) => query.state.data?.publication
+            ? false
+            : publicationPollIntervalMs(
+                query.state.dataUpdateCount + query.state.fetchFailureCount,
+            ),
+        refetchIntervalInBackground: false,
+        refetchOnWindowFocus: true,
+    });
 
     React.useEffect(() => {
         if (!file) {
@@ -84,55 +122,38 @@ export function LivepeerPaidUploadForm() {
     }, [file]);
 
     React.useEffect(() => {
+        fileSelectionVersion.current += 1;
         setJobId(null);
         setStatus(null);
         setError(null);
-        setUploaded(false);
-        setPublicationReady(false);
-        setUploadStage('idle');
+        moveUploadStage('draft');
         setFailedStep(null);
         setUploadProgress(0);
         setPayment(null);
         setPaymentAsset(null);
-    }, [accountId]);
+    }, [accountId, moveUploadStage]);
 
     React.useEffect(() => {
-        if (!uploaded || !jobId || !accountId) return;
-        let disposed = false;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const check = async () => {
-            try {
-                const job = await readLivepeerMediaJob(jobId);
-                if (!job) throw new Error('livepeer_job_missing');
-                const publication = await readLivepeerPublication(jobId);
-                if (disposed) return;
-                if (publication) {
-                    clearLivepeerUploadDraft(accountId);
-                    setPublicationReady(true);
-                    setUploadStage('published');
-                    setStatus('Publication ready.');
-                    return;
-                }
-                setStatus(job.status === 'Published' ? 'Finalizing publication…' : 'Livepeer is processing the upload…');
-            } catch {
-                if (!disposed) setStatus('Waiting for the publication status…');
-            }
-            if (!disposed) timer = setTimeout(check, 5_000);
-        };
-        void check();
-        return () => {
-            disposed = true;
-            if (timer) clearTimeout(timer);
-        };
-    }, [accountId, jobId, uploaded]);
+        if (!publicationPollingEnabled || !accountId) return;
+        if (publicationQuery.data?.publication) {
+            clearLivepeerUploadDraft(accountId);
+            moveUploadStage('published');
+            setStatus('Publication ready.');
+        } else if (publicationQuery.data?.job) {
+            setStatus(publicationQuery.data.job.status === 'Published'
+                ? 'Finalizing publication…'
+                : 'Livepeer is processing the upload…');
+        } else if (publicationQuery.isError) {
+            setStatus('Waiting for the publication status…');
+        }
+    }, [accountId, moveUploadStage, publicationPollingEnabled, publicationQuery.data, publicationQuery.isError]);
 
-    const selectFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selectFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const selectionVersion = ++fileSelectionVersion.current;
         const selected = event.target.files?.[0] || null;
         setFile(selected);
         setError(null);
-        setUploaded(false);
-        setPublicationReady(false);
-        setUploadStage('idle');
+        moveUploadStage('draft');
         setFailedStep(null);
         setUploadProgress(0);
         setPayment(null);
@@ -140,12 +161,15 @@ export function LivepeerPaidUploadForm() {
         setJobId(null);
         if (!selected) return setFileError(null);
         const validation = validateLivepeerSourceFile(selected);
-        setFileError(validation.ok ? null : fileValidationMessage(validation.error));
-        const draft = accountId ? readLivepeerUploadDraft(accountId, selected) : null;
+        if (!validation.ok) return setFileError(fileValidationMessage(validation.error));
+        setFileError(null);
+        const draft = accountId ? await readLivepeerUploadDraft(accountId, selected) : null;
+        if (selectionVersion !== fileSelectionVersion.current) return;
         setJobId(draft?.jobId || null);
         if (draft) {
             setTitle(draft.title);
             setPrice(draft.price);
+            moveUploadStage(restoreUploadStage(draft.stage));
         }
     };
 
@@ -154,19 +178,29 @@ export function LivepeerPaidUploadForm() {
         setBusy(true);
         setError(null);
         setFailedStep(null);
-        setUploadStage('payment');
+        moveUploadStage('draft');
+        moveUploadStage('preflight');
         setStatus('Checking payment options…');
         try {
             parseLivepeerPriceUsdc(price);
             const activeJobId = jobId || createLivepeerJobId();
             setJobId(activeJobId);
             writeLivepeerUploadDraft(accountId, {
+                schema: 'youtick.livepeer-ui-draft.v2',
+                stage: 'payment_pending',
                 jobId: activeJobId,
                 title: title.trim(),
                 price,
                 sourceBytes: file.size,
                 sourceName: file.name,
                 sourceLastModified: file.lastModified,
+                sourceFingerprintSha256: await fingerprintLivepeerSource(file),
+            });
+            await preflightLivepeerUpload({
+                accountId,
+                jobId: activeJobId,
+                generation: 1,
+                expectedSourceBytes: file.size,
             });
             const options = await prepareCreatorFeePaymentOptions({
                 accountId,
@@ -179,7 +213,7 @@ export function LivepeerPaidUploadForm() {
             }
             setPayment(options);
             setPaymentAsset(options.selected);
-            setUploadStage('payment_ready');
+            moveUploadStage('payment_required');
             setStatus(null);
         } catch (reason) {
             setFailedStep(0);
@@ -209,13 +243,10 @@ export function LivepeerPaidUploadForm() {
             const existingJob = await readLivepeerMediaJob(jobId);
             if (existingJob?.status === 'Published') {
                 clearLivepeerUploadDraft(accountId);
-                setUploaded(true);
-                setPublicationReady(true);
-                setUploadStage('published');
+                moveUploadStage('published');
                 setStatus('Publication ready.');
                 return;
             }
-            setUploadStage('authorization');
             setStatus('Checking upload availability…');
             await preflightLivepeerUpload({
                 accountId,
@@ -224,6 +255,7 @@ export function LivepeerPaidUploadForm() {
                 expectedSourceBytes: file.size,
             });
             availabilityConfirmed = true;
+            moveUploadStage('payment_pending');
             setStatus('Authorizing the paid job…');
             const wallet = await getWallet();
             const conversionExpectation = {
@@ -265,12 +297,14 @@ export function LivepeerPaidUploadForm() {
             });
             setStatus('Waiting for the payment to finalize…');
             await waitForAuthorizedLivepeerJob(jobId, accountId, uploadPublicKey);
+            advanceLivepeerUploadDraftStage(accountId, jobId, 'authorized');
+            moveUploadStage('authorized');
             if (convertedCheckout) {
                 updateActivePaymentCheckoutState(accountId, conversionExpectation, 'complete');
                 convertedCheckout = false;
             }
             activeStep = 2;
-            setUploadStage('upload');
+            moveUploadStage('intent_pending');
             setUploadProgress(0);
             setStatus('Preparing the Livepeer upload…');
             const intent = await requestLivepeerUploadIntent({
@@ -278,17 +312,24 @@ export function LivepeerPaidUploadForm() {
                 jobId,
                 generation: 1,
                 expectedSourceBytes: file.size,
+                sourceFingerprintSha256: await fingerprintLivepeerSource(file),
                 sourceType: source.sourceType,
             });
+            advanceLivepeerUploadDraftStage(accountId, jobId, 'upload_ready');
+            moveUploadStage('upload_ready');
             setStatus('Uploading directly to Livepeer…');
+            advanceLivepeerUploadDraftStage(accountId, jobId, 'uploading');
+            moveUploadStage('uploading');
             await uploadLivepeerSource(file, intent, {
                 onProgress: (sent, total) => setUploadProgress(
                     total > 0 ? Math.min(99, Math.max(0, Math.floor((sent / total) * 100))) : 0,
                 ),
+                heartbeat: () => heartbeatLivepeerUploadLease({ accountId, intent }),
             });
+            clearLivepeerJobSessionKey(accountId, jobId);
+            advanceLivepeerUploadDraftStage(accountId, jobId, 'provider_processing');
             setUploadProgress(100);
-            setUploaded(true);
-            setUploadStage('processing');
+            moveUploadStage('provider_processing');
             setStatus('Livepeer is processing the upload…');
         } catch (reason) {
             if (convertedCheckout && accountId && file && payment) {
@@ -300,6 +341,30 @@ export function LivepeerPaidUploadForm() {
             setFailedStep(activeStep);
             setStatus(null);
             setError(uploadErrorMessage(reason, availabilityConfirmed));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const cancel = async () => {
+        if (!accountId || !jobId || uploadStage !== 'authorized') return;
+        setBusy(true);
+        setError(null);
+        setStatus('Cancelling the upload job…');
+        try {
+            await cancelLivepeerUpload({ accountId, jobId, generation: 1 });
+            clearLivepeerJobSessionKey(accountId, jobId);
+            clearLivepeerUploadDraft(accountId);
+            setJobId(null);
+            setPayment(null);
+            setPaymentAsset(null);
+            setFailedStep(null);
+            setUploadProgress(0);
+            moveUploadStage('draft');
+            setStatus('Upload job cancelled. The technical-pilot fee is non-refundable.');
+        } catch (reason) {
+            setStatus(null);
+            setError(reason instanceof Error ? reason.message : 'Upload job could not be cancelled.');
         } finally {
             setBusy(false);
         }
@@ -402,7 +467,7 @@ export function LivepeerPaidUploadForm() {
                                     );
                                 })}
                             </ol>
-                            {uploadStage === 'upload' && (
+                            {uploadStage === 'uploading' && (
                                 <div className="mt-4">
                                     <div className="mb-2 flex justify-between text-sm text-zinc-300">
                                         <span>Uploading</span>
@@ -430,31 +495,20 @@ export function LivepeerPaidUploadForm() {
                     ) : (
                         <Button className="w-full" disabled={!formReady || busy || !paymentAsset} onClick={() => void start()}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />} Pay and upload</Button>
                     )}
+                    {accountId && jobId && uploadStage === 'authorized' && (
+                        <div className="space-y-2">
+                            <Button className="w-full" variant="destructive" disabled={busy} onClick={() => void cancel()}>
+                                Cancel job (no refund)
+                            </Button>
+                            <p className="text-xs text-zinc-400">Cancellation stops provider creation only. The technical-pilot fee is not refunded.</p>
+                        </div>
+                    )}
                     {status && <p role="status" className="text-sm text-zinc-400">{status}</p>}
                     {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
                 </CardContent>
             </Card>
         </div>
     );
-}
-
-async function waitForAuthorizedLivepeerJob(
-    jobId: string,
-    accountId: string,
-    uploadPublicKey: string,
-): Promise<void> {
-    for (const delay of [0, 1_000, 2_000, 4_000, 8_000]) {
-        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-        try {
-            const job = await readLivepeerMediaJob(jobId);
-            if (job
-                && job.creator_id === accountId
-                && job.upload_public_key === uploadPublicKey) return;
-        } catch {
-            // Final state can lag briefly after the wallet returns.
-        }
-    }
-    throw new Error('livepeer_job_pending');
 }
 
 function formatMicroUsdc(value: string): string {

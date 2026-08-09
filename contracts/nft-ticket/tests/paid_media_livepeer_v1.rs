@@ -1,9 +1,9 @@
 use near_sdk::json_types::{Base64VecU8, U128, U64};
-use near_sdk::test_utils::VMContextBuilder;
+use near_sdk::test_utils::{get_logs, VMContextBuilder};
 use near_sdk::{testing_env, AccountId, PromiseOrValue};
 use youtick_nft::{
-    Contract, CreatorFeeQuote, FeeAsset, LivepeerPublicationSubmission, PaidJobRequest,
-    PublicationAvailability,
+    Contract, CreatorFeeQuote, FeeAsset, LivepeerPublicationSubmission, MarketInitConfig,
+    PaidJobRequest, PublicationAvailability,
 };
 
 const PROFILE: &str = "paid-media-livepeer-v1";
@@ -38,14 +38,16 @@ fn context(predecessor: &str) -> VMContextBuilder {
 
 fn contract() -> Contract {
     testing_env!(context("market.testnet").build());
-    Contract::new(
-        account("platform.testnet"),
-        account("bridge.testnet"),
-        account("governance.testnet"),
-        Base64VecU8(QUOTE_PUBLIC_KEY.to_vec()),
-        1,
-        U128(1_000_000_000_000_000_000_000_000),
-    )
+    Contract::new(MarketInitConfig {
+        platform_account_id: account("platform.testnet"),
+        bridge_account_id: account("bridge.testnet"),
+        takedown_authority_id: account("governance.testnet"),
+        admin_account_id: account("admin.testnet"),
+        guardian_account_id: account("guardian.testnet"),
+        quote_public_key: Base64VecU8(QUOTE_PUBLIC_KEY.to_vec()),
+        quote_key_version: 1,
+        near_operational_reserve: U128(1_000_000_000_000_000_000_000_000),
+    })
 }
 
 fn near_request() -> PaidJobRequest {
@@ -437,6 +439,377 @@ fn submission(
 
 fn must_fail(action: impl FnOnce()) {
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(action)).is_err());
+}
+
+fn governance_event() -> near_sdk::serde_json::Value {
+    let logs = get_logs();
+    let value = logs.last().expect("governance event must be logged");
+    near_sdk::serde_json::from_str(
+        value
+            .strip_prefix("EVENT_JSON:")
+            .expect("governance event must use NEP-297 prefix"),
+    )
+    .unwrap()
+}
+
+#[test]
+fn economic_lifecycle_emits_rebuildable_events_without_upload_capabilities() {
+    let mut contract = contract();
+    create_job(&mut contract, "job-events", "creator.testnet");
+    let authorized = governance_event();
+    assert_eq!(authorized["event"], "media_job_authorized");
+    assert_eq!(authorized["data"][0]["contract_id"], "market.testnet");
+    assert_eq!(authorized["data"][0]["job_id"], "job-events");
+    assert_eq!(authorized["data"][0]["asset"], "USDC");
+    assert_eq!(authorized["data"][0]["amount"], "500000");
+    assert!(authorized["data"][0]["idempotency_key"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
+    assert!(!authorized.to_string().contains(UPLOAD_KEY));
+
+    testing_env!(context("creator.testnet").build());
+    contract.replace_upload_key(
+        "job-events".to_string(),
+        "ed25519:9nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF".to_string(),
+        U64(1_785_590_000_000),
+    );
+    let replaced = governance_event();
+    assert_eq!(replaced["event"], "media_job_upload_key_replaced");
+    assert_eq!(replaced["data"][0]["job_id"], "job-events");
+    assert!(replaced["data"][0]["upload_public_key_sha256"].is_string());
+
+    finalize(
+        &mut contract,
+        "job-events",
+        1,
+        "creator.testnet",
+        ASSET_HASH,
+        "playback_events",
+    );
+    let finalized = governance_event();
+    assert_eq!(finalized["event"], "publication_finalized");
+    assert_eq!(finalized["data"][0]["publication_id"], "job-events");
+    assert_eq!(finalized["data"][0]["title"], "Paid video");
+    assert_eq!(finalized["data"][0]["playback_id"], "playback_events");
+    assert_eq!(
+        finalized["data"][0]["published_at_ms"],
+        1_785_589_300_000u64
+    );
+    testing_env!(context("bridge.testnet").build());
+    contract.finalize_livepeer_publication(submission(
+        "job-events",
+        1,
+        "creator.testnet",
+        ASSET_HASH,
+        "playback_events",
+    ));
+    assert!(get_logs().is_empty());
+
+    testing_env!(context("bridge.testnet").build());
+    contract.suspend_livepeer_sales("job-events".to_string());
+    let suspended = governance_event();
+    assert_eq!(suspended["event"], "publication_sales_suspended");
+    testing_env!(context("bridge.testnet").build());
+    contract.suspend_livepeer_sales("job-events".to_string());
+    assert!(get_logs().is_empty());
+
+    testing_env!(context("governance.testnet").build());
+    contract.takedown_livepeer_publication(
+        "job-events".to_string(),
+        "GOVERNANCE_DECISION".to_string(),
+        "incident-events".to_string(),
+        "e".repeat(64),
+        U64(1_785_589_300_000),
+    );
+    let takedown = governance_event();
+    assert_eq!(takedown["event"], "publication_takedown");
+    assert_eq!(takedown["data"][0]["reason_code"], "GOVERNANCE_DECISION");
+    testing_env!(context("governance.testnet").build());
+    contract.takedown_livepeer_publication(
+        "job-events".to_string(),
+        "GOVERNANCE_DECISION".to_string(),
+        "incident-events".to_string(),
+        "e".repeat(64),
+        U64(1_785_589_300_000),
+    );
+    assert!(get_logs().is_empty());
+
+    create_job(&mut contract, "job-sale-event", "creator.testnet");
+    finalize(
+        &mut contract,
+        "job-sale-event",
+        1,
+        "creator.testnet",
+        "f".repeat(64).as_str(),
+        "playback_sale_event",
+    );
+    testing_env!(context(TESTNET_USDC).build());
+    assert!(matches!(
+        contract.ft_on_transfer(
+            account("buyer.testnet"),
+            U128(2_000_000),
+            r#"{"publication_id":"job-sale-event"}"#.to_string(),
+        ),
+        PromiseOrValue::Value(U128(0))
+    ));
+    let purchased = governance_event();
+    assert_eq!(purchased["event"], "entitlement_purchased");
+    assert_eq!(purchased["data"][0]["account_id"], "buyer.testnet");
+    assert_eq!(purchased["data"][0]["amount"], "2000000");
+
+    testing_env!(context("platform.testnet").build());
+    contract.rotate_quote_public_key(2, Base64VecU8(vec![2; 32]));
+    let rotated = governance_event();
+    assert_eq!(rotated["event"], "quote_key_rotated");
+    assert_eq!(rotated["data"][0]["quote_key_version"], 2);
+}
+
+#[test]
+fn guardian_freeze_blocks_bridge_and_admin_alone_unfreezes() {
+    let mut contract = contract();
+    create_job(&mut contract, "job-freeze", "creator.testnet");
+
+    testing_env!(context("attacker.testnet").build());
+    must_fail(|| contract.freeze_bridge());
+    testing_env!(context("admin.testnet").build());
+    must_fail(|| contract.freeze_bridge());
+
+    testing_env!(context("guardian.testnet").build());
+    contract.freeze_bridge();
+    assert!(contract.get_governance_state().bridge_frozen);
+    let frozen = governance_event();
+    assert_eq!(frozen["standard"], "youtick_market");
+    assert_eq!(frozen["version"], "1.0.0");
+    assert_eq!(frozen["event"], "bridge_frozen");
+    assert_eq!(frozen["data"][0]["actor_id"], "guardian.testnet");
+
+    testing_env!(context("bridge.testnet").build());
+    must_fail(|| {
+        contract.finalize_livepeer_publication(submission(
+            "job-freeze",
+            1,
+            "creator.testnet",
+            ASSET_HASH,
+            "playback_freeze",
+        ));
+    });
+    testing_env!(context("guardian.testnet").build());
+    must_fail(|| contract.unfreeze_bridge());
+
+    testing_env!(context("admin.testnet").build());
+    contract.unfreeze_bridge();
+    assert!(!contract.get_governance_state().bridge_frozen);
+    let unfrozen = governance_event();
+    assert_eq!(unfrozen["event"], "bridge_unfrozen");
+    assert_eq!(unfrozen["data"][0]["actor_id"], "admin.testnet");
+
+    finalize(
+        &mut contract,
+        "job-freeze",
+        1,
+        "creator.testnet",
+        ASSET_HASH,
+        "playback_freeze",
+    );
+    testing_env!(context("guardian.testnet").build());
+    contract.freeze_bridge();
+    testing_env!(context("bridge.testnet").build());
+    must_fail(|| {
+        contract.suspend_livepeer_sales("job-freeze".to_string());
+    });
+}
+
+#[test]
+fn guardian_pauses_new_purchases_and_admin_alone_unpauses() {
+    let mut contract = contract();
+    create_job(&mut contract, "job-purchase-pause", "creator.testnet");
+    finalize(
+        &mut contract,
+        "job-purchase-pause",
+        1,
+        "creator.testnet",
+        ASSET_HASH,
+        "playback_purchase_pause",
+    );
+    testing_env!(context(TESTNET_USDC).build());
+    assert!(matches!(
+        contract.ft_on_transfer(
+            account("existing-buyer.testnet"),
+            U128(2_000_000),
+            r#"{"publication_id":"job-purchase-pause"}"#.to_string(),
+        ),
+        PromiseOrValue::Value(U128(0))
+    ));
+    let serialized_state_before_pause = near_sdk::borsh::to_vec(&contract).unwrap();
+
+    testing_env!(context("attacker.testnet").build());
+    must_fail(|| contract.pause_new_purchases());
+    testing_env!(context("admin.testnet").build());
+    must_fail(|| contract.pause_new_purchases());
+
+    testing_env!(context("guardian.testnet").build());
+    contract.pause_new_purchases();
+    assert!(contract.get_governance_state().new_purchases_paused);
+    let paused = governance_event();
+    assert_eq!(paused["event"], "new_purchases_paused");
+    assert_eq!(paused["data"][0]["actor_id"], "guardian.testnet");
+    assert_eq!(
+        near_sdk::borsh::to_vec(&contract).unwrap(),
+        serialized_state_before_pause
+    );
+    assert!(contract.has_entitlement(
+        account("existing-buyer.testnet"),
+        "job-purchase-pause".to_string()
+    ));
+    testing_env!(context("guardian.testnet").build());
+    contract.pause_new_purchases();
+    assert!(get_logs().is_empty());
+
+    testing_env!(context(TESTNET_USDC).build());
+    let platform_before = contract.get_platform_balance();
+    let creator_before = contract.get_creator_balance(account("creator.testnet"));
+    let refunded = contract.ft_on_transfer(
+        account("buyer.testnet"),
+        U128(2_000_000),
+        r#"{"publication_id":"job-purchase-pause"}"#.to_string(),
+    );
+    assert!(matches!(refunded, PromiseOrValue::Value(U128(2_000_000))));
+    assert_eq!(contract.get_platform_balance(), platform_before);
+    assert_eq!(
+        contract.get_creator_balance(account("creator.testnet")),
+        creator_before
+    );
+    assert!(!contract.has_entitlement(account("buyer.testnet"), "job-purchase-pause".to_string()));
+
+    let upload = create_job_with(
+        &mut contract,
+        "job-upload-while-purchases-paused",
+        "creator.testnet",
+        2_000_000,
+        1_000_000,
+    );
+    assert!(matches!(upload, PromiseOrValue::Value(U128(0))));
+
+    testing_env!(context("guardian.testnet").build());
+    must_fail(|| contract.unpause_new_purchases());
+    let serialized_state_before_unpause = near_sdk::borsh::to_vec(&contract).unwrap();
+    testing_env!(context("admin.testnet").build());
+    contract.unpause_new_purchases();
+    assert!(!contract.get_governance_state().new_purchases_paused);
+    let unpaused = governance_event();
+    assert_eq!(unpaused["event"], "new_purchases_unpaused");
+    assert_eq!(unpaused["data"][0]["actor_id"], "admin.testnet");
+    assert_eq!(
+        near_sdk::borsh::to_vec(&contract).unwrap(),
+        serialized_state_before_unpause
+    );
+    testing_env!(context("admin.testnet").build());
+    contract.unpause_new_purchases();
+    assert!(get_logs().is_empty());
+
+    testing_env!(context(TESTNET_USDC).build());
+    let accepted = contract.ft_on_transfer(
+        account("buyer.testnet"),
+        U128(2_000_000),
+        r#"{"publication_id":"job-purchase-pause"}"#.to_string(),
+    );
+    assert!(matches!(accepted, PromiseOrValue::Value(U128(0))));
+    assert!(contract.has_entitlement(account("buyer.testnet"), "job-purchase-pause".to_string()));
+}
+
+#[test]
+fn admin_rotates_bridge_through_auditable_pending_state() {
+    let mut contract = contract();
+    create_job(&mut contract, "job-rotation", "creator.testnet");
+    let initial = contract.get_governance_state();
+    assert_eq!(initial.state_version, 2);
+    assert_eq!(initial.admin_account_id, account("admin.testnet"));
+    assert_eq!(initial.guardian_account_id, account("guardian.testnet"));
+    assert_eq!(initial.active_bridge_account_id, account("bridge.testnet"));
+    assert!(initial.pending_bridge_account_id.is_none());
+
+    testing_env!(context("attacker.testnet").build());
+    must_fail(|| contract.propose_bridge(account("next-bridge.testnet")));
+    testing_env!(context("admin.testnet").build());
+    must_fail(|| contract.propose_bridge(account("guardian.testnet")));
+    contract.propose_bridge(account("next-bridge.testnet"));
+    let proposed = contract.get_governance_state();
+    assert_eq!(
+        proposed.pending_bridge_account_id,
+        Some(account("next-bridge.testnet"))
+    );
+    assert_eq!(
+        proposed.bridge_rotation_proposed_at_ms,
+        Some(U64(1_785_589_300_000))
+    );
+    assert_eq!(governance_event()["event"], "bridge_rotation_proposed");
+
+    testing_env!(context("guardian.testnet").build());
+    contract.cancel_bridge_rotation();
+    assert!(contract
+        .get_governance_state()
+        .pending_bridge_account_id
+        .is_none());
+    assert_eq!(governance_event()["event"], "bridge_rotation_cancelled");
+
+    testing_env!(context("admin.testnet").build());
+    contract.propose_bridge(account("next-bridge.testnet"));
+    testing_env!(context("guardian.testnet").build());
+    must_fail(|| contract.execute_bridge_rotation());
+    testing_env!(context("admin.testnet").build());
+    contract.execute_bridge_rotation();
+    let rotated = contract.get_governance_state();
+    assert_eq!(
+        rotated.active_bridge_account_id,
+        account("next-bridge.testnet")
+    );
+    assert!(rotated.pending_bridge_account_id.is_none());
+    let event = governance_event();
+    assert_eq!(event["event"], "bridge_rotated");
+    assert_eq!(
+        event["data"][0]["previous_bridge_account_id"],
+        "bridge.testnet"
+    );
+    assert_eq!(
+        event["data"][0]["active_bridge_account_id"],
+        "next-bridge.testnet"
+    );
+
+    testing_env!(context("bridge.testnet").build());
+    must_fail(|| {
+        contract.finalize_livepeer_publication(submission(
+            "job-rotation",
+            1,
+            "creator.testnet",
+            ASSET_HASH,
+            "playback_rotation",
+        ));
+    });
+    testing_env!(context("next-bridge.testnet").build());
+    contract.finalize_livepeer_publication(submission(
+        "job-rotation",
+        1,
+        "creator.testnet",
+        ASSET_HASH,
+        "playback_rotation",
+    ));
+}
+
+#[test]
+fn constructor_rejects_shared_admin_and_guardian() {
+    testing_env!(context("market.testnet").build());
+    must_fail(|| {
+        Contract::new(MarketInitConfig {
+            platform_account_id: account("platform.testnet"),
+            bridge_account_id: account("bridge.testnet"),
+            takedown_authority_id: account("governance.testnet"),
+            admin_account_id: account("shared.testnet"),
+            guardian_account_id: account("shared.testnet"),
+            quote_public_key: Base64VecU8(QUOTE_PUBLIC_KEY.to_vec()),
+            quote_key_version: 1,
+            near_operational_reserve: U128(1_000_000_000_000_000_000_000_000),
+        });
+    });
 }
 
 #[test]

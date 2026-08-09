@@ -56,6 +56,7 @@ vi.mock('near-api-js', () => ({
     actions: {
         functionCall: vi.fn((methodName, args, gas, deposit) => ({ type: 'FunctionCall', methodName, args, gas, deposit })),
         addFunctionCallAccessKey: vi.fn((publicKey, receiverId, methodNames, allowance) => ({ type: 'AddKey', publicKey, receiverId, methodNames, allowance })),
+        deleteKey: vi.fn((publicKey) => ({ type: 'DeleteKey', publicKey })),
     },
 }));
 

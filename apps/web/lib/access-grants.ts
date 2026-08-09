@@ -1,8 +1,8 @@
 import { Account, actions, KeyPair, KeyPairSigner, type KeyPairString } from 'near-api-js';
 import { GAS_CONSTANTS, NEAR_CONFIG } from './constants';
 import { getProvider, viewContract } from './near';
-import { getCurrentRpcUrl } from './rpc-failover';
-import { getSignlessAccessKey, prepareSignlessKeyProvision, type SignlessKeyProvision } from './signless-access-key';
+import { getSplitTransactionProvider } from './rpc-failover';
+import { getUsableSignlessAccessKey, prepareSignlessKeyProvision, type SignlessKeyProvision } from './signless-access-key';
 import type { WalletInstance } from './types';
 
 const ACCESS_GRANT_CACHE_PREFIX = 'youtick:access-grant:';
@@ -349,14 +349,14 @@ async function tryIssueSessionGrantWithSignlessKey(
     accountId: string,
     transaction: PreparedSessionGrant['transaction'],
 ): Promise<boolean> {
-    const keyPair = await getSignlessAccessKey(accountId);
+    const keyPair = await getUsableSignlessAccessKey(accountId);
     if (!keyPair) {
         return false;
     }
 
     try {
         const signer = new KeyPairSigner(keyPair);
-        const account = new Account(accountId, getCurrentRpcUrl(), signer);
+        const account = new Account(accountId, getSplitTransactionProvider(), signer);
         await account.signAndSendTransaction({
             receiverId: transaction.receiverId,
             actions: transaction.actions as Parameters<Account['signAndSendTransaction']>[0]['actions'],
@@ -413,14 +413,16 @@ export async function prepareSessionGrant(params: {
                 actions.functionCall(
                     'issue_session_grant',
                     {
-                        target_owner_id: params.accountId,
-                        session_pk: sessionPublicKey,
-                        scope: params.scope,
-                        resource_id: resourceId,
-                        ttl_ms: ttlMs,
-                        origin_hash: originHash,
-                        device_hash: deviceHash,
-                        session_pok: sessionPok,
+                        request: {
+                            target_owner_id: params.accountId,
+                            session_pk: sessionPublicKey,
+                            scope: params.scope,
+                            resource_id: resourceId,
+                            ttl_ms: ttlMs,
+                            origin_hash: originHash,
+                            device_hash: deviceHash,
+                            session_pok: sessionPok,
+                        },
                     },
                     GAS_CONSTANTS.mediumGas,
                     BigInt(0),

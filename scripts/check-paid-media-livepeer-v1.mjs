@@ -27,7 +27,7 @@ const messageFields = [
 ];
 checkRequest(vectors.upload_intent, "/v1/upload-intents");
 checkRequest(vectors.playback_token_request, "/v1/playback-tokens");
-assert(vectors.upload_intent.envelope.version === "2", "upload control v2 is required");
+assert(vectors.upload_intent.envelope.version === "3", "upload control v3 is required");
 
 const quoteFields = [
   "domain", "version", "network", "contract_id", "creator_id", "job_id",
@@ -73,6 +73,7 @@ function checkRequest(request, route) {
   assert(request.body_sha256 === bodyHash, `${route} body SHA-256 drift`);
   assert(request.envelope.body_sha256 === bodyHash, `${route} envelope body SHA-256 drift`);
   assert(request.envelope.route === route, `${route} envelope route drift`);
+  assert(request.envelope.version === (route === "/v1/upload-intents" ? "3" : "2"), `${route} envelope version drift`);
   const canonicalMessage = messageFields.map((field) => request.envelope[field]).join("\n");
   assert(request.canonical_message === canonicalMessage, `${route} canonical signed message drift`);
 }

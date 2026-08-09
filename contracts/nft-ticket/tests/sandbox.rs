@@ -49,6 +49,8 @@ async fn init() -> anyhow::Result<(Contract, Account, Account, Contract)> {
     let platform = worker.dev_create_account().await?;
     let bridge = worker.dev_create_account().await?;
     let governance = worker.dev_create_account().await?;
+    let admin = worker.dev_create_account().await?;
+    let guardian = worker.dev_create_account().await?;
     let creator = worker.dev_create_account().await?;
     let usdc_id = TESTNET_USDC.parse()?;
     let usdc_key = SecretKey::from_seed(KeyType::ED25519, TESTNET_USDC);
@@ -71,12 +73,16 @@ async fn init() -> anyhow::Result<(Contract, Account, Account, Contract)> {
     contract
         .call("new")
         .args_json(json!({
-            "platform_account_id": platform.id(),
-            "bridge_account_id": bridge.id(),
-            "takedown_authority_id": governance.id(),
-            "quote_public_key": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
-            "quote_key_version": 1,
-            "near_operational_reserve": "1000000000000000000000000",
+            "config": {
+                "platform_account_id": platform.id(),
+                "bridge_account_id": bridge.id(),
+                "takedown_authority_id": governance.id(),
+                "admin_account_id": admin.id(),
+                "guardian_account_id": guardian.id(),
+                "quote_public_key": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
+                "quote_key_version": 1,
+                "near_operational_reserve": "1000000000000000000000000",
+            },
         }))
         .transact()
         .await?
@@ -222,15 +228,27 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
         .transact()
         .await?
         .json()?;
+    let stored_after_first: serde_json::Value = contract
+        .view("get_publication")
+        .args_json(json!({ "publication_id": "job-1" }))
+        .await?
+        .json()?;
     let second: serde_json::Value = bridge
         .call(contract.id(), "finalize_livepeer_publication")
         .args_json(args)
         .transact()
         .await?
         .json()?;
+    let stored_after_replay: serde_json::Value = contract
+        .view("get_publication")
+        .args_json(json!({ "publication_id": "job-1" }))
+        .await?
+        .json()?;
     let publication_count: u64 = contract.view("get_publications_count").await?.json()?;
     assert_eq!(publication_count, 1);
+    assert_eq!(first, stored_after_first);
     assert_eq!(first, second);
+    assert_eq!(first, stored_after_replay);
     assert_eq!(first["publication_id"], "job-1");
     Ok(())
 }

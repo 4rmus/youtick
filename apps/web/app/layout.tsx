@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Geist } from 'next/font/google';
+import { connection } from 'next/server';
 import './globals.css';
 import { Navbar } from '@/components/Navbar';
 import { QueryProvider } from '@/components/providers/QueryProvider';
@@ -13,7 +14,8 @@ export const metadata: Metadata = {
     metadataBase: new URL('https://youtick.net'),
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+    await connection();
     return (
         <html lang="en" data-scroll-behavior="smooth">
             <body className={`${geist.variable} min-h-screen bg-black text-white antialiased`}>

@@ -15,12 +15,14 @@ import {
 import { base64Encode, hexEncode } from '@/lib/crypto/codec';
 import { getProvider, viewContract } from '@/lib/near';
 import type { WalletInstance } from '@/lib/types';
+import type { UploadRecoveryStage } from '@/lib/livepeer-upload-state';
 
 const LIVEPEER_TUS_ORIGIN = 'https://origin.livepeer.com';
 const PROFILE_ID = 'paid-media-livepeer-v1';
 const PROFILE_CONFIG_SHA256 = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
 const LIVEPEER_SESSION_STORAGE_PREFIX = 'youtick:livepeer-job-session:';
 const LIVEPEER_DRAFT_STORAGE_PREFIX = 'youtick:livepeer-ui-draft:';
+const LIVEPEER_SOURCE_FINGERPRINT_WINDOW_BYTES = 1024 * 1024;
 const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const MIN_CREATOR_UPLOAD_FEE_USDC = 500_000n;
@@ -41,23 +43,37 @@ export const LIVEPEER_SOURCE_ACCEPT = Object.values(LIVEPEER_SOURCE_FORMATS)
     .join(',');
 
 export type LivepeerUploadIntent = {
-    schema: 'youtick.livepeer-upload-intent.v1';
+    schema: 'youtick.livepeer-upload-intent.v2';
     job_id: string;
     generation: number;
     expected_source_bytes: string;
     source_type: LivepeerSourceType;
     chunk_bytes: number;
     tus_endpoint: string;
+    lease_id: string;
+    lease_expires_at_ms: string;
+    heartbeat_interval_ms: number;
     created: boolean;
 };
 
 export type LivepeerUploadDraft = {
+    schema: 'youtick.livepeer-ui-draft.v2';
+    stage: UploadRecoveryStage;
     jobId: string;
     title: string;
     price: string;
     sourceBytes: number;
     sourceName: string;
     sourceLastModified: number;
+    sourceFingerprintSha256: string;
+};
+
+const LIVEPEER_RECOVERY_STAGE_ORDER: Record<UploadRecoveryStage, number> = {
+    payment_pending: 0,
+    authorized: 1,
+    upload_ready: 2,
+    uploading: 3,
+    provider_processing: 4,
 };
 
 export type LivepeerSourceValidation =
@@ -158,19 +174,35 @@ export function createLivepeerJobId(): string {
 
 export function writeLivepeerUploadDraft(accountId: string, draft: LivepeerUploadDraft): void {
     validateJobSessionIdentity(accountId, draft.jobId);
-    sessionStorage.setItem(`${LIVEPEER_DRAFT_STORAGE_PREFIX}${accountId}`, JSON.stringify(draft));
+    if (!isLivepeerUploadDraft(draft)) throw new Error('invalid_livepeer_draft');
+    const storageKey = `${LIVEPEER_DRAFT_STORAGE_PREFIX}${accountId}`;
+    let stage = draft.stage;
+    try {
+        const existing = JSON.parse(sessionStorage.getItem(storageKey) || 'null') as unknown;
+        if (isLivepeerUploadDraft(existing)
+            && existing.jobId === draft.jobId
+            && existing.sourceFingerprintSha256 === draft.sourceFingerprintSha256
+            && LIVEPEER_RECOVERY_STAGE_ORDER[existing.stage] > LIVEPEER_RECOVERY_STAGE_ORDER[stage]) {
+            stage = existing.stage;
+        }
+    } catch {
+        // The new valid draft replaces malformed session-only UI state.
+    }
+    sessionStorage.setItem(storageKey, JSON.stringify({ ...draft, stage }));
 }
 
-export function readLivepeerUploadDraft(accountId: string, file: File): LivepeerUploadDraft | null {
+export async function readLivepeerUploadDraft(accountId: string, file: File): Promise<LivepeerUploadDraft | null> {
     const storageKey = `${LIVEPEER_DRAFT_STORAGE_PREFIX}${accountId}`;
     const raw = sessionStorage.getItem(storageKey);
     if (!raw) return null;
     try {
         const draft = JSON.parse(raw) as LivepeerUploadDraft;
         validateJobSessionIdentity(accountId, draft.jobId);
+        if (!isLivepeerUploadDraft(draft)) throw new Error('invalid_livepeer_draft');
         return draft.sourceBytes === file.size
             && draft.sourceName === file.name
             && draft.sourceLastModified === file.lastModified
+            && draft.sourceFingerprintSha256 === await fingerprintLivepeerSource(file)
             ? draft
             : null;
     } catch {
@@ -181,6 +213,71 @@ export function readLivepeerUploadDraft(accountId: string, file: File): Livepeer
 
 export function clearLivepeerUploadDraft(accountId: string): void {
     sessionStorage.removeItem(`${LIVEPEER_DRAFT_STORAGE_PREFIX}${accountId}`);
+}
+
+export function advanceLivepeerUploadDraftStage(
+    accountId: string,
+    jobId: string,
+    stage: UploadRecoveryStage,
+): void {
+    validateJobSessionIdentity(accountId, jobId);
+    const storageKey = `${LIVEPEER_DRAFT_STORAGE_PREFIX}${accountId}`;
+    const raw = sessionStorage.getItem(storageKey);
+    if (!raw) return;
+    try {
+        const draft = JSON.parse(raw) as unknown;
+        if (!isLivepeerUploadDraft(draft) || draft.jobId !== jobId) throw new Error('invalid');
+        if (LIVEPEER_RECOVERY_STAGE_ORDER[stage] <= LIVEPEER_RECOVERY_STAGE_ORDER[draft.stage]) return;
+        sessionStorage.setItem(storageKey, JSON.stringify({ ...draft, stage }));
+    } catch {
+        sessionStorage.removeItem(storageKey);
+    }
+}
+
+export async function fingerprintLivepeerSource(file: File): Promise<string> {
+    if (!Number.isSafeInteger(file.size) || file.size < 1) throw new Error('empty_file');
+    const windowBytes = Math.min(file.size, LIVEPEER_SOURCE_FINGERPRINT_WINDOW_BYTES);
+    const head = new Uint8Array(await file.slice(0, windowBytes).arrayBuffer());
+    const tailStart = Math.max(0, file.size - windowBytes);
+    const tail = tailStart === 0
+        ? new Uint8Array()
+        : new Uint8Array(await file.slice(tailStart).arrayBuffer());
+    const prefix = new TextEncoder().encode([
+        'youtick.livepeer-source-fingerprint.v1',
+        String(file.size),
+        String(windowBytes),
+        String(tail.byteLength),
+        '',
+    ].join('\n'));
+    const input = new Uint8Array(prefix.byteLength + head.byteLength + tail.byteLength);
+    input.set(prefix);
+    input.set(head, prefix.byteLength);
+    input.set(tail, prefix.byteLength + head.byteLength);
+    return hexEncode(new Uint8Array(await crypto.subtle.digest('SHA-256', input)));
+}
+
+function isLivepeerUploadDraft(value: unknown): value is LivepeerUploadDraft {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const draft = value as Record<string, unknown>;
+    return draft.schema === 'youtick.livepeer-ui-draft.v2'
+        && typeof draft.stage === 'string'
+        && Object.hasOwn(LIVEPEER_RECOVERY_STAGE_ORDER, draft.stage)
+        && typeof draft.jobId === 'string'
+        && JOB_ID_PATTERN.test(draft.jobId)
+        && typeof draft.title === 'string'
+        && new TextEncoder().encode(draft.title).length <= 200
+        && typeof draft.price === 'string'
+        && draft.price.length <= 32
+        && Number.isSafeInteger(draft.sourceBytes)
+        && (draft.sourceBytes as number) > 0
+        && (draft.sourceBytes as number) <= MEDIA_UPLOAD_POLICY.paidSourceMaxBytes
+        && typeof draft.sourceName === 'string'
+        && draft.sourceName.length > 0
+        && draft.sourceName.length <= 1024
+        && Number.isSafeInteger(draft.sourceLastModified)
+        && (draft.sourceLastModified as number) >= 0
+        && typeof draft.sourceFingerprintSha256 === 'string'
+        && /^[0-9a-f]{64}$/.test(draft.sourceFingerprintSha256);
 }
 
 export function livepeerUploadFeeUsdc(sourceBytes: number): string {
@@ -513,6 +610,7 @@ export async function requestLivepeerUploadIntent(input: {
     jobId: string;
     generation: number;
     expectedSourceBytes: number;
+    sourceFingerprintSha256: string;
     sourceType: LivepeerSourceType;
 }): Promise<LivepeerUploadIntent> {
     requireFeature();
@@ -520,6 +618,9 @@ export async function requestLivepeerUploadIntent(input: {
         || input.expectedSourceBytes < 1
         || input.expectedSourceBytes > MEDIA_UPLOAD_POLICY.paidSourceMaxBytes) {
         throw new Error('source_limit_exceeded');
+    }
+    if (!/^[0-9a-f]{64}$/.test(input.sourceFingerprintSha256)) {
+        throw new Error('invalid_source_fingerprint');
     }
     validateJobSessionIdentity(input.accountId, input.jobId);
     const session = loadLivepeerJobSessionKey(input.accountId, input.jobId);
@@ -531,6 +632,7 @@ export async function requestLivepeerUploadIntent(input: {
         job_id: input.jobId,
         generation: input.generation,
         expected_source_bytes: String(input.expectedSourceBytes),
+        source_fingerprint_sha256: input.sourceFingerprintSha256,
         source_type: input.sourceType,
         profile_id: PROFILE_ID,
         profile_config_sha256: PROFILE_CONFIG_SHA256,
@@ -538,7 +640,7 @@ export async function requestLivepeerUploadIntent(input: {
     const bodySha256 = await sha256Hex(canonicalJson(body));
     const envelope = {
         domain: 'youtick.paid-media-livepeer-v1.control',
-        version: '2',
+        version: '3',
         method: 'POST',
         route,
         network: NEAR_NETWORK,
@@ -567,9 +669,116 @@ export async function requestLivepeerUploadIntent(input: {
     if (!response.ok) {
         throw new Error(typeof value.error === 'string' ? value.error : `livepeer_control_http_${response.status}`);
     }
-    const intent = parseIntent(value, input);
-    clearLivepeerJobSessionKey(input.accountId, input.jobId);
-    return intent;
+    return parseIntent(value, input);
+}
+
+export async function heartbeatLivepeerUploadLease(input: {
+    accountId: string;
+    intent: LivepeerUploadIntent;
+}): Promise<string> {
+    requireFeature();
+    validateJobSessionIdentity(input.accountId, input.intent.job_id);
+    const session = loadLivepeerJobSessionKey(input.accountId, input.intent.job_id);
+    if (!session) throw new Error('livepeer_session_key_missing');
+    const route = '/v1/upload-heartbeats';
+    const origin = browserOrigin();
+    const body = {
+        job_id: input.intent.job_id,
+        generation: input.intent.generation,
+        lease_id: input.intent.lease_id,
+    };
+    const envelope = {
+        domain: 'youtick.paid-media-livepeer-v1.control',
+        version: '2',
+        method: 'POST',
+        route,
+        network: NEAR_NETWORK,
+        contract_id: NEAR_CONFIG.marketContractId,
+        account_id: input.accountId,
+        resource: `job:${input.intent.job_id}:${input.intent.generation}`,
+        session_public_key: session.keyPair.getPublicKey().toString(),
+        origin,
+        device_nonce: randomNonce(),
+        expires_at_ms: String(Date.now() + 5 * 60 * 1000),
+        body_sha256: await sha256Hex(canonicalJson(body)),
+    };
+    const signature = base64Encode(session.keyPair.sign(
+        new TextEncoder().encode(canonicalControlMessage(envelope)),
+    ).signature);
+    const response = await fetch(bridgeRoute(route), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Youtick-Signature': signature },
+        body: JSON.stringify({ body, envelope }),
+        cache: 'no-store',
+    });
+    const value = await readJson(response);
+    if (!response.ok) {
+        throw new Error(typeof value.error === 'string'
+            ? value.error
+            : `livepeer_control_http_${response.status}`);
+    }
+    if (value.schema !== 'youtick.livepeer-upload-lease.v1'
+        || value.job_id !== input.intent.job_id
+        || value.generation !== input.intent.generation
+        || value.lease_id !== input.intent.lease_id
+        || typeof value.expires_at_ms !== 'string'
+        || !/^[1-9][0-9]{12,15}$/.test(value.expires_at_ms)
+        || BigInt(value.expires_at_ms) <= BigInt(Date.now())
+        || value.heartbeat_interval_ms !== input.intent.heartbeat_interval_ms) {
+        throw new Error('invalid_livepeer_upload_lease');
+    }
+    return value.expires_at_ms;
+}
+
+export async function cancelLivepeerUpload(input: {
+    accountId: string;
+    jobId: string;
+    generation: number;
+}): Promise<void> {
+    requireFeature();
+    validateJobSessionIdentity(input.accountId, input.jobId);
+    if (!Number.isSafeInteger(input.generation) || input.generation < 1) {
+        throw new Error('invalid_livepeer_cancellation');
+    }
+    const session = loadLivepeerJobSessionKey(input.accountId, input.jobId);
+    if (!session) throw new Error('livepeer_session_key_missing');
+    const route = '/v1/upload-cancellations';
+    const body = { job_id: input.jobId, generation: input.generation };
+    const envelope = {
+        domain: 'youtick.paid-media-livepeer-v1.control',
+        version: '2',
+        method: 'POST',
+        route,
+        network: NEAR_NETWORK,
+        contract_id: NEAR_CONFIG.marketContractId,
+        account_id: input.accountId,
+        resource: `job:${input.jobId}:${input.generation}`,
+        session_public_key: session.keyPair.getPublicKey().toString(),
+        origin: browserOrigin(),
+        device_nonce: randomNonce(),
+        expires_at_ms: String(Date.now() + 5 * 60 * 1000),
+        body_sha256: await sha256Hex(canonicalJson(body)),
+    };
+    const signature = base64Encode(session.keyPair.sign(
+        new TextEncoder().encode(canonicalControlMessage(envelope)),
+    ).signature);
+    const response = await fetch(bridgeRoute(route), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Youtick-Signature': signature },
+        body: JSON.stringify({ body, envelope }),
+        cache: 'no-store',
+    });
+    const value = await readJson(response);
+    if (!response.ok) {
+        throw new Error(typeof value.error === 'string'
+            ? value.error
+            : `livepeer_control_http_${response.status}`);
+    }
+    if (value.cancelled !== true
+        || typeof value.duplicate !== 'boolean'
+        || value.refundable !== false) {
+        throw new Error('invalid_livepeer_cancellation');
+    }
 }
 
 export async function preflightLivepeerUpload(input: {
@@ -613,6 +822,7 @@ export async function uploadLivepeerSource(
     options?: {
         signal?: AbortSignal;
         onProgress?: (uploadedBytes: number, totalBytes: number) => void;
+        heartbeat?: () => Promise<unknown>;
     },
 ): Promise<void> {
     requireFeature();
@@ -641,11 +851,20 @@ export async function uploadLivepeerSource(
     const abort = () => {
         void upload.abort(false).finally(() => rejectUpload(new Error('livepeer_upload_aborted')));
     };
+    let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleHeartbeat = () => {
+        if (!options?.heartbeat) return;
+        heartbeatTimer = setTimeout(() => {
+            void options.heartbeat!().catch(() => undefined).finally(scheduleHeartbeat);
+        }, intent.heartbeat_interval_ms);
+    };
     options?.signal?.addEventListener('abort', abort, { once: true });
     try {
+        scheduleHeartbeat();
         upload.start();
         await completion;
     } finally {
+        if (heartbeatTimer) clearTimeout(heartbeatTimer);
         options?.signal?.removeEventListener('abort', abort);
     }
 }
@@ -656,7 +875,7 @@ function parseIntent(value: Record<string, unknown>, expected: {
     expectedSourceBytes: number;
     sourceType: LivepeerSourceType;
 }): LivepeerUploadIntent {
-    if (value.schema !== 'youtick.livepeer-upload-intent.v1'
+    if (value.schema !== 'youtick.livepeer-upload-intent.v2'
         || value.job_id !== expected.jobId
         || value.generation !== expected.generation
         || value.expected_source_bytes !== String(expected.expectedSourceBytes)
@@ -664,6 +883,12 @@ function parseIntent(value: Record<string, unknown>, expected: {
         || value.chunk_bytes !== MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes
         || typeof value.tus_endpoint !== 'string'
         || !isLivepeerTusUrl(value.tus_endpoint)
+        || typeof value.lease_id !== 'string'
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.lease_id)
+        || typeof value.lease_expires_at_ms !== 'string'
+        || !/^[1-9][0-9]{12,15}$/.test(value.lease_expires_at_ms)
+        || BigInt(value.lease_expires_at_ms) <= BigInt(Date.now())
+        || value.heartbeat_interval_ms !== 5 * 60 * 1000
         || typeof value.created !== 'boolean') {
         throw new Error('invalid_livepeer_upload_intent');
     }
@@ -782,7 +1007,7 @@ function loadLivepeerJobSessionKey(accountId: string, jobId: string): LivepeerJo
     }
 }
 
-function clearLivepeerJobSessionKey(accountId: string, jobId: string): void {
+export function clearLivepeerJobSessionKey(accountId: string, jobId: string): void {
     if (typeof window === 'undefined') return;
     sessionStorage.removeItem(livepeerJobSessionStorageKey(accountId, jobId));
 }

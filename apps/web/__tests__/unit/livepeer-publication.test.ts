@@ -30,8 +30,10 @@ import {
     parseLivepeerPublication,
     readCreatorBalance,
     readLivepeerMediaJob,
+    readLivepeerUploadProgress,
     readLivepeerPublications,
     readLivepeerPublication,
+    waitForAuthorizedLivepeerJob,
     withdrawCreatorBalance,
     type LivepeerPublication,
 } from '@/lib/livepeer-publication';
@@ -138,6 +140,45 @@ describe('Livepeer publication UI boundary', () => {
             'get_publications',
             { from_index: '0', limit: 24 },
         );
+    });
+
+    it('waits outside the UI component for the exact authorized upload key', async () => {
+        vi.useFakeTimers();
+        state.viewContract
+            .mockRejectedValueOnce(new Error('finality_lag'))
+            .mockResolvedValueOnce({
+                job_id: 'job-001',
+                creator_id: 'creator.testnet',
+                status: 'Authorized',
+                upload_public_key: 'ed25519:11111111111111111111111111111111',
+            });
+
+        const pending = waitForAuthorizedLivepeerJob(
+            'job-001',
+            'creator.testnet',
+            'ed25519:11111111111111111111111111111111',
+        );
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        await expect(pending).resolves.toBeUndefined();
+        expect(state.viewContract).toHaveBeenCalledTimes(2);
+        vi.useRealTimers();
+    });
+
+    it('composes upload progress reads outside the UI component', async () => {
+        const job = {
+            job_id: 'job-001',
+            creator_id: 'creator.testnet',
+            status: 'Authorized',
+            upload_public_key: 'ed25519:11111111111111111111111111111111',
+        } as const;
+        state.viewContract.mockResolvedValueOnce(job).mockResolvedValueOnce(null);
+
+        await expect(readLivepeerUploadProgress('job-001')).resolves.toEqual({
+            job,
+            publication: null,
+        });
+        expect(state.viewContract).toHaveBeenCalledTimes(2);
     });
 
     it('reads and withdraws the creator USDC balance', async () => {

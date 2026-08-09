@@ -6,9 +6,11 @@
  * import { getCurrentRpcUrl, withRpcFailover, RPC_ENDPOINTS } from '@/lib/rpc-failover';
  */
 
+import { JsonRpcProvider } from 'near-api-js';
 import { APP_CONFIG, NEAR_NETWORK } from './constants';
 
 export const NEAR_RPC_PROXY_PATH = '/api/near-rpc';
+export const NEAR_RPC_BROADCAST_PROXY_PATH = '/api/near-rpc/broadcast';
 
 // RPC Endpoints - ordered by priority
 export const MAINNET_RPC_ENDPOINTS = [
@@ -51,6 +53,30 @@ export function getRpcEndpoints(): string[] {
  */
 export function getCurrentRpcUrl(): string {
     return resolveRpcUrl(RPC_ENDPOINTS[currentRpcIndex]);
+}
+
+export function getBroadcastRpcUrl(): string {
+    return resolveRpcUrl(NEAR_RPC_BROADCAST_PROXY_PATH);
+}
+
+class SplitTransactionRpcProvider extends JsonRpcProvider {
+    private readonly broadcastProvider: JsonRpcProvider;
+
+    constructor(readUrl: string, broadcastUrl: string) {
+        super({ url: readUrl });
+        this.broadcastProvider = new JsonRpcProvider({ url: broadcastUrl });
+    }
+
+    override sendTransactionUntil(
+        signedTransaction: Parameters<JsonRpcProvider['sendTransactionUntil']>[0],
+        waitUntil: Parameters<JsonRpcProvider['sendTransactionUntil']>[1],
+    ) {
+        return this.broadcastProvider.sendTransactionUntil(signedTransaction, waitUntil);
+    }
+}
+
+export function getSplitTransactionProvider(): JsonRpcProvider {
+    return new SplitTransactionRpcProvider(getCurrentRpcUrl(), getBroadcastRpcUrl());
 }
 
 /**

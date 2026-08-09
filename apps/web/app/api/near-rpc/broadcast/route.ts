@@ -1,4 +1,4 @@
-import { handleNearRpcRequest } from './proxy';
+import { handleNearRpcRequest } from '../proxy';
 
 export async function OPTIONS(): Promise<Response> {
     return new Response(null, {
@@ -8,5 +8,5 @@ export async function OPTIONS(): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-    return handleNearRpcRequest(request, 'read');
+    return handleNearRpcRequest(request, 'broadcast');
 }
