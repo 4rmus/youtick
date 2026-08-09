@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, scryptSync } from 'node:crypto';
 import {
     appendFileSync,
     chmodSync,
@@ -21,9 +21,11 @@ const SHA = 'a'.repeat(40);
 const ACCOUNT_ID = '1'.repeat(32);
 const ZONE_ID = '2'.repeat(32);
 const API_TOKEN = 'fixture-api-token';
-const NEAR_RPC_URL = 'https://rpc.fastnear.com/v1/release-test-secret';
+const NEAR_RPC_SECRET = 'release-test-secret';
+const NEAR_RPC_URL = `https://rpc.fastnear.com/v1/${NEAR_RPC_SECRET}`;
 const NEAR_RPC_SHA256 = createHash('sha256').update(NEAR_RPC_URL).digest('hex');
 const ONECLICK_API_KEY = `eyJx${'a'.repeat(266)}.${'b'.repeat(266)}.sig`;
+const ONECLICK_API_KEY_SCRYPT_SALT = 'youtick-release-test-v1';
 const TARGETS = {
     preview: {
         web: { worker: 'youtick-web-preview', domain: 'preview.youtick.net' },
@@ -222,14 +224,18 @@ if (secretsIndex >= 0) {
   const mode = fs.statSync(secretsPath).mode & 0o777;
   const keys = Object.keys(parsed);
   const hash = crypto.createHash('sha256').update(parsed.NEAR_RPC_URL || '').digest('hex');
-  const oneClickHash = crypto.createHash('sha256').update(parsed.ONECLICK_API_KEY || '').digest('hex');
-  const expectedKeys = process.env.FAKE_ONECLICK_API_KEY_SHA256
+  const oneClickHash = crypto.scryptSync(
+    parsed.ONECLICK_API_KEY || '',
+    'youtick-release-test-v1',
+    32,
+  ).toString('hex');
+  const expectedKeys = process.env.FAKE_ONECLICK_API_KEY_SCRYPT
     ? ['NEAR_RPC_URL', 'ONECLICK_API_KEY']
     : ['NEAR_RPC_URL'];
   if (mode !== 0o600 || JSON.stringify(keys) !== JSON.stringify(expectedKeys)
       || hash !== process.env.FAKE_NEAR_RPC_SHA256
-      || (process.env.FAKE_ONECLICK_API_KEY_SHA256
-        && oneClickHash !== process.env.FAKE_ONECLICK_API_KEY_SHA256)
+      || (process.env.FAKE_ONECLICK_API_KEY_SCRYPT
+        && oneClickHash !== process.env.FAKE_ONECLICK_API_KEY_SCRYPT)
       || process.env.NEAR_RPC_URL || process.env.ONECLICK_API_KEY) {
     throw new Error('invalid fake Wrangler secret contract');
   }
@@ -435,7 +441,7 @@ async function withFakeEnvironment(fake, callback, oneClickApiKey = null) {
     const previousLog = process.env.FAKE_WRANGLER_LOG;
     const previousSecretLog = process.env.FAKE_WRANGLER_SECRET_LOG;
     const previousNearRpcHash = process.env.FAKE_NEAR_RPC_SHA256;
-    const previousOneClickHash = process.env.FAKE_ONECLICK_API_KEY_SHA256;
+    const previousOneClickHash = process.env.FAKE_ONECLICK_API_KEY_SCRYPT;
     const previousNearRpcUrl = process.env.NEAR_RPC_URL;
     const previousOneClickApiKey = process.env.ONECLICK_API_KEY;
     process.env.FAKE_WRANGLER_STATE = fake.statePath;
@@ -444,11 +450,13 @@ async function withFakeEnvironment(fake, callback, oneClickApiKey = null) {
     process.env.FAKE_NEAR_RPC_SHA256 = NEAR_RPC_SHA256;
     process.env.NEAR_RPC_URL = NEAR_RPC_URL;
     if (oneClickApiKey) {
-        process.env.FAKE_ONECLICK_API_KEY_SHA256 = createHash('sha256')
-            .update(oneClickApiKey)
-            .digest('hex');
+        process.env.FAKE_ONECLICK_API_KEY_SCRYPT = scryptSync(
+            oneClickApiKey,
+            ONECLICK_API_KEY_SCRYPT_SALT,
+            32,
+        ).toString('hex');
     } else {
-        delete process.env.FAKE_ONECLICK_API_KEY_SHA256;
+        delete process.env.FAKE_ONECLICK_API_KEY_SCRYPT;
     }
     delete process.env.ONECLICK_API_KEY;
     try {
@@ -462,8 +470,8 @@ async function withFakeEnvironment(fake, callback, oneClickApiKey = null) {
         else process.env.FAKE_WRANGLER_SECRET_LOG = previousSecretLog;
         if (previousNearRpcHash === undefined) delete process.env.FAKE_NEAR_RPC_SHA256;
         else process.env.FAKE_NEAR_RPC_SHA256 = previousNearRpcHash;
-        if (previousOneClickHash === undefined) delete process.env.FAKE_ONECLICK_API_KEY_SHA256;
-        else process.env.FAKE_ONECLICK_API_KEY_SHA256 = previousOneClickHash;
+        if (previousOneClickHash === undefined) delete process.env.FAKE_ONECLICK_API_KEY_SCRYPT;
+        else process.env.FAKE_ONECLICK_API_KEY_SCRYPT = previousOneClickHash;
         if (previousNearRpcUrl === undefined) delete process.env.NEAR_RPC_URL;
         else process.env.NEAR_RPC_URL = previousNearRpcUrl;
         if (previousOneClickApiKey === undefined) delete process.env.ONECLICK_API_KEY;
@@ -768,7 +776,7 @@ test('only structured error 10007 permits workers.dev bootstrap before safe doma
     )), [TARGETS.preview.bridge.domain, TARGETS.preview.web.domain]);
     assert.deepEqual(JSON.parse(readFileSync(release.receipt, 'utf8')), receipt);
     for (const path of [fake.logPath, fake.secretLogPath, release.receipt]) {
-        assert.ok(!readFileSync(path, 'utf8').includes(NEAR_RPC_URL));
+        assert.ok(!readFileSync(path, 'utf8').includes(NEAR_RPC_SECRET));
     }
 });
 
