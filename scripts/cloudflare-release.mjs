@@ -28,6 +28,7 @@ const VERSION_RE = /^[A-Za-z0-9-]+$/;
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const RPC_PLACEHOLDER_RE = /<[^>]+>|placeholder|replace|change[-_\s]?me|todo|dummy|generic|example/i;
 const GENERIC_NEAR_RPC_HOSTS = new Set(['rpc.mainnet.near.org', 'rpc.testnet.near.org']);
+const POST_PROMOTION_SMOKE_RETRY_DELAYS_MS = [0, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 
 const TARGETS = Object.freeze({
     preview: Object.freeze({
@@ -49,6 +50,42 @@ const ALL_TARGETS = Object.freeze({
 });
 
 const READ_MODEL_TARGET = Object.freeze({ worker: 'youtick-market-read-model-testnet' });
+
+function transientWebPropagationError(error) {
+    const prefix = 'release_smoke_browser_errors\n';
+    if (!(error instanceof Error) || !error.message.startsWith(prefix)) return false;
+    const entries = error.message.slice(prefix.length)
+        .split(/\n(?=\/(?:tr)?:(?:console|pageerror):)/);
+    let hasPropagationSignal = false;
+    for (const entry of entries) {
+        if (/:(?:console|pageerror):.*ChunkLoadError: Loading chunk\b.*\bfailed\b/is.test(entry)) {
+            hasPropagationSignal = true;
+            continue;
+        }
+        if (entry.includes(':console:Failed to load resource: the server responded with a status of 404')) {
+            continue;
+        }
+        if (entry.includes('Content Security Policy directive: "script-src \'self\' \'unsafe-inline\'"')) {
+            hasPropagationSignal = true;
+            continue;
+        }
+        return false;
+    }
+    return hasPropagationSignal;
+}
+
+async function runPostPromotionSmoke(smokeFn, input, sleepFn) {
+    for (let attempt = 0; attempt < POST_PROMOTION_SMOKE_RETRY_DELAYS_MS.length; attempt += 1) {
+        const delay = POST_PROMOTION_SMOKE_RETRY_DELAYS_MS[attempt];
+        if (delay) await sleepFn(delay);
+        try {
+            return await smokeFn(input);
+        } catch (error) {
+            if (!transientWebPropagationError(error)
+                || attempt === POST_PROMOTION_SMOKE_RETRY_DELAYS_MS.length - 1) throw error;
+        }
+    }
+}
 
 const BRIDGE_PUBLIC_KEYS = Object.freeze([
     'ACCESS_CONTRACT_ID',
@@ -1184,6 +1221,7 @@ export async function deployRelease({
     cloudflareZoneId = process.env.CLOUDFLARE_ZONE_ID,
     nearRpcUrl: nearRpcUrlValue = process.env.NEAR_RPC_URL,
     oneClickApiKey: oneClickApiKeyValue = process.env.ONECLICK_API_KEY,
+    sleepFn = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
 } = {}) {
     if (!Object.hasOwn(TARGETS, target)) fail('target_invalid');
     if (!GIT_SHA_RE.test(sha || '')) fail('sha_invalid');
@@ -1404,9 +1442,13 @@ export async function deployRelease({
                     'read_model_promoted',
                 );
             }
-            await smokeFn(smokeInput(target, `https://${TARGETS[target].web.domain}`, {
-                expectedBridgeVersion: prepared.bridge.candidate,
-            }));
+            await runPostPromotionSmoke(
+                smokeFn,
+                smokeInput(target, `https://${TARGETS[target].web.domain}`, {
+                    expectedBridgeVersion: prepared.bridge.candidate,
+                }),
+                sleepFn,
+            );
             rollbackPerformed = target === 'production' && rollbackTest === 'true'
                 ? await runProductionRollbackTest({
                     runByComponent, argsByComponent, prepared, smokeFn, target,

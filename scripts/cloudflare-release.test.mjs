@@ -45,6 +45,16 @@ const TARGETS = {
 };
 const READ_MODEL_WORKER = 'youtick-market-read-model-testnet';
 
+function transientWebPropagationError() {
+    return new Error([
+        'release_smoke_browser_errors',
+        '/:console:Failed to load resource: the server responded with a status of 404 ()',
+        '/:console:ChunkLoadError: Loading chunk 142 failed.',
+        '(error: https://preview.youtick.net/_next/static/chunks/142-fixture.js)',
+        '/tr:console:Loading the script https://static.cloudflareinsights.com/beacon.min.js violates the following Content Security Policy directive: "script-src \'self\' \'unsafe-inline\'".',
+    ].join('\n'));
+}
+
 function canonicalJson(value) {
     return `${JSON.stringify(value, null, 2)}\n`;
 }
@@ -574,6 +584,7 @@ function deployFixture(
     {
         target = 'preview', rollbackTest = 'false', zoneId = ZONE_ID,
         nearRpcUrl = NEAR_RPC_URL, oneClickApiKey = ONECLICK_API_KEY,
+        sleepFn,
     } = {},
 ) {
     return withFakeEnvironment(fake, () => deployRelease({
@@ -592,6 +603,7 @@ function deployFixture(
         cloudflareZoneId: zoneId,
         nearRpcUrl,
         oneClickApiKey,
+        sleepFn,
     }), oneClickApiKey);
 }
 
@@ -1080,6 +1092,97 @@ test('target allowlist and disabled release flags are fail closed', async (t) =>
             nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY,
         }), /bridge_wrangler_config_invalid/);
     });
+});
+
+test('post-promotion smoke retries transient stable Web asset propagation', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, {
+        workers: {
+            [TARGETS.preview.web.worker]: {
+                traffic: [{ version_id: 'web-old', percentage: 100 }],
+            },
+            [TARGETS.preview.bridge.worker]: {
+                traffic: [{ version_id: 'bridge-old', percentage: 100 }],
+            },
+        },
+        uploadFailures: {},
+    });
+    const delays = [];
+    let smokeCalls = 0;
+    const receipt = await deployFixture(release, fake, async () => {
+        smokeCalls += 1;
+        if (smokeCalls === 3) throw transientWebPropagationError();
+        return { ok: true };
+    }, { sleepFn: async (delay) => delays.push(delay) });
+
+    assert.equal(smokeCalls, 4);
+    assert.deepEqual(delays, [1_000]);
+    assert.equal(receipt.web.versionId, 'web-new');
+});
+
+test('post-promotion smoke does not retry a non-transient browser error', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, {
+        workers: {
+            [TARGETS.preview.web.worker]: {
+                traffic: [{ version_id: 'web-old', percentage: 100 }],
+            },
+            [TARGETS.preview.bridge.worker]: {
+                traffic: [{ version_id: 'bridge-old', percentage: 100 }],
+            },
+        },
+        uploadFailures: {},
+    });
+    const delays = [];
+    let smokeCalls = 0;
+    await assert.rejects(deployFixture(release, fake, async () => {
+        smokeCalls += 1;
+        if (smokeCalls === 3) {
+            const error = transientWebPropagationError();
+            error.message += '\n/tr:console:ReferenceError: fixture';
+            throw error;
+        }
+        return { ok: true };
+    }, { sleepFn: async (delay) => delays.push(delay) }), /ReferenceError: fixture/);
+
+    assert.equal(smokeCalls, 3);
+    assert.deepEqual(delays, []);
+});
+
+test('post-promotion smoke exhaustion still restores every previous version', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, {
+        workers: {
+            [TARGETS.preview.web.worker]: {
+                traffic: [{ version_id: 'web-old', percentage: 100 }],
+            },
+            [TARGETS.preview.bridge.worker]: {
+                traffic: [{ version_id: 'bridge-old', percentage: 100 }],
+            },
+        },
+        uploadFailures: {},
+    });
+    const delays = [];
+    let smokeCalls = 0;
+    await assert.rejects(deployFixture(release, fake, async () => {
+        smokeCalls += 1;
+        if (smokeCalls >= 3) throw transientWebPropagationError();
+        return { ok: true };
+    }, { sleepFn: async (delay) => delays.push(delay) }), /ChunkLoadError/);
+
+    assert.equal(smokeCalls, 9);
+    assert.deepEqual(delays, [1_000, 2_000, 4_000, 8_000, 15_000, 30_000]);
+    const finalState = JSON.parse(readFileSync(fake.statePath, 'utf8'));
+    assert.deepEqual(finalState.workers[TARGETS.preview.web.worker].traffic, [
+        { version_id: 'web-old', percentage: 100 },
+    ]);
+    assert.deepEqual(finalState.workers[TARGETS.preview.bridge.worker].traffic, [
+        { version_id: 'bridge-old', percentage: 100 },
+    ]);
+    assert.deepEqual(finalState.workers[READ_MODEL_WORKER].traffic, [
+        { version_id: 'read-model-bootstrap', percentage: 100 },
+    ]);
+    assert.equal(existsSync(release.receipt), false);
 });
 
 test('candidate promotion failure restores both previous 100 percent versions', async (t) => {
