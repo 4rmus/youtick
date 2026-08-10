@@ -3,12 +3,13 @@ import { NextRequest } from 'next/server';
 import { middleware } from '../../middleware';
 
 describe('request nonce CSP', () => {
-    it('allows style attributes without weakening script or style element policies', () => {
+    it('allows injected styles without weakening the script policy', () => {
         const response = middleware(new NextRequest('https://youtick.net/watch'));
         const csp = response.headers.get('Content-Security-Policy');
 
         expect(csp).toContain("script-src 'self' 'nonce-");
         expect(csp).toContain("style-src 'self' 'nonce-");
+        expect(csp).toContain("style-src-elem 'self' 'unsafe-inline'");
         expect(csp).toContain("style-src-attr 'unsafe-inline'");
         expect(csp).toContain('https://static.cloudflareinsights.com');
         expect(csp).toContain("connect-src 'self' https:");

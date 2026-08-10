@@ -11,6 +11,7 @@ function contentSecurityPolicy(nonce: string): string {
         "default-src 'self'",
         `script-src 'self' 'nonce-${nonce}' https://static.cloudflareinsights.com${isDevelopment ? " 'unsafe-eval'" : ''}`,
         `style-src 'self' 'nonce-${nonce}'`,
+        "style-src-elem 'self' 'unsafe-inline'",
         "style-src-attr 'unsafe-inline'",
         "img-src 'self' data: blob: https:",
         "font-src 'self' data:",
