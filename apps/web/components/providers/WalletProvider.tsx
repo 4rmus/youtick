@@ -25,6 +25,13 @@ interface WalletContextValue {
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
+const CSP_NONCE_PATTERN = /^[A-Za-z0-9+/]{22}==$/;
+
+export function readDocumentCspNonce(): string | null {
+    if (typeof document === 'undefined') return null;
+    const nonce = document.querySelector<HTMLScriptElement>('script[nonce]')?.nonce;
+    return nonce && CSP_NONCE_PATTERN.test(nonce) ? nonce : null;
+}
 
 function createWalletAdapter(wallet: NearWalletBase): WalletInstance {
     return {
@@ -81,6 +88,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         let mounted = true;
+        const cspNonce = readDocumentCspNonce();
+        if (!cspNonce) {
+            queueMicrotask(() => {
+                if (mounted) setError('Wallet security boundary is unavailable. Reload the page.');
+            });
+            return () => {
+                mounted = false;
+            };
+        }
         const providers = NEAR_NETWORK === 'testnet'
             ? { mainnet: [], testnet: getRpcEndpoints() }
             : { mainnet: getRpcEndpoints(), testnet: [] };
@@ -94,6 +110,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 [NEAR_NETWORK]: true,
             },
             autoConnect: false,
+            cspNonce,
             footerBranding: null,
         });
         connectorRef.current = connector;
