@@ -247,6 +247,44 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
     }
 });
 
+test('release smoke identifies the failing Bridge mutation endpoint', async () => {
+    const allowedOrigin = 'https://allowed.test';
+    const fetchImpl = async (value) => {
+        const url = new URL(value);
+        if (url.hostname === 'web.test') {
+            if (url.pathname === '/api/near-rpc') {
+                return Response.json({ jsonrpc: '2.0', result: { chain_id: 'testnet' } });
+            }
+            return new Response('<!doctype html><main>ok</main>', {
+                headers: { 'Content-Type': 'text/html' },
+            });
+        }
+        if (url.pathname === '/__health') {
+            return Response.json({
+                stage: 'DISABLED',
+                providerMutationEnabled: false,
+                versionId: 'bridge-version',
+            });
+        }
+        const cors = ['/v1/upload-intents', '/v1/playback-tokens'].includes(url.pathname)
+            ? { 'Access-Control-Allow-Origin': allowedOrigin }
+            : {};
+        return Response.json(
+            { error: url.pathname === '/v1/playback-tokens' ? 'not_found' : 'control_plane_disabled' },
+            { status: url.pathname === '/v1/playback-tokens' ? 404 : 503, headers: cors },
+        );
+    };
+
+    await assert.rejects(runReleaseSmoke({
+        webUrl: 'https://web.test',
+        bridgeUrl: 'https://bridge.test',
+        allowedOrigin,
+        deniedOrigin: 'https://denied.test',
+        fetchImpl,
+        browserRunner: async () => ({ channel: 'fixture', routes: ['/', '/tr'] }),
+    }), /release_smoke_bridge_mutation_status_404 path=\/v1\/playback-tokens/);
+});
+
 test('Bridge bootstrap propagation retry is bounded and status scoped', async (t) => {
     const retryDelays = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
     for (const fixture of [
