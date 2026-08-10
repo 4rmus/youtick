@@ -6,9 +6,16 @@ import {
     browserOverrideHeaders,
     canonicalJson,
     compareFingerprints,
+    expectWebSecurityHeaders,
     fingerprintUrl,
     runReleaseSmoke,
 } from './release-smoke.mjs';
+
+const WEB_SECURITY_HEADERS = {
+    'Strict-Transport-Security': 'max-age=31536000',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+};
 
 async function serve(handler) {
     const server = createServer(handler);
@@ -62,7 +69,10 @@ test('fingerprint follows redirects and retains only canonical stable evidence',
                 'content-security-policy': "default-src 'self'",
                 'content-type': 'text/plain; charset=utf-8',
                 location: '/next',
+                'permissions-policy': null,
+                'referrer-policy': null,
                 server: 'fixture',
+                'strict-transport-security': null,
                 'x-proxy': 'web4',
                 'x-web4-origin': 'fixture.near',
             },
@@ -84,7 +94,15 @@ test('fingerprint comparison is key-order independent and rejects drift', () => 
         final_url: 'https://youtick.net/',
         body_sha256: 'a'.repeat(64),
         headers: Object.fromEntries([
-            ...['server', 'x-web4-origin', 'x-proxy', 'location'].map((name) => [name, null]),
+            ...[
+                'server',
+                'x-web4-origin',
+                'x-proxy',
+                'location',
+                'permissions-policy',
+                'referrer-policy',
+                'strict-transport-security',
+            ].map((name) => [name, null]),
             ['content-type', 'text/html'],
             ['content-security-policy', null],
             ['cache-control', 'public'],
@@ -117,6 +135,26 @@ test('browser override header is limited to the exact Preview web origin', () =>
     }
 });
 
+test('release smoke rejects missing or weakened web security headers', () => {
+    assert.doesNotThrow(() => expectWebSecurityHeaders(new Response(null, {
+        headers: WEB_SECURITY_HEADERS,
+    })));
+
+    for (const [name, value] of [
+        ['Strict-Transport-Security', null],
+        ['Referrer-Policy', 'unsafe-url'],
+        ['Permissions-Policy', 'camera=*'],
+    ]) {
+        const headers = new Headers(WEB_SECURITY_HEADERS);
+        if (value === null) headers.delete(name);
+        else headers.set(name, value);
+        assert.throws(
+            () => expectWebSecurityHeaders(new Response(null, { headers })),
+            /release_smoke_web_security_headers_invalid/,
+        );
+    }
+});
+
 test('release smoke retries workers.dev propagation and proves disabled Bridge contracts', async () => {
     const override = 'bridge-worker="version-123"';
     const mutationCors = new Map([
@@ -141,7 +179,7 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
             return;
         }
         if (request.method === 'GET' && ['/', '/tr'].includes(request.url)) {
-            response.writeHead(200, { 'Content-Type': 'text/html' });
+            response.writeHead(200, { 'Content-Type': 'text/html', ...WEB_SECURITY_HEADERS });
             response.end('<!doctype html><main>ok</main>');
             return;
         }
@@ -284,7 +322,7 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
                         return Response.json({ jsonrpc: '2.0', result: { chain_id: 'testnet' } });
                     }
                     return new Response('<!doctype html><main>ok</main>', {
-                        headers: { 'Content-Type': 'text/html' },
+                        headers: { 'Content-Type': 'text/html', ...WEB_SECURITY_HEADERS },
                     });
                 }
                 if (url.hostname === 'bridge.test' && url.pathname === '/__health') {
@@ -321,7 +359,7 @@ test('release smoke bounds and diagnoses override version propagation', async ()
                 return Response.json({ jsonrpc: '2.0', result: { chain_id: 'testnet' } });
             }
             return new Response('<!doctype html><main>ok</main>', {
-                headers: { 'Content-Type': 'text/html' },
+                headers: { 'Content-Type': 'text/html', ...WEB_SECURITY_HEADERS },
             });
         }
         if (url.hostname === 'bridge.test' && url.pathname === '/__health') {

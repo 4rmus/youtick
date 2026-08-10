@@ -11,10 +11,18 @@ const STABLE_HEADERS = [
     'content-security-policy',
     'content-type',
     'location',
+    'permissions-policy',
+    'referrer-policy',
     'server',
+    'strict-transport-security',
     'x-proxy',
     'x-web4-origin',
 ];
+const REQUIRED_WEB_SECURITY_HEADERS = {
+    'strict-transport-security': 'max-age=31536000',
+    'referrer-policy': 'strict-origin-when-cross-origin',
+    'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+};
 const DISABLED_BRIDGE_MUTATIONS = [
     { path: '/v1/livepeer-webhooks', cors: false },
     { path: '/v1/operations/admission-reopen', cors: false },
@@ -123,6 +131,13 @@ function parseJson(body, label) {
 function expectStatus(response, expected, label) {
     if (response.status !== expected) {
         throw new Error(`release_smoke_${label}_status_${response.status}`);
+    }
+}
+
+export function expectWebSecurityHeaders(response) {
+    if (Object.entries(REQUIRED_WEB_SECURITY_HEADERS)
+        .some(([name, value]) => response.headers.get(name) !== value)) {
+        throw new Error('release_smoke_web_security_headers_invalid');
     }
 }
 
@@ -243,8 +258,10 @@ export async function runReleaseSmoke({
 
     const root = await request(webUrl, '/', {}, headers, fetchImpl);
     expectStatus(root.response, 200, 'web_root');
+    expectWebSecurityHeaders(root.response);
     const tr = await request(webUrl, '/tr', {}, headers, fetchImpl);
     expectStatus(tr.response, 200, 'web_tr');
+    expectWebSecurityHeaders(tr.response);
     const rpc = await request(webUrl, '/api/near-rpc', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
