@@ -3744,3 +3744,59 @@ Evidence classes remain separate:
   mutation approval. Its acceptance check is one deployed Queue producer, zero
   consumers, no read-model route/cron and both runtime gates still false;
   Queue canary and flag activation remain later approval packages.
+
+### CHECKPOINT 119 — Phase 3–4 / exact-SHA dark Preview proof
+
+- DURUM: `PASS_PREVIEW / DARK_DEPLOYED / RUNTIME_CLOSED / PRODUCTION_UNTOUCHED`
+- BASELINE: PR #103 exact head
+  `fd01ea987c01c74a476d073ee5b061c7502e7bb0`, merged as
+  `origin/main@a8793e33e0a7d2ba16f4ab4c4ba5c801b42bad99`.
+- AMAÇ: Exercise the separately approved Checkpoint 118 release package on
+  Preview, close its external evidence requirement and retain every runtime,
+  consumer, message and Production activation boundary.
+- UYGULAMA:
+  - the post-promotion stable-domain smoke received a bounded retry only for
+    the observed Web chunk `404`/`ChunkLoadError` and stale legacy CSP
+    signature; candidate smoke and mixed or non-transient browser errors remain
+    immediate fail-closed, and exhaustion still restores every prior version;
+  - PR #103 was squash-merged with exact-head protection after terminal CI;
+  - exact-main Deploy Preview run `31412610484` attempts 1 and 2 remained fully
+    skipped; authorized attempt 3 deployed only Preview and the repository
+    gate was returned to `DEPLOY_PREVIEW_ENABLED=false` during the run.
+- DOĞRULAMA:
+  - full release/security/SLO tooling → 149/149 passed locally; PR CI run
+    `31412085465` and exact-main CI run `31412382763` completed successfully,
+    including both CodeQL languages and final `CI Gate`;
+  - Deploy Preview attempt 3 completed successfully for the exact merge SHA and
+    GitHub Preview deployment `5836524058` reached `success`;
+  - non-expired artifact `9072327596`, named
+    `preview-deployment-a8793e33e0a7d2ba16f4ab4c4ba5c801b42bad99`, has digest
+    `sha256:3d5154f48595ad46989f74cbf9828044577d43dbae0eb2399ef6b4ffcb6a275d`;
+    its receipt binds manifest
+    `c060f988ce36d83cc1175612a127a5d3bd1aeb194428d19b2ea36b4f0e6cacfc`
+    to the exact SHA;
+  - Preview traffic is 100% on Web
+    `321aadf7-668c-4dcf-acc2-9d1c2b516242`, Bridge
+    `ba26e779-53a0-480e-9cc9-8efaa1646db2` and read model
+    `da0408f9-2176-4806-aed9-66e8ed824340`;
+  - Preview `/` and `/tr` return 200. Bridge health reports `DISABLED`, provider
+    and operator mutation false, new uploads/playback/webhook Queue/archives
+    not ready, and the exact deployed version identity;
+  - Queue `youtick-livepeer-events-testnet` has exactly one producer
+    (`youtick-livepeer-bridge-preview`) and zero consumers. The deployed read
+    model has `READ_MODEL_ENABLED=false`,
+    `READ_MODEL_INGESTION_ENABLED=false`, no routes and no schedules;
+  - the receipt's before/after root fingerprints are byte-identical, the
+    deployment API reports zero Production records for the exact SHA, and the
+    final repository gate remains `DEPLOY_PREVIEW_ENABLED=false`.
+- KANIT: `LOCAL_TEST` + `MERGE` + `CI` + exact-SHA `PREVIEW_DEPLOYMENT` receipt
+  + read-only GitHub and Cloudflare control-plane/runtime evidence.
+- FAZ KAPISI: Checkpoint 118's external dark-deployment acceptance is closed.
+  Phase 3 and Phase 4 remain incomplete on Queue delivery, duplicate/out-of-order
+  runtime evidence, provider verification, read-model ingestion/rebuild and
+  product-facing read API evidence. Attaching the Queue consumer by itself is
+  not treated as a safe canary because the closed webhook Queue flag makes the
+  handler retry received messages. A later Queue canary therefore needs a
+  separately approved consumer, synthetic-message, retry/DLQ and provider/DO/
+  NEAR mutation boundary. No Queue consumer, message, runtime flag, read-model
+  route/cron, ingestion, provider mutation or Production deployment was added.
