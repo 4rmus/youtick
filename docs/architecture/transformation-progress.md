@@ -71,7 +71,8 @@ Evidence classes remain separate:
 - Retention: UploadJob 14 days, webhook dedup 30 days, operator audit 90 days.
 - Normal upload lease: 30-minute TTL and five-minute heartbeat.
 - Queue: batch 10, five-second timeout, three retries, concurrency 1, four-day
-  retention and dead-letter Queue; no binding or activation yet.
+  retention and dead-letter Queue. Dedicated testnet Queue/DLQ resources and
+  source binding now exist; no deployed producer/consumer or activation exists.
 - D1 operations: Neardata testnet final blocks, deployment-block start,
   complete-block cursor, Workers Paid, one-minute cron, max 180 blocks/run,
   Platform/SRE ownership, RPO 0, RTO 4h and pilot end plus 90-day retention.
@@ -137,7 +138,7 @@ Evidence classes remain separate:
 | One stuck job does not close global admission | PASS_LOCAL | A generic `CREATE_AMBIGUOUS` or first transient provider failure releases after the accepted 15 minutes while admission stays open; its per-job DO still prevents duplicate provider create. Provider-wide 402/429 immediate closure and two independent 5xx/timeouts inside 60 seconds remain separate circuit-breaker conditions. `LOCAL_TEST`. |
 | Lease timeout auto-releases | PASS_LOCAL | Normal reservations receive a random lease ID, expire after 30 minutes and renew from the same session-only upload key every five minutes. Coordinator alarm release, wrong-lease rejection and web signing pass locally. The separate ambiguous timeout remains 15 minutes. Real long-upload/browser/staging proof is absent. `LOCAL_TEST`. |
 | Reload/crash resumes the same TUS resource | PARTIAL | An authenticated retry after browser-key replacement and job-object restart returns the same TUS URL without a second provider create; client HEAD/offset resume also passes. The independent new-upload gate rejects an unrecorded intent while the same recorded Job returns its existing TUS resource. The v2 session draft checks name/bytes/lastModified plus bounded source SHA-256; signed upload-intent v3 persists that declaration and rejects a conflicting recovery. Real browser reload/staging and provider-computed full-source fingerprint proof are absent. `LOCAL_TEST`. |
-| Webhook ACK avoids heavy provider probing | PARTIAL | The gated ingress verifies HMAC/timestamp, sends a bounded Queue message and returns `202` before job-object/provider work. Consumer ACK/retry/poison behavior and fail-closed policy drift pass locally. Pilot policy is batch 10/5 seconds, three retries, concurrency 1, four-day retention and DLQ. Guarded release metadata/config requires the Queue gate to remain false; no Queue binding or staging traffic exists. `LOCAL_TEST`. |
+| Webhook ACK avoids heavy provider probing | PARTIAL | The gated ingress verifies HMAC/timestamp, sends a bounded Queue message and returns `202` before job-object/provider work. Consumer ACK/retry/poison behavior and fail-closed policy drift pass locally. Dedicated testnet Queue/DLQ resources and an exact source producer/consumer policy now exist. Guarded release metadata/config requires the Queue gate to remain false; no deployed producer/consumer, redelivery or staging traffic exists. `LOCAL_TEST` + `QUEUE_CONTROL_PLANE`. |
 | Duplicate/out-of-order queue tests pass | PASS_LOCAL | Duplicate ready-event processing remains idempotent, and duplicate late `asset.updated/processing` Queue delivery cannot regress an `ONCHAIN_PUBLISHED` job; both messages ACK and schedule reconcile only. Real Queue redelivery remains `UNPROVEN`. `LOCAL_TEST`. |
 | Worker split across domain boundaries | PARTIAL | The vendor-neutral port is 88 lines; separate 319-line provider/transport, 251-line ready-verification, 75-line webhook-normalization, 77-line UploadJob archive, 76-line operator archive and 33-line observed-fetch modules own external details. `workers/livepeer-bridge/src/index.ts` is 5,289 lines and still contains routes, domain state, a small environment composition factory, NEAR and DO logic. `LOCAL_TEST`. |
 | UploadJob terminal cleanup works | BLOCKED | The 14-day policy and default-off bounded D1 archive source pass locally, but deletion is intentionally absent until a real D1 archive commit is proven and v1 playback no longer reads the job. Neither external precondition exists, so no destructive cleanup is scheduled. |
@@ -197,7 +198,7 @@ Evidence classes remain separate:
 | UP-001 | 3 | PASS_LOCAL | Coordinator limits, budgets, 30-minute lease, five-minute heartbeat, wrong-token rejection, alarm release and 15-minute ambiguity isolation pass locally. A default-off new-upload gate rejects unrecorded intents while recorded intent/heartbeat/TUS recovery remains available. Real browser/large-upload/staging evidence is absent. |
 | UP-002 | 3 | PARTIAL | One allowed-predecessor table and timestamps cover real `AUTHORIZED → LEASED → PROVIDER_CREATE_PENDING → UPLOAD_READY → UPLOADING → PROCESSING → READY_VERIFIED → FINALIZE_RETRY/QUEUED → ONCHAIN_PUBLISHED` signals plus cancel/expiry/provider-failure terminals. Creator cancellation is pre-provider-only and non-refundable. Provider create uses one fail-closed `RECONCILE_ONLY` attempt; finalize retry uses capped 60–900-second backoff. Default-off terminal D1 archive/14-day eligibility passes locally, but real commit, v1 playback independence and deletion are absent. `LOCAL_TEST`. |
 | UP-003 | 3 | PARTIAL | Authenticated retry after browser-key replacement/object restart and after `UPLOADING` recovers the same TUS URL with no second provider create. The accepted gate is at least 99% resume success with zero second payments/assets. The v2 session draft rejects same-metadata/different-content files; upload-intent control v3 signs its bounded SHA-256 and UploadJob v2 rejects a conflicting retry. Deployed samples and payment/provider receipts remain absent. `LOCAL_TEST`. |
-| LP-001 | 3 | PARTIAL | Gated HMAC-verified Queue ingress and ACK/retry/poison consumer pass locally. Approved batch/retry/concurrency/retention/DLQ values fail closed on drift. Real binding, platform config, redelivery and staging proof are absent. |
+| LP-001 | 3 | PARTIAL | Gated HMAC-verified Queue ingress and ACK/retry/poison consumer pass locally. Dedicated testnet Queue `0a0a7e4fe00547439c24aafc8f5316c2` and DLQ `82246e5e383d488d935a97169fe3cb63` exist with the exact source producer/consumer policy. Both provider attachment counts remain zero; deployed binding, redelivery and staging proof are absent. |
 | LP-002 | 3 | PARTIAL | The concrete `MediaProvider` implementation now lives with separate API/TUS transport and raw normalization; ready validation, bounded private-media probes and pure webhook normalization also have explicit modules. The independent provider-mutation gate blocks create before lease/provider use while keeping an authorized job recoverable; provider reads and existing TUS recovery stay available. Conservative cost reservation exists, but actual billing reconciliation is external. No runtime asset-delete call site exists, so an unused mutation was not added. `LOCAL_TEST`. |
 | WEB-001 | 3 | PASS_LOCAL | One canonical UI stage follows the target lifecycle and a pure predecessor table enforces forward/retry/reset/terminal edges. A fingerprint-verified v2 draft restores safe UI projections; provider-processing resumes visibility-aware Query polling without reopening payment, while interrupted upload returns to upload-ready. The finality retry and composed job/publication read now live in the existing publication use-case service, leaving the component without a direct network primitive or timer. Real browser reload/staging proof remains absent. `LOCAL_TEST`. |
 | EVENT-001 | 4 | PARTIAL | Market v2 locally emits job, rebuild-complete publication, entitlement, withdrawal, bridge and quote-key events with common context/idempotency fields and no capabilities. The fresh testnet v2 has zero publications, but the updated artifact is not deployed; `contract_migrated`, testnet economic-event proof and final receipt/event indexing remain absent. |
@@ -3677,3 +3678,35 @@ Evidence classes remain separate:
 - FAZ KAPISI: The D1 foundation package is complete. No Worker, API, ingestion,
   archive, cron, Queue, deploy or traffic activation occurred. Queue foundation
   and dark deployment remain separate approval packages.
+
+### CHECKPOINT 117 — Phase 3 / dedicated testnet Queue foundation
+
+- DURUM: `QUEUES_PROVISIONED / SOURCE_BINDING / NO_PROVIDER_ATTACHMENTS / RUNTIME_CLOSED`
+- BASELINE: `agent/youtick-staging-readiness-20260810@fc5b9f2`.
+- AMAÇ: Create the separately approved webhook Queue/DLQ foundation and record
+  the exact source producer/consumer policy without deploying or enabling it.
+- UYGULAMA:
+  - created primary Queue `youtick-livepeer-events-testnet` with ID
+    `0a0a7e4fe00547439c24aafc8f5316c2` and 345600-second retention;
+  - created DLQ `youtick-livepeer-events-dlq-testnet` with ID
+    `82246e5e383d488d935a97169fe3cb63` and 345600-second retention;
+  - added the source `LIVEPEER_EVENTS` producer binding plus consumer policy:
+    batch 10, timeout 5 seconds, three retries, concurrency 1 and the exact DLQ;
+  - retained `LIVEPEER_WEBHOOK_QUEUE_ENABLED=false` and every other Bridge
+    product/provider/operator gate at its closed default.
+- DOĞRULAMA:
+  - provider Queue info → both exact IDs, each with zero producers and zero
+    consumers;
+  - Wrangler dry-run → exact `LIVEPEER_EVENTS` Queue binding and webhook Queue
+    gate false; no upload or deployment occurred;
+  - security config test → 6/6 passed; full release/security/SLO tooling →
+    109/109 passed; Bridge suite → 192 passed with two opt-in tests skipped;
+    TypeScript check, docs build and `git diff --check` passed (`LOCAL_TEST`).
+- KANIT: user-approved `QUEUE_MUTATION` + read-only provider Queue info +
+  `LOCAL_STATIC` + `LOCAL_TEST`. Wrangler 4.90 rejected the obsolete first
+  retention flag before mutation; both successful creates used
+  `--message-retention-period-secs 345600` exactly once.
+- FAZ KAPISI: The Queue foundation package is complete. No Worker/version
+  upload, deployed producer/consumer attachment, message, redelivery, DLQ
+  canary, traffic or feature-gate activation occurred. Dark deployment and
+  Queue canary remain separate approval packages.

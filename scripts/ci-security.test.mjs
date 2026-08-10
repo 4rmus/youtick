@@ -79,3 +79,18 @@ test('testnet read model binding stays dark and cron-free', async () => {
     assert.match(source, /migrations_dir = "d1"/);
     assert.doesNotMatch(source, /\btriggers\b|\bcrons\b|READ_MODEL_NEAR_RPC_URL/);
 });
+
+test('testnet Livepeer Queue binding stays closed with the pilot policy', async () => {
+    const source = await readFile(new URL('../workers/livepeer-bridge/wrangler.toml', import.meta.url), 'utf8');
+
+    assert.match(source, /LIVEPEER_WEBHOOK_QUEUE_ENABLED = "false"/);
+    assert.match(source, /\[\[queues\.producers\]\]\nbinding = "LIVEPEER_EVENTS"\nqueue = "youtick-livepeer-events-testnet"/);
+    assert.match(source, /\[\[queues\.consumers\]\]\nqueue = "youtick-livepeer-events-testnet"/);
+    assert.match(source, /max_batch_size = 10/);
+    assert.match(source, /max_batch_timeout = 5/);
+    assert.match(source, /max_retries = 3/);
+    assert.match(source, /max_concurrency = 1/);
+    assert.match(source, /dead_letter_queue = "youtick-livepeer-events-dlq-testnet"/);
+    assert.equal((source.match(/\[\[queues\.producers\]\]/g) ?? []).length, 1);
+    assert.equal((source.match(/\[\[queues\.consumers\]\]/g) ?? []).length, 1);
+});
