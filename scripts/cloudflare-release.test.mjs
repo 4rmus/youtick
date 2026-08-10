@@ -861,10 +861,11 @@ test('only structured error 10007 permits workers.dev bootstrap before safe doma
         expected: input.expectedBridgeVersion,
         override: input.overrideVersion,
         bootstrap: input.bridgeBootstrap,
+        playbackV2: input.includePlaybackV2,
     })), [
-        { expected: 'bridge-bootstrap', override: undefined, bootstrap: true },
-        { expected: 'bridge-new', override: 'bridge-new', bootstrap: undefined },
-        { expected: 'bridge-new', override: undefined, bootstrap: undefined },
+        { expected: 'bridge-bootstrap', override: undefined, bootstrap: true, playbackV2: false },
+        { expected: 'bridge-new', override: 'bridge-new', bootstrap: undefined, playbackV2: undefined },
+        { expected: 'bridge-new', override: undefined, bootstrap: undefined, playbackV2: undefined },
     ]);
     assert.equal(receipt.web.previousVersionId, 'web-bootstrap');
     assert.equal(receipt.bridge.previousVersionId, 'bridge-bootstrap');
@@ -1153,12 +1154,13 @@ test('production rollback test changes traffic only and restores Bridge before W
         expected: input.expectedBridgeVersion,
         override: input.overrideVersion,
         bootstrap: input.bridgeBootstrap,
+        playbackV2: input.includePlaybackV2,
     })), [
-        { expected: 'bridge-old', override: undefined, bootstrap: false },
-        { expected: 'bridge-new', override: 'bridge-new', bootstrap: undefined },
-        { expected: 'bridge-new', override: undefined, bootstrap: undefined },
-        { expected: 'bridge-old', override: undefined, bootstrap: undefined },
-        { expected: 'bridge-new', override: undefined, bootstrap: undefined },
+        { expected: 'bridge-old', override: undefined, bootstrap: false, playbackV2: false },
+        { expected: 'bridge-new', override: 'bridge-new', bootstrap: undefined, playbackV2: undefined },
+        { expected: 'bridge-new', override: undefined, bootstrap: undefined, playbackV2: undefined },
+        { expected: 'bridge-old', override: undefined, bootstrap: undefined, playbackV2: false },
+        { expected: 'bridge-new', override: undefined, bootstrap: undefined, playbackV2: undefined },
     ]);
     const deployments = calls(fake)
         .filter((args) => args[0] === 'versions' && args[1] === 'deploy')

@@ -1137,6 +1137,7 @@ async function runProductionRollbackTest({ runByComponent, argsByComponent, prep
         );
         await smokeFn(smokeInput(target, `https://${TARGETS[target].web.domain}`, {
             expectedBridgeVersion: prepared.bridge.previous,
+            includePlaybackV2: false,
         }));
     } catch (error) {
         testError = error;
@@ -1336,6 +1337,7 @@ export async function deployRelease({
                 bridgeUrl: candidateBridgeUrl,
                 expectedBridgeVersion: prepared.bridge.previous,
                 bridgeBootstrap: prepared.bridge.bootstrap,
+                includePlaybackV2: false,
             }));
             await smokeFn(smokeInput(target, candidateWebUrl, {
                 bridgeUrl: candidateBridgeUrl,

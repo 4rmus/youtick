@@ -247,9 +247,9 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
     }
 });
 
-test('release smoke identifies the failing Bridge mutation endpoint', async () => {
+test('release smoke can exclude candidate-only mutations and still identifies their failures', async () => {
     const allowedOrigin = 'https://allowed.test';
-    const fetchImpl = async (value) => {
+    const fetchImpl = async (value, init = {}) => {
         const url = new URL(value);
         if (url.hostname === 'web.test') {
             if (url.pathname === '/api/near-rpc') {
@@ -266,23 +266,41 @@ test('release smoke identifies the failing Bridge mutation endpoint', async () =
                 versionId: 'bridge-version',
             });
         }
-        const cors = ['/v1/upload-intents', '/v1/playback-tokens'].includes(url.pathname)
+        if (init.method === 'OPTIONS' && url.pathname === '/v1/upload-intents') {
+            return init.headers.get('Origin') === allowedOrigin
+                ? new Response(null, {
+                    status: 204,
+                    headers: { 'Access-Control-Allow-Origin': allowedOrigin },
+                })
+                : Response.json({ error: 'origin_denied' }, { status: 403 });
+        }
+        const cors = [
+            '/v1/upload-intents',
+            '/v1/playback-tokens',
+            '/v1/creator-fee-quotes/near',
+        ].includes(url.pathname)
             ? { 'Access-Control-Allow-Origin': allowedOrigin }
             : {};
         return Response.json(
-            { error: url.pathname === '/v1/playback-tokens' ? 'not_found' : 'control_plane_disabled' },
-            { status: url.pathname === '/v1/playback-tokens' ? 404 : 503, headers: cors },
+            { error: url.pathname === '/v2/playback-tokens' ? 'not_found' : 'control_plane_disabled' },
+            { status: url.pathname === '/v2/playback-tokens' ? 404 : 503, headers: cors },
         );
     };
-
-    await assert.rejects(runReleaseSmoke({
+    const input = {
         webUrl: 'https://web.test',
         bridgeUrl: 'https://bridge.test',
         allowedOrigin,
         deniedOrigin: 'https://denied.test',
         fetchImpl,
         browserRunner: async () => ({ channel: 'fixture', routes: ['/', '/tr'] }),
-    }), /release_smoke_bridge_mutation_status_404 path=\/v1\/playback-tokens/);
+    };
+
+    const previous = await runReleaseSmoke({ ...input, includePlaybackV2: false });
+    assert.equal('/v2/playback-tokens' in previous.bridge.mutation_statuses, false);
+    await assert.rejects(
+        runReleaseSmoke(input),
+        /release_smoke_bridge_mutation_status_404 path=\/v2\/playback-tokens/,
+    );
 });
 
 test('Bridge bootstrap propagation retry is bounded and status scoped', async (t) => {
