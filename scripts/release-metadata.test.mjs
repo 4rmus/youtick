@@ -26,6 +26,8 @@ function publicEnv(environment) {
     NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: bridgeOrigin,
     NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: "false",
     NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: "false",
+    NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2: "false",
+    NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2: "false",
     NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: "false",
     NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: "off",
     NEXT_PUBLIC_USDC_CONTRACT_ID: "usdc.testnet",
@@ -49,6 +51,9 @@ function publicEnv(environment) {
     LIVEPEER_BRIDGE_ENABLED: "false",
     LIVEPEER_NEW_UPLOADS_ENABLED: "false",
     LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: "false",
+    LIVEPEER_PLAYBACK_V2_ENABLED: "false",
+    LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED: "false",
+    LIVEPEER_WEBHOOK_QUEUE_ENABLED: "false",
     LIVEPEER_PROVIDER_MUTATIONS_ENABLED: "false",
     LIVEPEER_OPERATOR_MUTATIONS_ENABLED: "false",
     UPLOAD_JOB_ARCHIVE_ENABLED: "false",
@@ -152,10 +157,15 @@ test("config emits only canonical public values", () => {
   assert.equal(config.targets.web.worker, "youtick-web-preview");
   assert.equal(config.targets.bridge.domain, "bridge-preview.youtick.net");
   assert.equal(config.web.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1, "false");
+  assert.equal(config.web.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2, "false");
+  assert.equal(config.web.NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2, "false");
   assert.equal(config.web.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL, "false");
   assert.equal(config.bridge.LIVEPEER_BRIDGE_ENABLED, "false");
   assert.equal(config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED, "false");
   assert.equal(config.bridge.LIVEPEER_PLAYBACK_ISSUANCE_ENABLED, "false");
+  assert.equal(config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED, "false");
+  assert.equal(config.bridge.LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED, "false");
+  assert.equal(config.bridge.LIVEPEER_WEBHOOK_QUEUE_ENABLED, "false");
   assert.equal(config.bridge.LIVEPEER_PROVIDER_MUTATIONS_ENABLED, "false");
   assert.equal(config.bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED, "false");
   assert.equal(config.bridge.UPLOAD_JOB_ARCHIVE_ENABLED, "false");
@@ -257,6 +267,25 @@ test("config rejects placeholders and enabled release flags", async (t) => {
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /exactly false/);
   });
+
+  for (const flag of [
+    "NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2",
+    "NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2",
+    "LIVEPEER_PLAYBACK_V2_ENABLED",
+    "LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED",
+    "LIVEPEER_WEBHOOK_QUEUE_ENABLED",
+  ]) {
+    await t.test(`true ${flag}`, () => {
+      const env = publicEnv("preview");
+      env[`PREVIEW_${flag}`] = "true";
+      const result = run(
+        ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+        env,
+      );
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /exactly false/);
+    });
+  }
 
   await t.test("true playback-issuance flag", () => {
     const env = publicEnv("preview");

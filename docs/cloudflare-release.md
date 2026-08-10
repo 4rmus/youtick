@@ -36,6 +36,8 @@ değişkenler:
 - `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_LIVEPEER_BRIDGE_URL`
 - `NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1=false`
 - `NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE=false`
+- `NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2=false`
+- `NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2=false`
 - `NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL=false`
 - `NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE=off`
 - `NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO`
@@ -47,6 +49,9 @@ değişkenler:
 - `LIVEPEER_BRIDGE_ENABLED=false`
 - `LIVEPEER_NEW_UPLOADS_ENABLED=false`
 - `LIVEPEER_PLAYBACK_ISSUANCE_ENABLED=false`
+- `LIVEPEER_PLAYBACK_V2_ENABLED=false`
+- `LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED=false`
+- `LIVEPEER_WEBHOOK_QUEUE_ENABLED=false`
 - `LIVEPEER_PROVIDER_MUTATIONS_ENABLED=false`
 - `LIVEPEER_OPERATOR_MUTATIONS_ENABLED=false`
 - `UPLOAD_JOB_ARCHIVE_ENABLED=false`
@@ -71,13 +76,13 @@ yoktur. Authorization hiçbir `NEXT_PUBLIC_` değişkenine konulmaz.
 Guarded Preview/Production release sözleşmesi yeni upload ve bütün playback
 issuance domain bayraklarını zorunlu `false` tutar. Stateless playback v2 kaynakta bağımsız
 `NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2=false` ve
-`LIVEPEER_PLAYBACK_V2_ENABLED=false` varsayılanlarıyla bulunur. Bu iki değer bu
-runbook'un Preview/Production değişken sözleşmesine henüz eklenmemiştir; release
-smoke yalnız kapalı `/v2/playback-tokens` rotasının 503 döndüğünü kanıtlar.
+`LIVEPEER_PLAYBACK_V2_ENABLED=false` varsayılanlarıyla bulunur ve guarded release
+metadata/config paketinde açıkça kapalı taşınır. Release smoke kapalı
+`/v2/playback-tokens` rotasının 503 döndüğünü kanıtlar.
 Shadow ölçümü de kaynakta
 `NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2=false` ve
 `LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED=false` olarak kapalıdır ve bu release
-sözleşmesine eklenmemiştir. Kaynak/test varlığı aktivasyon kanıtı değildir.
+sözleşmesinde zorunlu `false` tutulur. Kaynak/test varlığı aktivasyon kanıtı değildir.
 
 Webhook Queue yolu kaynakta `LIVEPEER_WEBHOOK_QUEUE_ENABLED=false` ile kapalıdır.
 Kabul edilen pilot sözleşmesi batch 10, 5 saniye timeout, 3 retry, concurrency

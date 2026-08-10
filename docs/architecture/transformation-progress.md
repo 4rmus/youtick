@@ -124,7 +124,7 @@ Evidence classes remain separate:
 | V2 authorizer works in production-like staging | PARTIAL | The separately gated v2 route works in local Worker integration tests. It verifies real device and NEP-413 signatures, final publication/entitlement and a 180-second JWT; the all-playback issuance gate rejects both v1 and v2 before any RPC read. Production-like staging is `UNPROVEN`. `LOCAL_TEST`. |
 | Persistent write per token is zero | PASS_LOCAL | V2 invokes the authorizer directly without `LIVEPEER_CONTROL`; success and same-request replay tests prove no DO access while final reads repeat. V1 remains an independently closed fallback. `LOCAL_TEST`. |
 | Cold and cache-hit NEAR reads meet approved bounds | PASS_LOCAL | Cold v2 performs three final NEAR reads plus one provider-policy read. The bounded 1,024-record cache makes a fully warm replay use zero NEAR/provider reads. Publication/provider expire at 30 seconds, wallet proof at 60 seconds, positive entitlement at five minutes and negative at three seconds. Takedown and removed-key boundary tests pass. `LOCAL_TEST`; deployed latency is absent. |
-| Legacy/v2 shadow mismatch below approved threshold | PARTIAL | The accepted mismatch ratio is exactly 0. A separately gated source path embeds an independently signed v2 proof in a legacy request, fixes and returns only the legacy result, then runs the existing v2 decision without JWT or durable writes through `waitUntil`. A mismatch regression logs only bounded ALLOW/DENY/UNAVAILABLE and reason codes. Both shadow flags default false and are not release-wired. Deployed samples and a pass result remain `EXTERNAL_EVIDENCE_REQUIRED`. `LOCAL_TEST`. |
+| Legacy/v2 shadow mismatch below approved threshold | PARTIAL | The accepted mismatch ratio is exactly 0. A separately gated source path embeds an independently signed v2 proof in a legacy request, fixes and returns only the legacy result, then runs the existing v2 decision without JWT or durable writes through `waitUntil`. A mismatch regression logs only bounded ALLOW/DENY/UNAVAILABLE and reason codes. Both shadow flags default false and guarded release metadata/config now require them to remain false. Deployed samples and a pass result remain `EXTERNAL_EVIDENCE_REQUIRED`. `LOCAL_TEST`. |
 | Device-certificate UX and revoke/clear verified | PASS_LOCAL | Web creates an eight-hour wallet-authorized certificate, keeps its secret only in memory and clears it on disconnect or page reload. Wrong origin, expired certificate, invalid/removed/non-FullAccess wallet key and invalid device signature fail closed locally. A stolen in-memory certificate remains usable until expiry unless its wallet key is removed; deployed wallet UX is `UNPROVEN`. `LOCAL_TEST`. |
 | Access grant issuance can be disabled | PASS_LOCAL | Fresh Access v2 has an independent, readable issuance flag behind the existing owner timelock. One regression proves the exact 24-hour decommission sequence: a grant issued during the delay remains verifiable, execution rejects new issuance, and subject revoke plus bounded cleanup still work. Testnet execution remains absent. `LOCAL_TEST`. |
 | DO retention/cleanup proven automatically | PARTIAL | Creator-fee/payment rate-limit objects alarm and `deleteAll()` at window expiry; signed control nonces expire with their at-most-five-minute request and purge in 128-record batches; normal/ambiguous admission leases release at 30/15 minutes, webhook dedup purges at 30 days and admission-reopen audit at 90 days. Independent default-off UploadJob and operator outbox D1 archive sources persist bounded summaries, commit/retry metadata and 14/90-day eligibility boundaries locally. Real D1 commits, both destructive deletes and a complete class-wide max-record contract remain absent. `LOCAL_TEST`. |
@@ -137,7 +137,7 @@ Evidence classes remain separate:
 | One stuck job does not close global admission | PASS_LOCAL | A generic `CREATE_AMBIGUOUS` or first transient provider failure releases after the accepted 15 minutes while admission stays open; its per-job DO still prevents duplicate provider create. Provider-wide 402/429 immediate closure and two independent 5xx/timeouts inside 60 seconds remain separate circuit-breaker conditions. `LOCAL_TEST`. |
 | Lease timeout auto-releases | PASS_LOCAL | Normal reservations receive a random lease ID, expire after 30 minutes and renew from the same session-only upload key every five minutes. Coordinator alarm release, wrong-lease rejection and web signing pass locally. The separate ambiguous timeout remains 15 minutes. Real long-upload/browser/staging proof is absent. `LOCAL_TEST`. |
 | Reload/crash resumes the same TUS resource | PARTIAL | An authenticated retry after browser-key replacement and job-object restart returns the same TUS URL without a second provider create; client HEAD/offset resume also passes. The independent new-upload gate rejects an unrecorded intent while the same recorded Job returns its existing TUS resource. The v2 session draft checks name/bytes/lastModified plus bounded source SHA-256; signed upload-intent v3 persists that declaration and rejects a conflicting recovery. Real browser reload/staging and provider-computed full-source fingerprint proof are absent. `LOCAL_TEST`. |
-| Webhook ACK avoids heavy provider probing | PARTIAL | The gated ingress verifies HMAC/timestamp, sends a bounded Queue message and returns `202` before job-object/provider work. Consumer ACK/retry/poison behavior and fail-closed policy drift pass locally. Pilot policy is batch 10/5 seconds, three retries, concurrency 1, four-day retention and DLQ; no Queue binding or staging traffic exists. `LOCAL_TEST`. |
+| Webhook ACK avoids heavy provider probing | PARTIAL | The gated ingress verifies HMAC/timestamp, sends a bounded Queue message and returns `202` before job-object/provider work. Consumer ACK/retry/poison behavior and fail-closed policy drift pass locally. Pilot policy is batch 10/5 seconds, three retries, concurrency 1, four-day retention and DLQ. Guarded release metadata/config requires the Queue gate to remain false; no Queue binding or staging traffic exists. `LOCAL_TEST`. |
 | Duplicate/out-of-order queue tests pass | PASS_LOCAL | Duplicate ready-event processing remains idempotent, and duplicate late `asset.updated/processing` Queue delivery cannot regress an `ONCHAIN_PUBLISHED` job; both messages ACK and schedule reconcile only. Real Queue redelivery remains `UNPROVEN`. `LOCAL_TEST`. |
 | Worker split across domain boundaries | PARTIAL | The vendor-neutral port is 88 lines; separate 319-line provider/transport, 251-line ready-verification, 75-line webhook-normalization, 77-line UploadJob archive, 76-line operator archive and 33-line observed-fetch modules own external details. `workers/livepeer-bridge/src/index.ts` is 5,289 lines and still contains routes, domain state, a small environment composition factory, NEAR and DO logic. `LOCAL_TEST`. |
 | UploadJob terminal cleanup works | BLOCKED | The 14-day policy and default-off bounded D1 archive source pass locally, but deletion is intentionally absent until a real D1 archive commit is proven and v1 playback no longer reads the job. Neither external precondition exists, so no destructive cleanup is scheduled. |
@@ -3608,3 +3608,38 @@ Evidence classes remain separate:
   Phase 5 remain incomplete on their separately recorded deployed browser,
   independent audit, runtime attestation, observability and mainnet governance
   evidence. Preview and every runtime activation gate remain closed.
+
+### CHECKPOINT 115 — Phase 2–3 / guarded release wiring
+
+- DURUM: `PASS_LOCAL / RELEASE_GATES_CLOSED / NO_BINDING / NO_DEPLOYMENT`
+- BASELINE: `agent/youtick-staging-readiness-20260810@745edc34d8dad3896f3b2b59b7e2fdcc6476338b`.
+- AMAÇ: Carry the existing playback v2, legacy/v2 shadow and webhook Queue
+  controls through the guarded release artifact without enabling them or
+  provisioning external resources.
+- UYGULAMA:
+  - Preview and Production Web metadata now require
+    `NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2=false` and
+    `NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2=false`;
+  - Bridge metadata, artifact Wrangler config and first-deploy bootstrap config
+    now require `LIVEPEER_PLAYBACK_V2_ENABLED=false`,
+    `LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED=false` and
+    `LIVEPEER_WEBHOOK_QUEUE_ENABLED=false`;
+  - release validation rejects an enabled value before any Cloudflare mutation.
+- DOĞRULAMA:
+  - full release/security/SLO tooling suite → 107/107 passed
+    (`LOCAL_TEST`);
+  - docs VitePress build → passed (`LOCAL_TEST`);
+  - `git diff --check` → passed (`LOCAL_TEST`);
+  - read-only Cloudflare inventory shows one pre-existing differently named D1
+    with zero tables, no accepted Livepeer event Queue/DLQ names and no
+    read-model Worker deployment under the candidate names (`10007`). The
+    existing D1 is not assumed reusable.
+- KANIT: `LOCAL_STATIC` + `LOCAL_TEST` + read-only Cloudflare control-plane
+  absence. No CI, D1 write, Queue mutation, deploy, runtime or provider evidence
+  is claimed.
+- FAZ KAPISI: A dark artifact can now prove these controls are explicitly
+  closed. D1/cron and Queue bindings still require separately approved external
+  resource creation. Reusing the differently named empty D1 or creating the
+  dedicated plan resource is `DECISION_REQUIRED`; the plan recommends a
+  separate resource. V2/shadow/Queue activation still requires deployed canary
+  evidence and a separate flag-change approval.

@@ -67,6 +67,8 @@ function makeConfig(target) {
             NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: `https://${expected.bridge.domain}`,
             NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: 'false',
             NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: 'false',
+            NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2: 'false',
+            NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2: 'false',
             NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: 'false',
             NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: 'off',
         },
@@ -78,6 +80,9 @@ function makeConfig(target) {
             LIVEPEER_BRIDGE_ENABLED: 'false',
             LIVEPEER_NEW_UPLOADS_ENABLED: 'false',
             LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: 'false',
+            LIVEPEER_PLAYBACK_V2_ENABLED: 'false',
+            LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED: 'false',
+            LIVEPEER_WEBHOOK_QUEUE_ENABLED: 'false',
             LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'false',
             LIVEPEER_OPERATOR_MUTATIONS_ENABLED: 'false',
             UPLOAD_JOB_ARCHIVE_ENABLED: 'false',
@@ -144,6 +149,9 @@ function makeRelease(t, target = 'preview') {
         'LIVEPEER_BRIDGE_ENABLED = "false"',
         'LIVEPEER_NEW_UPLOADS_ENABLED = "false"',
         'LIVEPEER_PLAYBACK_ISSUANCE_ENABLED = "false"',
+        'LIVEPEER_PLAYBACK_V2_ENABLED = "false"',
+        'LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED = "false"',
+        'LIVEPEER_WEBHOOK_QUEUE_ENABLED = "false"',
         'LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "false"',
         'LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "false"',
         'UPLOAD_JOB_ARCHIVE_ENABLED = "false"',
@@ -526,6 +534,9 @@ test('Bridge artifact writer emits the exact disabled release config once', asyn
     assert.match(text, /MULTI_ASSET_PAYMENTS_MODE = "off"/);
     assert.match(text, /LIVEPEER_NEW_UPLOADS_ENABLED = "false"/);
     assert.match(text, /LIVEPEER_PLAYBACK_ISSUANCE_ENABLED = "false"/);
+    assert.match(text, /LIVEPEER_PLAYBACK_V2_ENABLED = "false"/);
+    assert.match(text, /LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED = "false"/);
+    assert.match(text, /LIVEPEER_WEBHOOK_QUEUE_ENABLED = "false"/);
     assert.match(text, /LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "false"/);
     assert.match(text, /LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "false"/);
     assert.match(text, /MULTI_ASSET_PAYMENT_ASSET_IDS = ""/);
