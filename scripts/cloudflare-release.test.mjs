@@ -15,7 +15,11 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
-import { deployRelease, writeBridgeArtifactWrangler } from './cloudflare-release.mjs';
+import {
+    deployRelease,
+    writeBridgeArtifactWrangler,
+    writeReadModelArtifactWrangler,
+} from './cloudflare-release.mjs';
 
 const SHA = 'a'.repeat(40);
 const ACCOUNT_ID = '1'.repeat(32);
@@ -39,6 +43,7 @@ const TARGETS = {
         bridge: { worker: 'youtick-livepeer-bridge', domain: 'bridge.youtick.net' },
     },
 };
+const READ_MODEL_WORKER = 'youtick-market-read-model-testnet';
 
 function canonicalJson(value) {
     return `${JSON.stringify(value, null, 2)}\n`;
@@ -115,8 +120,10 @@ function makeRelease(t, target = 'preview') {
     const artifactDir = join(root, 'artifact');
     const webRoot = join(root, 'web');
     const bridgeRoot = join(root, 'bridge');
+    const readModelRoot = join(root, 'read-model');
     mkdirSync(join(webRoot, '.open-next', 'assets'), { recursive: true });
     mkdirSync(bridgeRoot, { recursive: true });
+    mkdirSync(readModelRoot, { recursive: true });
     writeFileSync(join(webRoot, '.open-next', 'worker.js'), 'export default { fetch() {} };\n');
     writeFileSync(join(webRoot, '.open-next', 'assets', 'index.txt'), 'asset\n');
     writeFileSync(join(webRoot, 'wrangler.jsonc'), canonicalJson({
@@ -172,6 +179,31 @@ function makeRelease(t, target = 'preview') {
         'new_sqlite_classes = ["LivepeerControl"]',
         '',
     ].join('\n'));
+    writeFileSync(join(readModelRoot, 'worker.js'), 'export default { fetch() {} };\n');
+    writeFileSync(join(readModelRoot, 'wrangler.toml'), [
+        'name = "youtick-market-read-model-testnet"',
+        'main = "worker.mjs"',
+        'compatibility_date = "2026-08-10"',
+        'compatibility_flags = ["nodejs_compat"]',
+        'workers_dev = false',
+        'preview_urls = false',
+        '',
+        '[vars]',
+        'READ_MODEL_ENABLED = "false"',
+        'READ_MODEL_INGESTION_ENABLED = "false"',
+        'READ_MODEL_NETWORK = "testnet"',
+        'READ_MODEL_CONTRACT_ID = "lp-arch-market-v2-260809.youtick-dev-v3.testnet"',
+        'READ_MODEL_START_BLOCK_HEIGHT = "263118001"',
+        'READ_MODEL_MAX_BLOCKS_PER_RUN = "180"',
+        'READ_MODEL_WEB_ORIGIN = "https://preview.youtick.net"',
+        '',
+        '[[d1_databases]]',
+        'binding = "MARKET_READ_MODEL"',
+        'database_name = "youtick-market-read-model-testnet"',
+        'database_id = "71292344-ebde-444e-b7a5-51f788b77056"',
+        'migrations_dir = "d1"',
+        '',
+    ].join('\n'));
 
     mkdirSync(artifactDir, { recursive: true });
     const configName = `${target}-config.json`;
@@ -179,9 +211,11 @@ function makeRelease(t, target = 'preview') {
     const configPath = join(artifactDir, configName);
     const webPath = join(artifactDir, webName);
     const bridgePath = join(artifactDir, 'bridge.tar.gz');
+    const readModelPath = join(artifactDir, 'read-model.tar.gz');
     writeFileSync(configPath, canonicalJson(makeConfig(target)));
     createTar(webRoot, webPath);
     createTar(bridgeRoot, bridgePath);
+    createTar(readModelRoot, readModelPath);
 
     const emptyRecord = { path: 'unused', sha256: '0'.repeat(64), bytes: 1 };
     const manifest = {
@@ -198,6 +232,7 @@ function makeRelease(t, target = 'preview') {
             webPreview: target === 'preview' ? record(webPath) : emptyRecord,
             webProduction: target === 'production' ? record(webPath) : emptyRecord,
             bridge: record(bridgePath),
+            readModel: record(readModelPath),
         },
     };
     writeFileSync(join(artifactDir, 'manifest.json'), canonicalJson(manifest));
@@ -209,6 +244,8 @@ function makeRelease(t, target = 'preview') {
         configPath,
         bridgeRoot,
         bridgePath,
+        readModelRoot,
+        readModelPath,
     };
 }
 
@@ -253,6 +290,7 @@ if (secretsIndex >= 0) {
 }
 const value = (flag) => args[args.indexOf(flag) + 1];
 const worker = value('--name');
+const configText = () => fs.readFileSync(value('--config'), 'utf8');
 const output = (entry) => fs.appendFileSync(
   process.env.WRANGLER_OUTPUT_FILE_PATH,
   JSON.stringify({ ...entry, timestamp: new Date(0).toISOString() }) + '\n',
@@ -280,7 +318,27 @@ if (args[0] === 'versions' && args[1] === 'upload') {
     save();
     failed(code);
   }
-  const id = worker.includes('web') ? 'web-new' : 'bridge-new';
+  const text = configText();
+  if (worker === 'youtick-livepeer-bridge-preview'
+      && (!text.includes('[[queues.producers]]')
+        || !text.includes('binding = "LIVEPEER_EVENTS"')
+        || text.includes('queues.consumers'))) {
+    throw new Error('invalid preview Bridge candidate Queue config');
+  }
+  if (worker === 'youtick-livepeer-bridge' && text.includes('queues.')) {
+    throw new Error('production Bridge must not bind the testnet Queue');
+  }
+  if (worker === 'youtick-market-read-model-testnet'
+      && (!text.includes('workers_dev = false')
+        || !text.includes('READ_MODEL_ENABLED = "false"')
+        || !text.includes('READ_MODEL_INGESTION_ENABLED = "false"')
+        || !text.includes('binding = "MARKET_READ_MODEL"')
+        || /\btriggers\b|\bcrons\b/.test(text))) {
+    throw new Error('invalid dark read model config');
+  }
+  const id = worker.includes('web')
+    ? 'web-new'
+    : worker === 'youtick-market-read-model-testnet' ? 'read-model-new' : 'bridge-new';
   output({
     type: 'version-upload',
     version: 1,
@@ -295,7 +353,19 @@ if (args[0] === 'versions' && args[1] === 'upload') {
   process.exit(0);
 }
 if (args[0] === 'deploy') {
-  const id = worker.includes('web') ? 'web-bootstrap' : 'bridge-bootstrap';
+  const text = configText();
+  if (worker.includes('livepeer-bridge') && text.includes('queues.')) {
+    throw new Error('Bridge bootstrap must not attach Queue bindings');
+  }
+  if (worker === 'youtick-market-read-model-testnet'
+      && (!text.includes('workers_dev = false')
+        || !text.includes('preview_urls = false')
+        || /\btriggers\b|\bcrons\b/.test(text))) {
+    throw new Error('read model bootstrap is not dark');
+  }
+  const id = worker.includes('web')
+    ? 'web-bootstrap'
+    : worker === 'youtick-market-read-model-testnet' ? 'read-model-bootstrap' : 'bridge-bootstrap';
   state.noDeployments = state.noDeployments?.filter((name) => name !== worker);
   state.workers[worker] = { traffic: [{ version_id: id, percentage: 100 }] };
   save();
@@ -304,7 +374,9 @@ if (args[0] === 'deploy') {
     version: 1,
     worker_name: worker,
     version_id: id,
-    targets: ['https://' + worker + '.account.workers.dev'],
+    targets: worker === 'youtick-market-read-model-testnet'
+      ? []
+      : ['https://' + worker + '.account.workers.dev'],
   });
   process.exit(0);
 }
@@ -510,7 +582,7 @@ function deployFixture(
         artifactDir: release.artifactDir,
         receiptOutput: release.receipt,
         repoRoot: release.root,
-        wranglerPaths: { web: fake.binary, bridge: fake.binary },
+        wranglerPaths: { web: fake.binary, bridge: fake.binary, readModel: fake.binary },
         smokeFn,
         echoWrangler: false,
         rollbackTest,
@@ -541,8 +613,56 @@ test('Bridge artifact writer emits the exact disabled release config once', asyn
     assert.match(text, /LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "false"/);
     assert.match(text, /MULTI_ASSET_PAYMENT_ASSET_IDS = ""/);
     assert.doesNotMatch(text, /NEAR_RPC_URL|ALLOWED_ORIGINS|MARKET_CONTRACT_ID/);
+    assert.doesNotMatch(text, /queues\.producers|queues\.consumers|LIVEPEER_EVENTS/);
     assert.equal(statSync(output).mode & 0o777, 0o600);
     await assert.rejects(writeBridgeArtifactWrangler(output), /EEXIST/);
+});
+
+test('read-model artifact writer emits one route-free and cron-free dark config', async (t) => {
+    const root = mkdtempSync(join(tmpdir(), 'read-model-artifact-wrangler-test-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const output = join(root, 'wrangler.toml');
+
+    await writeReadModelArtifactWrangler(output);
+
+    const text = readFileSync(output, 'utf8');
+    assert.match(text, /name = "youtick-market-read-model-testnet"/);
+    assert.match(text, /workers_dev = false/);
+    assert.match(text, /preview_urls = false/);
+    assert.match(text, /READ_MODEL_ENABLED = "false"/);
+    assert.match(text, /READ_MODEL_INGESTION_ENABLED = "false"/);
+    assert.match(text, /binding = "MARKET_READ_MODEL"/);
+    assert.doesNotMatch(text, /\btriggers\b|\bcrons\b|READ_MODEL_NEAR_RPC_URL/);
+    assert.equal(statSync(output).mode & 0o777, 0o600);
+    await assert.rejects(writeReadModelArtifactWrangler(output), /EEXIST/);
+});
+
+test('Preview release keeps the Queue consumer detached and bootstraps the dark read model', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, {
+        workers: {
+            [TARGETS.preview.web.worker]: {
+                traffic: [{ version_id: 'web-old', percentage: 100 }],
+            },
+            [TARGETS.preview.bridge.worker]: {
+                traffic: [{ version_id: 'bridge-old', percentage: 100 }],
+            },
+        },
+        uploadFailures: {},
+    });
+
+    const receipt = await deployFixture(release, fake);
+
+    assert.deepEqual(receipt.readModel, {
+        worker: READ_MODEL_WORKER,
+        previousVersionId: 'read-model-bootstrap',
+        versionId: 'read-model-new',
+        bootstrap: true,
+    });
+    assert.equal(calls(fake).some((args) => args[0] === 'triggers'), false);
+    const readModelCalls = calls(fake).filter((args) => args.includes(READ_MODEL_WORKER));
+    assert.ok(readModelCalls.some((args) => args[0] === 'deploy'));
+    assert.ok(readModelCalls.every((args) => !args.includes('--env')));
 });
 
 test('a successful first upload without traffic is bootstrapped before its candidate', async (t) => {
@@ -750,10 +870,11 @@ test('only structured error 10007 permits workers.dev bootstrap before safe doma
     assert.equal(receipt.bridge.previousVersionId, 'bridge-bootstrap');
 
     const deploys = calls(fake).filter((args) => args[0] === 'deploy');
-    assert.equal(deploys.length, 2);
+    assert.equal(deploys.length, 3);
     const bridgeDeploy = deploys.find((args) => args.includes(TARGETS.preview.bridge.worker));
     assert.ok(deploys.every((args) => !args.includes('--domain')));
-    assert.ok(deploys.every((args) => args.at(args.indexOf('--config') + 1).includes('bootstrap')));
+    assert.ok(deploys.filter((args) => !args.includes(READ_MODEL_WORKER))
+        .every((args) => args.at(args.indexOf('--config') + 1).includes('bootstrap')));
     assert.ok(bridgeDeploy.includes('LIVEPEER_BRIDGE_ENABLED:false'));
     assert.ok(bridgeDeploy.includes('LIVEPEER_NEW_UPLOADS_ENABLED:false'));
     assert.ok(bridgeDeploy.includes('LIVEPEER_PLAYBACK_ISSUANCE_ENABLED:false'));
@@ -984,9 +1105,12 @@ test('candidate promotion failure restores both previous 100 percent versions', 
         .filter((args) => args[0] === 'versions' && args[1] === 'deploy')
         .map((args) => args.filter((entry) => /^[A-Za-z0-9-]+@[0-9]+$/.test(entry)));
     assert.deepEqual(deployments, [
+        ['read-model-bootstrap@100', 'read-model-new@0'],
         ['bridge-old@100', 'bridge-new@0'],
+        ['read-model-new@100'],
         ['bridge-new@100'],
         ['web-new@100'],
+        ['read-model-bootstrap@100'],
         ['bridge-old@100'],
         ['web-old@100'],
     ]);
@@ -996,6 +1120,9 @@ test('candidate promotion failure restores both previous 100 percent versions', 
     ]);
     assert.deepEqual(finalState.workers[TARGETS.preview.bridge.worker].traffic, [
         { version_id: 'bridge-old', percentage: 100 },
+    ]);
+    assert.deepEqual(finalState.workers[READ_MODEL_WORKER].traffic, [
+        { version_id: 'read-model-bootstrap', percentage: 100 },
     ]);
     assert.equal(calls(fake).filter((args) => args[0] === 'triggers').length, 0);
     assert.equal(statSync(release.artifactDir).isDirectory(), true);
@@ -1019,6 +1146,8 @@ test('production rollback test changes traffic only and restores Bridge before W
         smokeInputs.push(input);
         return { ok: true };
     }, { target: 'production', rollbackTest: 'true' });
+    assert.equal('readModel' in receipt, false);
+    assert.equal(calls(fake).some((args) => args.includes(READ_MODEL_WORKER)), false);
     assert.deepEqual(receipt.rollbackTest, { requested: true, performed: true });
     assert.deepEqual(smokeInputs.map((input) => ({
         expected: input.expectedBridgeVersion,

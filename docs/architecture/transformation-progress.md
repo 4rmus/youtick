@@ -3710,3 +3710,37 @@ Evidence classes remain separate:
   upload, deployed producer/consumer attachment, message, redelivery, DLQ
   canary, traffic or feature-gate activation occurred. Dark deployment and
   Queue canary remain separate approval packages.
+
+### CHECKPOINT 118 — Phase 3–4 / dark deployment release wiring
+
+- DURUM: `PASS_LOCAL / RELEASE_WIRED / EXTERNAL_NOT_RUN / RUNTIME_CLOSED`
+- BASELINE: `origin/main@69691e45169edf99ed3094f6fbfb03c817d19e7f`.
+- AMAÇ: Make the separately provisioned Queue and D1 foundations deployable as
+  closed Preview artifacts without attaching the Queue consumer, adding a cron
+  or exposing the read-model Worker.
+- UYGULAMA:
+  - the shared Bridge artifact and first-deploy bootstrap remain Queue-free;
+  - only the generated Preview candidate config receives the exact
+    `LIVEPEER_EVENTS` producer binding; Production cannot receive the testnet
+    Queue and no release config contains `queues.consumers`;
+  - the exact-SHA manifest now checksums `read-model.tar.gz`;
+  - Preview prepares, stages, promotes and can roll back the read-model version
+    with `READ_MODEL_ENABLED=false`, `READ_MODEL_INGESTION_ENABLED=false`,
+    `workers_dev=false`, `preview_urls=false`, the exact D1 binding and no
+    route/cron; Production does not deploy this testnet component.
+- DOĞRULAMA:
+  - full release/security/SLO tooling suite → 111/111 passed (`LOCAL_TEST`);
+  - Bridge and read-model Wrangler 4.90 dry-runs passed; the packaged read-model
+    dry-run retained the exact D1 binding and both disabled gates;
+  - generated artifact archives contain only their prebuilt module and exact
+    Wrangler config; workflow YAML parse and `git diff --check` passed;
+  - post-check still reports zero Queue producers, zero consumers, no
+    read-model Worker (`10007`) and `DEPLOY_PREVIEW_ENABLED=false`.
+- KANIT: `LOCAL_STATIC` + `LOCAL_TEST` + `TESTNET_READ`. No Worker/version
+  upload, deploy, traffic, route, cron, Queue attachment, message or runtime
+  flag change was performed.
+- FAZ KAPISI: Local dark-deployment wiring is complete. The exact-SHA Preview
+  upload/bootstrap remains `EXTERNAL_EVIDENCE_REQUIRED` and needs a separate
+  mutation approval. Its acceptance check is one deployed Queue producer, zero
+  consumers, no read-model route/cron and both runtime gates still false;
+  Queue canary and flag activation remain later approval packages.
