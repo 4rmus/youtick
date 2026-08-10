@@ -15,6 +15,15 @@ const WEB_SECURITY_HEADERS = {
     'Strict-Transport-Security': 'max-age=31536000',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    'Content-Security-Policy': [
+        "default-src 'self'",
+        "script-src 'self' 'nonce-ZmFrZS1yZWxlYXNlLW5vbmNl' https://static.cloudflareinsights.com",
+        "style-src 'self' 'nonce-ZmFrZS1yZWxlYXNlLW5vbmNl'",
+        "media-src 'self' blob: https://playback.livepeer.studio https://livepeercdn.com https://livepeercdn.studio https://asset-cdn.lp-playback.com https://*.lp-playback.studio",
+        "object-src 'none'",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+    ].join('; '),
 };
 
 async function serve(handler) {
@@ -151,6 +160,24 @@ test('release smoke rejects missing or weakened web security headers', () => {
         assert.throws(
             () => expectWebSecurityHeaders(new Response(null, { headers })),
             /release_smoke_web_security_headers_invalid/,
+        );
+    }
+});
+
+test('release smoke rejects weakened CSP enforcement', () => {
+    for (const csp of [
+        '',
+        WEB_SECURITY_HEADERS['Content-Security-Policy'].replace(
+            'https://playback.livepeer.studio',
+            'https:',
+        ),
+        `${WEB_SECURITY_HEADERS['Content-Security-Policy']}; script-src 'unsafe-inline'`,
+    ]) {
+        assert.throws(
+            () => expectWebSecurityHeaders(new Response(null, {
+                headers: { ...WEB_SECURITY_HEADERS, 'Content-Security-Policy': csp },
+            })),
+            /release_smoke_web_csp_invalid/,
         );
     }
 });

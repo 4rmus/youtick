@@ -14,7 +14,7 @@ function contentSecurityPolicy(nonce: string): string {
         "img-src 'self' data: blob: https:",
         "font-src 'self' data:",
         "connect-src 'self' https:",
-        "media-src 'self' blob: https:",
+        "media-src 'self' blob: https://playback.livepeer.studio https://livepeercdn.com https://livepeercdn.studio https://asset-cdn.lp-playback.com https://*.lp-playback.studio",
         "worker-src 'self' blob:",
         "object-src 'none'",
         "frame-ancestors 'none'",

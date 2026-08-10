@@ -23,6 +23,13 @@ const REQUIRED_WEB_SECURITY_HEADERS = {
     'referrer-policy': 'strict-origin-when-cross-origin',
     'permissions-policy': 'camera=(), microphone=(), geolocation=()',
 };
+const REQUIRED_WEB_CSP_DIRECTIVES = [
+    "default-src 'self'",
+    "media-src 'self' blob: https://playback.livepeer.studio https://livepeercdn.com https://livepeercdn.studio https://asset-cdn.lp-playback.com https://*.lp-playback.studio",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+];
 const DISABLED_BRIDGE_MUTATIONS = [
     { path: '/v1/livepeer-webhooks', cors: false },
     { path: '/v1/operations/admission-reopen', cors: false },
@@ -138,6 +145,16 @@ export function expectWebSecurityHeaders(response) {
     if (Object.entries(REQUIRED_WEB_SECURITY_HEADERS)
         .some(([name, value]) => response.headers.get(name) !== value)) {
         throw new Error('release_smoke_web_security_headers_invalid');
+    }
+    const csp = response.headers.get('content-security-policy') || '';
+    const directives = csp.split(';').map((value) => value.trim());
+    if (REQUIRED_WEB_CSP_DIRECTIVES.some((directive) => !directives.includes(directive))
+        || !directives.some((directive) => /^script-src .*'nonce-[A-Za-z0-9+/]+={0,2}'/.test(directive))
+        || !directives.some((directive) => /^style-src .*'nonce-[A-Za-z0-9+/]+={0,2}'/.test(directive))
+        || csp.includes("'unsafe-inline'")
+        || csp.includes("'unsafe-eval'")
+        || directives.some((directive) => directive.startsWith('media-src ') && directive.split(' ').includes('https:'))) {
+        throw new Error('release_smoke_web_csp_invalid');
     }
 }
 
