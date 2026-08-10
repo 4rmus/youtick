@@ -148,9 +148,9 @@ Evidence classes remain separate:
 | Exit gate | Status | Evidence |
 |---|---|---|
 | Standard events emitted on testnet | PARTIAL | Market source emits the economic/publication/withdrawal/governance catalog as `youtick_market@1.0.0`; fresh-v2 testnet previously proved governance events only. The new economic catalog is local and not deployed. `LOCAL_TEST` + prior `TESTNET` governance evidence. |
-| Read model rebuilds from chain | PARTIAL | The bounded Neardata adapter reads an exact testnet final block, verifies receipt/event bindings and feeds the deterministic reducer/atomic D1 writer. Temporary D1 API failures return a bounded 503; scheduled ingestion emits and throws only a bounded error code, while initial Discover falls back to NEAR without cursor mixing. A live read parsed the deployment block and a legacy governance event. No scheduler, D1 binding or zero-to-tip rebuild exists. `LOCAL_TEST` + `TESTNET_READ`. |
+| Read model rebuilds from chain | PARTIAL | The bounded Neardata adapter reads an exact testnet final block, verifies receipt/event bindings and feeds the deterministic reducer/atomic D1 writer. Temporary D1 API failures return a bounded 503; scheduled ingestion emits and throws only a bounded error code, while initial Discover falls back to NEAR without cursor mixing. A dedicated empty testnet D1 now has all four migrations and an exact source binding, but no Worker deployment, runtime binding, scheduler or zero-to-tip rebuild exists. `LOCAL_TEST` + `TESTNET_READ` + `D1_CONTROL_PLANE`. |
 | Event idempotency/finality watermark tests pass | PARTIAL | Exact contract replays emit no duplicate event. Reducer deduplicates `(block_height, receipt_id, event_index)`, rejects conflicts and the D1 writer advances a complete final block, including an empty block, atomically. No real D1 transaction exists. `LOCAL_TEST`. |
-| Discover/profile use read API | PARTIAL | A disabled-by-default Web client reads active Discover pages and creator publication/sales history from the versioned D1 API. Initial Discover failure falls back to canonical NEAR without mixing cursors; creator available balance/withdrawal and all purchase/playback authority stay on NEAR. Release metadata forces the new gate false; no D1 binding/deploy exists. `LOCAL_TEST`. |
+| Discover/profile use read API | PARTIAL | A disabled-by-default Web client reads active Discover pages and creator publication/sales history from the versioned D1 API. Initial Discover failure falls back to canonical NEAR without mixing cursors; creator available balance/withdrawal and all purchase/playback authority stay on NEAR. Release metadata forces the new gate false; the D1 binding exists only in source and no Worker/API deployment exists. `LOCAL_TEST`. |
 | Purchase/playback remain canonical-chain based | PASS | Current architecture and Worker final reads retain NEAR authority. `LOCAL_STATIC`; target runtime activation is not implied. |
 | Sale ledger and withdrawal audit available | PARTIAL | Event reducer/D1 projections include sale ledger, entitlements and withdrawal history; rebuild and D1 retain the same exact withdrawal event status. Creator aggregate sales use exact decimal-string/BigInt addition rather than lossy SQLite integer casts. No deployed D1, support authorization or accounting reconciliation exists. `LOCAL_TEST`. |
 | Refund/credit policy approved | PARTIAL | Technical pilot is explicitly non-refundable. Mainnet product/legal/finance confirmation and accounting invariants remain open. |
@@ -201,7 +201,7 @@ Evidence classes remain separate:
 | LP-002 | 3 | PARTIAL | The concrete `MediaProvider` implementation now lives with separate API/TUS transport and raw normalization; ready validation, bounded private-media probes and pure webhook normalization also have explicit modules. The independent provider-mutation gate blocks create before lease/provider use while keeping an authorized job recoverable; provider reads and existing TUS recovery stay available. Conservative cost reservation exists, but actual billing reconciliation is external. No runtime asset-delete call site exists, so an unused mutation was not added. `LOCAL_TEST`. |
 | WEB-001 | 3 | PASS_LOCAL | One canonical UI stage follows the target lifecycle and a pure predecessor table enforces forward/retry/reset/terminal edges. A fingerprint-verified v2 draft restores safe UI projections; provider-processing resumes visibility-aware Query polling without reopening payment, while interrupted upload returns to upload-ready. The finality retry and composed job/publication read now live in the existing publication use-case service, leaving the component without a direct network primitive or timer. Real browser reload/staging proof remains absent. `LOCAL_TEST`. |
 | EVENT-001 | 4 | PARTIAL | Market v2 locally emits job, rebuild-complete publication, entitlement, withdrawal, bridge and quote-key events with common context/idempotency fields and no capabilities. The fresh testnet v2 has zero publications, but the updated artifact is not deployed; `contract_migrated`, testnet economic-event proof and final receipt/event indexing remain absent. |
-| DATA-001 | 4 | PARTIAL | Source-only D1 schema, deterministic rebuild, complete-block atomic writer, bounded Neardata adapter, testnet-only scheduled entrypoint, contiguous cursor, >16-event fail-closed policy, structured lag telemetry, GET-only API and closed Discover/profile client pass locally. D1 query/ingestion exceptions are reduced to bounded 503/error codes and initial Discover fallback never mixes cursors. Start block is 263118001; no Worker/cron deployment, D1 binding/alert delivery or deployed RTO drill exists. |
+| DATA-001 | 4 | PARTIAL | Source-only D1 schema, deterministic rebuild, complete-block atomic writer, bounded Neardata adapter, testnet-only scheduled entrypoint, contiguous cursor, >16-event fail-closed policy, structured lag telemetry, GET-only API and closed Discover/profile client pass locally. Dedicated D1 `71292344-ebde-444e-b7a5-51f788b77056` has migrations 0001–0004 and an exact source binding; all ten domain tables are empty. D1 query/ingestion exceptions are reduced to bounded 503/error codes and initial Discover fallback never mixes cursors. Start block is 263118001; no Worker/cron deployment, alert delivery or deployed RTO drill exists. |
 | PAY-001 | 4 | PARTIAL | Technical pilot is non-refundable; source-only exact sale ledger, creator aggregate and withdrawal audit pass locally. Mainnet policy approval, deployed D1 and accounting reconciliation remain absent. |
 | SRE-001 | 0–5 | PARTIAL | Redacted request/dependency/Queue/payment telemetry, a one-shot per-isolate cold-start field, bounded state-kind/projected DO record telemetry, Market reserve/RPC-finality sources and a machine-readable `SOURCE_ONLY` policy exist. All nine alerts have a role/action and all six domain controls are source-ready. Guarded release inputs remain closed; the contract purchase control requires a separately approved on-chain pause receipt. Queue depth, DO byte/read/write/active-object metrics, platform aggregation, named on-call, deployed control exercise, dashboard, delivered alerts and drills are absent. |
 | PERF-001 | 5 | PARTIAL | Opt-in local runs reject 100,000 wrong-origin requests with zero growth and serve 1,000 authorized warm requests at 9.15 ms p95 with zero errors, no warm external/DO calls and bounded cache. Mocked local latency is not deployed evidence. |
@@ -3643,3 +3643,37 @@ Evidence classes remain separate:
   dedicated plan resource is `DECISION_REQUIRED`; the plan recommends a
   separate resource. V2/shadow/Queue activation still requires deployed canary
   evidence and a separate flag-change approval.
+
+### CHECKPOINT 116 — Phase 4 / dedicated testnet D1 foundation
+
+- DURUM: `D1_PROVISIONED / MIGRATIONS_APPLIED / SOURCE_BINDING / RUNTIME_CLOSED`
+- BASELINE: `agent/youtick-staging-readiness-20260810@18547ce48a58d97be8187538729de2af61049e35`.
+- AMAÇ: Create the separately approved pilot D1 foundation while keeping the
+  read API, ingestion, archives, cron and Worker deployment closed.
+- UYGULAMA:
+  - created `youtick-market-read-model-testnet` once in region `EEUR` with UUID
+    `71292344-ebde-444e-b7a5-51f788b77056`;
+  - applied `0001_initial.sql`, `0002_contiguous_watermark.sql`,
+    `0003_upload_job_archives.sql` and `0004_operator_outbox_archives.sql` to
+    that exact remote database;
+  - added `read-model/wrangler.toml` with `MARKET_READ_MODEL`,
+    `READ_MODEL_ENABLED=false`, `READ_MODEL_INGESTION_ENABLED=false`,
+    `workers_dev=false`, `preview_urls=false` and no cron trigger;
+  - added the existing `nodejs_compat` platform flag after the first dry-run
+    surfaced Worker imports from shared Node-compatible modules.
+- DOĞRULAMA:
+  - remote migration list → no migrations pending;
+  - remote `d1_migrations` → exact 0001–0004 names;
+  - remote schema → ten domain tables, four expected indexes and the contiguous
+    watermark trigger; all ten domain tables have zero rows;
+  - Wrangler dry-run → 45.96 KiB / gzip 10.23 KiB, exact D1 binding and both
+    runtime gates false, with no remaining compatibility warning;
+  - security config test → 5/5 passed; full release/security/SLO tooling →
+    108/108 passed; read-model suite → 34/34 passed; docs build and
+    `git diff --check` passed (`LOCAL_TEST`).
+- KANIT: user-approved `D1_MUTATION` + read-only remote D1 queries +
+  `LOCAL_STATIC` + `LOCAL_TEST`. One initial compound read-only count query hit
+  D1's term limit; the replacement scalar query succeeded with zero writes.
+- FAZ KAPISI: The D1 foundation package is complete. No Worker, API, ingestion,
+  archive, cron, Queue, deploy or traffic activation occurred. Queue foundation
+  and dark deployment remain separate approval packages.
