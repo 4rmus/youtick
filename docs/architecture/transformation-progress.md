@@ -3800,3 +3800,58 @@ Evidence classes remain separate:
   separately approved consumer, synthetic-message, retry/DLQ and provider/DO/
   NEAR mutation boundary. No Queue consumer, message, runtime flag, read-model
   route/cron, ingestion, provider mutation or Production deployment was added.
+
+### CHECKPOINT 120 — Phase 3 / bounded Preview Queue transport canary
+
+- DURUM: `PASS_PREVIEW / QUEUE_TRANSPORT_PROVEN / RUNTIME_RE-CLOSED /
+  PRODUCTION_UNTOUCHED`
+- BASELINE: `origin/main@bc906149bffa8c60f97854f5240c004954da522c`;
+  stable Preview Bridge version
+  `ba26e779-53a0-480e-9cc9-8efaa1646db2`.
+- AMAÇ: Prove bounded Queue delivery, ACK, duplicate/out-of-order transport and
+  retry/DLQ behavior without using a real UploadJob or allowing provider,
+  operator, NEAR or Production mutation.
+- UYGULAMA:
+  - Wrangler 4.90 uploaded inactive canary version
+    `c74a9c81-a2d3-4ffc-b0a9-684cd96be4ff` with the existing bindings and
+    secrets preserved, the accepted Queue policy added and only
+    `LIVEPEER_WEBHOOK_QUEUE_ENABLED` changed from false to true;
+  - the first activation attached the consumer before the exact canary version
+    was proven at the custom domain. Three expected-ACK messages reached DLQ
+    without a canary-version Queue trace; the attempt failed closed, restored
+    the stable version, removed the consumer and purged only those three
+    synthetic messages;
+  - the successful retry deployed the canary first, required a cache-busting
+    health probe to return its exact version, and only then attached one Worker
+    consumer with batch 10, timeout five seconds, three retries, concurrency
+    one and `youtick-livepeer-events-dlq-testnet`;
+  - messages were sent directly through the Cloudflare Queue API. They used a
+    nonexistent canary job identity, so the Durable Object returned before job
+    state, provider or NEAR processing.
+- DOĞRULAMA:
+  - local Queue/DO suite → 50/50 passed; TypeScript check and canary Wrangler
+    dry-run passed;
+  - one synthetic event produced one canary-version Queue invocation, one DO
+    `202` response and `outcome=ACK`; main Queue and DLQ returned to zero;
+  - an exact duplicate pair plus an older-timestamp update arrived in one
+    three-message batch, produced three DO `202` responses and three ACK logs;
+    both backlogs again returned to zero;
+  - one intentionally invalid raw webhook produced four DO HTTP 400 responses
+    with `invalid_webhook` and four `outcome=RETRY` logs, matching the initial
+    attempt plus three configured retries, then moved exactly one message to
+    DLQ;
+  - throughout the canary Bridge stage stayed `DISABLED`, provider/operator
+    mutation readiness stayed false and no real UploadJob, provider asset or
+    NEAR finalization was exercised;
+  - cleanup restored stable Bridge version
+    `ba26e779-53a0-480e-9cc9-8efaa1646db2` at 100%, removed the consumer,
+    purged the single synthetic DLQ message and ended with producer 1,
+    consumers 0 and zero bytes/messages in both Queue backlogs.
+- KANIT: approved `QUEUE_MUTATION` + `PREVIEW_DEPLOYMENT` + Cloudflare Queue
+  API metrics + version-scoped Worker tail + `LOCAL_TEST`. The failed first
+  activation remains part of the evidence and is not counted as a pass.
+- FAZ KAPISI: The bounded Queue transport canary is closed. Phase 3 is not
+  complete: a separately approved valid test-job lifecycle canary must still
+  prove provider verification, stateful duplicate/out-of-order idempotency and
+  no duplicate NEAR finalize. Phase 4 read-model ingestion remains later. No
+  consumer or Queue flag remains active, and Production was not changed.
