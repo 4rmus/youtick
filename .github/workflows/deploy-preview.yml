@@ -224,7 +224,7 @@ jobs:
             git diff --name-only -z "${baseline}" "${SHA}" > "${changed_file}"
             while IFS= read -r -d '' path; do
               case "${path}" in
-                apps/web/*|workers/livepeer-bridge/*|protocol/paid-media-livepeer-v1/*|scripts/check-paid-media-livepeer-v1.mjs|.nvmrc|.github/workflows/*)
+                apps/web/*|workers/livepeer-bridge/*|read-model/*|protocol/paid-media-livepeer-v1/*|scripts/check-paid-media-livepeer-v1.mjs|.nvmrc|.github/workflows/*)
                   deploy=true
                   break
                   ;;
@@ -350,11 +350,31 @@ jobs:
             --directory="${RUNNER_TEMP}/bridge-output" \
             index.js wrangler.toml \
             | gzip -n > "${RUNNER_TEMP}/bridge.tar.gz"
+      - name: Build and pack dark read-model bundle
+        run: |
+          workers/livepeer-bridge/node_modules/.bin/wrangler deploy \
+            --dry-run \
+            --cwd read-model \
+            --outdir "${RUNNER_TEMP}/read-model-output"
+          node scripts/cloudflare-release.mjs write-read-model-wrangler \
+            "${RUNNER_TEMP}/read-model-output/wrangler.toml"
+          tar \
+            --sort=name \
+            --mtime='UTC 1970-01-01' \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            --create \
+            --file=- \
+            --directory="${RUNNER_TEMP}/read-model-output" \
+            worker.js wrangler.toml \
+            | gzip -n > "${RUNNER_TEMP}/read-model.tar.gz"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bridge-${{ needs.authorize.outputs.sha }}
           path: |
             ${{ runner.temp }}/bridge.tar.gz
+            ${{ runner.temp }}/read-model.tar.gz
             ${{ runner.temp }}/bridge.spdx.json
           retention-days: 1
           overwrite: true
@@ -397,6 +417,7 @@ jobs:
           cp "${RUNNER_TEMP}/components/production/web-production.tar.gz" "${RUNNER_TEMP}/release/web-production.tar.gz"
           cp "${RUNNER_TEMP}/components/production/production-config.json" "${RUNNER_TEMP}/release/production-config.json"
           cp "${RUNNER_TEMP}/components/bridge/bridge.tar.gz" "${RUNNER_TEMP}/release/bridge.tar.gz"
+          cp "${RUNNER_TEMP}/components/bridge/read-model.tar.gz" "${RUNNER_TEMP}/release/read-model.tar.gz"
 
           node scripts/release-metadata.mjs manifest \
             --sha "${{ needs.authorize.outputs.sha }}" \
@@ -407,6 +428,7 @@ jobs:
             --web-preview "${RUNNER_TEMP}/release/web-preview.tar.gz" \
             --web-production "${RUNNER_TEMP}/release/web-production.tar.gz" \
             --bridge "${RUNNER_TEMP}/release/bridge.tar.gz" \
+            --read-model "${RUNNER_TEMP}/release/read-model.tar.gz" \
             --preview-config "${RUNNER_TEMP}/release/preview-config.json" \
             --production-config "${RUNNER_TEMP}/release/production-config.json" \
             --output-dir "${RUNNER_TEMP}/release"

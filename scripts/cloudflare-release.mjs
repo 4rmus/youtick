@@ -48,6 +48,8 @@ const ALL_TARGETS = Object.freeze({
     production: TARGETS.production,
 });
 
+const READ_MODEL_TARGET = Object.freeze({ worker: 'youtick-market-read-model-testnet' });
+
 const BRIDGE_PUBLIC_KEYS = Object.freeze([
     'ACCESS_CONTRACT_ID',
     'ALLOWED_ORIGINS',
@@ -129,6 +131,39 @@ const BRIDGE_ARTIFACT_WRANGLER = [
     '[[migrations]]',
     'tag = "v1"',
     'new_sqlite_classes = ["LivepeerControl"]',
+    '',
+].join('\n');
+
+const READ_MODEL_ARTIFACT_WRANGLER = [
+    'name = "youtick-market-read-model-testnet"',
+    'main = "worker.mjs"',
+    'compatibility_date = "2026-08-10"',
+    'compatibility_flags = ["nodejs_compat"]',
+    'workers_dev = false',
+    'preview_urls = false',
+    '',
+    '[vars]',
+    'READ_MODEL_ENABLED = "false"',
+    'READ_MODEL_INGESTION_ENABLED = "false"',
+    'READ_MODEL_NETWORK = "testnet"',
+    'READ_MODEL_CONTRACT_ID = "lp-arch-market-v2-260809.youtick-dev-v3.testnet"',
+    'READ_MODEL_START_BLOCK_HEIGHT = "263118001"',
+    'READ_MODEL_MAX_BLOCKS_PER_RUN = "180"',
+    'READ_MODEL_WEB_ORIGIN = "https://preview.youtick.net"',
+    '',
+    '[[d1_databases]]',
+    'binding = "MARKET_READ_MODEL"',
+    'database_name = "youtick-market-read-model-testnet"',
+    'database_id = "71292344-ebde-444e-b7a5-51f788b77056"',
+    'migrations_dir = "d1"',
+    '',
+].join('\n');
+
+const BRIDGE_PREVIEW_QUEUE_PRODUCER = [
+    '',
+    '[[queues.producers]]',
+    'binding = "LIVEPEER_EVENTS"',
+    'queue = "youtick-livepeer-events-testnet"',
     '',
 ].join('\n');
 
@@ -282,6 +317,12 @@ async function readRelease(artifactDir, target, sha) {
         'bridge.tar.gz',
         'bridge_bundle',
     );
+    const readModelArchive = await verifyRecord(
+        artifactDir,
+        manifest.bundles?.readModel,
+        'read-model.tar.gz',
+        'read_model_bundle',
+    );
 
     let config;
     try {
@@ -313,6 +354,7 @@ async function readRelease(artifactDir, target, sha) {
         config,
         webArchive,
         bridgeArchive,
+        readModelArchive,
     };
 }
 
@@ -358,14 +400,25 @@ async function validateBridgeWrangler(configPath, extractedRoot) {
     await assertRegularFile(join(extractedRoot, 'index.js'), 'bridge_worker');
 }
 
+async function validateReadModelWrangler(configPath, extractedRoot) {
+    const text = await readFile(configPath, 'utf8');
+    if (text !== READ_MODEL_ARTIFACT_WRANGLER) fail('read_model_wrangler_config_invalid');
+    await assertRegularFile(join(extractedRoot, 'worker.js'), 'read_model_worker');
+}
+
 export async function writeBridgeArtifactWrangler(outputPath) {
     await writeFile(resolve(outputPath), BRIDGE_ARTIFACT_WRANGLER, { flag: 'wx', mode: 0o600 });
+}
+
+export async function writeReadModelArtifactWrangler(outputPath) {
+    await writeFile(resolve(outputPath), READ_MODEL_ARTIFACT_WRANGLER, { flag: 'wx', mode: 0o600 });
 }
 
 async function writeSanitizedConfigs(extracted, target) {
     const expected = TARGETS[target];
     const webBootstrap = join(extracted.web, 'wrangler.bootstrap.json');
     const bridgeBootstrap = join(extracted.bridge, 'wrangler.bootstrap.toml');
+    const bridgeCandidate = join(extracted.bridge, 'wrangler.candidate.toml');
     await writeFile(webBootstrap, canonicalJson({
         name: expected.web.worker,
         main: '.open-next/worker.js',
@@ -410,7 +463,12 @@ async function writeSanitizedConfigs(extracted, target) {
         'new_sqlite_classes = ["LivepeerControl"]',
         '',
     ].join('\n'), { mode: 0o600 });
-    return { webBootstrap, bridgeBootstrap };
+    await writeFile(
+        bridgeCandidate,
+        `${BRIDGE_ARTIFACT_WRANGLER}${target === 'preview' ? BRIDGE_PREVIEW_QUEUE_PRODUCER : ''}`,
+        { mode: 0o600 },
+    );
+    return { webBootstrap, bridgeBootstrap, bridgeCandidate };
 }
 
 function runProcess(command, args, { cwd, env = process.env, echo = false } = {}) {
@@ -613,17 +671,28 @@ function assertTraffic(actual, expected, label) {
 }
 
 function componentArgs(component, target, extracted, releaseConfig, sanitized, bridgeSecretsFile) {
-    const expected = TARGETS[target][component];
-    const config = join(extracted, component === 'web' ? 'wrangler.jsonc' : 'wrangler.toml');
-    const entry = join(extracted, component === 'web' ? '.open-next/worker.js' : 'index.js');
+    const expected = component === 'readModel' ? READ_MODEL_TARGET : TARGETS[target][component];
+    const config = component === 'web'
+        ? join(extracted, 'wrangler.jsonc')
+        : component === 'bridge'
+            ? sanitized.bridgeCandidate
+            : join(extracted, 'wrangler.toml');
+    const entry = join(
+        extracted,
+        component === 'web' ? '.open-next/worker.js' : component === 'bridge' ? 'index.js' : 'worker.js',
+    );
     const base = ['--config', config, '--name', expected.worker];
     if (component === 'web') base.push('--env', target);
-    const bootstrapConfig = component === 'web' ? sanitized.webBootstrap : sanitized.bridgeBootstrap;
+    const bootstrapConfig = component === 'web'
+        ? sanitized.webBootstrap
+        : component === 'bridge'
+            ? sanitized.bridgeBootstrap
+            : config;
     const bootstrapBase = ['--config', bootstrapConfig, '--name', expected.worker];
     const vars = component === 'bridge'
         ? BRIDGE_PUBLIC_KEYS.flatMap((key) => ['--var', `${key}:${releaseConfig.bridge[key]}`])
         : [];
-    const uploadMode = component === 'bridge' ? ['--no-bundle'] : [];
+    const uploadMode = component === 'web' ? [] : ['--no-bundle'];
     const secrets = component === 'bridge' ? ['--secrets-file', bridgeSecretsFile] : [];
     return {
         expected,
@@ -701,7 +770,9 @@ async function prepareComponent({ component, target, sha, run, args, bootstrapAl
     const event = outputEvent(deployed, 'deploy');
     if (event.worker_name !== args.expected.worker) fail(`${component}_bootstrapped_worker_invalid`);
     const bootstrapVersion = versionId(event.version_id, component);
-    const bootstrapUrl = bootstrapWorkersDevUrl(event.targets, args.expected.worker, component);
+    const bootstrapUrl = component === 'readModel'
+        ? null
+        : bootstrapWorkersDevUrl(event.targets, args.expected.worker, component);
     await requireTraffic(
         run,
         args,
@@ -1028,7 +1099,7 @@ async function restorePrevious(runByComponent, argsByComponent, prepared, reason
     const errors = [];
     const restore = async (component) => {
         const state = prepared[component];
-        if (!state.previous) return;
+        if (!state?.previous) return;
         try {
             await deployTraffic(
                 runByComponent[component],
@@ -1040,6 +1111,7 @@ async function restorePrevious(runByComponent, argsByComponent, prepared, reason
             errors.push(`${component}: ${error instanceof Error ? error.message : 'rollback_failed'}`);
         }
     };
+    await restore('readModel');
     await restore('bridge');
     await restore('web');
     if (errors.length) fail(`rollback_failed: ${errors.join('; ')}`);
@@ -1139,11 +1211,17 @@ export async function deployRelease({
         const extracted = {
             web: join(tempRoot, 'web'),
             bridge: join(tempRoot, 'bridge'),
+            readModel: join(tempRoot, 'read-model'),
         };
         await extractArchive(release.webArchive, extracted.web);
         await extractArchive(release.bridgeArchive, extracted.bridge);
+        await extractArchive(release.readModelArchive, extracted.readModel);
         await validateWebWrangler(join(extracted.web, 'wrangler.jsonc'), extracted.web, target);
         await validateBridgeWrangler(join(extracted.bridge, 'wrangler.toml'), extracted.bridge);
+        await validateReadModelWrangler(
+            join(extracted.readModel, 'wrangler.toml'),
+            extracted.readModel,
+        );
         const sanitized = await writeSanitizedConfigs(extracted, target);
         if (!/^[a-f0-9]{32}$/.test(cloudflareZoneId || '')) fail('cloudflare_zone_id_invalid');
         const api = createCloudflareApi(cloudflareFetch, cloudflareAccountId, cloudflareApiToken);
@@ -1158,10 +1236,21 @@ export async function deployRelease({
         const accountSubdomain = await accountWorkersDevSubdomain(api, cloudflareAccountId);
 
         const defaultWrangler = join(repoRoot, 'apps', 'web', 'node_modules', '.bin', 'wrangler');
-        const binaries = wranglerPaths || { web: defaultWrangler, bridge: defaultWrangler };
+        const binaries = wranglerPaths || {
+            web: defaultWrangler,
+            bridge: defaultWrangler,
+            readModel: defaultWrangler,
+        };
         const runByComponent = {
             web: await makeWranglerRunner(binaries.web, tempRoot, { echo: echoWrangler, label: 'web' }),
             bridge: await makeWranglerRunner(binaries.bridge, tempRoot, { echo: echoWrangler, label: 'bridge' }),
+            ...(target === 'preview' ? {
+                readModel: await makeWranglerRunner(
+                    binaries.readModel ?? binaries.bridge,
+                    tempRoot,
+                    { echo: echoWrangler, label: 'read-model' },
+                ),
+            } : {}),
         };
         const argsByComponent = {
             web: componentArgs(
@@ -1170,6 +1259,11 @@ export async function deployRelease({
             bridge: componentArgs(
                 'bridge', target, extracted.bridge, release.config, sanitized, bridgeSecretsFile,
             ),
+            ...(target === 'preview' ? {
+                readModel: componentArgs(
+                    'readModel', target, extracted.readModel, release.config, sanitized, bridgeSecretsFile,
+                ),
+            } : {}),
         };
         const prepared = {
             web: await prepareComponent({
@@ -1180,6 +1274,14 @@ export async function deployRelease({
                 component: 'bridge', target, sha, run: runByComponent.bridge, args: argsByComponent.bridge,
                 bootstrapAllowed: beforeDomains.states.bridge === 'missing',
             }),
+            ...(target === 'preview' ? {
+                readModel: await prepareComponent({
+                    component: 'readModel', target, sha,
+                    run: runByComponent.readModel,
+                    args: argsByComponent.readModel,
+                    bootstrapAllowed: true,
+                }),
+            } : {}),
         };
         const workersDev = await workersDevUrls(
             api,
@@ -1201,11 +1303,24 @@ export async function deployRelease({
             : `https://${TARGETS[target].bridge.domain}`;
 
         let stagedBridge = false;
+        let stagedReadModel = false;
         let promotionStarted = false;
         let rollbackPerformed = false;
         const createdDomains = [];
         const attemptedDomains = new Set();
         try {
+            if (prepared.readModel) {
+                await deployTraffic(
+                    runByComponent.readModel,
+                    argsByComponent.readModel,
+                    [
+                        { version: prepared.readModel.previous, percentage: 100 },
+                        { version: prepared.readModel.candidate, percentage: 0 },
+                    ],
+                    `YouTick ${target} read model candidate ${sha}`,
+                );
+                stagedReadModel = true;
+            }
             await deployTraffic(
                 runByComponent.bridge,
                 argsByComponent.bridge,
@@ -1230,6 +1345,14 @@ export async function deployRelease({
             }));
 
             promotionStarted = true;
+            if (prepared.readModel) {
+                await deployTraffic(
+                    runByComponent.readModel,
+                    argsByComponent.readModel,
+                    [{ version: prepared.readModel.candidate, percentage: 100 }],
+                    `YouTick ${target} read model ${sha}`,
+                );
+            }
             await deployTraffic(
                 runByComponent.bridge,
                 argsByComponent.bridge,
@@ -1271,6 +1394,14 @@ export async function deployRelease({
                 [{ version: prepared.web.candidate, percentage: 100 }],
                 'web_promoted',
             );
+            if (prepared.readModel) {
+                await requireTraffic(
+                    runByComponent.readModel,
+                    argsByComponent.readModel,
+                    [{ version: prepared.readModel.candidate, percentage: 100 }],
+                    'read_model_promoted',
+                );
+            }
             await smokeFn(smokeInput(target, `https://${TARGETS[target].web.domain}`, {
                 expectedBridgeVersion: prepared.bridge.candidate,
             }));
@@ -1301,7 +1432,7 @@ export async function deployRelease({
                     recoveryErrors.push(cleanupError);
                 }
             }
-            if (stagedBridge || promotionStarted) {
+            if (stagedBridge || stagedReadModel || promotionStarted) {
                 try {
                     await restorePrevious(runByComponent, argsByComponent, prepared, sha);
                 } catch (rollbackError) {
@@ -1333,6 +1464,14 @@ export async function deployRelease({
                 versionId: prepared.bridge.candidate,
                 bootstrap: prepared.bridge.bootstrap,
             },
+            ...(prepared.readModel ? {
+                readModel: {
+                    worker: READ_MODEL_TARGET.worker,
+                    previousVersionId: prepared.readModel.previous,
+                    versionId: prepared.readModel.candidate,
+                    bootstrap: prepared.readModel.bootstrap,
+                },
+            } : {}),
             rollbackTest: {
                 requested: target === 'production' && rollbackTest === 'true',
                 performed: rollbackPerformed,
@@ -1353,8 +1492,12 @@ async function main(args = process.argv.slice(2)) {
         await writeBridgeArtifactWrangler(args[1]);
         return;
     }
+    if (args.length === 2 && args[0] === 'write-read-model-wrangler') {
+        await writeReadModelArtifactWrangler(args[1]);
+        return;
+    }
     if (args.length !== 5 || args[0] !== 'deploy') {
-        throw new Error('usage: cloudflare-release.mjs <write-bridge-wrangler <output>|deploy <preview|production> <sha> <artifact-dir> <receipt-output>>');
+        throw new Error('usage: cloudflare-release.mjs <write-bridge-wrangler <output>|write-read-model-wrangler <output>|deploy <preview|production> <sha> <artifact-dir> <receipt-output>>');
     }
     await deployRelease({
         target: args[1],

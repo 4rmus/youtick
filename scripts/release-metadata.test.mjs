@@ -94,6 +94,7 @@ function makeRelease() {
   writeFileSync(join(artifactDir, "web-preview.tar.gz"), "preview bundle\n");
   writeFileSync(join(artifactDir, "web-production.tar.gz"), "production bundle\n");
   writeFileSync(join(artifactDir, "bridge.tar.gz"), "bridge bundle\n");
+  writeFileSync(join(artifactDir, "read-model.tar.gz"), "read model bundle\n");
 
   const manifestArgs = [
     "manifest",
@@ -113,6 +114,8 @@ function makeRelease() {
     join(artifactDir, "web-production.tar.gz"),
     "--bridge",
     join(artifactDir, "bridge.tar.gz"),
+    "--read-model",
+    join(artifactDir, "read-model.tar.gz"),
     "--preview-config",
     previewConfig,
     "--production-config",
@@ -135,9 +138,11 @@ test("workflows keep cumulative Preview release provenance", () => {
   assert.match(preview, /\.path == "\.github\/workflows\/deploy-preview\.yml"/);
   assert.match(preview, /git merge-base --is-ancestor "\$\{candidate_sha\}" "\$\{SHA\}"/);
   assert.match(preview, /git diff --name-only -z "\$\{baseline\}" "\$\{SHA\}"/);
-  assert.match(preview, /apps\/web\/\*\|workers\/livepeer-bridge\/\*/);
+  assert.match(preview, /apps\/web\/\*\|workers\/livepeer-bridge\/\*\|read-model\/\*/);
   assert.match(preview, /contracts\/\*\|scripts\/check-paid-media-livepeer-v1-abi\.mjs\|docs\/\*/);
   assert.match(preview, /cloudflare-release\.mjs write-bridge-wrangler/);
+  assert.match(preview, /cloudflare-release\.mjs write-read-model-wrangler/);
+  assert.match(preview, /--read-model "\$\{RUNNER_TEMP\}\/release\/read-model\.tar\.gz"/);
   assert.doesNotMatch(preview, /cp workers\/livepeer-bridge\/wrangler\.toml/);
 });
 
@@ -483,6 +488,7 @@ test("manifest verification detects tampering and SHA mismatch", async (t) => {
     assert.equal(manifest.sha, SHA);
     assert.equal(manifest.lockfiles.web.path, "apps/web/package-lock.json");
     assert.equal(manifest.bundles.bridge.path, "bridge.tar.gz");
+    assert.equal(manifest.bundles.readModel.path, "read-model.tar.gz");
   });
 
   await t.test("tampered bundle", () => {

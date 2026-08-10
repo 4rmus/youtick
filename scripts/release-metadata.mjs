@@ -114,12 +114,14 @@ const RELEASE_FILES = Object.freeze({
   webPreview: "web-preview.tar.gz",
   webProduction: "web-production.tar.gz",
   bridge: "bridge.tar.gz",
+  readModel: "read-model.tar.gz",
   previewConfig: "preview-config.json",
   productionConfig: "production-config.json",
 });
 
 const CHECKSUM_FILES = Object.freeze([
   RELEASE_FILES.bridge,
+  RELEASE_FILES.readModel,
   "manifest.json",
   RELEASE_FILES.previewConfig,
   RELEASE_FILES.productionConfig,
@@ -422,6 +424,7 @@ async function commandManifest(options) {
     "web-preview",
     "web-production",
     "bridge",
+    "read-model",
     "preview-config",
     "production-config",
     "output-dir",
@@ -445,6 +448,12 @@ async function commandManifest(options) {
       "web production bundle",
     ),
     bridge: directReleaseFile(option(options, "bridge"), outputDir, RELEASE_FILES.bridge, "Bridge bundle"),
+    readModel: directReleaseFile(
+      option(options, "read-model"),
+      outputDir,
+      RELEASE_FILES.readModel,
+      "read model bundle",
+    ),
     previewConfig: directReleaseFile(
       option(options, "preview-config"),
       outputDir,
@@ -462,12 +471,13 @@ async function commandManifest(options) {
   await readCanonicalConfig(files.previewConfig, "preview");
   await readCanonicalConfig(files.productionConfig, "production");
 
-  const [webLock, bridgeLock, webPreview, webProduction, bridge, previewConfig, productionConfig] = await Promise.all([
+  const [webLock, bridgeLock, webPreview, webProduction, bridge, readModel, previewConfig, productionConfig] = await Promise.all([
     fileMetadata(resolve(option(options, "web-lock"))),
     fileMetadata(resolve(option(options, "bridge-lock"))),
     fileMetadata(files.webPreview),
     fileMetadata(files.webProduction),
     fileMetadata(files.bridge),
+    fileMetadata(files.readModel),
     fileMetadata(files.previewConfig),
     fileMetadata(files.productionConfig),
   ]);
@@ -489,6 +499,7 @@ async function commandManifest(options) {
       webPreview: { path: RELEASE_FILES.webPreview, ...webPreview },
       webProduction: { path: RELEASE_FILES.webProduction, ...webProduction },
       bridge: { path: RELEASE_FILES.bridge, ...bridge },
+      readModel: { path: RELEASE_FILES.readModel, ...readModel },
     },
   };
 
@@ -563,7 +574,7 @@ async function commandVerify(options) {
 
   assertKeys(manifest.lockfiles, ["web", "bridge"], "manifest.lockfiles");
   assertKeys(manifest.configs, ["preview", "production"], "manifest.configs");
-  assertKeys(manifest.bundles, ["webPreview", "webProduction", "bridge"], "manifest.bundles");
+  assertKeys(manifest.bundles, ["webPreview", "webProduction", "bridge", "readModel"], "manifest.bundles");
   validateFileRecord(manifest.lockfiles.web, "apps/web/package-lock.json", "manifest.lockfiles.web");
   validateFileRecord(
     manifest.lockfiles.bridge,
@@ -579,6 +590,7 @@ async function commandVerify(options) {
     "manifest.bundles.webProduction",
   );
   validateFileRecord(manifest.bundles.bridge, RELEASE_FILES.bridge, "manifest.bundles.bridge");
+  validateFileRecord(manifest.bundles.readModel, RELEASE_FILES.readModel, "manifest.bundles.readModel");
 
   await readCanonicalConfig(resolve(artifactDir, RELEASE_FILES.previewConfig), "preview");
   await readCanonicalConfig(resolve(artifactDir, RELEASE_FILES.productionConfig), "production");
@@ -591,6 +603,7 @@ async function commandVerify(options) {
     [manifest.bundles.webPreview, resolve(artifactDir, RELEASE_FILES.webPreview)],
     [manifest.bundles.webProduction, resolve(artifactDir, RELEASE_FILES.webProduction)],
     [manifest.bundles.bridge, resolve(artifactDir, RELEASE_FILES.bridge)],
+    [manifest.bundles.readModel, resolve(artifactDir, RELEASE_FILES.readModel)],
   ];
   for (const [record, path] of records) {
     const actual = await fileMetadata(path);
