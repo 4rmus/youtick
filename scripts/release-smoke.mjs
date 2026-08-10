@@ -265,7 +265,11 @@ export async function runReleaseSmoke({
             headers: { 'Content-Type': 'application/json', Origin: allowedOrigin },
             body: '{}',
         }, headers, fetchImpl);
-        expectStatus(result.response, 503, 'bridge_mutation');
+        if (result.response.status !== 503) {
+            throw new Error(
+                `release_smoke_bridge_mutation_status_${result.response.status} path=${mutation.path}`,
+            );
+        }
         const resultJson = expectJson(result.response, result.body, 'bridge_mutation');
         const corsOrigin = result.response.headers.get('access-control-allow-origin');
         if (resultJson.error !== 'control_plane_disabled'
