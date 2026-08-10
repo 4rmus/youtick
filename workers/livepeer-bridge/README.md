@@ -160,8 +160,11 @@ timestamp; every valid ACK/retry emits bounded `queueLagMs` without job,
 payload or provider identifiers. The accepted pilot policy is locked to
 batch 10, five-second timeout, three retries, concurrency 1, four-day retention
 and `youtick-livepeer-events-dlq-testnet`; ingress and consumption fail closed
-if the policy values drift. No Queue or DLQ binding is provisioned by this
-source-only slice, so the tracked gate remains false. Provider setup must match
+if the policy values drift. The dedicated testnet Queue and DLQ now exist, and
+the tracked Wrangler file contains the matching producer/consumer source
+configuration. No Worker is deployed and the provider reports zero attached
+producers/consumers, so the tracked gate remains false. Any later deployment
+must match
 Cloudflare's [consumer configuration](https://developers.cloudflare.com/queues/configuration/configure-queues/)
 and [dead-letter Queue](https://developers.cloudflare.com/queues/configuration/dead-letter-queues/)
 contracts.

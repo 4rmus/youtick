@@ -40,6 +40,18 @@ NEAR_OPERATOR_ACCOUNT_ID = "<replace-with-livepeer-bridge-account-id>"
 NEAR_OPERATOR_KEY_EPOCH = "1"
 CREATOR_FEE_QUOTE_KEY_VERSION = "1"
 
+[[queues.producers]]
+binding = "LIVEPEER_EVENTS"
+queue = "youtick-livepeer-events-testnet"
+
+[[queues.consumers]]
+queue = "youtick-livepeer-events-testnet"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 3
+max_concurrency = 1
+dead_letter_queue = "youtick-livepeer-events-dlq-testnet"
+
 [version_metadata]
 binding = "CF_VERSION_METADATA"
 

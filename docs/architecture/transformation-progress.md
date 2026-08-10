@@ -71,7 +71,8 @@ Evidence classes remain separate:
 - Retention: UploadJob 14 days, webhook dedup 30 days, operator audit 90 days.
 - Normal upload lease: 30-minute TTL and five-minute heartbeat.
 - Queue: batch 10, five-second timeout, three retries, concurrency 1, four-day
-  retention and dead-letter Queue; no binding or activation yet.
+  retention and dead-letter Queue. Dedicated testnet Queue/DLQ resources and
+  source binding now exist; no deployed producer/consumer or activation exists.
 - D1 operations: Neardata testnet final blocks, deployment-block start,
   complete-block cursor, Workers Paid, one-minute cron, max 180 blocks/run,
   Platform/SRE ownership, RPO 0, RTO 4h and pilot end plus 90-day retention.
@@ -124,7 +125,7 @@ Evidence classes remain separate:
 | V2 authorizer works in production-like staging | PARTIAL | The separately gated v2 route works in local Worker integration tests. It verifies real device and NEP-413 signatures, final publication/entitlement and a 180-second JWT; the all-playback issuance gate rejects both v1 and v2 before any RPC read. Production-like staging is `UNPROVEN`. `LOCAL_TEST`. |
 | Persistent write per token is zero | PASS_LOCAL | V2 invokes the authorizer directly without `LIVEPEER_CONTROL`; success and same-request replay tests prove no DO access while final reads repeat. V1 remains an independently closed fallback. `LOCAL_TEST`. |
 | Cold and cache-hit NEAR reads meet approved bounds | PASS_LOCAL | Cold v2 performs three final NEAR reads plus one provider-policy read. The bounded 1,024-record cache makes a fully warm replay use zero NEAR/provider reads. Publication/provider expire at 30 seconds, wallet proof at 60 seconds, positive entitlement at five minutes and negative at three seconds. Takedown and removed-key boundary tests pass. `LOCAL_TEST`; deployed latency is absent. |
-| Legacy/v2 shadow mismatch below approved threshold | PARTIAL | The accepted mismatch ratio is exactly 0. A separately gated source path embeds an independently signed v2 proof in a legacy request, fixes and returns only the legacy result, then runs the existing v2 decision without JWT or durable writes through `waitUntil`. A mismatch regression logs only bounded ALLOW/DENY/UNAVAILABLE and reason codes. Both shadow flags default false and are not release-wired. Deployed samples and a pass result remain `EXTERNAL_EVIDENCE_REQUIRED`. `LOCAL_TEST`. |
+| Legacy/v2 shadow mismatch below approved threshold | PARTIAL | The accepted mismatch ratio is exactly 0. A separately gated source path embeds an independently signed v2 proof in a legacy request, fixes and returns only the legacy result, then runs the existing v2 decision without JWT or durable writes through `waitUntil`. A mismatch regression logs only bounded ALLOW/DENY/UNAVAILABLE and reason codes. Both shadow flags default false and guarded release metadata/config now require them to remain false. Deployed samples and a pass result remain `EXTERNAL_EVIDENCE_REQUIRED`. `LOCAL_TEST`. |
 | Device-certificate UX and revoke/clear verified | PASS_LOCAL | Web creates an eight-hour wallet-authorized certificate, keeps its secret only in memory and clears it on disconnect or page reload. Wrong origin, expired certificate, invalid/removed/non-FullAccess wallet key and invalid device signature fail closed locally. A stolen in-memory certificate remains usable until expiry unless its wallet key is removed; deployed wallet UX is `UNPROVEN`. `LOCAL_TEST`. |
 | Access grant issuance can be disabled | PASS_LOCAL | Fresh Access v2 has an independent, readable issuance flag behind the existing owner timelock. One regression proves the exact 24-hour decommission sequence: a grant issued during the delay remains verifiable, execution rejects new issuance, and subject revoke plus bounded cleanup still work. Testnet execution remains absent. `LOCAL_TEST`. |
 | DO retention/cleanup proven automatically | PARTIAL | Creator-fee/payment rate-limit objects alarm and `deleteAll()` at window expiry; signed control nonces expire with their at-most-five-minute request and purge in 128-record batches; normal/ambiguous admission leases release at 30/15 minutes, webhook dedup purges at 30 days and admission-reopen audit at 90 days. Independent default-off UploadJob and operator outbox D1 archive sources persist bounded summaries, commit/retry metadata and 14/90-day eligibility boundaries locally. Real D1 commits, both destructive deletes and a complete class-wide max-record contract remain absent. `LOCAL_TEST`. |
@@ -137,7 +138,7 @@ Evidence classes remain separate:
 | One stuck job does not close global admission | PASS_LOCAL | A generic `CREATE_AMBIGUOUS` or first transient provider failure releases after the accepted 15 minutes while admission stays open; its per-job DO still prevents duplicate provider create. Provider-wide 402/429 immediate closure and two independent 5xx/timeouts inside 60 seconds remain separate circuit-breaker conditions. `LOCAL_TEST`. |
 | Lease timeout auto-releases | PASS_LOCAL | Normal reservations receive a random lease ID, expire after 30 minutes and renew from the same session-only upload key every five minutes. Coordinator alarm release, wrong-lease rejection and web signing pass locally. The separate ambiguous timeout remains 15 minutes. Real long-upload/browser/staging proof is absent. `LOCAL_TEST`. |
 | Reload/crash resumes the same TUS resource | PARTIAL | An authenticated retry after browser-key replacement and job-object restart returns the same TUS URL without a second provider create; client HEAD/offset resume also passes. The independent new-upload gate rejects an unrecorded intent while the same recorded Job returns its existing TUS resource. The v2 session draft checks name/bytes/lastModified plus bounded source SHA-256; signed upload-intent v3 persists that declaration and rejects a conflicting recovery. Real browser reload/staging and provider-computed full-source fingerprint proof are absent. `LOCAL_TEST`. |
-| Webhook ACK avoids heavy provider probing | PARTIAL | The gated ingress verifies HMAC/timestamp, sends a bounded Queue message and returns `202` before job-object/provider work. Consumer ACK/retry/poison behavior and fail-closed policy drift pass locally. Pilot policy is batch 10/5 seconds, three retries, concurrency 1, four-day retention and DLQ; no Queue binding or staging traffic exists. `LOCAL_TEST`. |
+| Webhook ACK avoids heavy provider probing | PARTIAL | The gated ingress verifies HMAC/timestamp, sends a bounded Queue message and returns `202` before job-object/provider work. Consumer ACK/retry/poison behavior and fail-closed policy drift pass locally. Dedicated testnet Queue/DLQ resources and an exact source producer/consumer policy now exist. Guarded release metadata/config requires the Queue gate to remain false; no deployed producer/consumer, redelivery or staging traffic exists. `LOCAL_TEST` + `QUEUE_CONTROL_PLANE`. |
 | Duplicate/out-of-order queue tests pass | PASS_LOCAL | Duplicate ready-event processing remains idempotent, and duplicate late `asset.updated/processing` Queue delivery cannot regress an `ONCHAIN_PUBLISHED` job; both messages ACK and schedule reconcile only. Real Queue redelivery remains `UNPROVEN`. `LOCAL_TEST`. |
 | Worker split across domain boundaries | PARTIAL | The vendor-neutral port is 88 lines; separate 319-line provider/transport, 251-line ready-verification, 75-line webhook-normalization, 77-line UploadJob archive, 76-line operator archive and 33-line observed-fetch modules own external details. `workers/livepeer-bridge/src/index.ts` is 5,289 lines and still contains routes, domain state, a small environment composition factory, NEAR and DO logic. `LOCAL_TEST`. |
 | UploadJob terminal cleanup works | BLOCKED | The 14-day policy and default-off bounded D1 archive source pass locally, but deletion is intentionally absent until a real D1 archive commit is proven and v1 playback no longer reads the job. Neither external precondition exists, so no destructive cleanup is scheduled. |
@@ -148,9 +149,9 @@ Evidence classes remain separate:
 | Exit gate | Status | Evidence |
 |---|---|---|
 | Standard events emitted on testnet | PARTIAL | Market source emits the economic/publication/withdrawal/governance catalog as `youtick_market@1.0.0`; fresh-v2 testnet previously proved governance events only. The new economic catalog is local and not deployed. `LOCAL_TEST` + prior `TESTNET` governance evidence. |
-| Read model rebuilds from chain | PARTIAL | The bounded Neardata adapter reads an exact testnet final block, verifies receipt/event bindings and feeds the deterministic reducer/atomic D1 writer. Temporary D1 API failures return a bounded 503; scheduled ingestion emits and throws only a bounded error code, while initial Discover falls back to NEAR without cursor mixing. A live read parsed the deployment block and a legacy governance event. No scheduler, D1 binding or zero-to-tip rebuild exists. `LOCAL_TEST` + `TESTNET_READ`. |
+| Read model rebuilds from chain | PARTIAL | The bounded Neardata adapter reads an exact testnet final block, verifies receipt/event bindings and feeds the deterministic reducer/atomic D1 writer. Temporary D1 API failures return a bounded 503; scheduled ingestion emits and throws only a bounded error code, while initial Discover falls back to NEAR without cursor mixing. A dedicated empty testnet D1 now has all four migrations and an exact source binding, but no Worker deployment, runtime binding, scheduler or zero-to-tip rebuild exists. `LOCAL_TEST` + `TESTNET_READ` + `D1_CONTROL_PLANE`. |
 | Event idempotency/finality watermark tests pass | PARTIAL | Exact contract replays emit no duplicate event. Reducer deduplicates `(block_height, receipt_id, event_index)`, rejects conflicts and the D1 writer advances a complete final block, including an empty block, atomically. No real D1 transaction exists. `LOCAL_TEST`. |
-| Discover/profile use read API | PARTIAL | A disabled-by-default Web client reads active Discover pages and creator publication/sales history from the versioned D1 API. Initial Discover failure falls back to canonical NEAR without mixing cursors; creator available balance/withdrawal and all purchase/playback authority stay on NEAR. Release metadata forces the new gate false; no D1 binding/deploy exists. `LOCAL_TEST`. |
+| Discover/profile use read API | PARTIAL | A disabled-by-default Web client reads active Discover pages and creator publication/sales history from the versioned D1 API. Initial Discover failure falls back to canonical NEAR without mixing cursors; creator available balance/withdrawal and all purchase/playback authority stay on NEAR. Release metadata forces the new gate false; the D1 binding exists only in source and no Worker/API deployment exists. `LOCAL_TEST`. |
 | Purchase/playback remain canonical-chain based | PASS | Current architecture and Worker final reads retain NEAR authority. `LOCAL_STATIC`; target runtime activation is not implied. |
 | Sale ledger and withdrawal audit available | PARTIAL | Event reducer/D1 projections include sale ledger, entitlements and withdrawal history; rebuild and D1 retain the same exact withdrawal event status. Creator aggregate sales use exact decimal-string/BigInt addition rather than lossy SQLite integer casts. No deployed D1, support authorization or accounting reconciliation exists. `LOCAL_TEST`. |
 | Refund/credit policy approved | PARTIAL | Technical pilot is explicitly non-refundable. Mainnet product/legal/finance confirmation and accounting invariants remain open. |
@@ -197,11 +198,11 @@ Evidence classes remain separate:
 | UP-001 | 3 | PASS_LOCAL | Coordinator limits, budgets, 30-minute lease, five-minute heartbeat, wrong-token rejection, alarm release and 15-minute ambiguity isolation pass locally. A default-off new-upload gate rejects unrecorded intents while recorded intent/heartbeat/TUS recovery remains available. Real browser/large-upload/staging evidence is absent. |
 | UP-002 | 3 | PARTIAL | One allowed-predecessor table and timestamps cover real `AUTHORIZED → LEASED → PROVIDER_CREATE_PENDING → UPLOAD_READY → UPLOADING → PROCESSING → READY_VERIFIED → FINALIZE_RETRY/QUEUED → ONCHAIN_PUBLISHED` signals plus cancel/expiry/provider-failure terminals. Creator cancellation is pre-provider-only and non-refundable. Provider create uses one fail-closed `RECONCILE_ONLY` attempt; finalize retry uses capped 60–900-second backoff. Default-off terminal D1 archive/14-day eligibility passes locally, but real commit, v1 playback independence and deletion are absent. `LOCAL_TEST`. |
 | UP-003 | 3 | PARTIAL | Authenticated retry after browser-key replacement/object restart and after `UPLOADING` recovers the same TUS URL with no second provider create. The accepted gate is at least 99% resume success with zero second payments/assets. The v2 session draft rejects same-metadata/different-content files; upload-intent control v3 signs its bounded SHA-256 and UploadJob v2 rejects a conflicting retry. Deployed samples and payment/provider receipts remain absent. `LOCAL_TEST`. |
-| LP-001 | 3 | PARTIAL | Gated HMAC-verified Queue ingress and ACK/retry/poison consumer pass locally. Approved batch/retry/concurrency/retention/DLQ values fail closed on drift. Real binding, platform config, redelivery and staging proof are absent. |
+| LP-001 | 3 | PARTIAL | Gated HMAC-verified Queue ingress and ACK/retry/poison consumer pass locally. Dedicated testnet Queue `0a0a7e4fe00547439c24aafc8f5316c2` and DLQ `82246e5e383d488d935a97169fe3cb63` exist with the exact source producer/consumer policy. Both provider attachment counts remain zero; deployed binding, redelivery and staging proof are absent. |
 | LP-002 | 3 | PARTIAL | The concrete `MediaProvider` implementation now lives with separate API/TUS transport and raw normalization; ready validation, bounded private-media probes and pure webhook normalization also have explicit modules. The independent provider-mutation gate blocks create before lease/provider use while keeping an authorized job recoverable; provider reads and existing TUS recovery stay available. Conservative cost reservation exists, but actual billing reconciliation is external. No runtime asset-delete call site exists, so an unused mutation was not added. `LOCAL_TEST`. |
 | WEB-001 | 3 | PASS_LOCAL | One canonical UI stage follows the target lifecycle and a pure predecessor table enforces forward/retry/reset/terminal edges. A fingerprint-verified v2 draft restores safe UI projections; provider-processing resumes visibility-aware Query polling without reopening payment, while interrupted upload returns to upload-ready. The finality retry and composed job/publication read now live in the existing publication use-case service, leaving the component without a direct network primitive or timer. Real browser reload/staging proof remains absent. `LOCAL_TEST`. |
 | EVENT-001 | 4 | PARTIAL | Market v2 locally emits job, rebuild-complete publication, entitlement, withdrawal, bridge and quote-key events with common context/idempotency fields and no capabilities. The fresh testnet v2 has zero publications, but the updated artifact is not deployed; `contract_migrated`, testnet economic-event proof and final receipt/event indexing remain absent. |
-| DATA-001 | 4 | PARTIAL | Source-only D1 schema, deterministic rebuild, complete-block atomic writer, bounded Neardata adapter, testnet-only scheduled entrypoint, contiguous cursor, >16-event fail-closed policy, structured lag telemetry, GET-only API and closed Discover/profile client pass locally. D1 query/ingestion exceptions are reduced to bounded 503/error codes and initial Discover fallback never mixes cursors. Start block is 263118001; no Worker/cron deployment, D1 binding/alert delivery or deployed RTO drill exists. |
+| DATA-001 | 4 | PARTIAL | Source-only D1 schema, deterministic rebuild, complete-block atomic writer, bounded Neardata adapter, testnet-only scheduled entrypoint, contiguous cursor, >16-event fail-closed policy, structured lag telemetry, GET-only API and closed Discover/profile client pass locally. Dedicated D1 `71292344-ebde-444e-b7a5-51f788b77056` has migrations 0001–0004 and an exact source binding; all ten domain tables are empty. D1 query/ingestion exceptions are reduced to bounded 503/error codes and initial Discover fallback never mixes cursors. Start block is 263118001; no Worker/cron deployment, alert delivery or deployed RTO drill exists. |
 | PAY-001 | 4 | PARTIAL | Technical pilot is non-refundable; source-only exact sale ledger, creator aggregate and withdrawal audit pass locally. Mainnet policy approval, deployed D1 and accounting reconciliation remain absent. |
 | SRE-001 | 0–5 | PARTIAL | Redacted request/dependency/Queue/payment telemetry, a one-shot per-isolate cold-start field, bounded state-kind/projected DO record telemetry, Market reserve/RPC-finality sources and a machine-readable `SOURCE_ONLY` policy exist. All nine alerts have a role/action and all six domain controls are source-ready. Guarded release inputs remain closed; the contract purchase control requires a separately approved on-chain pause receipt. Queue depth, DO byte/read/write/active-object metrics, platform aggregation, named on-call, deployed control exercise, dashboard, delivered alerts and drills are absent. |
 | PERF-001 | 5 | PARTIAL | Opt-in local runs reject 100,000 wrong-origin requests with zero growth and serve 1,000 authorized warm requests at 9.15 ms p95 with zero errors, no warm external/DO calls and bounded cache. Mocked local latency is not deployed evidence. |
@@ -3608,3 +3609,104 @@ Evidence classes remain separate:
   Phase 5 remain incomplete on their separately recorded deployed browser,
   independent audit, runtime attestation, observability and mainnet governance
   evidence. Preview and every runtime activation gate remain closed.
+
+### CHECKPOINT 115 — Phase 2–3 / guarded release wiring
+
+- DURUM: `PASS_LOCAL / RELEASE_GATES_CLOSED / NO_BINDING / NO_DEPLOYMENT`
+- BASELINE: `agent/youtick-staging-readiness-20260810@745edc34d8dad3896f3b2b59b7e2fdcc6476338b`.
+- AMAÇ: Carry the existing playback v2, legacy/v2 shadow and webhook Queue
+  controls through the guarded release artifact without enabling them or
+  provisioning external resources.
+- UYGULAMA:
+  - Preview and Production Web metadata now require
+    `NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2=false` and
+    `NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2=false`;
+  - Bridge metadata, artifact Wrangler config and first-deploy bootstrap config
+    now require `LIVEPEER_PLAYBACK_V2_ENABLED=false`,
+    `LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED=false` and
+    `LIVEPEER_WEBHOOK_QUEUE_ENABLED=false`;
+  - release validation rejects an enabled value before any Cloudflare mutation.
+- DOĞRULAMA:
+  - full release/security/SLO tooling suite → 107/107 passed
+    (`LOCAL_TEST`);
+  - docs VitePress build → passed (`LOCAL_TEST`);
+  - `git diff --check` → passed (`LOCAL_TEST`);
+  - read-only Cloudflare inventory shows one pre-existing differently named D1
+    with zero tables, no accepted Livepeer event Queue/DLQ names and no
+    read-model Worker deployment under the candidate names (`10007`). The
+    existing D1 is not assumed reusable.
+- KANIT: `LOCAL_STATIC` + `LOCAL_TEST` + read-only Cloudflare control-plane
+  absence. No CI, D1 write, Queue mutation, deploy, runtime or provider evidence
+  is claimed.
+- FAZ KAPISI: A dark artifact can now prove these controls are explicitly
+  closed. D1/cron and Queue bindings still require separately approved external
+  resource creation. Reusing the differently named empty D1 or creating the
+  dedicated plan resource is `DECISION_REQUIRED`; the plan recommends a
+  separate resource. V2/shadow/Queue activation still requires deployed canary
+  evidence and a separate flag-change approval.
+
+### CHECKPOINT 116 — Phase 4 / dedicated testnet D1 foundation
+
+- DURUM: `D1_PROVISIONED / MIGRATIONS_APPLIED / SOURCE_BINDING / RUNTIME_CLOSED`
+- BASELINE: `agent/youtick-staging-readiness-20260810@18547ce48a58d97be8187538729de2af61049e35`.
+- AMAÇ: Create the separately approved pilot D1 foundation while keeping the
+  read API, ingestion, archives, cron and Worker deployment closed.
+- UYGULAMA:
+  - created `youtick-market-read-model-testnet` once in region `EEUR` with UUID
+    `71292344-ebde-444e-b7a5-51f788b77056`;
+  - applied `0001_initial.sql`, `0002_contiguous_watermark.sql`,
+    `0003_upload_job_archives.sql` and `0004_operator_outbox_archives.sql` to
+    that exact remote database;
+  - added `read-model/wrangler.toml` with `MARKET_READ_MODEL`,
+    `READ_MODEL_ENABLED=false`, `READ_MODEL_INGESTION_ENABLED=false`,
+    `workers_dev=false`, `preview_urls=false` and no cron trigger;
+  - added the existing `nodejs_compat` platform flag after the first dry-run
+    surfaced Worker imports from shared Node-compatible modules.
+- DOĞRULAMA:
+  - remote migration list → no migrations pending;
+  - remote `d1_migrations` → exact 0001–0004 names;
+  - remote schema → ten domain tables, four expected indexes and the contiguous
+    watermark trigger; all ten domain tables have zero rows;
+  - Wrangler dry-run → 45.96 KiB / gzip 10.23 KiB, exact D1 binding and both
+    runtime gates false, with no remaining compatibility warning;
+  - security config test → 5/5 passed; full release/security/SLO tooling →
+    108/108 passed; read-model suite → 34/34 passed; docs build and
+    `git diff --check` passed (`LOCAL_TEST`).
+- KANIT: user-approved `D1_MUTATION` + read-only remote D1 queries +
+  `LOCAL_STATIC` + `LOCAL_TEST`. One initial compound read-only count query hit
+  D1's term limit; the replacement scalar query succeeded with zero writes.
+- FAZ KAPISI: The D1 foundation package is complete. No Worker, API, ingestion,
+  archive, cron, Queue, deploy or traffic activation occurred. Queue foundation
+  and dark deployment remain separate approval packages.
+
+### CHECKPOINT 117 — Phase 3 / dedicated testnet Queue foundation
+
+- DURUM: `QUEUES_PROVISIONED / SOURCE_BINDING / NO_PROVIDER_ATTACHMENTS / RUNTIME_CLOSED`
+- BASELINE: `agent/youtick-staging-readiness-20260810@fc5b9f2`.
+- AMAÇ: Create the separately approved webhook Queue/DLQ foundation and record
+  the exact source producer/consumer policy without deploying or enabling it.
+- UYGULAMA:
+  - created primary Queue `youtick-livepeer-events-testnet` with ID
+    `0a0a7e4fe00547439c24aafc8f5316c2` and 345600-second retention;
+  - created DLQ `youtick-livepeer-events-dlq-testnet` with ID
+    `82246e5e383d488d935a97169fe3cb63` and 345600-second retention;
+  - added the source `LIVEPEER_EVENTS` producer binding plus consumer policy:
+    batch 10, timeout 5 seconds, three retries, concurrency 1 and the exact DLQ;
+  - retained `LIVEPEER_WEBHOOK_QUEUE_ENABLED=false` and every other Bridge
+    product/provider/operator gate at its closed default.
+- DOĞRULAMA:
+  - provider Queue info → both exact IDs, each with zero producers and zero
+    consumers;
+  - Wrangler dry-run → exact `LIVEPEER_EVENTS` Queue binding and webhook Queue
+    gate false; no upload or deployment occurred;
+  - security config test → 6/6 passed; full release/security/SLO tooling →
+    109/109 passed; Bridge suite → 192 passed with two opt-in tests skipped;
+    TypeScript check, docs build and `git diff --check` passed (`LOCAL_TEST`).
+- KANIT: user-approved `QUEUE_MUTATION` + read-only provider Queue info +
+  `LOCAL_STATIC` + `LOCAL_TEST`. Wrangler 4.90 rejected the obsolete first
+  retention flag before mutation; both successful creates used
+  `--message-retention-period-secs 345600` exactly once.
+- FAZ KAPISI: The Queue foundation package is complete. No Worker/version
+  upload, deployed producer/consumer attachment, message, redelivery, DLQ
+  canary, traffic or feature-gate activation occurred. Dark deployment and
+  Queue canary remain separate approval packages.

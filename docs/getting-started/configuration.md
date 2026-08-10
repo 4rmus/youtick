@@ -138,8 +138,9 @@ and is not wired into Preview/Production release variables.
 Webhook Queue transport is also source-only and closed. Enabling it requires a
 `LIVEPEER_EVENTS` Queue producer/consumer binding and DLQ whose provider-side
 configuration exactly matches the tracked pilot policy. The Worker fails closed
-on value drift. The tracked configuration intentionally provisions neither
-Queue resource nor binding.
+on value drift. Dedicated testnet Queue/DLQ resources and their source Wrangler
+configuration now exist, but no Worker deployment or provider-side
+producer/consumer attachment exists and the runtime gate remains false.
 
 Multi-asset quotes are mainnet-only. The allowlist is a comma-separated subset
 of the built-in canonical 1Click asset IDs. Release environments retain
