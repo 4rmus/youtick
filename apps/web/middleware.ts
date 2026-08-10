@@ -23,7 +23,7 @@ function contentSecurityPolicy(nonce: string): string {
     ].join('; ');
 }
 
-export function proxy(request: NextRequest): NextResponse {
+export function middleware(request: NextRequest): NextResponse {
     const nonce = requestNonce();
     const csp = contentSecurityPolicy(nonce);
     const requestHeaders = new Headers(request.headers);
