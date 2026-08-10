@@ -220,6 +220,7 @@ export async function runReleaseSmoke({
     overrideVersion,
     expectedBridgeVersion,
     bridgeBootstrap = false,
+    includePlaybackV2 = true,
     fetchImpl = fetch,
     browserRunner = runChromeSmoke,
     sleepFn = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
@@ -260,6 +261,7 @@ export async function runReleaseSmoke({
 
     const mutationStatuses = {};
     for (const mutation of DISABLED_BRIDGE_MUTATIONS) {
+        if (!includePlaybackV2 && mutation.path === '/v2/playback-tokens') continue;
         const result = await request(bridgeUrl, mutation.path, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Origin: allowedOrigin },
