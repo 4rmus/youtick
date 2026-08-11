@@ -32,10 +32,12 @@ const ONECLICK_API_KEY = `eyJx${'a'.repeat(266)}.${'b'.repeat(266)}.sig`;
 const ONECLICK_API_KEY_SCRYPT_SALT = 'youtick-release-test-v1';
 const LIVEPEER_API_KEY = 'b6edb9db-f02e-4a8d-989b-4718f7090d76';
 const LIVEPEER_WEBHOOK_SECRET = 'a'.repeat(64);
+const LIVEPEER_JWT_PRIVATE_KEY = 'b'.repeat(128);
 const NEAR_OPERATOR_PRIVATE_KEY = `ed25519:${'1'.repeat(88)}`;
 const PREVIEW_SECRET_INPUTS = {
     livepeerApiKey: LIVEPEER_API_KEY,
     livepeerWebhookSecret: LIVEPEER_WEBHOOK_SECRET,
+    livepeerJwtPrivateKey: LIVEPEER_JWT_PRIVATE_KEY,
     nearOperatorPrivateKey: NEAR_OPERATOR_PRIVATE_KEY,
 };
 const TARGETS = {
@@ -293,7 +295,12 @@ if (secretsIndex >= 0) {
     32,
   ).toString('hex');
   const previewKeys = process.env.FAKE_PREVIEW_CREDENTIALS === 'true'
-    ? ['LIVEPEER_API_KEY', 'LIVEPEER_WEBHOOK_SECRET', 'NEAR_OPERATOR_PRIVATE_KEY']
+    ? [
+      'LIVEPEER_API_KEY',
+      'LIVEPEER_WEBHOOK_SECRET',
+      'LIVEPEER_JWT_PRIVATE_KEY',
+      'NEAR_OPERATOR_PRIVATE_KEY',
+    ]
     : [];
   const expectedKeys = [
     'NEAR_RPC_URL',
@@ -307,9 +314,11 @@ if (secretsIndex >= 0) {
       || (process.env.FAKE_PREVIEW_CREDENTIALS === 'true'
         && (parsed.LIVEPEER_API_KEY !== process.env.FAKE_LIVEPEER_API_KEY
           || parsed.LIVEPEER_WEBHOOK_SECRET !== process.env.FAKE_LIVEPEER_WEBHOOK_SECRET
+          || parsed.LIVEPEER_JWT_PRIVATE_KEY !== process.env.FAKE_LIVEPEER_JWT_PRIVATE_KEY
           || parsed.NEAR_OPERATOR_PRIVATE_KEY !== process.env.FAKE_NEAR_OPERATOR_PRIVATE_KEY))
       || process.env.NEAR_RPC_URL || process.env.ONECLICK_API_KEY
       || process.env.LIVEPEER_API_KEY || process.env.LIVEPEER_WEBHOOK_SECRET
+      || process.env.LIVEPEER_JWT_PRIVATE_KEY
       || process.env.NEAR_OPERATOR_PRIVATE_KEY) {
     throw new Error('invalid fake Wrangler secret contract');
   }
@@ -560,6 +569,7 @@ async function withFakeEnvironment(
     const previousPreviewCredentials = process.env.FAKE_PREVIEW_CREDENTIALS;
     const previousLivepeerApiKey = process.env.LIVEPEER_API_KEY;
     const previousLivepeerWebhookSecret = process.env.LIVEPEER_WEBHOOK_SECRET;
+    const previousLivepeerJwtPrivateKey = process.env.LIVEPEER_JWT_PRIVATE_KEY;
     const previousNearOperatorPrivateKey = process.env.NEAR_OPERATOR_PRIVATE_KEY;
     process.env.FAKE_WRANGLER_STATE = fake.statePath;
     process.env.FAKE_WRANGLER_LOG = fake.logPath;
@@ -580,9 +590,11 @@ async function withFakeEnvironment(
         process.env.FAKE_PREVIEW_CREDENTIALS = 'true';
         process.env.FAKE_LIVEPEER_API_KEY = LIVEPEER_API_KEY;
         process.env.FAKE_LIVEPEER_WEBHOOK_SECRET = LIVEPEER_WEBHOOK_SECRET;
+        process.env.FAKE_LIVEPEER_JWT_PRIVATE_KEY = LIVEPEER_JWT_PRIVATE_KEY;
         process.env.FAKE_NEAR_OPERATOR_PRIVATE_KEY = NEAR_OPERATOR_PRIVATE_KEY;
         process.env.LIVEPEER_API_KEY = LIVEPEER_API_KEY;
         process.env.LIVEPEER_WEBHOOK_SECRET = LIVEPEER_WEBHOOK_SECRET;
+        process.env.LIVEPEER_JWT_PRIVATE_KEY = LIVEPEER_JWT_PRIVATE_KEY;
         process.env.NEAR_OPERATOR_PRIVATE_KEY = NEAR_OPERATOR_PRIVATE_KEY;
     } else {
         delete process.env.FAKE_PREVIEW_CREDENTIALS;
@@ -608,11 +620,14 @@ async function withFakeEnvironment(
         else process.env.FAKE_PREVIEW_CREDENTIALS = previousPreviewCredentials;
         delete process.env.FAKE_LIVEPEER_API_KEY;
         delete process.env.FAKE_LIVEPEER_WEBHOOK_SECRET;
+        delete process.env.FAKE_LIVEPEER_JWT_PRIVATE_KEY;
         delete process.env.FAKE_NEAR_OPERATOR_PRIVATE_KEY;
         if (previousLivepeerApiKey === undefined) delete process.env.LIVEPEER_API_KEY;
         else process.env.LIVEPEER_API_KEY = previousLivepeerApiKey;
         if (previousLivepeerWebhookSecret === undefined) delete process.env.LIVEPEER_WEBHOOK_SECRET;
         else process.env.LIVEPEER_WEBHOOK_SECRET = previousLivepeerWebhookSecret;
+        if (previousLivepeerJwtPrivateKey === undefined) delete process.env.LIVEPEER_JWT_PRIVATE_KEY;
+        else process.env.LIVEPEER_JWT_PRIVATE_KEY = previousLivepeerJwtPrivateKey;
         if (previousNearOperatorPrivateKey === undefined) delete process.env.NEAR_OPERATOR_PRIVATE_KEY;
         else process.env.NEAR_OPERATOR_PRIVATE_KEY = previousNearOperatorPrivateKey;
     }
@@ -635,6 +650,7 @@ function deployFixture(
         nearRpcUrl = NEAR_RPC_URL, oneClickApiKey = ONECLICK_API_KEY,
         livepeerApiKey = target === 'preview' ? LIVEPEER_API_KEY : undefined,
         livepeerWebhookSecret = target === 'preview' ? LIVEPEER_WEBHOOK_SECRET : undefined,
+        livepeerJwtPrivateKey = target === 'preview' ? LIVEPEER_JWT_PRIVATE_KEY : undefined,
         nearOperatorPrivateKey = target === 'preview' ? NEAR_OPERATOR_PRIVATE_KEY : undefined,
         sleepFn,
     } = {},
@@ -657,6 +673,7 @@ function deployFixture(
         oneClickApiKey,
         livepeerApiKey,
         livepeerWebhookSecret,
+        livepeerJwtPrivateKey,
         nearOperatorPrivateKey,
         sleepFn,
     }), { oneClickApiKey, previewCredentials: target === 'preview' });
@@ -968,6 +985,7 @@ test('only structured error 10007 permits workers.dev bootstrap before safe doma
             'ONECLICK_API_KEY',
             'LIVEPEER_API_KEY',
             'LIVEPEER_WEBHOOK_SECRET',
+            'LIVEPEER_JWT_PRIVATE_KEY',
             'NEAR_OPERATOR_PRIVATE_KEY',
         ],
     })));
@@ -983,6 +1001,7 @@ test('only structured error 10007 permits workers.dev bootstrap before safe doma
     assert.deepEqual(JSON.parse(readFileSync(release.receipt, 'utf8')), receipt);
     for (const path of [fake.logPath, fake.secretLogPath, release.receipt]) {
         assert.ok(!readFileSync(path, 'utf8').includes(NEAR_RPC_SECRET));
+        assert.ok(!readFileSync(path, 'utf8').includes(LIVEPEER_JWT_PRIVATE_KEY));
     }
 });
 
@@ -1073,6 +1092,7 @@ test('1Click secret is required for quote-disabled status recovery', async (t) =
                 'ONECLICK_API_KEY',
                 'LIVEPEER_API_KEY',
                 'LIVEPEER_WEBHOOK_SECRET',
+                'LIVEPEER_JWT_PRIVATE_KEY',
                 'NEAR_OPERATOR_PRIVATE_KEY',
             ])
         )));
@@ -1113,6 +1133,19 @@ test('1Click secret is required for quote-disabled status recovery', async (t) =
         assert.deepEqual(calls(fake), []);
         assert.deepEqual(secretCalls(fake), []);
     });
+});
+
+test('Preview JWT private key is required before mutation', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+
+    await assert.rejects(
+        deployFixture(release, fake, undefined, { livepeerJwtPrivateKey: null }),
+        /cloudflare_release_livepeer_jwt_private_key_invalid/,
+    );
+    assert.deepEqual(fake.apiCalls, []);
+    assert.deepEqual(calls(fake), []);
+    assert.deepEqual(secretCalls(fake), []);
 });
 
 test('target allowlist and disabled release flags are fail closed', async (t) => {

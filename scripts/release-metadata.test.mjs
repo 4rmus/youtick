@@ -149,6 +149,10 @@ test("workflows keep cumulative Preview release provenance", () => {
   assert.match(preview, /cloudflare-release\.mjs write-bridge-wrangler/);
   assert.match(preview, /cloudflare-release\.mjs write-read-model-wrangler/);
   assert.match(preview, /--read-model "\$\{RUNNER_TEMP\}\/release\/read-model\.tar\.gz"/);
+  assert.match(
+    preview,
+    /LIVEPEER_JWT_PRIVATE_KEY: \$\{\{ secrets\.PREVIEW_LIVEPEER_JWT_PRIVATE_KEY \}\}/,
+  );
   assert.doesNotMatch(preview, /cp workers\/livepeer-bridge\/wrangler\.toml/);
 });
 

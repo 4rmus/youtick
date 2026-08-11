@@ -526,6 +526,26 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         }
     });
 
+    it('requires playback signing config before reporting new uploads ready', async () => {
+        const missingSigningConfig = await handler.fetch(
+            new Request('https://bridge.youtick.net/__health'),
+            createEnv({ LIVEPEER_BRIDGE_ENABLED: 'true' }),
+        );
+        expect(await missingSigningConfig.json()).toMatchObject({ newUploadReady: false });
+
+        const configured = await handler.fetch(
+            new Request('https://bridge.youtick.net/__health'),
+            createEnv({
+                LIVEPEER_BRIDGE_ENABLED: 'true',
+                ACCESS_CONTRACT_ID: 'paid-media-access.testnet',
+                LIVEPEER_JWT_PRIVATE_KEY: 'a'.repeat(64),
+                LIVEPEER_JWT_PUBLIC_KEY: 'b'.repeat(32),
+                LIVEPEER_JWT_ISSUER: ORIGIN,
+            }),
+        );
+        expect(await configured.json()).toMatchObject({ newUploadReady: true });
+    });
+
     it('logs bounded request completion fields without the query string', async () => {
         vi.spyOn(Date, 'now').mockReturnValueOnce(1_000).mockReturnValueOnce(1_012);
         const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
