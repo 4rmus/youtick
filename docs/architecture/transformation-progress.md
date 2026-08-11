@@ -3858,8 +3858,8 @@ Evidence classes remain separate:
 
 ### CHECKPOINT 121 — Phase 3 / valid test-job lifecycle canary preflight
 
-- DURUM: `DARK_ALIGNMENT_PASS / RUNTIME_CLOSED / PAID_CANARY_NOT_RUN /
-  PRODUCTION_UNTOUCHED`
+- DURUM: `DARK_ALIGNMENT_PASS / CANARY_APPROVED / PREFLIGHT_BLOCKED /
+  RUNTIME_CLOSED / PAID_CANARY_NOT_RUN / PRODUCTION_UNTOUCHED`
 - BASELINE: PR #106 exact head
   `81bdc5ee670d57d874836f68f3090b3104b8b55b`, merged as
   `origin/main@27c542fd0cf0fddd24e7bd560c7987234aff346a`.
@@ -3973,7 +3973,39 @@ Evidence classes remain separate:
   rollback/drain verification. Ambiguous payment, provider create or NEAR
   broadcast is never automatically retried. Playback, D1 ingestion/API/archive,
   multi-asset and Production stay closed.
-- FAZ KAPISI: The approved canonical dark-alignment sub-gate is closed.
-  `DECISION_REQUIRED` before the paid valid-job canary. Checkpoint 121 remains
-  incomplete until that separately approved canary and cleanup produce the
-  listed evidence. No later gate may start from this preflight.
+- ONAY SONRASI PREFLIGHT (2026-08-11):
+  - the bounded paid-canary package above was explicitly approved. Read-only
+    checks ran before any payment, provider, Queue, NEAR or deployment mutation;
+  - `origin/main@c283b1d716e82d9c5986af5b5f9a718f936bd754` remains the
+    reviewed source and exact-main CI run `31489671741` is successful. The
+    exact-main Deploy Preview run `31489876559` remains intentionally skipped
+    with `DEPLOY_PREVIEW_ENABLED=false`;
+  - Cloudflare auth is valid, but the deployed Preview Worker still binds only
+    the dark `NEAR_RPC_URL` and `ONECLICK_API_KEY` secrets. It has no
+    `LIVEPEER_API_KEY`, `LIVEPEER_WEBHOOK_SECRET` or
+    `NEAR_OPERATOR_PRIVATE_KEY`;
+  - the only local `LIVEPEER_API_KEY` candidate returned HTTP 401 for read-only
+    asset, webhook and API-token queries. It was not used for a mutation;
+  - the canonical Market finite function-call key
+    `ed25519:5HZnNtPKc6cVBTTvwtHacxQQJrU2uPQPEkGKkJyALFXc` remains on-chain
+    with only `finalize_livepeer_publication` and `suspend_livepeer_sales`, but
+    no matching local private credential exists. The available finite local key
+    targets an obsolete Market; the available FullAccess key was not used;
+  - focused Worker lifecycle/Queue tests pass 119/119, mocked provider canaries
+    pass 68/68, Worker TypeScript passes and paid-media contract tests pass
+    22/22 on the exact main tree;
+  - Preview Bridge health still reports version
+    `db5afd98-d7c2-4350-809a-740dcf957e6c`, stage `DISABLED` and every upload,
+    provider, operator, Queue and archive readiness field false. Preview `/`
+    and `/tr` return 200; the Queue remains at one producer and zero consumers,
+    and the DLQ has zero producers and consumers;
+  - no source upload, wallet/payment approval, provider asset, webhook/Queue
+    message, NEAR transaction, deployment or Production change occurred.
+- FAZ KAPISI: The approved paid canary could not safely start. `DECISION_REQUIRED`
+  for a bounded credential-provisioning package: a valid project-scoped
+  Livepeer API token, a dedicated webhook secret/configuration and a new finite
+  canonical-Market function-call key whose private half can be installed as a
+  Preview Worker secret. Any one-time FullAccess bootstrap, lost-key revocation,
+  provider token/webhook creation and secret installation must be approved
+  explicitly. Checkpoint 121 remains incomplete, runtime stays closed and no
+  later gate may start.
