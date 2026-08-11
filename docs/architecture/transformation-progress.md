@@ -3855,3 +3855,86 @@ Evidence classes remain separate:
   prove provider verification, stateful duplicate/out-of-order idempotency and
   no duplicate NEAR finalize. Phase 4 read-model ingestion remains later. No
   consumer or Queue flag remains active, and Production was not changed.
+
+### CHECKPOINT 121 — Phase 3 / valid test-job lifecycle canary preflight
+
+- DURUM: `DARK_ALIGNMENT_APPROVED / LOCAL_IMPLEMENTATION_IN_PROGRESS /
+  EXTERNAL_DARK_PROOF_PENDING / RUNTIME_CLOSED`
+- BASELINE: `origin/main@6adb071eb37aaa97ef9316385972d387bf889782`;
+  stable Preview Bridge version
+  `ba26e779-53a0-480e-9cc9-8efaa1646db2`.
+- AMAÇ: Prove one valid testnet paid-job lifecycle through provider readiness,
+  stateful Queue duplicate/out-of-order handling and one NEAR publication
+  finalize, then re-close every runtime gate without touching Production.
+- BAŞARI KRİTERLERİ:
+  - exactly one allowlisted pilot creator authorizes one small source, pays once
+    under the explicitly non-refundable pilot rule and creates exactly one
+    provider asset;
+  - the UploadJob verifies provider project, token identity, exact source bytes,
+    private playback policy and bounded outputs before finalization;
+  - an exact duplicate ready event and an older processing event cannot regress
+    the terminal job, create another provider asset or produce a second NEAR
+    finalize/publication;
+  - the final evidence binds one job, provider asset and publication using only
+    hashes/public receipt identifiers. It records zero second payments, provider
+    assets and finalize transactions;
+  - cleanup restores the stable Preview Bridge version, all runtime flags false,
+    zero Queue consumers and empty main/DLQ backlogs. The one finalized canary
+    publication and its provider asset remain canonical pilot state rather than
+    becoming an orphan; Production remains untouched.
+- YEREL ÖN KANIT:
+  - the complete 1,504-line architecture plan at
+    `/Users/arair/Desktop/youtick/youtick-fazli-mimari-donusum-plani.md` requires
+    Web/Worker feature gates to fail closed on configuration mismatch, health
+    to compare the active bridge and operator account, the operator to use only
+    a finite FunctionCall key, and Queue duplicate/out-of-order or ambiguous
+    broadcast paths to avoid a second finalize;
+  - current UploadJob source persists one provider-create attempt, recovers the
+    same recorded TUS capability and uses the deterministic
+    `<job>:<generation>:finalize` operator idempotency key;
+  - focused Worker lifecycle/Queue tests pass 119/119, mocked provider canaries
+    pass 68/68, paid-media contract tests pass 22/22 and Worker TypeScript passes;
+  - exact-main CI run `31429197921` and scheduled CodeQL run `31459263019` pass
+    for the baseline SHA. The exact-main Deploy Preview run `31429392860` is
+    skipped because `DEPLOY_PREVIEW_ENABLED=false`;
+  - read-only runtime checks show the stable Bridge version at 100% with stage
+    `DISABLED`; provider/operator/new-upload/webhook-Queue/archive readiness is
+    false. The testnet Queue has producer 1, consumers 0; its DLQ has no
+    producer/consumer. Preview `/` and `/tr` return 200.
+- SALT-OKUNUR ÖN KOŞUL DENETİMİ:
+  - the stable Preview Web/Bridge configuration points at
+    `ytlp-pv-market-32a01cc.testnet` and `ytlp-pv-access-32a01cc.testnet`, while
+    the accepted pilot runbook fixes `lp-arch-market-v2-260809.youtick-dev-v3.testnet`
+    and `lp-arch-access-v2-260809.youtick-dev-v3.testnet`;
+  - the canonical `lp-arch` Market has zero publications, is unfrozen and names
+    `lp-d6-bridge-5301d15.youtick-dev-v3.testnet` as active bridge. That account
+    has a finite function-call key for exactly the canonical Market and the two
+    finalize/suspend methods;
+  - the current Preview target also has zero publications, but its governance
+    view returns null and the bridge account has no finite function-call key for
+    that receiver. Silently using a FullAccess key is forbidden;
+  - the deployed Preview Worker has only `NEAR_RPC_URL` and `ONECLICK_API_KEY`
+    secret bindings. This matches the guarded dark-release contract, which
+    deliberately carries no provider, webhook or NEAR operator private key.
+    Those bindings remain unproven prerequisites for the later paid canary,
+    not for this closed-gate alignment proof.
+- KANIT: `LOCAL_TEST` + `CI` + read-only GitHub/Cloudflare control-plane and
+  runtime checks. No Worker version upload/deploy, consumer/message, flag,
+  provider/TUS, wallet/payment, NEAR transaction or Production mutation ran.
+- KARAR: `CANONICAL_LP_ARCH` was approved for only the canonical Preview
+  Web/Bridge alignment and closed-gate dark proof. The release metadata now
+  fails closed unless both Preview surfaces use the two runbook contract IDs.
+  Provider/webhook/operator secrets, paid upload, Queue consumer/message, NEAR
+  transaction and Production remain outside this approval.
+- ONAY PAKETİ: After the target/authority decision and a successful dark proof,
+  the canary requires one immutable reviewed SHA, a bounded Preview Worker
+  activation, one Queue consumer, synthetic duplicate/out-of-order delivery for
+  the valid job, temporary Bridge/new-upload/provider/operator/webhook-Queue
+  flags, one allowlisted creator payment and source upload, and final
+  rollback/drain verification. Ambiguous payment, provider create or NEAR
+  broadcast is never automatically retried. Playback, D1 ingestion/API/archive,
+  multi-asset and Production stay closed.
+- FAZ KAPISI: The approved dark-alignment sub-gate is in progress. Checkpoint
+  121 remains incomplete until the separately approved external canary and
+  cleanup produce the listed evidence. No later gate may start from this
+  preflight.
