@@ -652,6 +652,7 @@ async function makeWranglerRunner(binary, tempRoot, { echo, label }) {
         delete childEnvironment.ONECLICK_API_KEY;
         delete childEnvironment.LIVEPEER_API_KEY;
         delete childEnvironment.LIVEPEER_WEBHOOK_SECRET;
+        delete childEnvironment.LIVEPEER_JWT_PRIVATE_KEY;
         delete childEnvironment.NEAR_OPERATOR_PRIVATE_KEY;
         const result = await runProcess(binary, args, {
             cwd,
@@ -1235,6 +1236,7 @@ export async function deployRelease({
     oneClickApiKey: oneClickApiKeyValue = process.env.ONECLICK_API_KEY,
     livepeerApiKey: livepeerApiKeyValue = process.env.LIVEPEER_API_KEY,
     livepeerWebhookSecret: livepeerWebhookSecretValue = process.env.LIVEPEER_WEBHOOK_SECRET,
+    livepeerJwtPrivateKey: livepeerJwtPrivateKeyValue = process.env.LIVEPEER_JWT_PRIVATE_KEY,
     nearOperatorPrivateKey: nearOperatorPrivateKeyValue = process.env.NEAR_OPERATOR_PRIVATE_KEY,
     sleepFn = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
 } = {}) {
@@ -1252,6 +1254,10 @@ export async function deployRelease({
         LIVEPEER_WEBHOOK_SECRET: validatePreviewSecret(
             livepeerWebhookSecretValue,
             'livepeer_webhook_secret',
+        ),
+        LIVEPEER_JWT_PRIVATE_KEY: validatePreviewSecret(
+            livepeerJwtPrivateKeyValue,
+            'livepeer_jwt_private_key',
         ),
         NEAR_OPERATOR_PRIVATE_KEY: validatePreviewSecret(
             nearOperatorPrivateKeyValue,

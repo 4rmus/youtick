@@ -594,7 +594,8 @@ const bridgeWorker = {
                     && env.LIVEPEER_NEW_UPLOADS_ENABLED === 'true'
                     && env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED === 'true'
                     && Boolean(env.LIVEPEER_CONTROL)
-                    && validAdmissionConfig(env),
+                    && validAdmissionConfig(env)
+                    && validPlaybackConfig(env),
                 controlPlaneReady: env.LIVEPEER_BRIDGE_ENABLED === 'true'
                     && Boolean(env.LIVEPEER_CONTROL)
                     && validWebhookConfig(env)

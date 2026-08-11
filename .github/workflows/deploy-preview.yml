@@ -531,6 +531,7 @@ jobs:
           ONECLICK_API_KEY: ${{ secrets.ONECLICK_API_KEY }}
           LIVEPEER_API_KEY: ${{ secrets.PREVIEW_LIVEPEER_API_KEY }}
           LIVEPEER_WEBHOOK_SECRET: ${{ secrets.PREVIEW_LIVEPEER_WEBHOOK_SECRET }}
+          LIVEPEER_JWT_PRIVATE_KEY: ${{ secrets.PREVIEW_LIVEPEER_JWT_PRIVATE_KEY }}
           NEAR_OPERATOR_PRIVATE_KEY: ${{ secrets.PREVIEW_NEAR_OPERATOR_PRIVATE_KEY }}
           SHA: ${{ needs.authorize.outputs.sha }}
         run: |
