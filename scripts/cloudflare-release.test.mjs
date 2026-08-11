@@ -30,6 +30,14 @@ const NEAR_RPC_URL = `https://rpc.fastnear.com/v1/${NEAR_RPC_SECRET}`;
 const NEAR_RPC_SHA256 = createHash('sha256').update(NEAR_RPC_URL).digest('hex');
 const ONECLICK_API_KEY = `eyJx${'a'.repeat(266)}.${'b'.repeat(266)}.sig`;
 const ONECLICK_API_KEY_SCRYPT_SALT = 'youtick-release-test-v1';
+const LIVEPEER_API_KEY = 'b6edb9db-f02e-4a8d-989b-4718f7090d76';
+const LIVEPEER_WEBHOOK_SECRET = 'a'.repeat(64);
+const NEAR_OPERATOR_PRIVATE_KEY = `ed25519:${'1'.repeat(88)}`;
+const PREVIEW_SECRET_INPUTS = {
+    livepeerApiKey: LIVEPEER_API_KEY,
+    livepeerWebhookSecret: LIVEPEER_WEBHOOK_SECRET,
+    nearOperatorPrivateKey: NEAR_OPERATOR_PRIVATE_KEY,
+};
 const TARGETS = {
     preview: {
         web: { worker: 'youtick-web-preview', domain: 'preview.youtick.net' },
@@ -284,14 +292,25 @@ if (secretsIndex >= 0) {
     'youtick-release-test-v1',
     32,
   ).toString('hex');
-  const expectedKeys = process.env.FAKE_ONECLICK_API_KEY_SCRYPT
-    ? ['NEAR_RPC_URL', 'ONECLICK_API_KEY']
-    : ['NEAR_RPC_URL'];
+  const previewKeys = process.env.FAKE_PREVIEW_CREDENTIALS === 'true'
+    ? ['LIVEPEER_API_KEY', 'LIVEPEER_WEBHOOK_SECRET', 'NEAR_OPERATOR_PRIVATE_KEY']
+    : [];
+  const expectedKeys = [
+    'NEAR_RPC_URL',
+    ...(process.env.FAKE_ONECLICK_API_KEY_SCRYPT ? ['ONECLICK_API_KEY'] : []),
+    ...previewKeys,
+  ];
   if (mode !== 0o600 || JSON.stringify(keys) !== JSON.stringify(expectedKeys)
       || hash !== process.env.FAKE_NEAR_RPC_SHA256
       || (process.env.FAKE_ONECLICK_API_KEY_SCRYPT
         && oneClickHash !== process.env.FAKE_ONECLICK_API_KEY_SCRYPT)
-      || process.env.NEAR_RPC_URL || process.env.ONECLICK_API_KEY) {
+      || (process.env.FAKE_PREVIEW_CREDENTIALS === 'true'
+        && (parsed.LIVEPEER_API_KEY !== process.env.FAKE_LIVEPEER_API_KEY
+          || parsed.LIVEPEER_WEBHOOK_SECRET !== process.env.FAKE_LIVEPEER_WEBHOOK_SECRET
+          || parsed.NEAR_OPERATOR_PRIVATE_KEY !== process.env.FAKE_NEAR_OPERATOR_PRIVATE_KEY))
+      || process.env.NEAR_RPC_URL || process.env.ONECLICK_API_KEY
+      || process.env.LIVEPEER_API_KEY || process.env.LIVEPEER_WEBHOOK_SECRET
+      || process.env.NEAR_OPERATOR_PRIVATE_KEY) {
     throw new Error('invalid fake Wrangler secret contract');
   }
   fs.appendFileSync(process.env.FAKE_WRANGLER_SECRET_LOG, JSON.stringify({
@@ -526,7 +545,11 @@ function makeFakeWrangler(release, state) {
     return { binary, statePath, logPath, secretLogPath, apiCalls, apiFetch };
 }
 
-async function withFakeEnvironment(fake, callback, oneClickApiKey = null) {
+async function withFakeEnvironment(
+    fake,
+    callback,
+    { oneClickApiKey = null, previewCredentials = false } = {},
+) {
     const previousState = process.env.FAKE_WRANGLER_STATE;
     const previousLog = process.env.FAKE_WRANGLER_LOG;
     const previousSecretLog = process.env.FAKE_WRANGLER_SECRET_LOG;
@@ -534,6 +557,10 @@ async function withFakeEnvironment(fake, callback, oneClickApiKey = null) {
     const previousOneClickHash = process.env.FAKE_ONECLICK_API_KEY_SCRYPT;
     const previousNearRpcUrl = process.env.NEAR_RPC_URL;
     const previousOneClickApiKey = process.env.ONECLICK_API_KEY;
+    const previousPreviewCredentials = process.env.FAKE_PREVIEW_CREDENTIALS;
+    const previousLivepeerApiKey = process.env.LIVEPEER_API_KEY;
+    const previousLivepeerWebhookSecret = process.env.LIVEPEER_WEBHOOK_SECRET;
+    const previousNearOperatorPrivateKey = process.env.NEAR_OPERATOR_PRIVATE_KEY;
     process.env.FAKE_WRANGLER_STATE = fake.statePath;
     process.env.FAKE_WRANGLER_LOG = fake.logPath;
     process.env.FAKE_WRANGLER_SECRET_LOG = fake.secretLogPath;
@@ -549,6 +576,17 @@ async function withFakeEnvironment(fake, callback, oneClickApiKey = null) {
         delete process.env.FAKE_ONECLICK_API_KEY_SCRYPT;
     }
     delete process.env.ONECLICK_API_KEY;
+    if (previewCredentials) {
+        process.env.FAKE_PREVIEW_CREDENTIALS = 'true';
+        process.env.FAKE_LIVEPEER_API_KEY = LIVEPEER_API_KEY;
+        process.env.FAKE_LIVEPEER_WEBHOOK_SECRET = LIVEPEER_WEBHOOK_SECRET;
+        process.env.FAKE_NEAR_OPERATOR_PRIVATE_KEY = NEAR_OPERATOR_PRIVATE_KEY;
+        process.env.LIVEPEER_API_KEY = LIVEPEER_API_KEY;
+        process.env.LIVEPEER_WEBHOOK_SECRET = LIVEPEER_WEBHOOK_SECRET;
+        process.env.NEAR_OPERATOR_PRIVATE_KEY = NEAR_OPERATOR_PRIVATE_KEY;
+    } else {
+        delete process.env.FAKE_PREVIEW_CREDENTIALS;
+    }
     try {
         return await callback();
     } finally {
@@ -566,6 +604,17 @@ async function withFakeEnvironment(fake, callback, oneClickApiKey = null) {
         else process.env.NEAR_RPC_URL = previousNearRpcUrl;
         if (previousOneClickApiKey === undefined) delete process.env.ONECLICK_API_KEY;
         else process.env.ONECLICK_API_KEY = previousOneClickApiKey;
+        if (previousPreviewCredentials === undefined) delete process.env.FAKE_PREVIEW_CREDENTIALS;
+        else process.env.FAKE_PREVIEW_CREDENTIALS = previousPreviewCredentials;
+        delete process.env.FAKE_LIVEPEER_API_KEY;
+        delete process.env.FAKE_LIVEPEER_WEBHOOK_SECRET;
+        delete process.env.FAKE_NEAR_OPERATOR_PRIVATE_KEY;
+        if (previousLivepeerApiKey === undefined) delete process.env.LIVEPEER_API_KEY;
+        else process.env.LIVEPEER_API_KEY = previousLivepeerApiKey;
+        if (previousLivepeerWebhookSecret === undefined) delete process.env.LIVEPEER_WEBHOOK_SECRET;
+        else process.env.LIVEPEER_WEBHOOK_SECRET = previousLivepeerWebhookSecret;
+        if (previousNearOperatorPrivateKey === undefined) delete process.env.NEAR_OPERATOR_PRIVATE_KEY;
+        else process.env.NEAR_OPERATOR_PRIVATE_KEY = previousNearOperatorPrivateKey;
     }
 }
 
@@ -584,6 +633,9 @@ function deployFixture(
     {
         target = 'preview', rollbackTest = 'false', zoneId = ZONE_ID,
         nearRpcUrl = NEAR_RPC_URL, oneClickApiKey = ONECLICK_API_KEY,
+        livepeerApiKey = target === 'preview' ? LIVEPEER_API_KEY : undefined,
+        livepeerWebhookSecret = target === 'preview' ? LIVEPEER_WEBHOOK_SECRET : undefined,
+        nearOperatorPrivateKey = target === 'preview' ? NEAR_OPERATOR_PRIVATE_KEY : undefined,
         sleepFn,
     } = {},
 ) {
@@ -603,8 +655,11 @@ function deployFixture(
         cloudflareZoneId: zoneId,
         nearRpcUrl,
         oneClickApiKey,
+        livepeerApiKey,
+        livepeerWebhookSecret,
+        nearOperatorPrivateKey,
         sleepFn,
-    }), oneClickApiKey);
+    }), { oneClickApiKey, previewCredentials: target === 'preview' });
 }
 
 test('Bridge artifact writer emits the exact disabled release config once', async (t) => {
@@ -908,7 +963,13 @@ test('only structured error 10007 permits workers.dev bootstrap before safe doma
         command: args.slice(0, 2),
         worker: TARGETS.preview.bridge.worker,
         mode: 0o600,
-        keys: ['NEAR_RPC_URL', 'ONECLICK_API_KEY'],
+        keys: [
+            'NEAR_RPC_URL',
+            'ONECLICK_API_KEY',
+            'LIVEPEER_API_KEY',
+            'LIVEPEER_WEBHOOK_SECRET',
+            'NEAR_OPERATOR_PRIVATE_KEY',
+        ],
     })));
     const secretPaths = secretCommands.map((args) => args[args.indexOf('--secrets-file') + 1]);
     assert.equal(new Set(secretPaths).size, 1);
@@ -1007,7 +1068,13 @@ test('1Click secret is required for quote-disabled status recovery', async (t) =
 
         assert.ok(secretCalls(fake).length > 0);
         assert.ok(secretCalls(fake).every((call) => (
-            JSON.stringify(call.keys) === JSON.stringify(['NEAR_RPC_URL', 'ONECLICK_API_KEY'])
+            JSON.stringify(call.keys) === JSON.stringify([
+                'NEAR_RPC_URL',
+                'ONECLICK_API_KEY',
+                'LIVEPEER_API_KEY',
+                'LIVEPEER_WEBHOOK_SECRET',
+                'NEAR_OPERATOR_PRIVATE_KEY',
+            ])
         )));
         for (const path of [fake.logPath, fake.secretLogPath, release.receipt]) {
             assert.ok(!readFileSync(path, 'utf8').includes(ONECLICK_API_KEY));
@@ -1055,7 +1122,7 @@ test('target allowlist and disabled release flags are fail closed', async (t) =>
         writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
         await assert.rejects(deployRelease({
             target: 'preview', sha: SHA, artifactDir: release.artifactDir, receiptOutput: release.receipt,
-            nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY,
+            nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY, ...PREVIEW_SECRET_INPUTS,
         }), /manifest_targets_invalid|forbidden_target/);
     });
 
@@ -1068,7 +1135,7 @@ test('target allowlist and disabled release flags are fail closed', async (t) =>
         writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
         await assert.rejects(deployRelease({
             target: 'preview', sha: SHA, artifactDir: release.artifactDir, receiptOutput: release.receipt,
-            nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY,
+            nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY, ...PREVIEW_SECRET_INPUTS,
         }), /livepeer_bridge_enabled_not_false/);
     });
 
@@ -1089,7 +1156,7 @@ test('target allowlist and disabled release flags are fail closed', async (t) =>
         writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
         await assert.rejects(deployRelease({
             target: 'preview', sha: SHA, artifactDir: release.artifactDir, receiptOutput: release.receipt,
-            nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY,
+            nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY, ...PREVIEW_SECRET_INPUTS,
         }), /bridge_wrangler_config_invalid/);
     });
 });

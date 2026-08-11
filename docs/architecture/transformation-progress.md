@@ -3858,7 +3858,8 @@ Evidence classes remain separate:
 
 ### CHECKPOINT 121 — Phase 3 / valid test-job lifecycle canary preflight
 
-- DURUM: `DARK_ALIGNMENT_PASS / RUNTIME_CLOSED / PAID_CANARY_NOT_RUN /
+- DURUM: `DARK_ALIGNMENT_PASS / CANARY_APPROVED / CREDENTIALS_PROVISIONED /
+  RELEASE_WIRING_CANDIDATE / RUNTIME_CLOSED / PAID_CANARY_NOT_RUN /
   PRODUCTION_UNTOUCHED`
 - BASELINE: PR #106 exact head
   `81bdc5ee670d57d874836f68f3090b3104b8b55b`, merged as
@@ -3973,7 +3974,80 @@ Evidence classes remain separate:
   rollback/drain verification. Ambiguous payment, provider create or NEAR
   broadcast is never automatically retried. Playback, D1 ingestion/API/archive,
   multi-asset and Production stay closed.
-- FAZ KAPISI: The approved canonical dark-alignment sub-gate is closed.
-  `DECISION_REQUIRED` before the paid valid-job canary. Checkpoint 121 remains
-  incomplete until that separately approved canary and cleanup produce the
-  listed evidence. No later gate may start from this preflight.
+- ONAY SONRASI PREFLIGHT (2026-08-11):
+  - the bounded paid-canary package above was explicitly approved. Read-only
+    checks ran before any payment, provider, Queue, NEAR or deployment mutation;
+  - `origin/main@c283b1d716e82d9c5986af5b5f9a718f936bd754` remains the
+    reviewed source and exact-main CI run `31489671741` is successful. The
+    exact-main Deploy Preview run `31489876559` remains intentionally skipped
+    with `DEPLOY_PREVIEW_ENABLED=false`;
+  - Cloudflare auth is valid, but the deployed Preview Worker still binds only
+    the dark `NEAR_RPC_URL` and `ONECLICK_API_KEY` secrets. It has no
+    `LIVEPEER_API_KEY`, `LIVEPEER_WEBHOOK_SECRET` or
+    `NEAR_OPERATOR_PRIVATE_KEY`;
+  - the only local `LIVEPEER_API_KEY` candidate returned HTTP 401 for read-only
+    asset, webhook and API-token queries. It was not used for a mutation;
+  - the canonical Market finite function-call key
+    `ed25519:5HZnNtPKc6cVBTTvwtHacxQQJrU2uPQPEkGKkJyALFXc` remains on-chain
+    with only `finalize_livepeer_publication` and `suspend_livepeer_sales`, but
+    no matching local private credential exists. The available finite local key
+    targets an obsolete Market; the available FullAccess key was not used;
+  - focused Worker lifecycle/Queue tests pass 119/119, mocked provider canaries
+    pass 68/68, Worker TypeScript passes and paid-media contract tests pass
+    22/22 on the exact main tree;
+  - Preview Bridge health still reports version
+    `db5afd98-d7c2-4350-809a-740dcf957e6c`, stage `DISABLED` and every upload,
+    provider, operator, Queue and archive readiness field false. Preview `/`
+    and `/tr` return 200; the Queue remains at one producer and zero consumers,
+    and the DLQ has zero producers and consumers;
+  - no source upload, wallet/payment approval, provider asset, webhook/Queue
+    message, NEAR transaction, deployment or Production change occurred.
+- FAZ KAPISI: The approved paid canary could not safely start. `DECISION_REQUIRED`
+  for a bounded credential-provisioning package: a valid project-scoped
+  Livepeer API token, a dedicated webhook secret/configuration and a new finite
+  canonical-Market function-call key whose private half can be installed as a
+  Preview Worker secret. Any one-time FullAccess bootstrap, lost-key revocation,
+  provider token/webhook creation and secret installation must be approved
+  explicitly. Checkpoint 121 remains incomplete, runtime stays closed and no
+  later gate may start.
+- ONAYLI CREDENTIAL PAKETİ (2026-08-11):
+  - the bounded provisioning package was approved separately from the paid
+    upload canary. The existing non-CORS project token
+    `youtick-testnet-worker-20260807` was revealed from the exact
+    `youtick-paid-media-canary` project and returned HTTP 200 for a read-only
+    asset list, so no duplicate provider token was created;
+  - webhook `3fe1a9b8-0844-461a-9475-b75555ae7429` was rotated in place to
+    `https://bridge-preview.youtick.net/v1/livepeer-webhooks`, renamed
+    `youtick-preview-checkpoint-121` and retained only `asset.ready`,
+    `asset.updated`, `asset.failed` and `asset.deleted`. Its new 32-byte secret
+    matches the read-back configuration; only SHA-256
+    `d23584fff69055a17133ca3cb626da6e793c265caf2ec627b99200450bf86c61`
+    is recorded here;
+  - finite key `ed25519:8EcEK3GG7RPPEzPTe39QwJMuXb2XMG4b1s4ginPcTkFg`
+    was added to `lp-d6-bridge-5301d15.youtick-dev-v3.testnet` for only the
+    canonical Market, the two finalize/suspend methods and 0.02 NEAR allowance
+    in transaction `5DMyBtE2SUxWCwmobUHJx85Hdv1VNR36XdgbfmCTgFNR`;
+  - after exact on-chain permission verification, the lost canonical key
+    `ed25519:5HZnNtPKc6cVBTTvwtHacxQQJrU2uPQPEkGKkJyALFXc` was revoked in
+    transaction `6aWy8AuQB88UzNXYFtTgv6mgkyuSGgtu4c2Lvxbbu2YD`. The local FullAccess
+    bootstrap credential was never installed in a Worker;
+  - repository secrets `PREVIEW_LIVEPEER_API_KEY`,
+    `PREVIEW_LIVEPEER_WEBHOOK_SECRET` and
+    `PREVIEW_NEAR_OPERATOR_PRIVATE_KEY` were installed. Public release values
+    now name the exact token and operator-key epoch 5; the repository Preview
+    deploy gate remains false;
+  - Cloudflare inactive version `052ee2d2-0768-404c-a828-cce6211f311e` contains
+    the three new secret bindings alongside the existing `NEAR_RPC_URL` and
+    `ONECLICK_API_KEY`. Preview traffic remains 100% on dark version
+    `db5afd98-d7c2-4350-809a-740dcf957e6c`; no credential version traffic was
+    assigned;
+  - the guarded release source now carries the three Preview-only secrets
+    through its existing mode-0600 temporary secret file and removes them from
+    Wrangler's child environment. The complete release/security/SLO tooling
+    passes 116/116 and the VitePress build passes. This wiring is the current
+    publish candidate; it is not yet exact-head CI, merge or deploy evidence.
+- GÜNCEL FAZ KAPISI: The external credential blocker is closed. Checkpoint 121
+  remains incomplete because the release wiring must first be intentionally
+  published and pass exact-head/exact-main CI before any approved paid-canary
+  activation. No source upload, payment, provider asset, Queue message, NEAR
+  finalize, active Worker traffic change or Production mutation occurred.

@@ -243,6 +243,15 @@ function validateOneClickApiKey(value, required) {
     return value;
 }
 
+function validatePreviewSecret(value, label, pattern) {
+    if (typeof value !== 'string' || value.length < 16 || value.length > 4096
+        || value !== value.trim() || /\s/u.test(value) || /\p{Cc}/u.test(value)
+        || (pattern && !pattern.test(value))) {
+        fail(`${label}_invalid`);
+    }
+    return value;
+}
+
 function canonicalJson(value) {
     return `${JSON.stringify(value, null, 2)}\n`;
 }
@@ -641,6 +650,9 @@ async function makeWranglerRunner(binary, tempRoot, { echo, label }) {
         };
         delete childEnvironment.NEAR_RPC_URL;
         delete childEnvironment.ONECLICK_API_KEY;
+        delete childEnvironment.LIVEPEER_API_KEY;
+        delete childEnvironment.LIVEPEER_WEBHOOK_SECRET;
+        delete childEnvironment.NEAR_OPERATOR_PRIVATE_KEY;
         const result = await runProcess(binary, args, {
             cwd,
             echo,
@@ -1221,6 +1233,9 @@ export async function deployRelease({
     cloudflareZoneId = process.env.CLOUDFLARE_ZONE_ID,
     nearRpcUrl: nearRpcUrlValue = process.env.NEAR_RPC_URL,
     oneClickApiKey: oneClickApiKeyValue = process.env.ONECLICK_API_KEY,
+    livepeerApiKey: livepeerApiKeyValue = process.env.LIVEPEER_API_KEY,
+    livepeerWebhookSecret: livepeerWebhookSecretValue = process.env.LIVEPEER_WEBHOOK_SECRET,
+    nearOperatorPrivateKey: nearOperatorPrivateKeyValue = process.env.NEAR_OPERATOR_PRIVATE_KEY,
     sleepFn = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
 } = {}) {
     if (!Object.hasOwn(TARGETS, target)) fail('target_invalid');
@@ -1232,6 +1247,18 @@ export async function deployRelease({
     const repoRoot = await realpath(resolve(repoValue));
     const release = await readRelease(artifactDir, target, sha);
     const oneClickApiKey = validateOneClickApiKey(oneClickApiKeyValue, true);
+    const previewSecrets = target === 'preview' ? {
+        LIVEPEER_API_KEY: validatePreviewSecret(livepeerApiKeyValue, 'livepeer_api_key'),
+        LIVEPEER_WEBHOOK_SECRET: validatePreviewSecret(
+            livepeerWebhookSecretValue,
+            'livepeer_webhook_secret',
+        ),
+        NEAR_OPERATOR_PRIVATE_KEY: validatePreviewSecret(
+            nearOperatorPrivateKeyValue,
+            'near_operator_private_key',
+            /^ed25519:[1-9A-HJ-NP-Za-km-z]{80,100}$/,
+        ),
+    } : {};
 
     const tempRoot = await mkdtemp(join(tmpdir(), 'youtick-cloudflare-release-'));
     try {
@@ -1241,6 +1268,7 @@ export async function deployRelease({
             canonicalJson({
                 NEAR_RPC_URL: nearRpcUrl,
                 ...(oneClickApiKey ? { ONECLICK_API_KEY: oneClickApiKey } : {}),
+                ...previewSecrets,
             }),
             { flag: 'wx', mode: 0o600 },
         );
