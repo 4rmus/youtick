@@ -25,6 +25,7 @@ interface WalletContextValue {
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
+const WALLET_RESTORE_TIMEOUT_MS = 5_000;
 
 function createWalletAdapter(wallet: NearWalletBase): WalletInstance {
     return {
@@ -55,7 +56,7 @@ function createWalletAdapter(wallet: NearWalletBase): WalletInstance {
     };
 }
 
-export function WalletProvider({ children }: { children: React.ReactNode }) {
+export function WalletProvider({ children, cspNonce }: { children: React.ReactNode; cspNonce?: string }) {
     const connectorRef = useRef<NearConnector | null>(null);
     const walletRef = useRef<NearWalletBase | null>(null);
     const accountIdRef = useRef<string | null>(null);
@@ -95,6 +96,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             },
             autoConnect: false,
             footerBranding: null,
+            cspNonce,
         });
         connectorRef.current = connector;
 
@@ -113,8 +115,21 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
         connector.whenManifestLoaded
             .then(async () => {
-                const connected = await connector.getConnectedWallet();
-                if (mounted) applyWallet(connected.wallet, connected.accounts);
+                let timeoutId: ReturnType<typeof setTimeout> | undefined;
+                try {
+                    const connected = await Promise.race([
+                        connector.getConnectedWallet(),
+                        new Promise<never>((_, reject) => {
+                            timeoutId = setTimeout(
+                                () => reject(new Error('Wallet restore timed out')),
+                                WALLET_RESTORE_TIMEOUT_MS,
+                            );
+                        }),
+                    ]);
+                    if (mounted) applyWallet(connected.wallet, connected.accounts);
+                } finally {
+                    if (timeoutId !== undefined) clearTimeout(timeoutId);
+                }
             })
             .catch(() => {})
             .finally(() => {
@@ -126,7 +141,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             connector.removeAllListeners();
             if (connectorRef.current === connector) connectorRef.current = null;
         };
-    }, [applyWallet, clearAuth]);
+    }, [applyWallet, clearAuth, cspNonce]);
 
     const getWallet = useCallback(async (): Promise<WalletInstance> => {
         const connector = connectorRef.current;
