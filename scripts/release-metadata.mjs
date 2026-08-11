@@ -11,6 +11,10 @@ const DECIMAL_RE = /^[1-9][0-9]*$/;
 const PLACEHOLDER_RE = /<[^>]+>|(^|[-_\s])(placeholder|replace|change[-_\s]?me|todo|dummy)($|[-_\s])/i;
 const GENERIC_VALUE_RE = /^(?:example|sample|test)(?:[._:-].*)?$/i;
 const MAINNET_USDC_CONTRACT_ID = "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
+const PREVIEW_CONTRACT_IDS = Object.freeze({
+  market: "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+  access: "lp-arch-access-v2-260809.youtick-dev-v3.testnet",
+});
 const PAYMENT_ASSET_IDS = new Set([
   "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
   "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
@@ -313,6 +317,14 @@ function buildConfig(environment) {
   }
   if (web.NEXT_PUBLIC_ACCESS_CONTRACT_ID !== bridge.ACCESS_CONTRACT_ID) {
     fail("web and Bridge ACCESS_CONTRACT_ID must match");
+  }
+  if (environment === "preview") {
+    if (web.NEXT_PUBLIC_MARKET_CONTRACT_ID !== PREVIEW_CONTRACT_IDS.market) {
+      fail(`PREVIEW_MARKET_CONTRACT_ID must be exactly ${PREVIEW_CONTRACT_IDS.market}`);
+    }
+    if (web.NEXT_PUBLIC_ACCESS_CONTRACT_ID !== PREVIEW_CONTRACT_IDS.access) {
+      fail(`PREVIEW_ACCESS_CONTRACT_ID must be exactly ${PREVIEW_CONTRACT_IDS.access}`);
+    }
   }
 
   for (const key of [

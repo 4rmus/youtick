@@ -18,10 +18,16 @@ function publicEnv(environment) {
   const webOrigin = environment === "preview" ? "https://preview.youtick.net" : "https://app.youtick.net";
   const bridgeOrigin =
     environment === "preview" ? "https://bridge-preview.youtick.net" : "https://bridge.youtick.net";
+  const marketContractId = environment === "preview"
+    ? "lp-arch-market-v2-260809.youtick-dev-v3.testnet"
+    : "paid-media-v1.testnet";
+  const accessContractId = environment === "preview"
+    ? "lp-arch-access-v2-260809.youtick-dev-v3.testnet"
+    : "ticket-access-v1.testnet";
   const values = {
     NEXT_PUBLIC_NEAR_NETWORK: "testnet",
-    NEXT_PUBLIC_MARKET_CONTRACT_ID: "paid-media-v1.testnet",
-    NEXT_PUBLIC_ACCESS_CONTRACT_ID: "ticket-access-v1.testnet",
+    NEXT_PUBLIC_MARKET_CONTRACT_ID: marketContractId,
+    NEXT_PUBLIC_ACCESS_CONTRACT_ID: accessContractId,
     NEXT_PUBLIC_APP_URL: webOrigin,
     NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: bridgeOrigin,
     NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: "false",
@@ -35,8 +41,8 @@ function publicEnv(environment) {
     NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO: "1",
     ALLOWED_ORIGINS: webOrigin,
     NEAR_NETWORK: "testnet",
-    MARKET_CONTRACT_ID: "paid-media-v1.testnet",
-    ACCESS_CONTRACT_ID: "ticket-access-v1.testnet",
+    MARKET_CONTRACT_ID: marketContractId,
+    ACCESS_CONTRACT_ID: accessContractId,
     LIVEPEER_PROJECT_ID: "project-123",
     LIVEPEER_API_TOKEN_NAME: "release-token",
     LIVEPEER_CREATOR_ALLOWLIST: "",
@@ -161,6 +167,14 @@ test("config emits only canonical public values", () => {
   const config = JSON.parse(text);
   assert.equal(config.targets.web.worker, "youtick-web-preview");
   assert.equal(config.targets.bridge.domain, "bridge-preview.youtick.net");
+  assert.equal(
+    config.web.NEXT_PUBLIC_MARKET_CONTRACT_ID,
+    "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+  );
+  assert.equal(
+    config.bridge.ACCESS_CONTRACT_ID,
+    "lp-arch-access-v2-260809.youtick-dev-v3.testnet",
+  );
   assert.equal(config.web.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1, "false");
   assert.equal(config.web.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2, "false");
   assert.equal(config.web.NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2, "false");
@@ -183,6 +197,18 @@ test("config emits only canonical public values", () => {
 });
 
 test("config rejects placeholders and enabled release flags", async (t) => {
+  await t.test("noncanonical Preview contract IDs", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_NEXT_PUBLIC_MARKET_CONTRACT_ID = "ytlp-pv-market-32a01cc.testnet";
+    env.PREVIEW_MARKET_CONTRACT_ID = "ytlp-pv-market-32a01cc.testnet";
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /PREVIEW_MARKET_CONTRACT_ID must be exactly lp-arch-market-v2-260809/);
+  });
+
   await t.test("placeholder", () => {
     const env = publicEnv("preview");
     env.PREVIEW_NEXT_PUBLIC_MARKET_CONTRACT_ID = "<replace-with-market-contract>";
