@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Geist } from 'next/font/google';
+import { headers } from 'next/headers';
 import { connection } from 'next/server';
 import './globals.css';
 import { Navbar } from '@/components/Navbar';
@@ -16,11 +17,12 @@ export const metadata: Metadata = {
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
     await connection();
+    const cspNonce = (await headers()).get('x-nonce') ?? undefined;
     return (
         <html lang="en" data-scroll-behavior="smooth">
             <body className={`${geist.variable} min-h-screen bg-black text-white antialiased`}>
                 <QueryProvider>
-                    <WalletProvider>
+                    <WalletProvider cspNonce={cspNonce}>
                         <Navbar />
                         <main>{children}</main>
                     </WalletProvider>
