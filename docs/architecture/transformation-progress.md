@@ -3859,7 +3859,7 @@ Evidence classes remain separate:
 ### CHECKPOINT 121 — Phase 3 / valid test-job lifecycle canary preflight
 
 - DURUM: `DARK_ALIGNMENT_PASS / CANARY_APPROVED / CREDENTIALS_PROVISIONED /
-  RELEASE_WIRING_CANDIDATE / RUNTIME_CLOSED / PAID_CANARY_NOT_RUN /
+  RELEASE_WIRING_CI_PASS / RUNTIME_CLOSED / PAID_CANARY_NOT_RUN /
   PRODUCTION_UNTOUCHED`
 - BASELINE: PR #106 exact head
   `81bdc5ee670d57d874836f68f3090b3104b8b55b`, merged as
@@ -4044,10 +4044,21 @@ Evidence classes remain separate:
   - the guarded release source now carries the three Preview-only secrets
     through its existing mode-0600 temporary secret file and removes them from
     Wrangler's child environment. The complete release/security/SLO tooling
-    passes 116/116 and the VitePress build passes. This wiring is the current
-    publish candidate; it is not yet exact-head CI, merge or deploy evidence.
-- GÜNCEL FAZ KAPISI: The external credential blocker is closed. Checkpoint 121
-  remains incomplete because the release wiring must first be intentionally
-  published and pass exact-head/exact-main CI before any approved paid-canary
-  activation. No source upload, payment, provider asset, Queue message, NEAR
-  finalize, active Worker traffic change or Production mutation occurred.
+    passes 116/116 and the VitePress build passes;
+  - PR #108 exact head
+    `9684e80f1c8ee5841d75f95f9e63a393d5cff43f` passed CI
+    `31522859262`, including both CodeQL languages and final `CI Gate`, and was
+    squash-merged as `origin/main@acf12e4fd66fd3ee22cf0cdc7d08f11e0c861b85`.
+    Exact-main CI `31523716491` also passed;
+  - exact-main Deploy Preview run `31524489506` completed `skipped`: authorize,
+    bundle, artifact and deploy jobs were all skipped because
+    `DEPLOY_PREVIEW_ENABLED=false`. Read-only Cloudflare status still assigns
+    100% of Bridge traffic to dark version
+    `db5afd98-d7c2-4350-809a-740dcf957e6c`, tagged to the prior dark release;
+    the credential-bearing inactive version received no traffic.
+- GÜNCEL FAZ KAPISI: The external credential and release-wiring publication
+  gates are closed. Checkpoint 121 remains incomplete; the next gate is an
+  explicit paid-canary activation decision for one bounded valid test job.
+  This publication approval did not authorize that gate. No source upload,
+  payment, provider asset, Queue message, NEAR finalize, active Worker traffic
+  change or Production mutation occurred.
