@@ -3858,11 +3858,11 @@ Evidence classes remain separate:
 
 ### CHECKPOINT 121 — Phase 3 / valid test-job lifecycle canary preflight
 
-- DURUM: `DARK_ALIGNMENT_APPROVED / LOCAL_IMPLEMENTATION_IN_PROGRESS /
-  EXTERNAL_DARK_PROOF_PENDING / RUNTIME_CLOSED`
-- BASELINE: `origin/main@6adb071eb37aaa97ef9316385972d387bf889782`;
-  stable Preview Bridge version
-  `ba26e779-53a0-480e-9cc9-8efaa1646db2`.
+- DURUM: `DARK_ALIGNMENT_PASS / RUNTIME_CLOSED / PAID_CANARY_NOT_RUN /
+  PRODUCTION_UNTOUCHED`
+- BASELINE: PR #106 exact head
+  `81bdc5ee670d57d874836f68f3090b3104b8b55b`, merged as
+  `origin/main@27c542fd0cf0fddd24e7bd560c7987234aff346a`.
 - AMAÇ: Prove one valid testnet paid-job lifecycle through provider readiness,
   stateful Queue duplicate/out-of-order handling and one NEAR publication
   finalize, then re-close every runtime gate without touching Production.
@@ -3902,7 +3902,7 @@ Evidence classes remain separate:
     false. The testnet Queue has producer 1, consumers 0; its DLQ has no
     producer/consumer. Preview `/` and `/tr` return 200.
 - SALT-OKUNUR ÖN KOŞUL DENETİMİ:
-  - the stable Preview Web/Bridge configuration points at
+  - before alignment, the stable Preview Web/Bridge configuration pointed at
     `ytlp-pv-market-32a01cc.testnet` and `ytlp-pv-access-32a01cc.testnet`, while
     the accepted pilot runbook fixes `lp-arch-market-v2-260809.youtick-dev-v3.testnet`
     and `lp-arch-access-v2-260809.youtick-dev-v3.testnet`;
@@ -3910,7 +3910,7 @@ Evidence classes remain separate:
     `lp-d6-bridge-5301d15.youtick-dev-v3.testnet` as active bridge. That account
     has a finite function-call key for exactly the canonical Market and the two
     finalize/suspend methods;
-  - the current Preview target also has zero publications, but its governance
+  - the former Preview target also had zero publications, but its governance
     view returns null and the bridge account has no finite function-call key for
     that receiver. Silently using a FullAccess key is forbidden;
   - the deployed Preview Worker has only `NEAR_RPC_URL` and `ONECLICK_API_KEY`
@@ -3918,23 +3918,62 @@ Evidence classes remain separate:
     deliberately carries no provider, webhook or NEAR operator private key.
     Those bindings remain unproven prerequisites for the later paid canary,
     not for this closed-gate alignment proof.
-- KANIT: `LOCAL_TEST` + `CI` + read-only GitHub/Cloudflare control-plane and
-  runtime checks. No Worker version upload/deploy, consumer/message, flag,
-  provider/TUS, wallet/payment, NEAR transaction or Production mutation ran.
+- KANIT: `LOCAL_TEST` + `MERGE` + exact-main `CI` + exact-SHA
+  `PREVIEW_DEPLOYMENT` receipt + read-only GitHub/Cloudflare control-plane and
+  runtime checks. No Queue consumer/message, provider/TUS, wallet/payment, NEAR
+  transaction or Production mutation ran.
 - KARAR: `CANONICAL_LP_ARCH` was approved for only the canonical Preview
   Web/Bridge alignment and closed-gate dark proof. The release metadata now
   fails closed unless both Preview surfaces use the two runbook contract IDs.
   Provider/webhook/operator secrets, paid upload, Queue consumer/message, NEAR
   transaction and Production remain outside this approval.
-- ONAY PAKETİ: After the target/authority decision and a successful dark proof,
-  the canary requires one immutable reviewed SHA, a bounded Preview Worker
+- UYGULAMA:
+  - release metadata rejects any Preview Market/Access identity other than the
+    two accepted `lp-arch` targets after first requiring Web/Bridge parity;
+  - only the four Preview Web/Bridge contract variables were moved from the
+    temporary `ytlp-pv` identities to the canonical targets. The guarded
+    release gate was opened for the exact-main run and returned to
+    `DEPLOY_PREVIEW_ENABLED=false` immediately after success;
+  - PR #106 was squash-merged with exact-head protection after terminal CI.
+    No provider/webhook/operator secret was added and no runtime feature flag
+    was opened.
+- DOĞRULAMA:
+  - full local release/security/SLO tooling passed 116/116 and the VitePress
+    build passed. PR CI `31488408366` and exact-main CI `31488610482` completed
+    successfully, including both CodeQL languages and final `CI Gate`;
+  - guarded Deploy Preview run `31488787498` completed successfully. Non-expired
+    artifact `9100254979`, named
+    `preview-deployment-27c542fd0cf0fddd24e7bd560c7987234aff346a`, has digest
+    `sha256:00f9fb7c389d3ae5e8086322bd3ceed3a73fba5b94724aec97f37aa76ff521b4`;
+    its receipt binds manifest
+    `83aa215fa16ed831e5c64385a81911f2b7e9f4a8dbe32c86ec08ce5d0d9a55db`
+    to the exact merge SHA;
+  - Preview traffic is 100% on Web
+    `37d343c5-67c8-4ea6-8b60-51abc9f519c9`, Bridge
+    `db5afd98-d7c2-4350-809a-740dcf957e6c` and read model
+    `a5ca305e-3874-4950-b61d-54b6acdd313b`;
+  - artifact and deployed Bridge bindings carry the canonical Market/Access
+    identities. All Web product flags and Bridge upload, playback, Queue,
+    provider, operator and archive flags are false; multi-asset mode is off;
+  - stable Bridge health reports the exact version, stage `DISABLED`, provider
+    and operator mutation false and every readiness field false. Preview `/`
+    and `/tr` return 200;
+  - Queue `youtick-livepeer-events-testnet` has one producer and zero consumers;
+    its DLQ has zero producers and consumers. The read model has both gates
+    false and no schedule;
+  - the receipt's root before/after fingerprints are byte-identical. GitHub has
+    exactly one deployment record for the merge SHA and it is Preview;
+    Production Web/Bridge Workers remain absent. The final repository gate is
+    `DEPLOY_PREVIEW_ENABLED=false`.
+- ONAY PAKETİ: The next paid canary requires a separate approval for one
+  immutable reviewed SHA, a bounded Preview Worker
   activation, one Queue consumer, synthetic duplicate/out-of-order delivery for
   the valid job, temporary Bridge/new-upload/provider/operator/webhook-Queue
   flags, one allowlisted creator payment and source upload, and final
   rollback/drain verification. Ambiguous payment, provider create or NEAR
   broadcast is never automatically retried. Playback, D1 ingestion/API/archive,
   multi-asset and Production stay closed.
-- FAZ KAPISI: The approved dark-alignment sub-gate is in progress. Checkpoint
-  121 remains incomplete until the separately approved external canary and
-  cleanup produce the listed evidence. No later gate may start from this
-  preflight.
+- FAZ KAPISI: The approved canonical dark-alignment sub-gate is closed.
+  `DECISION_REQUIRED` before the paid valid-job canary. Checkpoint 121 remains
+  incomplete until that separately approved canary and cleanup produce the
+  listed evidence. No later gate may start from this preflight.
