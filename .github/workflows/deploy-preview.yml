@@ -529,6 +529,9 @@ jobs:
           CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
           NEAR_RPC_URL: ${{ secrets.NEAR_RPC_URL }}
           ONECLICK_API_KEY: ${{ secrets.ONECLICK_API_KEY }}
+          LIVEPEER_API_KEY: ${{ secrets.PREVIEW_LIVEPEER_API_KEY }}
+          LIVEPEER_WEBHOOK_SECRET: ${{ secrets.PREVIEW_LIVEPEER_WEBHOOK_SECRET }}
+          NEAR_OPERATOR_PRIVATE_KEY: ${{ secrets.PREVIEW_NEAR_OPERATOR_PRIVATE_KEY }}
           SHA: ${{ needs.authorize.outputs.sha }}
         run: |
           git fetch --no-tags origin main
