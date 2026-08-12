@@ -394,6 +394,7 @@ jobs:
           scripts/release-smoke.test.mjs
           scripts/cloudflare-release.test.mjs
           scripts/ci-security.test.mjs
+          scripts/apply-market-read-model-d1.test.mjs
           scripts/check-rust-wasm-advisories.test.mjs
           scripts/generate-contract-spdx.test.mjs
           scripts/slo-policy.test.mjs

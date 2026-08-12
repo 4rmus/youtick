@@ -211,6 +211,7 @@ function makeRelease(t, target = 'preview') {
         '[vars]',
         'READ_MODEL_ENABLED = "false"',
         'READ_MODEL_INGESTION_ENABLED = "false"',
+        'READ_MODEL_BACKFILL_ENABLED = "false"',
         'READ_MODEL_NETWORK = "testnet"',
         'READ_MODEL_CONTRACT_ID = "lp-arch-market-v2-260809.youtick-dev-v3.testnet"',
         'READ_MODEL_START_BLOCK_HEIGHT = "263118001"',
@@ -370,8 +371,9 @@ if (args[0] === 'versions' && args[1] === 'upload') {
       && (!text.includes('workers_dev = false')
         || !text.includes('READ_MODEL_ENABLED = "false"')
         || !text.includes('READ_MODEL_INGESTION_ENABLED = "false"')
+        || !text.includes('READ_MODEL_BACKFILL_ENABLED = "false"')
         || !text.includes('binding = "MARKET_READ_MODEL"')
-        || /\btriggers\b|\bcrons\b/.test(text))) {
+        || /\btriggers\b|\bcrons\b|\bqueues\b/.test(text))) {
     throw new Error('invalid dark read model config');
   }
   const id = worker.includes('web')
@@ -398,7 +400,8 @@ if (args[0] === 'deploy') {
   if (worker === 'youtick-market-read-model-testnet'
       && (!text.includes('workers_dev = false')
         || !text.includes('preview_urls = false')
-        || /\btriggers\b|\bcrons\b/.test(text))) {
+        || !text.includes('READ_MODEL_BACKFILL_ENABLED = "false"')
+        || /\btriggers\b|\bcrons\b|\bqueues\b/.test(text))) {
     throw new Error('read model bootstrap is not dark');
   }
   const id = worker.includes('web')
@@ -715,8 +718,9 @@ test('read-model artifact writer emits one route-free and cron-free dark config'
     assert.match(text, /preview_urls = false/);
     assert.match(text, /READ_MODEL_ENABLED = "false"/);
     assert.match(text, /READ_MODEL_INGESTION_ENABLED = "false"/);
+    assert.match(text, /READ_MODEL_BACKFILL_ENABLED = "false"/);
     assert.match(text, /binding = "MARKET_READ_MODEL"/);
-    assert.doesNotMatch(text, /\btriggers\b|\bcrons\b|READ_MODEL_NEAR_RPC_URL/);
+    assert.doesNotMatch(text, /\btriggers\b|\bcrons\b|\bqueues\b|READ_MODEL_NEAR_RPC_URL/);
     assert.equal(statSync(output).mode & 0o777, 0o600);
     await assert.rejects(writeReadModelArtifactWrangler(output), /EEXIST/);
 });
