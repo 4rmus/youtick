@@ -138,8 +138,8 @@ Evidence classes remain separate:
 | One stuck job does not close global admission | PASS_LOCAL | A generic `CREATE_AMBIGUOUS` or first transient provider failure releases after the accepted 15 minutes while admission stays open; its per-job DO still prevents duplicate provider create. Provider-wide 402/429 immediate closure and two independent 5xx/timeouts inside 60 seconds remain separate circuit-breaker conditions. `LOCAL_TEST`. |
 | Lease timeout auto-releases | PASS_LOCAL | Normal reservations receive a random lease ID, expire after 30 minutes and renew from the same session-only upload key every five minutes. Coordinator alarm release, wrong-lease rejection and web signing pass locally. The separate ambiguous timeout remains 15 minutes. Real long-upload/browser/staging proof is absent. `LOCAL_TEST`. |
 | Reload/crash resumes the same TUS resource | PARTIAL | An authenticated retry after browser-key replacement and job-object restart returns the same TUS URL without a second provider create; client HEAD/offset resume also passes. The independent new-upload gate rejects an unrecorded intent while the same recorded Job returns its existing TUS resource. The v2 session draft checks name/bytes/lastModified plus bounded source SHA-256; signed upload-intent v3 persists that declaration and rejects a conflicting recovery. Real browser reload/staging and provider-computed full-source fingerprint proof are absent. `LOCAL_TEST`. |
-| Webhook ACK avoids heavy provider probing | PARTIAL | The gated ingress verifies HMAC/timestamp, sends a bounded Queue message and returns `202` before job-object/provider work. Consumer ACK/retry/poison behavior and fail-closed policy drift pass locally. Dedicated testnet Queue/DLQ resources and an exact source producer/consumer policy now exist. Guarded release metadata/config requires the Queue gate to remain false; no deployed producer/consumer, redelivery or staging traffic exists. `LOCAL_TEST` + `QUEUE_CONTROL_PLANE`. |
-| Duplicate/out-of-order queue tests pass | PASS_LOCAL | Duplicate ready-event processing remains idempotent, and duplicate late `asset.updated/processing` Queue delivery cannot regress an `ONCHAIN_PUBLISHED` job; both messages ACK and schedule reconcile only. Real Queue redelivery remains `UNPROVEN`. `LOCAL_TEST`. |
+| Webhook ACK avoids heavy provider probing | PARTIAL | Exact-main Preview proved that the gated ingress verifies a real Livepeer signature, enqueues the bounded event and returns `202` before job-object/provider work; the terminal ready replay and older processing update then ACKed. Post-ACK reconciliation maintenance still performed read-only provider asset/playback/media probes, so a strict zero-provider-read interpretation remains open even though no mutation or duplicate economic side effect occurred. `LOCAL_TEST` + `PREVIEW_QUEUE`. |
+| Duplicate/out-of-order queue tests pass | PASS_PREVIEW | Exact-main Preview delivered one real terminal `asset.ready` replay followed by one older `asset.updated/processing` event. Both messages ACKed, the older event did not regress `ONCHAIN_PUBLISHED`, and payment, provider asset, publication and finalize counts stayed singletons. General redelivery/load evidence remains outside this bounded canary. `LOCAL_TEST` + `PREVIEW_QUEUE`. |
 | Worker split across domain boundaries | PARTIAL | The vendor-neutral port is 88 lines; separate 319-line provider/transport, 251-line ready-verification, 75-line webhook-normalization, 77-line UploadJob archive, 76-line operator archive and 33-line observed-fetch modules own external details. `workers/livepeer-bridge/src/index.ts` is 5,289 lines and still contains routes, domain state, a small environment composition factory, NEAR and DO logic. `LOCAL_TEST`. |
 | UploadJob terminal cleanup works | BLOCKED | The 14-day policy and default-off bounded D1 archive source pass locally, but deletion is intentionally absent until a real D1 archive commit is proven and v1 playback no longer reads the job. Neither external precondition exists, so no destructive cleanup is scheduled. |
 | Provider cost/budget metrics visible | PARTIAL | Source requires and reports positive monthly/per-job reservation values and auto-closes before exceeding the configured cap. This is a guard, not actual-cost accounting. Livepeer's public [Studio pricing](https://livepeer.studio/pricing) is minute-based and includes plan/minimum-spend terms, while the bridge upload intent has no duration and the asset response has no per-job billed-cost field. Machine-readable commercial terms plus invoice/usage reconciliation are `EXTERNAL_EVIDENCE_REQUIRED`. |
@@ -4106,3 +4106,33 @@ Evidence classes remain separate:
   fixed source. The next gate is review/CI of this minimal patch, followed by a
   separate exact-main Preview deployment and one bounded real ready replay plus
   older update. No second payment, upload or provider asset is required.
+- EXTERNAL TERMINAL REPLAY KAPANIŞI (2026-08-12):
+  - PR #112 exact head `1909c937ed8cc8f038d10e978526dfd32774770c`
+    passed review/CI, was squash-merged as
+    `origin/main@ac97fb368ca12c44fa5fa5ad1769dca275bf88b0`, and exact-main CI
+    `31619315509` passed. Guarded exact-main Preview deploy `31619541061`
+    passed and installed dark Bridge version
+    `8f8865aa-b7bb-4e8a-9fa3-44e05c4e6ac3`;
+  - one bounded replay candidate
+    `6efbbfe5-fcc4-4a28-a0a9-fcdc6834c28d` received the real Livepeer
+    `asset.ready` event once and then one older `asset.updated/processing`
+    event. Both signed ingress requests returned Queue `202` and both Queue
+    messages ACKed. The older update timestamp `1786484981027` remained below
+    ready timestamp `1786484981823` and did not regress terminal state;
+  - the job and publication remained unchanged, publication count stayed 1,
+    payment transaction
+    `DYMgYKg5ojtQpbK1WpkFFebB4cbLnHY83tBpgjqqWGvD`, finalize transaction
+    `ArawGPvXNULAFvCKZmfo8th7s1WvxNboDjCJhMKtJwzf` and Livepeer asset count 8
+    all stayed singletons. Post-ACK reconciliation maintenance made read-only
+    provider asset/playback/media probes, but no second payment, asset,
+    publication or finalize occurred;
+  - cleanup restored exact-main dark Bridge version
+    `8f8865aa-b7bb-4e8a-9fa3-44e05c4e6ac3` to 100%, all runtime gates false,
+    Queue producer/consumer counts 1/0 and main/DLQ backlogs 0/0.
+    `DEPLOY_PREVIEW_ENABLED=false`; Production deployment count stayed 0.
+- GÜNCEL FAZ KAPISI: `PASS_PREVIEW` for Checkpoint 121's bounded terminal
+  replay idempotency, one-payment/one-asset/one-publication/one-finalize
+  acceptance and fail-closed cleanup. This does not close all Phase 3 exit
+  gates. The next separately authorized runtime package is Phase 4 Read canary:
+  cron plus D1 ingestion, then API and internal Web sequentially, while upload,
+  playback issuance and provider mutation remain closed.
