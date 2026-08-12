@@ -1309,6 +1309,11 @@ export class LivepeerControl {
             || (webhook.event === 'asset.updated'
                 && ['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(existing.state)
                 && phase === 'ready');
+        if (existing.state === 'ONCHAIN_PUBLISHED' && readinessEvent) {
+            await updateAdmission(this.env, existing, 'ONCHAIN_PUBLISHED');
+            await ensureReconcileScheduled(this.state);
+            return json({ accepted: true, duplicate: true, finalized: true });
+        }
         if (!readinessEvent) {
             if (existing.state === 'ONCHAIN_PUBLISHED') {
                 await scheduleReconcile(this.state, Date.now());
