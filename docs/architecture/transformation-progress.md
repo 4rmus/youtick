@@ -4062,3 +4062,47 @@ Evidence classes remain separate:
   This publication approval did not authorize that gate. No source upload,
   payment, provider asset, Queue message, NEAR finalize, active Worker traffic
   change or Production mutation occurred.
+- ONAYLI VALID JOB SONUCU (2026-08-12):
+  - allowlisted creator payment created job
+    `lp-0b8d85d5-501f-41ad-8dc6-3fc340fd99f7`; the provider created exactly one
+    asset and the canonical Market recorded exactly one active publication;
+  - the job is `Published`, provider size equals expected size `9452298`, the
+    asset and project identifiers hash to the on-chain values, playback ID is
+    `dba5bb2s9shlyo85` and anonymous playback remains denied;
+  - testnet history contains exactly one payment transaction
+    `DYMgYKg5ojtQpbK1WpkFFebB4cbLnHY83tBpgjqqWGvD` and one finalize transaction
+    `ArawGPvXNULAFvCKZmfo8th7s1WvxNboDjCJhMKtJwzf` for this job;
+  - after publication, exact-main Preview was restored dark on Bridge version
+    `8be13c29-735e-41b5-ad2b-22b9dd345e92`, tagged
+    `a3df88e983ebe9cc6d6986be8545231424a664da`.
+- TERMINAL REPLAY CANARY (2026-08-12):
+  - the real Livepeer `asset.ready` delivery was resent once against the
+    existing terminal job. Ingress verified the provider signature and returned
+    Queue 202, but consumer version
+    `d64a2e2c-0666-4d57-ad8f-d990faba7c8a` retried four times and moved the
+    message to the DLQ;
+  - tail evidence showed provider asset/playback reads followed by repeated
+    anonymous media probes and `internal_error`. The terminal ready replay was
+    incorrectly re-running provider readiness verification instead of treating
+    `ONCHAIN_PUBLISHED` as idempotent;
+  - fail-closed stop occurred before a second ready replay or older updated
+    event. The job/publication stayed byte-for-byte equivalent, publication
+    count stayed 1, payment/finalize transaction sets stayed singletons and the
+    Livepeer asset list stayed at the same 8 identifiers;
+  - cleanup restored exact dark version
+    `8be13c29-735e-41b5-ad2b-22b9dd345e92`, paused delivery, removed the
+    consumer and purged only the one canary DLQ message. Main Queue and DLQ both
+    report backlog 0/0 bytes, consumer count 0 and every Bridge readiness flag
+    false. Production was not changed.
+- LOCAL KÖK NEDEN DÜZELTMESİ:
+  - `handleLivepeerWebhook` now recognizes an `asset.ready` event for an
+    `ONCHAIN_PUBLISHED` job before provider verification, refreshes admission
+    and reconciliation maintenance, and returns terminal duplicate success;
+  - the Queue regression covers a fresh terminal ready replay followed by an
+    older processing update, requires both messages to ACK and proves zero
+    provider reads. Worker TypeScript passes; all Worker tests pass 193 with 2
+    intentional skips.
+- GÜNCEL FAZ KAPISI: `UNPROVEN` for external terminal replay idempotency on the
+  fixed source. The next gate is review/CI of this minimal patch, followed by a
+  separate exact-main Preview deployment and one bounded real ready replay plus
+  older update. No second payment, upload or provider asset is required.

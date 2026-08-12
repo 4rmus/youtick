@@ -626,46 +626,59 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(retry).not.toHaveBeenCalled();
     });
 
-    it('keeps a published job terminal after duplicate out-of-order Queue delivery', async () => {
+    it('ACKs a terminal ready replay and older update without provider reads', async () => {
         const testState = createState();
         testState.values.set('job:v1', await publishedJob());
         let control!: LivepeerControl;
+        const admissionFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true }));
         const namespace = {
-            idFromName: vi.fn(() => ({ toString: () => 'job-id' })),
-            get: vi.fn(() => ({ fetch: (request: Request) => control.fetch(request) })),
+            idFromName: vi.fn((name: string) => ({ toString: () => name })),
+            get: vi.fn((id: { toString(): string }) => ({
+                fetch: (request: Request) => id.toString().startsWith('job:')
+                    ? control.fetch(request)
+                    : admissionFetch(request),
+            })),
         } as unknown as DurableObjectNamespace;
         const env = createEnv({
             LIVEPEER_WEBHOOK_QUEUE_ENABLED: 'true',
             LIVEPEER_CONTROL: namespace,
         });
         control = new LivepeerControl(testState.state, env);
+        const readyEvent = webhook('asset.ready');
         const lateProcessingEvent = webhook('asset.updated', Date.now() - 60_000);
-        const raw = new TextEncoder().encode(JSON.stringify(lateProcessingEvent));
-        const body = {
+        const queueBody = (value: ReturnType<typeof webhook>) => ({
             schema: 'youtick.livepeer-webhook-queue.v1',
             network: 'testnet',
             contract_id: CONTRACT_ID,
             job_id: 'job-001',
             generation: 1,
             enqueued_at_ms: String(Date.now()),
-            raw_body_base64: btoa(String.fromCharCode(...raw)),
-        };
-        const firstAck = vi.fn();
-        const secondAck = vi.fn();
+            raw_body_base64: btoa(String.fromCharCode(
+                ...new TextEncoder().encode(JSON.stringify(value)),
+            )),
+        });
+        const readyAck = vi.fn();
+        const lateAck = vi.fn();
         const retry = vi.fn();
+        const providerFetch = vi.fn(async () => {
+            throw new Error('terminal replay must not read the provider');
+        });
+        vi.stubGlobal('fetch', providerFetch);
 
         await handler.queue({
             messages: [
-                { body, ack: firstAck, retry },
-                { body, ack: secondAck, retry },
+                { body: queueBody(readyEvent), ack: readyAck, retry },
+                { body: queueBody(lateProcessingEvent), ack: lateAck, retry },
             ],
         } as unknown as MessageBatch<unknown>, env);
 
         expect(testState.values.get('job:v1')).toMatchObject({ state: 'ONCHAIN_PUBLISHED' });
         expect(testState.alarms).toHaveLength(2);
-        expect(firstAck).toHaveBeenCalledOnce();
-        expect(secondAck).toHaveBeenCalledOnce();
+        expect(readyAck).toHaveBeenCalledOnce();
+        expect(lateAck).toHaveBeenCalledOnce();
         expect(retry).not.toHaveBeenCalled();
+        expect(providerFetch).not.toHaveBeenCalled();
+        expect(admissionFetch).toHaveBeenCalledOnce();
     });
 
     it('accepts the previous webhook secret during the rotation overlap', async () => {
