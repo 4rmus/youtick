@@ -219,6 +219,7 @@ function makeRelease(t, target = 'preview') {
         'READ_MODEL_ENABLED = "false"',
         'READ_MODEL_INGESTION_ENABLED = "false"',
         'READ_MODEL_BACKFILL_ENABLED = "false"',
+        'READ_MODEL_BACKFILL_CONTINUE_ENABLED = "false"',
         'READ_MODEL_NETWORK = "testnet"',
         'READ_MODEL_CONTRACT_ID = "lp-arch-market-v2-260809.youtick-dev-v3.testnet"',
         'READ_MODEL_START_BLOCK_HEIGHT = "263118001"',
@@ -379,6 +380,7 @@ if (args[0] === 'versions' && args[1] === 'upload') {
         || !text.includes('READ_MODEL_ENABLED = "false"')
         || !text.includes('READ_MODEL_INGESTION_ENABLED = "false"')
         || !text.includes('READ_MODEL_BACKFILL_ENABLED = "false"')
+        || !text.includes('READ_MODEL_BACKFILL_CONTINUE_ENABLED = "false"')
         || !text.includes('binding = "MARKET_READ_MODEL"')
         || !text.includes('[triggers]\ncrons = ["* * * * *"]')
         || !text.includes('[observability]\nenabled = true\nhead_sampling_rate = 1')
@@ -410,6 +412,7 @@ if (args[0] === 'deploy') {
       && (!text.includes('workers_dev = false')
         || !text.includes('preview_urls = false')
         || !text.includes('READ_MODEL_BACKFILL_ENABLED = "false"')
+        || !text.includes('READ_MODEL_BACKFILL_CONTINUE_ENABLED = "false"')
         || !text.includes('[triggers]\ncrons = ["* * * * *"]')
         || !text.includes('[observability]\nenabled = true\nhead_sampling_rate = 1')
         || /\bqueues\b/.test(text))) {
@@ -732,6 +735,7 @@ test('read-model artifact writer emits one route-free finality-probe-only config
     assert.match(text, /READ_MODEL_ENABLED = "false"/);
     assert.match(text, /READ_MODEL_INGESTION_ENABLED = "false"/);
     assert.match(text, /READ_MODEL_BACKFILL_ENABLED = "false"/);
+    assert.match(text, /READ_MODEL_BACKFILL_CONTINUE_ENABLED = "false"/);
     assert.match(text, /binding = "MARKET_READ_MODEL"/);
     assert.doesNotMatch(text, /\bqueues\b|READ_MODEL_NEAR_RPC_URL/);
     assert.equal(statSync(output).mode & 0o777, 0o600);

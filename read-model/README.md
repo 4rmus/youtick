@@ -1,6 +1,6 @@
 # Market read model
 
-Status: `D1_PROVISIONED / MIGRATIONS_APPLIED / PREVIEW_WORKER_DARK / RUNTIME_GATES_CLOSED`
+Status: `D1_PROVISIONED / MIGRATIONS_APPLIED / FINALITY_SCHEDULED / WRITE_GATES_CLOSED`
 
 NEAR remains authoritative for payments, balances, entitlements and playback
 authorization. This derived model is only for discover, profile, dashboard and
@@ -81,14 +81,18 @@ final-height RPC read, then at most 180 contiguous Neardata blocks. This needs a
 Workers Paid plan because Free permits only 50 external subrequests per
 invocation and cannot keep pace with roughly one NEAR block per second. Mainnet
 ingestion is intentionally rejected in this pilot source. The tracked Wrangler
-config has no cron or Queue trigger and every read-model runtime gate is closed.
+config has only the read-only finality cron, no Queue trigger and every
+read-model write/API gate is closed.
 
 The same Worker also contains a source-only Queue backfill entrypoint guarded
 independently by `READ_MODEL_BACKFILL_ENABLED=false`. A valid message names only
 the exact next D1 watermark height. It processes the same maximum 180 contiguous
-blocks and, while backlog remains, emits one continuation message. A future or
-malformed cursor is retried without writing; a stale cursor is repaired from the
-D1 watermark, so a replay cannot choose or skip a block. The tracked and release
+blocks. Automatic continuation is separately closed unless
+`READ_MODEL_BACKFILL_CONTINUE_ENABLED=true`; while closed, a stale replay is
+acknowledged without emitting another message and no producer binding is needed.
+While enabled, remaining backlog emits one continuation and a stale cursor is
+repaired from the D1 watermark. A future or malformed cursor is retried without
+writing, so a message cannot choose or skip a block. The tracked and release
 configs deliberately contain no Queue binding or consumer: provisioning,
 single-concurrency policy, retry/DLQ policy and activation remain a separate
 external gate.
@@ -105,12 +109,15 @@ Worker release bound it without adding a cron, Queue consumer or public route:
 - migrations: `0001_initial.sql` through
   `0004_operator_outbox_archives.sql`, all applied remotely
 - runtime gates: `READ_MODEL_ENABLED=false`,
-  `READ_MODEL_INGESTION_ENABLED=false` and `READ_MODEL_BACKFILL_ENABLED=false`
-- exposure: `workers_dev=false`, `preview_urls=false`, no route, cron or Queue
+  `READ_MODEL_INGESTION_ENABLED=false`, `READ_MODEL_BACKFILL_ENABLED=false` and
+  `READ_MODEL_BACKFILL_CONTINUE_ENABLED=false`
+- exposure: `workers_dev=false`, `preview_urls=false`, no route or Queue; the
+  one-minute finality cron performs only two RPC reads
 
-Remote verification found all ten domain tables empty, the contiguous-watermark
-trigger and four expected indexes present, and no pending migration. This is a
-D1 foundation and dark binding receipt, not an ingestion/API or rebuild result.
+After the bounded canary, remote verification found the watermark at block
+`263118180` with all nine non-watermark tables empty. The contiguous-watermark
+trigger, four expected indexes and migrations remain intact. This proves one
+180-block slice, not an API activation or full rebuild.
 
 Every scheduled invocation emits exactly one secrets-free JSON record with
 schema `youtick.read-model-ingestion.v1`. Success records include status,
@@ -176,7 +183,7 @@ node --test scripts/apply-market-read-model-d1.test.mjs \
   scripts/rebuild-market-read-model.test.mjs
 ```
 
-Still required before pilot traffic: an exact-main Worker release, a finite
-dedicated RPC binding, Queue/consumer/DLQ resources, lag alerts, a named human
-Platform/SRE owner, a measured four-hour rebuild drill and an alert path for the
-bounded ingestion failure codes.
+Still required before pilot traffic: an exact-main release of this continuation
+guard, a supervised Queue consumer policy, a named human Platform/SRE owner and
+a measured four-hour rebuild drill. Alert delivery remains an explicitly
+accepted risk; the bounded ingestion failure codes still need active supervision.

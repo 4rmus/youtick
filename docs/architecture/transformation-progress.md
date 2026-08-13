@@ -149,8 +149,8 @@ Evidence classes remain separate:
 | Exit gate | Status | Evidence |
 |---|---|---|
 | Standard events emitted on testnet | PARTIAL | Market source emits the economic/publication/withdrawal/governance catalog as `youtick_market@1.0.0`; fresh-v2 testnet previously proved governance events only. The new economic catalog is local and not deployed. `LOCAL_TEST` + prior `TESTNET` governance evidence. |
-| Read model rebuilds from chain | PARTIAL | The bounded Neardata adapter and watermark-safe Queue source feed the deterministic reducer/atomic D1 writer. A dark read-model Worker is deployed with the exact D1 binding and only a two-read finality schedule; ingestion, backfill and API flags remain false, both dedicated backfill Queues remain unbound, all ten D1 tables are empty and no zero-to-tip rebuild exists. `LOCAL_TEST` + `TESTNET_READ` + `PREVIEW_DEPLOYMENT` + `D1_CONTROL_PLANE`. |
-| Event idempotency/finality watermark tests pass | PARTIAL | Exact contract replays emit no duplicate event. Reducer deduplicates `(block_height, receipt_id, event_index)`, rejects conflicts and the D1 writer advances a complete final block, including an empty block, atomically. The deployed finality schedule performs no D1 transaction; a real backfill transaction and RTO drill remain absent. `LOCAL_TEST` + `CI`. |
+| Read model rebuilds from chain | PARTIAL | The bounded Neardata adapter and watermark-safe Queue source feed the deterministic reducer/atomic D1 writer. A supervised canary processed blocks `263118001–263118180` and left the verified D1 watermark at `263118180`; all non-watermark tables remain empty. The Worker is dark again, both Queues are unbound/empty and no zero-to-tip rebuild exists. `LOCAL_TEST` + `TESTNET_READ` + `PREVIEW_QUEUE` + `D1_WRITE`. |
+| Event idempotency/finality watermark tests pass | PARTIAL | Exact contract replays emit no duplicate event. Reducer deduplicates `(block_height, receipt_id, event_index)`, rejects conflicts and the D1 writer advances a complete final block, including an empty block, atomically. The bounded canary performed 180 contiguous D1 writes and matched the expected terminal hash; the full RTO drill remains absent. `LOCAL_TEST` + `CI` + `PREVIEW_QUEUE` + `D1_WRITE`. |
 | Discover/profile use read API | PARTIAL | A disabled-by-default Web client reads active Discover pages and creator publication/sales history from the versioned D1 API. Initial Discover failure falls back to canonical NEAR without mixing cursors; creator available balance/withdrawal and all purchase/playback authority stay on NEAR. The D1 binding is deployed dark, but the API flag remains false and no public route exists. `LOCAL_TEST` + `PREVIEW_DEPLOYMENT`. |
 | Purchase/playback remain canonical-chain based | PASS | Current architecture and Worker final reads retain NEAR authority. `LOCAL_STATIC`; target runtime activation is not implied. |
 | Sale ledger and withdrawal audit available | PARTIAL | Event reducer/D1 projections include sale ledger, entitlements and withdrawal history; rebuild and D1 retain the same exact withdrawal event status. Creator aggregate sales use exact decimal-string/BigInt addition rather than lossy SQLite integer casts. No deployed D1, support authorization or accounting reconciliation exists. `LOCAL_TEST`. |
@@ -202,7 +202,7 @@ Evidence classes remain separate:
 | LP-002 | 3 | PARTIAL | The concrete `MediaProvider` implementation now lives with separate API/TUS transport and raw normalization; ready validation, bounded private-media probes and pure webhook normalization also have explicit modules. The independent provider-mutation gate blocks create before lease/provider use while keeping an authorized job recoverable; provider reads and existing TUS recovery stay available. Conservative cost reservation exists, but actual billing reconciliation is external. No runtime asset-delete call site exists, so an unused mutation was not added. `LOCAL_TEST`. |
 | WEB-001 | 3 | PASS_LOCAL | One canonical UI stage follows the target lifecycle and a pure predecessor table enforces forward/retry/reset/terminal edges. A fingerprint-verified v2 draft restores safe UI projections; provider-processing resumes visibility-aware Query polling without reopening payment, while interrupted upload returns to upload-ready. The finality retry and composed job/publication read now live in the existing publication use-case service, leaving the component without a direct network primitive or timer. Real browser reload/staging proof remains absent. `LOCAL_TEST`. |
 | EVENT-001 | 4 | PARTIAL | Market v2 locally emits job, rebuild-complete publication, entitlement, withdrawal, bridge and quote-key events with common context/idempotency fields and no capabilities. The fresh testnet v2 has zero publications, but the updated artifact is not deployed; `contract_migrated`, testnet economic-event proof and final receipt/event indexing remain absent. |
-| DATA-001 | 4 | PARTIAL | Source-only D1 schema, deterministic rebuild, complete-block atomic writer, bounded Neardata adapter, testnet-only scheduled entrypoint, contiguous cursor, >16-event fail-closed policy, structured lag telemetry, GET-only API and closed Discover/profile client pass locally. Dedicated D1 `71292344-ebde-444e-b7a5-51f788b77056` has migrations 0001–0004 and an exact source binding; all ten domain tables are empty. The read-model Worker now runs only the two-read finality probe each minute while ingestion/backfill and all three runtime flags remain false. D1 query/ingestion exceptions are reduced to bounded 503/error codes and initial Discover fallback never mixes cursors. Start block is 263118001; alert delivery and the deployed RTO drill remain absent. |
+| DATA-001 | 4 | PARTIAL | Source-only D1 schema, deterministic rebuild, complete-block atomic writer, bounded Neardata adapter, testnet-only scheduled entrypoint, contiguous cursor, >16-event fail-closed policy, structured lag telemetry, GET-only API and closed Discover/profile client pass locally. Dedicated D1 `71292344-ebde-444e-b7a5-51f788b77056` has migrations 0001–0004, an exact source binding and the bounded-canary watermark `263118180`; all nine non-watermark tables are empty. The deployed Worker again runs only the two-read finality probe while ingestion/backfill/API remain closed. Automatic Queue continuation is separately default-off in source. Start block is 263118001; alert delivery is accepted risk and the deployed RTO drill remains absent. |
 | PAY-001 | 4 | PARTIAL | Technical pilot is non-refundable; source-only exact sale ledger, creator aggregate and withdrawal audit pass locally. Mainnet policy approval, deployed D1 and accounting reconciliation remain absent. |
 | SRE-001 | 0–5 | PARTIAL | Redacted request/dependency/Queue/payment telemetry, a one-shot per-isolate cold-start field, bounded state-kind/projected DO record telemetry, Market reserve/RPC-finality sources and a machine-readable `SOURCE_ONLY` policy exist. The exact read-model finality source is deployed at one-minute cadence and its structured `lag_blocks` field is queryable. All nine alerts have a role/action and all six domain controls are source-ready. Guarded release inputs remain closed; the contract purchase control requires a separately approved on-chain pause receipt. The account-level native Workers Observability alert feature, named on-call, delivered notifications, deployed control exercises and drills remain absent. |
 | PERF-001 | 5 | PARTIAL | Opt-in local runs reject 100,000 wrong-origin requests with zero growth and serve 1,000 authorized warm requests at 9.15 ms p95 with zero errors, no warm external/DO calls and bounded cache. Mocked local latency is not deployed evidence. |
@@ -4426,3 +4426,43 @@ Evidence classes remain separate:
   mutation. Alert-channel selection, binding/test delivery, Queue attachment,
   backfill seed, D1 writes and the RTO 4h drill remain separate later gates;
   Cloudflare support is not one of those paths.
+
+### CHECKPOINT 130 — Phase 4 bounded Queue/D1 canary and continuation guard
+
+- DURUM: `BOUNDED_CANARY_PASS / CONTINUATION_RACE_CLEANED / LOCAL_SOURCE_PASS / RTO_UNPROVEN`.
+- SUPERVISED CANARY (2026-08-13):
+  - exact-main source `0718fb253b439de724cf3acf3c971b229137a569`
+    ran temporarily as backfill-active version
+    `617183d5-f51c-420e-ab6f-908045ef1734`; read/API and scheduled ingestion
+    remained false;
+  - one seed at `263118001` processed 180 contiguous blocks through
+    `263118180` in 105.211 seconds with `outcome=ok`, `event_count=0` and
+    terminal hash `8wwNDmjF6sudaajBJvRSnVcQL3p7FjxfndFPNnbYYhdW`;
+  - the exact version's finality probe also stayed healthy with two RPC calls
+    and 2–3 blocks of observed lag.
+- CONTINUATION RACE / CLEANUP:
+  - the first invocation exceeded the temporary Queue delivery delay, so its
+    continuation became deliverable before consumer removal completed. A
+    second 180-block slice reached `263118360` and observed four governance
+    events; this exceeded the intended one-slice canary boundary;
+  - the consumer was removed, exact-main dark version
+    `46bc8a81-70c8-4de5-afec-a1edcf20ebab` restored all runtime flags to false,
+    both Queues were purged and delivery delay was reset to zero. Final Queue
+    and DLQ backlogs, producer counts and consumer counts are all zero;
+  - D1 Time Travel removed the second-slice rows. Its requested boundary
+    bookmark resolved within the first slice at `263118106`, so the confirmed
+    first-slice watermark/hash/timestamp was restored with one atomic row
+    replacement. Final D1 state is watermark `263118180` with all nine
+    non-watermark tables empty; cleanup bookmark is
+    `00000013-00000002-000050c6-46a040aaba0532eb7d8270785435c3ab`.
+- LOCAL SOURCE GUARD:
+  - `READ_MODEL_BACKFILL_CONTINUE_ENABLED=false` now separates one-slice
+    execution from automatic continuation. While closed, no producer binding
+    is required and stale redelivery returns `stale_ignored` without producing
+    another message. Exact `true` preserves the existing continuation and
+    stale-watermark repair behavior;
+  - tracked/release configs keep both backfill flags false and contain no Queue
+    binding. Focused read-model/release/security tests pass 78/78.
+- GÜNCEL FAZ KAPISI: `LOCAL_SOURCE_PASS / REVIEW_AND_CI_PENDING`. Runtime stays
+  dark. Publish and merge this guard through scoped PR/CI, then stop before a
+  new Queue attachment, seed, D1 write or measured multi-slice RTO drill.
