@@ -4466,3 +4466,56 @@ Evidence classes remain separate:
 - GÜNCEL FAZ KAPISI: `LOCAL_SOURCE_PASS / REVIEW_AND_CI_PENDING`. Runtime stays
   dark. Publish and merge this guard through scoped PR/CI, then stop before a
   new Queue attachment, seed, D1 write or measured multi-slice RTO drill.
+
+### CHECKPOINT 131 — Phase 4 continuation-off single-slice runtime proof
+
+- DURUM: `SINGLE_SLICE_GUARD_PASS / RUNTIME_RECLOSED / RTO_4H_PROJECTED_FAIL`.
+- EXACT SOURCE / DARK DEPLOY (2026-08-14):
+  - continuation guard PR `#116` merged as exact main
+    `a908852077399a81fb25b0b5e6bcb3d74b95b3fc`; main CI run
+    `31743270526` passed all 12 jobs;
+  - exact source was deployed dark as version
+    `7ba7417f-241a-46f1-848d-8b72c14082b3`. `READ_MODEL_ENABLED`,
+    `READ_MODEL_INGESTION_ENABLED`, `READ_MODEL_BACKFILL_ENABLED` and
+    `READ_MODEL_BACKFILL_CONTINUE_ENABLED` were all false. The exact D1 and
+    RPC-secret bindings remained present, with no Queue producer binding;
+  - a temporary exact-source canary version
+    `c3d525e6-dd71-4c33-8784-26039e487a90` changed only
+    `READ_MODEL_BACKFILL_ENABLED=true`. Read/API ingestion and automatic
+    continuation remained false. Focused source tests passed 21/21 and the
+    Wrangler dry-run exposed only the intended D1 binding and variables.
+- BOUNDED QUEUE / D1 PROOF:
+  - both Queue backlogs began at zero. One temporary Worker consumer used batch
+    size 1, one-second wait, max concurrency 1, three retries, 60-second retry
+    delay and the dedicated DLQ. One JSON seed requested block `263118181`;
+  - Queue metrics recorded exactly one 81-byte write, one Worker read and one
+    successful delete, with zero retry. Measured end-to-end lag was 104.954
+    seconds and both final Queue backlogs returned to zero;
+  - D1 advanced exactly 180 contiguous blocks from watermark `263118180` to
+    `263118360`, terminal hash
+    `CZjyMAJXJXMLJ2aDswmrkvqwB4oZieNFti47icL5sXC9`. It recorded four matching
+    chain/governance events: `bridge_frozen`, `bridge_rotation_proposed`,
+    `bridge_rotated` and `bridge_unfrozen`. All other domain tables remained
+    empty;
+  - no continuation message was produced. The consumer was removed and dark
+    version `7ba7417f-241a-46f1-848d-8b72c14082b3` was restored to 100%.
+    Primary/DLQ producer and consumer counts are 0/0 and realtime backlog is
+    0 bytes/messages. A post-rollback exact-version finality cron returned
+    `outcome=ok`, `lag_blocks=2` and `rpc_calls=2`;
+  - no BetterStack-style service, email alarm, Cloudflare support request,
+    provider upload/payment mutation or unrelated runtime was added.
+- RTO EVIDENCE:
+  - at observed final block `263785591`, the remaining backlog from D1
+    watermark `263118360` was 667,231 blocks. The measured rate is 102.902
+    blocks/minute, projecting 108.069 hours to catch up;
+  - the accepted four-hour RTO requires 2,780.129 blocks/minute at that
+    boundary, a 27.017x throughput gap. A full automatic-continuation drill is
+    therefore not a valid next step with the current per-block adapter.
+- KANIT: exact-main `CI` + Cloudflare `WORKER_VERSION` + `QUEUE_HTTP_PUSH` +
+  realtime/operations `QUEUE_METRICS` + `D1_WRITE` + post-cleanup read-only
+  Worker/Queue/D1 verification.
+- GÜNCEL FAZ KAPISI: `THROUGHPUT_DECISION_REQUIRED / RUNTIME_CLOSED`. Keep
+  automatic continuation, Queue bindings/consumers and read-model write flags
+  closed. The next gate is source-only: either revise the four-hour RTO or
+  design and locally prove a materially higher-throughput ingestion path before
+  another runtime activation.
