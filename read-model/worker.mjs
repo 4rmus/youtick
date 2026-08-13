@@ -96,8 +96,9 @@ export async function ingestMarketReadModelBackfill(env, body, dependencies = {}
         return { schema: BACKFILL_TELEMETRY_SCHEMA, status: 'disabled' };
     }
     const config = ingestionConfig(env);
+    const continuationEnabled = env.READ_MODEL_BACKFILL_CONTINUE_ENABLED === 'true';
     const queue = env.READ_MODEL_BACKFILL_QUEUE;
-    if (!queue || typeof queue.send !== 'function') {
+    if (continuationEnabled && (!queue || typeof queue.send !== 'function')) {
         throw new Error('invalid_read_model_backfill_config');
     }
     const requestedBlockHeight = backfillMessageBlockHeight(body, config);
@@ -108,6 +109,13 @@ export async function ingestMarketReadModelBackfill(env, body, dependencies = {}
         throw new Error('read_model_backfill_gap');
     }
     if (requestedBlockHeight < nextBlockHeight) {
+        if (!continuationEnabled) {
+            return {
+                schema: BACKFILL_TELEMETRY_SCHEMA,
+                status: 'stale_ignored',
+                next_block_height: nextBlockHeight,
+            };
+        }
         await sendBackfillMessage(queue, nextBlockHeight);
         return {
             schema: BACKFILL_TELEMETRY_SCHEMA,
@@ -118,7 +126,7 @@ export async function ingestMarketReadModelBackfill(env, body, dependencies = {}
 
     const result = await ingestEnabledMarketReadModelBatch(env, dependencies, config);
     const telemetry = { ...result, schema: BACKFILL_TELEMETRY_SCHEMA };
-    if (result.remaining_blocks > 0) {
+    if (result.remaining_blocks > 0 && continuationEnabled) {
         const continuationBlockHeight = result.block_height + 1;
         await sendBackfillMessage(queue, continuationBlockHeight);
         return { ...telemetry, next_block_height: continuationBlockHeight };

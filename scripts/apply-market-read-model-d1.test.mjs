@@ -10,6 +10,7 @@ import { runMarketReadModelOnce } from './run-market-read-model-once.mjs';
 import {
     fetchNearFinalBlockHeight,
     ingestMarketReadModelBatch,
+    ingestMarketReadModelBackfill,
     marketReadModelWorker,
 } from '../read-model/worker.mjs';
 
@@ -574,6 +575,7 @@ test('Queue backfill is closed by default and retries without reading', async ()
         messages: [{ body: {}, ack: () => {}, retry: () => { retried += 1; } }],
     }, {
         READ_MODEL_BACKFILL_ENABLED: 'true',
+        READ_MODEL_BACKFILL_CONTINUE_ENABLED: 'true',
         READ_MODEL_NETWORK: 'testnet',
         READ_MODEL_CONTRACT_ID: 'market.testnet',
         READ_MODEL_START_BLOCK_HEIGHT: '100',
@@ -591,6 +593,51 @@ test('Queue backfill is closed by default and retries without reading', async ()
     });
 });
 
+test('Queue backfill continuation is separately closed by default', async () => {
+    const db = await database();
+    const requested = [];
+    const env = {
+        READ_MODEL_BACKFILL_ENABLED: 'true',
+        READ_MODEL_NETWORK: 'testnet',
+        READ_MODEL_CONTRACT_ID: 'market.testnet',
+        READ_MODEL_START_BLOCK_HEIGHT: '100',
+        READ_MODEL_MAX_BLOCKS_PER_RUN: '180',
+        READ_MODEL_NEAR_RPC_URL: 'https://test.rpc.fastnear.com',
+        MARKET_READ_MODEL: db,
+    };
+    const dependencies = {
+        fetchFinalHeight: async () => 350,
+        fetchBlock: async (input) => {
+            requested.push(input.blockHeight);
+            return {
+                network: input.network, contract_id: input.contractId, finality: 'final',
+                block_height: input.blockHeight,
+                block_hash: `block_hash_${String(input.blockHeight).padStart(24, '0')}`,
+                events: [],
+            };
+        },
+    };
+    const body = {
+        schema: 'youtick.read-model-backfill-message.v1',
+        next_block_height: 100,
+    };
+
+    const first = await ingestMarketReadModelBackfill(env, body, dependencies);
+    assert.equal(first.status, 'catching_up');
+    assert.equal(first.block_count, 180);
+    assert.equal(first.block_height, 279);
+    assert.equal('next_block_height' in first, false);
+
+    const replay = await ingestMarketReadModelBackfill(env, body, dependencies);
+    assert.deepEqual(replay, {
+        schema: 'youtick.read-model-backfill.v1',
+        status: 'stale_ignored',
+        next_block_height: 280,
+    });
+    assert.equal(requested.length, 180);
+    db.sqlite.close();
+});
+
 test('Queue backfill bounds work, repairs a failed continuation and rejects a gap', async () => {
     const db = await database();
     const requested = [];
@@ -599,6 +646,7 @@ test('Queue backfill bounds work, repairs a failed continuation and rejects a ga
     let queueUnavailable = true;
     const env = {
         READ_MODEL_BACKFILL_ENABLED: 'true',
+        READ_MODEL_BACKFILL_CONTINUE_ENABLED: 'true',
         READ_MODEL_NETWORK: 'testnet',
         READ_MODEL_CONTRACT_ID: 'market.testnet',
         READ_MODEL_START_BLOCK_HEIGHT: '100',

@@ -77,6 +77,7 @@ test('testnet read model binding stays dark with only the finality probe cron', 
     assert.match(source, /READ_MODEL_ENABLED = "false"/);
     assert.match(source, /READ_MODEL_INGESTION_ENABLED = "false"/);
     assert.match(source, /READ_MODEL_BACKFILL_ENABLED = "false"/);
+    assert.match(source, /READ_MODEL_BACKFILL_CONTINUE_ENABLED = "false"/);
     assert.match(source, /binding = "MARKET_READ_MODEL"/);
     assert.match(source, /database_name = "youtick-market-read-model-testnet"/);
     assert.match(source, /database_id = "71292344-ebde-444e-b7a5-51f788b77056"/);
