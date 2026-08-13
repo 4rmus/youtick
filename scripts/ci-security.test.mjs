@@ -65,13 +65,15 @@ test('required CI Gate waits for the reusable CodeQL workflow', async () => {
     assert.match(codeql, /\n  schedule:\n/);
 });
 
-test('testnet read model binding stays dark and cron-free', async () => {
+test('testnet read model binding stays dark with only the finality probe cron', async () => {
     const source = await readFile(new URL('../read-model/wrangler.toml', import.meta.url), 'utf8');
 
     assert.match(source, /name = "youtick-market-read-model-testnet"/);
     assert.match(source, /compatibility_flags = \["nodejs_compat"\]/);
     assert.match(source, /workers_dev = false/);
     assert.match(source, /preview_urls = false/);
+    assert.match(source, /\[triggers\]\ncrons = \["\* \* \* \* \*"\]/);
+    assert.match(source, /\[observability\]\nenabled = true\nhead_sampling_rate = 1/);
     assert.match(source, /READ_MODEL_ENABLED = "false"/);
     assert.match(source, /READ_MODEL_INGESTION_ENABLED = "false"/);
     assert.match(source, /READ_MODEL_BACKFILL_ENABLED = "false"/);
@@ -79,7 +81,7 @@ test('testnet read model binding stays dark and cron-free', async () => {
     assert.match(source, /database_name = "youtick-market-read-model-testnet"/);
     assert.match(source, /database_id = "71292344-ebde-444e-b7a5-51f788b77056"/);
     assert.match(source, /migrations_dir = "d1"/);
-    assert.doesNotMatch(source, /\btriggers\b|\bcrons\b|\bqueues\b|READ_MODEL_NEAR_RPC_URL/);
+    assert.doesNotMatch(source, /\bqueues\b|READ_MODEL_NEAR_RPC_URL/);
 });
 
 test('testnet Livepeer Queue binding stays closed with the pilot policy', async () => {

@@ -5,6 +5,13 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = false
 preview_urls = false
 
+[triggers]
+crons = ["* * * * *"]
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 [vars]
 READ_MODEL_ENABLED = "false"
 READ_MODEL_INGESTION_ENABLED = "false"

@@ -168,6 +168,23 @@ test('SLO policy locks report thresholds to emitted bounded events', async () =>
         policy.alerts.find(({ id }) => id === 'rpc_finality_lag').source_status,
         'SOURCE_PARTIAL',
     );
+    assert.deepEqual(
+        policy.alerts.find(({ id }) => id === 'rpc_finality_lag'),
+        {
+            id: 'rpc_finality_lag',
+            source_status: 'SOURCE_PARTIAL',
+            source_probe: 'runNearFinalityProbe',
+            source_field: 'lag_blocks',
+            operator: '>=',
+            threshold: 5,
+            unit: 'blocks',
+            evaluation_window_minutes: 5,
+            required_consecutive_observations: 5,
+            missing: 'deployed_alert_policy_and_delivery',
+            owner_role: 'PLATFORM_SRE',
+            first_action: 'hold_chain_mutations_and_verify_finality',
+        },
+    );
     assert.doesNotMatch(JSON.stringify(policy), /MISSING_SIGNAL|EXTERNAL_METRIC_REQUIRED/);
     assert.doesNotMatch(
         JSON.stringify(policy),
