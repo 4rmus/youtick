@@ -1,6 +1,6 @@
 # Market read model
 
-Status: `D1_PROVISIONED / MIGRATIONS_APPLIED / BINDING_SOURCE_ONLY / RUNTIME_GATES_CLOSED`
+Status: `D1_PROVISIONED / MIGRATIONS_APPLIED / PREVIEW_WORKER_DARK / RUNTIME_GATES_CLOSED`
 
 NEAR remains authoritative for payments, balances, entitlements and playback
 authorization. This derived model is only for discover, profile, dashboard and
@@ -12,8 +12,8 @@ skipped/older block or a different hash at the current height while permitting
 an exact replay. `d1/0003_upload_job_archives.sql` adds the separate bounded
 terminal UploadJob summary, and `d1/0004_operator_outbox_archives.sql` adds the
 bounded confirmed operator summary used by their independent Bridge archive
-gates. The dedicated testnet D1 and source-only binding are recorded below;
-no Worker deployment or runtime binding is claimed. Platform/SRE owns the pilot
+gates. The dedicated testnet D1 and dark Preview binding are recorded below;
+no ingestion or API activation is claimed. Platform/SRE owns the pilot
 path: NEAR is the `RPO 0` source, the
 rebuild target is `RTO 4h`, and derived data is retained through pilot end plus
 90 days unless an active audit hold applies.
@@ -81,12 +81,22 @@ final-height RPC read, then at most 180 contiguous Neardata blocks. This needs a
 Workers Paid plan because Free permits only 50 external subrequests per
 invocation and cannot keep pace with roughly one NEAR block per second. Mainnet
 ingestion is intentionally rejected in this pilot source. The tracked Wrangler
-config has no cron trigger and no Worker deployment exists.
+config has no cron or Queue trigger and every read-model runtime gate is closed.
+
+The same Worker also contains a source-only Queue backfill entrypoint guarded
+independently by `READ_MODEL_BACKFILL_ENABLED=false`. A valid message names only
+the exact next D1 watermark height. It processes the same maximum 180 contiguous
+blocks and, while backlog remains, emits one continuation message. A future or
+malformed cursor is retried without writing; a stale cursor is repaired from the
+D1 watermark, so a replay cannot choose or skip a block. The tracked and release
+configs deliberately contain no Queue binding or consumer: provisioning,
+single-concurrency policy, retry/DLQ policy and activation remain a separate
+external gate.
 
 ## Provisioned testnet foundation
 
-The user-approved D1 foundation was created on 2026-08-10 without deploying a
-Worker or adding a cron trigger:
+The user-approved D1 foundation was created on 2026-08-10. A later dark Preview
+Worker release bound it without adding a cron, Queue consumer or public route:
 
 - database: `youtick-market-read-model-testnet`
 - database ID: `71292344-ebde-444e-b7a5-51f788b77056`
@@ -94,13 +104,13 @@ Worker or adding a cron trigger:
 - source binding: `MARKET_READ_MODEL` in `wrangler.toml`
 - migrations: `0001_initial.sql` through
   `0004_operator_outbox_archives.sql`, all applied remotely
-- runtime gates: `READ_MODEL_ENABLED=false` and
-  `READ_MODEL_INGESTION_ENABLED=false`
-- exposure: `workers_dev=false`, `preview_urls=false`, no cron
+- runtime gates: `READ_MODEL_ENABLED=false`,
+  `READ_MODEL_INGESTION_ENABLED=false` and `READ_MODEL_BACKFILL_ENABLED=false`
+- exposure: `workers_dev=false`, `preview_urls=false`, no route, cron or Queue
 
 Remote verification found all ten domain tables empty, the contiguous-watermark
 trigger and four expected indexes present, and no pending migration. This is a
-D1 foundation receipt, not a deployed ingestion/API or rebuild result.
+D1 foundation and dark binding receipt, not an ingestion/API or rebuild result.
 
 Every scheduled invocation emits exactly one secrets-free JSON record with
 schema `youtick.read-model-ingestion.v1`. Success records include status,
@@ -141,8 +151,8 @@ watermark; cache identity binds both the watermark and exact request URL.
 Payments, balances, entitlements and playback authorization never use it.
 Activation requires `READ_MODEL_ENABLED=true`, a deployed `MARKET_READ_MODEL`
 binding, an exact network and contract ID, plus an exact HTTPS
-`READ_MODEL_WEB_ORIGIN` for CORS. The tracked binding is source-only; no deployed
-binding exists. The Web client is separately guarded
+`READ_MODEL_WEB_ORIGIN` for CORS. The tracked config and deployed binding remain
+dark; no public route exists. The Web client is separately guarded
 by `NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL=false` and an exact HTTPS
 `NEXT_PUBLIC_MARKET_READ_MODEL_URL`. Discover falls back to canonical NEAR only
 when its first derived request is unavailable and never mixes cursor sources.
@@ -166,7 +176,7 @@ node --test scripts/apply-market-read-model-d1.test.mjs \
   scripts/rebuild-market-read-model.test.mjs
 ```
 
-Still required before pilot traffic: a provider-side Worker deployment, cron
-trigger and deployed D1 binding, Queue resources, lag alerts, a named human Platform/SRE owner, a
-measured four-hour rebuild drill and an alert path for the bounded ingestion
-failure codes.
+Still required before pilot traffic: an exact-main Worker release, a finite
+dedicated RPC binding, Queue/consumer/DLQ resources, lag alerts, a named human
+Platform/SRE owner, a measured four-hour rebuild drill and an alert path for the
+bounded ingestion failure codes.

@@ -500,6 +500,156 @@ test('scheduled ingestion is bounded to 180 sequential blocks per paid-plan run'
     db.sqlite.close();
 });
 
+test('Queue backfill is closed by default and retries without reading', async () => {
+    let fetched = false;
+    let acked = 0;
+    let retried = 0;
+    const logs = [];
+    await marketReadModelWorker.queue({
+        messages: [{
+            body: {},
+            ack: () => { acked += 1; },
+            retry: () => { retried += 1; },
+        }],
+    }, { READ_MODEL_BACKFILL_ENABLED: 'false' }, {}, {
+        fetchBlock: async () => { fetched = true; },
+        fetchFinalHeight: async () => { fetched = true; },
+        logger: { log: (value) => logs.push(value), error: (value) => logs.push(value) },
+    });
+
+    assert.equal(fetched, false);
+    assert.equal(acked, 0);
+    assert.equal(retried, 1);
+    assert.deepEqual(JSON.parse(logs[0]), {
+        schema: 'youtick.read-model-backfill.v1', status: 'disabled',
+    });
+
+    const configErrors = [];
+    await marketReadModelWorker.queue({
+        messages: [{ body: {}, ack: () => {}, retry: () => { retried += 1; } }],
+    }, {
+        READ_MODEL_BACKFILL_ENABLED: 'true',
+        READ_MODEL_NETWORK: 'testnet',
+        READ_MODEL_CONTRACT_ID: 'market.testnet',
+        READ_MODEL_START_BLOCK_HEIGHT: '100',
+        READ_MODEL_MAX_BLOCKS_PER_RUN: '180',
+        READ_MODEL_NEAR_RPC_URL: 'https://test.rpc.fastnear.com',
+        MARKET_READ_MODEL: { prepare: () => { throw new Error('unexpected_read'); } },
+    }, {}, {
+        logger: { log: () => {}, error: (value) => configErrors.push(value) },
+    });
+    assert.equal(retried, 2);
+    assert.deepEqual(JSON.parse(configErrors[0]), {
+        schema: 'youtick.read-model-backfill.v1',
+        status: 'failed',
+        error_code: 'invalid_read_model_backfill_config',
+    });
+});
+
+test('Queue backfill bounds work, repairs a failed continuation and rejects a gap', async () => {
+    const db = await database();
+    const requested = [];
+    const sendAttempts = [];
+    const logs = [];
+    let queueUnavailable = true;
+    const env = {
+        READ_MODEL_BACKFILL_ENABLED: 'true',
+        READ_MODEL_NETWORK: 'testnet',
+        READ_MODEL_CONTRACT_ID: 'market.testnet',
+        READ_MODEL_START_BLOCK_HEIGHT: '100',
+        READ_MODEL_MAX_BLOCKS_PER_RUN: '180',
+        READ_MODEL_NEAR_RPC_URL: 'https://test.rpc.fastnear.com',
+        MARKET_READ_MODEL: db,
+        READ_MODEL_BACKFILL_QUEUE: {
+            async send(body, options) {
+                sendAttempts.push({ body, options });
+                if (queueUnavailable) throw new Error('provider_secret_value');
+            },
+        },
+    };
+    const dependencies = {
+        fetchFinalHeight: async () => 350,
+        fetchBlock: async (input) => {
+            requested.push(input.blockHeight);
+            return {
+                network: input.network, contract_id: input.contractId, finality: 'final',
+                block_height: input.blockHeight,
+                block_hash: `block_hash_${String(input.blockHeight).padStart(24, '0')}`,
+                events: [],
+            };
+        },
+        logger: { log: (value) => logs.push(value), error: (value) => logs.push(value) },
+    };
+    const message = (nextBlockHeight) => {
+        let acked = 0;
+        let retried = 0;
+        return {
+            body: {
+                schema: 'youtick.read-model-backfill-message.v1',
+                next_block_height: nextBlockHeight,
+            },
+            ack: () => { acked += 1; },
+            retry: () => { retried += 1; },
+            counts: () => ({ acked, retried }),
+        };
+    };
+
+    const first = message(100);
+    await marketReadModelWorker.queue({ messages: [first] }, env, {}, dependencies);
+    assert.deepEqual(first.counts(), { acked: 0, retried: 1 });
+    assert.equal(requested.length, 180);
+    assert.deepEqual([requested[0], requested.at(-1)], [100, 279]);
+    assert.deepEqual(sendAttempts[0], {
+        body: {
+            schema: 'youtick.read-model-backfill-message.v1',
+            next_block_height: 280,
+        },
+        options: { contentType: 'json' },
+    });
+    assert.deepEqual(JSON.parse(logs[0]), {
+        schema: 'youtick.read-model-backfill.v1',
+        status: 'failed',
+        error_code: 'read_model_backfill_queue_unavailable',
+    });
+    assert.doesNotMatch(logs.join('\n'), /provider_secret_value/);
+
+    queueUnavailable = false;
+    const replay = message(100);
+    await marketReadModelWorker.queue({ messages: [replay] }, env, {}, dependencies);
+    assert.deepEqual(replay.counts(), { acked: 1, retried: 0 });
+    assert.equal(requested.length, 180);
+    assert.deepEqual(sendAttempts[1], sendAttempts[0]);
+    assert.deepEqual(JSON.parse(logs[1]), {
+        schema: 'youtick.read-model-backfill.v1',
+        status: 'stale_requeued',
+        next_block_height: 280,
+    });
+
+    const gap = message(281);
+    await marketReadModelWorker.queue({ messages: [gap] }, env, {}, dependencies);
+    assert.deepEqual(gap.counts(), { acked: 0, retried: 1 });
+    assert.equal(requested.length, 180);
+    assert.equal(sendAttempts.length, 2);
+    assert.deepEqual(JSON.parse(logs[2]), {
+        schema: 'youtick.read-model-backfill.v1',
+        status: 'failed',
+        error_code: 'read_model_backfill_gap',
+    });
+
+    const malformed = message(280);
+    malformed.body.next_block_height = '280';
+    await marketReadModelWorker.queue({ messages: [malformed] }, env, {}, dependencies);
+    assert.deepEqual(malformed.counts(), { acked: 0, retried: 1 });
+    assert.equal(requested.length, 180);
+    assert.equal(sendAttempts.length, 2);
+    assert.deepEqual(JSON.parse(logs[3]), {
+        schema: 'youtick.read-model-backfill.v1',
+        status: 'failed',
+        error_code: 'invalid_read_model_backfill_message',
+    });
+    db.sqlite.close();
+});
+
 test('final-height RPC is bounded and requires the exact final block response', async () => {
     let request;
     const height = await fetchNearFinalBlockHeight({

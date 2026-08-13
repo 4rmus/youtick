@@ -9,6 +9,8 @@ const ACCOUNT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const MAX_BLOCKS_PER_RUN = 180;
 const MAX_RPC_RESPONSE_BYTES = 256 * 1024;
 const TELEMETRY_SCHEMA = 'youtick.read-model-ingestion.v1';
+const BACKFILL_TELEMETRY_SCHEMA = 'youtick.read-model-backfill.v1';
+const BACKFILL_MESSAGE_SCHEMA = 'youtick.read-model-backfill-message.v1';
 const INGESTION_ERROR_CODES = new Set([
     'd1_final_block_event_limit_exceeded',
     'invalid_d1_event_batch_size',
@@ -26,12 +28,23 @@ const INGESTION_ERROR_CODES = new Set([
     'neardata_unavailable',
     'read_model_final_rpc_unavailable',
 ]);
+const BACKFILL_ERROR_CODES = new Set([
+    ...INGESTION_ERROR_CODES,
+    'invalid_read_model_backfill_batch',
+    'invalid_read_model_backfill_config',
+    'invalid_read_model_backfill_message',
+    'read_model_backfill_gap',
+    'read_model_backfill_queue_unavailable',
+]);
 
 export async function ingestMarketReadModelBatch(env, dependencies = {}) {
     if (env.READ_MODEL_INGESTION_ENABLED !== 'true') {
         return { schema: TELEMETRY_SCHEMA, status: 'disabled' };
     }
-    const config = ingestionConfig(env);
+    return ingestEnabledMarketReadModelBatch(env, dependencies);
+}
+
+async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ingestionConfig(env)) {
     const fetchFinalHeight = dependencies.fetchFinalHeight ?? fetchNearFinalBlockHeight;
     const fetchBlock = dependencies.fetchBlock ?? fetchNeardataMarketBlock;
     const finalBlockHeight = await fetchFinalHeight(env);
@@ -68,6 +81,63 @@ export async function ingestMarketReadModelBatch(env, dependencies = {}) {
         remaining_blocks: Math.max(0, finalBlockHeight - last.block_height),
         ...last,
     };
+}
+
+export async function ingestMarketReadModelBackfill(env, body, dependencies = {}) {
+    if (env.READ_MODEL_BACKFILL_ENABLED !== 'true') {
+        return { schema: BACKFILL_TELEMETRY_SCHEMA, status: 'disabled' };
+    }
+    const config = ingestionConfig(env);
+    const queue = env.READ_MODEL_BACKFILL_QUEUE;
+    if (!queue || typeof queue.send !== 'function') {
+        throw new Error('invalid_read_model_backfill_config');
+    }
+    const requestedBlockHeight = backfillMessageBlockHeight(body, config);
+    const nextBlockHeight = await nextMarketReadModelBlockHeight(
+        env.MARKET_READ_MODEL, config,
+    );
+    if (requestedBlockHeight > nextBlockHeight) {
+        throw new Error('read_model_backfill_gap');
+    }
+    if (requestedBlockHeight < nextBlockHeight) {
+        await sendBackfillMessage(queue, nextBlockHeight);
+        return {
+            schema: BACKFILL_TELEMETRY_SCHEMA,
+            status: 'stale_requeued',
+            next_block_height: nextBlockHeight,
+        };
+    }
+
+    const result = await ingestEnabledMarketReadModelBatch(env, dependencies, config);
+    const telemetry = { ...result, schema: BACKFILL_TELEMETRY_SCHEMA };
+    if (result.remaining_blocks > 0) {
+        const continuationBlockHeight = result.block_height + 1;
+        await sendBackfillMessage(queue, continuationBlockHeight);
+        return { ...telemetry, next_block_height: continuationBlockHeight };
+    }
+    return telemetry;
+}
+
+function backfillMessageBlockHeight(body, config) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+        || Object.keys(body).length !== 2
+        || body.schema !== BACKFILL_MESSAGE_SCHEMA
+        || !Number.isSafeInteger(body.next_block_height)
+        || body.next_block_height < config.startBlockHeight) {
+        throw new Error('invalid_read_model_backfill_message');
+    }
+    return body.next_block_height;
+}
+
+async function sendBackfillMessage(queue, nextBlockHeight) {
+    try {
+        await queue.send({
+            schema: BACKFILL_MESSAGE_SCHEMA,
+            next_block_height: nextBlockHeight,
+        }, { contentType: 'json' });
+    } catch {
+        throw new Error('read_model_backfill_queue_unavailable');
+    }
 }
 
 export async function fetchNearFinalBlockHeight(env, fetchImpl = fetch) {
@@ -155,6 +225,38 @@ export const marketReadModelWorker = {
             },
         );
         ctx.waitUntil(work);
+    },
+    async queue(batch, env, _ctx, dependencies = {}) {
+        const logger = dependencies.logger ?? console;
+        if (!batch || !Array.isArray(batch.messages) || batch.messages.length !== 1) {
+            for (const message of batch?.messages ?? []) message.retry();
+            logger.error(JSON.stringify({
+                schema: BACKFILL_TELEMETRY_SCHEMA,
+                status: 'failed',
+                error_code: 'invalid_read_model_backfill_batch',
+            }));
+            return;
+        }
+        const [message] = batch.messages;
+        try {
+            const result = await ingestMarketReadModelBackfill(
+                env, message.body, dependencies,
+            );
+            logger.log(JSON.stringify(result));
+            if (result.status === 'disabled') message.retry();
+            else message.ack();
+        } catch (error) {
+            const value = error instanceof Error ? error.message : '';
+            const errorCode = BACKFILL_ERROR_CODES.has(value)
+                ? value
+                : 'read_model_backfill_failed';
+            logger.error(JSON.stringify({
+                schema: BACKFILL_TELEMETRY_SCHEMA,
+                status: 'failed',
+                error_code: errorCode,
+            }));
+            message.retry();
+        }
     },
 };
 

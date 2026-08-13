@@ -182,6 +182,7 @@ const READ_MODEL_ARTIFACT_WRANGLER = [
     '[vars]',
     'READ_MODEL_ENABLED = "false"',
     'READ_MODEL_INGESTION_ENABLED = "false"',
+    'READ_MODEL_BACKFILL_ENABLED = "false"',
     'READ_MODEL_NETWORK = "testnet"',
     'READ_MODEL_CONTRACT_ID = "lp-arch-market-v2-260809.youtick-dev-v3.testnet"',
     'READ_MODEL_START_BLOCK_HEIGHT = "263118001"',

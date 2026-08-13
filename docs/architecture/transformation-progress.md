@@ -4136,3 +4136,44 @@ Evidence classes remain separate:
   gates. The next separately authorized runtime package is Phase 4 Read canary:
   cron plus D1 ingestion, then API and internal Web sequentially, while upload,
   playback issuance and provider mutation remain closed.
+
+### CHECKPOINT 122 — Phase 4 Read preflight and bounded Queue backfill source
+
+- LIVE PREFLIGHT (2026-08-12, read-only):
+  - testnet D1 `71292344-ebde-444e-b7a5-51f788b77056` has migrations 0001–0004,
+    the contiguous-watermark trigger and four expected indexes; all ten domain
+    tables remain empty and the probes wrote zero rows;
+  - dark Worker version `8062e8cc-a942-4ea8-b1d6-479401e58395` remains at 100%
+    with source tag `ac97fb368ca12c44fa5fa5ad1769dca275bf88b0`, the exact D1 binding,
+    no route or schedule, and both read-model runtime flags false. Current main
+    `f2b8bc610d03a94f02022b15d4630c22f7963a73` differs only by the Checkpoint 121
+    progress record, but no exact-main deployed tag is claimed;
+  - dedicated `READ_MODEL_NEAR_RPC_URL`, Workers Paid proof, a delivered lag
+    alert and a named human on-call owner remain externally unproven. No secret,
+    trigger, flag, Queue, route or D1 data was changed.
+- RTO PREFLIGHT RESULT:
+  - final height `263617724` versus start `263118001` leaves 499,724 blocks;
+  - the existing 180-block one-minute schedule requires about 46.28 hours with
+    zero chain growth and about 69.42 hours at roughly 60 new blocks/minute;
+    the four-hour target needs sustained throughput of about 2,143 blocks/minute;
+  - therefore the cron-only activation is `PREFLIGHT_BLOCKED` and cannot claim
+    the accepted RTO 4h contract.
+- LOCAL SOURCE SLICE:
+  - the read-model Worker now has an independent
+    `READ_MODEL_BACKFILL_ENABLED=false` Queue entrypoint. One valid message is
+    bounded to 180 contiguous blocks and emits at most one continuation;
+  - message height must equal the D1 next watermark. A future cursor retries
+    before a Neardata read or D1 write; a stale replay regenerates the current
+    continuation. If D1 advances but Queue send fails, the original message is
+    retried and that stale repair prevents a silent chain stop;
+  - tracked and release Wrangler configs remain route-, cron- and Queue-free.
+    Queue provisioning, binding, single-concurrency consumer policy, retries,
+    DLQ and runtime activation are deliberately excluded from this source gate;
+  - read-model contract tests pass 36/36, the exact CI Gate command passes
+    136/136, and Wrangler 4.90.0 dry-run packages 49.84 KiB/gzip 10.87 KiB with
+    all three read-model flags false.
+- GÜNCEL FAZ KAPISI: `LOCAL_SOURCE_PASS / RUNTIME_BLOCKED`. This source does not
+  prove four-hour recovery. The next gate is review/CI of this bounded patch.
+  Any exact-main Preview deploy, RPC/Queue/alert provisioning, consumer attach,
+  seed message or D1 backfill requires separate authorization and measured
+  runtime evidence.
