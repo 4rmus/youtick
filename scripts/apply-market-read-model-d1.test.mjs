@@ -364,6 +364,51 @@ test('scheduled ingestion is inert while its independent runtime gate is closed'
     assert.equal(fetched, false);
 });
 
+test('minute finality schedule makes exactly two RPC reads without D1 or Queue access', async () => {
+    const requests = [];
+    const waits = [];
+    const logs = [];
+    const forbidden = new Proxy({}, {
+        get() { throw new Error('unexpected_binding_access'); },
+    });
+    marketReadModelWorker.scheduled({ cron: '* * * * *' }, {
+        READ_MODEL_ENABLED: 'false',
+        READ_MODEL_INGESTION_ENABLED: 'false',
+        READ_MODEL_BACKFILL_ENABLED: 'false',
+        READ_MODEL_NEAR_RPC_URL: 'https://test.rpc.fastnear.com',
+        MARKET_READ_MODEL: forbidden,
+        READ_MODEL_BACKFILL_QUEUE: forbidden,
+    }, { waitUntil: (promise) => waits.push(promise) }, {
+        now: () => 1_785_600_000_000,
+        fetchImpl: async (_url, init) => {
+            const request = JSON.parse(init.body);
+            requests.push(request);
+            const height = request.params.finality === 'final' ? 100 : 103;
+            return Response.json({
+                jsonrpc: '2.0', id: request.id, result: { header: { height } },
+            });
+        },
+        logger: { log: (value) => logs.push(value), error: (value) => logs.push(value) },
+    });
+
+    assert.equal(waits.length, 1);
+    const receipt = await waits[0];
+    assert.deepEqual(receipt, {
+        schema: 'youtick.near-finality-probe.v1',
+        event: 'rpc_finality_observed',
+        observed_at_ms: 1_785_600_000_000,
+        final_block_height: '100',
+        optimistic_block_height: '103',
+        lag_blocks: 3,
+        rpc_calls: 2,
+    });
+    assert.deepEqual(requests.map(({ method, params }) => ({ method, params })), [
+        { method: 'block', params: { finality: 'final' } },
+        { method: 'block', params: { finality: 'optimistic' } },
+    ]);
+    assert.deepEqual(logs, [receipt]);
+});
+
 test('scheduled Worker applies one testnet block and rejects unsafe activation config', async () => {
     const db = await database();
     const env = {

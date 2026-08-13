@@ -1,4 +1,5 @@
 import { fetchNeardataMarketBlock } from '../scripts/fetch-neardata-market-block.mjs';
+import { runNearFinalityProbe } from '../workers/livepeer-bridge/scripts/near-finality-canary.mjs';
 import {
     nextMarketReadModelBlockHeight,
     runMarketReadModelOnce,
@@ -11,6 +12,8 @@ const MAX_RPC_RESPONSE_BYTES = 256 * 1024;
 const TELEMETRY_SCHEMA = 'youtick.read-model-ingestion.v1';
 const BACKFILL_TELEMETRY_SCHEMA = 'youtick.read-model-backfill.v1';
 const BACKFILL_MESSAGE_SCHEMA = 'youtick.read-model-backfill-message.v1';
+const FINALITY_PROBE_CRON = '* * * * *';
+const FINALITY_TELEMETRY_SCHEMA = 'youtick.near-finality-probe.v1';
 const INGESTION_ERROR_CODES = new Set([
     'd1_final_block_event_limit_exceeded',
     'invalid_d1_event_batch_size',
@@ -35,6 +38,11 @@ const BACKFILL_ERROR_CODES = new Set([
     'invalid_read_model_backfill_message',
     'read_model_backfill_gap',
     'read_model_backfill_queue_unavailable',
+]);
+const FINALITY_ERROR_CODES = new Set([
+    'near_finality_probe_config_invalid',
+    'near_finality_probe_invalid',
+    'near_finality_probe_unavailable',
 ]);
 
 export async function ingestMarketReadModelBatch(env, dependencies = {}) {
@@ -204,23 +212,37 @@ function validRpcUrl(value) {
 
 export const marketReadModelWorker = {
     fetch: marketReadApi,
-    scheduled(_controller, env, ctx, dependencies = {}) {
+    scheduled(controller, env, ctx, dependencies = {}) {
         const logger = dependencies.logger ?? console;
-        const work = ingestMarketReadModelBatch(env, dependencies).then(
+        const isFinalityProbe = controller?.cron === FINALITY_PROBE_CRON;
+        const task = isFinalityProbe
+            ? runNearFinalityProbe({
+                rpcUrl: env.READ_MODEL_NEAR_RPC_URL,
+                fetchImpl: dependencies.fetchImpl,
+                now: dependencies.now,
+            })
+            : ingestMarketReadModelBatch(env, dependencies);
+        const work = task.then(
             (result) => {
-                logger.log(JSON.stringify(result));
+                logger.log(isFinalityProbe ? result : JSON.stringify(result));
                 return result;
             },
             (error) => {
                 const value = error instanceof Error ? error.message : '';
-                const errorCode = INGESTION_ERROR_CODES.has(value)
+                const errorCodes = isFinalityProbe
+                    ? FINALITY_ERROR_CODES
+                    : INGESTION_ERROR_CODES;
+                const errorCode = errorCodes.has(value)
                     ? value
-                    : 'read_model_ingestion_failed';
-                logger.error(JSON.stringify({
-                    schema: TELEMETRY_SCHEMA,
+                    : isFinalityProbe
+                        ? 'near_finality_probe_failed'
+                        : 'read_model_ingestion_failed';
+                const failure = {
+                    schema: isFinalityProbe ? FINALITY_TELEMETRY_SCHEMA : TELEMETRY_SCHEMA,
                     status: 'failed',
                     error_code: errorCode,
-                }));
+                };
+                logger.error(isFinalityProbe ? failure : JSON.stringify(failure));
                 throw new Error(errorCode);
             },
         );

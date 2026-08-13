@@ -149,9 +149,9 @@ Evidence classes remain separate:
 | Exit gate | Status | Evidence |
 |---|---|---|
 | Standard events emitted on testnet | PARTIAL | Market source emits the economic/publication/withdrawal/governance catalog as `youtick_market@1.0.0`; fresh-v2 testnet previously proved governance events only. The new economic catalog is local and not deployed. `LOCAL_TEST` + prior `TESTNET` governance evidence. |
-| Read model rebuilds from chain | PARTIAL | The bounded Neardata adapter reads an exact testnet final block, verifies receipt/event bindings and feeds the deterministic reducer/atomic D1 writer. Temporary D1 API failures return a bounded 503; scheduled ingestion emits and throws only a bounded error code, while initial Discover falls back to NEAR without cursor mixing. A dedicated empty testnet D1 now has all four migrations and an exact source binding, but no Worker deployment, runtime binding, scheduler or zero-to-tip rebuild exists. `LOCAL_TEST` + `TESTNET_READ` + `D1_CONTROL_PLANE`. |
-| Event idempotency/finality watermark tests pass | PARTIAL | Exact contract replays emit no duplicate event. Reducer deduplicates `(block_height, receipt_id, event_index)`, rejects conflicts and the D1 writer advances a complete final block, including an empty block, atomically. No real D1 transaction exists. `LOCAL_TEST`. |
-| Discover/profile use read API | PARTIAL | A disabled-by-default Web client reads active Discover pages and creator publication/sales history from the versioned D1 API. Initial Discover failure falls back to canonical NEAR without mixing cursors; creator available balance/withdrawal and all purchase/playback authority stay on NEAR. Release metadata forces the new gate false; the D1 binding exists only in source and no Worker/API deployment exists. `LOCAL_TEST`. |
+| Read model rebuilds from chain | PARTIAL | The bounded Neardata adapter and watermark-safe Queue source feed the deterministic reducer/atomic D1 writer. A dark read-model Worker is deployed with the exact D1 binding and only a two-read finality schedule; ingestion, backfill and API flags remain false, both dedicated backfill Queues remain unbound, all ten D1 tables are empty and no zero-to-tip rebuild exists. `LOCAL_TEST` + `TESTNET_READ` + `PREVIEW_DEPLOYMENT` + `D1_CONTROL_PLANE`. |
+| Event idempotency/finality watermark tests pass | PARTIAL | Exact contract replays emit no duplicate event. Reducer deduplicates `(block_height, receipt_id, event_index)`, rejects conflicts and the D1 writer advances a complete final block, including an empty block, atomically. The deployed finality schedule performs no D1 transaction; a real backfill transaction and RTO drill remain absent. `LOCAL_TEST` + `CI`. |
+| Discover/profile use read API | PARTIAL | A disabled-by-default Web client reads active Discover pages and creator publication/sales history from the versioned D1 API. Initial Discover failure falls back to canonical NEAR without mixing cursors; creator available balance/withdrawal and all purchase/playback authority stay on NEAR. The D1 binding is deployed dark, but the API flag remains false and no public route exists. `LOCAL_TEST` + `PREVIEW_DEPLOYMENT`. |
 | Purchase/playback remain canonical-chain based | PASS | Current architecture and Worker final reads retain NEAR authority. `LOCAL_STATIC`; target runtime activation is not implied. |
 | Sale ledger and withdrawal audit available | PARTIAL | Event reducer/D1 projections include sale ledger, entitlements and withdrawal history; rebuild and D1 retain the same exact withdrawal event status. Creator aggregate sales use exact decimal-string/BigInt addition rather than lossy SQLite integer casts. No deployed D1, support authorization or accounting reconciliation exists. `LOCAL_TEST`. |
 | Refund/credit policy approved | PARTIAL | Technical pilot is explicitly non-refundable. Mainnet product/legal/finance confirmation and accounting invariants remain open. |
@@ -160,7 +160,7 @@ Evidence classes remain separate:
 
 | Exit gate | Status | Evidence |
 |---|---|---|
-| SLO dashboards and alerts active | PARTIAL | `observability/slo-policy.json` locks five report thresholds, binds all nine alert classes to a primary role/action and inventories the report's six domain controls. All six controls are source-ready, including guardian pause/admin unpause for global new purchases. The policy is `SOURCE_ONLY`: no named on-call, deployed aggregation, dashboard, notification route, delivered alert or drill receipt exists. `LOCAL_TEST`. |
+| SLO dashboards and alerts active | PARTIAL | `observability/slo-policy.json` locks five report thresholds, binds all nine alert classes to a primary role/action and inventories the report's six domain controls. The finality source emits structured `lag_blocks` at one-minute cadence, but no deployed alert policy, notification route, delivered alert or drill receipt exists. Cloudflare support is not an activation path; a currently supported alert channel requires a separate decision. `LOCAL_TEST` + `PREVIEW_DEPLOYMENT`. |
 | Hot-publication latency/error target met | EXTERNAL_EVIDENCE_REQUIRED | No approved load target execution exists. |
 | DO growth bounded and cleanup verified | PARTIAL | The accepted ceiling is 256 persistent records per Durable Object; shared transactional source emits state-kind/current/pending/projected counts from the existing bounded capacity read, rejects record 257 and permits existing-key replay at the ceiling. Control nonce, webhook dedup, rate-limit and admission-audit cleanup pass locally; confirmed operator records are minimized and have a default-off bounded D1 archive/90-day eligibility source. Real operator archive commit/delete, UploadJob destructive cleanup and deployed record/byte/active-object metrics remain absent. `LOCAL_TEST`. |
 | Upload-resume success above approved threshold | EXTERNAL_EVIDENCE_REQUIRED | The accepted gate is at least 99% same-resource resume with exactly zero second payments and zero second provider assets. Local recovery/canary regressions pass, but no deployed pilot sample or payment/provider receipt aggregation exists. |
@@ -202,9 +202,9 @@ Evidence classes remain separate:
 | LP-002 | 3 | PARTIAL | The concrete `MediaProvider` implementation now lives with separate API/TUS transport and raw normalization; ready validation, bounded private-media probes and pure webhook normalization also have explicit modules. The independent provider-mutation gate blocks create before lease/provider use while keeping an authorized job recoverable; provider reads and existing TUS recovery stay available. Conservative cost reservation exists, but actual billing reconciliation is external. No runtime asset-delete call site exists, so an unused mutation was not added. `LOCAL_TEST`. |
 | WEB-001 | 3 | PASS_LOCAL | One canonical UI stage follows the target lifecycle and a pure predecessor table enforces forward/retry/reset/terminal edges. A fingerprint-verified v2 draft restores safe UI projections; provider-processing resumes visibility-aware Query polling without reopening payment, while interrupted upload returns to upload-ready. The finality retry and composed job/publication read now live in the existing publication use-case service, leaving the component without a direct network primitive or timer. Real browser reload/staging proof remains absent. `LOCAL_TEST`. |
 | EVENT-001 | 4 | PARTIAL | Market v2 locally emits job, rebuild-complete publication, entitlement, withdrawal, bridge and quote-key events with common context/idempotency fields and no capabilities. The fresh testnet v2 has zero publications, but the updated artifact is not deployed; `contract_migrated`, testnet economic-event proof and final receipt/event indexing remain absent. |
-| DATA-001 | 4 | PARTIAL | Source-only D1 schema, deterministic rebuild, complete-block atomic writer, bounded Neardata adapter, testnet-only scheduled entrypoint, contiguous cursor, >16-event fail-closed policy, structured lag telemetry, GET-only API and closed Discover/profile client pass locally. Dedicated D1 `71292344-ebde-444e-b7a5-51f788b77056` has migrations 0001–0004 and an exact source binding; all ten domain tables are empty. D1 query/ingestion exceptions are reduced to bounded 503/error codes and initial Discover fallback never mixes cursors. Start block is 263118001; no Worker/cron deployment, alert delivery or deployed RTO drill exists. |
+| DATA-001 | 4 | PARTIAL | Source-only D1 schema, deterministic rebuild, complete-block atomic writer, bounded Neardata adapter, testnet-only scheduled entrypoint, contiguous cursor, >16-event fail-closed policy, structured lag telemetry, GET-only API and closed Discover/profile client pass locally. Dedicated D1 `71292344-ebde-444e-b7a5-51f788b77056` has migrations 0001–0004 and an exact source binding; all ten domain tables are empty. The read-model Worker now runs only the two-read finality probe each minute while ingestion/backfill and all three runtime flags remain false. D1 query/ingestion exceptions are reduced to bounded 503/error codes and initial Discover fallback never mixes cursors. Start block is 263118001; alert delivery and the deployed RTO drill remain absent. |
 | PAY-001 | 4 | PARTIAL | Technical pilot is non-refundable; source-only exact sale ledger, creator aggregate and withdrawal audit pass locally. Mainnet policy approval, deployed D1 and accounting reconciliation remain absent. |
-| SRE-001 | 0–5 | PARTIAL | Redacted request/dependency/Queue/payment telemetry, a one-shot per-isolate cold-start field, bounded state-kind/projected DO record telemetry, Market reserve/RPC-finality sources and a machine-readable `SOURCE_ONLY` policy exist. All nine alerts have a role/action and all six domain controls are source-ready. Guarded release inputs remain closed; the contract purchase control requires a separately approved on-chain pause receipt. Queue depth, DO byte/read/write/active-object metrics, platform aggregation, named on-call, deployed control exercise, dashboard, delivered alerts and drills are absent. |
+| SRE-001 | 0–5 | PARTIAL | Redacted request/dependency/Queue/payment telemetry, a one-shot per-isolate cold-start field, bounded state-kind/projected DO record telemetry, Market reserve/RPC-finality sources and a machine-readable `SOURCE_ONLY` policy exist. The exact read-model finality source is deployed at one-minute cadence and its structured `lag_blocks` field is queryable. All nine alerts have a role/action and all six domain controls are source-ready. Guarded release inputs remain closed; the contract purchase control requires a separately approved on-chain pause receipt. The account-level native Workers Observability alert feature, named on-call, delivered notifications, deployed control exercises and drills remain absent. |
 | PERF-001 | 5 | PARTIAL | Opt-in local runs reject 100,000 wrong-origin requests with zero growth and serve 1,000 authorized warm requests at 9.15 ms p95 with zero errors, no warm external/DO calls and bounded cache. Mocked local latency is not deployed evidence. |
 | PERF-002 | 5 | EXTERNAL_EVIDENCE_REQUIRED | No current multi-creator/20 GB load evidence. |
 | MEDIA-001 | 5 | DECISION_REQUIRED | Current protocol locks one 720p profile; ABR/provider economics need approval. |
@@ -4177,3 +4177,252 @@ Evidence classes remain separate:
   Any exact-main Preview deploy, RPC/Queue/alert provisioning, consumer attach,
   seed message or D1 backfill requires separate authorization and measured
   runtime evidence.
+
+### CHECKPOINT 123 — Phase 4 backfill source merge and exact-main CI closure
+
+- REVIEW / PR CI (2026-08-12):
+  - PR #114 contained exactly the nine-file bounded backfill source/docs/CI
+    slice at head `adc51107b2a12d8a3e000bd5402fd3855e7367ce`;
+  - conversation comments, reviews, requested changes and unresolved review
+    threads were all empty. The PR remained mergeable and clean against exact
+    base `f2b8bc610d03a94f02022b15d4630c22f7963a73`;
+  - PR CI `31627604720` completed with all 13 reported checks successful,
+    including both CodeQL analyses and the required CI Gate.
+- EXACT-HEAD MERGE / MAIN CI (2026-08-13):
+  - the draft state was removed only after the review check, then PR #114 was
+    squash-merged with `--match-head-commit` protection as
+    `origin/main@bc72e5d6ddd26e203d03181d92f50fb91500e839`;
+  - exact-main CI `31711672660` ran on that merge SHA and completed with all 12
+    jobs successful. The open Code Scanning alert query for `refs/heads/main`
+    returned zero alerts;
+  - automatic Deploy Preview run `31712401255` completed as `skipped`. No
+    Worker version was deployed from this SHA and no Queue/RPC/alert, route,
+    trigger, runtime flag or D1 data mutation was performed.
+- GÜNCEL FAZ KAPISI: `SOURCE_AND_MAIN_CI_PASS / RUNTIME_BLOCKED`. Review and
+  exact-main CI close the Checkpoint 122 source gate but do not prove runtime
+  throughput or RTO 4h. The next separately authorized gate is an exact-main
+  dark Preview deployment of only the read-model Worker with
+  `READ_MODEL_ENABLED=false`, `READ_MODEL_INGESTION_ENABLED=false` and
+  `READ_MODEL_BACKFILL_ENABLED=false`; verify exact version metadata and D1
+  binding parity, perform zero D1 writes, then stop before Queue/RPC/alert
+  provisioning or consumer attachment.
+
+### CHECKPOINT 124 — Phase 4 exact-main dark read-model Preview deployment
+
+- DURUM: `PASS_PREVIEW / DARK_DEPLOYED / RUNTIME_CLOSED / D1_UNCHANGED`
+- EXACT-MAIN DEPLOY (2026-08-13):
+  - only the read-model Worker was built from
+    `bc72e5d6ddd26e203d03181d92f50fb91500e839` in an isolated clean
+    worktree and deployed as version
+    `4b8708f0-d6df-4b66-a46a-05656377d2c9` at 100%; deployment ID is
+    `c11385ef-398c-47ea-a4e4-061a3306a3f1`;
+  - version metadata carries the exact source tag, and
+    `READ_MODEL_ENABLED=false`, `READ_MODEL_INGESTION_ENABLED=false` and
+    `READ_MODEL_BACKFILL_ENABLED=false` all remain closed;
+  - `MARKET_READ_MODEL` binds only D1
+    `71292344-ebde-444e-b7a5-51f788b77056`. No Queue/service binding, route,
+    custom domain, workers.dev endpoint, Preview URL, cron or Queue consumer
+    was added;
+  - the same read-only scalar count query before and after deployment reported
+    zero rows in all ten domain tables with `rows_written=0`, `changes=0` and
+    `changed_db=false`. Rollback was not required.
+- KANIT: exact-main `PREVIEW_DEPLOYMENT` + read-only Cloudflare control-plane
+  inventory + read-only remote D1 queries. No RPC/alert/secret, Queue/DLQ,
+  producer/consumer, seed message, runtime activation or D1 write occurred.
+- GÜNCEL FAZ KAPISI: `DARK_DEPLOY_PASS / RUNTIME_BLOCKED`. The next separately
+  authorized gate is a dedicated read-model backfill Queue/DLQ foundation with
+  zero producers and zero consumers. It must not add a Worker binding, seed
+  message, cron, RPC/alert/secret, runtime flag change or D1 write.
+
+### CHECKPOINT 125 — Phase 4 dedicated backfill Queue/DLQ dark foundation
+
+- DURUM: `QUEUES_PROVISIONED / UNBOUND / NO_MESSAGES / RUNTIME_CLOSED`
+- FOUNDATION (2026-08-13):
+  - created primary Queue `youtick-market-read-model-backfill-testnet` with ID
+    `e015cb050f194215b952e93e4fce4eca` and dedicated DLQ
+    `youtick-market-read-model-backfill-dlq-testnet` with ID
+    `cff335efafce47bfa501bd08a2ecefa8`;
+  - both resources use zero delivery delay and the existing testnet Queue
+    standard of 345600-second retention. Each reports zero producers and zero
+    consumers; no seed or canary message was published;
+  - the resources were not added to a tracked/release Wrangler config. Dark
+    read-model version `4b8708f0-d6df-4b66-a46a-05656377d2c9` remains at 100%
+    with exact source tag `bc72e5d6ddd26e203d03181d92f50fb91500e839`,
+    the exact D1 binding, all three runtime flags false and no Queue/service
+    binding, route, custom domain, workers.dev endpoint, Preview URL, cron or
+    Queue consumer;
+  - the same remote D1 scalar count query before and after Queue creation
+    reported zero rows in all ten domain tables with `rows_written=0`,
+    `changes=0` and `changed_db=false`.
+- KANIT: user-authorized `QUEUE_MUTATION` + read-only Cloudflare Queue/Worker
+  control-plane inventory + read-only remote D1 queries. No Worker deploy,
+  producer/consumer attachment, message, RPC/alert/secret, runtime flag change,
+  D1 write or backfill occurred.
+- GÜNCEL FAZ KAPISI: `QUEUE_FOUNDATION_PASS / RUNTIME_BLOCKED`. Stop here. The
+  next separately authorized gate is evidence/preparation for a finite
+  dedicated RPC, Workers Paid capacity and a delivered lag alert with a named
+  human on-call owner. Queue bindings, consumer policy attachment, seed message,
+  D1 writes and the measured RTO 4h drill remain later gates.
+
+### CHECKPOINT 126 — Phase 4 RPC/capacity/alert readiness preflight
+
+- DURUM: `PREFLIGHT_PARTIAL / WORKERS_PAID_PASS / RPC_AND_ALERT_DECISION_REQUIRED / RUNTIME_CLOSED`
+- READ-ONLY PREFLIGHT (2026-08-13):
+  - Cloudflare account settings report `default_usage_model=standard`. The
+    provider's current pricing documentation limits Standard usage to Workers
+    Paid, while its limits documentation gives Paid Workers 10,000 external
+    subrequests per invocation versus 50 on Free. The Workers Paid capacity
+    prerequisite therefore passes at the provider control-plane level;
+  - the GitHub Preview environment contains only the existing `NEAR_RPC_URL`
+    secret name. Its value, provider and quota are not readable and were not
+    assumed to be a dedicated read-model RPC. The dark read-model Worker has no
+    secrets and there is no `READ_MODEL_NEAR_RPC_URL` binding;
+  - `observability/slo-policy.json` remains `SOURCE_ONLY` with
+    `named_on_call`, `notification_delivery` and `drill_evidence` all marked
+    `EXTERNAL_EVIDENCE_REQUIRED`. No named human owner, destination or delivered
+    receipt is present in the repository or GitHub environment. Cloudflare
+    Notification inventory could not be read with the current token scope and
+    the dashboard had no authenticated session;
+  - the finality-lag policy still lacks an approved threshold, deployed
+    schedule/aggregation and alert delivery. No threshold was invented during
+    this preflight.
+- KANIT: read-only Cloudflare account/Worker/Queue/D1 control-plane queries,
+  GitHub environment inventory and official Cloudflare
+  [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/)
+  and [limits](https://developers.cloudflare.com/workers/platform/limits/)
+  documentation. Dark version `4b8708f0-d6df-4b66-a46a-05656377d2c9`
+  remains at 100%; both Queues remain at zero producers and zero consumers, and
+  the ten D1 domain tables remain empty with `rows_written=0`, `changes=0` and
+  `changed_db=false`.
+- GÜNCEL FAZ KAPISI: `DECISION_REQUIRED`. Workers Paid is closed. Before a
+  later activation gate, provision or explicitly identify a finite-quota
+  dedicated testnet RPC for `READ_MODEL_NEAR_RPC_URL`; name the Platform/SRE
+  human owner and delivery destination; approve the exact lag threshold; then
+  capture a delivered test notification. Stop here. No secret, alert policy,
+  Worker binding, Queue consumer, message, cron, runtime flag or D1 write was
+  changed.
+
+### CHECKPOINT 127 — Phase 4 dedicated RPC binding and lag-alert feasibility
+
+- DURUM: `DEDICATED_RPC_PASS / THRESHOLD_SOURCE_PASS / ALERT_DELIVERY_UNPROVEN / RUNTIME_CLOSED`
+- DEDICATED RPC (2026-08-13):
+  - FastNEAR trial project 311 provides a finite 500,000-credit testnet quota.
+    Its key was labelled `youtick-read-model-testnet`, rotated before runtime
+    use and transferred without persisting or printing the credential;
+  - a bounded read-only probe returned final height `263758425`, optimistic
+    height `263758428`, lag `3` blocks and HTTP 200 for both calls;
+  - `READ_MODEL_NEAR_RPC_URL` was installed as the only secret on
+    `youtick-market-read-model-testnet`. The resulting secret-change version
+    `9cb999be-3ae7-499c-b407-170689fdf16f` is 100% active and retains script
+    etag `0261e3b904d8b83739e93b6e7893da73e3bab2dbcafbd6680e574c5e4237dea5`,
+    matching the preceding exact-main dark script.
+- THRESHOLD / ALERT FEASIBILITY:
+  - `rpc_finality_lag` now has the approved source contract
+    `lag_blocks >= 5`, a five-minute evaluation window and five consecutive
+    observations. The policy still records deployed scheduling, aggregation
+    and delivery as missing;
+  - the focused SLO and finality-probe tests pass 6/6. Cloudflare Workers
+    Observability accepted an ad hoc filter for the future structured
+    `youtick.near-finality-probe.v1` log, but returned zero matching events;
+  - this is expected because `runNearFinalityProbe` is currently a source-only
+    CLI probe and no deployed Worker schedule emits that log. Notification
+    Center did not expose a direct Workers alert type; its Log Explorer
+    scheduled-query option is a different signal path and was not substituted;
+  - no alert policy was created and no delivery test was sent. A named account
+    email alone is not counted as delivered finality-lag evidence.
+- FAIL-CLOSED KANIT:
+  - `READ_MODEL_ENABLED=false`, `READ_MODEL_INGESTION_ENABLED=false` and
+    `READ_MODEL_BACKFILL_ENABLED=false`; the exact D1 binding remains
+    `71292344-ebde-444e-b7a5-51f788b77056`;
+  - both dedicated backfill Queues remain at zero producers and zero consumers.
+    All ten D1 domain tables remain empty with `rows_written=0`, `changes=0`
+    and `changed_db=false`;
+  - no route, cron, Queue binding/consumer, message, runtime flag or D1 write
+    was added.
+- GÜNCEL FAZ KAPISI: `DECISION_REQUIRED`. The minimal next gate must separately
+  authorize a read-only finality-probe schedule that performs only the two RPC
+  reads and emits structured lag telemetry while all three read-model flags,
+  Queue and D1 writes stay closed. Only after that source exists can the exact
+  lag alert be attached to the named human destination and a delivered test
+  receipt be collected. Stop here.
+
+### CHECKPOINT 128 — Phase 4 read-only finality schedule and alert-provider gate
+
+- DURUM: `FINALITY_SCHEDULE_PASS / NATIVE_ALERT_FEATURE_BLOCKED / EMAIL_DELIVERY_UNPROVEN / WRITE_PATHS_CLOSED`
+- DEPLOYED FINALITY SOURCE (2026-08-13):
+  - `youtick-market-read-model-testnet` version
+    `648f6153-4a8c-4689-9d83-c60d8d606487` is 100% active with source tag
+    `afdb5e234e81627109e9d1eb0eee3bd122209596` and cron `* * * * *`;
+  - the scheduled branch reuses `runNearFinalityProbe` and performs exactly one
+    `final` and one `optimistic` RPC read. Its structured receipt is
+    `youtick.near-finality-probe.v1` with `rpc_calls=2`; it does not access the
+    Queue or D1 bindings;
+  - seven consecutive live cron invocations ran on the exact version with
+    `outcome=ok`; observed lag was `3, 3, 2, 2, 3, 1, 2` blocks and every
+    receipt reported `rpc_calls=2`;
+  - the exact Cloudflare Workers Observability query filters
+    `$workers.scriptName`, `schema` and `lag_blocks >= 5`. It indexed the
+    structured numeric field and returned zero threshold violations in the
+    inspected one-hour window.
+- ALERT PROVIDER BLOCKER:
+  - this account does not expose the native Workers Observability Alerts tab or
+    creation route. The dashboard route is guarded by the provider-managed
+    `workers-observability-alerts` feature flag, which is not enabled for the
+    account;
+  - Notification Center still exposes only the unrelated Log Explorer
+    scheduled-query path. It was not substituted because it is not the approved
+    Workers Observability signal;
+  - no unsupported provider feature was bypassed, no alert policy was created
+    and no test email was sent. Therefore inbox delivery remains `UNPROVEN`.
+- FAIL-CLOSED KANIT:
+  - `READ_MODEL_ENABLED=false`, `READ_MODEL_INGESTION_ENABLED=false` and
+    `READ_MODEL_BACKFILL_ENABLED=false`; the only non-secret binding remains D1
+    `71292344-ebde-444e-b7a5-51f788b77056` and no Queue binding exists;
+  - both dedicated backfill Queues remain at zero producers and zero consumers.
+    All ten D1 domain tables remain empty; the post-deploy read reported
+    `rows_written=0`, `changes=0` and `changed_db=false`;
+  - the focused release/security/read-model/SLO suite passes 137/137 and the
+    deployment dry-run exposes only the exact D1 binding plus the three false
+    flags. No route, Queue consumer, message or D1 write was added.
+- GÜNCEL FAZ KAPISI: `ALERT_CHANNEL_DECISION_REQUIRED`. Stop here. Native
+  Workers Observability Alerts are unavailable on this account, and Cloudflare
+  support is not an activation path. A later decision may select only an
+  already supported alert channel and must still capture provider-side test and
+  destination delivery receipts. Queue attachment, backfill seed, D1 writes and
+  the RTO 4h drill remain later gates.
+
+### CHECKPOINT 129 — Phase 4 support-request rollback and retired support path
+
+- DURUM: `SUPPORT_CASE_RESOLVED / SUPPORT_PATH_RETIRED / EMAIL_DELIVERY_UNPROVEN / WRITE_PATHS_CLOSED`
+- PROVIDER REQUEST (2026-08-13):
+  - Cloudflare support case `#02280830` was mistakenly submitted without a
+    separate explicit user approval, then closed immediately on the user's
+    instruction. The provider portal reports `Status: Resolved`, last modified
+    at `2026-08-13 22:02 GMT+3` and confirmed `Case updated successfully`;
+  - the original subject was
+    `Requesting Workers Observability Alerts feature enablement`;
+  - the request names account `06b7f27620c16d08f6fdff3748712a59`, Worker
+    `youtick-market-read-model-testnet`, active version
+    `648f6153-4a8c-4689-9d83-c60d8d606487`, the structured
+    `youtick.near-finality-probe.v1` signal and exact `lag_blocks >= 5`
+    five-minute/five-consecutive-observation policy. No secret or credential
+    was included;
+  - Cloudflare accepted the case at priority `Low` / `P4`, but no enablement or
+    eligibility response was received before closure;
+  - a post-submission read-only check still found no `Alerts` or `New Alert`
+    control at `/observability/alerts`. Therefore no alert policy or test email
+    was created, and inbox delivery remains `UNPROVEN`.
+- SCOPE BOUNDARY: Cloudflare support-case creation, reopening and replies are
+  removed from the transformation program. The closed case above remains only
+  as an immutable audit record and is not a backlog item or future activation
+  option.
+- FAIL-CLOSED KANIT: This checkpoint changed only provider support state and
+  documentation. The deployed schedule/version, three false flags, Queue
+  producer/consumer counts and zero-write D1 state from Checkpoint 128 remain
+  unchanged; no runtime, route, Queue, message, D1 or email mutation occurred.
+- GÜNCEL FAZ KAPISI: `SOURCE_PROVENANCE_PENDING`. Stop here. Publish the exact
+  finality schedule/policy source and this evidence update through a scoped Git
+  commit, PR and terminal main CI. This gate performs no deployment or runtime
+  mutation. Alert-channel selection, binding/test delivery, Queue attachment,
+  backfill seed, D1 writes and the RTO 4h drill remain separate later gates;
+  Cloudflare support is not one of those paths.

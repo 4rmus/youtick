@@ -208,6 +208,13 @@ function makeRelease(t, target = 'preview') {
         'workers_dev = false',
         'preview_urls = false',
         '',
+        '[triggers]',
+        'crons = ["* * * * *"]',
+        '',
+        '[observability]',
+        'enabled = true',
+        'head_sampling_rate = 1',
+        '',
         '[vars]',
         'READ_MODEL_ENABLED = "false"',
         'READ_MODEL_INGESTION_ENABLED = "false"',
@@ -373,7 +380,9 @@ if (args[0] === 'versions' && args[1] === 'upload') {
         || !text.includes('READ_MODEL_INGESTION_ENABLED = "false"')
         || !text.includes('READ_MODEL_BACKFILL_ENABLED = "false"')
         || !text.includes('binding = "MARKET_READ_MODEL"')
-        || /\btriggers\b|\bcrons\b|\bqueues\b/.test(text))) {
+        || !text.includes('[triggers]\ncrons = ["* * * * *"]')
+        || !text.includes('[observability]\nenabled = true\nhead_sampling_rate = 1')
+        || /\bqueues\b/.test(text))) {
     throw new Error('invalid dark read model config');
   }
   const id = worker.includes('web')
@@ -401,7 +410,9 @@ if (args[0] === 'deploy') {
       && (!text.includes('workers_dev = false')
         || !text.includes('preview_urls = false')
         || !text.includes('READ_MODEL_BACKFILL_ENABLED = "false"')
-        || /\btriggers\b|\bcrons\b|\bqueues\b/.test(text))) {
+        || !text.includes('[triggers]\ncrons = ["* * * * *"]')
+        || !text.includes('[observability]\nenabled = true\nhead_sampling_rate = 1')
+        || /\bqueues\b/.test(text))) {
     throw new Error('read model bootstrap is not dark');
   }
   const id = worker.includes('web')
@@ -705,7 +716,7 @@ test('Bridge artifact writer emits the exact disabled release config once', asyn
     await assert.rejects(writeBridgeArtifactWrangler(output), /EEXIST/);
 });
 
-test('read-model artifact writer emits one route-free and cron-free dark config', async (t) => {
+test('read-model artifact writer emits one route-free finality-probe-only config', async (t) => {
     const root = mkdtempSync(join(tmpdir(), 'read-model-artifact-wrangler-test-'));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const output = join(root, 'wrangler.toml');
@@ -716,11 +727,13 @@ test('read-model artifact writer emits one route-free and cron-free dark config'
     assert.match(text, /name = "youtick-market-read-model-testnet"/);
     assert.match(text, /workers_dev = false/);
     assert.match(text, /preview_urls = false/);
+    assert.match(text, /\[triggers\]\ncrons = \["\* \* \* \* \*"\]/);
+    assert.match(text, /\[observability\]\nenabled = true\nhead_sampling_rate = 1/);
     assert.match(text, /READ_MODEL_ENABLED = "false"/);
     assert.match(text, /READ_MODEL_INGESTION_ENABLED = "false"/);
     assert.match(text, /READ_MODEL_BACKFILL_ENABLED = "false"/);
     assert.match(text, /binding = "MARKET_READ_MODEL"/);
-    assert.doesNotMatch(text, /\btriggers\b|\bcrons\b|\bqueues\b|READ_MODEL_NEAR_RPC_URL/);
+    assert.doesNotMatch(text, /\bqueues\b|READ_MODEL_NEAR_RPC_URL/);
     assert.equal(statSync(output).mode & 0o777, 0o600);
     await assert.rejects(writeReadModelArtifactWrangler(output), /EEXIST/);
 });
