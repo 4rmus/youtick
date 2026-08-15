@@ -1,6 +1,6 @@
 # YouTick architecture transformation progress
 
-Status: `PHASE_4_EVENT_SOURCE_PASS / EVENT_TESTNET_APPROVAL_REQUIRED / RUNTIME_GATES_CLOSED`
+Status: `PHASE_4_EVENT_PASS_TESTNET / PHASE_2_STAGING_NEXT / RUNTIME_GATES_CLOSED`
 
 This file tracks the phased architecture plan in
 `/Users/arair/Desktop/youtick/youtick-fazli-mimari-donusum-plani.md`. The plan
@@ -194,7 +194,7 @@ Evidence classes remain separate:
 
 | Exit gate | Status | Evidence |
 |---|---|---|
-| Standard events emitted on testnet | PASS_LOCAL_SOURCE / PARTIAL_TESTNET | Checkpoint 144 adds a mandatory catalog regression proving exact parity between 18 emitted Market events and both final-event consumers; `contract_migrated` remains accepted but `NOT_APPLICABLE_FRESH_ID`. Checkpoint 143 proved five events on exact final testnet blocks. Remaining live receipt/index coverage is `UNPROVEN` and needs separate deploy/chain approval. `LOCAL_TEST` + prior `TESTNET_MUTATION` + prior `D1_WRITE`. |
+| Standard events emitted on testnet | PASS_TESTNET_FINAL | Checkpoint 145 combines 11 existing pilot events with the seven previously missing events produced on an isolated fresh-ID canary. All 18 applicable catalog entries have exact final block hash, receipt ID and event index evidence; `contract_migrated` is `NOT_APPLICABLE_FRESH_ID`. The canary is frozen and purchase-paused. `LOCAL_TEST` + `TESTNET_MUTATION` + exact-final `TESTNET_READ`. |
 | Read model rebuilds from chain | DEFERRED_POST_PLAN / NOT_A_V1_GATE | Bounded contiguous Neardata-to-D1 paths are proven, including the current v1 watermark `264071553`. Checkpoint 133 removed full zero-to-tip rebuild and RTO 4h from v1/Phase 4/Phase 6 exit gates; automatic continuation remains closed. `LOCAL_TEST` + bounded `D1_WRITE`; full rebuild is deliberately not claimed. |
 | Event idempotency/finality watermark tests pass | PASS_TESTNET_BOUNDED / CONTINUOUS_UNPROVEN | Reducer/D1 contracts deduplicate `(block_height, receipt_id, event_index)`, reject conflicts and require contiguous final blocks. Checkpoints 142–143 advanced v1 D1 by 41,163 blocks to exact hash `5cC4NH1a2VYyt8gQmjnmPJ54cE1YvDKrqTx4436HYJb2`; gaps and stale/incomplete inputs failed closed. Queue/continuous ingestion remain off. `LOCAL_TEST` + `CI` + bounded `D1_WRITE`. |
 | Discover/profile use read API | PASS_PREVIEW / PRODUCTION_CLOSED | `read-preview.youtick.net` serves publication-only D1 reads to Preview Discover/Profile. Creator sales, balances and withdrawals are not public; purchase/playback authority remains on NEAR. Checkpoint 140 proved fail-closed rollback and final exact-main Preview Web/Bridge/dark Worker deployment. Production Web/API remain absent. `CI` + `PREVIEW_DEPLOYMENT` + browser UAT. |
@@ -247,7 +247,7 @@ Evidence classes remain separate:
 | LP-001 | 3 | PARTIAL | Gated HMAC-verified Queue ingress and ACK/retry/poison consumer pass locally. Dedicated testnet Queue `0a0a7e4fe00547439c24aafc8f5316c2` and DLQ `82246e5e383d488d935a97169fe3cb63` exist with the exact source producer/consumer policy. Both provider attachment counts remain zero; deployed binding, redelivery and staging proof are absent. |
 | LP-002 | 3 | PARTIAL | The concrete `MediaProvider` implementation now lives with separate API/TUS transport and raw normalization; ready validation, bounded private-media probes and pure webhook normalization also have explicit modules. The independent provider-mutation gate blocks create before lease/provider use while keeping an authorized job recoverable; provider reads and existing TUS recovery stay available. Conservative cost reservation exists, but actual billing reconciliation is external. No runtime asset-delete call site exists, so an unused mutation was not added. `LOCAL_TEST`. |
 | WEB-001 | 3 | PASS_LOCAL | One canonical UI stage follows the target lifecycle and a pure predecessor table enforces forward/retry/reset/terminal edges. A fingerprint-verified v2 draft restores safe UI projections; provider-processing resumes visibility-aware Query polling without reopening payment, while interrupted upload returns to upload-ready. The finality retry and composed job/publication read now live in the existing publication use-case service, leaving the component without a direct network primitive or timer. Real browser reload/staging proof remains absent. `LOCAL_TEST`. |
-| EVENT-001 | 4 | PASS_LOCAL_SOURCE / PARTIAL_TESTNET | Mandatory CI tooling now locks 15 plan events plus `bridge_rotation_cancelled` and purchase pause/unpause across the Rust producer and both final-event consumers. `contract_migrated` is consumer-compatible but `NOT_APPLICABLE_FRESH_ID` because the pilot contract has no migration entrypoint. Checkpoint 143 proved five live final events; the other 13 emitted events and their exact receipt/index evidence remain `UNPROVEN`. |
+| EVENT-001 | 4 | PASS_TESTNET_FINAL | Mandatory tooling locks the Rust producer, both consumers and the recorded 18-event final testnet evidence to one catalog. The isolated canary supplied the seven previously missing events without changing the existing pilot contract; every applicable event now has a physical final-chain identity. `contract_migrated` remains `NOT_APPLICABLE_FRESH_ID`, not a fabricated event. Mainnet emission remains `UNPROVEN`. |
 | DATA-001 | 4 | PASS_V1_BOUNDED / CONTINUOUS_CLOSED | V1 D1 `50b1e14f-2b06-444b-98cf-b828f11277ef` has migrations 0001–0004, watermark `264071553`, one publication, five chain events, one entitlement, one sale, one withdrawal and two governance rows. Preview publication reads are active; ingestion/backfill/continuation and dedicated Queues remain unbound. Full rebuild/RTO 4h are deferred post-plan and are not v1 gates. |
 | PAY-001 | 4 | PASS_TESTNET / MAINNET_PARTIAL | Checkpoint 143 proves one 2 USDC purchase, 1.96 USDC creator credit/withdrawal, 0.04 USDC platform fee and matching D1 projections; purchases were re-paused. The technical-pilot policy is option A, explicitly non-refundable, with no automatic refund/reserve/escrow or implied credit. Mainnet product/legal/finance, user-facing terms and production accounting remain open. |
 | SRE-001 | 0–5 | PARTIAL | Redacted request/dependency/Queue/payment telemetry, a one-shot per-isolate cold-start field, bounded state-kind/projected DO record telemetry, Market reserve/RPC-finality sources and a machine-readable `SOURCE_ONLY` policy exist. The exact read-model finality source is deployed at one-minute cadence and its structured `lag_blocks` field is queryable. All nine alerts have a role/action and all six domain controls are source-ready. Guarded release inputs remain closed; the contract purchase control requires a separately approved on-chain pause receipt. The account-level native Workers Observability alert feature, named on-call, delivered notifications, deployed control exercises and drills remain absent. |
@@ -4904,3 +4904,81 @@ Evidence classes remain separate:
 - GÜNCEL FAZ KAPISI:
   `EVENT_001_SOURCE_PASS / TESTNET_CATALOG_APPROVAL_REQUIRED`. Stop here; do
   not advance to Phase 2–3 staging/runtime evidence automatically.
+
+### CHECKPOINT 145 — Phase 4 / EVENT-001 final testnet catalog proof
+
+- DURUM:
+  `PASS_TESTNET_FINAL / CANARY_RECLOSED / CI_UNPROVEN / RUNTIME_UNCHANGED`.
+- BASELINE: local
+  `agent/pay-001-non-refundable-20260815@6cbb390cde03c7c6ebc739f9ad26c3f3876e103c`,
+  three commits ahead of
+  `origin/main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`.
+- YETKİ: The user separately approved the bounded EVENT-001 contract deploy
+  and testnet transaction set. Queue/D1, provider and Cloudflare activation
+  were not included.
+- PREFLIGHT:
+  - exact main CI `31895385141` and Deploy Preview `31895517069` remained
+    successful; the public Bridge health stayed `stage=DISABLED` with every
+    mutation/upload/playback/Queue readiness field false;
+  - Rust 1.86/cargo-near rebuilt Market WASM with SHA-256
+    `d2f7a9b04bf215bbe5138523fe1e049a2707cc01a2bd35b52a657aa60e646833`,
+    matching the reviewed pilot artifact;
+  - the canonical Neardata parser recovered 11 distinct applicable catalog
+    events with exact final physical identities from the existing fresh pilot
+    contract before any new mutation.
+- ISOLATED DEPLOY:
+  - the first proposed parent account failed local/on-chain key parity before
+    signing; no account or fund mutation occurred;
+  - transaction `AiPAvgBjnZD1LfA7tHTwYjFEmThzm6hx5Yi2WMpFfzop` created and
+    funded `lp-event-144.dev-election2.testnet` with 7.5 testnet NEAR;
+  - deploy/init transaction
+    `9cBiinfZismi7ZFcjR2Vqcuo8sGKeiuTLNmJCVA66B4x` installed the exact WASM
+    behind separate platform/bridge/admin/guardian authorities. The generated
+    canary FullAccess key remains in the local legacy keychain and is not
+    committed.
+- BOUNDED CANARY:
+  - one 0.05 NEAR non-refundable native job fee authorized
+    `event-144-20260815`; its upload key was replaced and the bridge finalized
+    one synthetic publication without any provider call;
+  - one 2 USDC testnet purchase created a permanent canary entitlement and
+    split `1960000/40000` into creator/platform liabilities;
+  - both unregistered payout recipients caused the intended transfer failure:
+    creator `withdrawal_failed` was emitted and both liabilities were restored;
+    platform withdrawal emitted its required `started` event and restored;
+  - the publication then emitted sales suspension and one-way takedown. Bridge
+    proposal/cancellation and quote-key rotation supplied the remaining
+    governance events;
+  - two public-RPC cancellation attempts rate-limited before signing. A bounded
+    retry through the preconfigured FastNEAR testnet connection succeeded once;
+    no duplicate cancellation event was emitted.
+- FINAL EVENT PROOF:
+  - `docs/architecture/event-catalog-testnet-evidence.json` records exactly 18
+    applicable `youtick_market@1.0.0` events, each with contract, transaction,
+    final block/hash, receipt ID, event index and business idempotency key;
+  - the mandatory catalog regression proves the evidence names equal the Rust
+    producer and both final-event consumer catalogs and that all 18 physical
+    identities are unique;
+  - `contract_migrated` remains `NOT_APPLICABLE_FRESH_ID` because neither
+    contract exposes a migration entrypoint.
+- FINAL STATE:
+  - canary bridge is frozen, new purchases are paused, pending rotation is
+    empty, active bridge is the original bounded bridge, quote-key version is
+    2, publication is `TAKEDOWN` and reserve coverage is true;
+  - canary holds the permanent entitlement, 2 USDC contract balance,
+    `1960000/40000` creator/platform liabilities and the 0.05 NEAR platform
+    balance. Account/storage-deposit deletion was not authorized or attempted;
+  - the existing pilot contract remains bridge-unfrozen, purchase-paused and
+    without a pending rotation. Preview Bridge remains disabled and the public
+    read API watermark remains `264071553`.
+- DOĞRULAMA: catalog/evidence regression `1/1`, full read-model/catalog group
+  `42/42`, Market unit/lifecycle `7/7 + 22/22`, mandatory
+  release/security/SLO/catalog tooling `155/155`, live final Neardata evidence
+  replay `18/18`, VitePress build and diff whitespace checks passed.
+- KANIT: exact reviewed `TESTNET_DEPLOY` + authorized `TESTNET_MUTATION` +
+  exact-final `TESTNET_READ` + `LOCAL_TEST`. Branch CI remains `UNPROVEN` until
+  publish/PR.
+- SINIR: No Cloudflare Worker deploy/flag, Queue producer/consumer, D1 write,
+  provider call, Livepeer asset, alert, email or support request occurred.
+- GÜNCEL FAZ KAPISI: `EVENT_001_PASS_TESTNET_FINAL`. The single next gate is
+  Phase 2 V2 authorizer production-like staging evidence; stop before any
+  Cloudflare deploy or runtime activation without separate approval.

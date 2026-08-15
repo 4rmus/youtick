@@ -1,0 +1,215 @@
+{
+  "schema": "youtick.event-catalog-testnet-evidence.v1",
+  "recorded_at": "2026-08-15T20:11:59Z",
+  "status": "PASS_TESTNET_FINAL",
+  "standard": "youtick_market",
+  "version": "1.0.0",
+  "source_commit": "6cbb390cde03c7c6ebc739f9ad26c3f3876e103c",
+  "origin_main": "c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc",
+  "wasm_sha256": "d2f7a9b04bf215bbe5138523fe1e049a2707cc01a2bd35b52a657aa60e646833",
+  "canary": {
+    "contract_id": "lp-event-144.dev-election2.testnet",
+    "account_create_transaction": "AiPAvgBjnZD1LfA7tHTwYjFEmThzm6hx5Yi2WMpFfzop",
+    "deploy_transaction": "9cBiinfZismi7ZFcjR2Vqcuo8sGKeiuTLNmJCVA66B4x",
+    "bridge_frozen": true,
+    "new_purchases_paused": true,
+    "pending_bridge_account_id": null,
+    "active_bridge_account_id": "lp-d6-bridge-5301d15.youtick-dev-v3.testnet",
+    "publication_availability": "TAKEDOWN",
+    "quote_key_version": 2,
+    "reserve_covered": true,
+    "creator_balance_usdc": "1960000",
+    "platform_balance_usdc": "40000",
+    "contract_balance_usdc": "2000000",
+    "platform_near_balance_yocto": "50000000000000000000000"
+  },
+  "events": [
+    {
+      "event": "media_job_authorized",
+      "contract_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+      "transaction_hash": "DYMgYKg5ojtQpbK1WpkFFebB4cbLnHY83tBpgjqqWGvD",
+      "block_height": 263492159,
+      "block_hash": "D615bUsHbe9bRpCh21RN3XbCnz5N3bPUzFnYsf7JmsZd",
+      "receipt_id": "7HZEuAy9pk9LkBSnP46A9vYe6ForcQrXpqkZdvZjJ9LC",
+      "event_index": 0,
+      "idempotency_key": "job:lp-0b8d85d5-501f-41ad-8dc6-3fc340fd99f7:1:authorized"
+    },
+    {
+      "event": "media_job_upload_key_replaced",
+      "contract_id": "lp-event-144.dev-election2.testnet",
+      "transaction_hash": "E2wn1T47qhwnMb8TVicBTiaRhY6Pv99GR6hgD8BAxXZA",
+      "block_height": 264080240,
+      "block_hash": "DAFfhjQefb8Eu4QuVpjyUh2RxEBsgEJ3KGW7Yd4FxFoc",
+      "receipt_id": "CCRZCnuREaEjAgFpcqHkEk7mViLgWHFPgp1ovUyRwuAB",
+      "event_index": 0,
+      "idempotency_key": "job:event-144-20260815:1:upload-key:560402f031f10411d28032b4563f12d1223ae96f12a414823fd56bb167193f8f"
+    },
+    {
+      "event": "publication_finalized",
+      "contract_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+      "transaction_hash": "ArawGPvXNULAFvCKZmfo8th7s1WvxNboDjCJhMKtJwzf",
+      "block_height": 263494397,
+      "block_hash": "9thv2onLQGnuUQosED4ByEvDoD7pd3iMXwVMjUS1HvqJ",
+      "receipt_id": "2LfUpS5w3VWTCTsTEyMMratjLs9zYWoLRtEGuPtKe4cp",
+      "event_index": 0,
+      "idempotency_key": "publication:lp-0b8d85d5-501f-41ad-8dc6-3fc340fd99f7:1:finalized"
+    },
+    {
+      "event": "publication_sales_suspended",
+      "contract_id": "lp-event-144.dev-election2.testnet",
+      "transaction_hash": "DrxTrMmVSNxVvoMVhgBzKmaFEsu9rUtQvo3wPRQtc6F",
+      "block_height": 264080559,
+      "block_hash": "7cWEAJu726d32dpgbwwffVfFoh6NANLVDPTPwSFa8ggs",
+      "receipt_id": "HraLudWWW1ixV9e98rBnWtPajaqH89HcrbMfPJp93hx6",
+      "event_index": 0,
+      "idempotency_key": "publication:event-144-20260815:sales-suspended"
+    },
+    {
+      "event": "publication_takedown",
+      "contract_id": "lp-event-144.dev-election2.testnet",
+      "transaction_hash": "51Xmgjb5EGgXfMquHf9XmGnetfBRwf3PrWb9eLLTSzk",
+      "block_height": 264080601,
+      "block_hash": "rD2vty5dnu5vaVJSfqUVASH2vNc516LEdAs3i9mk6iw",
+      "receipt_id": "6PV9B8sLMwh8uZnH79cftwB4AJGSXEQDX6ARa4WT7ffm",
+      "event_index": 0,
+      "idempotency_key": "publication:event-144-20260815:takedown:event-144-catalog-canary"
+    },
+    {
+      "event": "entitlement_purchased",
+      "contract_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+      "transaction_hash": "FcsWfzpKdxXiX2uuBNYHp9wPM4Ri9vigCmdBnzdahHxS",
+      "block_height": 264070702,
+      "block_hash": "8kx7UBEmaJh9cGYFh6Ur8ob8nQWFL4zb5BBcK4tu4FcY",
+      "receipt_id": "3wwdMy9mEPP6z38RLjRb2QyZPzvhetaYdRdkN2QMzdGb",
+      "event_index": 0,
+      "idempotency_key": "entitlement:lp-d6-buyer-5301d15.youtick-dev-v3.testnet:lp-0b8d85d5-501f-41ad-8dc6-3fc340fd99f7"
+    },
+    {
+      "event": "creator_balance_withdrawal_started",
+      "contract_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+      "transaction_hash": "mzzxY7tE9yr7HxxFR7Zo9EMKdCnLSk54yCcop4TDy5L",
+      "block_height": 264070843,
+      "block_hash": "6qryvScaa19ZZ8a6PJsUt3piXXpc9F2CYsUHGgr47N31",
+      "receipt_id": "E7qE4WZF7h47rJH3AaYvVfF4By2nb8ij7EvXTNQDDV5a",
+      "event_index": 0,
+      "idempotency_key": "creator-withdrawal:lp-arch-creator-260809.youtick-dev-v3.testnet:1960000:1786819002047"
+    },
+    {
+      "event": "creator_balance_withdrawal_succeeded",
+      "contract_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+      "transaction_hash": "mzzxY7tE9yr7HxxFR7Zo9EMKdCnLSk54yCcop4TDy5L",
+      "block_height": 264070845,
+      "block_hash": "7vMBVyBQPW98Xt2XnG9zDtGhgoN5UwdkTSj9u5vj6Sib",
+      "receipt_id": "6kijMfTGVL77cwie1cfwyvpN7ZHjJ2uPfobkGdf8Hkpk",
+      "event_index": 0,
+      "idempotency_key": "creator-withdrawal:lp-arch-creator-260809.youtick-dev-v3.testnet:1960000:1786819002047"
+    },
+    {
+      "event": "creator_balance_withdrawal_failed",
+      "contract_id": "lp-event-144.dev-election2.testnet",
+      "transaction_hash": "Dy5k5K1SfYgfwRjB5Tcke63ukf2iygmDCiXKXBsdPAXc",
+      "block_height": 264080494,
+      "block_hash": "7rpvFfgtLPWaovmXEWvauj26Ew3Rvk9c4FYw7TwnCFgf",
+      "receipt_id": "9Wju5aTAAfmZLHARBbin85DdecBCVFokjqabJLyiKEo5",
+      "event_index": 0,
+      "idempotency_key": "creator-withdrawal:lp-d6-governance-5301d15.youtick-dev-v3.testnet:1960000:1786824436862"
+    },
+    {
+      "event": "platform_withdrawal_started",
+      "contract_id": "lp-event-144.dev-election2.testnet",
+      "transaction_hash": "2wLqVTHE63pYU72eq37i3AhXvTrRGQFbpsrXGXWtcXGQ",
+      "block_height": 264080526,
+      "block_hash": "2TmLxht3PEgbKkdHjJKtsc7hqsAr6FtS5MTk7zCjCPqQ",
+      "receipt_id": "G5VUfwB5KVB2HS9nxvdYs72AbCUoMnDjq4BEWJwPWEtD",
+      "event_index": 0,
+      "idempotency_key": "platform-withdrawal:USDC:40000:1786824457410"
+    },
+    {
+      "event": "bridge_frozen",
+      "contract_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+      "transaction_hash": "DQJRMFjakEPVaTmHaAdzv2NSBLYe8c9WtkHHjHDW96LV",
+      "block_height": 263118248,
+      "block_hash": "DgsSUkv62bHgREkWV4hisrcMrN7WoBAueHhXFqJxYRsr",
+      "receipt_id": "2wGKmVDSAxGctpSYhcEDxTMtg6hc6ukn5NpFvUhoJVVo",
+      "event_index": 0,
+      "idempotency_key": "legacy:2wGKmVDSAxGctpSYhcEDxTMtg6hc6ukn5NpFvUhoJVVo:0"
+    },
+    {
+      "event": "bridge_rotation_proposed",
+      "contract_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+      "transaction_hash": "GGGDbbnbFXrmDfNmUqTYpzaMCLi3TdNRhuErjvy2WyYW",
+      "block_height": 263118287,
+      "block_hash": "C2T71wQGtGGu49QWeQDgMSbDGJW9e2ZrSv7YCcBToNmg",
+      "receipt_id": "7oT6hX7zD42FCzo7ha787YoY4WJ5fUGxRuQBojyz9GGP",
+      "event_index": 0,
+      "idempotency_key": "legacy:7oT6hX7zD42FCzo7ha787YoY4WJ5fUGxRuQBojyz9GGP:0"
+    },
+    {
+      "event": "bridge_rotation_cancelled",
+      "contract_id": "lp-event-144.dev-election2.testnet",
+      "transaction_hash": "5hwZimvfXTTEufzHqWqH1JUDrhTj8YMGzkc9ZWmeb5bd",
+      "block_height": 264080767,
+      "block_hash": "4k1XQgFoZj95ENm32Y2EbBQZEqkQTmbpbKiUeRZWREM6",
+      "receipt_id": "3cDmW3KRp2Zgyt8VF33SkVNUTNhiYTUAptGuPdk6x9kj",
+      "event_index": 0,
+      "idempotency_key": "governance:bridge_rotation_cancelled:lp-arch-guardian-260809.youtick-dev-v3.testnet:1786824591120"
+    },
+    {
+      "event": "bridge_rotated",
+      "contract_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+      "transaction_hash": "7vWRJAsnUjHQAZoboZnMy8N2fb7kXUWz3a1bjgVVv9qh",
+      "block_height": 263118305,
+      "block_hash": "G5yd5gcvCbPeKnb4584xG8eUXYtC4rxZay8qy65WA1p7",
+      "receipt_id": "CZMbVgeFsCWeV28ZAxURRniAbyTJg3DAYjV7MXWK2ncy",
+      "event_index": 0,
+      "idempotency_key": "legacy:CZMbVgeFsCWeV28ZAxURRniAbyTJg3DAYjV7MXWK2ncy:0"
+    },
+    {
+      "event": "bridge_unfrozen",
+      "contract_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+      "transaction_hash": "A5yxxuWVBjLDdHyKdJPdXENkbdC92Dx9bMJo9heDgPg5",
+      "block_height": 263118348,
+      "block_hash": "FJ3e8YBNB4EUYREuC9VRM2xa2rmvLsPpgLKXr1hRYQ7P",
+      "receipt_id": "9aZMXLvkuGiQKcNS3rGPSvD99f8wzqG97qYQuu9RWoQR",
+      "event_index": 0,
+      "idempotency_key": "legacy:9aZMXLvkuGiQKcNS3rGPSvD99f8wzqG97qYQuu9RWoQR:0"
+    },
+    {
+      "event": "new_purchases_paused",
+      "contract_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+      "transaction_hash": "EvbrnfLg5fm1EEDnqDpmxVzTBKjTyQAEFKKLen7BXSCH",
+      "block_height": 264070789,
+      "block_hash": "G6ZixvUGkZoZaZgtkSeiFh1vPkfyAVnBAQ82VRu5JNPW",
+      "receipt_id": "HokT9Q5PEv5SRnPeCYuUWafQXtU9rEViBKYjmC9D6rkm",
+      "event_index": 0,
+      "idempotency_key": "governance:new_purchases_paused:lp-arch-guardian-260809.youtick-dev-v3.testnet:1786818973224"
+    },
+    {
+      "event": "new_purchases_unpaused",
+      "contract_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+      "transaction_hash": "Hav1jP5TBAnS7g3R8Wjf25Ex21nXLTdSZ5uUzT589iwL",
+      "block_height": 264070633,
+      "block_hash": "ANz9ZZ9LgHftx8eQNeQmAe6tS5AMgRvZaLv2H1fFBRnw",
+      "receipt_id": "8unTdCRQFmX5i8PQ4JyiCGvRfA9RMveKSm5ZUHVBWsaG",
+      "event_index": 0,
+      "idempotency_key": "governance:new_purchases_unpaused:lp-arch-admin-260809.youtick-dev-v3.testnet:1786818893730"
+    },
+    {
+      "event": "quote_key_rotated",
+      "contract_id": "lp-event-144.dev-election2.testnet",
+      "transaction_hash": "EkRxtnTajxTG86HWU922B7AuaEj6QggkhSwjQdg2uYYF",
+      "block_height": 264080798,
+      "block_hash": "EustFoJwpLvidAzLfnpddhLbCav7JCQjfBVT6EFKA3gT",
+      "receipt_id": "J94GjoGxPgejsdZmSWKSfm8ktcC6GJ2VJETouvp74Uff",
+      "event_index": 0,
+      "idempotency_key": "quote-key:2"
+    }
+  ],
+  "not_applicable": [
+    {
+      "event": "contract_migrated",
+      "status": "NOT_APPLICABLE_FRESH_ID",
+      "reason": "Both testnet contracts use fresh state and expose no migration entrypoint."
+    }
+  ]
+}

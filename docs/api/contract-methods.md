@@ -70,6 +70,10 @@ keys are represented only by SHA-256 in replacement audit events; private keys,
 provider credentials and TUS capabilities are never logged. `contract_migrated`
 is intentionally absent because fresh Market v2 has no migration entrypoint.
 
+All 18 applicable events have exact final testnet block/hash, receipt and event
+index evidence in
+[`event-catalog-testnet-evidence.json`](../architecture/event-catalog-testnet-evidence.json).
+
 ## Access
 
 The fresh-v2 access contract creates and revokes resource-bound Play grants,

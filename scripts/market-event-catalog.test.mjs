@@ -45,11 +45,13 @@ function setValues(source, name) {
         .map((value) => value[1]));
 }
 
-test('Market producer and final-event consumers share the EVENT-001 catalog', async () => {
-    const [contract, neardata, rebuild] = await Promise.all([
+test('Market producer, consumers and testnet evidence share the EVENT-001 catalog', async () => {
+    const [contract, neardata, rebuild, evidenceText] = await Promise.all([
         readFile(new URL('../contracts/nft-ticket/src/lib.rs', import.meta.url), 'utf8'),
         readFile(new URL('./fetch-neardata-market-block.mjs', import.meta.url), 'utf8'),
         readFile(new URL('./rebuild-market-read-model.mjs', import.meta.url), 'utf8'),
+        readFile(new URL('../docs/architecture/event-catalog-testnet-evidence.json',
+            import.meta.url), 'utf8'),
     ]);
     const expectedEmitted = sorted([...REQUIRED_EVENTS, ...PILOT_EXTENSIONS]);
     const expectedAccepted = sorted([
@@ -60,4 +62,17 @@ test('Market producer and final-event consumers share the EVENT-001 catalog', as
     assert.deepEqual(emittedEvents(contract), expectedEmitted);
     assert.deepEqual(setValues(neardata, 'EVENT_CATALOG'), expectedAccepted);
     assert.deepEqual(setValues(rebuild, 'CATALOG'), expectedAccepted);
+
+    const evidence = JSON.parse(evidenceText);
+    assert.equal(evidence.status, 'PASS_TESTNET_FINAL');
+    assert.deepEqual(sorted(evidence.events.map(({ event }) => event)), expectedEmitted);
+    assert.equal(new Set(evidence.events.map((event) => [event.contract_id,
+        event.block_height, event.receipt_id, event.event_index].join(':'))).size,
+    expectedEmitted.length);
+    assert.deepEqual(evidence.not_applicable.map(({ event, status }) => ({ event, status })), [{
+        event: 'contract_migrated', status: 'NOT_APPLICABLE_FRESH_ID',
+    }]);
+    assert.equal(evidence.canary.bridge_frozen, true);
+    assert.equal(evidence.canary.new_purchases_paused, true);
+    assert.equal(evidence.canary.pending_bridge_account_id, null);
 });

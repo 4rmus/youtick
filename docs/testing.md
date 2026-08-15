@@ -67,9 +67,10 @@ node --test scripts/apply-market-read-model-d1.test.mjs \
 
 These are pure local adapter/reducer/schema/API tests with mocked input. The
 catalog regression also keeps the Rust producer and both final-event consumer
-allowlists aligned, while treating `contract_migrated` as accepted but not
-emitted by the fresh-ID pilot contract. They create no D1 database, binding or
-network connection. The explicit
+allowlists aligned with the recorded 18-event final testnet evidence, while
+treating `contract_migrated` as accepted but not emitted by either fresh-ID
+contract. They create no D1 database, binding or network connection. The
+explicit
 `fetch-neardata-market-block.mjs` CLI performs a read-only testnet/mainnet GET
 and must be reported separately from local tests.
 
