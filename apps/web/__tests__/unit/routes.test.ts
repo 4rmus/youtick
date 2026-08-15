@@ -25,4 +25,18 @@ describe('Livepeer-only routes', () => {
         expect(source).toContain("get('job')");
         expect(source).not.toContain("get('cid')");
     });
+
+    it('opens publication reads without opening paid media actions', async () => {
+        const [discover, profile, card] = await Promise.all([
+            readFile('app/discover/page.tsx', 'utf8'),
+            readFile('app/profile/page.tsx', 'utf8'),
+            readFile('components/VideoCard.tsx', 'utf8'),
+        ]);
+
+        expect(discover).toContain('!FEATURE_FLAGS.enablePaidMediaLivepeerV1 && !FEATURE_FLAGS.enableDerivedReadModel');
+        expect(profile).toContain('!FEATURE_FLAGS.enablePaidMediaLivepeerV1 && !FEATURE_FLAGS.enableDerivedReadModel');
+        expect(profile).toContain('enabled: Boolean(accountId && FEATURE_FLAGS.enableDerivedReadModel)');
+        expect(profile).toContain('FEATURE_FLAGS.enablePaidMediaLivepeerV1 && (');
+        expect(card).toContain('return FEATURE_FLAGS.enablePaidMediaLivepeerV1 ? (');
+    });
 });

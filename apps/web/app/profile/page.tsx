@@ -28,12 +28,13 @@ export default function ProfilePage() {
     const activityQuery = useQuery({
         queryKey: ['creatorReadModel', accountId],
         queryFn: async () => (await readMarketCreatorPublicationPage(accountId!, null, 50)).items,
-        enabled: Boolean(accountId && FEATURE_FLAGS.enablePaidMediaLivepeerV1
-            && FEATURE_FLAGS.enableDerivedReadModel),
+        enabled: Boolean(accountId && FEATURE_FLAGS.enableDerivedReadModel),
         staleTime: 30_000,
     });
 
-    if (!FEATURE_FLAGS.enablePaidMediaLivepeerV1) return <RuntimeClosed />;
+    if (!FEATURE_FLAGS.enablePaidMediaLivepeerV1 && !FEATURE_FLAGS.enableDerivedReadModel) {
+        return <RuntimeClosed />;
+    }
     if (!accountId) {
         return (
             <PageShell className="flex items-center justify-center">
@@ -70,7 +71,11 @@ export default function ProfilePage() {
                     </Button>
                     <div>
                         <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Profile</h1>
-                        <p className="mt-1 text-sm text-zinc-400">Manage your publishing account and withdraw ticket revenue.</p>
+                        <p className="mt-1 text-sm text-zinc-400">
+                            {FEATURE_FLAGS.enablePaidMediaLivepeerV1
+                                ? 'Manage your publishing account and withdraw ticket revenue.'
+                                : 'Review publications for the connected creator account.'}
+                        </p>
                     </div>
                 </div>
 
@@ -84,24 +89,26 @@ export default function ProfilePage() {
                         <p className="mt-2 break-all font-mono text-sm text-white">{accountId}</p>
                     </Card>
 
-                    <Card className="border-near-green/20 bg-zinc-900 p-6">
-                        <div className="mb-4 flex items-center gap-3">
-                            <div className="rounded-lg bg-zinc-800 p-2"><Wallet className="h-5 w-5 text-zinc-400" /></div>
-                            <h2 className="font-semibold text-zinc-200">Creator balance</h2>
-                        </div>
-                        <p className="text-xs uppercase tracking-wider text-zinc-500">Available to withdraw</p>
-                        {balanceQuery.isLoading ? (
-                            <Loader2 role="status" aria-label="Loading balance" className="mt-4 h-6 w-6 animate-spin text-zinc-500" />
-                        ) : balanceQuery.error ? (
-                            <p role="alert" className="mt-4 text-sm text-red-400">Balance could not be loaded.</p>
-                        ) : (
-                            <p className="mt-4 text-3xl font-bold text-white">{formatUsdc(balanceQuery.data || '0')} <span className="text-sm font-normal text-zinc-400">USDC</span></p>
-                        )}
-                        <Button variant="near" className="mt-6 w-full" disabled={busy || !balanceQuery.data || BigInt(balanceQuery.data) === 0n} onClick={() => void withdraw()}>
-                            {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Withdraw
-                        </Button>
-                        {error && <p role="alert" className="mt-3 text-sm text-red-400">{error}</p>}
-                    </Card>
+                    {FEATURE_FLAGS.enablePaidMediaLivepeerV1 && (
+                        <Card className="border-near-green/20 bg-zinc-900 p-6">
+                            <div className="mb-4 flex items-center gap-3">
+                                <div className="rounded-lg bg-zinc-800 p-2"><Wallet className="h-5 w-5 text-zinc-400" /></div>
+                                <h2 className="font-semibold text-zinc-200">Creator balance</h2>
+                            </div>
+                            <p className="text-xs uppercase tracking-wider text-zinc-500">Available to withdraw</p>
+                            {balanceQuery.isLoading ? (
+                                <Loader2 role="status" aria-label="Loading balance" className="mt-4 h-6 w-6 animate-spin text-zinc-500" />
+                            ) : balanceQuery.error ? (
+                                <p role="alert" className="mt-4 text-sm text-red-400">Balance could not be loaded.</p>
+                            ) : (
+                                <p className="mt-4 text-3xl font-bold text-white">{formatUsdc(balanceQuery.data || '0')} <span className="text-sm font-normal text-zinc-400">USDC</span></p>
+                            )}
+                            <Button variant="near" className="mt-6 w-full" disabled={busy || !balanceQuery.data || BigInt(balanceQuery.data) === 0n} onClick={() => void withdraw()}>
+                                {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Withdraw
+                            </Button>
+                            {error && <p role="alert" className="mt-3 text-sm text-red-400">{error}</p>}
+                        </Card>
+                    )}
                 </div>
 
                 {FEATURE_FLAGS.enableDerivedReadModel && (
@@ -123,9 +130,15 @@ export default function ProfilePage() {
                                     <ul className="mt-2 space-y-2">
                                         {activityQuery.data.slice(0, 5).map((publication) => (
                                             <li key={publication.publication_id}>
-                                                <Link className="text-sm text-zinc-200 hover:text-emerald-300" href={`/watch?job=${encodeURIComponent(publication.publication_id)}`}>
-                                                    {publication.title} · {publication.availability.replaceAll('_', ' ').toLowerCase()}
-                                                </Link>
+                                                {FEATURE_FLAGS.enablePaidMediaLivepeerV1 ? (
+                                                    <Link className="text-sm text-zinc-200 hover:text-emerald-300" href={`/watch?job=${encodeURIComponent(publication.publication_id)}`}>
+                                                        {publication.title} · {publication.availability.replaceAll('_', ' ').toLowerCase()}
+                                                    </Link>
+                                                ) : (
+                                                    <span className="text-sm text-zinc-200">
+                                                        {publication.title} · {publication.availability.replaceAll('_', ' ').toLowerCase()}
+                                                    </span>
+                                                )}
                                             </li>
                                         ))}
                                     </ul>
