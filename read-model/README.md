@@ -117,11 +117,11 @@ external gate.
 
 ## Provisioned testnet foundation
 
-The user-approved D1 foundation was created on 2026-08-10. A later dark Preview
-Worker release bound it without adding a cron, Queue consumer or public route:
+The v1 D1 foundation was created and bootstrapped on 2026-08-15. The tracked
+dark Worker config targets it without adding a Queue consumer or public route:
 
-- database: `youtick-market-read-model-testnet`
-- database ID: `71292344-ebde-444e-b7a5-51f788b77056`
+- database: `youtick-market-read-model-v1-testnet`
+- database ID: `50b1e14f-2b06-444b-98cf-b828f11277ef`
 - region: `EEUR`
 - source binding: `MARKET_READ_MODEL` in `wrangler.toml`
 - migrations: `0001_initial.sql` through
@@ -132,10 +132,12 @@ Worker release bound it without adding a cron, Queue consumer or public route:
 - exposure: `workers_dev=false`, `preview_urls=false`, no route or Queue; the
   one-minute finality cron performs only two RPC reads
 
-After the bounded canary, remote verification found the watermark at block
-`263118180` with all nine non-watermark tables empty. The contiguous-watermark
-trigger, four expected indexes and migrations remain intact. This proves one
-180-block slice, not an API activation or full rebuild.
+Remote verification found one `ACTIVE` publication and the watermark at block
+`264030390`. The publication came from exact final block `264030389`; the next
+complete block contained no market events and advanced only the watermark.
+Event, governance, media-job, entitlement, sale, withdrawal and archive tables
+remain empty. The old bounded-canary D1 is preserved separately. This proves a
+v1 bootstrap plus one forward block, not an API activation or full rebuild.
 
 Every scheduled invocation emits exactly one secrets-free JSON record with
 schema `youtick.read-model-ingestion.v1`. Success records include status,
