@@ -64,6 +64,7 @@ function transientWebPropagationError(error) {
             continue;
         }
         if (entry.includes(':console:Failed to load resource: the server responded with a status of 404')) {
+            hasPropagationSignal = true;
             continue;
         }
         if (entry.includes('Content Security Policy directive: "script-src \'self\' \'unsafe-inline\'"')) {

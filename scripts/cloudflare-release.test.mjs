@@ -66,6 +66,13 @@ function transientWebPropagationError() {
     ].join('\n'));
 }
 
+function transientAsset404Error() {
+    return new Error([
+        'release_smoke_browser_errors',
+        '/:console:Failed to load resource: the server responded with a status of 404 ()',
+    ].join('\n'));
+}
+
 function canonicalJson(value) {
     return `${JSON.stringify(value, null, 2)}\n`;
 }
@@ -1261,6 +1268,32 @@ test('post-promotion smoke retries transient stable Web asset propagation', asyn
     const receipt = await deployFixture(release, fake, async () => {
         smokeCalls += 1;
         if (smokeCalls === 3) throw transientWebPropagationError();
+        return { ok: true };
+    }, { sleepFn: async (delay) => delays.push(delay) });
+
+    assert.equal(smokeCalls, 4);
+    assert.deepEqual(delays, [1_000]);
+    assert.equal(receipt.web.versionId, 'web-new');
+});
+
+test('post-promotion smoke retries a standalone transient asset 404', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, {
+        workers: {
+            [TARGETS.preview.web.worker]: {
+                traffic: [{ version_id: 'web-old', percentage: 100 }],
+            },
+            [TARGETS.preview.bridge.worker]: {
+                traffic: [{ version_id: 'bridge-old', percentage: 100 }],
+            },
+        },
+        uploadFailures: {},
+    });
+    const delays = [];
+    let smokeCalls = 0;
+    const receipt = await deployFixture(release, fake, async () => {
+        smokeCalls += 1;
+        if (smokeCalls === 3) throw transientAsset404Error();
         return { ok: true };
     }, { sleepFn: async (delay) => delays.push(delay) });
 
