@@ -51,7 +51,7 @@ describe('derived Market read client', () => {
         );
     });
 
-    it('parses creator publications and aggregate sales without treating them as balance', async () => {
+    it('parses creator publications without requesting private sales data', async () => {
         process.env.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL = 'true';
         process.env.NEXT_PUBLIC_MARKET_READ_MODEL_URL = 'https://read.test';
         const fetchMock = vi.fn()
@@ -66,27 +66,15 @@ describe('derived Market read client', () => {
                     source_block_height: 101,
                 }],
                 next_cursor: null,
-            }))
-            .mockResolvedValueOnce(Response.json({
-                schema: 'youtick.creator-sales-summary.v1',
-                watermark: { block_height: 103, block_hash: 'block_hash_000000000000000000000103' },
-                creator_id: 'creator.testnet', sale_count: 2,
-                gross_usdc: '4000000', creator_usdc: '3920000',
             }));
         vi.stubGlobal('fetch', fetchMock);
-        const {
-            readMarketCreatorPublicationPage,
-            readMarketCreatorSalesSummary,
-        } = await import('@/lib/market-read-model');
+        const { readMarketCreatorPublicationPage } = await import('@/lib/market-read-model');
 
         const publications = await readMarketCreatorPublicationPage('creator.testnet', null, 50);
-        const sales = await readMarketCreatorSalesSummary('creator.testnet');
 
         expect(publications.items[0].availability).toBe('SALES_SUSPENDED');
-        expect(sales).toMatchObject({ saleCount: 2, grossUsdc: '4000000', creatorUsdc: '3920000' });
         expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
             'https://read.test/v1/creators/creator.testnet/publications?limit=50',
-            'https://read.test/v1/creators/creator.testnet/sales-summary',
         ]);
     });
 });
