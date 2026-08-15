@@ -35,6 +35,7 @@ function publicEnv(environment) {
     NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2: "false",
     NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2: "false",
     NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: "false",
+    NEXT_PUBLIC_MARKET_READ_MODEL_URL: "",
     NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: "off",
     NEXT_PUBLIC_USDC_CONTRACT_ID: "usdc.testnet",
     NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO: "1",
@@ -279,6 +280,42 @@ test("config rejects placeholders and enabled release flags", async (t) => {
     );
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /exactly false/);
+  });
+
+  await t.test("Preview derived read model at its exact origin", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL = "true";
+    env.PREVIEW_NEXT_PUBLIC_MARKET_READ_MODEL_URL = "https://read-preview.youtick.net";
+    const output = join(tmpdir(), "preview-read-model-config.json");
+    const result = run(["config", "--environment", "preview", "--output", output], env);
+    assertSuccess(result);
+    const config = JSON.parse(readFileSync(output, "utf8"));
+    assert.equal(config.web.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL, "true");
+    assert.equal(config.web.NEXT_PUBLIC_MARKET_READ_MODEL_URL, "https://read-preview.youtick.net");
+  });
+
+  await t.test("Preview derived read model at another origin", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL = "true";
+    env.PREVIEW_NEXT_PUBLIC_MARKET_READ_MODEL_URL = "https://other.youtick.net";
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /must be exactly https:\/\/read-preview\.youtick\.net/);
+  });
+
+  await t.test("Production derived read model", () => {
+    const env = publicEnv("production");
+    env.PRODUCTION_NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL = "true";
+    env.PRODUCTION_NEXT_PUBLIC_MARKET_READ_MODEL_URL = "https://read-preview.youtick.net";
+    const result = run(
+      ["config", "--environment", "production", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /PRODUCTION_NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL must be exactly false/);
   });
 
   await t.test("true upload archive flag", () => {

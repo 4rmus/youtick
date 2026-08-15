@@ -54,6 +54,7 @@ const TARGETS = {
     },
 };
 const READ_MODEL_WORKER = 'youtick-market-read-model-testnet';
+const PREVIEW_READ_MODEL_ORIGIN = 'https://read-preview.youtick.net';
 
 function transientWebPropagationError() {
     return new Error([
@@ -95,6 +96,7 @@ function makeConfig(target) {
             NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2: 'false',
             NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2: 'false',
             NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: 'false',
+            NEXT_PUBLIC_MARKET_READ_MODEL_URL: '',
             NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: 'off',
         },
         bridge: {
@@ -1191,6 +1193,32 @@ test('target allowlist and disabled release flags are fail closed', async (t) =>
             target: 'preview', sha: SHA, artifactDir: release.artifactDir, receiptOutput: release.receipt,
             nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY, ...PREVIEW_SECRET_INPUTS,
         }), /livepeer_bridge_enabled_not_false/);
+    });
+
+    await t.test('accepts the Preview publication read origin', async (subtest) => {
+        const release = makeRelease(subtest);
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.web.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL = 'true';
+        config.web.NEXT_PUBLIC_MARKET_READ_MODEL_URL = PREVIEW_READ_MODEL_ORIGIN;
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.preview = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+        await deployFixture(release, fake);
+    });
+
+    await t.test('rejects another Preview read origin', async (subtest) => {
+        const release = makeRelease(subtest);
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.web.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL = 'true';
+        config.web.NEXT_PUBLIC_MARKET_READ_MODEL_URL = 'https://other.youtick.net';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.preview = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        await assert.rejects(deployRelease({
+            target: 'preview', sha: SHA, artifactDir: release.artifactDir, receiptOutput: release.receipt,
+            nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY, ...PREVIEW_SECRET_INPUTS,
+        }), /next_public_market_read_model_url_invalid/);
     });
 
     await t.test('rejects extra Bridge migrations and bindings', async (subtest) => {

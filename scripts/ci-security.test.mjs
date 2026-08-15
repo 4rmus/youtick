@@ -86,6 +86,31 @@ test('testnet read model binding stays dark with only the finality probe cron', 
     assert.doesNotMatch(source, /\bqueues\b|READ_MODEL_NEAR_RPC_URL/);
 });
 
+test('Preview publication API is read-only and bound to the exact Web origin', async () => {
+    const [config, deploy, promote] = await Promise.all([
+        readFile(new URL('../read-model/wrangler.preview.toml', import.meta.url), 'utf8'),
+        readFile(new URL('../.github/workflows/deploy-preview.yml', import.meta.url), 'utf8'),
+        readFile(new URL('../.github/workflows/promote-production.yml', import.meta.url), 'utf8'),
+    ]);
+
+    assert.match(config, /name = "youtick-market-read-model-preview"/);
+    assert.match(config, /workers_dev = false/);
+    assert.match(config, /preview_urls = false/);
+    assert.match(config, /routes = \[\{ pattern = "read-preview\.youtick\.net", custom_domain = true \}\]/);
+    assert.match(config, /READ_MODEL_ENABLED = "true"/);
+    assert.match(config, /READ_MODEL_INGESTION_ENABLED = "false"/);
+    assert.match(config, /READ_MODEL_BACKFILL_ENABLED = "false"/);
+    assert.match(config, /READ_MODEL_BACKFILL_CONTINUE_ENABLED = "false"/);
+    assert.match(config, /READ_MODEL_WEB_ORIGIN = "https:\/\/preview\.youtick\.net"/);
+    assert.match(config, /database_id = "50b1e14f-2b06-444b-98cf-b828f11277ef"/);
+    assert.doesNotMatch(config, /\[triggers\]|\bqueues\b|READ_MODEL_NEAR_RPC_URL/);
+    for (const workflow of [deploy, promote]) {
+        assert.match(workflow, /PREVIEW_NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: \$\{\{ vars\.PREVIEW_NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL \}\}/);
+        assert.match(workflow, /PREVIEW_NEXT_PUBLIC_MARKET_READ_MODEL_URL: \$\{\{ vars\.PREVIEW_NEXT_PUBLIC_MARKET_READ_MODEL_URL \}\}/);
+        assert.match(workflow, /PRODUCTION_NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: "false"/);
+    }
+});
+
 test('testnet Livepeer Queue binding stays closed with the pilot policy', async () => {
     const source = await readFile(new URL('../workers/livepeer-bridge/wrangler.toml', import.meta.url), 'utf8');
 

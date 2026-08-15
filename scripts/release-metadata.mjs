@@ -15,6 +15,7 @@ const PREVIEW_CONTRACT_IDS = Object.freeze({
   market: "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
   access: "lp-arch-access-v2-260809.youtick-dev-v3.testnet",
 });
+const PREVIEW_READ_MODEL_ORIGIN = "https://read-preview.youtick.net";
 const PAYMENT_ASSET_IDS = new Set([
   "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
   "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
@@ -100,7 +101,6 @@ const FALSE_FLAGS = Object.freeze([
   "NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE",
   "NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2",
   "NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2",
-  "NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL",
   "LIVEPEER_BRIDGE_ENABLED",
   "LIVEPEER_NEW_UPLOADS_ENABLED",
   "LIVEPEER_PLAYBACK_ISSUANCE_ENABLED",
@@ -246,6 +246,22 @@ function buildConfig(environment) {
   for (const flag of FALSE_FLAGS) {
     const value = web[flag] ?? bridge[flag];
     if (value !== "false") fail(`${environment.toUpperCase()}_${flag} must be exactly false`);
+  }
+  const derivedReadModel = web.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL;
+  if (environment === "production" && derivedReadModel !== "false") {
+    fail("PRODUCTION_NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL must be exactly false");
+  }
+  if (environment === "preview" && !["false", "true"].includes(derivedReadModel)) {
+    fail("PREVIEW_NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL must be exactly false or true");
+  }
+  if (derivedReadModel === "true") {
+    web.NEXT_PUBLIC_MARKET_READ_MODEL_URL = normalizeOrigin(
+      web.NEXT_PUBLIC_MARKET_READ_MODEL_URL,
+      "NEXT_PUBLIC_MARKET_READ_MODEL_URL",
+    );
+    if (web.NEXT_PUBLIC_MARKET_READ_MODEL_URL !== PREVIEW_READ_MODEL_ORIGIN) {
+      fail(`NEXT_PUBLIC_MARKET_READ_MODEL_URL must be exactly ${PREVIEW_READ_MODEL_ORIGIN}`);
+    }
   }
   const paymentMode = web.NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE;
   if (paymentMode !== bridge.MULTI_ASSET_PAYMENTS_MODE) {
