@@ -6,6 +6,10 @@ import {
     applyFinalMarketBlock,
     applyFinalMarketEventBatch,
 } from './apply-market-read-model-d1.mjs';
+import {
+    applyMarketReadModelBootstrap,
+    fetchMarketReadModelBootstrap,
+} from './bootstrap-market-read-model-d1.mjs';
 import { runMarketReadModelOnce } from './run-market-read-model-once.mjs';
 import {
     fetchNearFinalBlockHeight,
@@ -60,6 +64,128 @@ async function database() {
         },
     };
 }
+
+const bootstrapBlockHash = 'B6oE1UWkynBdztjt3CDPHv5er7q9PVqtYNUWBcC57SPX';
+const bootstrapPublication = {
+    publication_id: 'job-bootstrap',
+    creator_id: 'creator.testnet',
+    title: 'Bootstrap video',
+    price_usdc: '2000000',
+    generation: 1,
+    playback_id: 'playback_bootstrap',
+    availability: 'ACTIVE',
+    published_at_ms: 1_785_600_000_100,
+};
+
+function rpcJson(value, blockHash = bootstrapBlockHash) {
+    return Response.json({
+        jsonrpc: '2.0',
+        id: 'test',
+        result: {
+            block_hash: blockHash,
+            result: [...new TextEncoder().encode(JSON.stringify(value))],
+        },
+    });
+}
+
+test('builds a publication bootstrap from one exact final NEAR block', async () => {
+    const requests = [];
+    const snapshot = await fetchMarketReadModelBootstrap({
+        network: 'testnet',
+        contractId: 'market.testnet',
+        rpcUrl: 'https://dedicated-rpc.invalid/token',
+    }, async (_url, init) => {
+        const request = JSON.parse(init.body);
+        requests.push(request);
+        if (request.method === 'block') {
+            return Response.json({
+                jsonrpc: '2.0', id: 'test',
+                result: { header: { height: 263_118_360, hash: bootstrapBlockHash } },
+            });
+        }
+        if (request.params.method_name === 'get_publications_count') return rpcJson(1);
+        return rpcJson([{ ...bootstrapPublication, expected_source_bytes: '1000' }]);
+    });
+
+    assert.deepEqual(snapshot, {
+        schema: 'youtick.market-read-model-bootstrap.v1',
+        network: 'testnet',
+        contract_id: 'market.testnet',
+        finality: 'final',
+        block_height: 263_118_360,
+        block_hash: bootstrapBlockHash,
+        publications: [bootstrapPublication],
+    });
+    assert.deepEqual(requests.map((request) => request.method), ['block', 'query', 'query']);
+    assert.deepEqual(requests.slice(1).map((request) => request.params.block_id), [
+        bootstrapBlockHash, bootstrapBlockHash,
+    ]);
+
+    await assert.rejects(() => fetchMarketReadModelBootstrap({
+        network: 'testnet',
+        contractId: 'market.testnet',
+        rpcUrl: 'https://dedicated-rpc.invalid/token',
+    }, async (_url, init) => {
+        const request = JSON.parse(init.body);
+        if (request.method === 'block') return Response.json({
+            result: { header: { height: 263_118_360, hash: bootstrapBlockHash } },
+        });
+        return request.params.method_name === 'get_publications_count'
+            ? rpcJson(1)
+            : rpcJson([]);
+    }), /invalid_near_publication_page/);
+});
+
+test('bootstraps only publications and rejects any non-empty D1', async () => {
+    const db = await database();
+    const snapshot = {
+        schema: 'youtick.market-read-model-bootstrap.v1',
+        network: 'testnet',
+        contract_id: 'market.testnet',
+        finality: 'final',
+        block_height: 263_118_360,
+        block_hash: bootstrapBlockHash,
+        publications: [bootstrapPublication],
+    };
+
+    await applyMarketReadModelBootstrap(db, snapshot);
+    assert.deepEqual(
+        { ...db.sqlite.prepare(`
+            SELECT publication_id, availability, source_block_height FROM publications
+        `).get() },
+        {
+            publication_id: 'job-bootstrap', availability: 'ACTIVE',
+            source_block_height: 263_118_360,
+        },
+    );
+    assert.deepEqual(
+        { ...db.sqlite.prepare('SELECT block_height, block_hash FROM finality_watermarks').get() },
+        { block_height: 263_118_360, block_hash: bootstrapBlockHash },
+    );
+    assert.equal(db.sqlite.prepare('SELECT count(*) AS count FROM chain_events').get().count, 0);
+    assert.equal(db.sqlite.prepare('SELECT count(*) AS count FROM sale_ledger').get().count, 0);
+    assert.equal(db.sqlite.prepare('SELECT count(*) AS count FROM withdrawal_history').get().count, 0);
+    await assert.rejects(
+        () => applyMarketReadModelBootstrap(db, snapshot),
+        /d1_bootstrap_not_empty/,
+    );
+    db.sqlite.close();
+});
+
+test('rejects a duplicate publication before changing D1', async () => {
+    const db = await database();
+    await assert.rejects(() => applyMarketReadModelBootstrap(db, {
+        schema: 'youtick.market-read-model-bootstrap.v1',
+        network: 'testnet',
+        contract_id: 'market.testnet',
+        finality: 'final',
+        block_height: 263_118_360,
+        block_hash: bootstrapBlockHash,
+        publications: [bootstrapPublication, bootstrapPublication],
+    }), /duplicate_d1_bootstrap_publication/);
+    assert.equal(db.sqlite.prepare('SELECT count(*) AS count FROM finality_watermarks').get().count, 0);
+    db.sqlite.close();
+});
 
 test('D1 upload archive keeps a bounded terminal summary and 14 day boundary', async () => {
     const db = await database();
