@@ -40,7 +40,7 @@ Evidence classes remain separate:
 | ID | Status | Difference | Independent work allowed |
 |---|---|---|---|
 | DEC-001 | ACCEPTED | Use fresh isolated Market v2 and Access IDs with empty pilot state; do not import or overwrite the existing testnet pair. Mainnet also uses a fresh contract ID plus independently audited snapshot/import and invariant verification. | Market v2 carries `state_version=2`; no old-state migration claim. Mainnet implementation/audit remain later gates. |
-| DEC-002 | PARTIAL | The technical pilot is explicitly non-refundable. Product/legal/finance confirmation for mainnet general access is still absent. | Preserve no-automatic-refund behavior; no implied credit or mainnet policy claim. |
+| DEC-002 | ACCEPTED_FOR_TECHNICAL_PILOT | The technical pilot uses option A: explicitly non-refundable. Product/legal/finance confirmation for mainnet general access is still absent. | Preserve no-automatic-refund behavior; no reserve, escrow, implied credit or mainnet policy claim. |
 | DEC-003 | ACCEPTED | `SALES_SUSPENDED` preserves playback for existing entitlements while blocking new sales; takedown blocks playback. | Implement this exact semantic in v2. |
 | DEC-004 | ACCEPTED_FOR_PILOT | Pilot values are concurrency 2, attempts 2/day, ambiguity 15 minutes, monthly 20,000,000 micro-USD, per-job 2,000,000 micro-USD and retention 14/30/90 days. Testnet governance may omit multisig/timelock. | Values remain unconfigured until their bounded implementation/release checkpoint. |
 | DEC-005 | ACCEPTED_GUARDED | UploadJob retention is 14 days, but terminal deletion may run only after the D1 archive commit is proven and legacy v1 playback no longer reads that job. | Keep destructive cleanup absent until both machine-verifiable preconditions exist. |
@@ -76,7 +76,9 @@ Evidence classes remain separate:
 - D1 operations: Neardata testnet final blocks, deployment-block start,
   complete-block cursor, Workers Paid, one-minute cron, max 180 blocks/run,
   Platform/SRE ownership, RPO 0, RTO 4h and pilot end plus 90-day retention.
-- Finance: technical pilot is explicitly non-refundable.
+- Finance: technical pilot is explicitly non-refundable; option A was
+  reaffirmed on 2026-08-15 without authorizing an automatic refund, reserve,
+  escrow or implied platform credit.
 - Resilience: no platform source-media backup. Creators retain source files;
   provider asset loss suspends sales/playback and requires creator re-upload
   with a new publication or takedown.
@@ -90,6 +92,48 @@ Evidence classes remain separate:
   funded testnet admin, guardian and pilot-creator accounts exist.
 - External execution remains gated by exact target/account/artifact checks;
   this record does not treat local work as a testnet deployment or pilot run.
+
+## PAY-001 technical-pilot policy decision — 2026-08-15
+
+- DURUM:
+  `DECISION_ACCEPTED_FOR_TECHNICAL_PILOT / MAINNET_POLICY_UNPROVEN / RUNTIME_UNCHANGED`.
+- KARAR: Option A is fixed for the technical testnet/internal pilot. A completed
+  purchase is explicitly non-refundable. There is no automatic on-chain or
+  off-chain refund, platform reserve, settlement hold/escrow or implied credit.
+  Any goodwill credit would be a separately approved manual operation and is
+  not promised by this policy.
+- SCOPE: This is not mainnet product/legal/finance approval. Mainnet general
+  access still requires approved user-facing terms, support handling,
+  accounting invariants and contract/treasury review. Existing entitlement,
+  takedown and sales-suspension semantics are unchanged.
+- READ-ONLY CURRENT TRUTH:
+  - `origin/main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`; exact-main CI
+    `31895385141` and Deploy Preview `31895517069` succeeded;
+  - Preview Web version `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` and Bridge
+    version `86305272-4ebb-4ca4-9d0e-11e3bd182b17` carry the exact-main tag.
+    Bridge health is `stage=DISABLED`; provider/operator/upload/playback/Queue
+    mutation gates are false. The public read API remains separately active at
+    source tag `76e85f44e0d7ab38b0c96ab1302dcfde576b42dd`, with ingestion and
+    backfill false;
+  - dark read-model version `62451057-c6b6-40ff-a8f6-0ac6723d0a1c` carries
+    the exact-main tag and all four runtime/write flags false. Dedicated
+    backfill primary/DLQ producer-consumer counts are `0/0` and `0/0`;
+  - bound D1 `50b1e14f-2b06-444b-98cf-b828f11277ef` is at watermark
+    `264071553` / `5cC4NH1a2VYyt8gQmjnmPJ54cE1YvDKrqTx4436HYJb2`, with one
+    publication, five chain events, one entitlement, one sale, one withdrawal
+    and two governance rows. Both read-only queries report `rows_written=0`
+    and `changed_db=false`;
+  - `read-preview.youtick.net`, `bridge-preview.youtick.net`,
+    `preview.youtick.net` and `youtick.net` returned HTTP 200. Production Web
+    and Bridge Workers do not exist in the account and `app.youtick.net` /
+    `bridge.youtick.net` did not resolve.
+- KANIT: read-only Git/GitHub/Cloudflare control-plane, HTTP and D1 evidence.
+  No deploy, Queue/D1 write, provider, wallet, payment, chain, email, alert or
+  support mutation occurred.
+- FAZ KAPISI: `PASS_FOR_TECHNICAL_PILOT` for the PAY-001 policy decision only.
+  PAY-001 remains partial for mainnet approval and accounting closure.
+- SONRAKİ: reconcile Checkpoints 130–143 between this repository log and the
+  plan as a documentation-only gate; do not advance to EVENT-001 automatically.
 
 ## Phase exit gates
 
@@ -154,7 +198,7 @@ Evidence classes remain separate:
 | Discover/profile use read API | PARTIAL | A disabled-by-default Web client reads active Discover pages and creator publication history from the versioned D1 API. Creator sales stay in the accounting projection and are not publicly readable. Initial Discover failure falls back to canonical NEAR without mixing cursors; creator available balance/withdrawal and all purchase/playback authority stay on NEAR. The D1 binding is deployed dark, but the API flag remains false and no public route exists. `LOCAL_TEST` + `PREVIEW_DEPLOYMENT`. |
 | Purchase/playback remain canonical-chain based | PASS | Current architecture and Worker final reads retain NEAR authority. `LOCAL_STATIC`; target runtime activation is not implied. |
 | Sale ledger and withdrawal audit available | PARTIAL | Event reducer/D1 projections include sale ledger, entitlements and withdrawal history; rebuild and D1 retain the same exact withdrawal event status and decimal-string amounts. The public read API exposes none of these financial projections. Live economic rows and accounting reconciliation remain absent. `LOCAL_TEST`. |
-| Refund/credit policy approved | PARTIAL | Technical pilot is explicitly non-refundable. Mainnet product/legal/finance confirmation and accounting invariants remain open. |
+| Refund/credit policy approved | PASS_FOR_TECHNICAL_PILOT / MAINNET_PARTIAL | Option A is accepted for the technical pilot: no automatic refund, reserve, escrow or implied credit. Mainnet product/legal/finance confirmation, user-facing terms and accounting invariants remain open. `LOCAL_STATIC` + read-only current-runtime verification. |
 
 ### Phase 5 — scale, cost and SRE
 
@@ -203,7 +247,7 @@ Evidence classes remain separate:
 | WEB-001 | 3 | PASS_LOCAL | One canonical UI stage follows the target lifecycle and a pure predecessor table enforces forward/retry/reset/terminal edges. A fingerprint-verified v2 draft restores safe UI projections; provider-processing resumes visibility-aware Query polling without reopening payment, while interrupted upload returns to upload-ready. The finality retry and composed job/publication read now live in the existing publication use-case service, leaving the component without a direct network primitive or timer. Real browser reload/staging proof remains absent. `LOCAL_TEST`. |
 | EVENT-001 | 4 | PARTIAL | Market v2 locally emits job, rebuild-complete publication, entitlement, withdrawal, bridge and quote-key events with common context/idempotency fields and no capabilities. The fresh testnet v2 has zero publications, but the updated artifact is not deployed; `contract_migrated`, testnet economic-event proof and final receipt/event indexing remain absent. |
 | DATA-001 | 4 | PARTIAL | Source-only D1 schema, deterministic rebuild, complete-block atomic writer, bounded Neardata adapter, testnet-only scheduled entrypoint, contiguous cursor, >16-event fail-closed policy, structured lag telemetry, GET-only API and closed Discover/profile client pass locally. Dedicated v1 D1 `50b1e14f-2b06-444b-98cf-b828f11277ef` has migrations 0001–0004, one exact-final `ACTIVE` publication and forward-block watermark `264030390`; event, governance, media-job, entitlement, sale, withdrawal and archive tables are empty. The tracked Worker binding targets this D1 while the deployed Worker runs only the two-read finality probe and ingestion/backfill/API remain closed. Automatic Queue continuation is separately default-off in source. Full rebuild and its RTO target are deferred beyond v1; alert delivery is accepted risk. |
-| PAY-001 | 4 | PARTIAL | Technical pilot is non-refundable; source-only exact sale ledger, creator aggregate and withdrawal audit pass locally. Mainnet policy approval, deployed D1 and accounting reconciliation remain absent. |
+| PAY-001 | 4 | PARTIAL | The technical-pilot policy side is closed as option A: explicitly non-refundable, with no automatic refund/reserve/escrow or implied credit. Source-only exact sale ledger, creator aggregate and withdrawal audit pass locally. Mainnet product/legal/finance approval and accounting closure remain absent. |
 | SRE-001 | 0–5 | PARTIAL | Redacted request/dependency/Queue/payment telemetry, a one-shot per-isolate cold-start field, bounded state-kind/projected DO record telemetry, Market reserve/RPC-finality sources and a machine-readable `SOURCE_ONLY` policy exist. The exact read-model finality source is deployed at one-minute cadence and its structured `lag_blocks` field is queryable. All nine alerts have a role/action and all six domain controls are source-ready. Guarded release inputs remain closed; the contract purchase control requires a separately approved on-chain pause receipt. The account-level native Workers Observability alert feature, named on-call, delivered notifications, deployed control exercises and drills remain absent. |
 | PERF-001 | 5 | PARTIAL | Opt-in local runs reject 100,000 wrong-origin requests with zero growth and serve 1,000 authorized warm requests at 9.15 ms p95 with zero errors, no warm external/DO calls and bounded cache. Mocked local latency is not deployed evidence. |
 | PERF-002 | 5 | EXTERNAL_EVIDENCE_REQUIRED | No current multi-creator/20 GB load evidence. |
