@@ -12,10 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { FEATURE_FLAGS } from '@/lib/constants';
 import { formatUsdc, readCreatorBalance, withdrawCreatorBalance } from '@/lib/livepeer-publication';
-import {
-    readMarketCreatorPublicationPage,
-    readMarketCreatorSalesSummary,
-} from '@/lib/market-read-model';
+import { readMarketCreatorPublicationPage } from '@/lib/market-read-model';
 
 export default function ProfilePage() {
     const { accountId, connect, getWallet, isReady } = useWallet();
@@ -30,17 +27,7 @@ export default function ProfilePage() {
     });
     const activityQuery = useQuery({
         queryKey: ['creatorReadModel', accountId],
-        queryFn: async () => {
-            const [publications, sales] = await Promise.all([
-                readMarketCreatorPublicationPage(accountId!, null, 50),
-                readMarketCreatorSalesSummary(accountId!),
-            ]);
-            if (publications.watermark.block_height !== sales.watermark.block_height
-                || publications.watermark.block_hash !== sales.watermark.block_hash) {
-                throw new Error('market_read_model_watermark_mismatch');
-            }
-            return { publications: publications.items, sales };
-        },
+        queryFn: async () => (await readMarketCreatorPublicationPage(accountId!, null, 50)).items,
         enabled: Boolean(accountId && FEATURE_FLAGS.enablePaidMediaLivepeerV1
             && FEATURE_FLAGS.enableDerivedReadModel),
         staleTime: 30_000,
@@ -128,30 +115,21 @@ export default function ProfilePage() {
                         ) : activityQuery.error ? (
                             <p role="alert" className="mt-6 text-sm text-red-400">Publication activity could not be loaded.</p>
                         ) : activityQuery.data ? (
-                            <div className="mt-6 grid gap-6 md:grid-cols-2">
-                                <div>
-                                    <p className="text-xs uppercase tracking-wider text-zinc-500">Recorded sales</p>
-                                    <p className="mt-2 text-2xl font-bold text-white">{activityQuery.data.sales.saleCount}</p>
-                                    <p className="mt-2 text-sm text-zinc-400">
-                                        {formatUsdc(activityQuery.data.sales.grossUsdc)} USDC gross · {formatUsdc(activityQuery.data.sales.creatorUsdc)} USDC creator proceeds
-                                    </p>
-                                </div>
-                                <div>
-                                    <p className="text-xs uppercase tracking-wider text-zinc-500">Publications</p>
-                                    {activityQuery.data.publications.length === 0 ? (
-                                        <p className="mt-2 text-sm text-zinc-400">No publications yet.</p>
-                                    ) : (
-                                        <ul className="mt-2 space-y-2">
-                                            {activityQuery.data.publications.slice(0, 5).map((publication) => (
-                                                <li key={publication.publication_id}>
-                                                    <Link className="text-sm text-zinc-200 hover:text-emerald-300" href={`/watch?job=${encodeURIComponent(publication.publication_id)}`}>
-                                                        {publication.title} · {publication.availability.replaceAll('_', ' ').toLowerCase()}
-                                                    </Link>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    )}
-                                </div>
+                            <div className="mt-6">
+                                <p className="text-xs uppercase tracking-wider text-zinc-500">Publications</p>
+                                {activityQuery.data.length === 0 ? (
+                                    <p className="mt-2 text-sm text-zinc-400">No publications yet.</p>
+                                ) : (
+                                    <ul className="mt-2 space-y-2">
+                                        {activityQuery.data.slice(0, 5).map((publication) => (
+                                            <li key={publication.publication_id}>
+                                                <Link className="text-sm text-zinc-200 hover:text-emerald-300" href={`/watch?job=${encodeURIComponent(publication.publication_id)}`}>
+                                                    {publication.title} · {publication.availability.replaceAll('_', ' ').toLowerCase()}
+                                                </Link>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
                             </div>
                         ) : null}
                     </Card>

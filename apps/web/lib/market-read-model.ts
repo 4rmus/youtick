@@ -7,20 +7,12 @@ import {
 const ACCOUNT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const HASH_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
 const CURSOR_PATTERN = /^[A-Za-z0-9_-]{1,512}$/;
-const DECIMAL_PATTERN = /^(0|[1-9][0-9]{0,39})$/;
 
 type Watermark = { block_height: number; block_hash: string };
 
 export type MarketPublicationPage = {
     items: LivepeerPublication[];
     nextCursor: string | null;
-    watermark: Watermark;
-};
-
-export type MarketCreatorSalesSummary = {
-    saleCount: number;
-    grossUsdc: string;
-    creatorUsdc: string;
     watermark: Watermark;
 };
 
@@ -42,27 +34,6 @@ export function readMarketCreatorPublicationPage(
         `/v1/creators/${encodeURIComponent(accountId)}/publications`,
         'youtick.creator-publications.v1', accountId, cursor, limit, false,
     );
-}
-
-export async function readMarketCreatorSalesSummary(
-    accountId: string,
-): Promise<MarketCreatorSalesSummary> {
-    requireAccount(accountId);
-    const value = await requestJson(`/v1/creators/${encodeURIComponent(accountId)}/sales-summary`);
-    const watermark = parseWatermark(value.watermark);
-    if (value.schema !== 'youtick.creator-sales-summary.v1'
-        || value.creator_id !== accountId
-        || !Number.isSafeInteger(value.sale_count) || Number(value.sale_count) < 0
-        || typeof value.gross_usdc !== 'string' || !DECIMAL_PATTERN.test(value.gross_usdc)
-        || typeof value.creator_usdc !== 'string' || !DECIMAL_PATTERN.test(value.creator_usdc)) {
-        throw new Error('invalid_market_read_model_summary');
-    }
-    return {
-        saleCount: Number(value.sale_count),
-        grossUsdc: value.gross_usdc,
-        creatorUsdc: value.creator_usdc,
-        watermark,
-    };
 }
 
 async function readPublicationPage(

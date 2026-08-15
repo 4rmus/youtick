@@ -19,9 +19,6 @@ async function environment(enabled = true) {
             .run('testnet', 'market.testnet', row[0], row[1], row[2], 1,
                 '2000000', row[3], row[4], row[5], row[6]);
     }
-    sqlite.prepare('INSERT INTO sale_ledger VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run('testnet', 'market.testnet', 'sale-1', 'buyer.testnet', 'creator.testnet',
-            'pub-c', 'USDC', '2000000', '1960000', '40000', 103);
     const database = {
         prepare(sql) {
             return { bind: (...values) => ({ sql, values }) };
@@ -89,11 +86,8 @@ test('publications paginate active rows and bind cache identity to watermark', a
     sqlite.close();
 });
 
-test('creator projections include suspended work and expose aggregate sales only', async () => {
+test('creator projections include suspended work while sales summary stays private', async () => {
     const { sqlite, env } = await environment();
-    sqlite.prepare('INSERT INTO sale_ledger VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run('testnet', 'market.testnet', 'sale-2', 'buyer-2.testnet', 'creator.testnet',
-            'pub-c', 'USDC', '9007199254740993', '9007199254740993', '0', 103);
     const publications = await marketReadApi(new Request(
         'https://read.test/v1/creators/creator.testnet/publications',
     ), env);
@@ -103,20 +97,14 @@ test('creator projections include suspended work and expose aggregate sales only
         [['pub-c', 'ACTIVE'], ['pub-a', 'SALES_SUSPENDED']],
     );
 
+    env.MARKET_READ_MODEL.batch = async () => {
+        throw new Error('sales_summary_must_not_query_d1');
+    };
     const summary = await marketReadApi(new Request(
         'https://read.test/v1/creators/creator.testnet/sales-summary',
     ), env);
-    assert.deepEqual(await summary.json(), {
-        schema: 'youtick.creator-sales-summary.v1',
-        watermark: {
-            block_height: 103,
-            block_hash: 'block_hash_000000000000000000000103',
-        },
-        creator_id: 'creator.testnet',
-        sale_count: 2,
-        gross_usdc: '9007199256740993',
-        creator_usdc: '9007199256700993',
-    });
+    assert.equal(summary.status, 404);
+    assert.deepEqual(await summary.json(), { error: 'not_found' });
     sqlite.close();
 });
 

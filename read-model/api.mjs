@@ -1,7 +1,6 @@
 const ACCOUNT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
 const BLOCK_HASH_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
-const DECIMAL_PATTERN = /^(0|[1-9][0-9]{0,39})$/;
 const CACHE_CONTROL = 'public, max-age=15, stale-while-revalidate=15';
 
 export default {
@@ -26,7 +25,6 @@ function readModelRoute(pathname) {
     if (pathname === '/v1/publications') return 'publications';
     if (/^\/v1\/publications\/[^/]+$/.test(pathname)) return 'publication_detail';
     if (/^\/v1\/creators\/[^/]+\/publications$/.test(pathname)) return 'creator_publications';
-    if (/^\/v1\/creators\/[^/]+\/sales-summary$/.test(pathname)) return 'creator_sales_summary';
     return 'unknown';
 }
 
@@ -50,11 +48,6 @@ async function routeMarketReadApi(request, env) {
         if (creatorRoute) {
             const creator = pathPart(creatorRoute[1], ACCOUNT_PATTERN);
             return await publicationList(request, env, url, creator);
-        }
-        const summaryRoute = url.pathname.match(/^\/v1\/creators\/([^/]+)\/sales-summary$/);
-        if (summaryRoute) {
-            const creator = pathPart(summaryRoute[1], ACCOUNT_PATTERN);
-            return await salesSummary(request, env, creator);
         }
         const detailRoute = url.pathname.match(/^\/v1\/publications\/([^/]+)$/);
         if (detailRoute) {
@@ -133,40 +126,6 @@ async function publicationDetail(request, env, publicationId) {
         watermark,
         publication,
     }, watermark);
-}
-
-async function salesSummary(request, env, creator) {
-    const [watermarkResult, salesResult] = await env.MARKET_READ_MODEL.batch([
-        watermarkStatement(env),
-        env.MARKET_READ_MODEL.prepare(`
-            SELECT amount, creator_amount
-            FROM sale_ledger
-            WHERE network = ? AND contract_id = ? AND creator_id = ?
-        `).bind(env.READ_MODEL_NETWORK, env.READ_MODEL_CONTRACT_ID, creator),
-    ]);
-    const watermark = requiredWatermark(watermarkResult.results?.[0]);
-    const sales = salesResult.results || [];
-    // ponytail: exact pilot fold; materialize totals only when measured row volume requires it.
-    return cachedJson(request, {
-        schema: 'youtick.creator-sales-summary.v1',
-        watermark,
-        creator_id: creator,
-        sale_count: sales.length,
-        gross_usdc: sumExactDecimals(sales, 'amount'),
-        creator_usdc: sumExactDecimals(sales, 'creator_amount'),
-    }, watermark);
-}
-
-function sumExactDecimals(rows, field) {
-    let total = 0n;
-    for (const row of rows) {
-        const value = row[field];
-        if (typeof value !== 'string' || !DECIMAL_PATTERN.test(value)) {
-            throw new Error('read_model_corrupt');
-        }
-        total += BigInt(value);
-    }
-    return total.toString();
 }
 
 function watermarkStatement(env) {

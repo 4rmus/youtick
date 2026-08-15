@@ -172,10 +172,11 @@ hold evidence are required before destructive cleanup source may be added.
 
 `api.mjs` is a GET-only, disabled-by-default D1 Worker module. It exposes
 `/v1/publications`, `/v1/publications/:id`,
-`/v1/creators/:account/publications` and
-`/v1/creators/:account/sales-summary`. Every response carries the finality
-watermark; cache identity binds both the watermark and exact request URL.
-Payments, balances, entitlements and playback authorization never use it.
+and `/v1/creators/:account/publications`. Creator sales remain in the D1
+accounting projection but are not exposed by the public read API. Every
+projection response carries the finality watermark; cache identity binds both
+the watermark and exact request URL. Payments, balances, entitlements and
+playback authorization never use it.
 Activation requires `READ_MODEL_ENABLED=true`, a deployed `MARKET_READ_MODEL`
 binding, an exact network and contract ID, plus an exact HTTPS
 `READ_MODEL_WEB_ORIGIN` for CORS. The tracked config and deployed binding remain
