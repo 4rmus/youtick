@@ -199,8 +199,8 @@ const READ_MODEL_ARTIFACT_WRANGLER = [
     '',
     '[[d1_databases]]',
     'binding = "MARKET_READ_MODEL"',
-    'database_name = "youtick-market-read-model-testnet"',
-    'database_id = "71292344-ebde-444e-b7a5-51f788b77056"',
+    'database_name = "youtick-market-read-model-v1-testnet"',
+    'database_id = "50b1e14f-2b06-444b-98cf-b828f11277ef"',
     'migrations_dir = "d1"',
     '',
 ].join('\n');
