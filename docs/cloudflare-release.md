@@ -38,7 +38,8 @@ değişkenler:
 - `NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE=false`
 - `NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2=false`
 - `NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2=false`
-- `NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL=false`
+- `NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL=false` (Preview publication gate may be `true`)
+- `NEXT_PUBLIC_MARKET_READ_MODEL_URL` (required as `https://read-preview.youtick.net` when that gate is `true`)
 - `NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE=off`
 - `NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO`
 - `ALLOWED_ORIGINS`, `NEAR_NETWORK`, `MARKET_CONTRACT_ID`, `ACCESS_CONTRACT_ID`
@@ -61,8 +62,10 @@ değişkenler:
 - `MULTI_ASSET_PAYMENT_ASSET_IDS`
 
 USDC, read-model URL, creator allowlist, ücret rezervi ve operasyon bütçesi değişkenleri opsiyoneldir.
-Derived read gate kapalıyken read-model URL boş tutulur. Placeholder,
-`localhost`, `workers.dev`, kök `youtick.net` hedefi ve açık feature flag build öncesinde reddedilir.
+Derived read gate kapalıyken read-model URL boş tutulur. Yalnız Preview,
+`https://read-preview.youtick.net` ile bu gate'i açabilir; Production zorunlu `false` kalır.
+Placeholder, `localhost`, `workers.dev`, kök `youtick.net` hedefi ve diğer açık feature flag'ler
+build öncesinde reddedilir.
 `NEAR_RPC_URL` zorunlu environment secret'ıdır; artifact/config/manifest içine yazılmaz ve yalnız
 Bridge version upload sırasında geçici `0600` secrets file üzerinden Wrangler'a aktarılır. Eksik,
 placeholder/example, genel public NEAR RPC, HTTP, credentials veya whitespace içeren değer reddedilir.
@@ -91,11 +94,11 @@ değer kaymasında fail-closed davranır. Bu runbook henüz `LIVEPEER_EVENTS`
 binding veya dead-letter Queue oluşturmaz. Provider-side binding ve read-only
 konfigürasyon kanıtı olmadan bu flag açılamaz.
 
-Derived read-model web geçişi kaynakta
-`NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL=false` ile kapalıdır. Release metadata ve
-deploy doğrulaması bu değeri Preview/Production için zorunlu olarak `false`
-tutar; D1 Worker, `READ_MODEL_WEB_ORIGIN`, URL ve gerçek read smoke kanıtı bu
-runbook tarafından oluşturulmaz.
+Derived read-model web geçişi varsayılan olarak
+`NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL=false` ile kapalıdır. Preview bunu yalnız
+`NEXT_PUBLIC_MARKET_READ_MODEL_URL=https://read-preview.youtick.net` ile açabilir;
+Production release sözleşmesi zorunlu `false` kalır. Ayrı Preview D1 Worker
+yalnız publication GET rotalarını açar; cron, Queue ve yazma bayrakları kapalıdır.
 
 Preview ortamı çoklu ödeme için yalnız `off` veya `preview` kabul eder;
 Production bu kod diliminde yalnız `off` kabul eder. Web ve Bridge modları aynı

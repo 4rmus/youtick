@@ -50,6 +50,7 @@ const ALL_TARGETS = Object.freeze({
 });
 
 const READ_MODEL_TARGET = Object.freeze({ worker: 'youtick-market-read-model-testnet' });
+const PREVIEW_READ_MODEL_ORIGIN = 'https://read-preview.youtick.net';
 
 function transientWebPropagationError(error) {
     const prefix = 'release_smoke_browser_errors\n';
@@ -123,7 +124,6 @@ const FALSE_FLAGS = Object.freeze([
     ['web', 'NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE'],
     ['web', 'NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2'],
     ['web', 'NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2'],
-    ['web', 'NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL'],
     ['bridge', 'LIVEPEER_BRIDGE_ENABLED'],
     ['bridge', 'LIVEPEER_NEW_UPLOADS_ENABLED'],
     ['bridge', 'LIVEPEER_PLAYBACK_ISSUANCE_ENABLED'],
@@ -391,6 +391,17 @@ async function readRelease(artifactDir, target, sha) {
     scanForbiddenTargets(config);
     for (const [section, flag] of FALSE_FLAGS) {
         if (config[section]?.[flag] !== 'false') fail(`${flag.toLowerCase()}_not_false`);
+    }
+    const derivedReadModel = config.web?.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL;
+    if (target === 'production' && derivedReadModel !== 'false') {
+        fail('next_public_enable_derived_read_model_not_false');
+    }
+    if (target === 'preview' && !['false', 'true'].includes(derivedReadModel)) {
+        fail('next_public_enable_derived_read_model_invalid');
+    }
+    if (derivedReadModel === 'true'
+        && config.web?.NEXT_PUBLIC_MARKET_READ_MODEL_URL !== PREVIEW_READ_MODEL_ORIGIN) {
+        fail('next_public_market_read_model_url_invalid');
     }
     const paymentMode = config.web?.NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE;
     if (paymentMode !== config.bridge?.MULTI_ASSET_PAYMENTS_MODE

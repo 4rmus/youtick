@@ -179,21 +179,20 @@ the watermark and exact request URL. Payments, balances, entitlements and
 playback authorization never use it.
 Activation requires `READ_MODEL_ENABLED=true`, a deployed `MARKET_READ_MODEL`
 binding, an exact network and contract ID, plus an exact HTTPS
-`READ_MODEL_WEB_ORIGIN` for CORS. The tracked config and deployed binding remain
-dark; no public route exists. The Web client is separately guarded
+`READ_MODEL_WEB_ORIGIN` for CORS. The production `wrangler.toml` and deployed
+binding remain dark with no public route. `wrangler.preview.toml` is the separate
+read-only Preview API: it enables only GET reads at
+`https://read-preview.youtick.net`, allows only `https://preview.youtick.net`
+through CORS, and contains no cron, Queue, RPC secret or write gate. The Web
+client is separately guarded
 by `NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL=false` and an exact HTTPS
 `NEXT_PUBLIC_MARKET_READ_MODEL_URL`. Discover falls back to canonical NEAR only
 when its first derived request is unavailable and never mixes cursor sources.
 Temporary D1 query failures return only `read_model_unavailable` with HTTP 503.
 Scheduled ingestion logs and rejects with a bounded error code instead of
 rethrowing raw database errors.
-Creator profile may show derived publication history and aggregate sales, while
-available balance, withdrawal, purchase, entitlement and playback remain on
-canonical NEAR state. Sale amounts remain decimal strings; the pilot API folds
-them with JavaScript `BigInt` instead of SQLite `INTEGER`, so contract-sized
-values do not silently overflow. This exact fold intentionally scans the
-creator's ledger and must be replaced by a measured materialized projection
-before its row volume breaches the Worker/D1 latency budget.
+Creator profile may show derived publication history. Sales, available balance,
+withdrawal, purchase, entitlement and playback remain on canonical NEAR state.
 
 Run its local contract tests with:
 

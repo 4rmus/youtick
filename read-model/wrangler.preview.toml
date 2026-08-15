@@ -1,0 +1,28 @@
+name = "youtick-market-read-model-preview"
+main = "worker.mjs"
+compatibility_date = "2026-08-10"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "read-preview.youtick.net", custom_domain = true }]
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[vars]
+READ_MODEL_ENABLED = "true"
+READ_MODEL_INGESTION_ENABLED = "false"
+READ_MODEL_BACKFILL_ENABLED = "false"
+READ_MODEL_BACKFILL_CONTINUE_ENABLED = "false"
+READ_MODEL_NETWORK = "testnet"
+READ_MODEL_CONTRACT_ID = "lp-arch-market-v2-260809.youtick-dev-v3.testnet"
+READ_MODEL_START_BLOCK_HEIGHT = "263118001"
+READ_MODEL_MAX_BLOCKS_PER_RUN = "180"
+READ_MODEL_WEB_ORIGIN = "https://preview.youtick.net"
+
+[[d1_databases]]
+binding = "MARKET_READ_MODEL"
+database_name = "youtick-market-read-model-v1-testnet"
+database_id = "50b1e14f-2b06-444b-98cf-b828f11277ef"
+migrations_dir = "d1"

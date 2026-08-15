@@ -28,8 +28,9 @@ The derived read path has a separate closed gate. When explicitly enabled,
 `NEXT_PUBLIC_MARKET_READ_MODEL_URL` must be an exact HTTPS origin. The D1 Worker
 must independently have `READ_MODEL_ENABLED=true`, its D1 binding, exact
 network/contract values and `READ_MODEL_WEB_ORIGIN` equal to the Web origin.
-The tracked Preview/Production release contract forces the web gate to `false`
-and carries no read-model URL.
+The tracked Preview release permits the web gate only with
+`NEXT_PUBLIC_MARKET_READ_MODEL_URL=https://read-preview.youtick.net`. Production
+forces the web gate to `false` and carries no read-model URL.
 
 The source-only D1 Worker ingestion contract remains undeployed:
 
