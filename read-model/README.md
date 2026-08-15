@@ -64,6 +64,24 @@ unchanged. The pilot must alert and stop at that block; it must not split or
 partially publish it. After an explicit capacity/schema change, the operator
 replays that exact block and normal contiguous processing resumes.
 
+`scripts/bootstrap-market-read-model-d1.mjs` is the source-only v1 starting
+point for a fresh D1. It reads the publication count and at most 48 current
+publications from the same exact final NEAR block, then emits a bounded JSON
+snapshot without writing to D1:
+
+```bash
+READ_MODEL_NEAR_RPC_URL=https://dedicated-testnet-rpc/ \
+  node scripts/bootstrap-market-read-model-d1.mjs \
+  --network=testnet \
+  --contract=lp-arch-market-v2-260809.youtick-dev-v3.testnet
+```
+
+Its exported apply function refuses any non-empty D1 and atomically inserts
+only the finality watermark and current publication rows. It deliberately does
+not invent historical events, sales, entitlements, withdrawals or governance
+records. The existing canary D1 is therefore not an eligible target; live use
+requires a newly provisioned empty database and a separate activation gate.
+
 `scripts/run-market-read-model-once.mjs` is the source-only single-step runner.
 It reads one contract watermark, fetches only the deployment start block when
 the cursor is absent or exactly `watermark + 1` afterward, and applies that one
