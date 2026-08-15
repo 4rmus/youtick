@@ -168,7 +168,7 @@ Evidence classes remain separate:
 
 | Exit gate | Status | Evidence |
 |---|---|---|
-| V2 authorizer works in production-like staging | PARTIAL | The separately gated v2 route works in local Worker integration tests. It verifies real device and NEP-413 signatures, final publication/entitlement and a 180-second JWT; the all-playback issuance gate rejects both v1 and v2 before any RPC read. Production-like staging is `UNPROVEN`. `LOCAL_TEST`. |
+| V2 authorizer works in production-like staging | BLOCKED_PROVIDER_READ | Checkpoint 146 deployed the exact PR-head candidate at 0% and reached it only through a version override. Candidate health and the invalid-request rejection passed; three final testnet NEAR reads returned 200. The single Livepeer playback-policy GET returned 401, so the valid cold request failed closed with 503 and no JWT or replay sample. Stable-only 100% and all closed runtime flags were restored. `LOCAL_TEST` + bounded `PREVIEW_DEPLOYMENT` + `TESTNET_READ` + one failed provider read. |
 | Persistent write per token is zero | PASS_LOCAL | V2 invokes the authorizer directly without `LIVEPEER_CONTROL`; success and same-request replay tests prove no DO access while final reads repeat. V1 remains an independently closed fallback. `LOCAL_TEST`. |
 | Cold and cache-hit NEAR reads meet approved bounds | PASS_LOCAL | Cold v2 performs three final NEAR reads plus one provider-policy read. The bounded 1,024-record cache makes a fully warm replay use zero NEAR/provider reads. Publication/provider expire at 30 seconds, wallet proof at 60 seconds, positive entitlement at five minutes and negative at three seconds. Takedown and removed-key boundary tests pass. `LOCAL_TEST`; deployed latency is absent. |
 | Legacy/v2 shadow mismatch below approved threshold | PARTIAL | The accepted mismatch ratio is exactly 0. A separately gated source path embeds an independently signed v2 proof in a legacy request, fixes and returns only the legacy result, then runs the existing v2 decision without JWT or durable writes through `waitUntil`. A mismatch regression logs only bounded ALLOW/DENY/UNAVAILABLE and reason codes. Both shadow flags default false and guarded release metadata/config now require them to remain false. Deployed samples and a pass result remain `EXTERNAL_EVIDENCE_REQUIRED`. `LOCAL_TEST`. |
@@ -238,7 +238,7 @@ Evidence classes remain separate:
 | AUTH-003 | 1 | PASS_TESTNET | Required resource, pause semantics, field/per-owner bounds, cleanup and independent issuance control pass locally; a grant issue/verify/revoke/cleanup drill succeeded on the fresh Access v2 testnet ID. The source-only issuance-decommission sequence now passes; its testnet execution is absent. |
 | RPC-001 | 1 | PASS_LOCAL | Separate bounded read/broadcast paths, deadlines, response caps, rate maps and no-replay broadcast pass locally. Dedicated provider and distributed edge quota evidence remain external. |
 | PLAY-001 | 2 | PASS_LOCAL | Eight-hour NEP-413 device certificate, memory-only device key, signed request binding and disconnect/page-reload clear pass locally; deployed wallet proof is absent. |
-| PLAY-002 | 2 | PASS_LOCAL | V2 verifies final publication/entitlement and returns a 180-second playback-bound JWT without Access grant or DO writes. The all-playback issuance gate closes both legacy and v2 routes before RPC use; staging/load and deployed-gate proof are absent. |
+| PLAY-002 | 2 | BLOCKED_PROVIDER_READ | Local authorization and 1,000-request load evidence pass, but Checkpoint 146's 0%-traffic Preview candidate received HTTP 401 from the single approved Livepeer policy read. It returned 503 without JWT, then restored stable-only 100%; successful cold/replay staging proof remains open. |
 | PLAY-003 | 2 | PARTIAL | Bounded TTL cache, cold/hit read counts, provider JWT-policy check and 30/60-second takedown/key-removal bounds pass locally. Default-off legacy/v2 shadow execution returns only the legacy response, reuses the v2 decision without another JWT/write and emits bounded decision/reason-code comparison. The accepted mismatch ratio is 0; event-driven invalidation and deployed cache/shadow/latency samples remain absent. |
 | DO-001 | 2 | PARTIAL | Shared transactional enforcement emits a bounded `durable_object_storage_observed` event for `upload_job`, `admission`, `operator` or `rate_limit`, rejects record 257 and permits existing-key replay at the accepted 256-record ceiling. Rate-limit `deleteAll()`, 30-day webhook dedup and 90-day admission audit cleanup pass automatically. Independent default-off UploadJob and confirmed operator D1 archives enforce bounded summaries plus 14/90-day eligibility locally without deletion. Real archive commits, operator/UploadJob destructive cleanup and deployed metrics remain absent. |
 | UP-001 | 3 | PASS_LOCAL | Coordinator limits, budgets, 30-minute lease, five-minute heartbeat, wrong-token rejection, alarm release and 15-minute ambiguity isolation pass locally. A default-off new-upload gate rejects unrecorded intents while recorded intent/heartbeat/TUS recovery remains available. Real browser/large-upload/staging evidence is absent. |
@@ -4982,3 +4982,60 @@ Evidence classes remain separate:
 - GÜNCEL FAZ KAPISI: `EVENT_001_PASS_TESTNET_FINAL`. The single next gate is
   Phase 2 V2 authorizer production-like staging evidence; stop before any
   Cloudflare deploy or runtime activation without separate approval.
+
+### CHECKPOINT 146 — Phase 2 / V2 authorizer production-like staging attempt
+
+- DURUM:
+  `BLOCKED_PROVIDER_READ / FAIL_CLOSED / STABLE_RESTORED / NO_JWT`.
+- BASELINE: `origin/main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`;
+  draft PR `#124` exact head
+  `6a327835e736a746e08d827644bc9d4a46222bc3` is merge-clean and CI run
+  `31906629289` completed successfully, including CI Gate and both CodeQL
+  languages. The canary source used that exact PR head.
+- YETKİ: The user separately approved one bounded Preview Bridge candidate
+  upload, stable 100% + candidate 0% deployment, version-override requests,
+  offline local signing, up to three final testnet NEAR reads, exactly one
+  Livepeer playback-policy GET, tail evidence and unconditional restoration to
+  stable-only 100%. Web deploy, Queue/D1 activation, provider mutation and chain
+  transaction were outside scope.
+- LOCAL PREFLIGHT:
+  - focused V2 integration tests passed `16/16`; two external opt-in cases
+    remained skipped, and typecheck passed;
+  - 1,000 authorized warm requests completed with zero errors and p95
+    `14.19 ms`;
+  - Wrangler dry-run produced a `726.54 KiB` bundle (`152.62 KiB` gzip);
+  - only `LIVEPEER_BRIDGE_ENABLED`,
+    `LIVEPEER_PLAYBACK_ISSUANCE_ENABLED` and
+    `LIVEPEER_PLAYBACK_V2_ENABLED` were true. Provider/operator mutation, new
+    upload, shadow, Queue and archive flags stayed false; the candidate had no
+    Queue, D1 or Durable Object binding.
+- BOUNDED DEPLOY: candidate version
+  `afffab60-80a4-46a9-8f7b-1fe844a2b1c6` was uploaded with source tag
+  `6a327835e736a746e08d827644bc9d4a46222bc3` and added beside stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` at exactly `0%`. Public traffic
+  remained on stable at `100%`; only explicit version-overridden requests
+  reached the candidate.
+- CANARY/TELMETRY:
+  - candidate `/__health` returned 200 and the gated V2 surface was ready;
+  - an invalid V2 request returned 400 without dependency reads;
+  - the signed cold request made exactly three final testnet RPC reads:
+    `device_certificate_key` 200 and two `playback_authorization` reads 200;
+  - the single Livepeer `playback_read` returned 401 after 408 ms. The Worker
+    then emitted `provider_unavailable` and returned 503 in 1,325 ms;
+  - no JWT was issued. Fail-closed stopped the flow before the replay sample,
+    so successful cold/replay behavior remains `UNPROVEN`.
+- RESTORE: the first stable-only deployment request was rejected with Cloudflare
+  code `10220` because the candidate upload introduced a newer
+  `LIVEPEER_API_KEY` secret version. Wrangler's guarded rollback path confirmed
+  that named secret change and forced the already-approved rollback. The final
+  deployment contains only stable version
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` at `100%`; public health reports
+  `stage=DISABLED` and provider/operator mutation, new upload, playback V1/V2,
+  shadow, Queue and archive readiness all false.
+- KANIT: `LOCAL_TEST` + exact-head `CI` + bounded `PREVIEW_DEPLOYMENT` +
+  version-override HTTP/tail evidence + final `PREVIEW_RUNTIME_READ`. No Web
+  deploy, Queue/D1 activation or write, provider mutation, Livepeer asset,
+  wallet prompt, chain transaction, alert, email or support request occurred.
+- GÜNCEL FAZ KAPISI: `BLOCKED_PROVIDER_READ`. The single next action is an
+  explicitly approved Livepeer credential-parity diagnosis/remediation and a
+  fresh bounded retry; do not advance to later Phase 2–3 evidence automatically.
