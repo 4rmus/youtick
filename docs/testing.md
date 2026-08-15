@@ -60,12 +60,16 @@ node scripts/check-paid-media-livepeer-v1.mjs
 ```bash
 node --test scripts/apply-market-read-model-d1.test.mjs \
   scripts/fetch-neardata-market-block.test.mjs \
+  scripts/market-event-catalog.test.mjs \
   scripts/market-read-api.test.mjs \
   scripts/rebuild-market-read-model.test.mjs
 ```
 
-These are pure local adapter/reducer/schema/API tests with mocked input. They
-create no D1 database, binding or network connection. The explicit
+These are pure local adapter/reducer/schema/API tests with mocked input. The
+catalog regression also keeps the Rust producer and both final-event consumer
+allowlists aligned, while treating `contract_migrated` as accepted but not
+emitted by the fresh-ID pilot contract. They create no D1 database, binding or
+network connection. The explicit
 `fetch-neardata-market-block.mjs` CLI performs a read-only testnet/mainnet GET
 and must be reported separately from local tests.
 

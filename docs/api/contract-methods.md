@@ -56,8 +56,8 @@ The local source catalog includes:
   `creator_balance_withdrawal_succeeded`,
   `creator_balance_withdrawal_failed`
 - `platform_withdrawal_started`
-- `bridge_frozen`, `bridge_rotation_proposed`, `bridge_rotated`,
-  `bridge_unfrozen`
+- `bridge_frozen`, `bridge_rotation_proposed`, `bridge_rotation_cancelled`,
+  `bridge_rotated`, `bridge_unfrozen`
 - `new_purchases_paused`, `new_purchases_unpaused`
 - `quote_key_rotated`
 
