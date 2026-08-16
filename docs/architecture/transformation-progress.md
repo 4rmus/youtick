@@ -6867,3 +6867,52 @@ Evidence classes remain separate:
   append-only evidence head and its exact-head CI, then decide separately
   whether to make PR #127 ready and squash-merge it. Do not merge or advance to
   a runtime/archive gate without explicit approval.
+
+### CHECKPOINT 172 — Phase 2 / PR #127 post-merge evidence
+
+- DURUM: `PASS_MERGED / PASS_EXACT_MAIN_CI / DEPLOY_SKIPPED /
+  RUNTIME_CLOSED / MERGE_GATE_CLOSED`.
+- YETKİ VE KABUL:
+  - the user approved only making PR #127 ready, squash-merging exact head
+    `1bb8718381114e1cd56399957cf41dca8e5a6aae`, and verifying post-merge main
+    CI plus deploy-skip evidence;
+  - the follow-up evidence scope is this append-only checkpoint on exact main
+    `8455ad4b5d33f40cef1e2ba57e2b3b08710ef790`. Source changes, deploy,
+    testnet/provider writes, runtime activation, traffic shift and destructive
+    cleanup remain excluded.
+- MERGE:
+  - PR #127 was made ready only after its head, six-file diff, exact-head CI and
+    closed runtime state were rechecked. The GitHub integration returned `403`
+    for both ready and merge mutations, so the authenticated `gh` fallback was
+    used with the exact expected-head lock;
+  - GitHub records PR #127 `MERGED` from exact head `1bb8718...` as squash
+    commit `8455ad4b5d33f40cef1e2ba57e2b3b08710ef790`. The commit has sole parent
+    `1479e7fa858c27912aa6467e56e2c2722a45f106`, and its tree is byte-identical
+    to the reviewed PR-head tree. The source branch was not deleted.
+- LOCAL_TEST: `PASS_DOCS_ONLY`; no source changed in this evidence follow-up.
+  The Docs production build and `git diff --check` pass.
+- CI: `PASS_EXACT_MAIN`; push run `31973188051` completed successfully at exact
+  main SHA `8455ad4b5d33f40cef1e2ba57e2b3b08710ef790`. Bridge, Docs, both CodeQL
+  matrices, dependency audits and CI Gate passed; Web, Contracts and Livepeer
+  Protocol were path-filtered skips. This append-only evidence commit is not
+  used as self-referential CI evidence; its own exact-head Actions result must
+  be checked externally before handoff.
+- TESTNET: `NOT_RUN`; no provider access, wallet action, signature, chain query,
+  transaction or D1 mutation occurred.
+- DEPLOY: `NOT_RUN / SKIPPED`; exact-main Deploy Preview run `31973324953`
+  completed `skipped`, repository variable `DEPLOY_PREVIEW_ENABLED=false`, and
+  GitHub reports zero deployments for `8455ad4...`. No Cloudflare version,
+  route, binding, schedule, flag or traffic mutation occurred.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; Wrangler reports Bridge stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` 100% and Web stable
+  `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` 100%. A fresh cache-busting Bridge
+  health read returns the exact stable Bridge version, `stage=DISABLED`, and
+  false for provider/operator mutation, new upload, control plane, playback
+  V1/V2/shadow, Queue and both archive readiness fields.
+- GÜNCEL FAZ KAPISI:
+  `PHASE2_PR127_EXACT_HEAD_SQUASH_MERGE_APPROVAL_REQUIRED` is closed. Stop here.
+  The single proposed next gate after this evidence changeset receives its own
+  exact-head CI is `PHASE2_PR127_MERGE_EVIDENCE_PR_REVIEW_DECISION_REQUIRED`:
+  verify the one-file append-only diff and exact-head CI, then decide separately
+  whether to make only that evidence PR ready and squash-merge it. Do not deploy
+  or advance to a runtime/archive gate in the same loop.
