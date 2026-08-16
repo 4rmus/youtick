@@ -11,7 +11,10 @@ import type { CreateUploadResult, MediaSourceType } from './media-provider';
 import { MEDIA_SOURCE_FORMATS } from './media-provider';
 import { LivepeerProvider } from './livepeer-provider';
 import { dependencyFetch } from './dependency-fetch';
-import { assertDurableObjectRecordCapacity } from './durable-object-capacity';
+import {
+    assertDurableObjectRecordCapacity,
+    DURABLE_OBJECT_MAX_PERSISTENT_RECORDS,
+} from './durable-object-capacity';
 import {
     MAX_PROVIDER_PLAYBACK_OUTPUTS,
     firstVttThumbnailUrl,
@@ -542,6 +545,8 @@ const SAFE_ERROR_CODES = new Set([
     'operator_unauthorized',
     'operator_mutations_disabled',
     'operator_archive_conflict',
+    'operator_archive_eligible_count_invalid',
+    'operator_archive_scan_active',
     'operator_archive_unavailable',
     'outbox_conflict',
     'provider_identity_mismatch',
@@ -687,6 +692,23 @@ const bridgeWorker = {
                 return json({ error: 'runtime_not_configured' }, 503);
             }
             return forwardAdmissionStatus(request, env);
+        }
+
+        if (request.method === 'GET' && url.pathname === '/v1/operations/operator-outbox-status') {
+            if (!env.LIVEPEER_CONTROL || !validOperatorStatusConfig(env)) {
+                return json({ error: 'runtime_not_configured' }, 503);
+            }
+            return forwardOperatorOutboxStatus(request, env);
+        }
+
+        if (request.method === 'POST'
+            && url.pathname === '/v1/operations/operator-outbox-archive-scan') {
+            if (!env.LIVEPEER_CONTROL
+                || !validOperatorStatusConfig(env)
+                || !validOperatorArchiveConfig(env)) {
+                return json({ error: 'runtime_not_configured' }, 503);
+            }
+            return forwardOperatorOutboxArchiveScan(request, env);
         }
 
         if (request.method === 'POST' && url.pathname === '/v1/upload-preflight') {
@@ -959,6 +981,13 @@ export class LivepeerControl {
             }
             if (request.method === 'GET' && url.pathname === '/internal/admission/status') {
                 return await readAdmissionStatus(this.state, this.env);
+            }
+            if (request.method === 'GET' && url.pathname === '/internal/operator-outbox/status') {
+                return await readOperatorOutboxStatus(this.state);
+            }
+            if (request.method === 'POST'
+                && url.pathname === '/internal/operator-outbox/archive-scan') {
+                return await startOperatorOutboxArchiveScan(this.state, this.env);
             }
             return json({ error: 'not_found' }, 404);
         } catch (error) {
@@ -1450,6 +1479,115 @@ async function purgeExpiredControlNonces(state: DurableObjectState): Promise<voi
         .map(({ expiresAtMs }) => expiresAtMs);
     if (records.size === LIFECYCLE_DELETE_BATCH && expired.length > 0) pending.push(now);
     if (pending.length > 0) await scheduleAlarmNoLaterThan(state, Math.min(...pending));
+}
+
+type OperatorOutboxStatus = {
+    totalRecords: number;
+    invalidRecords: number;
+    confirmedRecords: number;
+    pendingRecords: number;
+    retryRecords: number;
+    committedRecords: number;
+    uncommittedRecords: number;
+    eligibleRecords: number;
+    scanActive: boolean;
+};
+
+function validOperatorOutboxRecord(key: string, value: unknown): value is OperatorRecord {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const record = value as Partial<OperatorRecord>;
+    if (record.schema !== 'youtick.livepeer-operator-outbox.v1'
+        || !['PENDING', 'RESERVED', 'SIGNED', 'BROADCAST', 'CONFIRMED'].includes(record.state || '')
+        || !OUTBOX_METHODS.has(record.method as OutboxMethod)
+        || typeof record.idempotencyKey !== 'string'
+        || !IDEMPOTENCY_PATTERN.test(record.idempotencyKey)
+        || key !== `outbox:${record.idempotencyKey}`
+        || typeof record.payloadSha256 !== 'string'
+        || !SHA256_PATTERN.test(record.payloadSha256)
+        || !Number.isSafeInteger(record.createdAtMs)
+        || Number(record.createdAtMs) <= 0) return false;
+    if (record.state !== 'CONFIRMED') return true;
+    const archive = record.archive;
+    return Number.isSafeInteger(record.confirmedAtMs)
+        && Number(record.confirmedAtMs) > 0
+        && Boolean(archive)
+        && ['PENDING', 'RETRY', 'COMMITTED'].includes(archive?.status || '')
+        && Number.isSafeInteger(archive?.attempts)
+        && Number(archive?.attempts) >= 0
+        && Number.isSafeInteger(archive?.createdAtMs)
+        && Number(archive?.createdAtMs) > 0
+        && Number.isSafeInteger(archive?.nextAttemptAtMs)
+        && Number(archive?.nextAttemptAtMs) > 0;
+}
+
+function summarizeOperatorOutbox(
+    stored: Map<string, unknown>,
+    scanActive: boolean,
+    now: number,
+): OperatorOutboxStatus {
+    const records = [...stored].filter((entry): entry is [string, OperatorRecord] => (
+        validOperatorOutboxRecord(entry[0], entry[1])
+    )).map(([, record]) => record);
+    const confirmed = records.filter((record) => record.state === 'CONFIRMED');
+    const pending = confirmed.filter((record) => record.archive?.status === 'PENDING');
+    const retry = confirmed.filter((record) => record.archive?.status === 'RETRY');
+    const committed = confirmed.filter((record) => record.archive?.status === 'COMMITTED');
+    const uncommitted = [...pending, ...retry];
+    return {
+        totalRecords: stored.size,
+        invalidRecords: stored.size - records.length,
+        confirmedRecords: confirmed.length,
+        pendingRecords: pending.length,
+        retryRecords: retry.length,
+        committedRecords: committed.length,
+        uncommittedRecords: uncommitted.length,
+        eligibleRecords: uncommitted.filter((record) => record.archive!.nextAttemptAtMs <= now).length,
+        scanActive,
+    };
+}
+
+async function readOperatorOutboxStatus(state: DurableObjectState): Promise<Response> {
+    const [stored, scan] = await Promise.all([
+        state.storage.list<unknown>({
+            prefix: 'outbox:',
+            limit: DURABLE_OBJECT_MAX_PERSISTENT_RECORDS,
+        }),
+        state.storage.get<OperatorArchiveScan>(OPERATOR_ARCHIVE_SCAN_KEY),
+    ]);
+    return json({
+        schema: 'youtick.livepeer-operator-outbox-status.v1',
+        ...summarizeOperatorOutbox(stored, Boolean(scan), Date.now()),
+    });
+}
+
+async function startOperatorOutboxArchiveScan(
+    state: DurableObjectState,
+    env: Env,
+): Promise<Response> {
+    if (!validOperatorArchiveConfig(env)) throw new Error('runtime_not_configured');
+    const status = await state.storage.transaction(async (transaction) => {
+        const stored = await transaction.list<unknown>({
+            prefix: 'outbox:',
+            limit: DURABLE_OBJECT_MAX_PERSISTENT_RECORDS,
+        });
+        const scan = await transaction.get<OperatorArchiveScan>(OPERATOR_ARCHIVE_SCAN_KEY);
+        const current = summarizeOperatorOutbox(stored, Boolean(scan), Date.now());
+        if (current.scanActive) throw new Error('operator_archive_scan_active');
+        if (current.invalidRecords !== 0
+            || current.uncommittedRecords !== 1
+            || current.eligibleRecords !== 1) {
+            throw new Error('operator_archive_eligible_count_invalid');
+        }
+        await assertDurableObjectRecordCapacity(
+            transaction,
+            [OPERATOR_ARCHIVE_SCAN_KEY],
+            'operator',
+        );
+        await transaction.put(OPERATOR_ARCHIVE_SCAN_KEY, {} satisfies OperatorArchiveScan);
+        return current;
+    });
+    await scheduleAlarmNoLaterThan(state, Date.now());
+    return json({ accepted: true, eligibleRecords: status.eligibleRecords }, 202);
 }
 
 async function advanceOperatorArchiveScan(
@@ -3084,6 +3222,53 @@ export async function forwardAdmissionStatus(request: Request, env: Env): Promis
     } catch (error) {
         const code = safeErrorCode(error);
         console.error(formatLog('livepeer_admission_status_failed', { code }));
+        return json({ error: code }, errorStatus(code));
+    }
+}
+
+async function operatorControlObject(env: Env): Promise<DurableObjectStub> {
+    if (!env.LIVEPEER_CONTROL || !validOperatorStatusConfig(env)) {
+        throw new Error('runtime_not_configured');
+    }
+    const signer = KeyPairSigner.fromSecretKey(env.NEAR_OPERATOR_PRIVATE_KEY as `ed25519:${string}`);
+    const publicKey = (await signer.getPublicKey()).toString();
+    return env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(operatorObjectName(
+        env.NEAR_NETWORK!,
+        publicKey,
+        Number(env.NEAR_OPERATOR_KEY_EPOCH),
+    )));
+}
+
+export async function forwardOperatorOutboxStatus(
+    request: Request,
+    env: Env,
+): Promise<Response> {
+    try {
+        await requireOperatorAuthorization(request, env);
+        return await (await operatorControlObject(env)).fetch(
+            new Request('https://object/internal/operator-outbox/status'),
+        );
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('livepeer_operator_outbox_status_failed', { code }));
+        return json({ error: code }, errorStatus(code));
+    }
+}
+
+export async function forwardOperatorOutboxArchiveScan(
+    request: Request,
+    env: Env,
+): Promise<Response> {
+    try {
+        if (!validOperatorArchiveConfig(env)) throw new Error('runtime_not_configured');
+        await requireOperatorAuthorization(request, env);
+        return await (await operatorControlObject(env)).fetch(new Request(
+            'https://object/internal/operator-outbox/archive-scan',
+            { method: 'POST' },
+        ));
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('livepeer_operator_outbox_archive_scan_failed', { code }));
         return json({ error: code }, errorStatus(code));
     }
 }
@@ -5273,6 +5458,10 @@ function validAdmissionReopenConfig(env: Env): boolean {
                 && !/[\r\n]/.test(env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN_PREVIOUS)));
 }
 
+function validOperatorStatusConfig(env: Env): boolean {
+    return validAdmissionReopenConfig(env) && validOperatorConfig(env);
+}
+
 function validProviderVerificationConfig(env: Env): boolean {
     return validApiKey(env.LIVEPEER_API_KEY)
         && typeof env.LIVEPEER_PROJECT_ID === 'string'
@@ -5459,6 +5648,8 @@ function errorStatus(code: string): number {
         || code === 'playback_denied') return 403;
     if (code.includes('conflict')
         || code === 'admission_denied'
+        || code === 'operator_archive_eligible_count_invalid'
+        || code === 'operator_archive_scan_active'
         || code === 'on_chain_job_mismatch'
         || code === 'near_finalize_failed'
         || code === 'near_finalize_mismatch'
