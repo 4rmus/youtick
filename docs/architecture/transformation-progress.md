@@ -174,7 +174,7 @@ Evidence classes remain separate:
 | Legacy/v2 shadow mismatch below approved threshold | PASS_PREVIEW | The accepted mismatch ratio is exactly 0. Checkpoint 150 recorded one valid `DENY/DENY` pair and Checkpoint 151 recorded one valid `ALLOW/ALLOW` pair against the same 0%-traffic candidate, for aggregate mismatch `0/2`. The positive pair used one zero-deposit, 180-second testnet legacy `Play` grant. Both samples returned only the legacy response contract; v2 shadow issued no JWT and added no durable write. Direct v2 and every mutation/Queue/archive gate stayed closed. Stable-only 100% and every runtime flag false were restored after each sample. `LOCAL_TEST` + exact-head `CI` + bounded `PREVIEW_DEPLOYMENT` + `TESTNET_READ/WRITE` + `PROVIDER_READ` + `PREVIEW_RUNTIME`. |
 | Device-certificate UX and revoke/clear verified | PASS_PREVIEW | Checkpoint 156 aligned the isolated Web and guarded Bridge candidate with the exact entitled buyer. One user-approved wallet certificate produced direct-v2 HTTP 200 and rendered the player; automatic same-page refresh and Checkpoint 158's repeat both returned 200 without another certificate prompt. Checkpoints 159–160 prove final testnet subject revoke/current-key deletion and deployed callback recovery to persistent `Connect` without a second wallet prompt. Checkpoint 162 removed both older broad FunctionCall keys at finality; Checkpoint 163 removed the temporary cleanup signer surface and re-verified exactly one FullAccess wallet key. The cleanup wallet's unexpected no-stop submission is recorded as a deviation and is not part of the accepted product UX. Public Web and Bridge deployments stayed stable-only 100% with every Bridge runtime flag false. `LOCAL_TEST` + exact-head prior `CI` + isolated `PREVIEW_DEPLOYMENT` + `TESTNET_READ/WRITE` + `PROVIDER_READ` + browser `PREVIEW_RUNTIME`. |
 | Access grant issuance can be disabled | PASS_LOCAL | Fresh Access v2 has an independent, readable issuance flag behind the existing owner timelock. One regression proves the exact 24-hour decommission sequence: a grant issued during the delay remains verifiable, execution rejects new issuance, and subject revoke plus bounded cleanup still work. Testnet execution remains absent. `LOCAL_TEST`. |
-| DO retention/cleanup proven automatically | PARTIAL | Creator-fee/payment rate-limit objects alarm and `deleteAll()` at window expiry; signed control nonces expire with their at-most-five-minute request and purge in 128-record batches; normal/ambiguous admission leases release at 30/15 minutes, webhook dedup purges at 30 days and admission-reopen audit at 90 days. Independent default-off UploadJob and operator outbox D1 archive sources persist bounded summaries, commit/retry metadata and 14/90-day eligibility boundaries locally. Real D1 commits, both destructive deletes and a complete class-wide max-record contract remain absent. `LOCAL_TEST`. |
+| DO retention/cleanup proven automatically | PARTIAL | Creator-fee/payment rate-limit objects alarm and `deleteAll()` at window expiry; signed control nonces expire with their at-most-five-minute request and purge in 128-record batches; normal/ambiguous admission leases release at 30/15 minutes, webhook dedup purges at 30 days and admission-reopen audit at 90 days. Independent default-off UploadJob and operator outbox D1 archive sources persist bounded summaries, commit/retry metadata and 14/90-day eligibility boundaries locally. Checkpoint 169 audits every persistent new-key path and proves all four state kinds reject record 257 before write while existing-key updates remain available at 256. Real D1 commits and both destructive deletes remain absent. `LOCAL_TEST`. |
 
 ### Phase 3 — upload and Livepeer control plane
 
@@ -6660,3 +6660,151 @@ Evidence classes remain separate:
   append-only checkpoint at its exact head and exact-head CI, then separately
   decide whether to squash-merge only that evidence PR; do not advance to a
   later Phase 2 runtime gate in the same loop.
+
+### CHECKPOINT 169 — Phase 2 / class-wide Durable Object record ceiling
+
+- DURUM: `PASS_LOCAL / CLASS_WIDE_MAX_RECORD_CONTRACT /
+  PASS_READ_ONLY_RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- YETKİ, VARSAYIMLAR VE KABUL:
+  - the user approved only the proposed local class-wide capacity-contract
+    gate on exact baseline `main@1479e7fa858c27912aa6467e56e2c2722a45f106`;
+  - acceptance requires every persistent new-key family in `LivepeerControl` to
+    use the shared 256-record guard, record 257 to fail before write for
+    `upload_job`, `admission`, `operator` and `rate_limit`, and an existing-key
+    update to remain available at 256;
+  - D1 writes, deletion, deploy, testnet/provider access, secret changes,
+    runtime activation and traffic shift are excluded.
+- SOURCE AUDIT VE UYGULAMA:
+  - tracked Wrangler declares one Durable Object binding and one migrated class,
+    `LIVEPEER_CONTROL` / `LivepeerControl`;
+  - every persistent new-key family is guarded: job/control nonce/reconcile,
+    webhook dedup and job outbox; admission singleton and reopen audit;
+    operator outbox, nonce watermark and archive cursor; creator-fee and payment
+    rate limits. Existing singleton, job and outbox writes are updates only;
+  - the audit found two guard/write pairs outside a storage transaction: initial
+    reconcile singleton creation and operator archive-cursor creation/update.
+    Both now run the capacity check and write in one transaction; the shared
+    guard accepts only `DurableObjectTransaction`, making a future non-atomic
+    caller a TypeScript error;
+  - the shared regression is expanded to all four state kinds and proves both
+    pre-write rejection at projected record 257 and the no-list existing-key
+    update path at 256. Admission singleton creation and operator outbox
+    creation now have direct class-level overflow regressions; existing
+    upload-job/outbox and payment-rate regressions complete the four path
+    families. No new abstraction or runtime feature was added.
+- LOCAL_TEST: `PASS`; focused capacity/index/finalize/payment suites pass
+  `153/153`; the complete Bridge suite passes `202` with two opt-in tests
+  skipped; mocked provider canaries pass `71/71`; TypeScript and
+  `git diff --check` pass; the Docs production build passes. Wrangler dry-run
+  reports 721.91 KiB / gzip 152.42 KiB and every tracked configuration gate
+  false; this is `LOCAL_STATIC`, not deploy or runtime evidence.
+- CI: `BASELINE_PASS / CHANGESET_UNPROVEN`; GitHub's latest main CI run
+  `31969328128` passes at exact baseline
+  `1479e7fa858c27912aa6467e56e2c2722a45f106`. This six-path local worktree
+  has no commit, push, PR or exact-head Actions run, so baseline CI is not
+  reclassified as changeset evidence.
+- TESTNET: `NOT_RUN`; no provider read, wallet action, signature, chain query,
+  transaction, D1 write or external mutation occurred.
+- DEPLOY: `NOT_RUN`; Wrangler was dry-run only. Exact-baseline Deploy Preview
+  run `31969470241` remains `skipped` with repository variable
+  `DEPLOY_PREVIEW_ENABLED=false`; no version upload, route change or traffic
+  deployment occurred for this gate.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; fresh deployment status reports
+  Bridge stable `86305272-4ebb-4ca4-9d0e-11e3bd182b17` 100% and Web stable
+  `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` 100%. A cache-busting Bridge health
+  probe returns the same version, `stage=DISABLED`, and provider/operator
+  mutation, new upload, control plane, playback V1/V2/shadow, Queue and both
+  archive readiness fields false. No flag, secret, provider or traffic
+  mutation occurred.
+- GÜNCEL FAZ KAPISI:
+  `PHASE2_DO_CLASS_WIDE_MAX_RECORD_CONTRACT_LOCAL_DECISION_REQUIRED` is closed.
+  Stop here. Phase 2 retention remains `PARTIAL` only for real archive commits
+  and their separately guarded destructive cleanup. The single proposed next
+  gate is `PHASE2_OPERATOR_OUTBOX_D1_ARCHIVE_COMMIT_PREFLIGHT_DECISION_REQUIRED`:
+  perform a read-only exact-SHA/binding/migration/eligible-record/rollback
+  preflight and stop before any deploy, D1 write, runtime activation or delete.
+
+### CHECKPOINT 170 — Phase 2 / operator outbox D1 archive commit preflight
+
+- DURUM: `PREFLIGHT_BLOCKED / REMOTE_MIGRATION_PASS /
+  BRIDGE_D1_BINDING_MISSING / ELIGIBLE_RECORD_UNPROVEN / RUNTIME_CLOSED /
+  CURRENT_GATE_CLOSED`.
+- YETKİ, VARSAYIMLAR VE KABUL:
+  - the user approved only the proposed read-only exact-SHA, D1
+    binding/migration, eligible-record and rollback preflight;
+  - commit/push/PR, deploy, D1 write, archive activation, traffic shift,
+    provider/chain mutation and deletion are excluded;
+  - acceptance requires each prerequisite to be independently proven. A
+    historical finalize receipt is not substituted for a current Durable Object
+    read, and baseline CI is not substituted for the dirty changeset's CI.
+- EXACT REPO VE GITHUB:
+  - local `HEAD`, fetched `origin/main` and GitHub `main` are exact
+    `1479e7fa858c27912aa6467e56e2c2722a45f106`. The existing six-path dirty
+    worktree from Checkpoint 169 is preserved without staging or overwrite;
+  - exact-main CI run `31969328128` is successful and Deploy Preview run
+    `31969470241` is skipped with repository variable
+    `DEPLOY_PREVIEW_ENABLED=false`. The local changeset has no commit, push, PR
+    or exact-head CI. The only open PRs are unrelated older drafts #94 and #95.
+- D1 VE MIGRATION READ:
+  - remote testnet D1 `youtick-market-read-model-v1-testnet` remains exact ID
+    `50b1e14f-2b06-444b-98cf-b828f11277ef`, region `EEUR`;
+  - remote `d1_migrations` lists `0001` through
+    `0004_operator_outbox_archives.sql`; Wrangler reports no pending migration.
+    `operator_outbox_archives` and its cleanup index exist with the tracked
+    composite primary key and bounded columns;
+  - the archive table contains zero rows. Every remote SQL receipt in this
+    preflight reports `changed_db=false` and `rows_written=0`; D1 info reports
+    zero write queries and rows written in the preceding 24 hours.
+- BINDING VE ELIGIBLE-RECORD SONUCU:
+  - the dark read-model deployment
+    `62451057-c6b6-40ff-a8f6-0ac6723d0a1c` is stable 100%, binds the exact D1
+    and keeps all four read-model flags false;
+  - tracked Bridge Wrangler, generated release artifact and active Bridge
+    version `86305272-4ebb-4ca4-9d0e-11e3bd182b17` have no
+    `MARKET_READ_MODEL` binding. The release validator currently rejects extra
+    Bridge bindings. `OPERATOR_OUTBOX_ARCHIVE_ENABLED=false`, and fresh health
+    returns `operatorOutboxArchiveReady=false`;
+  - active public configuration still targets canonical Market
+    `lp-arch-market-v2-260809.youtick-dev-v3.testnet`, operator account
+    `lp-d6-bridge-5301d15.youtick-dev-v3.testnet` and key epoch 5. Final testnet
+    block `264234095` shows the expected epoch-5 finite key still limited to
+    `finalize_livepeer_publication` and `suspend_livepeer_sales` on that Market;
+  - historical Checkpoint 121 proves job
+    `lp-0b8d85d5-501f-41ad-8dc6-3fc340fd99f7` finalized once in transaction
+    `ArawGPvXNULAFvCKZmfo8th7s1WvxNboDjCJhMKtJwzf`. The deployed source would
+    retain a confirmed outbox record with `PENDING` archive metadata and has no
+    delete path. This is a strong candidate inference, not current state proof:
+    no authenticated read-only operator-outbox status route exists and direct
+    Durable Object storage inspection is unavailable. Eligibility therefore
+    remains `UNPROVEN`.
+- ROLLBACK SINIRI:
+  - current stop state already is the safe rollback state: stable Bridge/Web
+    100%, archive flag false, no Bridge D1 binding and zero archive rows;
+  - the release rollback mechanism restores version traffic only and explicitly
+    does not reverse Durable Object state. A future D1 insert is idempotent and
+    append-only; successful archive evidence must not be deleted as rollback.
+    Failure must restore stable 100% plus the false flag and preserve any D1/DO
+    retry evidence for investigation.
+- LOCAL_TEST: `PASS`; focused operator archive success/failure regressions pass
+  `2/2`; release plus D1 suites pass `78/78`; `git diff --check` passes.
+- CI: `BASELINE_PASS / CHANGESET_UNPROVEN`; run `31969328128` covers only
+  exact baseline `1479e7fa...`, not the dirty six-path changeset.
+- TESTNET: `PASS_READ_ONLY`; one final access-key-list query verifies block
+  `264234095`, canonical receiver/method scope and epoch-5 public key. No
+  transaction, signature, key change or chain write occurred.
+- DEPLOY: `NOT_RUN`; no version upload, route, schedule, binding, flag or
+  traffic change occurred.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; Bridge stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17`, Web stable
+  `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` and read model stable
+  `62451057-c6b6-40ff-a8f6-0ac6723d0a1c` each remain 100%. Fresh Bridge health
+  returns `stage=DISABLED` and every provider/operator/upload/playback/Queue/
+  archive readiness field false.
+- GÜNCEL FAZ KAPISI:
+  `PHASE2_OPERATOR_OUTBOX_D1_ARCHIVE_COMMIT_PREFLIGHT_DECISION_REQUIRED` is
+  closed with a blocked result. A real archive commit cannot be attempted from
+  current source/runtime. Stop here. The single proposed next gate is
+  `PHASE2_CAPACITY_CHANGESET_CI_DECISION_REQUIRED`: review only the six dirty
+  paths, create an explicit-path commit/draft PR and obtain exact-head CI; do
+  not merge, deploy, add the D1 binding, expose operator status, activate the
+  archive flag or write/delete D1 in that gate.

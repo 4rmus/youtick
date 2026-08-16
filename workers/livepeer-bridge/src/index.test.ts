@@ -1863,6 +1863,26 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(admissionState.values.get('admission:v1')).toEqual(before);
     });
 
+    it('does not create an admission record above the object ceiling', async () => {
+        const admissionState = createState();
+        for (let index = 0; index < 256; index += 1) {
+            admissionState.values.set(`existing:${String(index).padStart(3, '0')}`, { index });
+        }
+        const admission = new LivepeerControl(admissionState.state, createEnv());
+
+        const response = await admission.fetch(admissionRequest('reserve', {
+            jobId: 'job-at-capacity',
+            generation: 1,
+            creator: String(vectors.upload_intent.envelope.account_id),
+            expectedSourceBytes: '1000',
+        }));
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'durable_object_record_limit' });
+        expect(admissionState.values.size).toBe(256);
+        expect(admissionState.values.has('admission:v1')).toBe(false);
+    });
+
     it('rejects an active-job quota overflow before Livepeer', async () => {
         const admissionState = createState();
         let admission!: LivepeerControl;

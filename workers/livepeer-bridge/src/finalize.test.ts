@@ -1674,6 +1674,24 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(sent).toHaveLength(1);
     });
 
+    it('does not create an operator outbox record above the object ceiling', async () => {
+        const testState = createState();
+        for (let index = 0; index < 256; index += 1) {
+            testState.values.set(`existing:${String(index).padStart(3, '0')}`, { index });
+        }
+        const control = new LivepeerControl(testState.state, createEnv());
+        const externalFetch = vi.fn();
+        vi.stubGlobal('fetch', externalFetch);
+
+        const response = await control.fetch(await finalizeRequest());
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'durable_object_record_limit' });
+        expect(testState.values.size).toBe(256);
+        expect(testState.values.has('outbox:job-001:1:finalize')).toBe(false);
+        expect(externalFetch).not.toHaveBeenCalled();
+    });
+
     it('rejects a conflicting final chain tuple instead of declaring success', async () => {
         const testState = createState();
         const control = new LivepeerControl(testState.state, createEnv());
