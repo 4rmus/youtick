@@ -6373,3 +6373,83 @@ Evidence classes remain separate:
   proposed next gate is `PHASE2_CHANGESET_STACK_REVIEW_DECISION_REQUIRED`:
   review the #124 -> #125 dependency and exact diffs, then decide the merge
   order separately without performing either merge.
+
+### CHECKPOINT 165 — Phase 2 / changeset stack review and merge order
+
+- DURUM: `PASS_EXACT_STACK_REVIEW / PASS_MERGE_ORDER_DECISION /
+  MERGE_NOT_RUN / RUNTIME_UNCHANGED / CURRENT_GATE_CLOSED`.
+- VARSAYIMLAR VE ÖLÇÜLEBİLİR KABUL:
+  - PR #124 and PR #125 must remain independently reviewable changesets;
+  - acceptance requires fresh Git ancestry, exact base/head SHA, commit list,
+    file diff and CI status for both PRs, plus an explicit merge sequence that
+    does not fold #125 back into #124 or expose the aggregate stack as #125;
+  - no merge, rebase, force-push, deploy, secret/provider change, traffic
+    shift, wallet action, testnet write or runtime activation is in scope.
+- GÜNCEL REPO VE GITHUB GERÇEĞİ:
+  - the worktree is clean at
+    `agent/phase2-v2-authorizer-staging-20260815@834d368144b4e7fef4f9118302d415e1e4607669`;
+    `origin/main` is `c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`;
+  - exact ancestry is
+    `main@c80377bf... -> #124@6a327835... -> #125@834d3681...`;
+  - PR #124 is `OPEN`, `DRAFT`, `MERGEABLE/CLEAN`, targets `main`, and contains
+    four commits. Its exact diff is six files, `+785/-19`: CI catalog wiring,
+    contract/testing docs, the 18-event final testnet evidence, progress
+    evidence and the EVENT-001 catalog-parity test;
+  - at reviewed head `834d3681...`, PR #125 is `OPEN`, `DRAFT`,
+    `MERGEABLE/CLEAN`, targets PR #124's exact head branch, and contains three
+    commits. Its exact pre-checkpoint diff is five files,
+    `+1620/-17`: bounded final-chain wallet-callback reconciliation, its tests,
+    the redacted GET-only provider read and its tests, plus progress evidence;
+  - the only path shared by both diffs is
+    `docs/architecture/transformation-progress.md`. Comparing #125 directly
+    from current `main` exposes the ten-file aggregate stack at `+2405/-36`,
+    so the current stacked base is material to exact review scope.
+- EXACT DIFF REVIEW:
+  - #124's required catalog test keeps the Rust producer, both final-event
+    consumers and the recorded 18-event testnet evidence equal. The evidence
+    is `PASS_TESTNET_FINAL`, records 18 unique applicable events, marks only
+    `contract_migrated` as `NOT_APPLICABLE_FRESH_ID`, and leaves the canary
+    frozen with purchases paused;
+  - #125 clears the local signless key after either the wallet callback or a
+    bounded proof that the exact final access key is absent and all bounded
+    subject grants are revoked. The provider preflight performs one validated,
+    five-second playback-policy GET and emits only redacted status/policy and
+    playback-ID digest; mutation remains disabled by default;
+  - no actionable correctness or scope finding was identified in either exact
+    diff. `git diff --check` passes independently for both PR ranges.
+- MERGE YÖNTEMİ VE SIRA KARARI:
+  - repository settings disable merge commits and allow squash/rebase. PRs
+    #120-#123 were squash-merged: each merge SHA differs from its PR head and
+    the current `main` history is single-parent;
+  - therefore the safe order is: separately approve and squash-merge #124
+    first; then rebuild #125 on the resulting exact `main` using only #125's
+    three commits (`28a204a7...`, `ab2719a0...`, `834d3681...`), retarget it to
+    `main`, re-confirm the exact five-path diff and obtain fresh exact-head CI;
+    only then request a separate #125 merge decision;
+  - merging #125 into its current base would update #124's head and collapse
+    the review boundary. Retargeting #125 before #124 merges, or retaining its
+    old ancestry after a squash, would expose the aggregate stack. Neither is
+    accepted. No merge, rebase or force-push was performed in this checkpoint.
+- LOCAL_TEST: `PASS`; EVENT-001 catalog parity passes `1/1`, Bridge
+  provider-canary tests pass `71/71`, focused Web signless-access-key tests pass
+  `14/14`, and both exact PR ranges pass `git diff --check`.
+- CI: `PASS_EXISTING_EXACT_HEADS`; PR #124 required `CI Gate` and all reported
+  checks remain green at exact head `6a327835...` in run `31906629289`. PR #125
+  required `CI Gate` and all reported checks remain green at reviewed head
+  `834d3681...` in run `31962078263`. This checkpoint is a docs-only follow-up;
+  its resulting head requires its own CI before this gate is handed off. These
+  results do not cover the future post-#124 restacked #125 SHA; that future CI
+  remains `UNPROVEN`.
+- TESTNET: `NOT_RUN`; this was a repository/GitHub review gate. No provider
+  read, wallet action, signature, chain query, transaction or write occurred.
+- DEPLOY: `NOT_RUN`; no version upload, route change or traffic deployment
+  occurred.
+- RUNTIME: `UNCHANGED_BY_GATE`; no runtime flag, secret, provider or traffic
+  mutation occurred. The last verified stable-only/closed runtime state from
+  Checkpoint 164 remains the prior evidence and is not reclassified as a new
+  runtime probe here.
+- GÜNCEL FAZ KAPISI: `PHASE2_CHANGESET_STACK_REVIEW_DECISION_REQUIRED` is
+  closed. Stop here; do not merge or restack automatically. The single proposed
+  next gate is `PHASE2_PR124_SQUASH_MERGE_DECISION_REQUIRED`: after explicit
+  approval, revalidate #124's exact head/checks and squash-merge only #124;
+  stop again before rebuilding or retargeting #125.
