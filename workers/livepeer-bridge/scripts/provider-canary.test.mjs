@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
     requestUpload,
     runProviderCanary,
+    runProviderReadPreflight,
 } from './provider-canary.mjs';
 
 const API_KEY = 'test-api-key-that-is-long-enough';
@@ -24,6 +25,53 @@ test('provider canary is fail-closed unless mutations are explicitly enabled', a
     await assert.rejects(
         runProviderCanary({ apiKey: API_KEY, mutationsEnabled: false }),
         /provider_canary_mutations_disabled/,
+    );
+});
+
+test('provider read preflight is GET-only and emits redacted evidence', async () => {
+    const calls = [];
+    const receipt = await runProviderReadPreflight({
+        apiKey: API_KEY,
+        playbackId: 'playback-123',
+        fetchImpl: async (url, init) => {
+            calls.push({ url, init });
+            return Response.json({
+                type: 'vod',
+                meta: { playbackPolicy: { type: 'jwt' }, secret: 'must-not-be-logged' },
+            });
+        },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].init.method, undefined);
+    assert.match(calls[0].init.headers.Authorization, /^Bearer /);
+    assert.equal(receipt.status, 200);
+    assert.equal(receipt.policy, 'jwt');
+    assert.doesNotMatch(JSON.stringify(receipt), /playback-123|test-api-key|must-not-be-logged/);
+});
+
+test('provider read preflight fails closed on credential rejection', async () => {
+    await assert.rejects(
+        runProviderReadPreflight({
+            apiKey: API_KEY,
+            playbackId: 'playback-123',
+            fetchImpl: async () => new Response('credential details', { status: 401 }),
+        }),
+        /^Error: provider_read_preflight_failed_401$/,
+    );
+});
+
+test('provider read preflight rejects a non-JWT playback policy', async () => {
+    await assert.rejects(
+        runProviderReadPreflight({
+            apiKey: API_KEY,
+            playbackId: 'playback-123',
+            fetchImpl: async () => Response.json({
+                type: 'vod',
+                meta: { playbackPolicy: { type: 'public' } },
+            }),
+        }),
+        /^Error: provider_read_preflight_policy_invalid$/,
     );
 });
 

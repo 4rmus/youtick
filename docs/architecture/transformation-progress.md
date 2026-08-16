@@ -155,8 +155,8 @@ Evidence classes remain separate:
 
 | Exit gate | Status | Evidence |
 |---|---|---|
-| P0 signless-key tests pass | PASS | FullAccess, empty/additional methods, wrong receiver, null/unlimited, below-minimum and above-maximum allowance are rejected at finality. Exact finite permission passes; RPC unknown fails closed without duplicate provisioning. Secure disconnect covers subject-grant revoke, exact-key deletion and wallet-rejection preservation. Targeted matrix 12/12 and related grant suite 11/11. `LOCAL_TEST`; CI/runtime proof absent. |
-| Browser secret is not broad persistent localStorage state | PASS_LOCAL | Signless secrets use sessionStorage; legacy `youtick:signless-keystore:` localStorage entries are removed and no persistent-device option exists. Explicit disconnect wallet-signs `revoke_subject_sessions` plus deletion of the exact signless key, and fails closed if approval is rejected. A production nonce CSP has no `unsafe-inline`; local production HTTP/browser smoke passed. `LOCAL_TEST`; deployed wallet/browser proof is absent. |
+| P0 signless-key tests pass | PASS | FullAccess, empty/additional methods, wrong receiver, null/unlimited, below-minimum and above-maximum allowance are rejected at finality. Exact finite permission passes; RPC unknown fails closed without duplicate provisioning. Secure disconnect covers subject-grant revoke, exact-key deletion, wallet-rejection preservation and bounded final-state reconciliation when the wallet callback is lost. Targeted matrix 14/14 and related grant suite 11/11. `LOCAL_TEST`; the current dirty reconciliation diff has no CI/deploy proof. |
+| Browser secret is not broad persistent localStorage state | PASS_PREVIEW | Signless secrets use sessionStorage; legacy `youtick:signless-keystore:` localStorage entries are removed and no persistent-device option exists. Explicit disconnect wallet-signs `revoke_subject_sessions` plus deletion of the exact signless key, and fails closed if approval is rejected. Checkpoints 159–160 prove final testnet revoke/current-key deletion and deployed callback recovery without a second wallet prompt. Checkpoint 162 then proves final deletion of the two older broad FunctionCall keys; Checkpoint 163 removes the temporary cleanup surface and re-verifies exactly one FullAccess wallet key. The cleanup wallet skipped the expected approval stop, and that deviation remains recorded rather than treated as reusable UX. A production nonce CSP has no `unsafe-inline`; local production HTTP/browser smoke passed. `LOCAL_TEST` + `TESTNET_MUTATION` + isolated `PREVIEW_DEPLOYMENT/RUNTIME`. |
 | Bridge freeze/rotation rehearsed on testnet | PASS | Fresh Market v2 artifact hash matches on-chain code. Guardian freeze, frozen rotation, old/new authority checks, admin unfreeze and restoration of the original bridge were executed with NEP-297 events. Final state is unfrozen with no pending rotation. `TESTNET_MUTATION`. |
 | Migration verified on fixture | ACCEPTED_PILOT_EXCEPTION | Market v2 source has `state_version=2`; the accepted pilot uses fresh empty IDs and does not claim old-state migration. Mainnet snapshot/import remains a later gate. |
 | Access pause/resource semantics fixed | PASS | Fresh Access v2 requires a bounded Play resource, applies global/scope pause during verification, caps each owner at 16 active grants, paginates list/cleanup and can disable new issuance. Contract 14/14 and web call-shape 11/11 pass. On testnet one session-only grant verified, revoked and cleaned to empty. `LOCAL_TEST` + `TESTNET_MUTATION`. |
@@ -168,11 +168,11 @@ Evidence classes remain separate:
 
 | Exit gate | Status | Evidence |
 |---|---|---|
-| V2 authorizer works in production-like staging | PARTIAL | The separately gated v2 route works in local Worker integration tests. It verifies real device and NEP-413 signatures, final publication/entitlement and a 180-second JWT; the all-playback issuance gate rejects both v1 and v2 before any RPC read. Production-like staging is `UNPROVEN`. `LOCAL_TEST`. |
+| V2 authorizer works in production-like staging | PASS_PREVIEW | Checkpoint 149 reused the exact CI-green PR-head code, installed only the validated Livepeer credential in a new secret version, and held the candidate at 0%. Three version-overridden valid requests returned 200 and independently verified 180-second ES256 JWTs; each tail event reported three final NEAR reads and one Livepeer policy read, all 200. Stable-only 100% and every runtime flag false were restored. `LOCAL_TEST` + exact-head `CI` + bounded `PREVIEW_DEPLOYMENT` + `TESTNET_READ` + `PREVIEW_RUNTIME`. |
 | Persistent write per token is zero | PASS_LOCAL | V2 invokes the authorizer directly without `LIVEPEER_CONTROL`; success and same-request replay tests prove no DO access while final reads repeat. V1 remains an independently closed fallback. `LOCAL_TEST`. |
-| Cold and cache-hit NEAR reads meet approved bounds | PASS_LOCAL | Cold v2 performs three final NEAR reads plus one provider-policy read. The bounded 1,024-record cache makes a fully warm replay use zero NEAR/provider reads. Publication/provider expire at 30 seconds, wallet proof at 60 seconds, positive entitlement at five minutes and negative at three seconds. Takedown and removed-key boundary tests pass. `LOCAL_TEST`; deployed latency is absent. |
-| Legacy/v2 shadow mismatch below approved threshold | PARTIAL | The accepted mismatch ratio is exactly 0. A separately gated source path embeds an independently signed v2 proof in a legacy request, fixes and returns only the legacy result, then runs the existing v2 decision without JWT or durable writes through `waitUntil`. A mismatch regression logs only bounded ALLOW/DENY/UNAVAILABLE and reason codes. Both shadow flags default false and guarded release metadata/config now require them to remain false. Deployed samples and a pass result remain `EXTERNAL_EVIDENCE_REQUIRED`. `LOCAL_TEST`. |
-| Device-certificate UX and revoke/clear verified | PASS_LOCAL | Web creates an eight-hour wallet-authorized certificate, keeps its secret only in memory and clears it on disconnect or page reload. Wrong origin, expired certificate, invalid/removed/non-FullAccess wallet key and invalid device signature fail closed locally. A stolen in-memory certificate remains usable until expiry unless its wallet key is removed; deployed wallet UX is `UNPROVEN`. `LOCAL_TEST`. |
+| Cold and cache-hit NEAR reads meet approved bounds | PASS_PREVIEW | Cold v2 performs three final NEAR reads plus one provider-policy read. Checkpoint 152 reused one signed request over a single keep-alive connection: the first Preview call was `MISS` with `rpcCalls=3` and `providerCalls=1`; the next eleven were all `HIT` with both counts zero. All 12 returned 200; cache-hit client p95 was 100 ms, below the approved 500 ms target, while tail authorization latency was 0 ms. Publication/provider expire at 30 seconds, wallet proof at 60 seconds, positive entitlement at five minutes and negative at three seconds. Takedown and removed-key boundary tests pass. Stable-only 100% and every runtime flag false were restored. `LOCAL_TEST` + exact-head `CI` + bounded `PREVIEW_DEPLOYMENT` + `TESTNET_READ` + `PROVIDER_READ` + `PREVIEW_RUNTIME`. |
+| Legacy/v2 shadow mismatch below approved threshold | PASS_PREVIEW | The accepted mismatch ratio is exactly 0. Checkpoint 150 recorded one valid `DENY/DENY` pair and Checkpoint 151 recorded one valid `ALLOW/ALLOW` pair against the same 0%-traffic candidate, for aggregate mismatch `0/2`. The positive pair used one zero-deposit, 180-second testnet legacy `Play` grant. Both samples returned only the legacy response contract; v2 shadow issued no JWT and added no durable write. Direct v2 and every mutation/Queue/archive gate stayed closed. Stable-only 100% and every runtime flag false were restored after each sample. `LOCAL_TEST` + exact-head `CI` + bounded `PREVIEW_DEPLOYMENT` + `TESTNET_READ/WRITE` + `PROVIDER_READ` + `PREVIEW_RUNTIME`. |
+| Device-certificate UX and revoke/clear verified | PASS_PREVIEW | Checkpoint 156 aligned the isolated Web and guarded Bridge candidate with the exact entitled buyer. One user-approved wallet certificate produced direct-v2 HTTP 200 and rendered the player; automatic same-page refresh and Checkpoint 158's repeat both returned 200 without another certificate prompt. Checkpoints 159–160 prove final testnet subject revoke/current-key deletion and deployed callback recovery to persistent `Connect` without a second wallet prompt. Checkpoint 162 removed both older broad FunctionCall keys at finality; Checkpoint 163 removed the temporary cleanup signer surface and re-verified exactly one FullAccess wallet key. The cleanup wallet's unexpected no-stop submission is recorded as a deviation and is not part of the accepted product UX. Public Web and Bridge deployments stayed stable-only 100% with every Bridge runtime flag false. `LOCAL_TEST` + exact-head prior `CI` + isolated `PREVIEW_DEPLOYMENT` + `TESTNET_READ/WRITE` + `PROVIDER_READ` + browser `PREVIEW_RUNTIME`. |
 | Access grant issuance can be disabled | PASS_LOCAL | Fresh Access v2 has an independent, readable issuance flag behind the existing owner timelock. One regression proves the exact 24-hour decommission sequence: a grant issued during the delay remains verifiable, execution rejects new issuance, and subject revoke plus bounded cleanup still work. Testnet execution remains absent. `LOCAL_TEST`. |
 | DO retention/cleanup proven automatically | PARTIAL | Creator-fee/payment rate-limit objects alarm and `deleteAll()` at window expiry; signed control nonces expire with their at-most-five-minute request and purge in 128-record batches; normal/ambiguous admission leases release at 30/15 minutes, webhook dedup purges at 30 days and admission-reopen audit at 90 days. Independent default-off UploadJob and operator outbox D1 archive sources persist bounded summaries, commit/retry metadata and 14/90-day eligibility boundaries locally. Real D1 commits, both destructive deletes and a complete class-wide max-record contract remain absent. `LOCAL_TEST`. |
 
@@ -238,8 +238,8 @@ Evidence classes remain separate:
 | AUTH-003 | 1 | PASS_TESTNET | Required resource, pause semantics, field/per-owner bounds, cleanup and independent issuance control pass locally; a grant issue/verify/revoke/cleanup drill succeeded on the fresh Access v2 testnet ID. The source-only issuance-decommission sequence now passes; its testnet execution is absent. |
 | RPC-001 | 1 | PASS_LOCAL | Separate bounded read/broadcast paths, deadlines, response caps, rate maps and no-replay broadcast pass locally. Dedicated provider and distributed edge quota evidence remain external. |
 | PLAY-001 | 2 | PASS_LOCAL | Eight-hour NEP-413 device certificate, memory-only device key, signed request binding and disconnect/page-reload clear pass locally; deployed wallet proof is absent. |
-| PLAY-002 | 2 | PASS_LOCAL | V2 verifies final publication/entitlement and returns a 180-second playback-bound JWT without Access grant or DO writes. The all-playback issuance gate closes both legacy and v2 routes before RPC use; staging/load and deployed-gate proof are absent. |
-| PLAY-003 | 2 | PARTIAL | Bounded TTL cache, cold/hit read counts, provider JWT-policy check and 30/60-second takedown/key-removal bounds pass locally. Default-off legacy/v2 shadow execution returns only the legacy response, reuses the v2 decision without another JWT/write and emits bounded decision/reason-code comparison. The accepted mismatch ratio is 0; event-driven invalidation and deployed cache/shadow/latency samples remain absent. |
+| PLAY-002 | 2 | PASS_PREVIEW | Local authorization and 1,000-request load evidence pass. Checkpoint 149's 0%-traffic candidate issued independently verified 180-second ES256 JWTs for three version-overridden valid requests; every request performed three final testnet NEAR reads plus one successful Livepeer policy read. Stable-only 100% and all runtime flags false were restored. |
+| PLAY-003 | 2 | PARTIAL_PREVIEW | Bounded TTL cache, cold/hit read counts, provider JWT-policy check and 30/60-second takedown/key-removal bounds pass locally. Checkpoints 150–151 close the deployed shadow slice at mismatch `0/2`. Checkpoint 152 adds one deployed cold miss followed by eleven deployed cache hits with zero warm NEAR/provider reads and 100 ms client p95. Direct v2, provider mutation and persistent shadow writes stayed closed after restore. Event-driven invalidation remains absent. |
 | DO-001 | 2 | PARTIAL | Shared transactional enforcement emits a bounded `durable_object_storage_observed` event for `upload_job`, `admission`, `operator` or `rate_limit`, rejects record 257 and permits existing-key replay at the accepted 256-record ceiling. Rate-limit `deleteAll()`, 30-day webhook dedup and 90-day admission audit cleanup pass automatically. Independent default-off UploadJob and confirmed operator D1 archives enforce bounded summaries plus 14/90-day eligibility locally without deletion. Real archive commits, operator/UploadJob destructive cleanup and deployed metrics remain absent. |
 | UP-001 | 3 | PASS_LOCAL | Coordinator limits, budgets, 30-minute lease, five-minute heartbeat, wrong-token rejection, alarm release and 15-minute ambiguity isolation pass locally. A default-off new-upload gate rejects unrecorded intents while recorded intent/heartbeat/TUS recovery remains available. Real browser/large-upload/staging evidence is absent. |
 | UP-002 | 3 | PARTIAL | One allowed-predecessor table and timestamps cover real `AUTHORIZED → LEASED → PROVIDER_CREATE_PENDING → UPLOAD_READY → UPLOADING → PROCESSING → READY_VERIFIED → FINALIZE_RETRY/QUEUED → ONCHAIN_PUBLISHED` signals plus cancel/expiry/provider-failure terminals. Creator cancellation is pre-provider-only and non-refundable. Provider create uses one fail-closed `RECONCILE_ONLY` attempt; finalize retry uses capped 60–900-second backoff. Default-off terminal D1 archive/14-day eligibility passes locally, but real commit, v1 playback independence and deletion are absent. `LOCAL_TEST`. |
@@ -251,7 +251,7 @@ Evidence classes remain separate:
 | DATA-001 | 4 | PASS_V1_BOUNDED / CONTINUOUS_CLOSED | V1 D1 `50b1e14f-2b06-444b-98cf-b828f11277ef` has migrations 0001–0004, watermark `264071553`, one publication, five chain events, one entitlement, one sale, one withdrawal and two governance rows. Preview publication reads are active; ingestion/backfill/continuation and dedicated Queues remain unbound. Full rebuild/RTO 4h are deferred post-plan and are not v1 gates. |
 | PAY-001 | 4 | PASS_TESTNET / MAINNET_PARTIAL | Checkpoint 143 proves one 2 USDC purchase, 1.96 USDC creator credit/withdrawal, 0.04 USDC platform fee and matching D1 projections; purchases were re-paused. The technical-pilot policy is option A, explicitly non-refundable, with no automatic refund/reserve/escrow or implied credit. Mainnet product/legal/finance, user-facing terms and production accounting remain open. |
 | SRE-001 | 0–5 | PARTIAL | Redacted request/dependency/Queue/payment telemetry, a one-shot per-isolate cold-start field, bounded state-kind/projected DO record telemetry, Market reserve/RPC-finality sources and a machine-readable `SOURCE_ONLY` policy exist. The exact read-model finality source is deployed at one-minute cadence and its structured `lag_blocks` field is queryable. All nine alerts have a role/action and all six domain controls are source-ready. Guarded release inputs remain closed; the contract purchase control requires a separately approved on-chain pause receipt. The account-level native Workers Observability alert feature, named on-call, delivered notifications, deployed control exercises and drills remain absent. |
-| PERF-001 | 5 | PARTIAL | Opt-in local runs reject 100,000 wrong-origin requests with zero growth and serve 1,000 authorized warm requests at 9.15 ms p95 with zero errors, no warm external/DO calls and bounded cache. Mocked local latency is not deployed evidence. |
+| PERF-001 | 5 | PARTIAL_PREVIEW | Opt-in local runs reject 100,000 wrong-origin requests with zero growth; the latest 1,000-request authorized warm run passed at 9.507 ms p95 with zero errors, no warm external/DO calls and bounded cache. Checkpoint 152's bounded Preview sample adds eleven consecutive cache hits at 100 ms client p95, zero errors and zero warm NEAR/provider reads. This is not a load/soak or multi-creator result. |
 | PERF-002 | 5 | EXTERNAL_EVIDENCE_REQUIRED | No current multi-creator/20 GB load evidence. |
 | MEDIA-001 | 5 | DECISION_REQUIRED | Current protocol locks one 720p profile; ABR/provider economics need approval. |
 | SEC-001 | 6 | EXTERNAL_EVIDENCE_REQUIRED | Independent audit scope/report absent. |
@@ -4982,3 +4982,1612 @@ Evidence classes remain separate:
 - GÜNCEL FAZ KAPISI: `EVENT_001_PASS_TESTNET_FINAL`. The single next gate is
   Phase 2 V2 authorizer production-like staging evidence; stop before any
   Cloudflare deploy or runtime activation without separate approval.
+
+### CHECKPOINT 146 — Phase 2 / V2 authorizer production-like staging attempt
+
+- DURUM:
+  `BLOCKED_PROVIDER_READ / FAIL_CLOSED / STABLE_RESTORED / NO_JWT`.
+- BASELINE: `origin/main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`;
+  draft PR `#124` exact head
+  `6a327835e736a746e08d827644bc9d4a46222bc3` is merge-clean and CI run
+  `31906629289` completed successfully, including CI Gate and both CodeQL
+  languages. The canary source used that exact PR head.
+- YETKİ: The user separately approved one bounded Preview Bridge candidate
+  upload, stable 100% + candidate 0% deployment, version-override requests,
+  offline local signing, up to three final testnet NEAR reads, exactly one
+  Livepeer playback-policy GET, tail evidence and unconditional restoration to
+  stable-only 100%. Web deploy, Queue/D1 activation, provider mutation and chain
+  transaction were outside scope.
+- LOCAL PREFLIGHT:
+  - focused V2 integration tests passed `16/16`; two external opt-in cases
+    remained skipped, and typecheck passed;
+  - 1,000 authorized warm requests completed with zero errors and p95
+    `14.19 ms`;
+  - Wrangler dry-run produced a `726.54 KiB` bundle (`152.62 KiB` gzip);
+  - only `LIVEPEER_BRIDGE_ENABLED`,
+    `LIVEPEER_PLAYBACK_ISSUANCE_ENABLED` and
+    `LIVEPEER_PLAYBACK_V2_ENABLED` were true. Provider/operator mutation, new
+    upload, shadow, Queue and archive flags stayed false; the candidate had no
+    Queue, D1 or Durable Object binding.
+- BOUNDED DEPLOY: candidate version
+  `afffab60-80a4-46a9-8f7b-1fe844a2b1c6` was uploaded with source tag
+  `6a327835e736a746e08d827644bc9d4a46222bc3` and added beside stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` at exactly `0%`. Public traffic
+  remained on stable at `100%`; only explicit version-overridden requests
+  reached the candidate.
+- CANARY/TELMETRY:
+  - candidate `/__health` returned 200 and the gated V2 surface was ready;
+  - an invalid V2 request returned 400 without dependency reads;
+  - the signed cold request made exactly three final testnet RPC reads:
+    `device_certificate_key` 200 and two `playback_authorization` reads 200;
+  - the single Livepeer `playback_read` returned 401 after 408 ms. The Worker
+    then emitted `provider_unavailable` and returned 503 in 1,325 ms;
+  - no JWT was issued. Fail-closed stopped the flow before the replay sample,
+    so successful cold/replay behavior remains `UNPROVEN`.
+- RESTORE: the first stable-only deployment request was rejected with Cloudflare
+  code `10220` because the candidate upload introduced a newer
+  `LIVEPEER_API_KEY` secret version. Wrangler's guarded rollback path confirmed
+  that named secret change and forced the already-approved rollback. The final
+  deployment contains only stable version
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` at `100%`; public health reports
+  `stage=DISABLED` and provider/operator mutation, new upload, playback V1/V2,
+  shadow, Queue and archive readiness all false.
+- KANIT: `LOCAL_TEST` + exact-head `CI` + bounded `PREVIEW_DEPLOYMENT` +
+  version-override HTTP/tail evidence + final `PREVIEW_RUNTIME_READ`. No Web
+  deploy, Queue/D1 activation or write, provider mutation, Livepeer asset,
+  wallet prompt, chain transaction, alert, email or support request occurred.
+- GÜNCEL FAZ KAPISI: `BLOCKED_PROVIDER_READ`. The single next action is an
+  explicitly approved Livepeer credential-parity diagnosis/remediation and a
+  fresh bounded retry; do not advance to later Phase 2–3 evidence automatically.
+
+### CHECKPOINT 147 — Phase 2 / V2 authorizer credential-parity diagnosis
+
+- DURUM: `ROOT_CAUSE_ISOLATED / PROVIDER_CREDENTIAL_401 /
+  EXISTING_TOKEN_IDENTIFIED / LOCAL_CREDENTIAL_PARITY_MISMATCH /
+  READ_PREFLIGHT_READY_LOCAL / PROVIDER_READ_CONFIRMATION_REQUIRED /
+  RETRY_NOT_RUN / RUNTIME_CLOSED`.
+- BASELINE: the current baseline commit is
+  `agent/phase2-v2-authorizer-staging-20260815@28a204a7ff6be66608b2469870fa32eae1b8b0f9`;
+  `origin/main` remains `c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`.
+  Draft PR `#124` remains open/merge-clean at exact head
+  `6a327835e736a746e08d827644bc9d4a46222bc3`; CI run `31906629289`
+  and exact-main CI run `31895385141` are successful. The current diagnosis
+  branch has no PR.
+- VARSAYIMLAR VE ÖLÇÜLEBİLİR KABUL:
+  - the provider request contract is `Authorization: Bearer <API key>`; the
+    existing Worker implementation matches Livepeer's current official
+    authentication contract, so an endpoint/header code change is not assumed;
+  - Cloudflare and GitHub expose secret names and metadata, not values. The
+    signed-in Livepeer project exposes the existing token locally, but its API
+    validity and the validity of repository secret `PREVIEW_LIVEPEER_API_KEY`
+    remain `UNPROVEN` until the read preflight passes;
+  - remediation passes only when the exact existing non-CORS token for the
+    canary project returns HTTP 200 for one known playback-policy GET before
+    any Worker upload. The secret and response body must not be logged;
+  - the bounded V2 retry may start only after that preflight, with the candidate
+    at 0%, stable at 100%, only the three read-path flags enabled, every
+    provider/operator/upload/shadow/Queue/archive mutation flag false and an
+    approved unconditional stable-only restore path.
+- TANI:
+  - the signed-in Livepeer Studio session resolves to project
+    `youtick-paid-media-canary` (`53baeeda-930d-45be-bda6-a41090e6d25e`) and
+    exactly one API-key record, `youtick-testnet-worker-20260807`, with CORS
+    access `None`. Its value was copied locally without being printed and was
+    hidden again in the dashboard;
+  - the revealed existing token has a valid bounded credential shape but does
+    not equal the ignored local `.dev.vars` value. This directly confirms
+    local credential-parity drift without revealing either value;
+  - the ignored, mode-0600 local `.dev.vars` contains one syntactically valid
+    `LIVEPEER_API_KEY` entry with no outer whitespace, but one direct read-only
+    GET for known canary playback `dba5bb2s9shlyo85` returned HTTP 401. No
+    response body or secret value was printed;
+  - Checkpoint 146's candidate-bound key produced the same HTTP 401 class. The
+    exact equality or provenance of those hidden values cannot be read back;
+  - stable version `86305272-4ebb-4ca4-9d0e-11e3bd182b17` and failed candidate
+    `afffab60-80a4-46a9-8f7b-1fe844a2b1c6` both list the expected
+    `LIVEPEER_API_KEY` secret binding. Cloudflare returns only its name/type;
+  - repository secret metadata shows `PREVIEW_LIVEPEER_API_KEY` was last
+    updated on 2026-08-11, when the existing project token passed the earlier
+    paid-canary preflight. This historical success is not current provider
+    validity proof;
+  - the smallest remediation is operational: reveal/reuse the existing current
+    project-scoped token, validate the single read, then supply that validated
+    value through a mode-0600 ephemeral candidate secret file. No provider
+    change, token creation/rotation or Worker source change is justified. If
+    the existing token cannot be validated, rotation is a separate explicit
+    decision.
+- LOCAL RETRY HAZIRLIĞI:
+  - the existing `provider-canary.mjs` now accepts the narrow
+    `--read-playback <id>` mode. It validates the API-key/playback-ID shape,
+    performs exactly one five-second `GET /api/playback/<id>` and requires HTTP
+    200 plus VOD/JWT policy before returning a receipt;
+  - the receipt contains only schema, status, bounded kind/policy and a SHA-256
+    playback-ID digest. The API key, raw playback ID and response body are not
+    emitted. Network, non-200, malformed response and non-JWT policy outcomes
+    fail closed with bounded error codes;
+  - the default provider canary remains mutation-disabled unless its existing
+    explicit flag is true. Read mode has no create, upload or delete call;
+  - canonical pre-upload command is `node --env-file-if-exists=.dev.vars scripts/provider-canary.mjs --read-playback <known-playback-id>`. The current
+    ignored credential returns bounded `provider_read_preflight_failed_401`;
+    candidate upload must not start until the same command returns the redacted
+    HTTP-200 VOD/JWT receipt.
+- RUNTIME SON DURUMU: a fresh cache-busting public health read still serves
+  stable version `86305272-4ebb-4ca4-9d0e-11e3bd182b17`, reports
+  `stage=DISABLED`, and keeps upload, provider/operator mutation, playback
+  V1/V2, shadow, Queue and archive readiness false. The previous exact 100%
+  assignment remains the last verified Cloudflare control-plane evidence. The
+  earlier unqualified Wrangler read targeted the production Worker name from
+  local `wrangler.toml` and returned independent code `10007`; it did not prove
+  an account mismatch.
+- DOĞRULAMA: provider/canary tests pass `71/71`; focused V2 tests pass `16/16`
+  with two external opt-in cases skipped; the opt-in 1,000-request warm test
+  passes with zero errors and fresh local p95 `11.208 ms`. Worker TypeScript check,
+  VitePress build and `git diff --check` pass.
+- KANIT: current `LOCAL_TEST` + one failed `PROVIDER_READ` + read-only
+  `LIVEPEER_DASHBOARD_METADATA` + read-only `GITHUB_METADATA` + fresh public
+  `PREVIEW_RUNTIME_READ`. `CI` is historical exact-SHA evidence above.
+  Successful `PROVIDER_READ`, `TESTNET`, fresh `DEPLOY` and successful V2
+  `RUNTIME` evidence are `UNPROVEN`; the bounded retry was not run.
+- GÜNCEL FAZ KAPISI: `PHASE2_V2_BLOCKED_PROVIDER_READ` remains open.
+  `DECISION_REQUIRED` immediately before transmitting the locally revealed
+  credential in one read-only provider preflight. Secret installation/rotation,
+  candidate upload/deploy, traffic shift and the bounded authorizer retry each
+  remain separate explicit-approval boundaries. Do not advance to a later gate.
+
+### CHECKPOINT 148 — Phase 2 / V2 provider-read closure
+
+- DURUM: `PASS_PROVIDER_READ / CREDENTIAL_PARITY_ROOT_CAUSE_CONFIRMED /
+  BOUNDED_RETRY_READY_FOR_DECISION / RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- BASELINE: local branch
+  `agent/phase2-v2-authorizer-staging-20260815@28a204a7ff6be66608b2469870fa32eae1b8b0f9`;
+  `origin/main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`.
+  The three-path dirty worktree remains preserved. Unrelated draft PR `#124`
+  is still open/merge-clean at `6a327835e736a746e08d827644bc9d4a46222bc3`
+  with successful CI run `31906629289`; the current local diff has no PR, so
+  current-diff `CI` remains `UNPROVEN`.
+- KABUL VE PROVIDER KANITI:
+  - the user explicitly approved one read-only Livepeer credential preflight;
+  - the existing `youtick-paid-media-canary` project token was supplied from
+    the local clipboard without printing or persisting it;
+  - exactly one `GET /api/playback/<known-id>` returned the redacted receipt
+    `status=200`, `kind=vod`, `policy=jwt` and only a SHA-256 playback-ID
+    digest. The API key, raw playback ID and provider response body were not
+    emitted;
+  - no token creation/rotation, provider change, asset mutation, secret
+    installation, deploy, traffic shift or bounded retry occurred.
+- EN KÜÇÜK DÜZELTME: no Worker authentication-header or provider-code change
+  is required. The current project token is valid; the failed local and prior
+  candidate reads were credential-parity drift. Before a bounded retry, the
+  exact validated value must be supplied through the already planned
+  mode-0600 ephemeral candidate secret input. Whether the GitHub repository
+  secret or any existing Cloudflare binding equals that value remains
+  `UNPROVEN`; replacing/installing a secret is a separate explicit decision.
+- LOCAL_TEST: provider/canary `71/71`; focused V2 `16/16` with two external
+  opt-in cases skipped; 1,000-request warm run has zero errors and local p95
+  `11.208 ms`; Worker TypeScript check, VitePress build and
+  `git diff --check` pass.
+- CI: `UNPROVEN` for the current dirty diff. Run `31906629289` is successful
+  historical evidence for unrelated PR `#124`, not evidence for this diff.
+- TESTNET: successful provider read used the existing testnet canary project
+  and policy record; V2 authorizer testnet execution itself was not run and is
+  `UNPROVEN`.
+- DEPLOY: not run. Repository variable `DEPLOY_PREVIEW_ENABLED=false`.
+- RUNTIME: a fresh cache-busting public health read serves stable version
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17`, reports `stage=DISABLED`, and keeps
+  provider/operator mutation, upload, playback V1/V2, shadow, Queue and archive
+  readiness false. The last exact control-plane assignment remains stable 100%.
+  The earlier `10007` came from querying the production Worker name rather than
+  `youtick-livepeer-bridge-preview`; it was not an account-scope failure.
+- GÜNCEL FAZ KAPISI: `PHASE2_V2_BLOCKED_PROVIDER_READ` is closed. Stop here.
+  The single proposed next gate is `PHASE2_V2_BOUNDED_RETRY_DECISION_REQUIRED`;
+  do not install a secret, deploy, shift traffic or execute the bounded retry
+  without separate explicit approval.
+
+### CHECKPOINT 149 — Phase 2 / V2 bounded production-like staging retry
+
+- DURUM: `PASS_PREVIEW_V2 / JWT_ISSUED / COLD_AND_REPLAY_PASS /
+  DEPLOYED_CACHE_HIT_UNPROVEN / STABLE_RESTORED / RUNTIME_CLOSED`.
+- BASELINE VE CI: candidate code is exact draft PR `#124` head
+  `6a327835e736a746e08d827644bc9d4a46222bc3`; run `31906629289` passed all
+  required jobs, CI Gate and both CodeQL languages. The current local
+  three-path dirty diff remains preserved and its CI is `UNPROVEN`.
+- YETKİ VE SINIR: the user explicitly approved secret installation, bounded
+  Preview deploy, version-override traffic and the V2 retry. Web deploy,
+  non-zero candidate traffic, provider/chain mutation, Queue/D1 activation and
+  Production remained outside the executed scope.
+- SECRET VE CANDIDATE:
+  - `wrangler versions secret put` created candidate
+    `e7659cae-f164-403f-ba41-d6d372eb5e50` by changing only
+    `LIVEPEER_API_KEY`; the value was piped from the local clipboard and was
+    neither printed nor persisted;
+  - its script etag exactly matches failed candidate
+    `afffab60-80a4-46a9-8f7b-1fe844a2b1c6`; only Bridge, playback issuance and
+    playback V2 flags are true. Provider/operator mutation, new upload, shadow,
+    Queue and archive flags are false; no Queue, D1 or Durable Object binding is
+    present;
+  - Cloudflare deployment assigned stable
+    `86305272-4ebb-4ca4-9d0e-11e3bd182b17` exactly 100% and candidate exactly
+    0%. Candidate `/__health` returned its exact version ID with
+    `playbackV2Ready=true`; an invalid V2 request returned 400.
+- BOUNDED CANARY:
+  - the mode-0600 local entitled-buyer key signed two ephemeral device
+    certificates and request bodies entirely offline: one for the interrupted
+    shell command and one for the corrected command. The corrected signed
+    request was reused once for replay; no wallet prompt or chain transaction
+    occurred;
+  - a shell reserved-variable error occurred after the first valid request had
+    already been sent, before its local summary was produced. The corrected
+    command then sent the planned cold and replay requests. Total valid V2
+    invocations were therefore three, not two;
+  - all three invocations returned HTTP 200. The two locally summarized
+    responses had client latency 1,509 ms and 1,830 ms; both JWTs had three
+    segments, `alg=ES256`, `typ=JWT`, valid signatures, exact action/issuer/
+    subject/video bindings, 180-second TTL and matching response expiry;
+  - candidate-version tail recorded authorization latency 1,159/1,165/1,522 ms.
+    Every invocation was `cacheResult=MISS`, `rpcCalls=3`, `providerCalls=1`;
+    all device-key, publication, entitlement and Livepeer playback-policy reads
+    returned 200. Requests reached more than one edge colo/isolate, so a
+    deployed cache-hit sample remains `UNPROVEN`; local warm evidence remains
+    the only zero-read cache-hit proof.
+- RESTORE VE RUNTIME: candidate was removed from the active deployment.
+  Cloudflare control-plane status now assigns only stable version
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` at exactly 100%. Stable version
+  metadata lists all eleven tracked runtime flags false; a fresh cache-busting
+  public health read returns that exact version, `stage=DISABLED`, and every
+  upload/provider/operator/playback V1/V2/shadow/Queue/archive readiness false.
+  Repository variable `DEPLOY_PREVIEW_ENABLED=false`.
+- LOCAL_TEST: provider/canary `71/71`; focused V2 `16/16` with two external
+  opt-in cases skipped; 1,000-request warm run zero errors and p95 `11.208 ms`;
+  TypeScript, VitePress and `git diff --check` pass.
+- CI: `PASS` for exact candidate source SHA `6a327835...`; current dirty diff
+  remains `UNPROVEN`.
+- TESTNET: `PASS_READ` for three final NEAR reads and one Livepeer policy read
+  per invocation; no testnet write occurred.
+- DEPLOY: `PASS_BOUNDED_PREVIEW`; candidate was 0% and restore is stable-only
+  100%. No Production deploy occurred.
+- RUNTIME: `PASS_PREVIEW_V2` for version-overridden authorization and JWT
+  issuance; final public runtime is closed. Deployed cache-hit behavior remains
+  `UNPROVEN`.
+- GÜNCEL FAZ KAPISI: the production-like V2 authorizer staging gate is closed.
+  Stop here. The single proposed next gate is
+  `PHASE2_SHADOW_STAGING_DECISION_REQUIRED`; do not enable shadow execution or
+  advance further without a new explicit decision.
+
+### CHECKPOINT 150 — Phase 2 / bounded legacy-v2 shadow staging
+
+- DURUM: `PARTIAL_PREVIEW_SHADOW / DENY_MATCH_PASS / MISMATCH_0_OF_1 /
+  ALLOW_SAMPLE_BLOCKED_NO_LEGACY_GRANT / STABLE_RESTORED / RUNTIME_CLOSED`.
+- BASELINE VE CI: local branch remains
+  `agent/phase2-v2-authorizer-staging-20260815@28a204a7ff6be66608b2469870fa32eae1b8b0f9`;
+  `origin/main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`. Draft PR `#124`
+  remains open, draft and mergeable at exact head
+  `6a327835e736a746e08d827644bc9d4a46222bc3`; run `31906629289`, CI Gate
+  and both CodeQL languages remain successful. The candidate runtime source
+  and package inputs have no diff from that exact PR head; the current
+  provider-canary/docs dirty diff remains preserved and its CI is `UNPROVEN`.
+- VARSAYIMLAR VE ÖLÇÜLEBİLİR KABUL:
+  - candidate traffic must remain 0% while stable remains 100%; only Bridge,
+    legacy playback issuance and v2 shadow may be true. Direct v2,
+    provider/operator mutation, new upload, Queue and archive flags stay false;
+  - the user-visible result must remain the legacy response contract. Shadow
+    runs only after that result is fixed, emits bounded decisions/reason codes,
+    produces no JWT and adds no durable write;
+  - closure requires at least one valid `ALLOW/ALLOW` pair and one valid
+    `DENY/DENY` pair, zero mismatch across both, exact candidate tail evidence,
+    and an unconditional stable-only restore. One-sided evidence cannot close
+    the gate;
+  - no grant issuance, payment, provider mutation, Livepeer asset operation,
+    Queue/D1 activation, Web/Production deploy or non-zero candidate traffic is
+    authorized by this bounded run.
+- TESTNET PREFLIGHT:
+  - publication `lp-0b8d85d5-501f-41ad-8dc6-3fc340fd99f7` was ACTIVE at final
+    block `264094810`, generation 1 and playback
+    `dba5bb2s9shlyo85`;
+  - the selected negative account had a live FullAccess key but
+    `has_entitlement=false` at the same block. This allowed independently valid
+    legacy and device-certificate proofs without a chain mutation;
+  - read-only `list_session_grants` checks returned zero grants for the six
+    available buyer/creator/test credential owners. In particular, the
+    entitled buyer used in Checkpoint 149 has no legacy `Play` grant. A valid
+    positive legacy request therefore cannot be produced from current state
+    without an explicitly approved grant-issuance transaction.
+- CANDIDATE VE GUARDS:
+  - a local-only temporary Wrangler configuration was dry-run, used and then
+    deleted. Candidate `dca6bc56-82ba-4126-bb67-e9453d47fcf3`, tagged with
+    exact source SHA `6a327835...`, inherited the already validated secret
+    bindings without printing values and added only the existing
+    `LIVEPEER_CONTROL` binding required by legacy playback;
+  - candidate metadata has Bridge, legacy playback issuance and shadow true;
+    direct v2 plus every provider/operator/new-upload/Queue/archive flag false.
+    It has no Queue or D1 binding;
+  - Cloudflare assigned stable
+    `86305272-4ebb-4ca4-9d0e-11e3bd182b17` exactly 100% and candidate exactly
+    0%. Version-overridden health returned the exact candidate ID,
+    `playbackReady=true`, `playbackShadowV2Ready=true`, mutation/readiness
+    guards false; direct `/v2/playback-tokens` returned 503.
+- BOUNDED RUNTIME:
+  - one preliminary request used the production origin and failed before DO or
+    shadow execution with `origin_denied`; the inherited Preview allowlist was
+    then read and no setting was changed;
+  - one correctly bound request used an ephemeral signed legacy session key
+    and an independently signed eight-hour device certificate. The legacy
+    result was HTTP 403 `playback_denied`, `no-store`, in 1,674 ms;
+  - candidate tail recorded legacy `DENY/playback_denied` and v2
+    `DENY/playback_denied` with `decisionMatch=true`; observed mismatch is
+    exactly `0/1` for the valid comparison;
+  - legacy execution made four successful final testnet reads and wrote only
+    its bounded replay nonce. V2 shadow made three successful reads
+    (`device_certificate_key`, publication and entitlement), stopped on the
+    negative entitlement, made zero Livepeer provider calls, emitted no JWT
+    and produced no shadow storage event.
+- RESTORE VE RUNTIME: tail was stopped before restore. Candidate was removed
+  from the deployment; the control plane now assigns only stable version
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` at exactly 100%. Stable metadata lists
+  all eleven tracked flags false. A fresh cache-busting public health read
+  returns that exact version, `stage=DISABLED`, and every playback, mutation,
+  upload, Queue and archive readiness false. Repository variable
+  `DEPLOY_PREVIEW_ENABLED=false`.
+- LOCAL_TEST: playback/shadow and v2 files pass `33/33` with two external
+  opt-in cases skipped; Worker TypeScript check passes. Final VitePress build
+  and `git diff --check` are recorded after this checkpoint edit.
+- CI: `PASS` for exact candidate source SHA `6a327835...`; current dirty diff
+  is `UNPROVEN`.
+- TESTNET: `PASS_READ_DENY_PAIR`; no testnet write occurred. Positive pair is
+  `BLOCKED_NO_LEGACY_GRANT`.
+- DEPLOY: `PASS_BOUNDED_PREVIEW`; candidate stayed 0%, stable stayed 100% and
+  final assignment is stable-only 100%. No Production/Web deploy occurred.
+- RUNTIME: `PARTIAL_PREVIEW_SHADOW`; the valid negative pair passed with zero
+  mismatch. Positive shadow behavior remains `UNPROVEN`, so the approved
+  two-sided acceptance criterion is not met.
+- GÜNCEL FAZ KAPISI: `PHASE2_SHADOW_STAGING` remains open and
+  `DECISION_REQUIRED` for a narrowly scoped testnet legacy `Play` grant before
+  one positive `ALLOW/ALLOW` shadow sample. Stop here. The single proposed next
+  gate is `PHASE2_SHADOW_ALLOW_GRANT_DECISION_REQUIRED`; do not issue a grant,
+  deploy or run another sample without a new explicit decision.
+
+### CHECKPOINT 151 — Phase 2 / positive legacy-v2 shadow closure
+
+- DURUM: `PASS_PREVIEW_SHADOW / ALLOW_MATCH_PASS / AGGREGATE_MISMATCH_0_OF_2 /
+  ONE_SHORT_LIVED_TESTNET_GRANT / STABLE_RESTORED / RUNTIME_CLOSED /
+  GRANT_EXPIRED`.
+- YETKİ VE SINIR: the user's `devam et` approved the single proposed
+  `PHASE2_SHADOW_ALLOW_GRANT_DECISION_REQUIRED` gate. Executed scope was one
+  zero-deposit short-lived testnet legacy `Play` grant, the existing candidate
+  at 0%, one version-overridden positive shadow sample and stable-only restore.
+  Payment, provider/asset mutation, Queue/D1, Web/Production, non-zero traffic,
+  secret change and grant revocation were not executed.
+- BASELINE VE CI: local branch remains
+  `agent/phase2-v2-authorizer-staging-20260815@28a204a7ff6be66608b2469870fa32eae1b8b0f9`;
+  `origin/main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`. Draft PR `#124`
+  remains open, draft and mergeable at exact candidate source head
+  `6a327835e736a746e08d827644bc9d4a46222bc3`; all checks, CI Gate and both
+  CodeQL languages are successful. The current three-path dirty diff remains
+  preserved and its CI is `UNPROVEN`.
+- VARSAYIMLAR VE ÖLÇÜLEBİLİR KABUL:
+  - the one transaction must call only `issue_session_grant` on fresh Access
+    v2, attach zero deposit and request a 180-second Play grant bound to the
+    entitled buyer, exact publication, Preview origin and ephemeral device;
+  - the candidate must remain 0% beside stable 100%. Only Bridge, legacy
+    playback issuance and shadow may be true; direct v2 and every mutation,
+    upload, Queue and archive flag remain false;
+  - the one user-visible response must be HTTP 200 legacy v1/no-store. Tail
+    must record `ALLOW/authorized` for both decisions, `decisionMatch=true`,
+    no shadow JWT/storage write and only read-only NEAR/Livepeer dependencies;
+  - combined with Checkpoint 150's valid negative pair, closure requires exact
+    aggregate mismatch `0/2`, stable-only restore and natural grant expiry.
+- PREFLIGHT:
+  - at final block `264095844`, Access v2 reported `paused=false`,
+    `grant_issuance_enabled=true`, Play `max_ttl_ms=600000` with required origin
+    and device bindings, and zero grants for the buyer;
+  - the publication was ACTIVE at generation 1 with exact playback ID; buyer
+    entitlement was true, its local credential resolved to a live FullAccess
+    key and the account had sufficient gas balance;
+  - Worker playback/shadow tests passed `33/33` with two external opt-in cases
+    skipped, Worker TypeScript passed, Web access-grant/shadow tests passed
+    `14/14`, and the targeted Access grant policy test passed `1/1`. An initial
+    incomplete `--exact` filter selected zero Rust tests and is not counted.
+- DEPLOY GUARDS:
+  - existing candidate `dca6bc56-82ba-4126-bb67-e9453d47fcf3` was reused; no
+    upload, secret or binding change occurred. Candidate remained exactly 0%
+    while stable `86305272-4ebb-4ca4-9d0e-11e3bd182b17` remained 100%;
+  - version-overridden health returned the exact candidate ID,
+    `playbackReady=true`, `playbackShadowV2Ready=true`; direct v2 returned 503
+    and provider/operator/new-upload/Queue/archive readiness remained false.
+- TESTNET WRITE:
+  - transaction `Etz5NaqYG9joD5M2FSC9JdM7gj3NG41Zy8RkEfLt4SZk` reached final status
+    `FINAL`. It contains one `issue_session_grant` action to
+    `lp-arch-access-v2-260809.youtick-dev-v3.testnet`, zero deposit and no other
+    action;
+  - a final-state read at block `264096074` matched buyer, exact publication,
+    Preview origin/device bindings, `scope=Play`, `revoked=false` and the
+    requested 180-second TTL. The ephemeral session private key remained only
+    in process memory and was not printed or persisted;
+  - no revoke/cleanup transaction was sent. The first post-restore check found
+    one active record with approximately 81 seconds remaining. A later final
+    read at block `264096398` found the retained record but `activeCount=0`
+    and zero remaining lifetime, proving natural expiry without another write.
+- POSITIVE SHADOW SAMPLE:
+  - the single version-overridden request returned HTTP 200 in 1,143 ms,
+    `Cache-Control: no-store`, exact schema
+    `youtick.livepeer-playback-token.v1` and exact playback ID. Its JWT had
+    three segments, matching issuer/subject and a 174-second bounded TTL;
+  - candidate tail reported 724 ms edge latency. Legacy execution made four
+    successful final NEAR reads and wrote only its bounded replay nonce;
+  - v2 shadow made three successful NEAR reads plus one successful Livepeer
+    playback-policy read, emitted no JWT or storage event, and logged
+    `legacyDecision=ALLOW`, `legacyReasonCode=authorized`,
+    `v2Decision=ALLOW`, `v2ReasonCode=authorized`, `decisionMatch=true`;
+  - combined with Checkpoint 150's valid `DENY/DENY` pair against the same
+    candidate, the accepted two-sided mismatch ratio is exactly `0/2`.
+- RESTORE VE RUNTIME: tail was stopped before restore. Candidate was removed
+  from the active deployment. Cloudflare now assigns only stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` at exactly 100%; stable metadata lists
+  all eleven tracked flags false. A fresh cache-busting public health read
+  returns that exact version, `stage=DISABLED`, and every playback, mutation,
+  upload, Queue and archive readiness false. Repository variable
+  `DEPLOY_PREVIEW_ENABLED=false`.
+- LOCAL_TEST: `PASS` as detailed above; final VitePress and
+  `git diff --check` pass after the expiry update.
+- CI: `PASS` for exact candidate source SHA `6a327835...`; current dirty diff
+  is `UNPROVEN`.
+- TESTNET: `PASS_WRITE_BOUNDED` for the one final zero-deposit grant action and
+  `PASS_READ` for final grant/publication/entitlement/authorization evidence.
+  `PASS_EXPIRY` for the final-state zero-active-grant read.
+- DEPLOY: `PASS_BOUNDED_PREVIEW`; candidate stayed 0%, stable stayed 100% and
+  final assignment is stable-only 100%. No Production/Web deploy occurred.
+- RUNTIME: `PASS_PREVIEW_SHADOW`; positive and negative decision pairs both
+  matched, aggregate mismatch is exactly zero and final public runtime is
+  closed.
+- GÜNCEL FAZ KAPISI: `PHASE2_SHADOW_STAGING` is closed with exact two-sided
+  mismatch `0/2`, stable-only restore and natural grant expiry. Stop here. The
+  single proposed next gate is `PHASE2_CACHE_HIT_PREVIEW_DECISION_REQUIRED`;
+  do not deploy or run another sample without a new explicit decision.
+
+### CHECKPOINT 152 — Phase 2 / bounded deployed V2 cache hit
+
+- DURUM: `PASS_PREVIEW_CACHE_HIT / ONE_COLD_MISS / ELEVEN_WARM_HITS /
+  WARM_RPC_0 / WARM_PROVIDER_0 / CACHE_HIT_P95_100_MS / STABLE_RESTORED /
+  RUNTIME_CLOSED`.
+- YETKİ VE SINIR: the user's approval applied only to the proposed bounded
+  cache-hit gate: stable 100%, existing v2 candidate 0%, at most twelve
+  version-overridden same-request reads and unconditional stable-only restore.
+  Secret changes, testnet writes, provider mutation, Queue/D1, Durable Object,
+  Web/Production and non-zero candidate traffic were not executed.
+- BASELINE VE CI: local branch remains
+  `agent/phase2-v2-authorizer-staging-20260815@28a204a7ff6be66608b2469870fa32eae1b8b0f9`;
+  `origin/main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`. Draft PR `#124`
+  remains open, draft and mergeable at exact candidate source head
+  `6a327835e736a746e08d827644bc9d4a46222bc3`; all checks, CI Gate and both
+  CodeQL languages are successful. The current three-path dirty diff remains
+  preserved and its CI is `UNPROVEN`.
+- VARSAYIMLAR VE ÖLÇÜLEBİLİR KABUL:
+  - one independently signed v2 request body must be reused serially over one
+    HTTP/1.1 keep-alive connection, with a hard maximum of twelve invocations;
+  - every response must be HTTP 200 v2, exact issuer/subject and 180-second JWT
+    TTL. At least one exact-candidate tail event must report
+    `cacheResult=HIT`, `rpcCalls=0`, `providerCalls=0`;
+  - cache-hit client p95 must remain below the approved 500 ms starting target,
+    internal error ratio must remain below 0.5%, and the cold call must remain
+    bounded at no more than three NEAR reads plus one provider-policy read;
+  - candidate remains 0%; only Bridge, playback issuance and direct v2 are
+    true. Legacy, shadow, mutation, upload, Queue and archive readiness remain
+    false, followed by stable-only restore.
+- PREFLIGHT:
+  - stable public runtime served exact version
+    `86305272-4ebb-4ca4-9d0e-11e3bd182b17`, `stage=DISABLED`, with every
+    readiness false. Wrangler OAuth resolved the expected Cloudflare account;
+  - existing candidate `e7659cae-f164-403f-ba41-d6d372eb5e50` retained exact
+    source tag `6a327835...-v2-retry`, the validated secret bindings and no DO,
+    Queue or D1 binding. Metadata had only Bridge, playback issuance and v2
+    true; every mutation/shadow/Queue/archive flag false;
+  - at final block `264096824`, the publication remained ACTIVE at generation
+    1 with exact playback ID; buyer entitlement was true and its credential was
+    a live FullAccess key;
+  - focused v2 tests passed `16/16` with two external opt-in cases skipped;
+    TypeScript passed. The opt-in 1,000-request warm test passed with zero
+    errors and fresh p95 `9.507 ms`.
+- DEPLOY GUARDS: Cloudflare assigned stable exactly 100% and candidate exactly
+  0%. Version-overridden health returned the exact candidate ID,
+  `playbackV2Ready=true`; legacy/shadow and every provider/operator/new-upload/
+  Queue/archive readiness remained false. No upload or setting change occurred.
+- BOUNDED CACHE SAMPLE:
+  - the exact same signed body and certificate were sent twelve times. All
+    twelve returned HTTP 200 schema `youtick.livepeer-playback-token.v2`, exact
+    playback/issuer/subject and 180-second JWT TTL; error ratio was zero;
+  - the first request opened the connection and took 1,450 ms. The next eleven
+    reused the same socket and took 89–100 ms; their nearest-rank p95 was
+    100 ms, below the 500 ms target;
+  - candidate tail recorded the first call as `cacheResult=MISS`,
+    `rpcCalls=3`, `providerCalls=1`, authorization latency 995 ms. All next
+    eleven events were `cacheResult=HIT`, `rpcCalls=0`, `providerCalls=0`,
+    authorization latency 0 ms;
+  - the candidate has no persistent-state binding, and no testnet/provider
+    write path was enabled or invoked.
+- RESTORE VE RUNTIME: the filtered tail was stopped before restore. Candidate
+  was removed from the active deployment. Cloudflare now assigns only stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` at exactly 100%; stable metadata lists
+  all eleven tracked flags false. A fresh cache-busting public health read
+  returns that exact version, `stage=DISABLED`, and every playback, mutation,
+  upload, Queue and archive readiness false. Repository variable
+  `DEPLOY_PREVIEW_ENABLED=false`.
+- LOCAL_TEST: `PASS` for focused v2, opt-in warm load and TypeScript; final
+  VitePress and `git diff --check` follow this checkpoint edit.
+- CI: `PASS` for exact candidate source SHA `6a327835...`; current dirty diff
+  is `UNPROVEN`.
+- TESTNET: `PASS_READ`; the one cold request performed three final reads and
+  eleven warm requests performed zero. No testnet write occurred.
+- DEPLOY: `PASS_BOUNDED_PREVIEW`; candidate stayed 0%, stable stayed 100% and
+  final assignment is stable-only 100%. No Production/Web deploy occurred.
+- RUNTIME: `PASS_PREVIEW_CACHE_HIT`; all responses succeeded, warm read counts
+  were zero and deployed cache-hit p95 met the approved target.
+- GÜNCEL FAZ KAPISI: `PHASE2_CACHE_HIT_PREVIEW` is closed. Stop here. The
+  single proposed next gate is
+  `PHASE2_DEVICE_CERT_UX_PREVIEW_DECISION_REQUIRED`; do not deploy Web, prompt
+  a wallet or advance automatically without a new explicit decision.
+
+### CHECKPOINT 153 — Phase 2 / device-certificate browser UX preflight
+
+- DURUM: `BLOCKED_WALLET_NOT_READY / NO_SIGNATURE / NO_TESTNET_WRITE /
+  STABLE_RESTORED / RUNTIME_CLOSED`.
+- YETKİ VE SINIR: the user's continuation approved only the proposed
+  device-certificate UX gate. The bounded target was one successful wallet
+  `signMessage`, one direct v2 playback and reload-based memory-clear proof.
+  Payment, grant or other chain write, provider mutation, Queue/D1,
+  Production and non-zero candidate traffic were excluded.
+- BASELINE VE CI: local branch remains
+  `agent/phase2-v2-authorizer-staging-20260815@28a204a7ff6be66608b2469870fa32eae1b8b0f9`;
+  `origin/main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`. Draft PR `#124`
+  remains open, draft and mergeable at exact head
+  `6a327835e736a746e08d827644bc9d4a46222bc3`; all checks, CI Gate and both
+  CodeQL languages are successful. The pre-existing three-path dirty diff was
+  preserved; this updated dirty diff has no CI and is `UNPROVEN`.
+- VARSAYIMLAR VE ÖLÇÜLEBİLİR KABUL:
+  - exact PR Web and Bridge source must be used; Web and Bridge candidates
+    must remain 0% while both stable versions remain 100%; version overrides
+    or an isolated preview origin must select only the candidates;
+  - the connected wallet must expose the entitled buyer
+    `lp-d6-buyer-5301d15.youtick-dev-v3.testnet`. At most one wallet
+    `signMessage` approval may certify an eight-hour memory-only device key;
+  - direct v2 must return HTTP 200 for publication
+    `lp-0b8d85d5-501f-41ad-8dc6-3fc340fd99f7`, generation 1 and playback
+    `dba5bb2s9shlyo85`; a second same-page request must reuse the certificate
+    without another approval;
+  - reload must discard the in-memory device key and require a new signature.
+    Disconnect is excluded because the current UI first requests an on-chain
+    `revoke_subject_sessions` transaction. Stable-only restore and all public
+    readiness false are unconditional.
+- LOCAL PREFLIGHT:
+  - `apps/web` trees at main `c80377b...`, PR `6a327835...` and local HEAD are
+    byte-identical at tree `ea1f2e55c62319114cdeb961fe10f15cb7a16936`;
+  - Web device-session and direct-v2 tests passed `6/6`; Web TypeScript passed;
+    Bridge v2/index tests passed `86` with two skipped external opt-in cases;
+  - an exact-source OpenNext Preview build completed with only the Web
+    paid-media UI gate and direct-v2 authorizer enabled; no repository source
+    file changed during the build.
+- DEPLOY PREFLIGHT:
+  - Web candidate `e45d468a-1823-431f-8d5c-77c04fae37dd`, tag
+    `6a327835...-device-cert-v2`, was uploaded. Cloudflare assigned it exactly
+    0% beside stable Web `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` at 100%; its
+    isolated preview alias served the candidate `/watch` bundle;
+  - Bridge candidate `e7659cae-f164-403f-ba41-d6d372eb5e50` was assigned 0%
+    beside stable Bridge `86305272-4ebb-4ca4-9d0e-11e3bd182b17` at 100%.
+    One dictionary version-override selected both exact candidates: the Web
+    watch chunk changed to the candidate bundle and Bridge health returned the
+    exact candidate with only direct-v2 readiness true;
+  - Brave automation cannot attach the Cloudflare override header. A second
+    undeployed Bridge version `97ec4f30-7857-4d92-b146-ddbf2445b65b`
+    preserved the existing secret bindings, allowed only Preview plus the Web
+    candidate origin, kept every mutation/Queue/archive flag false and enabled
+    only Bridge/playback issuance/direct-v2. The Worker has preview URLs
+    disabled, so this version was not exposed or deployed.
+- BROWSER PREFLIGHT VE BLOCKER:
+  - the isolated Web candidate loaded successfully in the existing Brave
+    profile and exposed the wallet selector. Meteor Wallet opened, but was
+    locked and displayed creator account
+    `lp-arch-creator-260809.youtick-dev-v3.testnet`, not the entitled buyer;
+  - no password was read or entered, no account was changed, no connection was
+    approved and no device certificate or playback request was produced.
+    Nightly was not installed and the Intear embedded surface was blocked;
+  - the required browser proof therefore remains `UNPROVEN`. The independent
+    blocker is a user-unlocked Meteor session switched to the exact entitled
+    buyer; wallet credentials must not be shared with automation.
+- RESTORE VE RUNTIME: no non-zero canary ran. Web candidate and Bridge
+  candidate were removed from active deployments. Cloudflare now assigns only
+  Web stable `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` and Bridge stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17`, each at exactly 100%. Fresh Bridge
+  health returns the exact stable ID, `stage=DISABLED` and every playback,
+  mutation, upload, Queue and archive readiness false. Repository variable
+  `DEPLOY_PREVIEW_ENABLED=false`.
+- LOCAL_TEST: `PASS` for the focused Web/Bridge suites, TypeScript and exact
+  Web source-tree identity; final docs build and diff checks follow this edit.
+- CI: `PASS` for exact source SHA `6a327835...`; current dirty diff is
+  `UNPROVEN`.
+- TESTNET: `NOT_RUN`; no read/write acceptance sample or transaction was
+  executed for this gate.
+- DEPLOY: `PASS_PREFLIGHT_ONLY`; both exact candidates were proven at 0% and
+  both public Workers were restored stable-only 100%. No Production deploy or
+  non-zero traffic shift occurred.
+- RUNTIME: `BLOCKED_WALLET_NOT_READY`; no signature, v2 playback or reload
+  proof exists. Public stable runtime is closed.
+- GÜNCEL FAZ KAPISI: `PHASE2_DEVICE_CERT_UX_PREVIEW` remains open and
+  `DECISION_REQUIRED`. Stop here. The single proposed next gate is
+  `PHASE2_DEVICE_CERT_UX_PREVIEW_WALLET_READY_DECISION_REQUIRED`: the user
+  unlocks Meteor locally, switches to exact buyer account, shares no password,
+  then explicitly approves the one-signature bounded continuation.
+
+### CHECKPOINT 154 — Phase 2 / device-certificate locked-wallet retry
+
+- DURUM: `EXACT_BUYER_CONFIRMED / BLOCKED_WALLET_LOCKED / NO_SIGNATURE /
+  V2_NOT_RUN / STABLE_RESTORED / RUNTIME_CLOSED`.
+- YETKİ VE SINIR: the user explicitly approved one device-certificate
+  `signMessage`. The bounded attempt allowed the already prepared Preview Web
+  and Bridge candidates, but still excluded `AddKey`, payment, grant or other
+  chain write, provider mutation, Queue/D1, Production and disconnect. Because
+  Brave cannot attach the Cloudflare version-override header, the previously
+  approved Preview traffic scope was used only long enough to expose the
+  guarded Bridge candidate to the isolated Web origin.
+- RECHECK VE KABUL: branch, local HEAD, `origin/main`, dirty paths and PR #124
+  remain unchanged from Checkpoint 153. PR #124 is still open, draft and
+  mergeable at exact head `6a327835...`; all reported checks remain successful.
+  Acceptance still requires exactly one wallet signature, direct-v2 HTTP 200,
+  same-page certificate reuse without a second prompt, reload requiring a new
+  signature and unconditional stable-only restore.
+- BOUNDED DEPLOY:
+  - Bridge candidate `97ec4f30-7857-4d92-b146-ddbf2445b65b` was first added at
+    0% beside stable `86305272-4ebb-4ca4-9d0e-11e3bd182b17` at 100%; an exact
+    version override returned candidate health with only direct-v2 readiness
+    true. The isolated Web origin received a 204 CORS preflight with its exact
+    `Access-Control-Allow-Origin` value;
+  - Bridge Preview was then bounded to candidate 100% and stable 0%. Public
+    health returned the exact candidate version. Provider/operator mutation,
+    new upload, legacy/shadow playback, Queue and archive readiness remained
+    false. Web public traffic and Web deployment were not changed;
+  - after the locked-wallet result, Bridge was restored to stable-only 100%.
+    Fresh public health returned the exact stable version, `stage=DISABLED`
+    and every playback, mutation, upload, Queue and archive readiness false.
+    Web also remains stable-only 100% and `DEPLOY_PREVIEW_ENABLED=false`.
+- BROWSER VE RUNTIME:
+  - the isolated Web showed the exact entitled buyer
+    `lp-d6-buyer-5301d15.youtick-dev-v3.testnet`, the expected publication and
+    `Confirming ticket access`;
+  - Meteor opened the exact testnet `sign_message` request for that buyer, but
+    required the wallet password before displaying the signing decision. The
+    automation did not read or enter a password and closed the popup. No
+    signature proof, `/v2/playback-tokens` request, JWT or playback resulted;
+  - the candidate tail observed only a GET cover request and its read-only NEAR
+    and Livepeer dependencies. It observed no direct-v2 authorization event or
+    write path. This is preflight evidence, not successful runtime acceptance.
+- LOCAL_TEST: `PASS`; Web device-session/direct-v2 tests passed `6/6` and Web
+  TypeScript passed. Bridge V2/index tests passed `86` with two external opt-in
+  cases skipped and Bridge TypeScript passed.
+- CI: `PASS` for exact source SHA `6a327835...`; current dirty documentation
+  and provider-canary diff remains `UNPROVEN`.
+- TESTNET: `PASS_READ_PREFLIGHT_ONLY / V2_NOT_RUN`; no testnet transaction or
+  write occurred.
+- DEPLOY: `PASS_BOUNDED_ATTEMPT / STABLE_RESTORED`; the guarded candidate was
+  temporarily public only for this browser attempt and final control-plane
+  assignments are Web stable 100% and Bridge stable 100%.
+- RUNTIME: `BLOCKED_WALLET_LOCKED`; exact buyer/account routing is proven, but
+  the one-signature, direct-v2 200, same-page reuse and reload-clear acceptance
+  remain `UNPROVEN`.
+- GÜNCEL FAZ KAPISI: `PHASE2_DEVICE_CERT_UX_PREVIEW` remains open. Stop here.
+  The single proposed continuation is
+  `PHASE2_DEVICE_CERT_UX_PREVIEW_WALLET_UNLOCKED_RETRY_DECISION_REQUIRED`: the
+  user unlocks the already open Meteor tab locally without sharing the
+  password, then explicitly approves one fresh bounded signature attempt.
+
+### CHECKPOINT 155 — Phase 2 / post-signature playback failure diagnosis
+
+- DURUM: `USER_REPORTED_SIGNATURE_APPROVAL / PLAYBACK_FAILED /
+  ROOT_CAUSE_STABLE_CONTROL_PLANE_DISABLED / NO_JWT_PROOF /
+  STABLE_100 / RUNTIME_CLOSED`.
+- OBSERVED BROWSER STATE: after unlocking Meteor and approving the pending
+  request locally, the user reported that video did not open. The exact Web
+  candidate page currently shows the entitled buyer, expected publication and
+  `Playback is temporarily unavailable. Please try again.` with a `Try again`
+  button. The browser console also contains wallet-connector `Iframe not
+  loaded` errors; those errors do not prove whether a valid signature proof was
+  returned and are not counted as successful authorization evidence.
+- ROOT CAUSE:
+  - Checkpoint 154 restored Bridge to stable-only before the user-local wallet
+    approval because the wallet was locked and no password could be entered by
+    automation. The pending page therefore resumed against the closed stable
+    Bridge rather than candidate `97ec4f30...`;
+  - Cloudflare control-plane status still assigns only stable Bridge
+    `86305272-4ebb-4ca4-9d0e-11e3bd182b17` at 100%. Fresh health reports
+    `stage=DISABLED` and direct-v2 readiness false;
+  - an independent empty POST from the exact isolated Web origin to the public
+    `/v2/playback-tokens` route returned HTTP 503
+    `control_plane_disabled`. Source order checks the three Bridge/playback/v2
+    runtime flags before parsing or verifying a request. The visible playback
+    failure is therefore explained by the intentional stable guard, not by a
+    provider/video failure.
+- SAFETY: no new deploy, traffic shift, provider mutation, Queue/D1 action,
+  wallet prompt or chain transaction was initiated during this diagnosis.
+  Web remains stable-only `874a3f92...` at 100%, Bridge remains stable-only
+  `86305272...` at 100%, all public readiness fields are false and repository
+  variable `DEPLOY_PREVIEW_ENABLED=false`.
+- LOCAL_TEST: focused Web/Bridge tests and type checks are rerun below after
+  this evidence edit. No source code change is required by the diagnosed
+  failure.
+- CI: exact candidate source SHA `6a327835...` remains green; the current dirty
+  evidence/provider-canary diff remains `UNPROVEN`.
+- TESTNET: `USER_REPORTED_SIGNATURE_APPROVAL / AUTHORIZATION_UNPROVEN`; no
+  successful v2 read receipt, JWT or testnet write exists for this attempt.
+- DEPLOY: `NOT_RUN_THIS_DIAGNOSIS / STABLE_100`.
+- RUNTIME: `FAIL_EXPECTED_CLOSED_STABLE`; the failed attempt does not close the
+  one-signature, v2 HTTP 200, same-page reuse or reload-clear acceptance.
+- GÜNCEL FAZ KAPISI: `PHASE2_DEVICE_CERT_UX_PREVIEW` remains open. Stop here.
+  The single proposed continuation is
+  `PHASE2_DEVICE_CERT_UX_PREVIEW_ALIGNED_RETRY_DECISION_REQUIRED`: only after a
+  new explicit approval, start candidate traffic and tail first, then create
+  one fresh wallet request while Meteor is already unlocked; restore stable
+  immediately after the success/failure verdict.
+
+### CHECKPOINT 156 — Phase 2 / aligned device-certificate browser acceptance
+
+- DURUM: `PASS_PREVIEW_DEVICE_CERT / PASS_V2_PLAYBACK /
+  PASS_SAME_PAGE_CERTIFICATE_REUSE / PASS_RELOAD_MEMORY_CLEAR /
+  NO_SECOND_SIGNATURE / STABLE_RESTORED / CURRENT_GATE_CLOSED`.
+- YETKİ VE SINIR: the user explicitly approved temporary Bridge candidate
+  100%, exact-version tail and the existing `Try again` action. A fresh wallet
+  signature was excluded unless separately confirmed. Reload was used only to
+  prove memory clear; its new Meteor request was not approved. Payment,
+  `AddKey`, grant/revoke or other chain write, disconnect, provider mutation,
+  Queue/D1 and Production remained excluded.
+- BASELINE VE PREFLIGHT:
+  - local branch/HEAD and the three preserved dirty paths remained unchanged;
+    draft PR #124 was open, mergeable and green at exact candidate source
+    `6a327835e736a746e08d827644bc9d4a46222bc3`;
+  - stable Bridge was initially 100% and `stage=DISABLED`. Candidate
+    `97ec4f30-7857-4d92-b146-ddbf2445b65b` carried the exact source tag and had
+    only Bridge, playback issuance and direct v2 true. Mutation, new-upload,
+    legacy/shadow, Queue and archive flags were false, payment mode was off and
+    no Queue, D1 or Durable Object binding was present.
+- ALIGNED BROWSER CANARY:
+  - Bridge Preview was temporarily assigned candidate 100% and stable 0%;
+    exact-version health returned `playbackV2Ready=true` with all excluded
+    readiness fields false. Tail was active before the browser retry;
+  - the existing in-memory certificate from the user's one approved Meteor
+    signature was reused by `Try again`; no new wallet window opened. The first
+    direct-v2 POST returned HTTP 200 in 987 ms. Tail recorded `cacheResult=MISS`,
+    exactly three final NEAR reads and one Livepeer playback-policy read, all
+    HTTP 200. The browser accepted the token and rendered the video controls;
+  - after about 151 seconds, the page's automatic token refresh produced a
+    second direct-v2 POST. It returned HTTP 200 in 1,671 ms and no wallet prompt
+    appeared, proving same-page certificate reuse. The second edge invocation
+    was another `MISS` with three NEAR reads and one provider read; this gate
+    proves browser certificate reuse, not an additional cache-hit sample;
+  - page reload removed the module-memory device authority. The page returned
+    to `Confirming ticket access`, the Meteor connector requested completion
+    and Brave exposed a newly blocked popup. No second signature was approved
+    and no post-reload direct-v2 POST occurred before tail shutdown.
+- RESTORE VE RUNTIME: tail was stopped before restore. Bridge candidate was
+  removed from the active deployment and stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` returned to 100%. Fresh public health
+  reports the exact stable ID, `stage=DISABLED` and every playback, mutation,
+  upload, Queue and archive readiness false. Web public deployment remains
+  stable-only `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` at 100% and repository
+  variable `DEPLOY_PREVIEW_ENABLED=false`.
+- LOCAL_TEST: focused Web/Bridge tests, both type checks, VitePress build and
+  `git diff --check` are rerun below after this evidence edit.
+- CI: `PASS` for exact candidate source SHA `6a327835...`; the current dirty
+  evidence/provider-canary diff remains `UNPROVEN`.
+- TESTNET: `PASS_READ`; the two successful v2 authorizations performed six
+  final NEAR reads and two Livepeer policy reads. No testnet transaction or
+  write occurred.
+- DEPLOY: `PASS_BOUNDED_PREVIEW / STABLE_RESTORED`; only Bridge Preview traffic
+  was temporarily shifted, Web public traffic was unchanged and final
+  assignments are stable-only 100%.
+- RUNTIME: `PASS_PREVIEW_DEVICE_CERT_UX`; one approved certificate supported
+  initial playback and same-page token refresh, while reload required a new
+  signature and did not retain the browser secret.
+- GÜNCEL FAZ KAPISI: `PHASE2_DEVICE_CERT_UX_PREVIEW` is closed. Stop here; do
+  not advance automatically. The single proposed next gate is
+  `PHASE2_DEVICE_CERT_REVOKE_PREVIEW_DECISION_REQUIRED`: explicitly approve and
+  bound the current on-chain disconnect/revoke path, or keep that separate
+  chain-write acceptance `UNPROVEN`.
+
+### CHECKPOINT 157 — Phase 2 / post-closure playback repeat diagnosis
+
+- DURUM: `SIGNED_MESSAGE_BODY_CONSISTENT / PREFLIGHT_ORIGIN_DENIED /
+  ROOT_CAUSE_STABLE_RESTORED / NO_CODE_CHANGE / RUNTIME_CLOSED /
+  DECISION_REQUIRED`.
+- OBSERVED BROWSER VE MESSAGE:
+  - the exact isolated Web page shows buyer
+    `lp-d6-buyer-5301d15.youtick-dev-v3.testnet`, publication
+    `lp-0b8d85d5-501f-41ad-8dc6-3fc340fd99f7` and the retryable playback error;
+  - the user-reported device message was issued at
+    `2026-08-16T13:50:03.990Z`, expires eight hours later, carries the expected
+    `youtick.device-session` domain, `testnet` network and `play` scope, and its
+    `origin_hash` exactly equals SHA-256 of the isolated Web origin. The actual
+    signature bytes were not supplied, so independent cryptographic signature
+    validation is `UNPROVEN`; no secret or wallet password was read or logged;
+  - the connector's `Iframe not loaded` console entry is not the blocking
+    network result. The browser separately reports that the Bridge preflight
+    lacks `Access-Control-Allow-Origin` and never sends the POST.
+- ROOT CAUSE VE LIVE PROBE:
+  - Cloudflare restored stable-only at `2026-08-16T13:13:08.078208Z`, before
+    this new device message was issued. Current control-plane status assigns
+    only stable Bridge `86305272-4ebb-4ca4-9d0e-11e3bd182b17` at 100%; fresh
+    health returns that exact ID, `stage=DISABLED`, and all playback, mutation,
+    upload, Queue and archive readiness fields false;
+  - an `OPTIONS /v2/playback-tokens` probe from the exact isolated Web origin
+    returned HTTP 403 `origin_denied` without a CORS allow-origin header. This
+    matches source: preflight accepts only configured origins, while the stable
+    config allows public Web origins and intentionally excludes this isolated
+    canary origin;
+  - even if only the stable CORS allowlist were widened, the following POST
+    would still fail closed because Bridge/playback/direct-v2 flags are false.
+    Therefore a CORS-only source or config edit would not restore playback;
+  - candidate `97ec4f30-7857-4d92-b146-ddbf2445b65b` has Preview URLs disabled.
+    Its inferred version-alias URL returned Cloudflare 1042/HTTP 404, so the
+    existing candidate cannot be selected by the browser without a bounded
+    Bridge Preview traffic assignment.
+- MINIMUM REMEDIATION: no repository source change is justified. To repeat
+  playback, obtain a fresh explicit approval, start an exact-version tail,
+  temporarily assign the already verified Bridge candidate 100%, use the
+  existing `Try again` action, stop before any new `signMessage`, record the
+  verdict and restore stable-only 100% with every runtime flag closed.
+- LOCAL_TEST: `PASS`; Web device-session/direct-v2 tests passed `6/6`, Bridge
+  direct-v2/index tests passed `86` with two external opt-in tests skipped, and
+  both Web and Bridge TypeScript checks passed. No source code changed.
+- CI: `PASS` only for draft PR #124 exact head
+  `6a327835e736a746e08d827644bc9d4a46222bc3`; all reported checks including CI
+  Gate and CodeQL are green. Current dirty evidence/provider-canary changes are
+  not that CI artifact and remain `UNPROVEN`.
+- TESTNET: `NOT_RUN_THIS_DIAGNOSIS`; no authorization POST, provider read,
+  testnet RPC read or chain write occurred.
+- DEPLOY: `NOT_RUN_THIS_DIAGNOSIS / STABLE_100`; no version upload, deployment
+  or traffic shift occurred.
+- RUNTIME: `FAIL_EXPECTED_CLOSED_STABLE`; the observed browser failure is fully
+  explained before provider/video access and does not invalidate Checkpoint
+  156's bounded candidate acceptance.
+- GÜNCEL FAZ KAPISI: `PHASE2_DEVICE_CERT_UX_PREVIEW` remains closed. The
+  previously proposed revoke gate is not started while the user is resolving
+  playback. Stop here. The single proposed operational gate is
+  `PHASE2_DEVICE_CERT_PLAYBACK_REPEAT_DECISION_REQUIRED`.
+
+### CHECKPOINT 158 — Phase 2 / approved playback repeat and visual acceptance
+
+- DURUM: `PASS_BOUNDED_PLAYBACK_REPEAT / PASS_V2_HTTP_200 /
+  PASS_VIDEO_FRAME_RENDERED / NO_NEW_SIGNMESSAGE / STABLE_RESTORED /
+  OPERATIONAL_GATE_CLOSED`.
+- YETKİ VE SINIR: the user explicitly approved temporary Bridge candidate
+  100%, exact-version tail and the existing `Try again` action, with a mandatory
+  stop before any new `signMessage`. The bounded retry excluded a fresh wallet
+  signature, payment, grant/revoke or other chain write, provider/operator
+  mutation, upload, Queue/D1/archive and Production.
+- PREFLIGHT:
+  - the browser still showed exact buyer
+    `lp-d6-buyer-5301d15.youtick-dev-v3.testnet`, the expected publication and
+    `Try again`; no wallet action was pending in the Web page;
+  - stable Bridge `86305272-4ebb-4ca4-9d0e-11e3bd182b17` was initially 100%
+    with `stage=DISABLED`. Candidate
+    `97ec4f30-7857-4d92-b146-ddbf2445b65b` had the exact PR source tag, allowed
+    the isolated Web origin, enabled only Bridge/playback issuance/direct-v2,
+    kept payment mode off and all mutation/upload/shadow/Queue/archive flags
+    false, and had no Queue, D1 or Durable Object binding;
+  - repository and GitHub truth remained unchanged: local HEAD `28a204a7...`,
+    `origin/main` `c80377b...`, draft PR #124 exact head `6a327835...` open,
+    mergeable and green, the three pre-existing dirty paths preserved, and
+    `DEPLOY_PREVIEW_ENABLED=false`.
+- BOUNDED RUNTIME:
+  - exact-version tail started before Cloudflare assigned candidate 100% and
+    stable 0% at `2026-08-16T14:18:51.800764Z`. Fresh health returned the exact
+    candidate ID, `playbackV2Ready=true`, all excluded readiness fields false,
+    and the isolated Web preflight returned HTTP 204 with the exact CORS
+    allow-origin header;
+  - the single approved `Try again` reused the current in-memory device
+    certificate. No new wallet window or `signMessage` appeared. Browser
+    preflight returned 204 and the direct-v2 POST returned HTTP 200 in 1,678 ms;
+  - exact tail recorded `cacheResult=MISS`, exactly three final NEAR reads and
+    one Livepeer playback-policy read, all HTTP 200. It also recorded the
+    publication cover path HTTP 200;
+  - the Web page replaced the error with player controls. A single Play action
+    rendered an actual video frame in the player, closing the distinction
+    between token issuance and visible media playback.
+- RESTORE VE SAFETY: after the success verdict, the exact-version tail was
+  stopped before restore. Candidate was removed from the active deployment;
+  Cloudflare assigned only stable Bridge
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` 100% at
+  `2026-08-16T14:21:07.605775Z`. Fresh health returns that exact ID,
+  `stage=DISABLED`, and every playback, mutation, upload, Queue and archive
+  readiness field false. Web stable remains
+  `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` 100% and
+  `DEPLOY_PREVIEW_ENABLED=false`.
+- LOCAL_TEST: focused Web/Bridge tests, both type checks, VitePress build and
+  `git diff --check` are rerun below after this evidence edit. No source code
+  changed in this operational gate.
+- CI: `PASS` for PR #124 exact head `6a327835...`; the current dirty
+  evidence/provider-canary diff is not that CI artifact and remains
+  `UNPROVEN`.
+- TESTNET: `PASS_READ`; the successful authorization performed three final
+  NEAR reads and one provider playback-policy read. No testnet transaction or
+  write occurred.
+- DEPLOY: `PASS_BOUNDED_PREVIEW / STABLE_RESTORED`; only Bridge Preview traffic
+  changed temporarily. No version upload, Web traffic change or Production
+  deployment occurred.
+- RUNTIME: `PASS_VISIBLE_PLAYBACK / RUNTIME_RECLOSED`; the reported CORS error
+  disappeared under the aligned candidate, the existing certificate was
+  accepted without a new signature and a video frame rendered before the
+  fail-closed stable restore.
+- GÜNCEL FAZ KAPISI: `PHASE2_DEVICE_CERT_PLAYBACK_REPEAT` is closed. Stop here;
+  do not advance automatically. The single proposed next architectural gate
+  returns to `PHASE2_DEVICE_CERT_REVOKE_PREVIEW_DECISION_REQUIRED`.
+
+### CHECKPOINT 159 — Phase 2 / revoke finality and lost-wallet-callback diagnosis
+
+- DURUM: `PASS_TESTNET_REVOKE / PASS_EXACT_CURRENT_KEY_DELETE /
+  BLOCKED_WALLET_CALLBACK / PASS_LOCAL_BOUNDED_RECONCILIATION /
+  BLOCKED_STALE_ACCESS_KEY / STABLE_100 / CURRENT_GATE_OPEN`.
+- VARSAYIMLAR VE KABUL KRİTERLERİ:
+  - the exact subject is
+    `lp-d6-buyer-5301d15.youtick-dev-v3.testnet`, the exact Access contract is
+    `lp-arch-access-v2-260809.youtick-dev-v3.testnet`, and only the current
+    sessionStorage signless public key is in this device's bounded revoke
+    scope;
+  - acceptance requires a final zero-deposit `revoke_subject_sessions`, final
+    deletion of that exact current public key, every listed owner grant
+    `revoked=true`, local cache/key clear and visible Web disconnect. RPC
+    ambiguity must leave the browser connected. Any older unrelated access
+    key is an independent remediation decision, not silently deleted here.
+- TESTNET MUTATION EVIDENCE:
+  - the user approved both already-open Meteor transactions locally. Official
+    testnet RPC reports transaction
+    `EU81uxvvL4h1GL9v2EaeFR8Qwkom6LK2Dc84mCwsdPku` `FINAL/SuccessValue`; it is
+    signed by the exact buyer, calls only `revoke_subject_sessions` on the
+    exact Access contract with `owner_id` equal to that buyer, zero deposit and
+    100 Tgas;
+  - transaction `CgmiHtU47CcjknaVZmYzpmx1MzysAcLpQQH2m7fDGrfm`
+    is independently `FINAL/SuccessValue`; it is signed by and received by the
+    exact buyer and deletes only the current browser key
+    `ed25519:8HeKV6...PEq8`;
+  - final-state reads at blocks `264196921` and `264196927` show the listed
+    grant `revoked=true` and that exact key absent. No secret key, password or
+    signed credential value was read or logged.
+- CALLBACK ROOT CAUSE:
+  - after both final successes, the deployed Web remained on buyer/Disconnect
+    behind `Complete your request in Meteor Wallet`; the user independently
+    reported that Meteor opened but no approval or Webapp-return window was
+    available;
+  - console/connector evidence shows the wallet flow ending with
+    `closed_success` followed by near-connect 0.11.4 `Iframe not loaded` while
+    forwarding the result. The public npm registry has no version newer than
+    the deployed 0.11.4. The unresolved wallet Promise prevents the existing
+    code from reaching cache clear and connector disconnect. On-chain success
+    therefore does not count as UI revoke/clear acceptance.
+- MINIMUM LOCAL FIX:
+  - `revokeBrowserAuthority` now performs a final-state preflight. If the exact
+    current key is already absent and all at-most-16 owner grants are revoked,
+    it clears the session key without opening a second wallet prompt;
+  - otherwise it keeps the wallet request and a bounded five-minute,
+    two-second final-state reconciliation in a race. Callback success remains
+    valid; a lost callback is accepted only after the exact key is absent and
+    every listed grant is revoked. Unknown RPC state or timeout fails closed.
+    No provider, deploy, traffic, secret or runtime flag changed.
+- INDEPENDENT BLOCKER: final account-key reads still show the wallet FullAccess
+  key and an older FunctionCall key `ed25519:DyRDL3...` with empty method names
+  and 0.25 NEAR allowance to the Access contract. Historical final transaction
+  `5P16r1gpsvnsuNLjxXtvQ9WgWR8meAvwYMP5qHmpiNi1` created it in an earlier
+  session. Its private-key ownership is `UNPROVEN`; deleting it would be a new
+  exact chain write and remains `BLOCKED_STALE_ACCESS_KEY` pending a separate
+  explicit approval.
+- LOCAL_TEST: `PASS`; focused signless/wallet-provider tests passed `16/16`,
+  the complete Web suite passed `137/137`, targeted ESLint passed, Web
+  TypeScript passed and `git diff --check` passed. The two new cases prove lost
+  callback reconciliation and no-second-prompt behavior after finality.
+- CI: `PASS` only for draft PR #124 exact head `6a327835...`; PR remains open,
+  draft, mergeable and every reported check is green. Local HEAD is
+  `28a204a7...`; the current dirty callback fix/evidence/provider-canary diff is
+  not that artifact and remains `UNPROVEN` in CI.
+- TESTNET: `PASS_WRITE`; both exact user-approved transactions and their final
+  state are independently verified. No additional wallet request, signature or
+  chain write was initiated after the callback failure.
+- DEPLOY: `NOT_RUN`; no Web or Bridge version was uploaded and no traffic
+  changed. Control-plane status remains Bridge stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` 100% and Web stable
+  `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` 100%.
+- RUNTIME: `BLOCKED_WALLET_CALLBACK / STABLE_CLOSED`; fresh Bridge health
+  returns the exact stable ID, `stage=DISABLED`, and all playback, mutation,
+  upload, Queue and archive readiness false. The isolated Web URL returns 200,
+  but visible disconnect/local clear and the local fallback are not deployed
+  or browser-proven.
+- GÜNCEL FAZ KAPISI: `PHASE2_DEVICE_CERT_REVOKE_PREVIEW` remains open. Stop
+  here. The single proposed continuation is
+  `PHASE2_REVOKE_CALLBACK_FIX_PREVIEW_DECISION_REQUIRED`: after explicit deploy
+  approval, deploy only the Web callback-reconciliation diff to an isolated
+  Preview candidate and prove that the already-final chain state completes
+  disconnect without a new transaction or `signMessage`; then restore Web
+  stable-only 100% and stop.
+
+### CHECKPOINT 160 — Phase 2 / deployed revoke-callback recovery acceptance
+
+- DURUM: `PASS_PREVIEW_CALLBACK_RECOVERY / PASS_NO_SECOND_WALLET_PROMPT /
+  PASS_RELOAD_DISCONNECTED / STABLE_TRAFFIC_UNCHANGED /
+  BLOCKED_TWO_STALE_ACCESS_KEYS / CURRENT_GATE_CLOSED`.
+- YETKİ VE KABUL SINIRI: the user approved the proposed isolated Web Preview
+  deploy and no-signature disconnect retry. Scope excluded public traffic
+  shift, Bridge/provider/secret mutation, a new transaction, `signMessage`,
+  stale-key deletion and Production. Acceptance required the already-final
+  revoked state to reach visible `Connect`, open no new wallet UI, remain
+  disconnected after reload, and leave Web/Bridge stable 100% with every
+  Bridge runtime flag false.
+- PREFLIGHT:
+  - local branch/HEAD remained
+    `agent/phase2-v2-authorizer-staging-20260815` at `28a204a7...`; the only Web
+    diff was the callback reconciliation and its unit test, with canonical diff
+    SHA-256 `2f4f57cb4190b217c50fbefeb0fe2265ccca579a421c18f1ae8264d6af42c0ec`.
+    Existing documentation and Bridge provider-canary edits were preserved;
+  - draft PR #124 remained open, mergeable and green at exact head
+    `6a327835...`. The local dirty Web diff is not that CI artifact and stayed
+    `UNPROVEN` in CI;
+  - official final testnet reads at block `264199379` showed the prior exact
+    deleted key absent, one listed owner grant and that grant `revoked=true`;
+  - Cloudflare auth was valid. Public deployment status initially assigned Web
+    stable `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` 100% and Bridge stable
+    `86305272-4ebb-4ca4-9d0e-11e3bd182b17` 100%. Bridge health reported
+    `stage=DISABLED` and all playback, mutation, upload, Queue and archive
+    readiness false. Repository `DEPLOY_PREVIEW_ENABLED=false`.
+- BUILD VE DEPLOY:
+  - the OpenNext Preview build completed with the exact repository Preview
+    public variables and both Web playback flags false. No secret value was
+    printed or copied;
+  - candidate `901b6690-188c-422c-9f3c-381b96133140` was first uploaded to a
+    new 0%-traffic alias. Because browser sessionStorage is origin-bound, that
+    origin could not exercise the existing buyer session and was not used for
+    acceptance;
+  - the identical bundle was uploaded as candidate
+    `f9485d12-3382-41fc-bd4e-d7bb746ad823` on the existing isolated
+    `phase2-device-cert-v2` alias. Both operations were version uploads only;
+    neither created a deployment nor changed public traffic. Exact candidate
+    metadata reports the expected tag/message, fetch handler and only the
+    static-assets binding.
+- BROWSER ACCEPTANCE:
+  - the updated existing-origin page restored exact buyer
+    `lp-d6-buyer-5301d15.youtick-dev-v3.testnet` and exposed one `Disconnect`
+    button with no pending Meteor modal;
+  - one click changed the navigation to `Connect` within five seconds. Browser
+    tab inventory was identical before and after: no new wallet tab, approval
+    window, transaction request or `signMessage` appeared;
+  - a full reload still showed `Connect` and did not restore the buyer. This is
+    deployed visible disconnect/clear persistence without inspecting or
+    logging browser storage or secret material.
+- INDEPENDENT KEY FINDING: final account-key read at block `264199991` shows
+  one wallet FullAccess key and two FunctionCall keys. Both FunctionCall keys
+  target the exact Access contract, have empty method lists and 0.25 NEAR
+  allowance; their key nonces are rooted at blocks `264185022` and `264197023`.
+  The latter therefore predates this acceptance click and is consistent with
+  the user-reported post-revoke viewing attempt. Neither is the prior exact
+  deleted key. Their private-key ownership is `UNPROVEN`; deleting them would
+  require a new wallet-approved chain write and remains
+  `BLOCKED_TWO_STALE_ACCESS_KEYS`.
+- LOCAL_TEST: `PASS`; before upload the final Web suite passed `137/137`,
+  focused callback/wallet tests passed `16/16`, TypeScript and targeted ESLint
+  passed, the OpenNext Preview production build succeeded, docs build passed
+  and `git diff --check` passed.
+- CI: `PASS` only for PR #124 exact head `6a327835...`; current dirty Web diff
+  remains `UNPROVEN` in CI.
+- TESTNET: `PASS_READ / NO_AUTHORIZED_WRITE_THIS_GATE`; the browser opened no
+  wallet approval and this gate submitted no transaction. Final reads show the
+  prior exact key absent and every listed grant revoked. The two independently
+  blocked broad keys are not counted as remediated.
+- DEPLOY: `PASS_ISOLATED_VERSION_UPLOAD / PUBLIC_TRAFFIC_UNCHANGED`; candidate
+  `f9485d12...` was browser-tested only by version alias. Final public status
+  still assigns Web stable `874a3f92...` 100% and Bridge stable `86305272...`
+  100%.
+- RUNTIME: `PASS_PREVIEW_REVOKE_CALLBACK_RECOVERY / RUNTIME_CLOSED`; visible
+  disconnect and reload persistence passed on the isolated candidate. Fresh
+  Bridge health remains `stage=DISABLED` with every readiness field false and
+  `DEPLOY_PREVIEW_ENABLED=false`.
+- GÜNCEL FAZ KAPISI: `PHASE2_REVOKE_CALLBACK_FIX_PREVIEW` is closed. Stop here;
+  do not advance automatically. The single proposed next gate is
+  `PHASE2_STALE_SIGNLESS_KEYS_REMEDIATION_DECISION_REQUIRED`: inventory the two
+  exact broad FunctionCall public keys, prepare one bounded wallet transaction
+  containing only their two `DeleteKey` actions, stop before approval, and
+  execute only after a new explicit user confirmation.
+
+### CHECKPOINT 161 — Phase 2 / stale signless-key deletion plan locked
+
+- DURUM: `PASS_FINAL_KEY_INVENTORY / PASS_LOCAL_TWO_DELETEKEY_PLAN /
+  NO_WALLET_OPENED / NO_CHAIN_WRITE / DECISION_REQUIRED`.
+- YETKİ VE KABUL SINIRI: the user approved continuation of the proposed
+  preparation gate. This loop was bounded to final read inventory and canonical
+  transaction construction. Wallet connect/approval, transaction signing or
+  broadcast, deploy, traffic, provider, secret and Production mutations were
+  excluded.
+- FINAL KEY INVENTORY: official testnet RPC at block `264208617` returned
+  exactly three keys for
+  `lp-d6-buyer-5301d15.youtick-dev-v3.testnet`: one FullAccess wallet key and
+  exactly two FunctionCall keys, with no other key class. Both FunctionCall
+  keys target `lp-arch-access-v2-260809.youtick-dev-v3.testnet`, expose empty
+  method lists and have 0.25 NEAR allowance:
+  - `ed25519:5hw89fx3GiyJZr7euwHUhNbyBygd2be8K73Qr4SnYFaK`, key nonce
+    `264197023000000`;
+  - `ed25519:DyRDL3hmNYj7fk1SaV6zrgpJtMCZPr8U22TWJdhv48TA`, key nonce
+    `264185022000000`.
+- EXCLUSIONS: the exact key deleted in Checkpoint 159 remains absent. The one
+  FullAccess wallet key is not a deletion target. The plan contains no grant
+  revoke, AddKey, FunctionCall, Transfer, deposit, contract receiver or third
+  public key.
+- CANONICAL TRANSACTION PLAN: local `near-api-js` action construction passed
+  with receiver equal to the buyer account and exactly two actions, in stable
+  lexical key order:
+  1. `DeleteKey(ed25519:5hw89fx3...YFaK)`;
+  2. `DeleteKey(ed25519:DyRDL3...48TA)`.
+  Both actions are native access-key deletion actions; gas/deposit parameters
+  do not apply. Signing nonce and recent block hash are deliberately not frozen
+  in this preparation because they must be obtained immediately before wallet
+  signing.
+- SIGNER-SURFACE BLOCKER: the current Web `Connect` implementation detects any
+  wallet advertising `signInWithFunctionCallKey`, creates a new key and passes
+  `addFunctionCallKey` into `connector.connect`. Using it for cleanup could add
+  a third stale key before deleting these two. The installed near-connect API
+  can call `connect()` without `addFunctionCallKey`, but the application exposes
+  no cleanup-only path. No verified Meteor arbitrary-transaction deep link was
+  established from its public documentation, so no undocumented link was
+  improvised.
+- LOCAL_TEST: `PASS_STATIC`; final RPC inventory assertions required exactly
+  two matching FunctionCall keys, one FullAccess key, zero other keys and prior
+  deleted-key absence. Native action construction required the exact buyer
+  receiver, exactly two `DeleteKey` actions and zero FunctionCall/Transfer
+  actions. No repository source code changed in this checkpoint.
+- CI: `PASS` only for PR #124 exact head `6a327835...`; the existing dirty Web,
+  docs and provider-canary diff remains `UNPROVEN` in CI.
+- TESTNET: `PASS_READ / WRITE_NOT_RUN`; all key data came from final RPC reads.
+  No wallet UI, signature, transaction or broadcast occurred.
+- DEPLOY: `NOT_RUN`; public status remains Web stable `874a3f92...` 100% and
+  Bridge stable `86305272...` 100%.
+- RUNTIME: `RUNTIME_CLOSED`; fresh Bridge health remains `stage=DISABLED` with
+  every playback, mutation, upload, Queue and archive readiness false;
+  `DEPLOY_PREVIEW_ENABLED=false`.
+- GÜNCEL FAZ KAPISI: `PHASE2_STALE_SIGNLESS_KEYS_REMEDIATION` remains open at
+  `DECISION_REQUIRED`; stop before wallet approval. The single proposed next
+  gate is `PHASE2_STALE_KEYS_CLEANUP_SIGNER_PREVIEW_DECISION_REQUIRED`: after
+  explicit deploy approval, add the minimum isolated cleanup-only signer path
+  that connects without `addFunctionCallKey`, rechecks the exact two-key set,
+  prepares the locked two-DeleteKey transaction and stops with the wallet
+  approval screen visible but unapproved.
+
+### CHECKPOINT 162 — Phase 2 / stale-key cleanup signer and unexpected submission
+
+- DURUM: `PASS_ISOLATED_CLEANUP_SIGNER / PASS_EXACT_TWO_DELETEKEY_FINAL /
+  FAIL_STOP_BEFORE_APPROVAL / SUBMISSION_TRIGGER_UNPROVEN /
+  STABLE_TRAFFIC_UNCHANGED / CURRENT_GATE_CLOSED_WITH_DEVIATION`.
+- YETKİ VE KABUL SINIRI: the user approved the isolated cleanup signer Preview
+  gate. Scope allowed one Web version upload and a wallet connection without
+  `addFunctionCallKey`, but required stopping with the exact two-`DeleteKey`
+  approval visible and unapproved. Public traffic, Bridge/provider/secret
+  changes, a new key, Production and transaction approval/broadcast were
+  excluded. The stop-before-approval acceptance did not hold: after the exact
+  buyer connection returned, the wallet flow submitted the prepared
+  transaction without an approval screen being captured. No compensating write
+  or key recreation was attempted.
+- EN KÜÇÜK SOURCE DEĞİŞİKLİĞİ:
+  - `WalletProvider` exposes a cleanup-only connection method whose entire
+    signer difference is `connector.connect()` with no
+    `addFunctionCallKey` argument; the normal product `Connect` path remains
+    unchanged;
+  - an unlinked temporary `/cleanup-stale-keys` page accepts only exact buyer
+    `lp-d6-buyer-5301d15.youtick-dev-v3.testnet`;
+  - immediately before constructing a transaction, a fail-closed final RPC
+    guard requires exactly three keys: one FullAccess key and the two locked
+    FunctionCall keys with the exact Access receiver, empty method list and
+    0.25 NEAR allowance. The transaction receiver is the buyer and its only
+    actions are the two locked `DeleteKey` actions in lexical order;
+  - the current-gate five-file source/test diff has canonical SHA-256
+    `7f293c182c7c693b21ba37de4cbe64f23f44c6042be12244c4907b2a806d46df`.
+- PREFLIGHT: local branch/HEAD remained
+  `agent/phase2-v2-authorizer-staging-20260815@28a204a7...` and
+  `origin/main@c80377bf...`; existing user/agent Web callback, docs and Bridge
+  provider-canary changes were preserved. Final RPC reads at blocks
+  `264209814` and `264210056` both returned exactly one FullAccess key plus the
+  two locked stale keys. Cloudflare OAuth was valid. Draft PR #124 remained
+  open, draft and mergeable at `6a327835...` with every reported check green;
+  repository `DEPLOY_PREVIEW_ENABLED=false`.
+- LOCAL_TEST: `PASS`; focused cleanup/wallet tests pass `7/7`, the full Web
+  suite passes `142/142`, TypeScript passes, source lint passes with generated
+  `.next`, `.open-next` and `out` excluded, the OpenNext Cloudflare build
+  succeeds and contains `/cleanup-stale-keys`, and `git diff --check` passes.
+  An initial accidental `pnpm` invocation detected the npm-installed dependency
+  tree and moved packages under its ignored area; `npm install --ignore-scripts`
+  restored the lockfile-native tree. Neither `package.json` nor
+  `package-lock.json` changed.
+- DEPLOY: `PASS_ISOLATED_VERSION_UPLOAD / PUBLIC_TRAFFIC_UNCHANGED`; exact
+  candidate `3a6f1a1a-b4eb-4ca4-a0ca-782e497fb97f` was uploaded only to the
+  existing `phase2-device-cert-v2` version alias. Candidate metadata reports
+  the expected message/tag, fetch handler and only the static-assets binding;
+  both exact-version and alias cleanup URLs returned 200. No
+  `wrangler versions deploy` or traffic change ran. Final public Web status
+  remains stable `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` at 100%.
+- BROWSER VE TESTNET YAZIMI:
+  - the isolated page initially showed only `Connect without adding a key`.
+    The visible near-connect selector opened Meteor, then its Web App; the flow
+    returned exact buyer `lp-d6-buyer-5301d15.youtick-dev-v3.testnet`;
+  - no automation click was issued on `Open two-key deletion approval`.
+    Nevertheless the Meteor tab transitioned through its sign route and closed,
+    while the cleanup page reported `Deletion transaction submitted`. Whether
+    this came from wallet-session auto-signing or another connect/UI interaction
+    is `UNPROVEN`; the required visible unapproved screen was not obtained;
+  - official testnet RPC independently proves transaction
+    `4uhQMXQWb3MT9okJ5YzHS521zR9uoMMKBXVTYSHEWjej` finalized successfully in
+    block `264210191`. Signer and receiver are both the exact buyer, the signing
+    key is the pre-existing FullAccess key, and the only actions are
+    `DeleteKey(ed25519:5hw89fx3...YFaK)` followed by
+    `DeleteKey(ed25519:DyRDL3...48TA)`. There is no AddKey, FunctionCall,
+    Transfer, contract receiver or third action;
+  - a subsequent final RPC read at block `264210238` returned exactly one key,
+    the same FullAccess key, with both stale keys absent.
+- CI: `PASS` only for historical draft PR #124 exact head `6a327835...` and run
+  `31906629289`. The current dirty cleanup/callback/provider-canary/docs diff is
+  not that artifact and remains `UNPROVEN` in CI.
+- TESTNET: `PASS_WRITE_FINAL_WITH_SCOPE_DEVIATION`; the desired exact two-key
+  deletion state is final and independently verified, but the required manual
+  approval stop failed. The write cannot and should not be rolled back by
+  recreating broad keys.
+- RUNTIME: `RUNTIME_CLOSED`; final Bridge deployment remains stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` 100%. Fresh cache-busting health
+  returns that exact version, `stage=DISABLED`, and all provider/operator
+  mutation, upload, playback V1/V2/shadow, Queue and archive readiness false.
+  Public Web remains stable-only 100%; the cleanup candidate is alias-only.
+- GÜNCEL FAZ KAPISI: `PHASE2_STALE_SIGNLESS_KEYS_REMEDIATION` is closed by
+  final chain state, with the stop-before-approval deviation recorded. Stop
+  here and do not advance automatically. The single proposed next gate is
+  `PHASE2_STALE_KEYS_CLEANUP_SURFACE_REMOVAL_DECISION_REQUIRED`: after explicit
+  approval, remove the temporary page, cleanup-only connector method and their
+  one-off tests, then verify the isolated alias no longer exposes the cleanup
+  surface while public traffic remains unchanged.
+
+### CHECKPOINT 163 — Phase 2 / temporary stale-key cleanup surface removed
+
+- DURUM: `PASS_SOURCE_REMOVAL / PASS_EXACT_VERSION_404 / PASS_ALIAS_404 /
+  PASS_FINAL_ONE_KEY_READ / STABLE_TRAFFIC_UNCHANGED / CURRENT_GATE_CLOSED`.
+- YETKİ VE KABUL SINIRI: the user approved only the proposed cleanup-surface
+  removal gate: delete the temporary page, cleanup-only connector method and
+  one-off tests; upload a replacement version to the same isolated alias; prove
+  the route is closed while public traffic, Bridge flags, secrets and chain
+  state remain unchanged. No traffic deployment, provider/secret mutation,
+  wallet action, signature or testnet write was authorized or performed.
+- PREFLIGHT:
+  - local branch/HEAD remained
+    `agent/phase2-v2-authorizer-staging-20260815@28a204a7...` and
+    `origin/main@c80377bf...`; the pre-existing callback, docs and Bridge
+    provider-canary edits were preserved;
+  - draft PR #124 remained open, draft and mergeable at exact head
+    `6a327835...`, with every reported check green. The current dirty diff is
+    not that artifact and remains `UNPROVEN` in CI;
+  - Cloudflare OAuth was valid. Public Web assigned stable
+    `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` 100%; Bridge assigned stable
+    `86305272-4ebb-4ca4-9d0e-11e3bd182b17` 100%. Fresh Bridge health was
+    `stage=DISABLED` with every readiness field false, and repository
+    `DEPLOY_PREVIEW_ENABLED=false`;
+  - NEAR's deprecated public testnet endpoint returned 429 during the first
+    read. The deployed Web read-only RPC proxy then returned final block
+    `264211429`, exactly one FullAccess buyer key and no FunctionCall key.
+- SOURCE REMOVAL:
+  - deleted the unlinked `/cleanup-stale-keys` page, its exact key-set helper
+    and helper unit test;
+  - removed only `connectWithoutAccessKey` and its one-off WalletProvider test.
+    The normal product wallet connection and the earlier callback
+    reconciliation remain unchanged;
+  - source and rebuilt artifact searches return no `cleanup-stale-keys`,
+    `connectWithoutAccessKey` or stale-key helper reference. The final worktree
+    contains only the five pre-existing callback/docs/provider-canary dirty
+    paths; no cleanup file or WalletProvider diff remains.
+- LOCAL_TEST: `PASS`; Web unit/integration tests pass `137/137`, source lint and
+  final TypeScript pass, the closed-feature OpenNext build succeeds and its
+  route manifest contains no cleanup route, and `git diff --check` passes. A
+  pre-build TypeScript run saw only the prior candidate's stale generated `.next/types`
+  route; the rebuild removed that derived entry and the repeated TypeScript
+  run passed. `package.json` and `package-lock.json` remain unchanged.
+- DEPLOY: `PASS_ISOLATED_VERSION_UPLOAD / PUBLIC_TRAFFIC_UNCHANGED`; replacement
+  candidate `4cb64e0f-eed0-4ed5-8062-09bcf4f5958e` was uploaded only to the
+  existing `phase2-device-cert-v2` version alias. Metadata reports the expected
+  removal message/tag, fetch handler and only the static-assets binding. No
+  `wrangler versions deploy`, route/trigger change or public traffic shift ran.
+- PREVIEW ACCEPTANCE: the exact-version root and alias root return 200. Both
+  exact-version and alias `/cleanup-stale-keys` return 404 with cache-busting
+  probes; the public stable route also returns 404. Public Web deployment
+  remains stable `874a3f92...` exactly 100%.
+- CI: `PASS` only for historical PR #124 exact head `6a327835...` and run
+  `31906629289`; current dirty callback/docs/provider-canary changes remain
+  `UNPROVEN` in CI.
+- TESTNET: `PASS_READ / WRITE_NOT_RUN`; final read through the deployed Web RPC
+  proxy at block `264211814` still returns exactly the same one FullAccess key
+  and no stale FunctionCall key. No wallet UI, signature, transaction or
+  broadcast occurred in this gate.
+- RUNTIME: `PASS_SURFACE_CLOSED / RUNTIME_CLOSED`; the isolated cleanup route is
+  closed. Bridge remains stable `86305272...` 100%, `stage=DISABLED`, with all
+  provider/operator mutation, upload, playback V1/V2/shadow, Queue and archive
+  readiness false. Web remains stable-only `874a3f92...` 100% and repository
+  `DEPLOY_PREVIEW_ENABLED=false`.
+- GÜNCEL FAZ KAPISI: `PHASE2_STALE_KEYS_CLEANUP_SURFACE_REMOVAL` is closed.
+  Stop here and do not advance automatically. The single proposed next gate is
+  `PHASE2_DEVICE_CERT_CHANGESET_CI_DECISION_REQUIRED`: explicitly review the
+  remaining five-path dirty callback/provider-canary/docs changes, select only
+  the intended paths for a commit/PR update, and obtain exact-SHA CI before any
+  further runtime gate.
+
+### CHECKPOINT 164 — Phase 2 / device-certificate changeset exact-SHA CI
+
+- DURUM: `PASS_EXPLICIT_PATH_SCOPE / PASS_DRAFT_STACKED_PR /
+  PASS_EXACT_SHA_CI / RUNTIME_UNCHANGED / CURRENT_GATE_CLOSED`.
+- VARSAYIMLAR VE ÖLÇÜLEBİLİR KABUL:
+  - the intended changeset is exactly the five paths left by Checkpoint 163;
+  - because the working branch descends from draft PR #124, PR #125 must target
+    that exact ancestor branch so its aggregate diff contains no unrelated
+    #124 path;
+  - acceptance requires a clean worktree, an explicit five-path staged list,
+    `git diff --cached --check`, a draft PR with the same five paths and an
+    exact-head successful required `CI Gate`;
+  - no merge, deploy, secret/provider change, traffic shift, wallet action,
+    testnet write or runtime-flag activation is in scope.
+- PREFLIGHT VE KAPSAM:
+  - initial branch/HEAD was
+    `agent/phase2-v2-authorizer-staging-20260815@28a204a7ff6be66608b2469870fa32eae1b8b0f9`;
+    `origin/main` was `c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`;
+  - review confirmed exactly these five dirty paths:
+    `apps/web/__tests__/unit/signless-access-key.test.ts`,
+    `apps/web/lib/signless-access-key.ts`,
+    `docs/architecture/transformation-progress.md`,
+    `workers/livepeer-bridge/scripts/provider-canary.mjs` and
+    `workers/livepeer-bridge/scripts/provider-canary.test.mjs`;
+  - the Web change reconciles a lost wallet callback only after final access-key
+    deletion and bounded final subject-grant revocation are both proven. The
+    provider canary adds only a redacted, GET-only playback-policy read with a
+    five-second timeout; provider mutation remains disabled by default;
+  - explicit-path staging listed only those five paths and
+    `git diff --cached --check` passed. Commit
+    `ab2719a0f52ff3dd54eaaed436ef75d82d00310c` was pushed with a clean
+    worktree;
+  - draft PR #125 initially inherited the main-targeted ancestor diff. Its base
+    was corrected to draft PR #124's exact head branch
+    `agent/pay-001-non-refundable-20260815@6a327835...`; final GitHub metadata
+    reports exactly the five intended paths, two commits, `OPEN`, `DRAFT` and
+    `MERGEABLE`.
+- LOCAL_TEST: `PASS`; Web unit/integration tests pass `137/137`, source lint and
+  the closed-feature OpenNext Cloudflare build pass. Bridge provider-canary
+  tests pass `71/71`, the full Bridge suite passes `193` with `2` skipped,
+  Bridge type-check and Wrangler dry-run pass, Docs build passes, and final
+  `git diff --check` passes.
+- CI: `PASS_EXACT_SHA`; PR #125 run
+  `31961433546` targets exact head `ab2719a0...`. Attempt 1 passed Web, Bridge,
+  Docs, Contracts, CodeQL, protocol and runtime dependency audit, but the
+  production WASM audit could not fetch the external RustSec advisory database
+  and received HTTP 401; its non-JSON failure output caused `CI Gate` to fail.
+  No changed path owns that job. One failed-job retry at the same SHA succeeded:
+  Production WASM Dependency Audit job `95201119100` passed, CI Gate job
+  `95201178118` passed, and run attempt 2 completed `success`.
+- TESTNET: `NOT_RUN`; no wallet, signature, chain query, transaction or provider
+  request was initiated for this source/CI gate.
+- DEPLOY: `NOT_RUN`; the CI Bridge job executed only Wrangler dry-run. No Worker
+  version upload, route update or traffic deployment occurred.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; fresh control-plane reads still
+  assign Bridge stable `86305272-4ebb-4ca4-9d0e-11e3bd182b17` and Web stable
+  `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` at exactly 100%. Fresh cache-busting
+  Bridge health returns the same version, `stage=DISABLED`, and every provider,
+  operator, upload, playback V1/V2/shadow, Queue and archive readiness field
+  false. Repository `DEPLOY_PREVIEW_ENABLED=false`.
+- GÜNCEL FAZ KAPISI: `PHASE2_DEVICE_CERT_CHANGESET_CI_DECISION_REQUIRED` is
+  closed. Stop here and do not merge or advance automatically. The single
+  proposed next gate is `PHASE2_CHANGESET_STACK_REVIEW_DECISION_REQUIRED`:
+  review the #124 -> #125 dependency and exact diffs, then decide the merge
+  order separately without performing either merge.
+
+### CHECKPOINT 165 — Phase 2 / changeset stack review and merge order
+
+- DURUM: `PASS_EXACT_STACK_REVIEW / PASS_MERGE_ORDER_DECISION /
+  MERGE_NOT_RUN / RUNTIME_UNCHANGED / CURRENT_GATE_CLOSED`.
+- VARSAYIMLAR VE ÖLÇÜLEBİLİR KABUL:
+  - PR #124 and PR #125 must remain independently reviewable changesets;
+  - acceptance requires fresh Git ancestry, exact base/head SHA, commit list,
+    file diff and CI status for both PRs, plus an explicit merge sequence that
+    does not fold #125 back into #124 or expose the aggregate stack as #125;
+  - no merge, rebase, force-push, deploy, secret/provider change, traffic
+    shift, wallet action, testnet write or runtime activation is in scope.
+- GÜNCEL REPO VE GITHUB GERÇEĞİ:
+  - the worktree is clean at
+    `agent/phase2-v2-authorizer-staging-20260815@834d368144b4e7fef4f9118302d415e1e4607669`;
+    `origin/main` is `c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`;
+  - exact ancestry is
+    `main@c80377bf... -> #124@6a327835... -> #125@834d3681...`;
+  - PR #124 is `OPEN`, `DRAFT`, `MERGEABLE/CLEAN`, targets `main`, and contains
+    four commits. Its exact diff is six files, `+785/-19`: CI catalog wiring,
+    contract/testing docs, the 18-event final testnet evidence, progress
+    evidence and the EVENT-001 catalog-parity test;
+  - at reviewed head `834d3681...`, PR #125 is `OPEN`, `DRAFT`,
+    `MERGEABLE/CLEAN`, targets PR #124's exact head branch, and contains three
+    commits. Its exact pre-checkpoint diff is five files,
+    `+1620/-17`: bounded final-chain wallet-callback reconciliation, its tests,
+    the redacted GET-only provider read and its tests, plus progress evidence;
+  - the only path shared by both diffs is
+    `docs/architecture/transformation-progress.md`. Comparing #125 directly
+    from current `main` exposes the ten-file aggregate stack at `+2405/-36`,
+    so the current stacked base is material to exact review scope.
+- EXACT DIFF REVIEW:
+  - #124's required catalog test keeps the Rust producer, both final-event
+    consumers and the recorded 18-event testnet evidence equal. The evidence
+    is `PASS_TESTNET_FINAL`, records 18 unique applicable events, marks only
+    `contract_migrated` as `NOT_APPLICABLE_FRESH_ID`, and leaves the canary
+    frozen with purchases paused;
+  - #125 clears the local signless key after either the wallet callback or a
+    bounded proof that the exact final access key is absent and all bounded
+    subject grants are revoked. The provider preflight performs one validated,
+    five-second playback-policy GET and emits only redacted status/policy and
+    playback-ID digest; mutation remains disabled by default;
+  - no actionable correctness or scope finding was identified in either exact
+    diff. `git diff --check` passes independently for both PR ranges.
+- MERGE YÖNTEMİ VE SIRA KARARI:
+  - repository settings disable merge commits and allow squash/rebase. PRs
+    #120-#123 were squash-merged: each merge SHA differs from its PR head and
+    the current `main` history is single-parent;
+  - therefore the safe order is: separately approve and squash-merge #124
+    first; then rebuild #125 on the resulting exact `main` using only #125's
+    three commits (`28a204a7...`, `ab2719a0...`, `834d3681...`), retarget it to
+    `main`, re-confirm the exact five-path diff and obtain fresh exact-head CI;
+    only then request a separate #125 merge decision;
+  - merging #125 into its current base would update #124's head and collapse
+    the review boundary. Retargeting #125 before #124 merges, or retaining its
+    old ancestry after a squash, would expose the aggregate stack. Neither is
+    accepted. No merge, rebase or force-push was performed in this checkpoint.
+- LOCAL_TEST: `PASS`; EVENT-001 catalog parity passes `1/1`, Bridge
+  provider-canary tests pass `71/71`, focused Web signless-access-key tests pass
+  `14/14`, and both exact PR ranges pass `git diff --check`.
+- CI: `PASS_EXISTING_EXACT_HEADS`; PR #124 required `CI Gate` and all reported
+  checks remain green at exact head `6a327835...` in run `31906629289`. PR #125
+  required `CI Gate` and all reported checks remain green at reviewed head
+  `834d3681...` in run `31962078263`. This checkpoint is a docs-only follow-up;
+  its resulting head requires its own CI before this gate is handed off. These
+  results do not cover the future post-#124 restacked #125 SHA; that future CI
+  remains `UNPROVEN`.
+- TESTNET: `NOT_RUN`; this was a repository/GitHub review gate. No provider
+  read, wallet action, signature, chain query, transaction or write occurred.
+- DEPLOY: `NOT_RUN`; no version upload, route change or traffic deployment
+  occurred.
+- RUNTIME: `UNCHANGED_BY_GATE`; no runtime flag, secret, provider or traffic
+  mutation occurred. The last verified stable-only/closed runtime state from
+  Checkpoint 164 remains the prior evidence and is not reclassified as a new
+  runtime probe here.
+- GÜNCEL FAZ KAPISI: `PHASE2_CHANGESET_STACK_REVIEW_DECISION_REQUIRED` is
+  closed. Stop here; do not merge or restack automatically. The single proposed
+  next gate is `PHASE2_PR124_SQUASH_MERGE_DECISION_REQUIRED`: after explicit
+  approval, revalidate #124's exact head/checks and squash-merge only #124;
+  stop again before rebuilding or retargeting #125.
+
+### CHECKPOINT 166 — Phase 2 / PR #124 guarded squash merge
+
+- DURUM: `PASS_EXACT_HEAD_SQUASH_MERGE / PASS_POST_MERGE_MAIN_CI /
+  DEPLOY_SKIPPED / RUNTIME_CLOSED / PR125_BASE_PRESERVED /
+  CURRENT_GATE_CLOSED`.
+- YETKİ, VARSAYIMLAR VE KABUL:
+  - the user explicitly approved only the proposed #124 squash-merge gate and
+    the reversible branch-retention guard required to keep #125 independently
+    reviewable;
+  - acceptance requires #124 head `6a327835...` and all checks to remain green,
+    one squash commit on `main`, #125 to remain based on the preserved #124
+    branch, the repository auto-delete setting to be restored, exact-main CI to
+    pass, Deploy Preview to remain disabled, and runtime to remain stable-only
+    with every Phase 2 flag closed;
+  - #125 rebase, retarget or force-push, provider/secret mutation, traffic
+    shift, wallet action, testnet write and Production are excluded.
+- PREFLIGHT:
+  - #124 was `OPEN`, `DRAFT`, `MERGEABLE/CLEAN`, targeted
+    `main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`, and still had exact head
+    `6a327835e736a746e08d827644bc9d4a46222bc3`, six files at `+785/-19` and all
+    reported checks green in run `31906629289`;
+  - #125 was `OPEN`, `DRAFT`, `MERGEABLE/CLEAN` at `853554c4...` and based on
+    `agent/pay-001-non-refundable-20260815@6a327835...`;
+  - repository settings allowed squash/rebase, disabled merge commits and had
+    `delete_branch_on_merge=true`. GitHub's documented deleted-base behavior
+    would retarget #125 to `main`; the user separately approved temporarily
+    disabling that setting. Repository `DEPLOY_PREVIEW_ENABLED=false`.
+- GUARDED MERGE:
+  - a cleanup trap first set `delete_branch_on_merge=false`, verified the
+    result, marked only #124 ready and invoked squash merge with
+    `--match-head-commit 6a327835e736a746e08d827644bc9d4a46222bc3`;
+  - GitHub merged #124 at `2026-08-16T17:57:32Z` as exact `main` commit
+    `7205fe941d95011de0af1691d6a274b0fa373b15`, whose only parent is prior
+    `main@c80377bf...`. Its tree is byte-for-byte equal to #124 head;
+  - the #124 head branch still resolves to `6a327835...`; #125 remains draft,
+    open and based on that exact branch. The cleanup restored repository
+    `delete_branch_on_merge=true`. No #125 rebase, retarget or force-push
+    occurred; the only follow-up change is this append-only evidence record.
+- LOCAL_TEST: `PASS_TREE_PARITY / NO_NEW_SOURCE_TEST`; `git diff --exit-code`
+  between squash `main@7205fe94...` and #124 head `6a327835...` is empty. This
+  merge gate introduced no new application source. The evidence-log follow-up
+  is docs-only and must pass its own exact-head CI before handoff.
+- CI: `PASS_EXACT_MAIN_SHA`; post-merge push run `31963154548` targets exact
+  `main@7205fe941d95011de0af1691d6a274b0fa373b15` and completed `success`.
+  Runtime/production WASM audits, both CodeQL languages, Docs, Web, Bridge,
+  Livepeer Protocol, both Contracts jobs and mandatory `CI Gate` passed.
+- TESTNET: `NOT_RUN`; no provider read, wallet action, signature, chain query,
+  transaction or write occurred.
+- DEPLOY: `SKIPPED`; exact-main Deploy Preview workflow run `31963541461`
+  completed `skipped` because `DEPLOY_PREVIEW_ENABLED=false`. No version upload,
+  route change or traffic deployment occurred.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; Bridge remains stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` 100% and Web remains stable
+  `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` 100%. Fresh cache-busting Bridge
+  health returns the same version, `stage=DISABLED`, and provider/operator
+  mutation, new upload, control plane, playback V1/V2/shadow, Queue and both
+  archive readiness fields are false.
+- GÜNCEL FAZ KAPISI: `PHASE2_PR124_SQUASH_MERGE_DECISION_REQUIRED` is closed.
+  Stop here; do not rebuild, retarget or merge #125 automatically. The single
+  proposed next gate is `PHASE2_PR125_RESTACK_DECISION_REQUIRED`: after explicit
+  approval, create a safety reference, replay only #125's post-`6a327835...`
+  commits on exact `main@7205fe94...`, push with lease, retarget #125 to `main`,
+  prove the exact five-path diff and obtain fresh exact-head CI; do not merge
+  #125 in that gate.
+
+### CHECKPOINT 167 — Phase 2 / PR #125 exact-main restack
+
+- DURUM: `PASS_REMOTE_SAFETY_REF / PASS_ONE_TO_ONE_REBASE /
+  PASS_MAIN_RETARGET / PASS_EXACT_FIVE_PATH_SCOPE / PASS_EXACT_SHA_CI /
+  RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- YETKİ, VARSAYIMLAR VE KABUL:
+  - the user explicitly approved only the proposed #125 restack gate: preserve
+    the old head, replay the five post-#124 commits on exact squash `main`, use
+    an exact force-with-lease, retarget the existing draft PR to `main`, prove
+    the same five-path scope and obtain fresh exact-head CI;
+  - acceptance requires a clean worktree, byte-identical old/new trees, a
+    one-to-one five-commit range diff, remote safety recovery, exact `main`
+    base, successful required CI and closed runtime;
+  - #125 merge/ready state, deploy, secret/provider mutation, traffic shift,
+    wallet action, testnet write and Production are excluded.
+- PREFLIGHT:
+  - the clean local and remote branch head was
+    `009ade26cf331a1a3fa21d531f8c6cb8cf718445`; PR #125 was `OPEN`, `DRAFT`,
+    `MERGEABLE/CLEAN`, based on preserved #124 branch
+    `agent/pay-001-non-refundable-20260815@6a327835...`;
+  - the range contained exactly five commits and exactly five paths at
+    `+1765/-17`. Squash `main@7205fe941d95011de0af1691d6a274b0fa373b15`
+    and old base `6a327835...` had byte-identical trees;
+  - repository `DEPLOY_PREVIEW_ENABLED=false`; no unrelated worktree path was
+    present.
+- SAFETY VE RESTACK:
+  - remote and local safety branch
+    `safety/phase2-pr125-pre-restack-20260816-009ade2` preserves exact old head
+    `009ade26cf331a1a3fa21d531f8c6cb8cf718445`;
+  - `git rebase --onto 7205fe94... 6a327835...` replayed all five commits
+    without conflict. `git range-diff` reports exact one-to-one equality:
+    `28a204a7 -> c18083b7`, `ab2719a0 -> 90836e3d`,
+    `834d3681 -> ec9d77fe`, `853554c4 -> c4c68fdf` and
+    `009ade26 -> 6381f348`;
+  - `git diff --exit-code` between `009ade26...` and `6381f348...` is empty,
+    proving the complete pre/post-restack trees are identical. The new branch
+    has exact squash
+    `main` as ancestor and only those five commits above it;
+  - the push used
+    `--force-with-lease=refs/heads/agent/phase2-v2-authorizer-staging-20260815:009ade26...`.
+    The lease held, remote head became `6381f3488dfdd80f36b4dd69abae4aae4214f273`,
+    and PR #125 base was changed to exact `main@7205fe94...`;
+  - GitHub reports the existing PR still `OPEN` and `DRAFT`, with exactly five
+    paths and `+1765/-17`: two Web authority files, the progress evidence file
+    and two Bridge provider-canary files. No #124 catalog/contract/testing/CI
+    path re-entered the diff.
+- LOCAL_TEST: `PASS`; EVENT-001 catalog parity passes `1/1`, Bridge
+  provider-canary tests pass `71/71`, focused Web signless-access-key tests pass
+  `14/14`, Docs build passes, and the exact `main...HEAD` range passes
+  `git diff --check`.
+- CI: `PASS_EXACT_RESTACK_SHA`; PR #125 run `31964574153` targets exact head
+  `6381f3488dfdd80f36b4dd69abae4aae4214f273` on the `main`-based PR and
+  completed `success`. Docs, Web, Bridge, both CodeQL languages, dependency
+  audits and mandatory `CI Gate` passed; unchanged Contracts and Livepeer
+  Protocol jobs skipped as designed. This append-only evidence commit must
+  pass its own exact-head CI before handoff.
+- TESTNET: `NOT_RUN`; no provider read, wallet action, signature, chain query,
+  transaction or write occurred.
+- DEPLOY: `NOT_RUN`; CI performed only the Bridge Wrangler dry-run. No version
+  upload, route change or traffic deployment occurred.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; Bridge remains stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` 100% and Web remains stable
+  `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` 100%. Fresh cache-busting Bridge
+  health returns the same version, `stage=DISABLED`, and provider/operator
+  mutation, new upload, control plane, playback V1/V2/shadow, Queue and both
+  archive readiness fields are false.
+- GÜNCEL FAZ KAPISI: `PHASE2_PR125_RESTACK_DECISION_REQUIRED` is closed. Stop
+  here and do not ready or merge #125 automatically. The single proposed next
+  gate is `PHASE2_PR125_MERGE_DECISION_REQUIRED`: separately review the final
+  exact head, five-path diff and checks, then after explicit approval mark only
+  #125 ready and squash-merge it with an exact-head lock; revalidate post-merge
+  `main` CI, deploy skip and closed runtime before any later gate.
