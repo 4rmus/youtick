@@ -6591,3 +6591,72 @@ Evidence classes remain separate:
   exact head, five-path diff and checks, then after explicit approval mark only
   #125 ready and squash-merge it with an exact-head lock; revalidate post-merge
   `main` CI, deploy skip and closed runtime before any later gate.
+
+### CHECKPOINT 168 — Phase 2 / PR #125 exact-head squash merge
+
+- DURUM: `PASS_EXACT_HEAD_SQUASH_MERGE / PASS_POST_MERGE_MAIN_CI /
+  DEPLOY_SKIPPED / RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- YETKİ, VARSAYIMLAR VE KABUL:
+  - the user explicitly approved only the proposed #125 merge gate: revalidate
+    the final exact head, five-path scope and checks, mark only #125 ready,
+    squash-merge it with an exact-head lock, and verify post-merge CI, deploy
+    skip and closed runtime;
+  - acceptance requires exact head `965455151db8b539bd7d60cb721ebc6e6f267030`,
+    exact base `main@7205fe941d95011de0af1691d6a274b0fa373b15`,
+    unchanged five-path scope, successful required PR and post-merge `main` CI,
+    byte-identical squash/PR trees, skipped Deploy Preview and stable-only
+    runtime with all Phase 2 flags closed;
+  - provider/secret mutation, deploy, traffic shift, wallet action, testnet
+    write, Production and automatic merge of this evidence follow-up are
+    excluded.
+- PREFLIGHT:
+  - #125 was `OPEN`, `DRAFT`, `MERGEABLE/CLEAN`, targeted exact
+    `main@7205fe94...`, and still had exact head `96545515...`, six commits and
+    exactly five paths at `+1838/-17`: two Web authority files, this progress
+    evidence file and two Bridge provider-canary files;
+  - all reported checks remained green at exact head in CI run `31964783386`,
+    including mandatory `CI Gate` job `95208424667`; the exact range passed
+    `git diff --check` and no other open PR used the #125 head branch as its
+    base;
+  - repository settings allowed squash/rebase, disabled merge commits and had
+    `delete_branch_on_merge=true`; repository
+    `DEPLOY_PREVIEW_ENABLED=false`.
+- EXACT-HEAD MERGE:
+  - only #125 was marked ready and the squash merge used
+    `--match-head-commit 965455151db8b539bd7d60cb721ebc6e6f267030`;
+  - GitHub merged #125 at `2026-08-16T19:02:20Z` as exact `main` commit
+    `dd8934ed51f27dc9f80ab5a2eac8a0eaa7bbdb1a`, whose only parent is prior
+    `main@7205fe94...`. Its tree `99d6fe32558ea4c9bbdb2de62d6767d2579deb2c`
+    is byte-for-byte equal to the exact PR head tree;
+  - GitHub automatically deleted the merged feature branch as configured. The
+    remote recovery branch
+    `safety/phase2-pr125-pre-restack-20260816-009ade2` remains intact. No
+    provider, secret, deploy, traffic or runtime mutation occurred.
+- LOCAL_TEST: `PASS_TREE_PARITY / NO_NEW_SOURCE_TEST`; `git diff --exit-code`
+  between squash `main@dd8934ed...` and exact PR head `96545515...` is empty.
+  The merge introduced no source delta beyond the already-tested PR tree. This
+  evidence follow-up changes only this Markdown file and must pass Docs build,
+  `git diff --check` and its own exact-head CI before handoff.
+- CI: `PASS_EXACT_MAIN_SHA`; post-merge push run `31966375527` targets exact
+  `main@dd8934ed51f27dc9f80ab5a2eac8a0eaa7bbdb1a` and completed `success`.
+  Runtime/production WASM audits, both CodeQL languages, Docs, Web, Bridge and
+  mandatory `CI Gate` job `95212296686` passed; unchanged Contracts and
+  Livepeer Protocol jobs skipped as designed.
+- TESTNET: `NOT_RUN`; no provider read, wallet action, signature, chain query,
+  transaction or write occurred.
+- DEPLOY: `SKIPPED`; exact-main Deploy Preview workflow run `31966509229`
+  completed `skipped` because `DEPLOY_PREVIEW_ENABLED=false`. No version upload,
+  route change or traffic deployment occurred.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; Bridge remains stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` 100% and Web remains stable
+  `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` 100%. Fresh cache-busting Bridge
+  health returns the same version, `stage=DISABLED`, and provider/operator
+  mutation, new upload, control plane, playback V1/V2/shadow, Queue and both
+  archive readiness fields are false.
+- GÜNCEL FAZ KAPISI: `PHASE2_PR125_MERGE_DECISION_REQUIRED` is closed. Stop
+  here; do not merge this docs-only evidence follow-up automatically. The
+  single proposed next gate is
+  `PHASE2_PR125_MERGE_EVIDENCE_PR_DECISION_REQUIRED`: review this one-file
+  append-only checkpoint at its exact head and exact-head CI, then separately
+  decide whether to squash-merge only that evidence PR; do not advance to a
+  later Phase 2 runtime gate in the same loop.
