@@ -1,6 +1,6 @@
 # YouTick architecture transformation progress
 
-Status: `PHASE_6_LOCAL_PARTIAL / ARCHITECTURE_VALUES_ACCEPTED / RUNTIME_GATES_CLOSED`
+Status: `PHASE_4_EVENT_PASS_TESTNET / PHASE_2_STAGING_NEXT / RUNTIME_GATES_CLOSED`
 
 This file tracks the phased architecture plan in
 `/Users/arair/Desktop/youtick/youtick-fazli-mimari-donusum-plani.md`. The plan
@@ -40,7 +40,7 @@ Evidence classes remain separate:
 | ID | Status | Difference | Independent work allowed |
 |---|---|---|---|
 | DEC-001 | ACCEPTED | Use fresh isolated Market v2 and Access IDs with empty pilot state; do not import or overwrite the existing testnet pair. Mainnet also uses a fresh contract ID plus independently audited snapshot/import and invariant verification. | Market v2 carries `state_version=2`; no old-state migration claim. Mainnet implementation/audit remain later gates. |
-| DEC-002 | PARTIAL | The technical pilot is explicitly non-refundable. Product/legal/finance confirmation for mainnet general access is still absent. | Preserve no-automatic-refund behavior; no implied credit or mainnet policy claim. |
+| DEC-002 | ACCEPTED_FOR_TECHNICAL_PILOT | The technical pilot uses option A: explicitly non-refundable. Product/legal/finance confirmation for mainnet general access is still absent. | Preserve no-automatic-refund behavior; no reserve, escrow, implied credit or mainnet policy claim. |
 | DEC-003 | ACCEPTED | `SALES_SUSPENDED` preserves playback for existing entitlements while blocking new sales; takedown blocks playback. | Implement this exact semantic in v2. |
 | DEC-004 | ACCEPTED_FOR_PILOT | Pilot values are concurrency 2, attempts 2/day, ambiguity 15 minutes, monthly 20,000,000 micro-USD, per-job 2,000,000 micro-USD and retention 14/30/90 days. Testnet governance may omit multisig/timelock. | Values remain unconfigured until their bounded implementation/release checkpoint. |
 | DEC-005 | ACCEPTED_GUARDED | UploadJob retention is 14 days, but terminal deletion may run only after the D1 archive commit is proven and legacy v1 playback no longer reads that job. | Keep destructive cleanup absent until both machine-verifiable preconditions exist. |
@@ -76,7 +76,9 @@ Evidence classes remain separate:
 - D1 operations: Neardata testnet final blocks, deployment-block start,
   complete-block cursor, Workers Paid, one-minute cron, max 180 blocks/run,
   Platform/SRE ownership, RPO 0, RTO 4h and pilot end plus 90-day retention.
-- Finance: technical pilot is explicitly non-refundable.
+- Finance: technical pilot is explicitly non-refundable; option A was
+  reaffirmed on 2026-08-15 without authorizing an automatic refund, reserve,
+  escrow or implied platform credit.
 - Resilience: no platform source-media backup. Creators retain source files;
   provider asset loss suspends sales/playback and requires creator re-upload
   with a new publication or takedown.
@@ -90,6 +92,50 @@ Evidence classes remain separate:
   funded testnet admin, guardian and pilot-creator accounts exist.
 - External execution remains gated by exact target/account/artifact checks;
   this record does not treat local work as a testnet deployment or pilot run.
+
+## PAY-001 technical-pilot policy decision — 2026-08-15
+
+- DURUM:
+  `DECISION_ACCEPTED_FOR_TECHNICAL_PILOT / MAINNET_POLICY_UNPROVEN / RUNTIME_UNCHANGED`.
+- KARAR: Option A is fixed for the technical testnet/internal pilot. A completed
+  purchase is explicitly non-refundable. There is no automatic on-chain or
+  off-chain refund, platform reserve, settlement hold/escrow or implied credit.
+  Any goodwill credit would be a separately approved manual operation and is
+  not promised by this policy.
+- SCOPE: This is not mainnet product/legal/finance approval. Mainnet general
+  access still requires approved user-facing terms, support handling,
+  accounting invariants and contract/treasury review. Existing entitlement,
+  takedown and sales-suspension semantics are unchanged.
+- READ-ONLY CURRENT TRUTH:
+  - `origin/main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`; exact-main CI
+    `31895385141` and Deploy Preview `31895517069` succeeded;
+  - Preview Web version `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` and Bridge
+    version `86305272-4ebb-4ca4-9d0e-11e3bd182b17` carry the exact-main tag.
+    Bridge health is `stage=DISABLED`; provider/operator/upload/playback/Queue
+    mutation gates are false. The public read API remains separately active at
+    source tag `76e85f44e0d7ab38b0c96ab1302dcfde576b42dd`, with ingestion and
+    backfill false;
+  - dark read-model version `62451057-c6b6-40ff-a8f6-0ac6723d0a1c` carries
+    the exact-main tag and all four runtime/write flags false. Dedicated
+    backfill primary/DLQ producer-consumer counts are `0/0` and `0/0`;
+  - bound D1 `50b1e14f-2b06-444b-98cf-b828f11277ef` is at watermark
+    `264071553` / `5cC4NH1a2VYyt8gQmjnmPJ54cE1YvDKrqTx4436HYJb2`, with one
+    publication, five chain events, one entitlement, one sale, one withdrawal
+    and two governance rows. Both read-only queries report `rows_written=0`
+    and `changed_db=false`;
+  - `read-preview.youtick.net`, `bridge-preview.youtick.net`,
+    `preview.youtick.net` and `youtick.net` returned HTTP 200. Production Web
+    and Bridge Workers do not exist in the account and `app.youtick.net` /
+    `bridge.youtick.net` did not resolve.
+- KANIT: read-only Git/GitHub/Cloudflare control-plane, HTTP and D1 evidence.
+  No deploy, Queue/D1 write, provider, wallet, payment, chain, email, alert or
+  support mutation occurred.
+- FAZ KAPISI: `PASS_FOR_TECHNICAL_PILOT` for the PAY-001 policy decision only.
+  PAY-001 remains partial for mainnet approval and accounting closure.
+- UZLAŞTIRMA: Checkpoints 130–143 are now recorded below with their original
+  evidence classes. The PAY-001 pilot decision is included in the closure.
+- SONRAKİ: EVENT-001 standard event catalog; do not activate runtime, Queue/D1
+  writes or a new economic flow automatically.
 
 ## Phase exit gates
 
@@ -148,13 +194,13 @@ Evidence classes remain separate:
 
 | Exit gate | Status | Evidence |
 |---|---|---|
-| Standard events emitted on testnet | PARTIAL | Market source emits the economic/publication/withdrawal/governance catalog as `youtick_market@1.0.0`; fresh-v2 testnet previously proved governance events only. The new economic catalog is local and not deployed. `LOCAL_TEST` + prior `TESTNET` governance evidence. |
-| Read model rebuilds from chain | PARTIAL | The bounded Neardata adapter and watermark-safe Queue source feed the deterministic reducer/atomic D1 writer. A supervised canary processed blocks `263118001–263118180` and left the verified D1 watermark at `263118180`; all non-watermark tables remain empty. The Worker is dark again, both Queues are unbound/empty and no zero-to-tip rebuild exists. `LOCAL_TEST` + `TESTNET_READ` + `PREVIEW_QUEUE` + `D1_WRITE`. |
-| Event idempotency/finality watermark tests pass | PARTIAL | Exact contract replays emit no duplicate event. Reducer deduplicates `(block_height, receipt_id, event_index)`, rejects conflicts and the D1 writer advances a complete final block, including an empty block, atomically. The bounded canary performed 180 contiguous D1 writes and matched the expected terminal hash; the full RTO drill remains absent. `LOCAL_TEST` + `CI` + `PREVIEW_QUEUE` + `D1_WRITE`. |
-| Discover/profile use read API | PARTIAL | A disabled-by-default Web client reads active Discover pages and creator publication history from the versioned D1 API. Creator sales stay in the accounting projection and are not publicly readable. Initial Discover failure falls back to canonical NEAR without mixing cursors; creator available balance/withdrawal and all purchase/playback authority stay on NEAR. The D1 binding is deployed dark, but the API flag remains false and no public route exists. `LOCAL_TEST` + `PREVIEW_DEPLOYMENT`. |
+| Standard events emitted on testnet | PASS_TESTNET_FINAL | Checkpoint 145 combines 11 existing pilot events with the seven previously missing events produced on an isolated fresh-ID canary. All 18 applicable catalog entries have exact final block hash, receipt ID and event index evidence; `contract_migrated` is `NOT_APPLICABLE_FRESH_ID`. The canary is frozen and purchase-paused. `LOCAL_TEST` + `TESTNET_MUTATION` + exact-final `TESTNET_READ`. |
+| Read model rebuilds from chain | DEFERRED_POST_PLAN / NOT_A_V1_GATE | Bounded contiguous Neardata-to-D1 paths are proven, including the current v1 watermark `264071553`. Checkpoint 133 removed full zero-to-tip rebuild and RTO 4h from v1/Phase 4/Phase 6 exit gates; automatic continuation remains closed. `LOCAL_TEST` + bounded `D1_WRITE`; full rebuild is deliberately not claimed. |
+| Event idempotency/finality watermark tests pass | PASS_TESTNET_BOUNDED / CONTINUOUS_UNPROVEN | Reducer/D1 contracts deduplicate `(block_height, receipt_id, event_index)`, reject conflicts and require contiguous final blocks. Checkpoints 142–143 advanced v1 D1 by 41,163 blocks to exact hash `5cC4NH1a2VYyt8gQmjnmPJ54cE1YvDKrqTx4436HYJb2`; gaps and stale/incomplete inputs failed closed. Queue/continuous ingestion remain off. `LOCAL_TEST` + `CI` + bounded `D1_WRITE`. |
+| Discover/profile use read API | PASS_PREVIEW / PRODUCTION_CLOSED | `read-preview.youtick.net` serves publication-only D1 reads to Preview Discover/Profile. Creator sales, balances and withdrawals are not public; purchase/playback authority remains on NEAR. Checkpoint 140 proved fail-closed rollback and final exact-main Preview Web/Bridge/dark Worker deployment. Production Web/API remain absent. `CI` + `PREVIEW_DEPLOYMENT` + browser UAT. |
 | Purchase/playback remain canonical-chain based | PASS | Current architecture and Worker final reads retain NEAR authority. `LOCAL_STATIC`; target runtime activation is not implied. |
-| Sale ledger and withdrawal audit available | PARTIAL | Event reducer/D1 projections include sale ledger, entitlements and withdrawal history; rebuild and D1 retain the same exact withdrawal event status and decimal-string amounts. The public read API exposes none of these financial projections. Live economic rows and accounting reconciliation remain absent. `LOCAL_TEST`. |
-| Refund/credit policy approved | PARTIAL | Technical pilot is explicitly non-refundable. Mainnet product/legal/finance confirmation and accounting invariants remain open. |
+| Sale ledger and withdrawal audit available | PASS_TESTNET / MAINNET_UNPROVEN | Checkpoint 143 projected one 2 USDC sale, one entitlement and one terminal 1.96 USDC withdrawal from exact final testnet events; decimal creator/platform amounts reconcile to `1960000/40000`. Financial projections remain non-public. Production/mainnet accounting and continuous ingestion are `UNPROVEN`. `LOCAL_TEST` + `TESTNET_MUTATION` + `D1_WRITE`. |
+| Refund/credit policy approved | PASS_FOR_TECHNICAL_PILOT / MAINNET_PARTIAL | Option A is accepted for the technical pilot: no automatic refund, reserve, escrow or implied credit. Mainnet product/legal/finance confirmation, user-facing terms and accounting invariants remain open. `LOCAL_STATIC` + read-only current-runtime verification. |
 
 ### Phase 5 — scale, cost and SRE
 
@@ -166,8 +212,8 @@ Evidence classes remain separate:
 | Upload-resume success above approved threshold | EXTERNAL_EVIDENCE_REQUIRED | The accepted gate is at least 99% same-resource resume with exactly zero second payments and zero second provider assets. Local recovery/canary regressions pass, but no deployed pilot sample or payment/provider receipt aggregation exists. |
 | RPC/provider fault injection degrades safely | PARTIAL | The report's eight chaos scenarios now map to deterministic local regressions: bounded NEAR failures/circuit, Livepeer 429/5xx/timeout admission behavior, duplicate/out-of-order webhook, Queue retry/redelivery, ambiguous broadcast reuse, exact-version rejection, early/delayed alarm timing and bounded D1/API/Web fallback. This is complete source-matrix coverage, not a real chaos run. Provider, Cloudflare Queue/D1, mixed deployed versions and staging evidence remain `EXTERNAL_EVIDENCE_REQUIRED`. `LOCAL_TEST`. |
 | Cost model and budget alarm defined | PARTIAL | Approved pilot monthly/per-job reservation values fail closed locally and provider 402/429 closes admission. Actual Livepeer billed-usage/invoice reconciliation and delivered budget alerts remain external. `LOCAL_TEST`. |
-| Security/supply-chain gates mandatory | PARTIAL | All tracked third-party Actions are commit-SHA pinned; runtime npm high-severity advisories, RustSec and the reusable CodeQL matrix are explicit dependencies of the ruleset-required `CI Gate`. Exact-main run `31340805068` passed both CodeQL languages and `CI Gate` for `df381b0f5b263870128b911768de616169ddeb97`; both analyses report zero results and alerts #3–#5 are fixed without dismissal. Non-expired artifact `contract-sbom-df381b0f5b263870128b911768de616169ddeb97` has digest `sha256:6f34b9cce99e733739e8bf979e9d5129a6c160d3fe103a01af94c62ec32a76cd`. Release provenance and Web/Bridge runtime SPDX attestations remain absent because guarded Preview stayed disabled and skipped; test/dev `time` remains informational. `CI`. |
-| Exact-SHA mainnet release candidate reproducible | PARTIAL | Release/security/SLO tooling tests 102/102 locally and in the latest required `CI Gate`; no mainnet candidate artifact or activation evidence. `LOCAL_TEST` + `CI`. |
+| Security/supply-chain gates mandatory | PARTIAL | All tracked third-party Actions are commit-SHA pinned; runtime npm high-severity advisories, RustSec and reusable JavaScript/TypeScript plus Rust CodeQL are required by `CI Gate`. Exact-main `c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc` CI `31895385141` passed before Preview deployment `31895517069`; earlier main CodeQL alerts #3–#5 remain fixed without dismissal. Contract and Worker runtime SPDX/mainnet attestations remain incomplete. `CI` + `PREVIEW_DEPLOYMENT`. |
+| Exact-SHA mainnet release candidate reproducible | PASS_PREVIEW / MAINNET_UNPROVEN | Checkpoint 140 proved exact-main Preview deployment plus fail-closed rollback and recovery. No mainnet candidate artifact, production Worker or activation evidence exists. `CI` + `PREVIEW_DEPLOYMENT`; mainnet remains `UNPROVEN`. |
 
 ### Phase 6 — resilience, audit and mainnet
 
@@ -176,7 +222,7 @@ Evidence classes remain separate:
 | External audit P0/P1 closed | EXTERNAL_EVIDENCE_REQUIRED | No audit report supplied. |
 | Bridge/provider/migration drills complete | EXTERNAL_EVIDENCE_REQUIRED | Fresh mainnet ID plus independently audited snapshot/import is accepted, but no mainnet implementation, audit or current drill packet exists. |
 | Provider asset-loss response drill succeeds | PARTIAL | The source-only incident policy suspends sales/playback and requires creator re-upload with a new publication or takedown. No deployed provider-loss drill, support receipt or user-facing terms exist. `LOCAL_STATIC`. |
-| Dark deploy and internal mainnet canary proven | EXTERNAL_EVIDENCE_REQUIRED | Preview is disabled; production app/Bridge DNS did not resolve; no mainnet mutation is authorized. |
+| Dark deploy and internal mainnet canary proven | PASS_PREVIEW / MAINNET_UNPROVEN | Exact-main Preview Web/Bridge/dark read-model deployment and publication-read UAT passed with mutation/write gates closed. Production app/Bridge Workers and DNS remain absent; no mainnet canary or mutation is authorized. |
 | Refund/support/incident processes ready | PARTIAL | Pilot non-refundable direction, a source-only nine-alert incident table and a six-domain kill-switch matrix are recorded. All six controls are source-ready; global new purchases uses guardian pause/admin unpause and preserves existing entitlements. Named humans, deployed control proof, delivered notification route, drill receipts, mainnet terms and support approval remain absent. `LOCAL_TEST` + `LOCAL_STATIC`. |
 | Mainnet checklist approved by governance | EXTERNAL_EVIDENCE_REQUIRED | The required model is accepted as 2-of-3 multisig plus a 24-hour timelock, with immediate privilege-reducing guardian pause/freeze. Implementation, custody, audit, drill and governance approval evidence are absent. |
 | General access can open gradually | BLOCKED | Depends on all preceding phase gates and explicit activation approval. |
@@ -201,9 +247,9 @@ Evidence classes remain separate:
 | LP-001 | 3 | PARTIAL | Gated HMAC-verified Queue ingress and ACK/retry/poison consumer pass locally. Dedicated testnet Queue `0a0a7e4fe00547439c24aafc8f5316c2` and DLQ `82246e5e383d488d935a97169fe3cb63` exist with the exact source producer/consumer policy. Both provider attachment counts remain zero; deployed binding, redelivery and staging proof are absent. |
 | LP-002 | 3 | PARTIAL | The concrete `MediaProvider` implementation now lives with separate API/TUS transport and raw normalization; ready validation, bounded private-media probes and pure webhook normalization also have explicit modules. The independent provider-mutation gate blocks create before lease/provider use while keeping an authorized job recoverable; provider reads and existing TUS recovery stay available. Conservative cost reservation exists, but actual billing reconciliation is external. No runtime asset-delete call site exists, so an unused mutation was not added. `LOCAL_TEST`. |
 | WEB-001 | 3 | PASS_LOCAL | One canonical UI stage follows the target lifecycle and a pure predecessor table enforces forward/retry/reset/terminal edges. A fingerprint-verified v2 draft restores safe UI projections; provider-processing resumes visibility-aware Query polling without reopening payment, while interrupted upload returns to upload-ready. The finality retry and composed job/publication read now live in the existing publication use-case service, leaving the component without a direct network primitive or timer. Real browser reload/staging proof remains absent. `LOCAL_TEST`. |
-| EVENT-001 | 4 | PARTIAL | Market v2 locally emits job, rebuild-complete publication, entitlement, withdrawal, bridge and quote-key events with common context/idempotency fields and no capabilities. The fresh testnet v2 has zero publications, but the updated artifact is not deployed; `contract_migrated`, testnet economic-event proof and final receipt/event indexing remain absent. |
-| DATA-001 | 4 | PARTIAL | Source-only D1 schema, deterministic rebuild, complete-block atomic writer, bounded Neardata adapter, testnet-only scheduled entrypoint, contiguous cursor, >16-event fail-closed policy, structured lag telemetry, GET-only API and closed Discover/profile client pass locally. Dedicated v1 D1 `50b1e14f-2b06-444b-98cf-b828f11277ef` has migrations 0001–0004, one exact-final `ACTIVE` publication and forward-block watermark `264030390`; event, governance, media-job, entitlement, sale, withdrawal and archive tables are empty. The tracked Worker binding targets this D1 while the deployed Worker runs only the two-read finality probe and ingestion/backfill/API remain closed. Automatic Queue continuation is separately default-off in source. Full rebuild and its RTO target are deferred beyond v1; alert delivery is accepted risk. |
-| PAY-001 | 4 | PARTIAL | Technical pilot is non-refundable; source-only exact sale ledger, creator aggregate and withdrawal audit pass locally. Mainnet policy approval, deployed D1 and accounting reconciliation remain absent. |
+| EVENT-001 | 4 | PASS_TESTNET_FINAL | Mandatory tooling locks the Rust producer, both consumers and the recorded 18-event final testnet evidence to one catalog. The isolated canary supplied the seven previously missing events without changing the existing pilot contract; every applicable event now has a physical final-chain identity. `contract_migrated` remains `NOT_APPLICABLE_FRESH_ID`, not a fabricated event. Mainnet emission remains `UNPROVEN`. |
+| DATA-001 | 4 | PASS_V1_BOUNDED / CONTINUOUS_CLOSED | V1 D1 `50b1e14f-2b06-444b-98cf-b828f11277ef` has migrations 0001–0004, watermark `264071553`, one publication, five chain events, one entitlement, one sale, one withdrawal and two governance rows. Preview publication reads are active; ingestion/backfill/continuation and dedicated Queues remain unbound. Full rebuild/RTO 4h are deferred post-plan and are not v1 gates. |
+| PAY-001 | 4 | PASS_TESTNET / MAINNET_PARTIAL | Checkpoint 143 proves one 2 USDC purchase, 1.96 USDC creator credit/withdrawal, 0.04 USDC platform fee and matching D1 projections; purchases were re-paused. The technical-pilot policy is option A, explicitly non-refundable, with no automatic refund/reserve/escrow or implied credit. Mainnet product/legal/finance, user-facing terms and production accounting remain open. |
 | SRE-001 | 0–5 | PARTIAL | Redacted request/dependency/Queue/payment telemetry, a one-shot per-isolate cold-start field, bounded state-kind/projected DO record telemetry, Market reserve/RPC-finality sources and a machine-readable `SOURCE_ONLY` policy exist. The exact read-model finality source is deployed at one-minute cadence and its structured `lag_blocks` field is queryable. All nine alerts have a role/action and all six domain controls are source-ready. Guarded release inputs remain closed; the contract purchase control requires a separately approved on-chain pause receipt. The account-level native Workers Observability alert feature, named on-call, delivered notifications, deployed control exercises and drills remain absent. |
 | PERF-001 | 5 | PARTIAL | Opt-in local runs reject 100,000 wrong-origin requests with zero growth and serve 1,000 authorized warm requests at 9.15 ms p95 with zero errors, no warm external/DO calls and bounded cache. Mocked local latency is not deployed evidence. |
 | PERF-002 | 5 | EXTERNAL_EVIDENCE_REQUIRED | No current multi-creator/20 GB load evidence. |
@@ -4519,3 +4565,420 @@ Evidence classes remain separate:
   closed. The next gate is source-only: either revise the four-hour RTO or
   design and locally prove a materially higher-throughput ingestion path before
   another runtime activation.
+
+### CHECKPOINT 132 — Phase 4 source-only throughput prototype
+
+- DURUM:
+  `LOCAL_PROTOTYPE_PASS / PROVIDER_REPEAT_BLOCKED / RUNTIME_NOT_WIRED / RTO_UNPROVEN`.
+- BASELINE: local checkpoint
+  `agent/read-model-throughput-prototype@b8b34cd525ac6d23115f057b4d80776b11627872`.
+- UYGULAMA:
+  - the public Neardata surface exposed no range endpoint, so 180 exact-height
+    reads were bounded to six concurrent lanes;
+  - the D1 writer prepared at most 180 contiguous blocks and 900 SQL
+    statements as one fail-closed atomic batch;
+  - the prototype was not connected to the Worker schedule, Queue or runtime.
+- DOĞRULAMA: focused tests 31/31, related local CI tests 147/147 and Wrangler
+  dry-run passed. One read-only live Neardata sample processed
+  `263118001–263118180` in 4,837.636 ms, or 2,232.495 blocks/minute. The
+  immediate repeat was rejected by the provider; the 1.284 ms local SQLite
+  writer median is not live D1 evidence.
+- KANIT: `LOCAL_TEST` + one bounded `TESTNET_READ`. No push, PR, merge, deploy,
+  Queue/D1 write or runtime activation occurred.
+- GÜNCEL FAZ KAPISI: `LOCAL_PROTOTYPE_ONLY / RUNTIME_CLOSED`. The sample did
+  not prove sustained throughput or RTO 4h.
+
+### CHECKPOINT 133 — Phase 4 full-rebuild v1 deferral
+
+- DURUM: `FULL_REBUILD_DEFERRED_POST_PLAN / NOT_A_V1_GATE / RUNTIME_RECLOSED`.
+- KARAR: the user removed full zero-to-tip read-model rebuild and its RTO 4h
+  target from v1, Phase 4 and Phase 6 exit gates. They may be reconsidered only
+  after the remaining plan gates are complete.
+- SINIR: NEAR remains the economic/entitlement authority; D1 remains a
+  disposable derived read model. Bounded forward processing and event/read API
+  work stay in scope, but automatic Queue continuation does not.
+- KANIT: `USER_DECISION` + documentation. No code, deploy, Queue/D1 write or
+  runtime mutation occurred.
+- GÜNCEL FAZ KAPISI: `PASS_DECISION`. Full rebuild is not an active blocker and
+  must not silently re-enter EVENT-001, Phase 5 or Phase 6.
+
+### CHECKPOINT 134 — Phase 4 safe v1 publication bootstrap source
+
+- DURUM: `MERGED / PASS_MAIN_CI / LIVE_BOOTSTRAP_NOT_RUN / RUNTIME_CLOSED`.
+- UYGULAMA:
+  - PR #118 added a source-only bootstrap that reads one exact final NEAR block,
+    caps current publications at 48 and rejects a non-empty target D1;
+  - one atomic transaction writes only the finality watermark and current
+    publication rows. It does not invent historical events, sales,
+    entitlements, withdrawals or governance records.
+- DOĞRULAMA: squash merge
+  `8c853e5c20087950f2ef35a30d758e3b3d962922`; PR CI Gate/CodeQL passed,
+  exact-main CI `31882426264` succeeded and Deploy Preview `31882826899` was
+  skipped as guarded.
+- KANIT: `LOCAL_TEST` + `CI`. No live D1 write, Queue binding or runtime flag
+  change occurred in this checkpoint.
+- GÜNCEL FAZ KAPISI: `SOURCE_AND_MAIN_CI_PASS / LIVE_BOOTSTRAP_SEPARATE`.
+
+### CHECKPOINT 135 — Phase 4 v1 D1 bootstrap and forward-block proof
+
+- DURUM:
+  `PASS_TESTNET_D1 / ONE_PUBLICATION_BOOTSTRAPPED / TEMP_RUNTIME_REMOVED / QUEUES_UNBOUND`.
+- D1 MUTATION:
+  - dedicated EEUR database `youtick-market-read-model-v1-testnet`
+    (`50b1e14f-2b06-444b-98cf-b828f11277ef`) was created and migrations
+    0001–0004 were applied;
+  - exact final block `264030389` /
+    `6DXRoJsMfk6aed5GrVLEcgs6GtQ8GfTy5JRntLgGHHeK` bootstrapped one `ACTIVE`
+    publication. The complete empty block `264030390` /
+    `HL9DLPqdqSAGtG5eqrDzyw9fChkVsXedT7dT8dqiubJS` then advanced the
+    watermark without moving the publication source height;
+  - event, governance, media-job, entitlement, sale, withdrawal and archive
+    tables remained empty.
+- CLEANUP: the temporary remote-preview scheduled harness was removed and left
+  no repository change. The old canary D1 stayed at watermark `263118360` with
+  four chain/governance events and no publication. Backfill primary/DLQ stayed
+  at `0/0` producers/consumers.
+- KANIT: separately authorized `D1_MUTATION` + exact-final `TESTNET_READ` +
+  post-cleanup control-plane/D1 reads. No Queue attachment, public route or
+  persistent runtime activation occurred.
+- GÜNCEL FAZ KAPISI: `V1_D1_FOUNDATION_PASS / TRACKED_BINDING_PENDING`.
+
+### CHECKPOINT 136 — Phase 4 exact-main v1 D1 dark binding
+
+- DURUM: `MERGED / PASS_MAIN_CI / DARK_D1_BINDING_PASS / WRITE_FLAGS_CLOSED`.
+- UYGULAMA: PR #119 moved the tracked dark Worker binding to v1 D1. PR head
+  `46d011c516e1498c613cc828e6afc7db0b21990b` passed CI `31884813365`,
+  including both CodeQL jobs; squash merge produced exact main
+  `9a80a2ddfe2ea3d2cc1a48cbe21b35ae8fa5cbe3`.
+- DEPLOY/DOĞRULAMA: main CI `31885228459` passed 12/12 and guarded Deploy
+  Preview `31885607554` skipped. Dark version
+  `f4aa80ec-dbb5-4cfc-bd90-7fc8f8f8a3ec` ran at 100% with v1 D1, the
+  existing RPC secret, all four read/write flags false and no Queue binding or
+  public route. A cron receipt returned `outcome=ok`, `lag_blocks=2`,
+  `rpc_calls=2`; read-only D1 state remained watermark `264030390` and one
+  publication.
+- KANIT: `CI` + `PREVIEW_DEPLOYMENT` + read-only Worker/D1/Queue evidence.
+- GÜNCEL FAZ KAPISI: `DARK_BINDING_PASS / API_AND_WRITES_CLOSED`.
+
+### CHECKPOINT 137 — Phase 4 public finance-read removal
+
+- DURUM:
+  `MERGED / PASS_MAIN_CI / PUBLIC_FINANCE_API_REMOVED / RUNTIME_NOT_CHANGED`.
+- UYGULAMA: PR #120 removed creator sales summaries from the public read API.
+  `/v1/creators/:account/sales-summary` returns `404 not_found` without a D1
+  query even when the API gate is true; Profile reads only creator
+  publications, while balances and withdrawals remain canonical NEAR reads.
+- DOĞRULAMA: PR head
+  `7b91a877827779aa7b5a4c4d0506c51258c1cd5d` passed CI
+  `31888890156`; exact main
+  `81ec27a00c46e4170b4e0adacc239ed3ef902f45` passed main CI
+  `31889320200`, while guarded Deploy Preview `31889712915` skipped. Local
+  root 147/147, Web 134/134, browser canary 5/5, lint, build, docs and dry-run
+  checks passed.
+- KANIT: `LOCAL_TEST` + `CI`. The serving dark version, D1, Queues and four
+  false runtime flags did not change.
+- GÜNCEL FAZ KAPISI: `PUBLIC_FINANCE_BOUNDARY_PASS / DARK_DEPLOY_PENDING`.
+
+### CHECKPOINT 138 — Phase 4 exact-main finance-safe dark deployment
+
+- DURUM: `PASS_PREVIEW_DARK / EXACT_MAIN / WRITES_CLOSED`.
+- DEPLOY: exact-main
+  `81ec27a00c46e4170b4e0adacc239ed3ef902f45` was installed as Worker
+  version `8ac7fc2f-11e1-4a6e-a2aa-2cb188f0b690`, deployment
+  `be62a709-98e3-42d2-a661-b8495e3cd3e0`, at 100%.
+- DOĞRULAMA: main CI 12/12, focused read-model 36/36 and strict Wrangler
+  dry-run passed. The exact version bound v1 D1 and the existing RPC secret,
+  exposed no route or Queue, kept all four runtime/write flags false and
+  emitted one healthy two-read finality receipt. D1 stayed at watermark
+  `264030390`, one publication and zero rows in the other domain tables;
+  read-only probes reported `rows_written=0`, `changed_db=false`.
+- KANIT: `CI` + `PREVIEW_DEPLOYMENT` + read-only runtime/D1/Queue evidence.
+- GÜNCEL FAZ KAPISI: `DARK_EXACT_MAIN_PASS / PUBLIC_API_CLOSED`.
+
+### CHECKPOINT 139 — Phase 4 publication-only internal read canary
+
+- DURUM:
+  `PASS_INTERNAL_CANARY / PUBLICATION_ONLY / TEMP_RUNTIME_REMOVED / PRODUCTION_CLOSED`.
+- CANARY:
+  - a temporary remote read API and local HTTPS Web used exact main
+    `81ec27a00c46e4170b4e0adacc239ed3ef902f45` and the real v1 D1;
+  - health, publication list and creator-publications returned 200 with the
+    exact watermark and one `ACTIVE` publication. Sales-summary stayed 404,
+    invalid creator stayed 400 and CORS allowed only the exact canary origin;
+  - Discover desktop/mobile rendered the publication and Profile client tests
+    kept publication activity in D1 while balances remained on NEAR. No wallet
+    approval was requested.
+- CLEANUP: temporary Web/API processes were stopped and no persistent canary
+  service remained. The dark deployment, false flags, unbound Queues and D1
+  contents were unchanged.
+- KANIT: `LOCAL_BROWSER` + temporary `PREVIEW_READ` + post-cleanup read-only
+  control-plane evidence. No lasting deploy/runtime mutation remained.
+- GÜNCEL FAZ KAPISI: `INTERNAL_PUBLICATION_READ_PASS / PREVIEW_RELEASE_PENDING`.
+
+### CHECKPOINT 140 — Phase 4 permanent Preview publication reads
+
+- DURUM: `PASS_PREVIEW / ROLLBACK_PROVEN / PRODUCTION_CLOSED`.
+- RELEASE:
+  - PR #121 / exact main
+    `76e85f44e0d7ab38b0c96ab1302dcfde576b42dd` deployed route-free
+    `youtick-market-read-model-preview` version
+    `4442b1f0-2f0c-4adb-945d-3c1a1d80db00` at
+    `read-preview.youtick.net`. Only read API is enabled; ingestion,
+    backfill and continuation are false and no Queue is bound;
+  - PR #122 decoupled read-only Discover/Profile from the paid-action gate;
+    PR #123 bounded transient asset-404 propagation retries.
+- ROLLBACK / EXACT-MAIN PROOF: deploy run `31894926563` failed closed on the
+  first transient 404 and restored the three previous versions. Exact main
+  `c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc` then passed CI
+  `31895385141` and Deploy Preview `31895517069`.
+- FINAL RUNTIME: Web `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0`, Bridge
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` and dark read model
+  `62451057-c6b6-40ff-a8f6-0ac6723d0a1c` carry the exact-main tag.
+  Bridge mutation gates and all dark read-model flags are false. The separate
+  publication API remains at source tag
+  `76e85f44e0d7ab38b0c96ab1302dcfde576b42dd`.
+- UAT: Preview Discover/Profile and publication routes passed desktop/mobile;
+  sales-summary remained 404, invalid creator 400 and POST 405. Production Web
+  and API were not created. `DEPLOY_PREVIEW_ENABLED` returned to false.
+- KANIT: `CI` + `PREVIEW_DEPLOYMENT` + browser UAT + real rollback. No
+  ingestion, backfill, continuation, production release, alert or support
+  request occurred.
+- GÜNCEL FAZ KAPISI: `PUBLICATION_READ_PASS_PREVIEW / PRODUCTION_CLOSED`.
+
+### CHECKPOINT 141 — Phase 4 live economic projection preflight
+
+- DURUM:
+  `PREFLIGHT_PASS / ECONOMIC_MUTATION_NOT_RUN / PERMANENT_ENTITLEMENT_RISK_ACCEPTED`.
+- SOURCE/CHAIN PARITY: exact-main source built with Rust 1.86 and cargo-near
+  0.18 produced Market WASM hash
+  `d2f7a9b04bf215bbe5138523fe1e049a2707cc01a2bd35b52a657aa60e646833`,
+  matching the live testnet contract. Projection/event 35/35, Market 7/7 and
+  paid-media lifecycle 22/22 tests passed.
+- READ-ONLY PREFLIGHT: purchases were paused; the target publication was
+  `ACTIVE` at 2 USDC; buyer/creator balances, storage registration, separate
+  local signers and Market reserve were sufficient. D1 watermark `264030390`
+  lagged the observed final tip by 28,863 blocks and contained no entitlement,
+  sale or withdrawal rows; Queues stayed unbound.
+- RISK: the proposed testnet purchase would leave a permanent entitlement and
+  had no refund/delete path. Catch-up and economic mutations therefore required
+  separate approvals.
+- KANIT: `LOCAL_TEST` + exact-final `TESTNET_READ` + read-only D1/Queue/runtime
+  evidence. No chain or D1 mutation occurred.
+- GÜNCEL FAZ KAPISI: `MANUAL_CATCHUP_APPROVAL_REQUIRED`.
+
+### CHECKPOINT 142 — Phase 4 bounded manual v1 D1 catch-up
+
+- DURUM:
+  `BOUNDED_MANUAL_CATCHUP_PASS / QUEUE_UNBOUND / ECONOMIC_MUTATION_NOT_RUN / RUNTIME_CLOSED`.
+- D1 MUTATION: from starting watermark `264030390` /
+  `HL9DLPqdqSAGtG5eqrDzyw9fChkVsXedT7dT8dqiubJS`, an explicitly
+  authorized detached exact-main worktree advanced 35,078 contiguous blocks to
+  fixed final target `264065468` /
+  `8YM5LV4yQ4CRm58Xorb2intg1bysLMjH37gegx1u8jNC` without Queue bindings.
+- FAIL-CLOSED PROOF: FastNEAR reported zero successful target-contract events
+  in every bounded range; 100-block header lists were height/hash/parent
+  checked. The D1 trigger rejected gaps, while wrong contract, stale parallel
+  work, RPC timeout and incomplete indexed tail left the cursor unchanged.
+- FINAL STATE: one publication remained; chain events, media jobs,
+  entitlements, sales, withdrawals, governance and archives stayed zero. The
+  dark exact-main version remained at 100% with four false flags; primary/DLQ
+  remained `0/0`; `DEPLOY_PREVIEW_ENABLED=false`.
+- KANIT: separately authorized bounded `D1_WRITE` + exact-final `TESTNET_READ`
+  + post-write read-only verification. No purchase, withdrawal, Queue,
+  continuous ingestion, alert or support request occurred.
+- GÜNCEL FAZ KAPISI: `ECONOMIC_CANARY_APPROVAL_REQUIRED`.
+
+### CHECKPOINT 143 — Phase 4 live testnet sale and withdrawal projection
+
+- DURUM:
+  `LIVE_ECONOMIC_PROJECTION_PASS / PURCHASES_REPAUSED / QUEUE_UNBOUND / RUNTIME_RECLOSED`.
+- TESTNET MUTATION:
+  - admin unpaused purchases in transaction
+    `Hav1jP5TBAnS7g3R8Wjf25Ex21nXLTdSZ5uUzT589iwL`;
+  - buyer transaction `FcsWfzpKdxXiX2uuBNYHp9wPM4Ri9vigCmdBnzdahHxS`
+    paid 2 USDC and created one permanent entitlement, allocating 1.96 USDC to
+    the creator and 0.04 USDC to the platform;
+  - guardian transaction `EvbrnfLg5fm1EEDnqDpmxVzTBKjTyQAEFKKLen7BXSCH`
+    re-paused purchases;
+  - creator transaction `mzzxY7tE9yr7HxxFR7Zo9EMKdCnLSk54yCcop4TDy5L`
+    withdrew 1.96 USDC successfully.
+- D1 PROJECTION: a separately authorized Queue-free bounded apply advanced
+  6,085 blocks to `264071553` /
+  `5cC4NH1a2VYyt8gQmjnmPJ54cE1YvDKrqTx4436HYJb2`. Five exact final
+  events produced `chain_events=5`, `viewer_entitlements=1`, `sale_ledger=1`,
+  `withdrawal_history=1`, `governance_audit=2`; the sale reconciles
+  `2000000=1960000+40000` and withdrawal is terminal-success.
+- CLEANUP/CURRENT BOUNDARY: final chain state has purchases paused, entitlement
+  true, creator contract balance zero and expected buyer/creator/Market USDC
+  balances. Exact-main CI/Preview deployment remained passed, dark runtime
+  flags remained false and dedicated Queues remained unbound.
+- KANIT: explicitly authorized `TESTNET_MUTATION` + bounded `D1_WRITE` +
+  exact-final chain/D1 reconciliation + read-only cleanup verification. The
+  later chain tip moved on, so continuous ingestion remains `UNPROVEN`.
+- GÜNCEL FAZ KAPISI: `PAY_001_POLICY_DECISION_REQUIRED`; no automatic next
+  runtime or economic action.
+
+### CHECKPOINT 130–143 / PAY-001 document reconciliation closure
+
+- DURUM:
+  `DOCUMENT_RECONCILIATION_PASS / PAY_001_PILOT_POLICY_PASS / RUNTIME_UNCHANGED`.
+- BASELINE: `origin/main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`,
+  exact-main CI `31895385141`, Deploy Preview `31895517069` and local PAY-001
+  decision commit `cf2e043243a8aef9b13b96506092950b883f22a3`.
+- UZLAŞTIRMA:
+  - missing Checkpoints 132–143 were copied from the plan into this canonical
+    evidence log with local/CI/testnet/D1/deploy classes kept separate;
+  - Phase 4 and Section 14 summaries now reflect the v1 D1 watermark, Preview
+    publication reads, live testnet economic projection and the accepted
+    non-refundable technical-pilot option A;
+  - Checkpoint 132 remains an unpublished local prototype; Checkpoint 133 keeps
+    full rebuild/RTO 4h deferred beyond the active plan.
+- CURRENT READ-ONLY RECHECK (2026-08-15):
+  - exact main and its terminal CI/deploy results are unchanged;
+  - Preview Web and Bridge plus dark read model remain at the recorded 100%
+    versions. Bridge mutation gates and all four dark read-model flags are
+    false; publication API read-only mode is true with ingestion/backfill/
+    continuation false;
+  - v1 D1 remains at `264071553` with counts `1/5/1/1/1/2` for publication,
+    chain-event, entitlement, sale, withdrawal and governance rows. Queries
+    reported `rows_written=0`, `changed_db=false`;
+  - dedicated primary/DLQ each report zero producers and zero consumers;
+    read API, Bridge Preview, Web Preview and `youtick.net` returned HTTP 200;
+    `DEPLOY_PREVIEW_ENABLED=false`.
+- DOĞRULAMA: VitePress docs build and `git diff --check` passed; Checkpoint
+  130–143 headings are unique and the critical SHA/run/D1/watermark/PAY-001
+  tokens match the plan.
+- KANIT: `LOCAL_STATIC` + `LOCAL_TEST` + read-only
+  Git/GitHub/Cloudflare/HTTP/D1 evidence.
+  This reconciliation performed no deploy, Queue/D1 write, provider, wallet,
+  chain, email, alert or support mutation. Its branch CI is `UNPROVEN` until a
+  later explicit publish/PR workflow.
+- GÜNCEL FAZ KAPISI: `PASS_LOCAL_DOCUMENTATION`. The single next gate is
+  EVENT-001 standard event-catalog closure. Stop before any runtime, Queue/D1
+  or economic activation.
+
+### CHECKPOINT 144 — Phase 4 / EVENT-001 catalog parity gate
+
+- DURUM:
+  `PASS_LOCAL_SOURCE / PARTIAL_TESTNET / CI_UNPROVEN / RUNTIME_UNCHANGED`.
+- BASELINE: local branch
+  `agent/pay-001-non-refundable-20260815@63edf7158b3e7b340bc42e8a1103784e950bb4e3`,
+  two commits ahead of `origin/main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`.
+- AMAÇ: Close catalog drift locally without inventing a migration event or
+  authorizing a contract deploy/testnet transaction.
+- UYGULAMA:
+  - a standard-library-only mandatory CI regression extracts the Market v2
+    Rust event call sites and the two final-event consumer allowlists;
+  - it requires the 15 applicable plan events plus
+    `bridge_rotation_cancelled`, `new_purchases_paused` and
+    `new_purchases_unpaused` to be emitted and accepted exactly;
+  - both consumers continue accepting `contract_migrated`, but the fresh-ID
+    pilot does not emit it because no migration entrypoint exists;
+  - API/testing docs now expose the cancellation event and the same
+    `NOT_APPLICABLE_FRESH_ID` boundary.
+- DOĞRULAMA:
+  - focused catalog regression `1/1` and the read-model/catalog group `42/42`
+    passed;
+  - Rust 1.86 fmt/clippy passed; Market unit tests `7/7` and paid-media
+    lifecycle tests `22/22` passed;
+  - mandatory release/security/SLO/catalog tooling passed `155/155`;
+  - VitePress docs build and diff whitespace checks passed.
+- CURRENT READ-ONLY RECHECK (2026-08-15):
+  - exact main CI `31895385141` and Deploy Preview `31895517069` remain
+    successful for `c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`;
+  - Preview Web version `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0`, Bridge
+    version `86305272-4ebb-4ca4-9d0e-11e3bd182b17` and dark read-model
+    version `62451057-c6b6-40ff-a8f6-0ac6723d0a1c` are each at 100%;
+  - Bridge reports `stage=DISABLED` and every mutation/upload/playback/Queue
+    readiness field false. The dark read model has all four runtime flags
+    false; publication API version `4442b1f0-2f0c-4adb-945d-3c1a1d80db00`
+    has read-only mode true and ingestion/backfill/continuation false;
+  - Bridge health and publication reads returned HTTP 200; the publication
+    response still reports watermark `264071553`.
+- KANIT: `LOCAL_STATIC` + `LOCAL_TEST` + read-only GitHub/Cloudflare/HTTP.
+  Branch CI and the remaining 13 live event receipts are `UNPROVEN`.
+- RİSK/BLOCKER: No deploy, Queue/D1 activation or write, provider, wallet,
+  contract/chain, alert, email or support mutation occurred. Full EVENT-001
+  testnet proof requires a separately approved bounded contract deployment and
+  chain transaction set; no fake migration action is part of that set.
+- GÜNCEL FAZ KAPISI:
+  `EVENT_001_SOURCE_PASS / TESTNET_CATALOG_APPROVAL_REQUIRED`. Stop here; do
+  not advance to Phase 2–3 staging/runtime evidence automatically.
+
+### CHECKPOINT 145 — Phase 4 / EVENT-001 final testnet catalog proof
+
+- DURUM:
+  `PASS_TESTNET_FINAL / CANARY_RECLOSED / CI_UNPROVEN / RUNTIME_UNCHANGED`.
+- BASELINE: local
+  `agent/pay-001-non-refundable-20260815@6cbb390cde03c7c6ebc739f9ad26c3f3876e103c`,
+  three commits ahead of
+  `origin/main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`.
+- YETKİ: The user separately approved the bounded EVENT-001 contract deploy
+  and testnet transaction set. Queue/D1, provider and Cloudflare activation
+  were not included.
+- PREFLIGHT:
+  - exact main CI `31895385141` and Deploy Preview `31895517069` remained
+    successful; the public Bridge health stayed `stage=DISABLED` with every
+    mutation/upload/playback/Queue readiness field false;
+  - Rust 1.86/cargo-near rebuilt Market WASM with SHA-256
+    `d2f7a9b04bf215bbe5138523fe1e049a2707cc01a2bd35b52a657aa60e646833`,
+    matching the reviewed pilot artifact;
+  - the canonical Neardata parser recovered 11 distinct applicable catalog
+    events with exact final physical identities from the existing fresh pilot
+    contract before any new mutation.
+- ISOLATED DEPLOY:
+  - the first proposed parent account failed local/on-chain key parity before
+    signing; no account or fund mutation occurred;
+  - transaction `AiPAvgBjnZD1LfA7tHTwYjFEmThzm6hx5Yi2WMpFfzop` created and
+    funded `lp-event-144.dev-election2.testnet` with 7.5 testnet NEAR;
+  - deploy/init transaction
+    `9cBiinfZismi7ZFcjR2Vqcuo8sGKeiuTLNmJCVA66B4x` installed the exact WASM
+    behind separate platform/bridge/admin/guardian authorities. The generated
+    canary FullAccess key remains in the local legacy keychain and is not
+    committed.
+- BOUNDED CANARY:
+  - one 0.05 NEAR non-refundable native job fee authorized
+    `event-144-20260815`; its upload key was replaced and the bridge finalized
+    one synthetic publication without any provider call;
+  - one 2 USDC testnet purchase created a permanent canary entitlement and
+    split `1960000/40000` into creator/platform liabilities;
+  - both unregistered payout recipients caused the intended transfer failure:
+    creator `withdrawal_failed` was emitted and both liabilities were restored;
+    platform withdrawal emitted its required `started` event and restored;
+  - the publication then emitted sales suspension and one-way takedown. Bridge
+    proposal/cancellation and quote-key rotation supplied the remaining
+    governance events;
+  - two public-RPC cancellation attempts rate-limited before signing. A bounded
+    retry through the preconfigured FastNEAR testnet connection succeeded once;
+    no duplicate cancellation event was emitted.
+- FINAL EVENT PROOF:
+  - `docs/architecture/event-catalog-testnet-evidence.json` records exactly 18
+    applicable `youtick_market@1.0.0` events, each with contract, transaction,
+    final block/hash, receipt ID, event index and business idempotency key;
+  - the mandatory catalog regression proves the evidence names equal the Rust
+    producer and both final-event consumer catalogs and that all 18 physical
+    identities are unique;
+  - `contract_migrated` remains `NOT_APPLICABLE_FRESH_ID` because neither
+    contract exposes a migration entrypoint.
+- FINAL STATE:
+  - canary bridge is frozen, new purchases are paused, pending rotation is
+    empty, active bridge is the original bounded bridge, quote-key version is
+    2, publication is `TAKEDOWN` and reserve coverage is true;
+  - canary holds the permanent entitlement, 2 USDC contract balance,
+    `1960000/40000` creator/platform liabilities and the 0.05 NEAR platform
+    balance. Account/storage-deposit deletion was not authorized or attempted;
+  - the existing pilot contract remains bridge-unfrozen, purchase-paused and
+    without a pending rotation. Preview Bridge remains disabled and the public
+    read API watermark remains `264071553`.
+- DOĞRULAMA: catalog/evidence regression `1/1`, full read-model/catalog group
+  `42/42`, Market unit/lifecycle `7/7 + 22/22`, mandatory
+  release/security/SLO/catalog tooling `155/155`, live final Neardata evidence
+  replay `18/18`, VitePress build and diff whitespace checks passed.
+- KANIT: exact reviewed `TESTNET_DEPLOY` + authorized `TESTNET_MUTATION` +
+  exact-final `TESTNET_READ` + `LOCAL_TEST`. Branch CI remains `UNPROVEN` until
+  publish/PR.
+- SINIR: No Cloudflare Worker deploy/flag, Queue producer/consumer, D1 write,
+  provider call, Livepeer asset, alert, email or support request occurred.
+- GÜNCEL FAZ KAPISI: `EVENT_001_PASS_TESTNET_FINAL`. The single next gate is
+  Phase 2 V2 authorizer production-like staging evidence; stop before any
+  Cloudflare deploy or runtime activation without separate approval.

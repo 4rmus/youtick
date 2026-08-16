@@ -56,8 +56,8 @@ The local source catalog includes:
   `creator_balance_withdrawal_succeeded`,
   `creator_balance_withdrawal_failed`
 - `platform_withdrawal_started`
-- `bridge_frozen`, `bridge_rotation_proposed`, `bridge_rotated`,
-  `bridge_unfrozen`
+- `bridge_frozen`, `bridge_rotation_proposed`, `bridge_rotation_cancelled`,
+  `bridge_rotated`, `bridge_unfrozen`
 - `new_purchases_paused`, `new_purchases_unpaused`
 - `quote_key_rotated`
 
@@ -69,6 +69,10 @@ Exact successful replays do not emit a second economic event. Upload public
 keys are represented only by SHA-256 in replacement audit events; private keys,
 provider credentials and TUS capabilities are never logged. `contract_migrated`
 is intentionally absent because fresh Market v2 has no migration entrypoint.
+
+All 18 applicable events have exact final testnet block/hash, receipt and event
+index evidence in
+[`event-catalog-testnet-evidence.json`](../architecture/event-catalog-testnet-evidence.json).
 
 ## Access
 
