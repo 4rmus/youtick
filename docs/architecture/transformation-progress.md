@@ -6453,3 +6453,68 @@ Evidence classes remain separate:
   next gate is `PHASE2_PR124_SQUASH_MERGE_DECISION_REQUIRED`: after explicit
   approval, revalidate #124's exact head/checks and squash-merge only #124;
   stop again before rebuilding or retargeting #125.
+
+### CHECKPOINT 166 — Phase 2 / PR #124 guarded squash merge
+
+- DURUM: `PASS_EXACT_HEAD_SQUASH_MERGE / PASS_POST_MERGE_MAIN_CI /
+  DEPLOY_SKIPPED / RUNTIME_CLOSED / PR125_BASE_PRESERVED /
+  CURRENT_GATE_CLOSED`.
+- YETKİ, VARSAYIMLAR VE KABUL:
+  - the user explicitly approved only the proposed #124 squash-merge gate and
+    the reversible branch-retention guard required to keep #125 independently
+    reviewable;
+  - acceptance requires #124 head `6a327835...` and all checks to remain green,
+    one squash commit on `main`, #125 to remain based on the preserved #124
+    branch, the repository auto-delete setting to be restored, exact-main CI to
+    pass, Deploy Preview to remain disabled, and runtime to remain stable-only
+    with every Phase 2 flag closed;
+  - #125 rebase, retarget or force-push, provider/secret mutation, traffic
+    shift, wallet action, testnet write and Production are excluded.
+- PREFLIGHT:
+  - #124 was `OPEN`, `DRAFT`, `MERGEABLE/CLEAN`, targeted
+    `main@c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`, and still had exact head
+    `6a327835e736a746e08d827644bc9d4a46222bc3`, six files at `+785/-19` and all
+    reported checks green in run `31906629289`;
+  - #125 was `OPEN`, `DRAFT`, `MERGEABLE/CLEAN` at `853554c4...` and based on
+    `agent/pay-001-non-refundable-20260815@6a327835...`;
+  - repository settings allowed squash/rebase, disabled merge commits and had
+    `delete_branch_on_merge=true`. GitHub's documented deleted-base behavior
+    would retarget #125 to `main`; the user separately approved temporarily
+    disabling that setting. Repository `DEPLOY_PREVIEW_ENABLED=false`.
+- GUARDED MERGE:
+  - a cleanup trap first set `delete_branch_on_merge=false`, verified the
+    result, marked only #124 ready and invoked squash merge with
+    `--match-head-commit 6a327835e736a746e08d827644bc9d4a46222bc3`;
+  - GitHub merged #124 at `2026-08-16T17:57:32Z` as exact `main` commit
+    `7205fe941d95011de0af1691d6a274b0fa373b15`, whose only parent is prior
+    `main@c80377bf...`. Its tree is byte-for-byte equal to #124 head;
+  - the #124 head branch still resolves to `6a327835...`; #125 remains draft,
+    open and based on that exact branch. The cleanup restored repository
+    `delete_branch_on_merge=true`. No #125 rebase, retarget or force-push
+    occurred; the only follow-up change is this append-only evidence record.
+- LOCAL_TEST: `PASS_TREE_PARITY / NO_NEW_SOURCE_TEST`; `git diff --exit-code`
+  between squash `main@7205fe94...` and #124 head `6a327835...` is empty. This
+  merge gate introduced no new application source. The evidence-log follow-up
+  is docs-only and must pass its own exact-head CI before handoff.
+- CI: `PASS_EXACT_MAIN_SHA`; post-merge push run `31963154548` targets exact
+  `main@7205fe941d95011de0af1691d6a274b0fa373b15` and completed `success`.
+  Runtime/production WASM audits, both CodeQL languages, Docs, Web, Bridge,
+  Livepeer Protocol, both Contracts jobs and mandatory `CI Gate` passed.
+- TESTNET: `NOT_RUN`; no provider read, wallet action, signature, chain query,
+  transaction or write occurred.
+- DEPLOY: `SKIPPED`; exact-main Deploy Preview workflow run `31963541461`
+  completed `skipped` because `DEPLOY_PREVIEW_ENABLED=false`. No version upload,
+  route change or traffic deployment occurred.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; Bridge remains stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` 100% and Web remains stable
+  `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` 100%. Fresh cache-busting Bridge
+  health returns the same version, `stage=DISABLED`, and provider/operator
+  mutation, new upload, control plane, playback V1/V2/shadow, Queue and both
+  archive readiness fields are false.
+- GÜNCEL FAZ KAPISI: `PHASE2_PR124_SQUASH_MERGE_DECISION_REQUIRED` is closed.
+  Stop here; do not rebuild, retarget or merge #125 automatically. The single
+  proposed next gate is `PHASE2_PR125_RESTACK_DECISION_REQUIRED`: after explicit
+  approval, create a safety reference, replay only #125's post-`6a327835...`
+  commits on exact `main@7205fe94...`, push with lease, retarget #125 to `main`,
+  prove the exact five-path diff and obtain fresh exact-head CI; do not merge
+  #125 in that gate.
