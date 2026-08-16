@@ -6307,3 +6307,69 @@ Evidence classes remain separate:
   remaining five-path dirty callback/provider-canary/docs changes, select only
   the intended paths for a commit/PR update, and obtain exact-SHA CI before any
   further runtime gate.
+
+### CHECKPOINT 164 — Phase 2 / device-certificate changeset exact-SHA CI
+
+- DURUM: `PASS_EXPLICIT_PATH_SCOPE / PASS_DRAFT_STACKED_PR /
+  PASS_EXACT_SHA_CI / RUNTIME_UNCHANGED / CURRENT_GATE_CLOSED`.
+- VARSAYIMLAR VE ÖLÇÜLEBİLİR KABUL:
+  - the intended changeset is exactly the five paths left by Checkpoint 163;
+  - because the working branch descends from draft PR #124, PR #125 must target
+    that exact ancestor branch so its aggregate diff contains no unrelated
+    #124 path;
+  - acceptance requires a clean worktree, an explicit five-path staged list,
+    `git diff --cached --check`, a draft PR with the same five paths and an
+    exact-head successful required `CI Gate`;
+  - no merge, deploy, secret/provider change, traffic shift, wallet action,
+    testnet write or runtime-flag activation is in scope.
+- PREFLIGHT VE KAPSAM:
+  - initial branch/HEAD was
+    `agent/phase2-v2-authorizer-staging-20260815@28a204a7ff6be66608b2469870fa32eae1b8b0f9`;
+    `origin/main` was `c80377bfb7ad03e2df9d8c1d5a23db4dbfd643fc`;
+  - review confirmed exactly these five dirty paths:
+    `apps/web/__tests__/unit/signless-access-key.test.ts`,
+    `apps/web/lib/signless-access-key.ts`,
+    `docs/architecture/transformation-progress.md`,
+    `workers/livepeer-bridge/scripts/provider-canary.mjs` and
+    `workers/livepeer-bridge/scripts/provider-canary.test.mjs`;
+  - the Web change reconciles a lost wallet callback only after final access-key
+    deletion and bounded final subject-grant revocation are both proven. The
+    provider canary adds only a redacted, GET-only playback-policy read with a
+    five-second timeout; provider mutation remains disabled by default;
+  - explicit-path staging listed only those five paths and
+    `git diff --cached --check` passed. Commit
+    `ab2719a0f52ff3dd54eaaed436ef75d82d00310c` was pushed with a clean
+    worktree;
+  - draft PR #125 initially inherited the main-targeted ancestor diff. Its base
+    was corrected to draft PR #124's exact head branch
+    `agent/pay-001-non-refundable-20260815@6a327835...`; final GitHub metadata
+    reports exactly the five intended paths, two commits, `OPEN`, `DRAFT` and
+    `MERGEABLE`.
+- LOCAL_TEST: `PASS`; Web unit/integration tests pass `137/137`, source lint and
+  the closed-feature OpenNext Cloudflare build pass. Bridge provider-canary
+  tests pass `71/71`, the full Bridge suite passes `193` with `2` skipped,
+  Bridge type-check and Wrangler dry-run pass, Docs build passes, and final
+  `git diff --check` passes.
+- CI: `PASS_EXACT_SHA`; PR #125 run
+  `31961433546` targets exact head `ab2719a0...`. Attempt 1 passed Web, Bridge,
+  Docs, Contracts, CodeQL, protocol and runtime dependency audit, but the
+  production WASM audit could not fetch the external RustSec advisory database
+  and received HTTP 401; its non-JSON failure output caused `CI Gate` to fail.
+  No changed path owns that job. One failed-job retry at the same SHA succeeded:
+  Production WASM Dependency Audit job `95201119100` passed, CI Gate job
+  `95201178118` passed, and run attempt 2 completed `success`.
+- TESTNET: `NOT_RUN`; no wallet, signature, chain query, transaction or provider
+  request was initiated for this source/CI gate.
+- DEPLOY: `NOT_RUN`; the CI Bridge job executed only Wrangler dry-run. No Worker
+  version upload, route update or traffic deployment occurred.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; fresh control-plane reads still
+  assign Bridge stable `86305272-4ebb-4ca4-9d0e-11e3bd182b17` and Web stable
+  `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` at exactly 100%. Fresh cache-busting
+  Bridge health returns the same version, `stage=DISABLED`, and every provider,
+  operator, upload, playback V1/V2/shadow, Queue and archive readiness field
+  false. Repository `DEPLOY_PREVIEW_ENABLED=false`.
+- GÜNCEL FAZ KAPISI: `PHASE2_DEVICE_CERT_CHANGESET_CI_DECISION_REQUIRED` is
+  closed. Stop here and do not merge or advance automatically. The single
+  proposed next gate is `PHASE2_CHANGESET_STACK_REVIEW_DECISION_REQUIRED`:
+  review the #124 -> #125 dependency and exact diffs, then decide the merge
+  order separately without performing either merge.
