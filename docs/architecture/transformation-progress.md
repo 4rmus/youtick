@@ -6888,7 +6888,9 @@ Evidence classes remain separate:
   - GitHub records PR #127 `MERGED` from exact head `1bb8718...` as squash
     commit `8455ad4b5d33f40cef1e2ba57e2b3b08710ef790`. The commit has sole parent
     `1479e7fa858c27912aa6467e56e2c2722a45f106`, and its tree is byte-identical
-    to the reviewed PR-head tree. The source branch was not deleted.
+    to the reviewed PR-head tree. The merge command did not request branch
+    deletion. GitHub reports `delete_branch_on_merge=true`; the remote source
+    branch is absent while the local branch remains.
 - LOCAL_TEST: `PASS_DOCS_ONLY`; no source changed in this evidence follow-up.
   The Docs production build and `git diff --check` pass.
 - CI: `PASS_EXACT_MAIN`; push run `31973188051` completed successfully at exact
