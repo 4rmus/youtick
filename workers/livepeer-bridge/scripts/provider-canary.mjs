@@ -13,6 +13,12 @@ function requireApiKey(apiKey) {
     }
 }
 
+function requirePlaybackId(playbackId) {
+    if (typeof playbackId !== 'string' || !/^[A-Za-z0-9_-]{6,128}$/.test(playbackId)) {
+        throw new Error('livepeer_playback_id_invalid');
+    }
+}
+
 async function readJson(response, code) {
     let body;
     try {
@@ -82,6 +88,39 @@ export async function deleteAsset(apiKey, assetId, fetchImpl = fetch) {
     return response.status;
 }
 
+export async function runProviderReadPreflight({
+    apiKey,
+    playbackId,
+    fetchImpl = fetch,
+}) {
+    requireApiKey(apiKey);
+    requirePlaybackId(playbackId);
+    let response;
+    try {
+        response = await fetchImpl(
+            `${LIVEPEER_API_BASE}/playback/${encodeURIComponent(playbackId)}`,
+            {
+                headers: { Authorization: `Bearer ${apiKey}` },
+                signal: AbortSignal.timeout(5_000),
+            },
+        );
+    } catch {
+        throw new Error('provider_read_preflight_unavailable');
+    }
+    if (response.status !== 200) throw new Error(`provider_read_preflight_failed_${response.status}`);
+    const playback = await readJson(response, 'provider_read_preflight_response_invalid');
+    if (playback.type !== 'vod' || playback.meta?.playbackPolicy?.type !== 'jwt') {
+        throw new Error('provider_read_preflight_policy_invalid');
+    }
+    return {
+        schema: 'youtick.livepeer-provider-read-preflight.v1',
+        status: response.status,
+        kind: 'vod',
+        policy: 'jwt',
+        playback_id_sha256: sha256(playbackId),
+    };
+}
+
 export async function runProviderCanary({
     apiKey,
     mutationsEnabled,
@@ -133,9 +172,16 @@ export async function runProviderCanary({
 }
 
 if (import.meta.main) {
-    const receipt = await runProviderCanary({
-        apiKey: process.env.LIVEPEER_API_KEY,
-        mutationsEnabled: process.env.LIVEPEER_PROVIDER_CANARY_MUTATIONS === 'true',
-    });
+    const mode = process.argv[2];
+    if (mode && mode !== '--read-playback') throw new Error('provider_canary_mode_invalid');
+    const receipt = mode === '--read-playback'
+        ? await runProviderReadPreflight({
+            apiKey: process.env.LIVEPEER_API_KEY,
+            playbackId: process.argv[3],
+        })
+        : await runProviderCanary({
+            apiKey: process.env.LIVEPEER_API_KEY,
+            mutationsEnabled: process.env.LIVEPEER_PROVIDER_CANARY_MUTATIONS === 'true',
+        });
     process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
 }

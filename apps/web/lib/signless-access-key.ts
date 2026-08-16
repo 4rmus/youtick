@@ -1,6 +1,6 @@
 import { KeyPair, PublicKey, actions } from 'near-api-js';
 import { GAS_CONSTANTS, NEAR_CONFIG, NEAR_NETWORK } from './constants';
-import { getProvider } from './near';
+import { getProvider, viewContract } from './near';
 import { nearAmountToYocto } from './near-amount';
 import type { WalletInstance } from './types';
 
@@ -8,6 +8,9 @@ const SIGNLESS_ACCESS_KEY_METHODS = ['issue_session_grant'] as const;
 const SIGNLESS_ACCESS_KEY_ALLOWANCE_YOCTO = nearAmountToYocto(GAS_CONSTANTS.sessionKeyAllowance);
 // Below this remaining allowance a grant call may no longer fit; reprovision.
 const SIGNLESS_ACCESS_KEY_MIN_ALLOWANCE_YOCTO = nearAmountToYocto(0.01);
+const REVOKE_RECONCILE_ATTEMPTS = 150;
+const REVOKE_RECONCILE_DELAY_MS = 2_000;
+const MAX_SESSION_GRANTS_PER_OWNER = 16;
 
 const SIGNLESS_KEY_STORAGE_PREFIX = 'youtick:signless-keystore:';
 
@@ -63,8 +66,13 @@ export async function clearSignlessAccessKey(accountId: string): Promise<void> {
 export async function revokeBrowserAuthority(
     wallet: Pick<WalletInstance, 'signAndSendTransactions'>,
     accountId: string,
-): Promise<void> {
+): Promise<'already-revoked' | 'wallet' | 'chain'> {
     const keyPair = await getSignlessAccessKey(accountId);
+    const publicKey = keyPair?.getPublicKey().toString() ?? null;
+    if (await isBrowserAuthorityRevoked(accountId, publicKey)) {
+        await clearSignlessAccessKey(accountId);
+        return 'already-revoked';
+    }
     const transactions: Array<{ receiverId: string; actions: unknown[] }> = [
         {
             receiverId: NEAR_CONFIG.accessContractId,
@@ -86,8 +94,17 @@ export async function revokeBrowserAuthority(
         });
     }
 
-    await wallet.signAndSendTransactions({ transactions });
-    await clearSignlessAccessKey(accountId);
+    const controller = new AbortController();
+    try {
+        const completedBy = await Promise.race([
+            wallet.signAndSendTransactions({ transactions }).then(() => 'wallet' as const),
+            waitForRevokedBrowserAuthority(accountId, publicKey, controller.signal),
+        ]);
+        await clearSignlessAccessKey(accountId);
+        return completedBy;
+    } finally {
+        controller.abort();
+    }
 }
 
 export function buildSignlessAccessKeyRequest(keyPair: KeyPair) {
@@ -179,6 +196,47 @@ async function getSignlessKeyOnChainState(accountId: string, publicKey: string):
         return 'invalid';
     }
     return 'usable';
+}
+
+interface ListedSessionGrant {
+    revoked?: boolean;
+}
+
+async function isBrowserAuthorityRevoked(accountId: string, publicKey: string | null): Promise<boolean> {
+    const [keyState, grants] = await Promise.all([
+        publicKey ? getSignlessKeyOnChainState(accountId, publicKey) : Promise.resolve('missing' as const),
+        viewContract<ListedSessionGrant[]>(
+            getProvider(),
+            NEAR_CONFIG.accessContractId,
+            'list_session_grants',
+            { owner_id: accountId, from_index: 0, limit: MAX_SESSION_GRANTS_PER_OWNER },
+        ).catch(() => null),
+    ]);
+    return keyState === 'missing'
+        && Array.isArray(grants)
+        && grants.every((grant) => grant.revoked === true);
+}
+
+async function waitForRevokedBrowserAuthority(
+    accountId: string,
+    publicKey: string | null,
+    signal: AbortSignal,
+): Promise<'chain'> {
+    for (let attempt = 0; attempt < REVOKE_RECONCILE_ATTEMPTS; attempt += 1) {
+        await new Promise<void>((resolve, reject) => {
+            const onAbort = () => {
+                clearTimeout(timeoutId);
+                reject(new Error('revoke_reconciliation_cancelled'));
+            };
+            const timeoutId = setTimeout(() => {
+                signal.removeEventListener('abort', onAbort);
+                resolve();
+            }, REVOKE_RECONCILE_DELAY_MS);
+            signal.addEventListener('abort', onAbort, { once: true });
+        });
+        if (await isBrowserAuthorityRevoked(accountId, publicKey)) return 'chain';
+    }
+    throw new Error('Browser access revocation could not be confirmed');
 }
 
 export async function getUsableSignlessAccessKey(accountId: string): Promise<KeyPair | null> {

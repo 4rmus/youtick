@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const query = vi.fn();
+const viewContract = vi.fn();
 
 vi.mock('@/lib/near', () => ({
     getProvider: () => ({ query }),
+    viewContract,
 }));
 
 describe('signless-access-key', () => {
@@ -14,9 +16,12 @@ describe('signless-access-key', () => {
         localStorage.clear();
         sessionStorage.clear();
         query.mockReset();
+        viewContract.mockReset();
+        viewContract.mockRejectedValue(new Error('RPC unavailable'));
     });
 
     afterEach(() => {
+        vi.useRealTimers();
         vi.resetModules();
     });
 
@@ -130,5 +135,60 @@ describe('signless-access-key', () => {
         await expect(revokeBrowserAuthority(wallet, 'alice.testnet')).rejects.toThrow('wallet rejected');
 
         expect(await getSignlessAccessKey('alice.testnet')).not.toBeNull();
+    });
+
+    it('finishes a secure disconnect from final chain state when the wallet callback is lost', async () => {
+        vi.useFakeTimers();
+        const { KeyPair } = await import('near-api-js');
+        const keyPair = KeyPair.fromRandom('ed25519');
+        query
+            .mockResolvedValueOnce({
+                permission: {
+                    FunctionCall: {
+                        receiver_id: 'access.testnet',
+                        method_names: ['issue_session_grant'],
+                        allowance: '250000000000000000000000',
+                    },
+                },
+            })
+            .mockRejectedValueOnce(new Error('access key does not exist'));
+        viewContract
+            .mockResolvedValueOnce([{ revoked: false }])
+            .mockResolvedValueOnce([{ revoked: true }]);
+        const wallet = {
+            signAndSendTransactions: vi.fn(() => new Promise<object[] | void>(() => {})),
+        };
+        const {
+            getSignlessAccessKey,
+            persistSignlessAccessKey,
+            revokeBrowserAuthority,
+        } = await import('@/lib/signless-access-key');
+        await persistSignlessAccessKey('alice.testnet', keyPair);
+
+        const revocation = revokeBrowserAuthority(wallet, 'alice.testnet');
+        await vi.advanceTimersByTimeAsync(2_000);
+
+        await expect(revocation).resolves.toBe('chain');
+        expect(wallet.signAndSendTransactions).toHaveBeenCalledOnce();
+        expect(await getSignlessAccessKey('alice.testnet')).toBeNull();
+    });
+
+    it('skips a second wallet prompt when final chain state is already revoked', async () => {
+        const { KeyPair } = await import('near-api-js');
+        const keyPair = KeyPair.fromRandom('ed25519');
+        query.mockRejectedValueOnce(new Error('access key does not exist'));
+        viewContract.mockResolvedValueOnce([{ revoked: true }]);
+        const wallet = { signAndSendTransactions: vi.fn() };
+        const {
+            getSignlessAccessKey,
+            persistSignlessAccessKey,
+            revokeBrowserAuthority,
+        } = await import('@/lib/signless-access-key');
+        await persistSignlessAccessKey('alice.testnet', keyPair);
+
+        await expect(revokeBrowserAuthority(wallet, 'alice.testnet')).resolves.toBe('already-revoked');
+
+        expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
+        expect(await getSignlessAccessKey('alice.testnet')).toBeNull();
     });
 });
