@@ -6518,3 +6518,76 @@ Evidence classes remain separate:
   commits on exact `main@7205fe94...`, push with lease, retarget #125 to `main`,
   prove the exact five-path diff and obtain fresh exact-head CI; do not merge
   #125 in that gate.
+
+### CHECKPOINT 167 — Phase 2 / PR #125 exact-main restack
+
+- DURUM: `PASS_REMOTE_SAFETY_REF / PASS_ONE_TO_ONE_REBASE /
+  PASS_MAIN_RETARGET / PASS_EXACT_FIVE_PATH_SCOPE / PASS_EXACT_SHA_CI /
+  RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- YETKİ, VARSAYIMLAR VE KABUL:
+  - the user explicitly approved only the proposed #125 restack gate: preserve
+    the old head, replay the five post-#124 commits on exact squash `main`, use
+    an exact force-with-lease, retarget the existing draft PR to `main`, prove
+    the same five-path scope and obtain fresh exact-head CI;
+  - acceptance requires a clean worktree, byte-identical old/new trees, a
+    one-to-one five-commit range diff, remote safety recovery, exact `main`
+    base, successful required CI and closed runtime;
+  - #125 merge/ready state, deploy, secret/provider mutation, traffic shift,
+    wallet action, testnet write and Production are excluded.
+- PREFLIGHT:
+  - the clean local and remote branch head was
+    `009ade26cf331a1a3fa21d531f8c6cb8cf718445`; PR #125 was `OPEN`, `DRAFT`,
+    `MERGEABLE/CLEAN`, based on preserved #124 branch
+    `agent/pay-001-non-refundable-20260815@6a327835...`;
+  - the range contained exactly five commits and exactly five paths at
+    `+1765/-17`. Squash `main@7205fe941d95011de0af1691d6a274b0fa373b15`
+    and old base `6a327835...` had byte-identical trees;
+  - repository `DEPLOY_PREVIEW_ENABLED=false`; no unrelated worktree path was
+    present.
+- SAFETY VE RESTACK:
+  - remote and local safety branch
+    `safety/phase2-pr125-pre-restack-20260816-009ade2` preserves exact old head
+    `009ade26cf331a1a3fa21d531f8c6cb8cf718445`;
+  - `git rebase --onto 7205fe94... 6a327835...` replayed all five commits
+    without conflict. `git range-diff` reports exact one-to-one equality:
+    `28a204a7 -> c18083b7`, `ab2719a0 -> 90836e3d`,
+    `834d3681 -> ec9d77fe`, `853554c4 -> c4c68fdf` and
+    `009ade26 -> 6381f348`;
+  - `git diff --exit-code` between `009ade26...` and `6381f348...` is empty,
+    proving the complete pre/post-restack trees are identical. The new branch
+    has exact squash
+    `main` as ancestor and only those five commits above it;
+  - the push used
+    `--force-with-lease=refs/heads/agent/phase2-v2-authorizer-staging-20260815:009ade26...`.
+    The lease held, remote head became `6381f3488dfdd80f36b4dd69abae4aae4214f273`,
+    and PR #125 base was changed to exact `main@7205fe94...`;
+  - GitHub reports the existing PR still `OPEN` and `DRAFT`, with exactly five
+    paths and `+1765/-17`: two Web authority files, the progress evidence file
+    and two Bridge provider-canary files. No #124 catalog/contract/testing/CI
+    path re-entered the diff.
+- LOCAL_TEST: `PASS`; EVENT-001 catalog parity passes `1/1`, Bridge
+  provider-canary tests pass `71/71`, focused Web signless-access-key tests pass
+  `14/14`, Docs build passes, and the exact `main...HEAD` range passes
+  `git diff --check`.
+- CI: `PASS_EXACT_RESTACK_SHA`; PR #125 run `31964574153` targets exact head
+  `6381f3488dfdd80f36b4dd69abae4aae4214f273` on the `main`-based PR and
+  completed `success`. Docs, Web, Bridge, both CodeQL languages, dependency
+  audits and mandatory `CI Gate` passed; unchanged Contracts and Livepeer
+  Protocol jobs skipped as designed. This append-only evidence commit must
+  pass its own exact-head CI before handoff.
+- TESTNET: `NOT_RUN`; no provider read, wallet action, signature, chain query,
+  transaction or write occurred.
+- DEPLOY: `NOT_RUN`; CI performed only the Bridge Wrangler dry-run. No version
+  upload, route change or traffic deployment occurred.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; Bridge remains stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` 100% and Web remains stable
+  `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` 100%. Fresh cache-busting Bridge
+  health returns the same version, `stage=DISABLED`, and provider/operator
+  mutation, new upload, control plane, playback V1/V2/shadow, Queue and both
+  archive readiness fields are false.
+- GÜNCEL FAZ KAPISI: `PHASE2_PR125_RESTACK_DECISION_REQUIRED` is closed. Stop
+  here and do not ready or merge #125 automatically. The single proposed next
+  gate is `PHASE2_PR125_MERGE_DECISION_REQUIRED`: separately review the final
+  exact head, five-path diff and checks, then after explicit approval mark only
+  #125 ready and squash-merge it with an exact-head lock; revalidate post-merge
+  `main` CI, deploy skip and closed runtime before any later gate.
