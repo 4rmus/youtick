@@ -2,7 +2,7 @@ export const DURABLE_OBJECT_MAX_PERSISTENT_RECORDS = 256;
 export type DurableObjectStateKind = 'upload_job' | 'admission' | 'operator' | 'rate_limit';
 
 export async function assertDurableObjectRecordCapacity(
-    storage: DurableObjectStorage | DurableObjectTransaction,
+    storage: DurableObjectTransaction,
     keys: string[],
     stateKind: DurableObjectStateKind,
 ): Promise<void> {

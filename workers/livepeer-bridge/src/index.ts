@@ -1489,30 +1489,34 @@ async function advanceOperatorArchiveScan(
         if (retryAtMs !== null) {
             earliestRetryAtMs = Math.min(earliestRetryAtMs ?? retryAtMs, retryAtMs);
         }
-        await assertDurableObjectRecordCapacity(
-            state.storage,
-            [OPERATOR_ARCHIVE_SCAN_KEY],
-            'operator',
-        );
-        await state.storage.put(OPERATOR_ARCHIVE_SCAN_KEY, {
-            after: key,
-            ...(earliestRetryAtMs === undefined ? {} : { earliestRetryAtMs }),
-        } satisfies OperatorArchiveScan);
+        await state.storage.transaction(async (transaction) => {
+            await assertDurableObjectRecordCapacity(
+                transaction,
+                [OPERATOR_ARCHIVE_SCAN_KEY],
+                'operator',
+            );
+            await transaction.put(OPERATOR_ARCHIVE_SCAN_KEY, {
+                after: key,
+                ...(earliestRetryAtMs === undefined ? {} : { earliestRetryAtMs }),
+            } satisfies OperatorArchiveScan);
+        });
         await scheduleAlarmNoLaterThan(state, now);
         return true;
     }
 
     const after = [...records.keys()].at(-1)!;
     if (records.size === OPERATOR_ARCHIVE_SCAN_BATCH) {
-        await assertDurableObjectRecordCapacity(
-            state.storage,
-            [OPERATOR_ARCHIVE_SCAN_KEY],
-            'operator',
-        );
-        await state.storage.put(OPERATOR_ARCHIVE_SCAN_KEY, {
-            after,
-            ...(earliestRetryAtMs === undefined ? {} : { earliestRetryAtMs }),
-        } satisfies OperatorArchiveScan);
+        await state.storage.transaction(async (transaction) => {
+            await assertDurableObjectRecordCapacity(
+                transaction,
+                [OPERATOR_ARCHIVE_SCAN_KEY],
+                'operator',
+            );
+            await transaction.put(OPERATOR_ARCHIVE_SCAN_KEY, {
+                after,
+                ...(earliestRetryAtMs === undefined ? {} : { earliestRetryAtMs }),
+            } satisfies OperatorArchiveScan);
+        });
         await scheduleAlarmNoLaterThan(state, now);
         return true;
     }
@@ -2385,17 +2389,18 @@ function monthlyBudget(env: Env): bigint | null {
 }
 
 async function ensureReconcileScheduled(state: DurableObjectState): Promise<void> {
-    const existing = await state.storage.get<ReconcileRecord>(RECONCILE_KEY);
-    if (!existing) {
+    await state.storage.transaction(async (transaction) => {
+        const existing = await transaction.get<ReconcileRecord>(RECONCILE_KEY);
+        if (existing) return;
         const now = Date.now();
-        await assertDurableObjectRecordCapacity(state.storage, [RECONCILE_KEY], 'upload_job');
-        await state.storage.put(RECONCILE_KEY, {
+        await assertDurableObjectRecordCapacity(transaction, [RECONCILE_KEY], 'upload_job');
+        await transaction.put(RECONCILE_KEY, {
             schema: 'youtick.livepeer-reconcile.v1',
             status: 'PROVIDER_UNKNOWN',
             consecutiveErrors: 0,
             nextReconcileAtMs: now,
         } satisfies ReconcileRecord);
-    }
+    });
     await scheduleReconcile(state, Date.now());
 }
 
