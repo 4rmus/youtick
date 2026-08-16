@@ -6808,3 +6808,62 @@ Evidence classes remain separate:
   paths, create an explicit-path commit/draft PR and obtain exact-head CI; do
   not merge, deploy, add the D1 binding, expose operator status, activate the
   archive flag or write/delete D1 in that gate.
+
+### CHECKPOINT 171 — Phase 2 / capacity changeset exact-head CI
+
+- DURUM: `PASS_CHANGESET_SCOPE / PASS_SOURCE_HEAD_CI / NO_DEPLOY /
+  RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- YETKİ VE KABUL:
+  - the user approved only review of the existing six dirty paths,
+    explicit-path commit/push, a draft PR and exact-head CI;
+  - acceptance requires the PR diff to contain exactly those six paths, CI to
+    pass on the exact PR head and stable-only runtime plus false flags to remain
+    unchanged. Merge, deploy, binding changes, operator status exposure,
+    archive activation and D1 write/delete remain excluded.
+- CHANGESET VE PR:
+  - explicit staging contained only
+    `docs/architecture/transformation-progress.md`,
+    `workers/livepeer-bridge/src/durable-object-capacity.test.ts`,
+    `workers/livepeer-bridge/src/durable-object-capacity.ts`,
+    `workers/livepeer-bridge/src/finalize.test.ts`,
+    `workers/livepeer-bridge/src/index.test.ts` and
+    `workers/livepeer-bridge/src/index.ts`; cached diff check passed and the
+    worktree contained no additional path;
+  - source commit `5a5b8186ad99d35811dd814ed6eb63bdc95b6344` was
+    pushed to `agent/phase2-do-capacity-contract-20260816`. Draft PR #127 is
+    open against `main`, exact head `5a5b8186...`, with exactly the same six
+    files. It was not made ready and was not merged;
+  - the GitHub connector lacked PR-create permission (`403`), so the already
+    authenticated scoped `gh` fallback created only the draft PR. No other
+    GitHub mutation was performed.
+- LOCAL_TEST: `PASS`; the source remains exactly the locally verified
+  Checkpoint 169 implementation: focused Bridge suites `153/153`, complete
+  Bridge `202` passed with two opt-in skips, mocked provider canaries `71/71`,
+  TypeScript, Wrangler dry-run, Docs build and diff checks passed. The release
+  plus D1 suites from Checkpoint 170 passed `78/78`.
+- CI: `PASS_EXACT_SOURCE_HEAD`; pull-request run `31971406756` completed
+  successfully at exact SHA `5a5b8186ad99d35811dd814ed6eb63bdc95b6344`.
+  Bridge, Docs, dependency audits, JavaScript/TypeScript CodeQL, Rust CodeQL and
+  the aggregate CI Gate passed; Contracts, Web and Livepeer Protocol were
+  path-filtered skips. There were zero failed or pending checks. This
+  append-only evidence commit is intentionally not used as self-referential CI
+  evidence; its own exact-head Actions result must be checked externally before
+  handoff.
+- TESTNET: `NOT_RUN`; no provider read, wallet action, signature, chain query,
+  transaction or D1 mutation occurred.
+- DEPLOY: `NOT_RUN`; repository variable `DEPLOY_PREVIEW_ENABLED=false`, GitHub
+  reports zero deployments for exact source SHA `5a5b8186...`, and no version,
+  route, binding, schedule, flag or traffic mutation occurred.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; Wrangler reports Bridge stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` 100% and Web stable
+  `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` 100%. A fresh cache-busting Bridge
+  health probe returns the exact Bridge version, `stage=DISABLED`, and false
+  for provider/operator mutation, new upload, control plane, playback V1/V2/
+  shadow, Queue and both archive readiness fields.
+- GÜNCEL FAZ KAPISI:
+  `PHASE2_CAPACITY_CHANGESET_CI_DECISION_REQUIRED` is closed. Stop here. The
+  single proposed next gate is
+  `PHASE2_PR127_EXACT_HEAD_REVIEW_DECISION_REQUIRED`: verify the final
+  append-only evidence head and its exact-head CI, then decide separately
+  whether to make PR #127 ready and squash-merge it. Do not merge or advance to
+  a runtime/archive gate without explicit approval.
