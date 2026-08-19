@@ -60,6 +60,7 @@ docs/llm-wiki/
 
 # AI Assistants
 AGENTS.md
+!/AGENTS.md
 .claude/
 .agent/
 .agents/*
