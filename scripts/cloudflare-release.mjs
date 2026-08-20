@@ -214,6 +214,15 @@ const BRIDGE_PREVIEW_QUEUE_PRODUCER = [
     '',
 ].join('\n');
 
+const BRIDGE_PREVIEW_D1_BINDING = [
+    '',
+    '[[d1_databases]]',
+    'binding = "MARKET_READ_MODEL"',
+    'database_name = "youtick-market-read-model-v1-testnet"',
+    'database_id = "50b1e14f-2b06-444b-98cf-b828f11277ef"',
+    '',
+].join('\n');
+
 function fail(message) {
     throw new Error(`cloudflare_release_${message}`);
 }
@@ -532,7 +541,9 @@ async function writeSanitizedConfigs(extracted, target) {
     ].join('\n'), { mode: 0o600 });
     await writeFile(
         bridgeCandidate,
-        `${BRIDGE_ARTIFACT_WRANGLER}${target === 'preview' ? BRIDGE_PREVIEW_QUEUE_PRODUCER : ''}`,
+        `${BRIDGE_ARTIFACT_WRANGLER}${target === 'preview'
+            ? `${BRIDGE_PREVIEW_QUEUE_PRODUCER}${BRIDGE_PREVIEW_D1_BINDING}`
+            : ''}`,
         { mode: 0o600 },
     );
     return { webBootstrap, bridgeBootstrap, bridgeCandidate };
@@ -674,6 +685,7 @@ async function makeWranglerRunner(binary, tempRoot, { echo, label }) {
         delete childEnvironment.LIVEPEER_API_KEY;
         delete childEnvironment.LIVEPEER_WEBHOOK_SECRET;
         delete childEnvironment.LIVEPEER_JWT_PRIVATE_KEY;
+        delete childEnvironment.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN;
         delete childEnvironment.NEAR_OPERATOR_PRIVATE_KEY;
         const result = await runProcess(binary, args, {
             cwd,
@@ -1258,6 +1270,7 @@ export async function deployRelease({
     livepeerApiKey: livepeerApiKeyValue = process.env.LIVEPEER_API_KEY,
     livepeerWebhookSecret: livepeerWebhookSecretValue = process.env.LIVEPEER_WEBHOOK_SECRET,
     livepeerJwtPrivateKey: livepeerJwtPrivateKeyValue = process.env.LIVEPEER_JWT_PRIVATE_KEY,
+    paidMediaOperatorToken: paidMediaOperatorTokenValue = process.env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN,
     nearOperatorPrivateKey: nearOperatorPrivateKeyValue = process.env.NEAR_OPERATOR_PRIVATE_KEY,
     sleepFn = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
 } = {}) {
@@ -1279,6 +1292,11 @@ export async function deployRelease({
         LIVEPEER_JWT_PRIVATE_KEY: validatePreviewSecret(
             livepeerJwtPrivateKeyValue,
             'livepeer_jwt_private_key',
+        ),
+        LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN: validatePreviewSecret(
+            paidMediaOperatorTokenValue,
+            'paid_media_operator_token',
+            /^.{32,4096}$/u,
         ),
         NEAR_OPERATOR_PRIVATE_KEY: validatePreviewSecret(
             nearOperatorPrivateKeyValue,

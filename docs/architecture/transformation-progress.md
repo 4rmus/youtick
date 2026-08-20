@@ -6918,3 +6918,184 @@ Evidence classes remain separate:
   verify the one-file append-only diff and exact-head CI, then decide separately
   whether to make only that evidence PR ready and squash-merge it. Do not deploy
   or advance to a runtime/archive gate in the same loop.
+
+### CHECKPOINT 173 — Phase 2 / operator outbox D1 binding remediation review
+
+- DURUM: `PASS_READ_ONLY_REVIEW / MINIMUM_CHANGESET_IDENTIFIED /
+  BRIDGE_D1_BINDING_MISSING / OPERATOR_STATUS_AUTH_MISSING /
+  ELIGIBLE_RECORD_UNPROVEN / RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- YETKİ, VARSAYIMLAR VE KABUL:
+  - the user approved only the exact-main source/config review and selection of
+    the smallest remediation; implementation, commit/push/PR, secret install or
+    rotation, deploy, D1/testnet write, archive activation, traffic shift and
+    deletion are excluded;
+  - the existing local archive writer, 90-day boundary and retry behavior are
+    assumed reusable only where their focused tests still pass. Acceptance for
+    a later changeset requires a Preview-only D1 binding, a bounded
+    operator-authenticated read-only status, an explicit fail-closed scan start
+    and no testnet D1 binding in Production;
+  - `OPERATOR_OUTBOX_ARCHIVE_ENABLED=false` must remain the tracked/release
+    default. Source readiness is not deployment or permission to install the
+    missing operator token, enable the archive gate or commit a D1 row.
+- EXACT REPO, GITHUB VE RUNTIME:
+  - fetched `origin/main`, GitHub `main` and PR #128's squash commit are exact
+    `12bc94222219afb7de54b22f21414fe7b0b8f701`. Local head is the reviewed PR
+    head `fb8f145...`, but its tree is byte-identical to exact main and the
+    worktree was clean before this append-only evidence update;
+  - exact-main CI `31974575050` is successful. Deploy Preview `31974695985` is
+    skipped, `DEPLOY_PREVIEW_ENABLED=false`, and GitHub reports zero deployments
+    for the exact SHA;
+  - fresh Cloudflare status keeps Bridge stable
+    `86305272-4ebb-4ca4-9d0e-11e3bd182b17` and Web stable
+    `874a3f92-acd1-44d3-b23b-6e38c7ccd6e0` at 100%. Bridge health returns the
+    same version, `stage=DISABLED`, and false for provider/operator mutation,
+    new upload, control plane, playback V1/V2/shadow, Queue and both archive
+    readiness fields.
+- KÖK NEDEN VE EN KÜÇÜK DEĞİŞİKLİK:
+  - the remote testnet D1 has no pending migration; a read-only query returns
+    `operator_outbox_archives=0`, `changed_db=false`, `rows_read=0` and
+    `rows_written=0`. The dark read-model remains stable 100% with the exact
+    D1 binding;
+  - tracked Bridge Wrangler, the exact release artifact and active Bridge
+    version have no `MARKET_READ_MODEL` binding. The release validator accepts
+    only its fixed target-neutral Bridge config and rejects an extra artifact
+    binding. The safe correction is therefore to keep that artifact neutral and
+    add the exact testnet D1 only to the generated Preview candidate; Production
+    must remain binding-free;
+  - the active Bridge version has the Durable Object and NEAR operator secret
+    bindings but no `LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN`. The repository and
+    environment secret inventories also have no Preview operator token. Secret
+    creation/install is a later `DECISION_REQUIRED` action and its value was not
+    requested, read or logged;
+  - no public or internal operator-outbox status route exists. With the archive
+    flag false, a historical confirmed record is not scheduled for archive, so
+    adding only the D1 binding neither proves eligibility nor starts a bounded
+    commit. The smallest source correction reuses the existing operator auth
+    pattern to add a bounded read-only status plus an explicit scan-start route.
+    Status must work while the Bridge/archive gates are false and must not write
+    or schedule an alarm. Scan start must reject unless auth/config pass, the
+    archive flag is true and exactly one eligible record was just observed;
+  - the proposed implementation scope is only
+    `.github/workflows/deploy-preview.yml`, `scripts/cloudflare-release.mjs`,
+    `scripts/cloudflare-release.test.mjs`,
+    `workers/livepeer-bridge/wrangler.toml`,
+    `workers/livepeer-bridge/src/index.ts` and
+    `workers/livepeer-bridge/src/index.test.ts`. No new archive abstraction,
+    schema/migration, Production binding or cleanup path is needed.
+- OLÇÜLEBİLİR CHANGESET KABULÜ:
+  - generated Preview candidate has exactly one `MARKET_READ_MODEL` binding to
+    D1 `50b1e14f-2b06-444b-98cf-b828f11277ef`; generated Production candidate
+    has none, and the fixed artifact validator still rejects arbitrary extra
+    bindings;
+  - Preview release accepts the existing operator-token secret name only through
+    its 0600 secret file, rejects a missing/invalid value before Wrangler or API
+    mutation, and does not pass or print that secret for Production;
+  - unauthorized status/scan return 403; missing required config returns 503.
+    Authorized status returns bounded non-secret counts while the Bridge and
+    archive flags are false, and proves zero storage writes plus zero alarms;
+  - scan start with a false archive flag or an eligible count other than one
+    fails before alarm/D1 work. Exact-one plus valid config schedules one scan;
+    existing archive regressions still prove one idempotent D1 row, retained DO
+    state, exact readback and bounded retry on D1 failure;
+  - focused Bridge tests, TypeScript, release tests, Wrangler dry-run, Docs build
+    and diff checks pass with every tracked runtime flag false.
+- LOCAL_TEST: `PASS_BASELINE`; focused operator archive success/failure tests
+  pass `2/2`, Bridge TypeScript passes and the complete Cloudflare release suite
+  passes `54/54`. These tests cover existing behavior; the proposed changeset
+  has not been implemented and therefore has no changeset test evidence.
+- CI: `PASS_EXISTING_EXACT_MAIN / CHANGESET_NOT_CREATED`; run `31974575050`
+  covers exact main only. There is no source change, commit, PR or exact-head CI
+  for the proposed six paths.
+- TESTNET: `PASS_READ_ONLY_D1 / NO_WRITE`; migration status and the zero-row
+  archive query were read-only. No provider access, wallet action, signature,
+  chain query/transaction or D1 mutation occurred.
+- DEPLOY: `NOT_RUN`; no version upload, secret install, route, binding, flag,
+  schedule or traffic mutation occurred.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; stable-only assignments and false
+  readiness fields were reverified. The active Bridge still has no D1 binding
+  or operator-token secret.
+- GÜNCEL FAZ KAPISI:
+  `PHASE2_OPERATOR_OUTBOX_D1_BINDING_REMEDIATION_REVIEW_DECISION_REQUIRED` is
+  closed. Stop here. Phase 2 retention remains `PARTIAL`; eligibility is still
+  `UNPROVEN`. The single proposed next gate is
+  `PHASE2_OPERATOR_OUTBOX_D1_BINDING_AND_STATUS_CHANGESET_DECISION_REQUIRED`:
+  implement only the six listed source/config paths and their focused tests on
+  the exact-main tree, leaving every flag false; do not commit/push, install a
+  secret, deploy, access provider/testnet chain, write D1 or start a scan.
+
+### CHECKPOINT 174 — Phase 2 / operator outbox D1 binding and status changeset
+
+- DURUM: `PASS_LOCAL_CHANGESET / SOURCE_READY / NO_COMMIT / NO_DEPLOY /
+  RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- YETKİ VE KABUL:
+  - this gate implements only the six paths selected in Checkpoint 173 and
+    appends verified evidence here. Commit/push/PR, secret creation or install,
+    deploy, testnet/provider access, D1 write, archive activation, scan
+    invocation, traffic shift and cleanup remain excluded;
+  - the tracked and generated runtime defaults must keep
+    `OPERATOR_OUTBOX_ARCHIVE_ENABLED=false` and every other mutation/readiness
+    flag false. Status must be bounded, operator-authenticated and read-only;
+    scan start must fail closed unless config is valid and exactly one eligible
+    record is observed atomically.
+- UYGULANAN EN KÜÇÜK CHANGESET:
+  - `workers/livepeer-bridge/wrangler.toml` now declares the exact testnet
+    `MARKET_READ_MODEL` D1 binding. The fixed Bridge release artifact remains
+    target-neutral; `scripts/cloudflare-release.mjs` adds that D1 binding only
+    to the generated Preview candidate, while the generated Production
+    candidate remains free of Preview Queue and D1 bindings;
+  - Preview release now accepts `PREVIEW_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN`
+    only through the existing 0600 secret-file path, rejects a missing or
+    invalid value before Cloudflare API/Wrangler mutation and removes the value
+    from child process environments. No secret value was requested, read,
+    printed or installed;
+  - Bridge now exposes operator-authenticated
+    `GET /v1/operations/operator-outbox-status`. It works while Bridge and
+    archive flags are false, returns only bounded counts, record validity and
+    scan-active state, and does not return record identifiers, transaction
+    data, payload hashes, keys or tokens;
+  - `POST /v1/operations/operator-outbox-archive-scan` remains unavailable
+    unless the archive flag, D1 and operator config are valid. In one Durable
+    Object transaction it rejects an active scan, malformed state, zero/many
+    uncommitted records or zero/many currently eligible records; exact-one
+    creates only the bounded scan marker and schedules one alarm. The request
+    itself does not access or write D1.
+- LOCAL_TEST: `PASS`:
+  - focused operator-outbox status/scan tests pass `2/2`; they prove missing
+    config `503`, unauthorized `403`, status with both runtime flags false,
+    zero status writes/alarms, zero/many eligibility rejection, exact-one scan
+    scheduling, duplicate-scan rejection and zero D1 calls in the request;
+  - Bridge TypeScript passes; the complete Bridge suite passes `204` with `2`
+    pre-existing conditional skips across `7` files;
+  - the complete Cloudflare release suite passes `55/55`, including Preview
+    D1/token inclusion, Production exclusion, neutral artifact config, 0600
+    secret-file isolation, non-leak checks and fail-before-mutation validation;
+  - Wrangler `4.90.0` dry-run succeeds and resolves `MARKET_READ_MODEL` to the
+    exact testnet D1 while showing Bridge, provider/operator mutation, upload,
+    playback, Queue and both archive flags false. Docs production build and
+    `git diff --check` pass.
+- CI: `UNPROVEN_FOR_CHANGESET`. Existing exact-main CI run `31974575050`
+  remains successful at `12bc94222219afb7de54b22f21414fe7b0b8f701`, but the
+  uncommitted seven-path worktree has no exact-head CI and is not represented
+  as a GitHub PR.
+- TESTNET: `NOT_RUN`; no provider access, wallet action, signature, chain query,
+  transaction, remote Durable Object request, archive scan or D1 mutation
+  occurred.
+- DEPLOY: `NOT_RUN / SKIPPED_EXISTING_MAIN`; current GitHub main and
+  `origin/main` remain exact `12bc942...`, repository variable
+  `DEPLOY_PREVIEW_ENABLED=false`, existing Deploy Preview run `31974695985` is
+  skipped and GitHub reports zero deployments for that exact SHA. No version,
+  binding, secret, route, schedule, flag or traffic mutation occurred.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; Bridge remains stable
+  `86305272-4ebb-4ca4-9d0e-11e3bd182b17` at 100%. A fresh cache-busting health
+  read returns that exact version, `status=ok`, `stage=DISABLED`, and false for
+  provider/operator mutation, new upload, control plane, playback V1/V2/shadow,
+  Queue and both archive readiness fields. The changeset is local only.
+- GÜNCEL FAZ KAPISI:
+  `PHASE2_OPERATOR_OUTBOX_D1_BINDING_AND_STATUS_CHANGESET_DECISION_REQUIRED` is
+  closed. Stop here. Phase 2 retention remains `PARTIAL`; live eligibility and
+  archive commit remain `UNPROVEN`. The single proposed next gate is
+  `PHASE2_OPERATOR_OUTBOX_D1_BINDING_AND_STATUS_CHANGESET_CI_DECISION_REQUIRED`:
+  inspect the seven dirty paths, stage only the six source/config paths plus
+  this evidence file by explicit path, create a bounded commit/draft PR and
+  obtain exact-head CI evidence. Do not install the missing secret, deploy,
+  activate the archive flag, call status/scan or write testnet D1 in that gate.

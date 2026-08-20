@@ -52,6 +52,11 @@ max_retries = 3
 max_concurrency = 1
 dead_letter_queue = "youtick-livepeer-events-dlq-testnet"
 
+[[d1_databases]]
+binding = "MARKET_READ_MODEL"
+database_name = "youtick-market-read-model-v1-testnet"
+database_id = "50b1e14f-2b06-444b-98cf-b828f11277ef"
+
 [version_metadata]
 binding = "CF_VERSION_METADATA"
 
