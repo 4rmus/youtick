@@ -7099,3 +7099,49 @@ Evidence classes remain separate:
   this evidence file by explicit path, create a bounded commit/draft PR and
   obtain exact-head CI evidence. Do not install the missing secret, deploy,
   activate the archive flag, call status/scan or write testnet D1 in that gate.
+
+### CHECKPOINT 175 — Phase 2 / PR #131 post-merge evidence
+
+- DURUM: `PASS_MERGED / PASS_EXACT_MAIN_CI / DEPLOY_SKIPPED /
+  RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- YETKİ VE KABUL:
+  - the approved gate covered exact-head review, ready state, squash merge and
+    post-merge CI/deploy-boundary verification for PR #131;
+  - this follow-up records only that completed evidence. It does not authorize
+    another merge, deploy, secret creation/install, runtime activation,
+    provider/testnet access, archive scan, D1 write or destructive cleanup.
+- PR VE MERGE:
+  - PR #131 contained one commit and exactly the seven reviewed paths on
+    `main@4fc88119e3ad98f0fff36ecfb36a3e2c2607f437`. Its exact head
+    `bc7876ad039da7830287bef4ed77af62f756f8a5` passed pull-request CI run
+    `32420244179`, including both CodeQL languages and the aggregate CI Gate;
+  - the PR was made ready only after its head, clean merge state, unchanged
+    seven-file scope, terminal checks and absence of review threads were
+    reverified. Exact-head-protected squash merge produced
+    `main@8069074397b18756797ca22d3228aa354fb4af64` with sole parent
+    `4fc88119...`; the merge tree and reviewed PR-head tree are both
+    `608915e61780bb15bb484900ecc37d8282f2b461`.
+- CI: `PASS_EXACT_MAIN`; push run `32600278385` completed successfully at exact
+  merge SHA `80690743...`. Bridge, Web, Docs, Contracts, protocol, dependency
+  audits, JavaScript/TypeScript and Rust CodeQL, and CI Gate all passed. The
+  Node.js 20 deprecation annotation did not fail a job and is not represented
+  as runtime or deployment evidence.
+- DEPLOY: `NOT_RUN / SKIPPED`; Deploy Preview run `32600645109` completed
+  `skipped`, repository variable `DEPLOY_PREVIEW_ENABLED=false`, and GitHub
+  reports zero deployments for the exact merge SHA. No Cloudflare version,
+  binding, secret, route, schedule, flag or traffic mutation occurred.
+- RUNTIME: `PASS_READ_ONLY / RUNTIME_CLOSED`; the public Bridge health response
+  remains version `86305272-4ebb-4ca4-9d0e-11e3bd182b17`, `stage=DISABLED`,
+  with provider/operator mutation, new upload, control plane, playback V1/V2/
+  shadow, Queue and both archive readiness fields false.
+- TESTNET / PROVIDER / D1: `NOT_RUN`; no provider request, wallet action,
+  signature, chain query/transaction, remote Durable Object request, archive
+  scan or D1 mutation occurred.
+- GÜNCEL FAZ KAPISI:
+  `PHASE2_PR131_POST_MERGE_EVIDENCE_DECISION_REQUIRED` is closed. Phase 2
+  retention remains `PARTIAL`; live operator-outbox eligibility and a real D1
+  archive commit remain `UNPROVEN`. The single proposed next gate is
+  `PHASE2_OPERATOR_OUTBOX_PREVIEW_DEPLOY_PREFLIGHT_DECISION_REQUIRED`: perform
+  a read-only exact-main/release-input/secret-presence/rollback review and stop
+  before secret creation or install, deploy, flag activation, status/scan call,
+  provider/testnet access or D1 write.
