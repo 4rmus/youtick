@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { KeyPair } from 'near-api-js';
 import vectors from '../../../protocol/paid-media-livepeer-v1/golden-vectors.json';
 import handler, {
     LivepeerControl,
@@ -16,6 +17,7 @@ const API_KEY = 'test-livepeer-api-key';
 const OPERATOR_ID = 'paid-media-operator.testnet';
 const OPERATOR_TOKEN = 'test-paid-media-operator-token-32-bytes';
 const OPERATOR_TOKEN_PREVIOUS = 'previous-paid-media-operator-token-32-bytes';
+const OPERATOR_PRIVATE_KEY = KeyPair.fromRandom('ed25519').toString();
 const BLOCK_HASH = '11111111111111111111111111111111';
 const TUS_ENDPOINT = 'https://origin.livepeer.com/api/asset/upload/tus?token=secret';
 const TUS_UPLOAD_URL = 'https://origin.livepeer.com/api/asset/upload/tus/upload-123';
@@ -2452,5 +2454,155 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             },
         });
         expect(JSON.stringify(body)).not.toContain(OPERATOR_TOKEN);
+    });
+
+    it('keeps operator-outbox status read-only while runtime flags are disabled', async () => {
+        const operatorState = createState();
+        const now = Date.now();
+        operatorState.values.set('outbox:archive-status-1', {
+            schema: 'youtick.livepeer-operator-outbox.v1',
+            state: 'CONFIRMED',
+            method: 'finalize_livepeer_publication',
+            idempotencyKey: 'archive-status-1',
+            payloadSha256: 'a'.repeat(64),
+            createdAtMs: now - 2_000,
+            txHash: 'sensitive-test-transaction',
+            confirmedAtMs: now - 1_000,
+            archive: {
+                status: 'PENDING',
+                attempts: 0,
+                createdAtMs: now - 1_000,
+                nextAttemptAtMs: now - 1_000,
+            },
+        });
+        let control!: LivepeerControl;
+        const env = createEnv({
+            LIVEPEER_BRIDGE_ENABLED: 'false',
+            OPERATOR_OUTBOX_ARCHIVE_ENABLED: 'false',
+            LIVEPEER_PAID_MEDIA_OPERATOR_ID: OPERATOR_ID,
+            LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN: OPERATOR_TOKEN,
+            NEAR_OPERATOR_ACCOUNT_ID: OPERATOR_ID,
+            NEAR_OPERATOR_PRIVATE_KEY: OPERATOR_PRIVATE_KEY,
+            NEAR_OPERATOR_KEY_EPOCH: '1',
+            LIVEPEER_CONTROL: {
+                idFromName: (name: string) => ({ toString: () => name }),
+                get: () => ({ fetch: (request: Request) => control.fetch(request) }),
+            } as unknown as DurableObjectNamespace,
+        });
+        control = new LivepeerControl(operatorState.state, env);
+        const request = (token?: string) => new Request(
+            'https://bridge.youtick.net/v1/operations/operator-outbox-status',
+            { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+        );
+        const before = structuredClone([...operatorState.values]);
+
+        delete env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN;
+        const unconfigured = await handler.fetch(request(OPERATOR_TOKEN), env);
+        expect(unconfigured.status).toBe(503);
+        expect(await unconfigured.json()).toEqual({ error: 'runtime_not_configured' });
+        env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN = OPERATOR_TOKEN;
+
+        const unauthorized = await handler.fetch(request(), env);
+        expect(unauthorized.status).toBe(403);
+        expect(await unauthorized.json()).toEqual({ error: 'operator_unauthorized' });
+
+        const response = await handler.fetch(request(OPERATOR_TOKEN), env);
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(body).toEqual({
+            schema: 'youtick.livepeer-operator-outbox-status.v1',
+            totalRecords: 1,
+            invalidRecords: 0,
+            confirmedRecords: 1,
+            pendingRecords: 1,
+            retryRecords: 0,
+            committedRecords: 0,
+            uncommittedRecords: 1,
+            eligibleRecords: 1,
+            scanActive: false,
+        });
+        expect([...operatorState.values]).toEqual(before);
+        expect(operatorState.alarms).toEqual([]);
+        expect(JSON.stringify(body)).not.toContain(OPERATOR_TOKEN);
+        expect(JSON.stringify(body)).not.toContain(env.NEAR_OPERATOR_PRIVATE_KEY);
+        expect(JSON.stringify(body)).not.toContain('sensitive-test-transaction');
+    });
+
+    it('starts an operator-outbox archive scan only for exactly one eligible record', async () => {
+        const operatorState = createState();
+        const now = Date.now();
+        const record = (idempotencyKey: string) => ({
+            schema: 'youtick.livepeer-operator-outbox.v1',
+            state: 'CONFIRMED',
+            method: 'finalize_livepeer_publication',
+            idempotencyKey,
+            payloadSha256: 'a'.repeat(64),
+            createdAtMs: now - 2_000,
+            confirmedAtMs: now - 1_000,
+            archive: {
+                status: 'PENDING',
+                attempts: 0,
+                createdAtMs: now - 1_000,
+                nextAttemptAtMs: now - 1_000,
+            },
+        });
+        let d1Calls = 0;
+        let control!: LivepeerControl;
+        const env = createEnv({
+            LIVEPEER_BRIDGE_ENABLED: 'false',
+            OPERATOR_OUTBOX_ARCHIVE_ENABLED: 'false',
+            LIVEPEER_PAID_MEDIA_OPERATOR_ID: OPERATOR_ID,
+            LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN: OPERATOR_TOKEN,
+            NEAR_OPERATOR_ACCOUNT_ID: OPERATOR_ID,
+            NEAR_OPERATOR_PRIVATE_KEY: OPERATOR_PRIVATE_KEY,
+            NEAR_OPERATOR_KEY_EPOCH: '1',
+            MARKET_READ_MODEL: {
+                prepare: () => {
+                    d1Calls += 1;
+                    throw new Error('unexpected_d1_access');
+                },
+            } as unknown as D1Database,
+            LIVEPEER_CONTROL: {
+                idFromName: (name: string) => ({ toString: () => name }),
+                get: () => ({ fetch: (request: Request) => control.fetch(request) }),
+            } as unknown as DurableObjectNamespace,
+        });
+        control = new LivepeerControl(operatorState.state, env);
+        const request = () => new Request(
+            'https://bridge.youtick.net/v1/operations/operator-outbox-archive-scan',
+            { method: 'POST', headers: { Authorization: `Bearer ${OPERATOR_TOKEN}` } },
+        );
+
+        const disabled = await handler.fetch(request(), env);
+        expect(disabled.status).toBe(503);
+        expect(await disabled.json()).toEqual({ error: 'runtime_not_configured' });
+        expect(operatorState.alarms).toEqual([]);
+
+        env.OPERATOR_OUTBOX_ARCHIVE_ENABLED = 'true';
+        const empty = await handler.fetch(request(), env);
+        expect(empty.status).toBe(409);
+        expect(await empty.json()).toEqual({ error: 'operator_archive_eligible_count_invalid' });
+        expect(operatorState.alarms).toEqual([]);
+
+        operatorState.values.set('outbox:archive-scan-1', record('archive-scan-1'));
+        operatorState.values.set('outbox:archive-scan-2', record('archive-scan-2'));
+        const ambiguous = await handler.fetch(request(), env);
+        expect(ambiguous.status).toBe(409);
+        expect(await ambiguous.json()).toEqual({ error: 'operator_archive_eligible_count_invalid' });
+        expect(operatorState.alarms).toEqual([]);
+
+        operatorState.values.delete('outbox:archive-scan-2');
+        const accepted = await handler.fetch(request(), env);
+        expect(accepted.status).toBe(202);
+        expect(await accepted.json()).toEqual({ accepted: true, eligibleRecords: 1 });
+        expect(operatorState.values.get('operator:archive-scan:v1')).toEqual({});
+        expect(operatorState.alarms).toHaveLength(1);
+        expect(d1Calls).toBe(0);
+
+        const duplicate = await handler.fetch(request(), env);
+        expect(duplicate.status).toBe(409);
+        expect(await duplicate.json()).toEqual({ error: 'operator_archive_scan_active' });
+        expect(operatorState.alarms).toHaveLength(1);
+        expect(d1Calls).toBe(0);
     });
 });

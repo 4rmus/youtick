@@ -33,11 +33,13 @@ const ONECLICK_API_KEY_SCRYPT_SALT = 'youtick-release-test-v1';
 const LIVEPEER_API_KEY = 'b6edb9db-f02e-4a8d-989b-4718f7090d76';
 const LIVEPEER_WEBHOOK_SECRET = 'a'.repeat(64);
 const LIVEPEER_JWT_PRIVATE_KEY = 'b'.repeat(128);
+const LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN = 'c'.repeat(64);
 const NEAR_OPERATOR_PRIVATE_KEY = `ed25519:${'1'.repeat(88)}`;
 const PREVIEW_SECRET_INPUTS = {
     livepeerApiKey: LIVEPEER_API_KEY,
     livepeerWebhookSecret: LIVEPEER_WEBHOOK_SECRET,
     livepeerJwtPrivateKey: LIVEPEER_JWT_PRIVATE_KEY,
+    paidMediaOperatorToken: LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN,
     nearOperatorPrivateKey: NEAR_OPERATOR_PRIVATE_KEY,
 };
 const TARGETS = {
@@ -317,6 +319,7 @@ if (secretsIndex >= 0) {
       'LIVEPEER_API_KEY',
       'LIVEPEER_WEBHOOK_SECRET',
       'LIVEPEER_JWT_PRIVATE_KEY',
+      'LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN',
       'NEAR_OPERATOR_PRIVATE_KEY',
     ]
     : [];
@@ -333,10 +336,13 @@ if (secretsIndex >= 0) {
         && (parsed.LIVEPEER_API_KEY !== process.env.FAKE_LIVEPEER_API_KEY
           || parsed.LIVEPEER_WEBHOOK_SECRET !== process.env.FAKE_LIVEPEER_WEBHOOK_SECRET
           || parsed.LIVEPEER_JWT_PRIVATE_KEY !== process.env.FAKE_LIVEPEER_JWT_PRIVATE_KEY
+          || parsed.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN
+            !== process.env.FAKE_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN
           || parsed.NEAR_OPERATOR_PRIVATE_KEY !== process.env.FAKE_NEAR_OPERATOR_PRIVATE_KEY))
       || process.env.NEAR_RPC_URL || process.env.ONECLICK_API_KEY
       || process.env.LIVEPEER_API_KEY || process.env.LIVEPEER_WEBHOOK_SECRET
       || process.env.LIVEPEER_JWT_PRIVATE_KEY
+      || process.env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN
       || process.env.NEAR_OPERATOR_PRIVATE_KEY) {
     throw new Error('invalid fake Wrangler secret contract');
   }
@@ -378,11 +384,17 @@ if (args[0] === 'versions' && args[1] === 'upload') {
   if (worker === 'youtick-livepeer-bridge-preview'
       && (!text.includes('[[queues.producers]]')
         || !text.includes('binding = "LIVEPEER_EVENTS"')
+        || !text.includes('[[d1_databases]]')
+        || !text.includes('binding = "MARKET_READ_MODEL"')
+        || !text.includes('database_name = "youtick-market-read-model-v1-testnet"')
+        || !text.includes('database_id = "50b1e14f-2b06-444b-98cf-b828f11277ef"')
+        || (text.match(/binding = "MARKET_READ_MODEL"/g) || []).length !== 1
         || text.includes('queues.consumers'))) {
-    throw new Error('invalid preview Bridge candidate Queue config');
+    throw new Error('invalid preview Bridge candidate binding config');
   }
-  if (worker === 'youtick-livepeer-bridge' && text.includes('queues.')) {
-    throw new Error('production Bridge must not bind the testnet Queue');
+  if (worker === 'youtick-livepeer-bridge'
+      && (text.includes('queues.') || text.includes('binding = "MARKET_READ_MODEL"'))) {
+    throw new Error('production Bridge must not bind Preview testnet resources');
   }
   if (worker === 'youtick-market-read-model-testnet'
       && (!text.includes('workers_dev = false')
@@ -596,6 +608,7 @@ async function withFakeEnvironment(
     const previousLivepeerApiKey = process.env.LIVEPEER_API_KEY;
     const previousLivepeerWebhookSecret = process.env.LIVEPEER_WEBHOOK_SECRET;
     const previousLivepeerJwtPrivateKey = process.env.LIVEPEER_JWT_PRIVATE_KEY;
+    const previousPaidMediaOperatorToken = process.env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN;
     const previousNearOperatorPrivateKey = process.env.NEAR_OPERATOR_PRIVATE_KEY;
     process.env.FAKE_WRANGLER_STATE = fake.statePath;
     process.env.FAKE_WRANGLER_LOG = fake.logPath;
@@ -617,10 +630,12 @@ async function withFakeEnvironment(
         process.env.FAKE_LIVEPEER_API_KEY = LIVEPEER_API_KEY;
         process.env.FAKE_LIVEPEER_WEBHOOK_SECRET = LIVEPEER_WEBHOOK_SECRET;
         process.env.FAKE_LIVEPEER_JWT_PRIVATE_KEY = LIVEPEER_JWT_PRIVATE_KEY;
+        process.env.FAKE_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN = LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN;
         process.env.FAKE_NEAR_OPERATOR_PRIVATE_KEY = NEAR_OPERATOR_PRIVATE_KEY;
         process.env.LIVEPEER_API_KEY = LIVEPEER_API_KEY;
         process.env.LIVEPEER_WEBHOOK_SECRET = LIVEPEER_WEBHOOK_SECRET;
         process.env.LIVEPEER_JWT_PRIVATE_KEY = LIVEPEER_JWT_PRIVATE_KEY;
+        process.env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN = LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN;
         process.env.NEAR_OPERATOR_PRIVATE_KEY = NEAR_OPERATOR_PRIVATE_KEY;
     } else {
         delete process.env.FAKE_PREVIEW_CREDENTIALS;
@@ -647,6 +662,7 @@ async function withFakeEnvironment(
         delete process.env.FAKE_LIVEPEER_API_KEY;
         delete process.env.FAKE_LIVEPEER_WEBHOOK_SECRET;
         delete process.env.FAKE_LIVEPEER_JWT_PRIVATE_KEY;
+        delete process.env.FAKE_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN;
         delete process.env.FAKE_NEAR_OPERATOR_PRIVATE_KEY;
         if (previousLivepeerApiKey === undefined) delete process.env.LIVEPEER_API_KEY;
         else process.env.LIVEPEER_API_KEY = previousLivepeerApiKey;
@@ -654,6 +670,11 @@ async function withFakeEnvironment(
         else process.env.LIVEPEER_WEBHOOK_SECRET = previousLivepeerWebhookSecret;
         if (previousLivepeerJwtPrivateKey === undefined) delete process.env.LIVEPEER_JWT_PRIVATE_KEY;
         else process.env.LIVEPEER_JWT_PRIVATE_KEY = previousLivepeerJwtPrivateKey;
+        if (previousPaidMediaOperatorToken === undefined) {
+            delete process.env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN;
+        } else {
+            process.env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN = previousPaidMediaOperatorToken;
+        }
         if (previousNearOperatorPrivateKey === undefined) delete process.env.NEAR_OPERATOR_PRIVATE_KEY;
         else process.env.NEAR_OPERATOR_PRIVATE_KEY = previousNearOperatorPrivateKey;
     }
@@ -677,6 +698,9 @@ function deployFixture(
         livepeerApiKey = target === 'preview' ? LIVEPEER_API_KEY : undefined,
         livepeerWebhookSecret = target === 'preview' ? LIVEPEER_WEBHOOK_SECRET : undefined,
         livepeerJwtPrivateKey = target === 'preview' ? LIVEPEER_JWT_PRIVATE_KEY : undefined,
+        paidMediaOperatorToken = target === 'preview'
+            ? LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN
+            : undefined,
         nearOperatorPrivateKey = target === 'preview' ? NEAR_OPERATOR_PRIVATE_KEY : undefined,
         sleepFn,
     } = {},
@@ -700,6 +724,7 @@ function deployFixture(
         livepeerApiKey,
         livepeerWebhookSecret,
         livepeerJwtPrivateKey,
+        paidMediaOperatorToken,
         nearOperatorPrivateKey,
         sleepFn,
     }), { oneClickApiKey, previewCredentials: target === 'preview' });
@@ -723,7 +748,7 @@ test('Bridge artifact writer emits the exact disabled release config once', asyn
     assert.match(text, /LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "false"/);
     assert.match(text, /MULTI_ASSET_PAYMENT_ASSET_IDS = ""/);
     assert.doesNotMatch(text, /NEAR_RPC_URL|ALLOWED_ORIGINS|MARKET_CONTRACT_ID/);
-    assert.doesNotMatch(text, /queues\.producers|queues\.consumers|LIVEPEER_EVENTS/);
+    assert.doesNotMatch(text, /queues\.producers|queues\.consumers|LIVEPEER_EVENTS|MARKET_READ_MODEL/);
     assert.equal(statSync(output).mode & 0o777, 0o600);
     await assert.rejects(writeBridgeArtifactWrangler(output), /EEXIST/);
 });
@@ -1016,6 +1041,7 @@ test('only structured error 10007 permits workers.dev bootstrap before safe doma
             'LIVEPEER_API_KEY',
             'LIVEPEER_WEBHOOK_SECRET',
             'LIVEPEER_JWT_PRIVATE_KEY',
+            'LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN',
             'NEAR_OPERATOR_PRIVATE_KEY',
         ],
     })));
@@ -1032,6 +1058,7 @@ test('only structured error 10007 permits workers.dev bootstrap before safe doma
     for (const path of [fake.logPath, fake.secretLogPath, release.receipt]) {
         assert.ok(!readFileSync(path, 'utf8').includes(NEAR_RPC_SECRET));
         assert.ok(!readFileSync(path, 'utf8').includes(LIVEPEER_JWT_PRIVATE_KEY));
+        assert.ok(!readFileSync(path, 'utf8').includes(LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN));
     }
 });
 
@@ -1123,6 +1150,7 @@ test('1Click secret is required for quote-disabled status recovery', async (t) =
                 'LIVEPEER_API_KEY',
                 'LIVEPEER_WEBHOOK_SECRET',
                 'LIVEPEER_JWT_PRIVATE_KEY',
+                'LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN',
                 'NEAR_OPERATOR_PRIVATE_KEY',
             ])
         )));
@@ -1172,6 +1200,19 @@ test('Preview JWT private key is required before mutation', async (t) => {
     await assert.rejects(
         deployFixture(release, fake, undefined, { livepeerJwtPrivateKey: null }),
         /cloudflare_release_livepeer_jwt_private_key_invalid/,
+    );
+    assert.deepEqual(fake.apiCalls, []);
+    assert.deepEqual(calls(fake), []);
+    assert.deepEqual(secretCalls(fake), []);
+});
+
+test('Preview paid-media operator token is required before mutation', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+
+    await assert.rejects(
+        deployFixture(release, fake, undefined, { paidMediaOperatorToken: null }),
+        /cloudflare_release_paid_media_operator_token_invalid/,
     );
     assert.deepEqual(fake.apiCalls, []);
     assert.deepEqual(calls(fake), []);
