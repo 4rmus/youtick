@@ -136,7 +136,8 @@ test('Preview operator outbox status workflow is protected and GET-only', async 
     assert.match(source, /\npermissions: \{\}\n/);
     assert.match(source, /if: github\.ref == 'refs\/heads\/main'/);
     assert.match(source, /name: Preview/);
-    assert.match(source, /PREVIEW_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN/);
+    assert.match(source, /\$\{\{ secrets\.PREVIEW_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN \}\}/);
+    assert.match(source, /\$\{#OPERATOR_TOKEN\}/);
     assert.match(source, /--request GET/);
     assert.match(source, /\/v1\/operations\/operator-outbox-status/);
     assert.match(source, /youtick\.livepeer-operator-outbox-status\.v1/);
@@ -144,4 +145,5 @@ test('Preview operator outbox status workflow is protected and GET-only', async 
     assert.doesNotMatch(source, /^\s+-?\s*uses:/m);
     assert.doesNotMatch(source, /--request POST|operator-outbox-archive-scan|wrangler|gh api/);
     assert.doesNotMatch(source, /set -x|echo .*OPERATOR_TOKEN|printenv/);
+    assert.doesNotMatch(source, /\\\$\{/);
 });

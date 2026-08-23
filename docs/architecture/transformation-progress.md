@@ -7189,3 +7189,36 @@ Evidence classes remain separate:
   review only these three paths, create an explicit-path commit/draft PR and
   obtain exact-head CI. Do not merge, execute the workflow, call status/scan,
   deploy, rotate secrets, enable flags or write D1 in that gate.
+
+### CHECKPOINT 177 — Phase 2 / operator status first run and source fix
+
+- DURUM: `FIRST_RUN_FAILED_BEFORE_REQUEST / SOURCE_FIX_READY /
+  RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- İLK ÇALIŞTIRMA:
+  - manually dispatched run `32644810666` used exact
+    `main@cc7a93c9a0f2a239b85f35b596ea6b7a2aaf7a4a` and failed before `curl`
+    because the workflow source contained literal backslashes before GitHub
+    and shell variable expressions;
+  - the operator token remained masked and was not printed. No authenticated
+    status GET, POST/archive scan, D1 operation, deploy, provider/testnet call
+    or runtime mutation occurred;
+  - GitHub created only Preview-environment deployment metadata for the job.
+    This was not a Cloudflare deployment. Preview Bridge remains version
+    `d9b9d330-b22d-4a12-ac5d-646660d85ce7`, `stage=DISABLED`, with every
+    readiness and mutation field false; the checked D1 write counters remain
+    zero.
+- DÜZELTME:
+  - `.github/workflows/operator-outbox-status.yml` removes only the unintended
+    literal backslashes so GitHub and Bash can expand the existing values;
+  - `scripts/ci-security.test.mjs` now requires the intended secret and shell
+    expressions and rejects a literal `\${` regression. The workflow is not
+    rerun in this gate.
+- GÜNCEL FAZ KAPISI:
+  `PHASE2_OPERATOR_OUTBOX_STATUS_SOURCE_FIX_CI_DECISION_REQUIRED` is closed
+  when this three-path fix has an exact-head draft PR and successful CI. Phase
+  2 retention remains `PARTIAL`; live status, eligibility and a real D1 archive
+  commit remain `UNPROVEN`. The single proposed next gate is
+  `PHASE2_OPERATOR_OUTBOX_STATUS_SOURCE_FIX_MERGE_DECISION_REQUIRED`: review
+  the exact PR head and decide whether to squash-merge it. Do not execute the
+  workflow, deploy, call status/scan, rotate secrets, enable flags or write D1
+  in that gate.
