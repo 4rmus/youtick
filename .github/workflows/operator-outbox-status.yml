@@ -19,18 +19,18 @@ jobs:
       name: Preview
       url: https://bridge-preview.youtick.net
     env:
-      OPERATOR_TOKEN: \${{ secrets.PREVIEW_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN }}
+      OPERATOR_TOKEN: ${{ secrets.PREVIEW_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN }}
     steps:
       - name: Read redacted status
         shell: bash
         run: |
           set -euo pipefail
-          [[ "\${#OPERATOR_TOKEN}" -ge 32 ]]
-          [[ "\${OPERATOR_TOKEN}" != *$'\n'* ]]
+          [[ "${#OPERATOR_TOKEN}" -ge 32 ]]
+          [[ "${OPERATOR_TOKEN}" != *$'\n'* ]]
 
           response_file="$(mktemp)"
-          trap 'rm -f "\${response_file}"' EXIT
-          chmod 600 "\${response_file}"
+          trap 'rm -f "${response_file}"' EXIT
+          chmod 600 "${response_file}"
 
           http_status="$(
             curl \
@@ -42,13 +42,13 @@ jobs:
               --max-time 20 \
               --retry 0 \
               --request GET \
-              --header "Authorization: Bearer \${OPERATOR_TOKEN}" \
-              --output "\${response_file}" \
+              --header "Authorization: Bearer ${OPERATOR_TOKEN}" \
+              --output "${response_file}" \
               --write-out '%{http_code}' \
               https://bridge-preview.youtick.net/v1/operations/operator-outbox-status
           )"
-          if [[ "\${http_status}" != "200" ]]; then
-            echo "operator_outbox_status_http_\${http_status}" >&2
+          if [[ "${http_status}" != "200" ]]; then
+            echo "operator_outbox_status_http_${http_status}" >&2
             exit 1
           fi
 
@@ -82,7 +82,7 @@ jobs:
             and .confirmedRecords <= .totalRecords
             and .committedRecords + .uncommittedRecords == .confirmedRecords
             and .pendingRecords + .retryRecords == .uncommittedRecords
-          ' "\${response_file}" > /dev/null
+          ' "${response_file}" > /dev/null
 
           jq '{
             schema,
@@ -95,4 +95,4 @@ jobs:
             uncommittedRecords,
             eligibleRecords,
             scanActive
-          }' "\${response_file}" >> "\${GITHUB_STEP_SUMMARY}"
+          }' "${response_file}" >> "${GITHUB_STEP_SUMMARY}"
