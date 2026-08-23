@@ -134,7 +134,6 @@ const FALSE_FLAGS = Object.freeze([
     ['bridge', 'LIVEPEER_PROVIDER_MUTATIONS_ENABLED'],
     ['bridge', 'LIVEPEER_OPERATOR_MUTATIONS_ENABLED'],
     ['bridge', 'UPLOAD_JOB_ARCHIVE_ENABLED'],
-    ['bridge', 'OPERATOR_OUTBOX_ARCHIVE_ENABLED'],
     ['bridge', 'LIVEPEER_NEAR_CREATOR_FEE_ENABLED'],
 ]);
 
@@ -401,6 +400,13 @@ async function readRelease(artifactDir, target, sha) {
     scanForbiddenTargets(config);
     for (const [section, flag] of FALSE_FLAGS) {
         if (config[section]?.[flag] !== 'false') fail(`${flag.toLowerCase()}_not_false`);
+    }
+    const operatorArchive = config.bridge?.OPERATOR_OUTBOX_ARCHIVE_ENABLED;
+    if (target === 'production' && operatorArchive !== 'false') {
+        fail('operator_outbox_archive_enabled_not_false');
+    }
+    if (target === 'preview' && !['false', 'true'].includes(operatorArchive)) {
+        fail('operator_outbox_archive_enabled_invalid');
     }
     const derivedReadModel = config.web?.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL;
     if (target === 'production' && derivedReadModel !== 'false') {

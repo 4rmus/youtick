@@ -154,6 +154,11 @@ test("workflows keep cumulative Preview release provenance", () => {
     preview,
     /LIVEPEER_JWT_PRIVATE_KEY: \$\{\{ secrets\.PREVIEW_LIVEPEER_JWT_PRIVATE_KEY \}\}/,
   );
+  assert.match(
+    preview,
+    /PREVIEW_OPERATOR_OUTBOX_ARCHIVE_ENABLED: \$\{\{ vars\.PREVIEW_OPERATOR_OUTBOX_ARCHIVE_ENABLED \}\}/,
+  );
+  assert.match(preview, /PRODUCTION_OPERATOR_OUTBOX_ARCHIVE_ENABLED: "false"/);
   assert.doesNotMatch(preview, /cp workers\/livepeer-bridge\/wrangler\.toml/);
 });
 
@@ -201,7 +206,7 @@ test("config emits only canonical public values", () => {
   assert.ok(!text.includes(createHash("sha256").update(secret).digest("hex")));
 });
 
-test("config rejects placeholders and enabled release flags", async (t) => {
+test("config rejects placeholders and enforces release flag policy", async (t) => {
   await t.test("noncanonical Preview contract IDs", () => {
     const env = publicEnv("preview");
     env.PREVIEW_NEXT_PUBLIC_MARKET_CONTRACT_ID = "ytlp-pv-market-32a01cc.testnet";
@@ -392,11 +397,24 @@ test("config rejects placeholders and enabled release flags", async (t) => {
     assert.match(result.stderr, /exactly false/);
   });
 
-  await t.test("true operator archive flag", () => {
+  await t.test("true Preview operator archive flag", () => {
+    const output = join(tmpdir(), "preview-operator-archive-config.json");
     const env = publicEnv("preview");
     env.PREVIEW_OPERATOR_OUTBOX_ARCHIVE_ENABLED = "true";
     const result = run(
-      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      ["config", "--environment", "preview", "--output", output],
+      env,
+    );
+    assertSuccess(result);
+    const config = JSON.parse(readFileSync(output, "utf8"));
+    assert.equal(config.bridge.OPERATOR_OUTBOX_ARCHIVE_ENABLED, "true");
+  });
+
+  await t.test("true Production operator archive flag", () => {
+    const env = publicEnv("production");
+    env.PRODUCTION_OPERATOR_OUTBOX_ARCHIVE_ENABLED = "true";
+    const result = run(
+      ["config", "--environment", "production", "--output", join(tmpdir(), "unused-config.json")],
       env,
     );
     assert.notEqual(result.status, 0);

@@ -7222,3 +7222,52 @@ Evidence classes remain separate:
   the exact PR head and decide whether to squash-merge it. Do not execute the
   workflow, deploy, call status/scan, rotate secrets, enable flags or write D1
   in that gate.
+
+### CHECKPOINT 178 — Phase 2 / operator archive activation hardening changeset
+
+- DURUM: `PASS_LOCAL_CHANGESET / PREVIEW_ONLY_FLAG_SOURCE_READY /
+  EXPLICIT_SCAN_MARKER_REQUIRED / NO_COMMIT / NO_DEPLOY /
+  CURRENT_GATE_CLOSED`.
+- KANITLI GİRDİ:
+  - exact `main@bb250c5b91b21b4cef54be0e1bc0dcd3de1af072` CI run
+    `32645684349` is successful and Deploy Preview run `32646090768` is
+    skipped with `DEPLOY_PREVIEW_ENABLED=false`;
+  - operator status run `32646372715` succeeded on that exact main with one
+    valid, confirmed, pending, uncommitted and eligible record, zero invalid,
+    retry or committed records, and `scanActive=false`;
+  - read-only preflight kept Bridge version
+    `d9b9d330-b22d-4a12-ac5d-646660d85ce7` stable 100% and `stage=DISABLED`.
+    Remote D1 has the exact archive schema, no pending migration and zero
+    archive rows. Required secret names are present; no value was read.
+- KÖK NEDEN VE DÜZELTME:
+  - the protected Preview workflow and both release validators forced
+    `OPERATOR_OUTBOX_ARCHIVE_ENABLED=false`, so the guarded release could not
+    represent an approved Preview-only archive candidate;
+  - the alarm path also treated a missing archive-scan marker as an empty scan,
+    allowing an unrelated alarm to inspect pre-existing records after flag
+    activation. It now returns without D1 access when the marker is absent;
+  - new confirmed records create the marker before scheduling their automatic
+    archive alarm, explicit exact-one scan start still creates it for an
+    existing record, and a failed archive retains a marker and retry deadline;
+  - Deploy Preview now reads the named Preview repository variable. Metadata
+    and release validation accept only `false|true` for Preview while
+    Production remains exactly `false`. A missing Preview variable therefore
+    still fails closed before release mutation.
+- LOCAL_TEST:
+  - complete Bridge tests pass `205 passed / 2 skipped`, TypeScript passes and
+    Wrangler dry-run completes with every tracked flag false;
+  - release/security tests pass `109/109`; workflow YAML parsing and
+    `git diff --check` pass. These are local source checks, not CI, provider,
+    Preview runtime or D1-write evidence.
+- DIŞ SINIR: `NOT_RUN`; no commit, push, PR, CI rerun, GitHub variable/secret
+  mutation, deploy, traffic shift, operator scan, D1 write, provider, wallet or
+  chain operation occurred.
+- GÜNCEL FAZ KAPISI:
+  `PHASE2_OPERATOR_OUTBOX_ARCHIVE_ACTIVATION_HARDENING_CHANGESET_DECISION_REQUIRED`
+  is closed locally. Phase 2 retention remains `PARTIAL`; the guarded Preview
+  activation and a real D1 archive commit remain `UNPROVEN`. The single
+  proposed next gate is
+  `PHASE2_OPERATOR_OUTBOX_ARCHIVE_ACTIVATION_HARDENING_CI_DECISION_REQUIRED`:
+  review only these nine paths, create an explicit-path commit/draft PR and
+  obtain exact-head CI. Do not merge, set the Preview archive/release variables,
+  deploy, call status/scan, write D1 or touch Production in that gate.

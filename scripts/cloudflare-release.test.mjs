@@ -1255,6 +1255,41 @@ test('target allowlist and disabled release flags are fail closed', async (t) =>
         await deployFixture(release, fake);
     });
 
+    await t.test('accepts the Preview operator archive flag', async (subtest) => {
+        const release = makeRelease(subtest);
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.bridge.OPERATOR_OUTBOX_ARCHIVE_ENABLED = 'true';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.preview = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+
+        await deployFixture(release, fake);
+
+        const bridgeCommands = calls(fake).filter((args) => (
+            args.includes(TARGETS.preview.bridge.worker)
+            && (args[0] === 'deploy' || (args[0] === 'versions' && args[1] === 'upload'))
+        ));
+        assert.equal(bridgeCommands.length, 2);
+        assert.ok(bridgeCommands.every((args) => (
+            args.includes('OPERATOR_OUTBOX_ARCHIVE_ENABLED:true')
+        )));
+    });
+
+    await t.test('rejects the Production operator archive flag', async (subtest) => {
+        const release = makeRelease(subtest, 'production');
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.bridge.OPERATOR_OUTBOX_ARCHIVE_ENABLED = 'true';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.production = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        await assert.rejects(deployRelease({
+            target: 'production', sha: SHA, artifactDir: release.artifactDir,
+            receiptOutput: release.receipt, nearRpcUrl: NEAR_RPC_URL,
+            oneClickApiKey: ONECLICK_API_KEY,
+        }), /operator_outbox_archive_enabled_not_false/);
+    });
+
     await t.test('rejects another Preview read origin', async (subtest) => {
         const release = makeRelease(subtest);
         const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
