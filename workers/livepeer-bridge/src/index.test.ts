@@ -2528,6 +2528,44 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(JSON.stringify(body)).not.toContain('sensitive-test-transaction');
     });
 
+    it('does not archive a preexisting operator record without an explicit scan marker', async () => {
+        const operatorState = createState();
+        const now = Date.now();
+        const record = {
+            schema: 'youtick.livepeer-operator-outbox.v1',
+            state: 'CONFIRMED',
+            method: 'finalize_livepeer_publication',
+            idempotencyKey: 'archive-marker-required-1',
+            payloadSha256: 'a'.repeat(64),
+            createdAtMs: now - 2_000,
+            confirmedAtMs: now - 1_000,
+            archive: {
+                status: 'PENDING',
+                attempts: 0,
+                createdAtMs: now - 1_000,
+                nextAttemptAtMs: now - 1_000,
+            },
+        };
+        operatorState.values.set(`outbox:${record.idempotencyKey}`, record);
+        let d1Calls = 0;
+        const control = new LivepeerControl(operatorState.state, createEnv({
+            OPERATOR_OUTBOX_ARCHIVE_ENABLED: 'true',
+            MARKET_READ_MODEL: {
+                prepare: () => {
+                    d1Calls += 1;
+                    throw new Error('unexpected_d1_access');
+                },
+            } as unknown as D1Database,
+        }));
+
+        await control.alarm();
+
+        expect(operatorState.values.get(`outbox:${record.idempotencyKey}`)).toEqual(record);
+        expect(operatorState.values.has('operator:archive-scan:v1')).toBe(false);
+        expect(operatorState.alarms).toEqual([]);
+        expect(d1Calls).toBe(0);
+    });
+
     it('starts an operator-outbox archive scan only for exactly one eligible record', async () => {
         const operatorState = createState();
         const now = Date.now();
@@ -2604,5 +2642,11 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(await duplicate.json()).toEqual({ error: 'operator_archive_scan_active' });
         expect(operatorState.alarms).toHaveLength(1);
         expect(d1Calls).toBe(0);
+
+        await control.alarm();
+        expect(d1Calls).toBe(1);
+        expect(operatorState.values.get('outbox:archive-scan-1')).toMatchObject({
+            archive: { status: 'RETRY', attempts: 1 },
+        });
     });
 });

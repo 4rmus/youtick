@@ -1788,6 +1788,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             archive: Record<string, unknown>;
         };
         expect(pending.archive).toMatchObject({ status: 'PENDING', attempts: 0 });
+        expect(testState.values.get('operator:archive-scan:v1')).toEqual({});
         await control.alarm();
 
         const committed = testState.values.get('outbox:job-001:1:finalize') as {
@@ -1835,6 +1836,17 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
                 attempts: 1,
                 nextAttemptAtMs: expect.any(Number),
             },
+        });
+        const retryAtMs = (testState.values.get('outbox:job-001:1:finalize') as {
+            archive: { nextAttemptAtMs: number };
+        }).archive.nextAttemptAtMs;
+        expect(testState.values.get('operator:archive-scan:v1')).toEqual({
+            after: 'outbox:job-001:1:finalize',
+            earliestRetryAtMs: retryAtMs,
+        });
+        await control.alarm();
+        expect(testState.values.get('operator:archive-scan:v1')).toEqual({
+            earliestRetryAtMs: retryAtMs,
         });
         expect(testState.values.has('outbox:job-001:1:finalize')).toBe(true);
     });

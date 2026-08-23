@@ -1595,22 +1595,33 @@ async function advanceOperatorArchiveScan(
     env: Env,
 ): Promise<boolean> {
     if (env.OPERATOR_OUTBOX_ARCHIVE_ENABLED !== 'true') return false;
-    const scan = await state.storage.get<OperatorArchiveScan>(OPERATOR_ARCHIVE_SCAN_KEY) || {};
+    const scan = await state.storage.get<OperatorArchiveScan>(OPERATOR_ARCHIVE_SCAN_KEY);
+    if (!scan) return false;
+    const now = Date.now();
+    if (scan.after === undefined
+        && scan.earliestRetryAtMs !== undefined
+        && scan.earliestRetryAtMs > now) {
+        await scheduleAlarmNoLaterThan(state, scan.earliestRetryAtMs);
+        return true;
+    }
     const records = await state.storage.list<OperatorRecord>({
         prefix: 'outbox:',
         startAfter: scan.after,
         limit: OPERATOR_ARCHIVE_SCAN_BATCH,
     });
     if (records.size === 0) {
-        await state.storage.delete(OPERATOR_ARCHIVE_SCAN_KEY);
         if (scan.earliestRetryAtMs !== undefined) {
+            await state.storage.put(OPERATOR_ARCHIVE_SCAN_KEY, {
+                earliestRetryAtMs: scan.earliestRetryAtMs,
+            } satisfies OperatorArchiveScan);
             await scheduleAlarmNoLaterThan(state, scan.earliestRetryAtMs);
+            return true;
         }
+        await state.storage.delete(OPERATOR_ARCHIVE_SCAN_KEY);
         return scan.after !== undefined;
     }
 
-    const now = Date.now();
-    let earliestRetryAtMs = scan.earliestRetryAtMs;
+    let earliestRetryAtMs = scan.after === undefined ? undefined : scan.earliestRetryAtMs;
     for (const [key, record] of records) {
         if (record.schema !== 'youtick.livepeer-operator-outbox.v1'
             || record.state !== 'CONFIRMED'
@@ -1658,10 +1669,14 @@ async function advanceOperatorArchiveScan(
         await scheduleAlarmNoLaterThan(state, now);
         return true;
     }
-    await state.storage.delete(OPERATOR_ARCHIVE_SCAN_KEY);
     if (earliestRetryAtMs !== undefined) {
+        await state.storage.put(OPERATOR_ARCHIVE_SCAN_KEY, {
+            earliestRetryAtMs,
+        } satisfies OperatorArchiveScan);
         await scheduleAlarmNoLaterThan(state, earliestRetryAtMs);
+        return true;
     }
+    await state.storage.delete(OPERATOR_ARCHIVE_SCAN_KEY);
     return false;
 }
 
@@ -5393,6 +5408,15 @@ async function persistConfirmedOperatorRecord(
     if (env.OPERATOR_OUTBOX_ARCHIVE_ENABLED === 'true'
         && archive
         && archive.status !== 'COMMITTED') {
+        await state.storage.transaction(async (transaction) => {
+            if (await transaction.get<OperatorArchiveScan>(OPERATOR_ARCHIVE_SCAN_KEY)) return;
+            await assertDurableObjectRecordCapacity(
+                transaction,
+                [OPERATOR_ARCHIVE_SCAN_KEY],
+                'operator',
+            );
+            await transaction.put(OPERATOR_ARCHIVE_SCAN_KEY, {} satisfies OperatorArchiveScan);
+        });
         await scheduleAlarmNoLaterThan(
             state,
             Math.max(Date.now(), archive.nextAttemptAtMs),

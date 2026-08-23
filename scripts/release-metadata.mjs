@@ -110,7 +110,6 @@ const FALSE_FLAGS = Object.freeze([
   "LIVEPEER_PROVIDER_MUTATIONS_ENABLED",
   "LIVEPEER_OPERATOR_MUTATIONS_ENABLED",
   "UPLOAD_JOB_ARCHIVE_ENABLED",
-  "OPERATOR_OUTBOX_ARCHIVE_ENABLED",
   "LIVEPEER_NEAR_CREATOR_FEE_ENABLED",
 ]);
 
@@ -246,6 +245,13 @@ function buildConfig(environment) {
   for (const flag of FALSE_FLAGS) {
     const value = web[flag] ?? bridge[flag];
     if (value !== "false") fail(`${environment.toUpperCase()}_${flag} must be exactly false`);
+  }
+  const operatorArchive = bridge.OPERATOR_OUTBOX_ARCHIVE_ENABLED;
+  if (environment === "production" && operatorArchive !== "false") {
+    fail("PRODUCTION_OPERATOR_OUTBOX_ARCHIVE_ENABLED must be exactly false");
+  }
+  if (environment === "preview" && !["false", "true"].includes(operatorArchive)) {
+    fail("PREVIEW_OPERATOR_OUTBOX_ARCHIVE_ENABLED must be exactly false or true");
   }
   const derivedReadModel = web.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL;
   if (environment === "production" && derivedReadModel !== "false") {
