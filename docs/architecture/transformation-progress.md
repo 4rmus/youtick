@@ -7145,3 +7145,47 @@ Evidence classes remain separate:
   a read-only exact-main/release-input/secret-presence/rollback review and stop
   before secret creation or install, deploy, flag activation, status/scan call,
   provider/testnet access or D1 write.
+
+### CHECKPOINT 176 — Phase 2 / exact-main Preview deploy and status runner source
+
+- DURUM: `PASS_EXACT_PREVIEW_DEPLOY / STATUS_RUNNER_SOURCE_READY /
+  STATUS_NOT_RUN / RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- DEPLOY:
+  - exact `main@909033a142830f595652b52da8e4799718e41ca1` CI run
+    `32601143343` was rerun successfully before protected Deploy Preview run
+    `32602262609`;
+  - the release flag was enabled only for that run and restored to
+    `DEPLOY_PREVIEW_ENABLED=false` immediately after terminal success;
+  - Preview Web `54a67bdd-2138-4bdc-be74-ce59bf606c73`, Bridge
+    `d9b9d330-b22d-4a12-ac5d-646660d85ce7` and dark read-model
+    `b40736f5-d611-42dd-bae1-60c8aeb45f9f` are each stable 100% with the
+    exact-main source tag.
+- RUNTIME VE VERİ SINIRI:
+  - Bridge has the exact `MARKET_READ_MODEL` D1 binding and named operator
+    token secret binding, but Bridge/upload/playback/provider/operator/Queue
+    and both archive flags remain false. Public health is `stage=DISABLED`
+    with every readiness field false;
+  - the dark read-model keeps all four runtime/write flags false. Remote D1 has
+    no pending migration and reports zero write queries and rows written during
+    the deploy gate;
+  - operator status/scan, provider, wallet, chain transaction and D1 mutation
+    were not run. Production was not changed.
+- STATUS RUNNER SOURCE:
+  - `.github/workflows/operator-outbox-status.yml` is a manually dispatched,
+    main-only, Preview-environment workflow with no GitHub token permissions or
+    third-party actions;
+  - it performs only authenticated `GET
+    /v1/operations/operator-outbox-status`, rejects non-200 or unexpected
+    schemas/count invariants, and writes only allowlisted redacted counts to the
+    GitHub step summary. It contains no POST, scan or D1 path;
+  - `scripts/ci-security.test.mjs` locks these boundaries. The workflow is
+    source-only and was not executed in this gate.
+- GÜNCEL FAZ KAPISI:
+  `PHASE2_OPERATOR_OUTBOX_STATUS_RUNNER_CHANGESET_DECISION_REQUIRED` is
+  closed locally when its focused security/Docs checks pass. Phase 2 retention
+  remains `PARTIAL`; live eligibility and a real D1 archive commit remain
+  `UNPROVEN`. The single proposed next gate is
+  `PHASE2_OPERATOR_OUTBOX_STATUS_RUNNER_CHANGESET_CI_DECISION_REQUIRED`:
+  review only these three paths, create an explicit-path commit/draft PR and
+  obtain exact-head CI. Do not merge, execute the workflow, call status/scan,
+  deploy, rotate secrets, enable flags or write D1 in that gate.

@@ -125,3 +125,23 @@ test('testnet Livepeer Queue binding stays closed with the pilot policy', async 
     assert.equal((source.match(/\[\[queues\.producers\]\]/g) ?? []).length, 1);
     assert.equal((source.match(/\[\[queues\.consumers\]\]/g) ?? []).length, 1);
 });
+
+test('Preview operator outbox status workflow is protected and GET-only', async () => {
+    const source = await readFile(
+        new URL('../.github/workflows/operator-outbox-status.yml', import.meta.url),
+        'utf8',
+    );
+
+    assert.match(source, /\n  workflow_dispatch:\n/);
+    assert.match(source, /\npermissions: \{\}\n/);
+    assert.match(source, /if: github\.ref == 'refs\/heads\/main'/);
+    assert.match(source, /name: Preview/);
+    assert.match(source, /PREVIEW_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN/);
+    assert.match(source, /--request GET/);
+    assert.match(source, /\/v1\/operations\/operator-outbox-status/);
+    assert.match(source, /youtick\.livepeer-operator-outbox-status\.v1/);
+    assert.match(source, /GITHUB_STEP_SUMMARY/);
+    assert.doesNotMatch(source, /^\s+-?\s*uses:/m);
+    assert.doesNotMatch(source, /--request POST|operator-outbox-archive-scan|wrangler|gh api/);
+    assert.doesNotMatch(source, /set -x|echo .*OPERATOR_TOKEN|printenv/);
+});
