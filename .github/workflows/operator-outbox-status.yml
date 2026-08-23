@@ -1,0 +1,98 @@
+name: Preview Operator Outbox Status
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: preview-operator-outbox-status
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  status:
+    name: Read operator outbox status
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    environment:
+      name: Preview
+      url: https://bridge-preview.youtick.net
+    env:
+      OPERATOR_TOKEN: \${{ secrets.PREVIEW_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN }}
+    steps:
+      - name: Read redacted status
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "\${#OPERATOR_TOKEN}" -ge 32 ]]
+          [[ "\${OPERATOR_TOKEN}" != *$'\n'* ]]
+
+          response_file="$(mktemp)"
+          trap 'rm -f "\${response_file}"' EXIT
+          chmod 600 "\${response_file}"
+
+          http_status="$(
+            curl \
+              --silent \
+              --show-error \
+              --proto '=https' \
+              --tlsv1.2 \
+              --connect-timeout 5 \
+              --max-time 20 \
+              --retry 0 \
+              --request GET \
+              --header "Authorization: Bearer \${OPERATOR_TOKEN}" \
+              --output "\${response_file}" \
+              --write-out '%{http_code}' \
+              https://bridge-preview.youtick.net/v1/operations/operator-outbox-status
+          )"
+          if [[ "\${http_status}" != "200" ]]; then
+            echo "operator_outbox_status_http_\${http_status}" >&2
+            exit 1
+          fi
+
+          jq -e '
+            keys == [
+              "committedRecords",
+              "confirmedRecords",
+              "eligibleRecords",
+              "invalidRecords",
+              "pendingRecords",
+              "retryRecords",
+              "scanActive",
+              "schema",
+              "totalRecords",
+              "uncommittedRecords"
+            ]
+            and .schema == "youtick.livepeer-operator-outbox-status.v1"
+            and (.scanActive | type == "boolean")
+            and ([
+              .totalRecords,
+              .invalidRecords,
+              .confirmedRecords,
+              .pendingRecords,
+              .retryRecords,
+              .committedRecords,
+              .uncommittedRecords,
+              .eligibleRecords
+            ] | all(type == "number" and . >= 0 and floor == .))
+            and .eligibleRecords <= .uncommittedRecords
+            and .uncommittedRecords <= .confirmedRecords
+            and .confirmedRecords <= .totalRecords
+            and .committedRecords + .uncommittedRecords == .confirmedRecords
+            and .pendingRecords + .retryRecords == .uncommittedRecords
+          ' "\${response_file}" > /dev/null
+
+          jq '{
+            schema,
+            totalRecords,
+            invalidRecords,
+            confirmedRecords,
+            pendingRecords,
+            retryRecords,
+            committedRecords,
+            uncommittedRecords,
+            eligibleRecords,
+            scanActive
+          }' "\${response_file}" >> "\${GITHUB_STEP_SUMMARY}"
