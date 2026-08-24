@@ -7316,3 +7316,60 @@ Evidence classes remain separate:
   only these three paths, create an explicit-path commit/draft PR and obtain
   exact-head CI. Do not merge, execute the scan workflow, deploy, change
   variables/secrets, write D1 or touch Production in that gate.
+
+### CHECKPOINT 180 — Phase 2 / exact-one operator archive canary closure
+
+- DURUM: `PASS_EXACT_ONE_ARCHIVE_CANARY / D1_COMMIT_PROVEN /
+  DURABLE_OBJECT_COMMITTED / RETENTION_90D_NOT_DUE /
+  CLEANUP_AUDIT_HOLD_UNPROVEN / CURRENT_GATE_CLOSED`.
+- EXACT SOURCE VE KAPALI YAYIN SINIRI:
+  - PR #136 exact head `fdde03d54b7c7ea4ad394a2d0ff5f1f14e14c00a`
+    passed pull-request CI run `32719907882` and squash-merged as exact
+    `main@71d0ee497b20621cb987dfc0d2cf2f0131095320`;
+  - exact-main CI run `32749028322` passed and Deploy Preview run
+    `32749847759` was skipped. `DEPLOY_PREVIEW_ENABLED=false` and
+    `PREVIEW_OPERATOR_OUTBOX_ARCHIVE_ENABLED=false` remained closed;
+  - Preview Bridge stayed version
+    `d02deee9-c025-4d4d-8f5a-d5ccc32515e4` stable 100%, `stage=DISABLED`,
+    with provider/operator mutation, upload, playback and Queue readiness
+    false; only `operatorOutboxArchiveReady=true`.
+- BOUNDED CANARY:
+  - before mutation, remote D1 had the exact schema, no pending migration and
+    zero archive rows. The guarded workflow had no prior run and its live GET
+    precondition required exactly one valid, confirmed, pending, uncommitted
+    and eligible record with `scanActive=false`;
+  - scan run `32770467656` executed once on exact
+    `main@71d0ee497b20621cb987dfc0d2cf2f0131095320`. Its precondition passed,
+    exactly one POST was accepted with `eligibleRecords=1`, and no retry or
+    second POST occurred;
+  - D1 then contained exactly one structurally valid archive row. Method,
+    identity, hash-length and timestamp constraints passed; cleanup eligibility
+    equals confirmed time plus exactly `7776000000` ms. The redacted full-row
+    snapshot digest is
+    `c4a00e5c16ff0338554bc439797ca3da8afa4a53b27a465c375d4b8ef49ad515`;
+  - post-canary GET-only status run `32770554129` returned one total, valid,
+    confirmed and committed record; pending, retry, uncommitted and eligible
+    counts were zero and `scanActive=false`.
+- KANIT SINIRI:
+  - the only expected GitHub side effects were two Preview-environment metadata
+    records for the scan and status jobs. They were not Cloudflare deploys;
+    Bridge traffic/version stayed unchanged;
+  - no deploy, variable/secret mutation, provider access, wallet action, NEAR
+    query/transaction or Production workflow occurred. The operator token and
+    row identifiers, account IDs, transaction/hash fields and payload data were
+    not printed or recorded here.
+- RETENTION: the real archive commit and exact 90-day cleanup-eligibility
+  timestamp are `PASS`. Actual elapsed 90-day retention is `NOT_DUE`; legal or
+  audit-hold behavior, cleanup execution and deletion/non-deletion evidence are
+  `UNPROVEN`. No cleanup or deletion was attempted, and the confirmed Durable
+  Object record remains committed.
+- GÜNCEL FAZ KAPISI:
+  `PHASE2_OPERATOR_OUTBOX_ARCHIVE_EXACT_ONE_CANARY_DECISION_REQUIRED` is
+  closed. Phase 2 archive durability is proven for one bounded testnet record;
+  the elapsed-retention lifecycle remains `PARTIAL / NOT_DUE`. The single
+  proposed next gate is
+  `PHASE2_OPERATOR_OUTBOX_ARCHIVE_CANARY_EVIDENCE_CI_DECISION_REQUIRED`:
+  review only this append-only evidence file, create an explicit-path
+  commit/draft PR and obtain exact-head CI. Do not merge, deploy, run status or
+  scan, change variables/secrets, write/delete D1, access provider/chain or
+  touch Production in that gate.
