@@ -1,0 +1,112 @@
+name: Preview Operator Outbox Archive Scan
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: preview-operator-outbox-archive-scan
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  scan:
+    name: Start exact-one operator archive scan
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    environment:
+      name: Preview
+      url: https://bridge-preview.youtick.net
+    env:
+      OPERATOR_TOKEN: ${{ secrets.PREVIEW_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN }}
+    steps:
+      - name: Verify status and start one scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${#OPERATOR_TOKEN}" -ge 32 ]]
+          [[ "${OPERATOR_TOKEN}" != *$'\n'* ]]
+          [[ "${OPERATOR_TOKEN}" != *$'\r'* ]]
+
+          status_file="$(mktemp)"
+          scan_file="$(mktemp)"
+          trap 'rm -f "${status_file}" "${scan_file}"' EXIT
+          chmod 600 "${status_file}" "${scan_file}"
+
+          status_http="$(
+            curl \
+              --silent \
+              --show-error \
+              --proto '=https' \
+              --tlsv1.2 \
+              --connect-timeout 5 \
+              --max-time 20 \
+              --retry 0 \
+              --request GET \
+              --header "Authorization: Bearer ${OPERATOR_TOKEN}" \
+              --output "${status_file}" \
+              --write-out '%{http_code}' \
+              https://bridge-preview.youtick.net/v1/operations/operator-outbox-status
+          )"
+          if [[ "${status_http}" != "200" ]]; then
+            echo "operator_outbox_status_http_${status_http}" >&2
+            exit 1
+          fi
+
+          jq -e '
+            keys == [
+              "committedRecords",
+              "confirmedRecords",
+              "eligibleRecords",
+              "invalidRecords",
+              "pendingRecords",
+              "retryRecords",
+              "scanActive",
+              "schema",
+              "totalRecords",
+              "uncommittedRecords"
+            ]
+            and .schema == "youtick.livepeer-operator-outbox-status.v1"
+            and .totalRecords == 1
+            and .invalidRecords == 0
+            and .confirmedRecords == 1
+            and .pendingRecords == 1
+            and .retryRecords == 0
+            and .committedRecords == 0
+            and .uncommittedRecords == 1
+            and .eligibleRecords == 1
+            and .scanActive == false
+          ' "${status_file}" > /dev/null
+
+          scan_http="$(
+            curl \
+              --silent \
+              --show-error \
+              --proto '=https' \
+              --tlsv1.2 \
+              --connect-timeout 5 \
+              --max-time 20 \
+              --retry 0 \
+              --request POST \
+              --header "Authorization: Bearer ${OPERATOR_TOKEN}" \
+              --output "${scan_file}" \
+              --write-out '%{http_code}' \
+              https://bridge-preview.youtick.net/v1/operations/operator-outbox-archive-scan
+          )"
+          if [[ "${scan_http}" != "202" ]]; then
+            echo "operator_outbox_archive_scan_http_${scan_http}" >&2
+            exit 1
+          fi
+
+          jq -e '
+            keys == ["accepted", "eligibleRecords"]
+            and .accepted == true
+            and .eligibleRecords == 1
+          ' "${scan_file}" > /dev/null
+
+          jq '{
+            schema: "youtick.livepeer-operator-outbox-archive-scan-start.v1",
+            accepted,
+            eligibleRecords
+          }' "${scan_file}" >> "${GITHUB_STEP_SUMMARY}"

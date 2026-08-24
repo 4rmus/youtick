@@ -7271,3 +7271,48 @@ Evidence classes remain separate:
   review only these nine paths, create an explicit-path commit/draft PR and
   obtain exact-head CI. Do not merge, set the Preview archive/release variables,
   deploy, call status/scan, write D1 or touch Production in that gate.
+
+### CHECKPOINT 179 — Phase 2 / exact-one operator archive scan runner source
+
+- DURUM: `PASS_LOCAL_CHANGESET / EXACT_ONE_SINGLE_POST_SOURCE_READY /
+  SCAN_NOT_RUN / D1_UNCHANGED / CURRENT_GATE_CLOSED`.
+- KANITLI RUNTIME GİRDİSİ:
+  - protected Preview deploy run `32651607870` succeeded for exact
+    `main@9e98dbd5ca8111214136af9f71552a907e2409a1`. Web
+    `36c2da81-5b79-4261-b954-9ddd0af2572b`, Bridge
+    `d02deee9-c025-4d4d-8f5a-d5ccc32515e4` and read-model
+    `bc82b928-9411-4a73-8ae1-ac3d1667e508` are each stable 100%; both
+    temporary GitHub variables were restored to false;
+  - post-activation status run `32715903724` succeeded on that exact main with
+    one valid, confirmed, pending, uncommitted and eligible record, zero
+    invalid, retry or committed records, and `scanActive=false`;
+  - Bridge remains `stage=DISABLED` with provider/operator mutation, upload,
+    playback and Queue readiness false; only `operatorOutboxArchiveReady=true`.
+    Remote D1 remains zero archive rows with the unchanged empty-data digest.
+- SCAN RUNNER SOURCE:
+  - `.github/workflows/operator-outbox-archive-scan.yml` is manual, main-only,
+    Preview-environment and `permissions: {}` with no third-party actions;
+  - it validates the named operator token without printing it, performs exactly
+    one bounded status GET and requires the exact live count tuple above before
+    allowing exactly one POST to the archive-scan endpoint;
+  - it rejects non-200/202 responses, unexpected schemas, active scans or any
+    count drift. There is no retry loop, request payload, Wrangler/GitHub API or
+    D1 command. The step summary contains only the redacted accepted flag and
+    eligible count;
+  - `scripts/ci-security.test.mjs` locks the manual/main/Preview boundary,
+    exact-one predicates, exactly one GET and POST, zero retries, no secret
+    output and no escaped variable regression.
+- LOCAL_TEST: `PASS`; security tests pass `9/9`, workflow YAML and extracted
+  Bash syntax parse, and `git diff --check` passes. This is source-only local
+  evidence; the scan workflow was not executed.
+- DIŞ SINIR: `NOT_RUN`; no commit, push, PR, CI, workflow dispatch, deploy,
+  GitHub variable/secret change, archive scan, D1 write, provider, wallet,
+  chain or Production operation occurred in this changeset gate.
+- GÜNCEL FAZ KAPISI:
+  `PHASE2_OPERATOR_OUTBOX_ARCHIVE_SCAN_RUNNER_CHANGESET_DECISION_REQUIRED` is
+  closed locally. Phase 2 retention remains `PARTIAL`; a real archive commit
+  remains `UNPROVEN`. The single proposed next gate is
+  `PHASE2_OPERATOR_OUTBOX_ARCHIVE_SCAN_RUNNER_CI_DECISION_REQUIRED`: review
+  only these three paths, create an explicit-path commit/draft PR and obtain
+  exact-head CI. Do not merge, execute the scan workflow, deploy, change
+  variables/secrets, write D1 or touch Production in that gate.
