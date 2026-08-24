@@ -147,3 +147,38 @@ test('Preview operator outbox status workflow is protected and GET-only', async 
     assert.doesNotMatch(source, /set -x|echo .*OPERATOR_TOKEN|printenv/);
     assert.doesNotMatch(source, /\\\$\{/);
 });
+
+test('Preview operator archive scan workflow is exact-one and single-POST', async () => {
+    const source = await readFile(
+        new URL('../.github/workflows/operator-outbox-archive-scan.yml', import.meta.url),
+        'utf8',
+    );
+
+    assert.match(source, /\n  workflow_dispatch:\n/);
+    assert.match(source, /\npermissions: \{\}\n/);
+    assert.match(source, /if: github\.ref == 'refs\/heads\/main'/);
+    assert.match(source, /name: Preview/);
+    assert.match(source, /\$\{\{ secrets\.PREVIEW_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN \}\}/);
+    assert.match(source, /\/v1\/operations\/operator-outbox-status/);
+    assert.match(source, /\/v1\/operations\/operator-outbox-archive-scan/);
+    assert.match(source, /\.totalRecords == 1/);
+    assert.match(source, /\.invalidRecords == 0/);
+    assert.match(source, /\.confirmedRecords == 1/);
+    assert.match(source, /\.pendingRecords == 1/);
+    assert.match(source, /\.retryRecords == 0/);
+    assert.match(source, /\.committedRecords == 0/);
+    assert.match(source, /\.uncommittedRecords == 1/);
+    assert.match(source, /\.eligibleRecords == 1/);
+    assert.match(source, /\.scanActive == false/);
+    assert.match(source, /operator_outbox_archive_scan_http_\$\{scan_http\}/);
+    assert.match(source, /"youtick\.livepeer-operator-outbox-archive-scan-start\.v1"/);
+    assert.equal((source.match(/--request GET/g) ?? []).length, 1);
+    assert.equal((source.match(/--request POST/g) ?? []).length, 1);
+    assert.equal((source.match(/^\s+curl \\/gm) ?? []).length, 2);
+    assert.equal((source.match(/--retry 0/g) ?? []).length, 2);
+    assert.doesNotMatch(source, /^\s+-?\s*uses:/m);
+    assert.doesNotMatch(source, /--request (?:PUT|PATCH|DELETE)|--data|--form|--upload-file/);
+    assert.doesNotMatch(source, /wrangler|gh api|set -x|echo .*OPERATOR_TOKEN|printenv/);
+    assert.doesNotMatch(source, /\b(?:for|while)\b/);
+    assert.doesNotMatch(source, /\\\$\{/);
+});
