@@ -97,17 +97,13 @@ const OPTIONAL_KEYS = new Set([
 ]);
 
 const FALSE_FLAGS = Object.freeze([
-  "NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1",
   "NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE",
   "NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2",
   "NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2",
-  "LIVEPEER_BRIDGE_ENABLED",
-  "LIVEPEER_NEW_UPLOADS_ENABLED",
   "LIVEPEER_PLAYBACK_ISSUANCE_ENABLED",
   "LIVEPEER_PLAYBACK_V2_ENABLED",
   "LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED",
   "LIVEPEER_WEBHOOK_QUEUE_ENABLED",
-  "LIVEPEER_PROVIDER_MUTATIONS_ENABLED",
   "LIVEPEER_OPERATOR_MUTATIONS_ENABLED",
   "UPLOAD_JOB_ARCHIVE_ENABLED",
   "LIVEPEER_NEAR_CREATOR_FEE_ENABLED",
@@ -245,6 +241,34 @@ function buildConfig(environment) {
   for (const flag of FALSE_FLAGS) {
     const value = web[flag] ?? bridge[flag];
     if (value !== "false") fail(`${environment.toUpperCase()}_${flag} must be exactly false`);
+  }
+  const uploadCanaryFlags = [
+    web.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1,
+    bridge.LIVEPEER_BRIDGE_ENABLED,
+    bridge.LIVEPEER_NEW_UPLOADS_ENABLED,
+    bridge.LIVEPEER_PROVIDER_MUTATIONS_ENABLED,
+  ];
+  if (environment === "production" && uploadCanaryFlags.some((value) => value !== "false")) {
+    fail("PRODUCTION multi-creator upload canary flags must be exactly false");
+  }
+  if (environment === "preview"
+      && !(uploadCanaryFlags.every((value) => value === "false")
+        || uploadCanaryFlags.every((value) => value === "true"))) {
+    fail("PREVIEW multi-creator upload canary flags must be all false or all true");
+  }
+  if (environment === "preview" && uploadCanaryFlags[0] === "true") {
+    const creators = bridge.LIVEPEER_CREATOR_ALLOWLIST.split(",");
+    if (creators.length !== 2
+        || new Set(creators).size !== 2
+        || creators.some((creator) => !/^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(creator))) {
+      fail("PREVIEW multi-creator upload canary requires exactly two distinct testnet creators");
+    }
+    if (bridge.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS !== "20000000") {
+      fail("PREVIEW multi-creator upload canary monthly budget must be exactly 20000000");
+    }
+    if (bridge.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS !== "2000000") {
+      fail("PREVIEW multi-creator upload canary job reservation must be exactly 2000000");
+    }
   }
   const operatorArchive = bridge.OPERATOR_OUTBOX_ARCHIVE_ENABLED;
   if (environment === "production" && operatorArchive !== "false") {

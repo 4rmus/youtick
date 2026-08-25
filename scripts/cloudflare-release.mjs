@@ -121,17 +121,13 @@ const BRIDGE_PUBLIC_KEYS = Object.freeze([
 ]);
 
 const FALSE_FLAGS = Object.freeze([
-    ['web', 'NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1'],
     ['web', 'NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE'],
     ['web', 'NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2'],
     ['web', 'NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2'],
-    ['bridge', 'LIVEPEER_BRIDGE_ENABLED'],
-    ['bridge', 'LIVEPEER_NEW_UPLOADS_ENABLED'],
     ['bridge', 'LIVEPEER_PLAYBACK_ISSUANCE_ENABLED'],
     ['bridge', 'LIVEPEER_PLAYBACK_V2_ENABLED'],
     ['bridge', 'LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED'],
     ['bridge', 'LIVEPEER_WEBHOOK_QUEUE_ENABLED'],
-    ['bridge', 'LIVEPEER_PROVIDER_MUTATIONS_ENABLED'],
     ['bridge', 'LIVEPEER_OPERATOR_MUTATIONS_ENABLED'],
     ['bridge', 'UPLOAD_JOB_ARCHIVE_ENABLED'],
     ['bridge', 'LIVEPEER_NEAR_CREATOR_FEE_ENABLED'],
@@ -400,6 +396,34 @@ async function readRelease(artifactDir, target, sha) {
     scanForbiddenTargets(config);
     for (const [section, flag] of FALSE_FLAGS) {
         if (config[section]?.[flag] !== 'false') fail(`${flag.toLowerCase()}_not_false`);
+    }
+    const uploadCanaryFlags = [
+        config.web?.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1,
+        config.bridge?.LIVEPEER_BRIDGE_ENABLED,
+        config.bridge?.LIVEPEER_NEW_UPLOADS_ENABLED,
+        config.bridge?.LIVEPEER_PROVIDER_MUTATIONS_ENABLED,
+    ];
+    if (target === 'production' && uploadCanaryFlags.some((value) => value !== 'false')) {
+        fail('production_multi_creator_upload_canary_flags_not_false');
+    }
+    if (target === 'preview'
+        && !(uploadCanaryFlags.every((value) => value === 'false')
+            || uploadCanaryFlags.every((value) => value === 'true'))) {
+        fail('preview_multi_creator_upload_canary_flags_invalid');
+    }
+    if (target === 'preview' && uploadCanaryFlags[0] === 'true') {
+        const creators = config.bridge?.LIVEPEER_CREATOR_ALLOWLIST?.split(',') ?? [];
+        if (creators.length !== 2
+            || new Set(creators).size !== 2
+            || creators.some((creator) => !/^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(creator))) {
+            fail('preview_multi_creator_upload_canary_creators_invalid');
+        }
+        if (config.bridge?.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS !== '20000000') {
+            fail('preview_multi_creator_upload_canary_monthly_budget_invalid');
+        }
+        if (config.bridge?.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS !== '2000000') {
+            fail('preview_multi_creator_upload_canary_job_reservation_invalid');
+        }
     }
     const operatorArchive = config.bridge?.OPERATOR_OUTBOX_ARCHIVE_ENABLED;
     if (target === 'production' && operatorArchive !== 'false') {
