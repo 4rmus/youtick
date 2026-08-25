@@ -137,6 +137,7 @@ function makeRelease() {
 test("workflows keep cumulative Preview release provenance", () => {
   const ci = readFileSync(join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
   const preview = readFileSync(join(REPO_ROOT, ".github/workflows/deploy-preview.yml"), "utf8");
+  const promote = readFileSync(join(REPO_ROOT, ".github/workflows/promote-production.yml"), "utf8");
   const gate = ci.slice(ci.indexOf("  ci-gate:"));
 
   assert.match(gate, /- name: Test release tooling/);
@@ -158,6 +159,18 @@ test("workflows keep cumulative Preview release provenance", () => {
     preview,
     /PREVIEW_OPERATOR_OUTBOX_ARCHIVE_ENABLED: \$\{\{ vars\.PREVIEW_OPERATOR_OUTBOX_ARCHIVE_ENABLED \}\}/,
   );
+  for (const name of [
+    "PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1",
+    "PREVIEW_LIVEPEER_BRIDGE_ENABLED",
+    "PREVIEW_LIVEPEER_NEW_UPLOADS_ENABLED",
+    "PREVIEW_LIVEPEER_PROVIDER_MUTATIONS_ENABLED",
+  ]) {
+    assert.match(
+      preview,
+      new RegExp(`${name}: \\\$\\{\\{ vars\\.PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED \\\\|\\\\| 'false' \\\$\\}\\}`),
+    );
+  }
+  assert.doesNotMatch(promote, /PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED/);
   assert.match(preview, /PRODUCTION_OPERATOR_OUTBOX_ARCHIVE_ENABLED: "false"/);
   assert.doesNotMatch(preview, /cp workers\/livepeer-bridge\/wrangler\.toml/);
 });
@@ -334,7 +347,7 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
     assert.match(result.stderr, /exactly false/);
   });
 
-  await t.test("true new-upload flag", () => {
+  await t.test("partial Preview upload canary flags", () => {
     const env = publicEnv("preview");
     env.PREVIEW_LIVEPEER_NEW_UPLOADS_ENABLED = "true";
     const result = run(
@@ -342,7 +355,7 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
       env,
     );
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /exactly false/);
+    assert.match(result.stderr, /must be all false or all true/);
   });
 
   for (const flag of [
@@ -375,7 +388,7 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
     assert.match(result.stderr, /exactly false/);
   });
 
-  await t.test("true provider-mutation flag", () => {
+  await t.test("partial Preview provider-mutation flag", () => {
     const env = publicEnv("preview");
     env.PREVIEW_LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "true";
     const result = run(
@@ -383,8 +396,83 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
       env,
     );
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /exactly false/);
+    assert.match(result.stderr, /must be all false or all true/);
   });
+
+  await t.test("complete Preview multi-creator upload canary packet", () => {
+    const output = join(tmpdir(), "preview-multi-creator-upload-config.json");
+    const env = publicEnv("preview");
+    env.PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = "true";
+    env.PREVIEW_LIVEPEER_BRIDGE_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_NEW_UPLOADS_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_CREATOR_ALLOWLIST = "creator-one.testnet,creator-two.testnet";
+    env.PREVIEW_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS = "20000000";
+    env.PREVIEW_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS = "2000000";
+    const result = run(["config", "--environment", "preview", "--output", output], env);
+    assertSuccess(result);
+    const config = JSON.parse(readFileSync(output, "utf8"));
+    assert.equal(config.web.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1, "true");
+    assert.equal(config.bridge.LIVEPEER_BRIDGE_ENABLED, "true");
+    assert.equal(config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED, "true");
+    assert.equal(config.bridge.LIVEPEER_PROVIDER_MUTATIONS_ENABLED, "true");
+  });
+
+  await t.test("Preview upload canary rejects one creator", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = "true";
+    env.PREVIEW_LIVEPEER_BRIDGE_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_NEW_UPLOADS_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_CREATOR_ALLOWLIST = "creator-one.testnet";
+    env.PREVIEW_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS = "20000000";
+    env.PREVIEW_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS = "2000000";
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /requires exactly two distinct testnet creators/);
+  });
+
+  for (const [label, name, value, error] of [
+    [
+      "duplicate creators",
+      "PREVIEW_LIVEPEER_CREATOR_ALLOWLIST",
+      "creator-one.testnet,creator-one.testnet",
+      /requires exactly two distinct testnet creators/,
+    ],
+    [
+      "wrong monthly budget",
+      "PREVIEW_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS",
+      "20000001",
+      /monthly budget must be exactly 20000000/,
+    ],
+    [
+      "wrong job reservation",
+      "PREVIEW_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS",
+      "2000001",
+      /job reservation must be exactly 2000000/,
+    ],
+  ]) {
+    await t.test(`Preview upload canary rejects ${label}`, () => {
+      const env = publicEnv("preview");
+      env.PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = "true";
+      env.PREVIEW_LIVEPEER_BRIDGE_ENABLED = "true";
+      env.PREVIEW_LIVEPEER_NEW_UPLOADS_ENABLED = "true";
+      env.PREVIEW_LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "true";
+      env.PREVIEW_LIVEPEER_CREATOR_ALLOWLIST = "creator-one.testnet,creator-two.testnet";
+      env.PREVIEW_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS = "20000000";
+      env.PREVIEW_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS = "2000000";
+      env[name] = value;
+      const result = run(
+        ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+        env,
+      );
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, error);
+    });
+  }
 
   await t.test("true operator-mutation flag", () => {
     const env = publicEnv("preview");

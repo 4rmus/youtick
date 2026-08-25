@@ -174,7 +174,7 @@ Evidence classes remain separate:
 | Legacy/v2 shadow mismatch below approved threshold | PASS_PREVIEW | The accepted mismatch ratio is exactly 0. Checkpoint 150 recorded one valid `DENY/DENY` pair and Checkpoint 151 recorded one valid `ALLOW/ALLOW` pair against the same 0%-traffic candidate, for aggregate mismatch `0/2`. The positive pair used one zero-deposit, 180-second testnet legacy `Play` grant. Both samples returned only the legacy response contract; v2 shadow issued no JWT and added no durable write. Direct v2 and every mutation/Queue/archive gate stayed closed. Stable-only 100% and every runtime flag false were restored after each sample. `LOCAL_TEST` + exact-head `CI` + bounded `PREVIEW_DEPLOYMENT` + `TESTNET_READ/WRITE` + `PROVIDER_READ` + `PREVIEW_RUNTIME`. |
 | Device-certificate UX and revoke/clear verified | PASS_PREVIEW | Checkpoint 156 aligned the isolated Web and guarded Bridge candidate with the exact entitled buyer. One user-approved wallet certificate produced direct-v2 HTTP 200 and rendered the player; automatic same-page refresh and Checkpoint 158's repeat both returned 200 without another certificate prompt. Checkpoints 159–160 prove final testnet subject revoke/current-key deletion and deployed callback recovery to persistent `Connect` without a second wallet prompt. Checkpoint 162 removed both older broad FunctionCall keys at finality; Checkpoint 163 removed the temporary cleanup signer surface and re-verified exactly one FullAccess wallet key. The cleanup wallet's unexpected no-stop submission is recorded as a deviation and is not part of the accepted product UX. Public Web and Bridge deployments stayed stable-only 100% with every Bridge runtime flag false. `LOCAL_TEST` + exact-head prior `CI` + isolated `PREVIEW_DEPLOYMENT` + `TESTNET_READ/WRITE` + `PROVIDER_READ` + browser `PREVIEW_RUNTIME`. |
 | Access grant issuance can be disabled | PASS_LOCAL | Fresh Access v2 has an independent, readable issuance flag behind the existing owner timelock. One regression proves the exact 24-hour decommission sequence: a grant issued during the delay remains verifiable, execution rejects new issuance, and subject revoke plus bounded cleanup still work. Testnet execution remains absent. `LOCAL_TEST`. |
-| DO retention/cleanup proven automatically | PARTIAL | Creator-fee/payment rate-limit objects alarm and `deleteAll()` at window expiry; signed control nonces expire with their at-most-five-minute request and purge in 128-record batches; normal/ambiguous admission leases release at 30/15 minutes, webhook dedup purges at 30 days and admission-reopen audit at 90 days. Independent default-off UploadJob and operator outbox D1 archive sources persist bounded summaries, commit/retry metadata and 14/90-day eligibility boundaries locally. Checkpoint 169 audits every persistent new-key path and proves all four state kinds reject record 257 before write while existing-key updates remain available at 256. Real D1 commits and both destructive deletes remain absent. `LOCAL_TEST`. |
+| DO retention/cleanup proven automatically | PASS_FOR_PHASE_PROGRESSION / TIME_BOUND_FOLLOWUP | Creator-fee/payment rate-limit objects alarm and `deleteAll()` at window expiry; signed control nonces expire with their at-most-five-minute request and purge in 128-record batches; normal/ambiguous admission leases release at 30/15 minutes, webhook dedup purges at 30 days and admission-reopen audit at 90 days. Independent default-off UploadJob and operator outbox D1 archive sources persist bounded summaries, commit/retry metadata and 14/90-day eligibility boundaries. Checkpoint 169 proves all four state kinds reject record 257 before write while existing-key updates remain available at 256. Checkpoint 180 proves exactly one operator record was committed to D1 and remained committed in its Durable Object; its exact 90-day eligibility timestamp is recorded. Checkpoint 181 records the user's decision not to block Phase 3 on elapsed calendar time. Operator deletion/audit-hold behavior remains `UNPROVEN`, and an UploadJob archive commit/delete remains a separate Phase 3 gap. `LOCAL_TEST` + `CI` + `PREVIEW_RUNTIME` + `D1_WRITE` + `LOCAL_STATIC`. |
 
 ### Phase 3 — upload and Livepeer control plane
 
@@ -187,7 +187,7 @@ Evidence classes remain separate:
 | Webhook ACK avoids heavy provider probing | PARTIAL | Exact-main Preview proved that the gated ingress verifies a real Livepeer signature, enqueues the bounded event and returns `202` before job-object/provider work; the terminal ready replay and older processing update then ACKed. Post-ACK reconciliation maintenance still performed read-only provider asset/playback/media probes, so a strict zero-provider-read interpretation remains open even though no mutation or duplicate economic side effect occurred. `LOCAL_TEST` + `PREVIEW_QUEUE`. |
 | Duplicate/out-of-order queue tests pass | PASS_PREVIEW | Exact-main Preview delivered one real terminal `asset.ready` replay followed by one older `asset.updated/processing` event. Both messages ACKed, the older event did not regress `ONCHAIN_PUBLISHED`, and payment, provider asset, publication and finalize counts stayed singletons. General redelivery/load evidence remains outside this bounded canary. `LOCAL_TEST` + `PREVIEW_QUEUE`. |
 | Worker split across domain boundaries | PARTIAL | The vendor-neutral port is 88 lines; separate 319-line provider/transport, 251-line ready-verification, 75-line webhook-normalization, 77-line UploadJob archive, 76-line operator archive and 33-line observed-fetch modules own external details. `workers/livepeer-bridge/src/index.ts` is 5,289 lines and still contains routes, domain state, a small environment composition factory, NEAR and DO logic. `LOCAL_TEST`. |
-| UploadJob terminal cleanup works | BLOCKED | The 14-day policy and default-off bounded D1 archive source pass locally, but deletion is intentionally absent until a real D1 archive commit is proven and v1 playback no longer reads the job. Neither external precondition exists, so no destructive cleanup is scheduled. |
+| UploadJob terminal cleanup works | BLOCKED | The 14-day policy and default-off bounded D1 archive source pass locally, but deletion is intentionally absent until an UploadJob-specific D1 archive commit is proven and v1 playback no longer reads that job. Checkpoint 180 proves an operator-outbox archive commit, not an UploadJob archive, so neither UploadJob precondition exists and no destructive cleanup is scheduled. |
 | Provider cost/budget metrics visible | PARTIAL | Source requires and reports positive monthly/per-job reservation values and auto-closes before exceeding the configured cap. This is a guard, not actual-cost accounting. Livepeer's public [Studio pricing](https://livepeer.studio/pricing) is minute-based and includes plan/minimum-spend terms, while the bridge upload intent has no duration and the asset response has no per-job billed-cost field. Machine-readable commercial terms plus invoice/usage reconciliation are `EXTERNAL_EVIDENCE_REQUIRED`. |
 
 ### Phase 4 — events, read model and finance
@@ -208,7 +208,7 @@ Evidence classes remain separate:
 |---|---|---|
 | SLO dashboards and alerts active | PARTIAL | `observability/slo-policy.json` locks five report thresholds, binds all nine alert classes to a primary role/action and inventories the report's six domain controls. The finality source emits structured `lag_blocks` at one-minute cadence, but no deployed alert policy, notification route, delivered alert or drill receipt exists. Cloudflare support is not an activation path; a currently supported alert channel requires a separate decision. `LOCAL_TEST` + `PREVIEW_DEPLOYMENT`. |
 | Hot-publication latency/error target met | EXTERNAL_EVIDENCE_REQUIRED | No approved load target execution exists. |
-| DO growth bounded and cleanup verified | PARTIAL | The accepted ceiling is 256 persistent records per Durable Object; shared transactional source emits state-kind/current/pending/projected counts from the existing bounded capacity read, rejects record 257 and permits existing-key replay at the ceiling. Control nonce, webhook dedup, rate-limit and admission-audit cleanup pass locally; confirmed operator records are minimized and have a default-off bounded D1 archive/90-day eligibility source. Real operator archive commit/delete, UploadJob destructive cleanup and deployed record/byte/active-object metrics remain absent. `LOCAL_TEST`. |
+| DO growth bounded and cleanup verified | PARTIAL / RETENTION_90D_NOT_DUE | The accepted ceiling is 256 persistent records per Durable Object; shared transactional source emits state-kind/current/pending/projected counts from the existing bounded capacity read, rejects record 257 and permits existing-key replay at the ceiling. Control nonce, webhook dedup, rate-limit and admission-audit cleanup pass locally. Checkpoint 180 proves one bounded operator D1 archive commit and its exact 90-day eligibility boundary. Actual operator deletion/audit-hold behavior, UploadJob archive/cleanup and deployed record/byte/active-object metrics remain absent. `LOCAL_TEST` + `CI` + `PREVIEW_RUNTIME` + `D1_WRITE`. |
 | Upload-resume success above approved threshold | EXTERNAL_EVIDENCE_REQUIRED | The accepted gate is at least 99% same-resource resume with exactly zero second payments and zero second provider assets. Local recovery/canary regressions pass, but no deployed pilot sample or payment/provider receipt aggregation exists. |
 | RPC/provider fault injection degrades safely | PARTIAL | The report's eight chaos scenarios now map to deterministic local regressions: bounded NEAR failures/circuit, Livepeer 429/5xx/timeout admission behavior, duplicate/out-of-order webhook, Queue retry/redelivery, ambiguous broadcast reuse, exact-version rejection, early/delayed alarm timing and bounded D1/API/Web fallback. This is complete source-matrix coverage, not a real chaos run. Provider, Cloudflare Queue/D1, mixed deployed versions and staging evidence remain `EXTERNAL_EVIDENCE_REQUIRED`. `LOCAL_TEST`. |
 | Cost model and budget alarm defined | PARTIAL | Approved pilot monthly/per-job reservation values fail closed locally and provider 402/429 closes admission. Actual Livepeer billed-usage/invoice reconciliation and delivered budget alerts remain external. `LOCAL_TEST`. |
@@ -240,7 +240,7 @@ Evidence classes remain separate:
 | PLAY-001 | 2 | PASS_LOCAL | Eight-hour NEP-413 device certificate, memory-only device key, signed request binding and disconnect/page-reload clear pass locally; deployed wallet proof is absent. |
 | PLAY-002 | 2 | PASS_PREVIEW | Local authorization and 1,000-request load evidence pass. Checkpoint 149's 0%-traffic candidate issued independently verified 180-second ES256 JWTs for three version-overridden valid requests; every request performed three final testnet NEAR reads plus one successful Livepeer policy read. Stable-only 100% and all runtime flags false were restored. |
 | PLAY-003 | 2 | PARTIAL_PREVIEW | Bounded TTL cache, cold/hit read counts, provider JWT-policy check and 30/60-second takedown/key-removal bounds pass locally. Checkpoints 150–151 close the deployed shadow slice at mismatch `0/2`. Checkpoint 152 adds one deployed cold miss followed by eleven deployed cache hits with zero warm NEAR/provider reads and 100 ms client p95. Direct v2, provider mutation and persistent shadow writes stayed closed after restore. Event-driven invalidation remains absent. |
-| DO-001 | 2 | PARTIAL | Shared transactional enforcement emits a bounded `durable_object_storage_observed` event for `upload_job`, `admission`, `operator` or `rate_limit`, rejects record 257 and permits existing-key replay at the accepted 256-record ceiling. Rate-limit `deleteAll()`, 30-day webhook dedup and 90-day admission audit cleanup pass automatically. Independent default-off UploadJob and confirmed operator D1 archives enforce bounded summaries plus 14/90-day eligibility locally without deletion. Real archive commits, operator/UploadJob destructive cleanup and deployed metrics remain absent. |
+| DO-001 | 2 | PARTIAL / RETENTION_90D_NOT_DUE | Shared transactional enforcement emits a bounded `durable_object_storage_observed` event for `upload_job`, `admission`, `operator` or `rate_limit`, rejects record 257 and permits existing-key replay at the accepted 256-record ceiling. Rate-limit `deleteAll()`, 30-day webhook dedup and 90-day admission audit cleanup pass automatically. Checkpoint 180 proves exactly one operator D1 archive commit and its 90-day eligibility boundary. Operator deletion/audit-hold behavior, an UploadJob archive commit/delete and deployed metrics remain absent. |
 | UP-001 | 3 | PASS_LOCAL | Coordinator limits, budgets, 30-minute lease, five-minute heartbeat, wrong-token rejection, alarm release and 15-minute ambiguity isolation pass locally. A default-off new-upload gate rejects unrecorded intents while recorded intent/heartbeat/TUS recovery remains available. Real browser/large-upload/staging evidence is absent. |
 | UP-002 | 3 | PARTIAL | One allowed-predecessor table and timestamps cover real `AUTHORIZED → LEASED → PROVIDER_CREATE_PENDING → UPLOAD_READY → UPLOADING → PROCESSING → READY_VERIFIED → FINALIZE_RETRY/QUEUED → ONCHAIN_PUBLISHED` signals plus cancel/expiry/provider-failure terminals. Creator cancellation is pre-provider-only and non-refundable. Provider create uses one fail-closed `RECONCILE_ONLY` attempt; finalize retry uses capped 60–900-second backoff. Default-off terminal D1 archive/14-day eligibility passes locally, but real commit, v1 playback independence and deletion are absent. `LOCAL_TEST`. |
 | UP-003 | 3 | PARTIAL | Authenticated retry after browser-key replacement/object restart and after `UPLOADING` recovers the same TUS URL with no second provider create. The accepted gate is at least 99% resume success with zero second payments/assets. The v2 session draft rejects same-metadata/different-content files; upload-intent control v3 signs its bounded SHA-256 and UploadJob v2 rejects a conflicting retry. Deployed samples and payment/provider receipts remain absent. `LOCAL_TEST`. |
@@ -7372,4 +7372,89 @@ Evidence classes remain separate:
   review only this append-only evidence file, create an explicit-path
   commit/draft PR and obtain exact-head CI. Do not merge, deploy, run status or
   scan, change variables/secrets, write/delete D1, access provider/chain or
+  touch Production in that gate.
+
+### CHECKPOINT 181 — Phase 2 / elapsed-retention follow-up decision
+
+- DURUM: `PASS_FOR_PHASE_PROGRESSION / RETENTION_90D_TIME_BOUND_FOLLOWUP /
+  CLEANUP_NOT_AUTHORIZED / RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- KULLANICI KARARI:
+  - the user explicitly directed the plan not to wait for the elapsed 90-day
+    interval before continuing. The real operator archive commit and its exact
+    cleanup-eligibility timestamp from Checkpoint 180 remain valid evidence;
+  - the cleanup lifecycle is moved to a dated follow-up that is not actionable
+    before approximately `2026-11-22`. The exact stored eligibility timestamp,
+    not this approximate date, remains authoritative;
+  - the follow-up still requires a fresh audit/legal-hold preflight and separate
+    explicit approval before any delete or non-delete runtime evidence. This
+    decision does not reclassify elapsed retention, cleanup or audit-hold
+    behavior as proven.
+- KANIT VE SINIR:
+  - exact upstream remains `main@2fb50f584f62eeb9f62ea4c3b7706f2abec32fcf`;
+    exact-main CI `32771953759` is successful and Deploy Preview `32772189408`
+    is skipped;
+  - this gate changes only the phase summary and plan status. No commit, push,
+    PR, CI rerun, deploy, workflow dispatch, status/scan call, variable/secret
+    change, D1/provider/wallet/chain access or Production operation occurred;
+  - UploadJob archive/delete remains a separate Phase 3 gap. The operator
+    archive canary does not satisfy that precondition.
+- GÜNCEL FAZ KAPISI:
+  `PHASE2_RETENTION_90D_EXIT_POLICY_DECISION_REQUIRED` is closed. Phase 2 is
+  `PASS_FOR_PHASE_PROGRESSION` with one non-blocking, time-bound retention
+  follow-up. The single proposed next gate is
+  `PHASE3_MULTI_CREATOR_UPLOAD_PREFLIGHT_REVIEW_DECISION_REQUIRED`: perform a
+  read-only exact-main review of the two creator identities, sample media,
+  provider/TUS readiness, budget limits, rollback boundary and measurable
+  acceptance criteria for the smallest real concurrent-upload Preview slice.
+  Do not deploy, create provider assets, request wallet signatures, pay, write
+  D1/Queue/chain state or activate runtime flags in that review gate.
+
+### CHECKPOINT 182 — Phase 3 / guarded multi-creator canary release source
+
+- DURUM: `PASS_LOCAL_CHANGESET / PREVIEW_ONLY_SOURCE_READY /
+  PRODUCTION_CLOSED / EXTERNAL_INPUTS_BLOCKED / NO_DEPLOY /
+  CURRENT_GATE_CLOSED`.
+- YETKİ VE KABUL:
+  - the user approved only the smallest source change that lets the existing
+    protected Preview release represent a later multi-creator upload canary.
+    Commit, push, PR, CI rerun, repository variable/secret changes, deploy,
+    media/provider creation, wallet/payment, D1/Queue/chain writes, traffic and
+    Production remain excluded;
+  - acceptance requires one absent-by-default repository variable to control
+    the complete Preview packet, strict two-creator and budget validation,
+    unchanged Production false gates and no second deployment system.
+- EN KÜÇÜK DEĞİŞİKLİK:
+  - existing protected `.github/workflows/deploy-preview.yml` reuses one
+    `PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED` variable for the Web paid-media,
+    Bridge, new-upload and provider-mutation flags. A missing or empty variable
+    resolves to `false` for all four;
+  - release metadata and Cloudflare release validation accept either all four
+    false or all four true in Preview. The true packet requires exactly two
+    distinct `.testnet` creator IDs, monthly budget `20000000` micro-USD and
+    per-job reservation `2000000` micro-USD. Partial flags, duplicate/missing
+    creators and budget drift fail before release mutation;
+  - Production still requires all four flags false. The Production promotion
+    workflow does not consume the canary variable. Playback, Queue, operator,
+    archive and creator-fee gates remain false.
+- LOCAL_TEST:
+  - release metadata and Cloudflare release suites pass `107/107`, including
+    complete-packet positive coverage plus partial flag, one/duplicate creator
+    and both budget-drift negatives;
+  - JavaScript syntax, workflow security checks, YAML parsing, Docs build and
+    `git diff --check` pass. These are local source checks, not CI or deploy
+    evidence.
+- DIŞ SINIR:
+  - the current Preview variable inventory still lacks the two creator and
+    budget inputs; no sample media is present; the available mode-0600 local
+    Livepeer credential returned read-only HTTP 401. None was changed;
+  - no workflow was dispatched and live Preview remains closed. This source
+    readiness does not authorize secret rotation, configuration, deploy or a
+    real upload canary.
+- GÜNCEL FAZ KAPISI:
+  `PHASE3_MULTI_CREATOR_CANARY_GUARDED_SOURCE_CHANGESET_DECISION_REQUIRED` is
+  closed locally. The single proposed next gate is
+  `PHASE3_MULTI_CREATOR_CANARY_SOURCE_CHANGESET_CI_DECISION_REQUIRED`: review
+  only the six changed paths, create an explicit-path commit/draft PR and
+  obtain exact-head CI. Do not configure the canary variable, creators,
+  budgets or secrets; do not deploy, upload, pay, write external state or
   touch Production in that gate.

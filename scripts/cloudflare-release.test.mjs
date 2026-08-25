@@ -1219,7 +1219,7 @@ test('Preview paid-media operator token is required before mutation', async (t) 
     assert.deepEqual(secretCalls(fake), []);
 });
 
-test('target allowlist and disabled release flags are fail closed', async (t) => {
+test('target allowlist and guarded release flags are fail closed', async (t) => {
     await t.test('rejects a forbidden manifest target', async (subtest) => {
         const release = makeRelease(subtest);
         release.manifest.targets.preview.bridge.worker = 'youtick-livepeer-bridge-c3-4ea2011';
@@ -1240,7 +1240,36 @@ test('target allowlist and disabled release flags are fail closed', async (t) =>
         await assert.rejects(deployRelease({
             target: 'preview', sha: SHA, artifactDir: release.artifactDir, receiptOutput: release.receipt,
             nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY, ...PREVIEW_SECRET_INPUTS,
-        }), /livepeer_bridge_enabled_not_false/);
+        }), /preview_multi_creator_upload_canary_flags_invalid/);
+    });
+
+    await t.test('accepts the complete Preview multi-creator upload canary packet', async (subtest) => {
+        const release = makeRelease(subtest);
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.web.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = 'true';
+        config.bridge.LIVEPEER_BRIDGE_ENABLED = 'true';
+        config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED = 'true';
+        config.bridge.LIVEPEER_PROVIDER_MUTATIONS_ENABLED = 'true';
+        config.bridge.LIVEPEER_CREATOR_ALLOWLIST = 'creator-one.testnet,creator-two.testnet';
+        config.bridge.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS = '20000000';
+        config.bridge.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS = '2000000';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.preview = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+
+        await deployFixture(release, fake);
+
+        const bridgeCommands = calls(fake).filter((args) => (
+            args.includes(TARGETS.preview.bridge.worker)
+            && (args[0] === 'deploy' || (args[0] === 'versions' && args[1] === 'upload'))
+        ));
+        assert.equal(bridgeCommands.length, 2);
+        assert.ok(bridgeCommands.every((args) => (
+            args.includes('LIVEPEER_BRIDGE_ENABLED:true')
+            && args.includes('LIVEPEER_NEW_UPLOADS_ENABLED:true')
+            && args.includes('LIVEPEER_PROVIDER_MUTATIONS_ENABLED:true')
+        )));
     });
 
     await t.test('accepts the Preview publication read origin', async (subtest) => {
