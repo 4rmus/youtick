@@ -7458,3 +7458,258 @@ Evidence classes remain separate:
   obtain exact-head CI. Do not configure the canary variable, creators,
   budgets or secrets; do not deploy, upload, pay, write external state or
   touch Production in that gate.
+
+### CHECKPOINT 183 — Phase 3 / PR #138 post-merge evidence
+
+- DURUM: `PASS_MERGED / PASS_EXACT_MAIN_CI / DEPLOY_SKIPPED /
+  ZERO_DEPLOYMENTS / RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- YETKİ VE KABUL:
+  - the user explicitly approved making PR #138 ready, squash-merging exact
+    head `b0c77100464d33e8523581737d671675fb06620e`, and verifying post-merge
+    main CI plus deploy-skip evidence. Manual deploy, configuration/secret
+    changes, canary activation, media/provider creation, wallet/payment and
+    D1/Queue/chain writes remained excluded;
+  - acceptance required the recorded merge to use that exact head, the squash
+    tree to equal the reviewed PR tree, terminal exact-main CI, a skipped
+    Deploy Preview run, zero deployments and unchanged closed Preview runtime.
+- MERGE:
+  - PR #138 had one commit, exactly the six reviewed paths and successful
+    exact-head CI run `32820019692`. It was made ready only after its head and
+    checks were revalidated;
+  - GitHub records PR #138 `MERGED` from exact head `b0c7710...` as squash
+    commit `48ed7685d454e1402b3c3889fe28c4b6b493ebb3`. Its sole parent is prior
+    main `2fb50f584f62eeb9f62ea4c3b7706f2abec32fcf`; PR-head and squash trees are
+    both `783e4f4ae6a76efbe818a7e1bd9b14675ecd317b`;
+  - the repository's delete-on-merge policy removed the remote source branch.
+    No local worktree or user change was cleaned in this gate.
+- CI:
+  - exact-main run `32824453675` completed successfully at
+    `48ed7685d454e1402b3c3889fe28c4b6b493ebb3`. All 12 jobs, including CI Gate,
+    both CodeQL languages, Bridge, Web, contracts, protocol, Docs and dependency
+    audits, passed;
+  - automatic Deploy Preview run `32825263693` completed `skipped` for the same
+    exact SHA. GitHub reports zero deployments.
+- RUNTIME VE DIŞ SINIR:
+  - `DEPLOY_PREVIEW_ENABLED=false` and the multi-creator canary variable remains
+    absent/false. Fresh public health remains version
+    `d02deee9-c025-4d4d-8f5a-d5ccc32515e4`, `stage=DISABLED`, with new upload
+    and provider mutation readiness false;
+  - no variable/secret, deploy, media/provider, wallet/payment, D1/Queue/chain
+    or Production operation occurred. This append-only evidence update is
+    local only and is not self-referential CI evidence.
+- GÜNCEL FAZ KAPISI:
+  `PHASE3_PR138_EXACT_HEAD_SQUASH_MERGE_DECISION_REQUIRED` is closed. The guarded
+  source is merged, but the real canary remains blocked on owner inputs. The
+  single proposed next gate is
+  `PHASE3_MULTI_CREATOR_CANARY_INPUT_PACKET_OWNER_DECISION_REQUIRED`: select the
+  exact second testnet creator, approve two rights-safe sample media inputs,
+  choose a valid project-scoped Livepeer credential delivery path and name the
+  Preview on-call/notification owner. Do not create accounts/media, rotate or
+  install secrets, configure variables, deploy, upload or pay in that decision
+  gate.
+
+### CHECKPOINT 184 — Phase 3 / multi-creator canary pre-deploy packet
+
+- DURUM: `PASS_READ_ONLY_PREFLIGHT / INPUTS_PASS / MARKET_PASS /
+  WORKERS_PAID_PASS / CONFIG_PACKET_PASS / EXECUTION_HARNESS_BLOCKED /
+  RUNTIME_CLOSED / CURRENT_GATE_CLOSED`.
+- EXACT SOURCE VE RELEASE SINIRI:
+  - upstream is exact `main@48ed7685d454e1402b3c3889fe28c4b6b493ebb3`;
+    main CI `32824453675` passes all 12 jobs and Deploy Preview `32825263693`
+    is skipped. No exact-main Preview release artifact exists because the
+    protected deploy workflow did not run; that workflow is the only allowed
+    artifact-build and Cloudflare deploy surface;
+  - both the current closed packet and a simulated canary-open packet pass
+    `release-metadata.mjs config` against the complete 59-variable repository
+    inventory. The open packet keeps the four canary flags in lockstep, exactly
+    two creators and the approved `20000000/2000000` budgets; Production is not
+    touched.
+- CREATOR, MEDIA VE PROVIDER GİRDİLERİ:
+  - `lp-p3-creator-a-250825.youtick-dev-v3.testnet` and
+    `lp-p3-creator-b-250825.youtick-dev-v3.testnet` each have final `0.1 NEAR`,
+    `20000000` micro-USDC, registered USDC storage, one distinct chain-matching
+    key and mode-0600 local credentials;
+  - the approved H.264/AAC 1280x720 media inputs remain unchanged at 341028 and
+    744278 bytes with SHA-256
+    `27264dd1f93463725b2a2ac028128ce042fda9989f682338372b02dafe66dea6` and
+    `da0abd4c474231308da502d59e9fe171b1d1e2bbaf3075e2f9151d842337be78`;
+  - the CORS-None Livepeer token returns one redacted `200 / vod / jwt`
+    provider-read receipt and is installed only as repository secret
+    `PREVIEW_LIVEPEER_API_KEY`. The redundant CORS-Full `test-phase-3` key was
+    deleted; the two intended CORS-None keys remain.
+- MARKET, CAPACITY VE ON-CALL:
+  - final Market governance has distinct admin/guardian/bridge roles,
+    `new_purchases_paused=true`, no pending bridge rotation and storage reserve
+    covered. Live WASM SHA-256 exactly matches
+    `d2f7a9b04bf215bbe5138523fe1e049a2707cc01a2bd35b52a657aa60e646833`;
+  - a current Cloudflare account-settings GET returns
+    `default_usage_model=standard`, preserving Workers Paid evidence;
+  - Preview requires only reviewer `@4rmus`. Approval notification and the
+    GET-only status workflow pass in run `32861958618`; no Cloudflare deploy
+    occurred. Canary and deploy repository variables remain false.
+- KİLİTLİ DEPLOY VE GERİ DÖNÜŞ SIRASI:
+  - a later explicit deployment gate may set only the canary and deploy
+    variables true, rerun exact-main CI and use the protected Deploy Preview
+    workflow after `@4rmus` approval. The workflow must build/verify the exact
+    release artifact before Cloudflare mutation and retain the current closed
+    Bridge version `d02deee9-c025-4d4d-8f5a-d5ccc32515e4` as rollback input;
+  - before any upload, exact deployed Web/Bridge versions, four true canary
+    flags, all excluded false flags, two-entry allowlist, budgets and zero new
+    provider/job/payment deltas must be recorded. Any mismatch stops before a
+    wallet/provider mutation;
+  - failure closes both repository variables, blocks new attempts and requires
+    a separately approved protected closed-packet redeploy. Contract state is
+    never rolled back; no payment is retried and no provider asset is deleted
+    without its exact generated ID and a later cleanup approval.
+- BLOCKER:
+  - the repository has no executable that performs the required two-creator
+    `payment -> Bridge intent -> concurrent TUS upload -> exact delta` flow.
+    `playback-canary.mjs` is a single provider-level canary, while the Web path
+    depends on an interactive wallet session. Deploying before choosing and
+    validating one of those execution surfaces would open gates without a
+    reproducible bounded smoke;
+  - the approved media is suitable for the concurrent smoke only; it is not a
+    32 MiB resume or large-file proof.
+- GÜNCEL FAZ KAPISI:
+  `PHASE3_MULTI_CREATOR_CANARY_PREDEPLOY_PACKET_DECISION_REQUIRED` is closed with
+  a blocked runtime result. The single proposed next gate is
+  `PHASE3_MULTI_CREATOR_UPLOAD_RUNNER_SOURCE_DESIGN_DECISION_REQUIRED`: select
+  the smallest source-only runner that reuses current signing, payment, Bridge
+  and TUS modules for exactly two creators and leaves every external path
+  disabled. Do not implement, commit, deploy, pay, upload or mutate provider
+  state in that design gate.
+
+### CHECKPOINT 185 — Phase 3 / multi-creator upload runner source design
+
+- DURUM: `PASS_SOURCE_DESIGN_LOCKED / EXISTING_WEB_FLOW_REUSED /
+  NO_NEW_DEPENDENCY / NO_EXTERNAL_MUTATION / CURRENT_GATE_CLOSED`.
+- SEÇİLEN EN KÜÇÜK YOL:
+  - use one isolated TypeScript canary entry under `apps/web/scripts`, executed
+    by the already-installed Vitest/Vite toolchain. It imports the current Web
+    payment, job-key signing, Bridge intent, heartbeat and TUS upload functions;
+    it does not copy the protocol or add a second upload implementation;
+  - use a minimal `near-api-js` account adapter only to let the two existing
+    mode-0600 testnet credentials satisfy the current wallet transaction
+    interface. No FullAccess key is copied to GitHub, Cloudflare, an environment
+    variable or the repository;
+  - use a separate Vitest config without the normal unit-test mocks, plus one
+    package command. No new package, shared abstraction, workflow or deploy
+    surface is justified.
+- SONRAKİ IMPLEMENTATION PATH SETİ:
+  - new `apps/web/scripts/multi-creator-upload-canary.test.ts` owns both the
+    bounded orchestration and its one network-free contract check;
+  - new `apps/web/vitest.canary.config.ts` supplies only the existing `@` alias,
+    Node environment and this exact canary entry, with no mocked NEAR client;
+  - `apps/web/package.json` adds only the named canary command. Production Web,
+    Worker, protocol, workflow and release files remain forbidden.
+- FAIL-CLOSED ÇALIŞMA SÖZLEŞMESİ:
+  - live mutation is disabled by default and requires a later exact activation
+    acknowledgement, an expected deployed Bridge version, two media paths and
+    the fixed creator pair. Both files must match their locked byte sizes and
+    SHA-256 values; both credentials must match their final chain keys;
+  - before payment, the runner requires the expected enabled Preview health,
+    two successful non-mutating upload preflights, no pre-existing generated
+    jobs and sufficient exact USDC balances. Any mismatch exits with zero
+    payment or provider mutation;
+  - it authorizes exactly one fixed-price USDC job per creator, waits for both
+    final on-chain jobs, requests exactly one new Bridge intent per job and
+    requires `created=true` plus two distinct TUS endpoint fingerprints. Only
+    then does one barrier start both existing TUS uploads concurrently;
+  - the runner waits for both upload outcomes and never repeats a payment,
+    requests a second intent, deletes an asset, refunds, publishes or changes a
+    flag. The current TUS client's bounded transport retry remains unchanged.
+- RECOVERY VE REDACTED RECEIPT:
+  - job-bound upload keys use a runner-local mode-0600 recovery file that acts
+    like browser `sessionStorage`; it is removed after two successful uploads
+    and retained only after a paid failure so the job is recoverable. Wallet
+    FullAccess keys are read from their existing credential files and are never
+    copied into that recovery file;
+  - success requires exactly two payment deltas of `500000` micro-USDC, two
+    exact matching final jobs, two newly created and distinct Bridge provider
+    resources, and two completed uploads with the locked byte counts. Console
+    evidence contains only counts, statuses and hashes; raw keys, credential
+    contents, job IDs, TUS URLs and provider identifiers are omitted;
+  - this smoke does not claim 32 MiB resume, provider inventory reconciliation,
+    processing/publication or playback proof. Those are separate gates.
+- REDDEDİLEN YOLLAR:
+  - running `playback-canary.mjs` twice bypasses payment and Bridge admission;
+  - two interactive browser wallets are not reproducible and would move local
+    account authority into browser state. Neither path satisfies this gate.
+- KANIT SINIRI:
+  - only this design decision and the external phase summary changed. No runner
+    source, dependency, commit, push, PR, CI, workflow, deploy, variable/secret,
+    wallet/payment, provider, D1/Queue/chain or Production operation occurred.
+- GÜNCEL FAZ KAPISI:
+  `PHASE3_MULTI_CREATOR_UPLOAD_RUNNER_SOURCE_DESIGN_DECISION_REQUIRED` is
+  closed. The single proposed next gate is
+  `PHASE3_MULTI_CREATOR_UPLOAD_RUNNER_SOURCE_IMPLEMENTATION_DECISION_REQUIRED`:
+  implement only the three locked paths, run the network-free canary contract
+  check plus touched-path Web checks and stop. Do not commit, deploy, activate
+  flags, pay, upload or access provider state in that implementation gate.
+
+### CHECKPOINT 186 — Phase 3 / PR #139 runner source closure
+
+- DURUM: `PASS_MERGED / PASS_EXACT_MAIN_CI / DEPLOY_SKIPPED /
+  ZERO_DEPLOYMENTS / RUNNER_SOURCE_READY / RUNTIME_CLOSED /
+  CURRENT_GATE_CLOSED`.
+- SOURCE VE LOCAL_TEST:
+  - the locked implementation changed exactly `apps/web/package.json`,
+    `apps/web/scripts/multi-creator-upload-canary.test.ts` and
+    `apps/web/vitest.canary.config.ts`. No dependency, workflow, production
+    runtime or release file changed;
+  - the named canary command passed one network-free contract test and skipped
+    the live test by default. The existing Web suite passed `137/137`, browser
+    canary `5/5`, TypeScript, ESLint and a closed-flag Web build passed. No
+    recovery file was created. These results are `LOCAL_TEST`, not Preview or
+    provider evidence;
+  - the runner keeps the exact two creator/media locks, explicit live
+    acknowledgement, expected Bridge version, final-key and balance preflights,
+    one payment and one newly created intent per creator, concurrent TUS barrier,
+    redacted receipt and mode-0600 paid-failure recovery boundary from
+    Checkpoint 185.
+- PR VE EXACT MERGE:
+  - PR #139 contained one commit and exactly the three reviewed paths. Its
+    exact head `65698e5ba322ab237077a60cd5bbb9c9927d3761` passed pull-request CI
+    run `32872156726` and was made ready only after head/check revalidation;
+  - exact-head protected squash merge produced
+    `main@766951581ef3cc65385fc10df5fc5524b11925c7` with sole parent
+    `48ed7685d454e1402b3c3889fe28c4b6b493ebb3`. PR and squash tree are both
+    `684381d84a5e865536161dbbeb38386540fe39d6`;
+  - the remote source branch was removed by repository policy. The isolated
+    local worktree and all pre-existing dirty user worktrees were retained.
+- CI KANIT SINIRI:
+  - exact-main push CI run `32880836500` completed successfully: Web, both
+    dependency audits, both CodeQL languages, change detection and CI Gate
+    passed; unaffected Bridge, contracts, protocol and Docs jobs were skipped;
+  - the normal Web job runs lint, the existing Web suite, browser playback
+    canary and build. It does not invoke the new named
+    `test:multi-creator-upload-canary` command. Therefore the runner's default
+    no-network contract execution remains `LOCAL_TEST`; CI proves compilation,
+    lint/security analysis and surrounding Web regression only;
+  - the Node 20 action deprecation annotation is non-blocking and belongs to an
+    existing artifact action. No rerun or source change was made for it.
+- DEPLOY VE RUNTIME SINIRI:
+  - automatic Deploy Preview run `32881096568` completed `skipped` for exact
+    main. Authorize, Bridge/Web build, release assembly and deploy jobs all had
+    zero steps. `DEPLOY_PREVIEW_ENABLED=false`; the multi-creator canary variable
+    remains absent, and GitHub reports zero deployments for this SHA;
+  - the only exact-main artifact is the contract SBOM from CI, not a Preview
+    release artifact. No Cloudflare mutation occurred;
+  - a fresh public health read still returns Bridge version
+    `d02deee9-c025-4d4d-8f5a-d5ccc32515e4`, `stage=DISABLED`, with provider
+    mutation, new upload, webhook Queue and UploadJob archive readiness false.
+- KANIT SINIRI:
+  - this gate changed only the append-only evidence and external plan summary.
+    No commit, push, PR, workflow dispatch/rerun, variable/secret, deploy,
+    wallet/payment, upload, provider asset, D1/Queue/chain or Production
+    operation occurred.
+- GÜNCEL FAZ KAPISI:
+  `PHASE3_MULTI_CREATOR_UPLOAD_RUNNER_SOURCE_CHANGESET_CI_DECISION_REQUIRED` is
+  closed. The single proposed next gate is
+  `PHASE3_CHECKPOINTS_183_186_EVIDENCE_CHANGESET_CI_DECISION_REQUIRED`: move
+  only this accumulated append-only evidence onto current exact main, create an
+  explicit-path commit/draft PR and obtain exact-head CI. Do not merge, change
+  variables/secrets, rerun a deployment workflow, deploy, run the live canary,
+  pay, upload, access provider state, touch Production or delete anything in
+  that documentation gate. The protected Preview deployment decision follows
+  only after this evidence is canonical on main.
