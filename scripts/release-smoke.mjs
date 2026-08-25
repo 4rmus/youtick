@@ -140,7 +140,7 @@ async function request(baseUrl, path, init, headers, fetchImpl) {
 }
 
 async function bridgeHealth(
-    bridgeUrl, headers, expectedVersion, bridgeBootstrap, fetchImpl, sleepFn,
+    bridgeUrl, headers, expectedVersion, expectedBridgeEnabled, bridgeBootstrap, fetchImpl, sleepFn,
 ) {
     const delays = bridgeBootstrap
         ? BOOTSTRAP_HEALTH_RETRY_DELAYS_MS
@@ -159,8 +159,18 @@ async function bridgeHealth(
             expectStatus(health.response, 200, 'bridge_health');
         }
         const healthJson = expectJson(health.response, health.body, 'bridge_health');
-        if (healthJson.stage !== 'DISABLED' || healthJson.providerMutationEnabled !== false) {
-            throw new Error('release_smoke_bridge_not_disabled');
+        const enabled = healthJson.stage === 'ENABLED'
+            && healthJson.providerMutationEnabled === true
+            && healthJson.newUploadReady === true;
+        const disabled = healthJson.stage === 'DISABLED'
+            && healthJson.providerMutationEnabled === false
+            && healthJson.newUploadReady === false;
+        if (expectedBridgeEnabled === null ? !enabled && !disabled : expectedBridgeEnabled ? !enabled : !disabled) {
+            throw new Error(expectedBridgeEnabled === null
+                ? 'release_smoke_bridge_policy_invalid'
+                : expectedBridgeEnabled
+                    ? 'release_smoke_bridge_not_enabled'
+                    : 'release_smoke_bridge_not_disabled');
         }
         if (!VERSION_RE.test(healthJson.versionId || '')) {
             throw new Error('release_smoke_bridge_version_invalid');
@@ -219,6 +229,7 @@ export async function runReleaseSmoke({
     overrideWorker,
     overrideVersion,
     expectedBridgeVersion,
+    expectedBridgeEnabled = false,
     bridgeBootstrap = false,
     includePlaybackV2 = true,
     fetchImpl = fetch,
@@ -238,6 +249,9 @@ export async function runReleaseSmoke({
         throw new Error('release_smoke_bridge_version_expectation_conflict');
     }
     const expectedVersion = expectedBridgeVersion ?? overrideVersion;
+    if (expectedBridgeEnabled !== null && typeof expectedBridgeEnabled !== 'boolean') {
+        throw new Error('release_smoke_bridge_policy_invalid');
+    }
     if (typeof bridgeBootstrap !== 'boolean' || (bridgeBootstrap && !expectedVersion)) {
         throw new Error('release_smoke_bridge_bootstrap_invalid');
     }
@@ -256,11 +270,12 @@ export async function runReleaseSmoke({
     const browser = await browserRunner({ webUrl, headers });
 
     const healthJson = await bridgeHealth(
-        bridgeUrl, headers, expectedVersion, bridgeBootstrap, fetchImpl, sleepFn,
+        bridgeUrl, headers, expectedVersion, expectedBridgeEnabled,
+        bridgeBootstrap, fetchImpl, sleepFn,
     );
 
     const mutationStatuses = {};
-    for (const mutation of DISABLED_BRIDGE_MUTATIONS) {
+    for (const mutation of healthJson.stage === 'ENABLED' ? [] : DISABLED_BRIDGE_MUTATIONS) {
         if (!includePlaybackV2 && mutation.path === '/v2/playback-tokens') continue;
         const result = await request(bridgeUrl, mutation.path, {
             method: 'POST',
@@ -306,7 +321,7 @@ export async function runReleaseSmoke({
         web: { root_status: 200, tr_status: 200, near_rpc_status: 200, browser },
         bridge: {
             health_status: 200,
-            stage: 'DISABLED',
+            stage: healthJson.stage,
             version_id: healthJson.versionId,
             mutation_statuses: mutationStatuses,
             allowed_preflight_status: 204,
