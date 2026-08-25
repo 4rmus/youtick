@@ -804,6 +804,85 @@ test('Preview release keeps the Queue consumer detached and bootstraps the dark 
     assert.ok(readModelCalls.every((args) => !args.includes('--env')));
 });
 
+test('Preview recovery replaces zero-percent residue from a failed candidate', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, {
+        workers: {
+            [TARGETS.preview.web.worker]: {
+                traffic: [{ version_id: 'web-old', percentage: 100 }],
+            },
+            [TARGETS.preview.bridge.worker]: {
+                traffic: [
+                    { version_id: 'bridge-old', percentage: 100 },
+                    { version_id: 'bridge-residue', percentage: 0 },
+                ],
+            },
+            [READ_MODEL_WORKER]: {
+                traffic: [
+                    { version_id: 'read-model-old', percentage: 100 },
+                    { version_id: 'read-model-residue', percentage: 0 },
+                ],
+            },
+        },
+        uploadFailures: {},
+    });
+
+    const receipt = await deployFixture(release, fake);
+    assert.equal(receipt.bridge.previousVersionId, 'bridge-old');
+    assert.equal(receipt.readModel.previousVersionId, 'read-model-old');
+    const state = JSON.parse(readFileSync(fake.statePath, 'utf8'));
+    assert.deepEqual(state.workers[TARGETS.preview.bridge.worker].traffic, [
+        { version_id: 'bridge-new', percentage: 100 },
+    ]);
+    assert.deepEqual(state.workers[READ_MODEL_WORKER].traffic, [
+        { version_id: 'read-model-new', percentage: 100 },
+    ]);
+});
+
+test('candidate smoke failure leaves zero-percent staging without a rollback deploy', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, {
+        workers: {
+            [TARGETS.preview.web.worker]: {
+                traffic: [{ version_id: 'web-old', percentage: 100 }],
+            },
+            [TARGETS.preview.bridge.worker]: {
+                traffic: [{ version_id: 'bridge-old', percentage: 100 }],
+            },
+            [READ_MODEL_WORKER]: {
+                traffic: [{ version_id: 'read-model-old', percentage: 100 }],
+            },
+        },
+        uploadFailures: {},
+    });
+    let smokeCalls = 0;
+    await assert.rejects(deployFixture(release, fake, async () => {
+        smokeCalls += 1;
+        if (smokeCalls === 2) throw new Error('candidate smoke failed');
+        return { ok: true };
+    }), /candidate smoke failed/);
+
+    const deployments = calls(fake)
+        .filter((args) => args[0] === 'versions' && args[1] === 'deploy')
+        .map((args) => args.filter((entry) => /^[A-Za-z0-9-]+@[0-9]+$/.test(entry)));
+    assert.deepEqual(deployments, [
+        ['read-model-old@100', 'read-model-new@0'],
+        ['bridge-old@100', 'bridge-new@0'],
+    ]);
+    const state = JSON.parse(readFileSync(fake.statePath, 'utf8'));
+    assert.deepEqual(state.workers[TARGETS.preview.web.worker].traffic, [
+        { version_id: 'web-old', percentage: 100 },
+    ]);
+    assert.deepEqual(state.workers[TARGETS.preview.bridge.worker].traffic, [
+        { version_id: 'bridge-old', percentage: 100 },
+        { version_id: 'bridge-new', percentage: 0 },
+    ]);
+    assert.deepEqual(state.workers[READ_MODEL_WORKER].traffic, [
+        { version_id: 'read-model-old', percentage: 100 },
+        { version_id: 'read-model-new', percentage: 0 },
+    ]);
+});
+
 test('a successful first upload without traffic is bootstrapped before its candidate', async (t) => {
     const release = makeRelease(t);
     const fake = makeFakeWrangler(release, {
@@ -1257,8 +1336,18 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
         release.manifest.configs.preview = record(release.configPath);
         writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
         const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+        const smokeInputs = [];
 
-        await deployFixture(release, fake);
+        await deployFixture(release, fake, async (input) => {
+            smokeInputs.push(input);
+            return { ok: true };
+        });
+
+        assert.deepEqual(smokeInputs.map(({ expectedBridgeEnabled }) => expectedBridgeEnabled), [
+            null,
+            true,
+            true,
+        ]);
 
         const bridgeCommands = calls(fake).filter((args) => (
             args.includes(TARGETS.preview.bridge.worker)

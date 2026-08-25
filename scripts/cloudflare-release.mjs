@@ -835,10 +835,15 @@ async function requireTraffic(run, args, expected, label) {
 
 async function prepareComponent({ component, target, sha, run, args, bootstrapAllowed }) {
     const before = await currentTraffic(run, args, `${component}_before`, { allowFailure: true });
+    let previousVersion;
     if (before.traffic) {
-        if (before.traffic.length !== 1 || before.traffic[0].percentage !== 100) {
+        const stable = before.traffic.filter(({ percentage }) => percentage === 100);
+        if (stable.length !== 1
+            || before.traffic.some(({ percentage }) => ![0, 100].includes(percentage))
+            || new Set(before.traffic.map(({ version }) => version)).size !== before.traffic.length) {
             fail(`${component}_existing_deployment_not_stable`);
         }
+        previousVersion = stable[0].version;
     } else if (!bootstrapAllowed || (!exactBootstrapFailure(before.result)
         && !exactNoDeploymentsFailure(before.result, args.expected.worker))) {
         fail(`${component}_previous_deployment_unverified`);
@@ -857,7 +862,7 @@ async function prepareComponent({ component, target, sha, run, args, bootstrapAl
             if (before.traffic) {
                 return {
                     component,
-                    previous: before.traffic[0].version,
+                    previous: previousVersion,
                     candidate: versionId(event.version_id, component),
                     previewUrl: event.preview_url,
                     bootstrap: false,
@@ -1444,8 +1449,6 @@ export async function deployRelease({
             ? workersDev.bridge
             : `https://${TARGETS[target].bridge.domain}`;
 
-        let stagedBridge = false;
-        let stagedReadModel = false;
         let promotionStarted = false;
         let rollbackPerformed = false;
         const createdDomains = [];
@@ -1461,7 +1464,6 @@ export async function deployRelease({
                     ],
                     `YouTick ${target} read model candidate ${sha}`,
                 );
-                stagedReadModel = true;
             }
             await deployTraffic(
                 runByComponent.bridge,
@@ -1472,11 +1474,11 @@ export async function deployRelease({
                 ],
                 `YouTick ${target} candidate ${sha}`,
             );
-            stagedBridge = true;
 
             await smokeFn(smokeInput(target, candidateWebUrl, {
                 bridgeUrl: candidateBridgeUrl,
                 expectedBridgeVersion: prepared.bridge.previous,
+                expectedBridgeEnabled: null,
                 bridgeBootstrap: prepared.bridge.bootstrap,
                 includePlaybackV2: false,
             }));
@@ -1485,6 +1487,7 @@ export async function deployRelease({
                 overrideWorker: TARGETS[target].bridge.worker,
                 overrideVersion: prepared.bridge.candidate,
                 expectedBridgeVersion: prepared.bridge.candidate,
+                expectedBridgeEnabled: release.config.bridge.LIVEPEER_BRIDGE_ENABLED === 'true',
             }));
 
             promotionStarted = true;
@@ -1549,6 +1552,7 @@ export async function deployRelease({
                 smokeFn,
                 smokeInput(target, `https://${TARGETS[target].web.domain}`, {
                     expectedBridgeVersion: prepared.bridge.candidate,
+                    expectedBridgeEnabled: release.config.bridge.LIVEPEER_BRIDGE_ENABLED === 'true',
                 }),
                 sleepFn,
             );
@@ -1579,7 +1583,7 @@ export async function deployRelease({
                     recoveryErrors.push(cleanupError);
                 }
             }
-            if (stagedBridge || stagedReadModel || promotionStarted) {
+            if (promotionStarted) {
                 try {
                     await restorePrevious(runByComponent, argsByComponent, prepared, sha);
                 } catch (rollbackError) {

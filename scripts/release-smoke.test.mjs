@@ -163,6 +163,7 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
             json(response, 200, {
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
+                newUploadReady: false,
                 versionId: 'version-123',
             });
             return;
@@ -263,6 +264,7 @@ test('release smoke can exclude candidate-only mutations and still identifies th
             return Response.json({
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
+                newUploadReady: false,
                 versionId: 'bridge-version',
             });
         }
@@ -303,6 +305,56 @@ test('release smoke can exclude candidate-only mutations and still identifies th
     );
 });
 
+test('enabled upload canary smoke requires exact ready policy without mutation probes', async () => {
+    const allowedOrigin = 'https://allowed.test';
+    let bridgePosts = 0;
+    const input = {
+        webUrl: 'https://web.test',
+        bridgeUrl: 'https://bridge.test',
+        allowedOrigin,
+        deniedOrigin: 'https://denied.test',
+        fetchImpl: async (value, init = {}) => {
+            const url = new URL(value);
+            if (url.hostname === 'web.test') {
+                return url.pathname === '/api/near-rpc'
+                    ? Response.json({ jsonrpc: '2.0', result: { chain_id: 'testnet' } })
+                    : new Response('<!doctype html><main>ok</main>', {
+                        headers: { 'Content-Type': 'text/html' },
+                    });
+            }
+            if (url.pathname === '/__health') {
+                return Response.json({
+                    stage: 'ENABLED',
+                    providerMutationEnabled: true,
+                    newUploadReady: true,
+                    versionId: 'bridge-enabled',
+                });
+            }
+            if (init.method === 'POST') {
+                bridgePosts += 1;
+                throw new Error('unexpected mutation probe');
+            }
+            if (init.method === 'OPTIONS' && url.pathname === '/v1/upload-intents') {
+                return init.headers.get('Origin') === allowedOrigin
+                    ? new Response(null, {
+                        status: 204,
+                        headers: { 'Access-Control-Allow-Origin': allowedOrigin },
+                    })
+                    : Response.json({ error: 'origin_denied' }, { status: 403 });
+            }
+            throw new Error('unexpected fixture request');
+        },
+        browserRunner: async () => ({ channel: 'fixture', routes: ['/', '/tr'] }),
+    };
+    const result = await runReleaseSmoke({ ...input, expectedBridgeEnabled: true });
+    const inferred = await runReleaseSmoke({ ...input, expectedBridgeEnabled: null });
+
+    assert.equal(bridgePosts, 0);
+    assert.equal(result.bridge.stage, 'ENABLED');
+    assert.deepEqual(result.bridge.mutation_statuses, {});
+    assert.equal(inferred.bridge.stage, 'ENABLED');
+});
+
 test('Bridge bootstrap propagation retry is bounded and status scoped', async (t) => {
     const retryDelays = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
     for (const fixture of [
@@ -317,7 +369,10 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
             bootstrap: true,
             requests: 7,
             delays: retryDelays,
-            body: { stage: 'DISABLED', providerMutationEnabled: false, versionId: 'bridge-old' },
+            body: {
+                stage: 'DISABLED', providerMutationEnabled: false,
+                newUploadReady: false, versionId: 'bridge-old',
+            },
             error: 'release_smoke_bridge_version_mismatch',
         },
         {
@@ -326,8 +381,24 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
             bootstrap: true,
             requests: 1,
             delays: [],
-            body: { stage: 'ENABLED', providerMutationEnabled: true, versionId: 'bridge-bootstrap' },
+            body: {
+                stage: 'ENABLED', providerMutationEnabled: true,
+                newUploadReady: true, versionId: 'bridge-bootstrap',
+            },
             error: 'release_smoke_bridge_not_disabled',
+        },
+        {
+            name: 'enabled candidate invalid policy',
+            status: 200,
+            bootstrap: false,
+            expectedEnabled: true,
+            requests: 1,
+            delays: [],
+            body: {
+                stage: 'DISABLED', providerMutationEnabled: false,
+                newUploadReady: false, versionId: 'bridge-bootstrap',
+            },
+            error: 'release_smoke_bridge_not_enabled',
         },
     ]) {
         await t.test(fixture.name, async () => {
@@ -356,6 +427,7 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
                 allowedOrigin: 'https://allowed.test',
                 deniedOrigin: 'https://denied.test',
                 expectedBridgeVersion: 'bridge-bootstrap',
+                expectedBridgeEnabled: fixture.expectedEnabled ?? false,
                 bridgeBootstrap: fixture.bootstrap,
                 fetchImpl,
                 browserRunner: async () => ({ channel: 'fixture', routes: ['/', '/tr'] }),
@@ -385,6 +457,7 @@ test('release smoke bounds and diagnoses override version propagation', async ()
             return Response.json({
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
+                newUploadReady: false,
                 versionId: 'bridge-old',
             });
         }
