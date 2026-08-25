@@ -217,7 +217,10 @@ jobs:
           )
 
           deploy=false
-          if [[ -z "${baseline}" ]]; then
+          if [[ "${PREVIEW_LIVEPEER_BRIDGE_ENABLED}" == "true" ]]; then
+            deploy=true
+            echo "Preview Livepeer canary enabled; building current main ${SHA}."
+          elif [[ -z "${baseline}" ]]; then
             deploy=true
             echo "No trusted Preview baseline found; building current main ${SHA}."
           else

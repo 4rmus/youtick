@@ -146,6 +146,10 @@ test("workflows keep cumulative Preview release provenance", () => {
   assert.match(preview, /\.path == "\.github\/workflows\/deploy-preview\.yml"/);
   assert.match(preview, /git merge-base --is-ancestor "\$\{candidate_sha\}" "\$\{SHA\}"/);
   assert.match(preview, /git diff --name-only -z "\$\{baseline\}" "\$\{SHA\}"/);
+  assert.match(
+    preview,
+    /if \[\[ "\$\{PREVIEW_LIVEPEER_BRIDGE_ENABLED\}" == "true" \]\]; then\s+deploy=true\s+echo "Preview Livepeer canary enabled; building current main \$\{SHA\}\."\s+elif \[\[ -z "\$\{baseline\}" \]\]; then/,
+  );
   assert.match(preview, /apps\/web\/\*\|workers\/livepeer-bridge\/\*\|read-model\/\*/);
   assert.match(preview, /contracts\/\*\|scripts\/check-paid-media-livepeer-v1-abi\.mjs\|docs\/\*/);
   assert.match(preview, /cloudflare-release\.mjs write-bridge-wrangler/);
