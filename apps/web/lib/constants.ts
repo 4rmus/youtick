@@ -37,6 +37,8 @@ export const FEATURE_FLAGS = {
     enablePlaybackShadowV2: process.env.NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2 === 'true',
     enableLivepeerNearCreatorFee:
         process.env.NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE === 'true',
+    enableSponsoredLivepeerUploads:
+        process.env.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS === 'true',
     enableDerivedReadModel,
 } as const;
 

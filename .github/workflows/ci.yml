@@ -199,6 +199,7 @@ jobs:
       NEXT_PUBLIC_ACCESS_CONTRACT_ID: access.testnet
       NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: "false"
       NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: "false"
+      NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS: "false"
       NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: "false"
       NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: "off"
     defaults:
@@ -212,6 +213,7 @@ jobs:
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - run: npm ci --no-audit --no-fund --prefer-offline
+      - run: npm run test:wallet-provenance
       - run: npm run lint
       - run: npm test -- --run
       - run: npm run test:livepeer-canary

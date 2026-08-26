@@ -126,6 +126,8 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
         ['/v1/playback-tokens', true],
         ['/v2/playback-tokens', true],
         ['/v1/creator-fee-quotes/near', true],
+        ['/v1/sponsored-upload-quotes', true],
+        ['/v1/sponsored-upload-relays', true],
     ]);
     const seen = [];
     const web = await serve(async (request, response) => {
@@ -164,6 +166,8 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
                 newUploadReady: false,
+                sponsoredUploadQuoteReady: false,
+                sponsoredUploadRelayReady: false,
                 versionId: 'version-123',
             });
             return;
@@ -239,6 +243,8 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
             'bridge:POST:/v1/playback-tokens',
             'bridge:POST:/v2/playback-tokens',
             'bridge:POST:/v1/creator-fee-quotes/near',
+            'bridge:POST:/v1/sponsored-upload-quotes',
+            'bridge:POST:/v1/sponsored-upload-relays',
             'bridge:OPTIONS:/v1/upload-intents',
             'bridge:OPTIONS:/v1/upload-intents',
         ]);
@@ -265,6 +271,8 @@ test('release smoke can exclude candidate-only mutations and still identifies th
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
                 newUploadReady: false,
+                sponsoredUploadQuoteReady: false,
+                sponsoredUploadRelayReady: false,
                 versionId: 'bridge-version',
             });
         }
@@ -280,6 +288,8 @@ test('release smoke can exclude candidate-only mutations and still identifies th
             '/v1/upload-intents',
             '/v1/playback-tokens',
             '/v1/creator-fee-quotes/near',
+            '/v1/sponsored-upload-quotes',
+            '/v1/sponsored-upload-relays',
         ].includes(url.pathname)
             ? { 'Access-Control-Allow-Origin': allowedOrigin }
             : {};
@@ -327,6 +337,8 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
                     stage: 'ENABLED',
                     providerMutationEnabled: true,
                     newUploadReady: true,
+                    sponsoredUploadQuoteReady: false,
+                    sponsoredUploadRelayReady: false,
                     versionId: 'bridge-enabled',
                 });
             }
@@ -370,8 +382,12 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
             requests: 7,
             delays: retryDelays,
             body: {
-                stage: 'DISABLED', providerMutationEnabled: false,
-                newUploadReady: false, versionId: 'bridge-old',
+                stage: 'DISABLED',
+                providerMutationEnabled: false,
+                newUploadReady: false,
+                sponsoredUploadQuoteReady: false,
+                sponsoredUploadRelayReady: false,
+                versionId: 'bridge-old',
             },
             error: 'release_smoke_bridge_version_mismatch',
         },
@@ -383,7 +399,10 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
             delays: [],
             body: {
                 stage: 'ENABLED', providerMutationEnabled: true,
-                newUploadReady: true, versionId: 'bridge-bootstrap',
+                newUploadReady: true,
+                sponsoredUploadQuoteReady: false,
+                sponsoredUploadRelayReady: false,
+                versionId: 'bridge-bootstrap',
             },
             error: 'release_smoke_bridge_not_disabled',
         },
@@ -396,7 +415,10 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
             delays: [],
             body: {
                 stage: 'DISABLED', providerMutationEnabled: false,
-                newUploadReady: false, versionId: 'bridge-bootstrap',
+                newUploadReady: false,
+                sponsoredUploadQuoteReady: false,
+                sponsoredUploadRelayReady: false,
+                versionId: 'bridge-bootstrap',
             },
             error: 'release_smoke_bridge_not_enabled',
         },
@@ -458,6 +480,8 @@ test('release smoke bounds and diagnoses override version propagation', async ()
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
                 newUploadReady: false,
+                sponsoredUploadQuoteReady: false,
+                sponsoredUploadRelayReady: false,
                 versionId: 'bridge-old',
             });
         }

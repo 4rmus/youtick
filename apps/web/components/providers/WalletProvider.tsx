@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { NearConnector, type Account, type NearWalletBase } from '@hot-labs/near-connect';
+import { NearConnector, type Account, type NearWalletBase, type WalletManifest } from '@hot-labs/near-connect';
 import { clearSessionGrantCache } from '@/lib/access-grants';
 import { clearDeviceSession } from '@/lib/device-session';
 import { NEAR_NETWORK } from '@/lib/constants';
@@ -15,6 +15,10 @@ import {
     revokeBrowserAuthority,
 } from '@/lib/signless-access-key';
 import type { WalletInstance } from '@/lib/types';
+import {
+    PINNED_WALLET_MANIFEST,
+    isPinnedMeteorManifest,
+} from '@/lib/pinned-wallet-manifest';
 
 interface WalletContextValue {
     accountId: string | null;
@@ -26,8 +30,22 @@ interface WalletContextValue {
 
 const WalletContext = createContext<WalletContextValue | null>(null);
 const WALLET_RESTORE_TIMEOUT_MS = 5_000;
+const SPONSORED_DELEGATE_MAX_BLOCKS = 200;
+const VERIFIED_WALLET_WINDOWS: Record<string, number> = {
+    'meteor-wallet': 200,
+};
 
-function createWalletAdapter(wallet: NearWalletBase): WalletInstance {
+function sponsoredDelegateWindow(wallet: NearWalletBase, trusted: boolean): number | null {
+    if (!trusted || !isPinnedMeteorManifest(wallet.manifest)) return null;
+    const features = wallet.manifest.features as unknown as Record<string, unknown>;
+    if (!features.signDelegateActions) return null;
+    if (features.signDelegateActionsWithTtl === true) return SPONSORED_DELEGATE_MAX_BLOCKS;
+    const observed = VERIFIED_WALLET_WINDOWS[wallet.manifest.id];
+    return observed && observed <= SPONSORED_DELEGATE_MAX_BLOCKS ? observed : null;
+}
+
+export function createWalletAdapter(wallet: NearWalletBase, trusted = false): WalletInstance {
+    const delegateWindow = sponsoredDelegateWindow(wallet, trusted);
     return {
         async signAndSendTransaction(params) {
             return (await wallet.signAndSendTransaction({
@@ -53,12 +71,28 @@ function createWalletAdapter(wallet: NearWalletBase): WalletInstance {
                 nonce: params.nonce,
             });
         },
+        ...(delegateWindow
+            && typeof wallet.signDelegateActions === 'function'
+            ? {
+                async signDelegateActions(params: {
+                    delegateActions: Array<{ receiverId: string; actions: unknown[] }>;
+                    blockHeightTtl?: number;
+                }) {
+                    return wallet.signDelegateActions({
+                        network: NEAR_NETWORK,
+                        delegateActions: params.delegateActions as Parameters<NearWalletBase['signDelegateActions']>[0]['delegateActions'],
+                        blockHeightTtl: params.blockHeightTtl ?? delegateWindow,
+                    } as Parameters<NearWalletBase['signDelegateActions']>[0]);
+                },
+            }
+            : {}),
     };
 }
 
 export function WalletProvider({ children, cspNonce }: { children: React.ReactNode; cspNonce?: string }) {
     const connectorRef = useRef<NearConnector | null>(null);
     const walletRef = useRef<NearWalletBase | null>(null);
+    const pinnedWalletRef = useRef<NearWalletBase | null>(null);
     const accountIdRef = useRef<string | null>(null);
     const [accountId, setAccountId] = useState<string | null>(null);
     const [isReady, setIsReady] = useState(false);
@@ -117,6 +151,18 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             .then(async () => {
                 let timeoutId: ReturnType<typeof setTimeout> | undefined;
                 try {
+                    connector.wallets = connector.wallets.filter((candidate) => (
+                        candidate.manifest.id !== 'meteor-wallet'
+                    ));
+                    connector.manifest.wallets = connector.manifest.wallets.filter((candidate) => (
+                        candidate.id !== 'meteor-wallet'
+                    ));
+                    await connector.registerWallet(
+                        PINNED_WALLET_MANIFEST.wallets[0] as unknown as WalletManifest,
+                    );
+                    pinnedWalletRef.current = connector.wallets.find((candidate) => (
+                        isPinnedMeteorManifest(candidate.manifest)
+                    )) ?? null;
                     const connected = await Promise.race([
                         connector.getConnectedWallet(),
                         new Promise<never>((_, reject) => {
@@ -140,6 +186,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             mounted = false;
             connector.removeAllListeners();
             if (connectorRef.current === connector) connectorRef.current = null;
+            pinnedWalletRef.current = null;
         };
     }, [applyWallet, clearAuth, cspNonce]);
 
@@ -148,7 +195,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         if (!connector) throw new Error('Wallet connector is not ready');
         const wallet = walletRef.current ?? await connector.wallet();
         walletRef.current = wallet;
-        return createWalletAdapter(wallet);
+        return createWalletAdapter(wallet, wallet === pinnedWalletRef.current);
     }, []);
 
     const connect = useCallback(async () => {

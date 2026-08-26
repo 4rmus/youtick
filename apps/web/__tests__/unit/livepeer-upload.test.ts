@@ -13,6 +13,7 @@ const near = vi.hoisted(() => ({
 const featureFlags = vi.hoisted(() => ({
     enablePaidMediaLivepeerV1: true,
     enableLivepeerNearCreatorFee: true,
+    enableSponsoredLivepeerUploads: false,
 }));
 
 vi.mock('@/lib/near', () => ({
@@ -108,6 +109,20 @@ function createWallet() {
     };
 }
 
+function createSponsoredWallet() {
+    return {
+        ...createWallet(),
+        signDelegateActions: vi.fn().mockResolvedValue({
+            signedDelegateActions: ['A'.repeat(64)],
+        }),
+    };
+}
+
+async function sha256(value: string): Promise<string> {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 async function provisionJobSession(
     wallet: ReturnType<typeof createWallet>,
     jobId = 'job-001',
@@ -127,6 +142,7 @@ describe('Livepeer browser upload', () => {
         tus.instances.length = 0;
         vi.restoreAllMocks();
         featureFlags.enableLivepeerNearCreatorFee = true;
+        featureFlags.enableSponsoredLivepeerUploads = false;
         near.viewContract.mockReset().mockResolvedValue(null);
         sessionStorage.clear();
         delete process.env.NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO;
@@ -502,6 +518,162 @@ describe('Livepeer browser upload', () => {
         expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
     });
 
+    it('shows one exact sponsor quote and sends one delegate instead of a wallet transaction', async () => {
+        featureFlags.enableSponsoredLivepeerUploads = true;
+        vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
+        const wallet = createSponsoredWallet();
+        const onSponsoredQuote = vi.fn();
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.endsWith('/v1/sponsored-upload-relays')) {
+                expect(JSON.parse(String(init?.body))).toEqual({
+                    signed_delegate_base64: 'A'.repeat(64),
+                });
+                return Response.json({
+                    accepted: true,
+                    relayed: false,
+                    job_id: 'job-sponsored',
+                    tx_hash: 'relay-transaction',
+                }, { status: 202 });
+            }
+            expect(url).toBe('https://bridge.youtick.net/v1/sponsored-upload-quotes');
+            const { request } = JSON.parse(String(init?.body)) as {
+                request: Record<string, string>;
+            };
+            const quoteWithoutId = {
+                domain: 'youtick.sponsored-upload-quote',
+                version: '1',
+                network: 'testnet',
+                contract_id: 'paid-media-livepeer-v1.testnet',
+                creator_id: request.creator_id,
+                job_id: request.job_id,
+                request_sha256: await sha256(JSON.stringify(request)),
+                expected_source_bytes: request.expected_source_bytes,
+                upload_fee_usdc: '500000',
+                sponsor_fee_usdc: '75000',
+                total_fee_usdc: '575000',
+                delegate_receiver_id: 'usdc.testnet',
+                delegate_method: 'ft_transfer_call',
+                delegate_gas: '100000000000000',
+                delegate_deposit_yocto: '1',
+                billable_gas: '150000000000000',
+                gas_price_yocto: '100000000',
+                near_usd_micro: '5000000',
+                rate_source: 'outlayer-price-oracle-wrap-near-v1',
+                rate_timestamp_ms: '1785589300000',
+                quote_block_height: '1000',
+                max_delegate_block_height: '1200',
+                expires_at_ms: '1785589420000',
+                quote_key_version: 1,
+            };
+            const canonical = [
+                'domain', 'version', 'network', 'contract_id', 'creator_id', 'job_id',
+                'request_sha256', 'expected_source_bytes', 'upload_fee_usdc',
+                'sponsor_fee_usdc', 'total_fee_usdc', 'delegate_receiver_id',
+                'delegate_method', 'delegate_gas', 'delegate_deposit_yocto',
+                'billable_gas', 'gas_price_yocto', 'near_usd_micro', 'rate_source',
+                'rate_timestamp_ms', 'quote_block_height', 'max_delegate_block_height',
+                'expires_at_ms', 'quote_key_version',
+            ].map((field) => String(quoteWithoutId[field as keyof typeof quoteWithoutId])).join('\n');
+            return Response.json({
+                request,
+                quote: { ...quoteWithoutId, quote_id: await sha256(canonical) },
+                signature: btoa('\0'.repeat(64)),
+                public_key_version: 1,
+            });
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        await expect(authorizeLivepeerPaidJob(wallet as never, {
+            accountId: 'creator.testnet',
+            jobId: 'job-sponsored',
+            title: 'Paid video',
+            priceUsdc: '2000001',
+            expectedSourceBytes: 83_886_080,
+            onSponsoredQuote,
+        })).resolves.toMatch(/^ed25519:/);
+
+        expect(onSponsoredQuote).toHaveBeenCalledWith({
+            uploadFeeUsdc: '500000',
+            sponsorFeeUsdc: '75000',
+            totalFeeUsdc: '575000',
+        });
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+        expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
+        expect(wallet.signDelegateActions).toHaveBeenCalledOnce();
+        expect(wallet.signDelegateActions.mock.calls[0][0].blockHeightTtl).toBe(200);
+        const delegate = wallet.signDelegateActions.mock.calls[0][0].delegateActions[0];
+        expect(delegate.receiverId).toBe('usdc.testnet');
+        const action = delegate.actions[0] as {
+            methodName: string;
+            gas: bigint;
+            deposit: bigint;
+            args: { receiver_id: string; amount: string; msg: string };
+        };
+        expect(action).toMatchObject({
+            methodName: 'ft_transfer_call',
+            gas: 100_000_000_000_000n,
+            deposit: 1n,
+            args: {
+                receiver_id: 'paid-media-livepeer-v1.testnet',
+                amount: '575000',
+                msg: expect.any(String),
+            },
+        });
+        expect(JSON.parse(action.args.msg)).toMatchObject({
+            action: 'create_paid_job',
+            job_id: 'job-sponsored',
+            sponsor_quote: { total_fee_usdc: '575000' },
+            sponsor_quote_signature: btoa('\0'.repeat(64)),
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+
+        await expect(authorizeLivepeerPaidJob(wallet as never, {
+            accountId: 'creator.testnet',
+            jobId: 'job-sponsored',
+            title: 'Paid video',
+            priceUsdc: '2000001',
+            expectedSourceBytes: 83_886_080,
+            onSponsoredQuote,
+        })).resolves.toMatch(/^ed25519:/);
+        expect(wallet.signDelegateActions).toHaveBeenCalledOnce();
+        expect(onSponsoredQuote).toHaveBeenCalledOnce();
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('falls back to the existing USDC transaction when delegate signing is unavailable', async () => {
+        featureFlags.enableSponsoredLivepeerUploads = true;
+        const wallet = createWallet();
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+
+        await provisionJobSession(wallet);
+
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects a mismatched sponsor quote before opening the wallet', async () => {
+        featureFlags.enableSponsoredLivepeerUploads = true;
+        const wallet = createSponsoredWallet();
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+            request: {},
+            quote: {},
+            signature: 'invalid',
+            public_key_version: 1,
+        })));
+
+        await expect(authorizeLivepeerPaidJob(wallet as never, {
+            accountId: 'creator.testnet',
+            jobId: 'job-invalid-sponsor',
+            title: 'Paid video',
+            priceUsdc: '2000001',
+            expectedSourceBytes: SOURCE_BYTES,
+        })).rejects.toThrow('invalid_sponsored_upload_quote');
+        expect(wallet.signDelegateActions).not.toHaveBeenCalled();
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+    });
+
     it('reuses the same job key with one transaction per retry', async () => {
         const wallet = createWallet();
         const firstPublicKey = await provisionJobSession(wallet);
@@ -613,6 +785,10 @@ describe('Livepeer browser upload', () => {
         expect(selectCreatorFeeAsset({
             usdcBalance: '300000', nearBalanceYocto: '100', usdcFee: '300000',
             gasReserveYocto: '100',
+        })).toEqual({ selected: 'USDC', usable: ['USDC'] });
+        expect(selectCreatorFeeAsset({
+            usdcBalance: '300000', nearBalanceYocto: '0', usdcFee: '300000',
+            gasReserveYocto: '100', gasSponsoredUsdc: true,
         })).toEqual({ selected: 'USDC', usable: ['USDC'] });
     });
 

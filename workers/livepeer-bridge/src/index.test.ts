@@ -1,5 +1,11 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { KeyPair } from 'near-api-js';
+import {
+    KeyPair,
+    KeyPairSigner,
+    actions,
+    buildDelegateAction,
+    encodeSignedDelegate,
+} from 'near-api-js';
 import vectors from '../../../protocol/paid-media-livepeer-v1/golden-vectors.json';
 import handler, {
     LivepeerControl,
@@ -18,6 +24,9 @@ const OPERATOR_ID = 'paid-media-operator.testnet';
 const OPERATOR_TOKEN = 'test-paid-media-operator-token-32-bytes';
 const OPERATOR_TOKEN_PREVIOUS = 'previous-paid-media-operator-token-32-bytes';
 const OPERATOR_PRIVATE_KEY = KeyPair.fromRandom('ed25519').toString();
+const SPONSOR_RELAYER_ID = 'sponsor-relayer.testnet';
+const SPONSOR_RELAYER_PRIVATE_KEY = KeyPair.fromRandom('ed25519').toString();
+const TESTNET_USDC = '3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af';
 const BLOCK_HASH = '11111111111111111111111111111111';
 const TUS_ENDPOINT = 'https://origin.livepeer.com/api/asset/upload/tus?token=secret';
 const TUS_UPLOAD_URL = 'https://origin.livepeer.com/api/asset/upload/tus/upload-123';
@@ -160,6 +169,81 @@ function quoteRequest(body?: Record<string, unknown>): Request {
     });
 }
 
+function sponsoredQuoteRequest(body?: Record<string, unknown>): Request {
+    return new Request('https://bridge.youtick.net/v1/sponsored-upload-quotes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+        body: JSON.stringify({
+            request: {
+                creator_id: 'creator.testnet',
+                job_id: 'job-sponsored',
+                title: 'Paid video',
+                price_usdc: '2000000',
+                expected_source_bytes: '1000000000',
+                profile_id: 'paid-media-livepeer-v1',
+                profile_config_sha256: vectors.upload_intent.body.profile_config_sha256,
+                upload_public_key: vectors.upload_intent.envelope.session_public_key,
+                upload_key_expires_at_ms: String(Date.now() + 10 * 60 * 1000),
+                ...body,
+            },
+        }),
+    });
+}
+
+async function signedSponsoredRelay(
+    quoteResponse: Record<string, unknown>,
+    signer: KeyPairSigner,
+    overrides?: {
+        receiverId?: string;
+        innerReceiverId?: string;
+        methodName?: string;
+        amount?: string;
+        gas?: bigint;
+        deposit?: bigint;
+        jobId?: string;
+        quoteSignature?: string;
+        nonce?: bigint;
+        maxBlockHeight?: bigint;
+    },
+): Promise<Request> {
+    const quote = quoteResponse.quote as Record<string, unknown>;
+    const request = quoteResponse.request as Record<string, unknown>;
+    const message = JSON.stringify({
+        action: 'create_paid_job',
+        job_id: overrides?.jobId ?? request.job_id,
+        title: request.title,
+        price_usdc: request.price_usdc,
+        expected_source_bytes: request.expected_source_bytes,
+        profile_id: request.profile_id,
+        profile_config_sha256: request.profile_config_sha256,
+        upload_public_key: request.upload_public_key,
+        upload_key_expires_at_ms: request.upload_key_expires_at_ms,
+        sponsor_quote: quote,
+        sponsor_quote_signature: overrides?.quoteSignature ?? quoteResponse.signature,
+    });
+    const delegate = buildDelegateAction({
+        senderId: String(request.creator_id),
+        receiverId: overrides?.receiverId ?? TESTNET_USDC,
+        actions: [actions.functionCall(overrides?.methodName ?? 'ft_transfer_call', {
+            receiver_id: overrides?.innerReceiverId ?? CONTRACT_ID,
+            amount: overrides?.amount ?? String(quote.total_fee_usdc),
+            memo: 'YouTick creator upload fee',
+            msg: message,
+        }, overrides?.gas ?? 100_000_000_000_000n, overrides?.deposit ?? 1n)],
+        nonce: overrides?.nonce ?? 11n,
+        maxBlockHeight: overrides?.maxBlockHeight ?? BigInt(String(quote.max_delegate_block_height)),
+        publicKey: await signer.getPublicKey(),
+    });
+    const signed = await signer.signDelegateAction(delegate);
+    return new Request('https://bridge.youtick.net/v1/sponsored-upload-relays', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+        body: JSON.stringify({
+            signed_delegate_base64: base64Encode(encodeSignedDelegate(signed.signedDelegate)),
+        }),
+    });
+}
+
 function uploadPreflightRequest(
     body?: Record<string, unknown>,
     origin = ORIGIN,
@@ -193,6 +277,47 @@ function quoteRuntime(overrides?: Partial<Env>): { env: Env; state: TestState } 
     });
     control = new LivepeerControl(state.state, env);
     return { env, state };
+}
+
+function sponsoredRuntime(overrides?: Partial<Env>): {
+    env: Env;
+    admissionState: TestState;
+    quoteState: TestState;
+    relayerState: TestState;
+} {
+    const admissionState = createState();
+    const quoteState = createState();
+    const relayerState = createState();
+    let admission!: LivepeerControl;
+    let quote!: LivepeerControl;
+    let relayer!: LivepeerControl;
+    const env = createEnv({
+        LIVEPEER_BRIDGE_ENABLED: 'true',
+        LIVEPEER_SPONSORED_UPLOADS_ENABLED: 'true',
+        LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'false',
+        CREATOR_FEE_QUOTE_PRIVATE_KEY: quotePrivateKey,
+        CREATOR_FEE_QUOTE_KEY_VERSION: '1',
+        NEAR_SPONSOR_RELAYER_ACCOUNT_ID: SPONSOR_RELAYER_ID,
+        NEAR_SPONSOR_RELAYER_PRIVATE_KEY: SPONSOR_RELAYER_PRIVATE_KEY,
+        NEAR_SPONSOR_RELAYER_KEY_EPOCH: '1',
+        LIVEPEER_CONTROL: {
+            idFromName: (name: string) => ({ toString: () => name }),
+            get: (id: DurableObjectId) => ({
+                fetch: (request: Request) => {
+                    const name = id.toString();
+                    if (name.startsWith('admission:')) return admission.fetch(request);
+                    if (name.startsWith('creator-fee-quote:')) return quote.fetch(request);
+                    if (name.startsWith('sponsor-relayer:')) return relayer.fetch(request);
+                    throw new Error(`unexpected_object:${name}`);
+                },
+            }),
+        } as unknown as DurableObjectNamespace,
+        ...overrides,
+    });
+    admission = new LivepeerControl(admissionState.state, env);
+    quote = new LivepeerControl(quoteState.state, env);
+    relayer = new LivepeerControl(relayerState.state, env);
+    return { env, admissionState, quoteState, relayerState };
 }
 
 function oracleRpcResponse(
@@ -526,6 +651,209 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             expect(preflight.status).toBe(204);
             expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN);
         }
+    });
+
+    it('keeps sponsored quote and relay mutations disabled by default', async () => {
+        const env = createEnv();
+        const health = await handler.fetch(new Request('https://bridge.youtick.net/__health'), env);
+        expect(await health.json()).toMatchObject({
+            sponsoredUploadQuoteReady: false,
+            sponsoredUploadRelayReady: false,
+        });
+        const quote = await handler.fetch(sponsoredQuoteRequest(), env);
+        expect(quote.status).toBe(503);
+        expect(await quote.json()).toEqual({ error: 'control_plane_disabled' });
+
+        env.LIVEPEER_BRIDGE_ENABLED = 'true';
+        env.LIVEPEER_SPONSORED_UPLOADS_ENABLED = 'true';
+        const relay = await handler.fetch(new Request(
+            'https://bridge.youtick.net/v1/sponsored-upload-relays',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+                body: JSON.stringify({ signed_delegate_base64: 'invalid' }),
+            },
+        ), env);
+        expect(relay.status).toBe(503);
+        expect(await relay.json()).toEqual({ error: 'sponsor_relay_mutations_disabled' });
+
+        const deniedRuntime = sponsoredRuntime({
+            LIVEPEER_CREATOR_ALLOWLIST: 'other.testnet',
+        });
+        const denied = await handler.fetch(sponsoredQuoteRequest(), deniedRuntime.env);
+        expect(denied.status).toBe(503);
+        expect(await denied.json()).toEqual({ error: 'admission_closed' });
+        expect(deniedRuntime.quoteState.values.size).toBe(0);
+    });
+
+    it('issues one bounded quote and relays only the exact creator upload once', async () => {
+        const now = vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
+        const runtime = sponsoredRuntime({
+            LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'true',
+        });
+        const userSigner = KeyPairSigner.fromSecretKey(KeyPair.fromRandom('ed25519').toString());
+        let jobCreated = false;
+        let sendCount = 0;
+        let gasPrice = '100000000';
+        let usdcBalance = '575000';
+        let oracleTimestamp = '1785589239999000000';
+        let quoteBody!: Record<string, unknown>;
+        const rpc = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            const method = body.method;
+            const params = body.params as Record<string, unknown>;
+            if (method === 'block') {
+                return Response.json({ result: { header: { hash: BLOCK_HASH, height: 1_000 } } });
+            }
+            if (method === 'gas_price') {
+                return Response.json({ result: { gas_price: gasPrice } });
+            }
+            if (method === 'send_tx') {
+                sendCount += 1;
+                return Response.json({ error: { cause: { name: 'TIMEOUT_ERROR' } } });
+            }
+            if (method === 'tx') {
+                jobCreated = true;
+                return Response.json({ result: { status: { SuccessValue: '' } } });
+            }
+            if (method !== 'query') throw new Error(`unexpected_rpc:${String(method)}`);
+            if (params.request_type === 'view_access_key') {
+                return Response.json({
+                    result: {
+                        nonce: params.account_id === SPONSOR_RELAYER_ID ? 20 : 10,
+                        permission: 'FullAccess',
+                        block_hash: BLOCK_HASH,
+                    },
+                });
+            }
+            if (params.request_type !== 'call_function') {
+                throw new Error(`unexpected_query:${String(params.request_type)}`);
+            }
+            if (params.account_id === 'price-oracle.testnet') {
+                return oracleRpcResponse(
+                    { multiplier: '500000000', decimals: 8 },
+                    oracleTimestamp,
+                );
+            }
+            if (params.account_id === TESTNET_USDC && params.method_name === 'ft_balance_of') {
+                return Response.json({
+                    result: { result: [...new TextEncoder().encode(JSON.stringify(usdcBalance))] },
+                });
+            }
+            if (params.account_id === CONTRACT_ID && params.method_name === 'get_media_job') {
+                const request = quoteBody.request as Record<string, unknown> | undefined;
+                const quote = quoteBody.quote as Record<string, unknown> | undefined;
+                const job = jobCreated && request && quote ? {
+                    ...request,
+                    generation: 1,
+                    status: 'Authorized',
+                    fee_asset: 'USDC',
+                    fee_amount: quote.total_fee_usdc,
+                    fee_usd_micro: quote.total_fee_usdc,
+                    fee_quote_hash: quote.quote_id,
+                } : null;
+                return Response.json({
+                    result: {
+                        block_hash: BLOCK_HASH,
+                        result: [...new TextEncoder().encode(JSON.stringify(job))],
+                    },
+                });
+            }
+            throw new Error(`unexpected_call:${String(params.account_id)}:${String(params.method_name)}`);
+        });
+        vi.stubGlobal('fetch', rpc);
+
+        const staleQuote = await handler.fetch(sponsoredQuoteRequest(), runtime.env);
+        expect(staleQuote.status).toBe(503);
+        expect(await staleQuote.json()).toEqual({ error: 'rate_source_stale' });
+
+        oracleTimestamp = '1785589300000000000';
+        const quoteResponse = await handler.fetch(sponsoredQuoteRequest(), runtime.env);
+        expect(quoteResponse.status).toBe(200);
+        quoteBody = await quoteResponse.json() as Record<string, unknown>;
+        expect(quoteBody).toMatchObject({
+            request: { creator_id: 'creator.testnet', job_id: 'job-sponsored' },
+            quote: {
+                upload_fee_usdc: '500000',
+                sponsor_fee_usdc: '75000',
+                total_fee_usdc: '575000',
+                delegate_receiver_id: TESTNET_USDC,
+                delegate_gas: '100000000000000',
+                billable_gas: '150000000000000',
+                quote_block_height: '1000',
+                max_delegate_block_height: '1200',
+            },
+            public_key_version: 1,
+        });
+        expect(runtime.admissionState.values.has('admission:v1')).toBe(false);
+
+        const rejectedDelegates = [
+            { receiverId: CONTRACT_ID },
+            { innerReceiverId: 'other-market.testnet' },
+            { methodName: 'ft_transfer' },
+            { amount: '574999' },
+            { gas: 99_999_999_999_999n },
+            { deposit: 0n },
+            { jobId: 'job-other' },
+            { quoteSignature: base64Encode(new Uint8Array(64)) },
+            { nonce: 12n },
+            { maxBlockHeight: 1_201n },
+        ];
+        for (const overrides of rejectedDelegates) {
+            const rejected = await handler.fetch(
+                await signedSponsoredRelay(quoteBody, userSigner, overrides),
+                runtime.env,
+            );
+            expect(rejected.status).toBe(400);
+            expect(await rejected.json()).toEqual({ error: 'invalid_sponsored_upload_relay' });
+        }
+        expect(sendCount).toBe(0);
+
+        const relayRequest = await signedSponsoredRelay(quoteBody, userSigner);
+        gasPrice = '100000001';
+        const reprice = await handler.fetch(relayRequest.clone(), runtime.env);
+        expect(reprice.status).toBe(409);
+        expect(await reprice.json()).toEqual({ error: 'sponsor_quote_reprice_required' });
+        expect(sendCount).toBe(0);
+        expect(runtime.admissionState.values.has('admission:v1')).toBe(false);
+
+        gasPrice = '100000000';
+        usdcBalance = '574999';
+        const insufficient = await handler.fetch(relayRequest.clone(), runtime.env);
+        expect(insufficient.status).toBe(409);
+        expect(await insufficient.json()).toEqual({ error: 'sponsor_balance_insufficient' });
+        expect(sendCount).toBe(0);
+        expect(runtime.admissionState.values.has('admission:v1')).toBe(false);
+
+        usdcBalance = '575000';
+        const pending = await handler.fetch(relayRequest.clone(), runtime.env);
+        expect(pending.status).toBe(202);
+        expect(await pending.json()).toMatchObject({
+            accepted: true,
+            relayed: false,
+            job_id: 'job-sponsored',
+        });
+        expect(sendCount).toBe(1);
+        expect(runtime.relayerState.values.has('sponsor-relay:job-sponsored')).toBe(true);
+        expect(runtime.admissionState.values.has('admission:v1')).toBe(true);
+        expect(runtime.relayerState.alarms).toHaveLength(1);
+
+        now.mockReturnValue(1_785_589_500_000);
+        const reconciled = await handler.fetch(relayRequest.clone(), runtime.env);
+        expect(reconciled.status).toBe(200);
+        expect(await reconciled.json()).toMatchObject({
+            accepted: true,
+            relayed: true,
+            job_id: 'job-sponsored',
+        });
+        expect(sendCount).toBe(1);
+        expect(runtime.relayerState.values.has('sponsor-relay:job-sponsored')).toBe(false);
+
+        const duplicate = await handler.fetch(relayRequest, runtime.env);
+        expect(duplicate.status).toBe(200);
+        expect(await duplicate.json()).toMatchObject({ accepted: true, relayed: true });
+        expect(sendCount).toBe(1);
+        expect(JSON.stringify([...runtime.relayerState.values])).not.toContain(SPONSOR_RELAYER_PRIVATE_KEY);
     });
 
     it('requires playback signing config before reporting new uploads ready', async () => {

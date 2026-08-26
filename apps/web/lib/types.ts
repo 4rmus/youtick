@@ -6,6 +6,10 @@ export interface WalletInstance {
     signAndSendTransactions(params: {
         transactions: Array<{ receiverId: string; actions: unknown[] }>;
     }): Promise<object[] | void>;
+    signDelegateActions?(params: {
+        delegateActions: Array<{ receiverId: string; actions: unknown[] }>;
+        blockHeightTtl?: number;
+    }): Promise<{ signedDelegateActions: string[] }>;
     getAccounts?(): Promise<Array<{ accountId: string }>>;
     signMessage?(params: {
         message: string;

@@ -32,6 +32,7 @@ function publicEnv(environment) {
     NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: bridgeOrigin,
     NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: "false",
     NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: "false",
+    NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS: "false",
     NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2: "false",
     NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2: "false",
     NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: "false",
@@ -66,6 +67,8 @@ function publicEnv(environment) {
     UPLOAD_JOB_ARCHIVE_ENABLED: "false",
     OPERATOR_OUTBOX_ARCHIVE_ENABLED: "false",
     LIVEPEER_NEAR_CREATOR_FEE_ENABLED: "false",
+    LIVEPEER_SPONSORED_UPLOADS_ENABLED: "false",
+    LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: "false",
     MULTI_ASSET_PAYMENTS_MODE: "off",
     MULTI_ASSET_PAYMENT_ASSET_IDS: "",
   };
@@ -176,6 +179,12 @@ test("workflows keep cumulative Preview release provenance", () => {
   }
   assert.doesNotMatch(promote, /PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED/);
   assert.match(preview, /PRODUCTION_OPERATOR_OUTBOX_ARCHIVE_ENABLED: "false"/);
+  for (const workflow of [preview, promote]) {
+    assert.match(workflow, /NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS: "false"/);
+    assert.match(workflow, /LIVEPEER_SPONSORED_UPLOADS_ENABLED: "false"/);
+    assert.match(workflow, /LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: "false"/);
+    assert.doesNotMatch(workflow, /NEAR_SPONSOR_RELAYER_PRIVATE_KEY/);
+  }
   assert.doesNotMatch(preview, /cp workers\/livepeer-bridge\/wrangler\.toml/);
 });
 
@@ -303,6 +312,23 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /exactly false/);
   });
+
+  for (const flag of [
+    "NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS",
+    "LIVEPEER_SPONSORED_UPLOADS_ENABLED",
+    "LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED",
+  ]) {
+    await t.test(`true ${flag}`, () => {
+      const env = publicEnv("preview");
+      env[`PREVIEW_${flag}`] = "true";
+      const result = run(
+        ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+        env,
+      );
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /exactly false/);
+    });
+  }
 
   await t.test("Preview derived read model at its exact origin", () => {
     const env = publicEnv("preview");

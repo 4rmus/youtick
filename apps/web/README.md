@@ -63,17 +63,30 @@ and later work cannot be cancelled through this action.
 npm ci
 npm test -- --run
 npm run test:livepeer-canary
+npm run test:wallet-provenance
 npm run lint
 NEXT_PUBLIC_NEAR_NETWORK=testnet \
 NEXT_PUBLIC_MARKET_CONTRACT_ID=market.testnet \
 NEXT_PUBLIC_ACCESS_CONTRACT_ID=access.testnet \
 NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1=false \
+NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS=false \
 NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2=false \
 NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE=off \
 npm run build
 ```
 
-Copy `.env.example` to `.env.local` for development. Market and access IDs are required and have no fallback. The Livepeer and native-NEAR fee flags remain closed until their release gates are approved.
+Copy `.env.example` to `.env.local` for development. Market and access IDs are required and have no fallback. The Livepeer, sponsored-upload and native-NEAR fee flags remain closed until their release gates are approved.
 Multi-asset payments also default to `off`. `preview` is dry-quote only; `live`
 requires the Bridge to use the same mode and a positive
 `NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO`.
+
+Sponsored upload accepts only a wallet profile proven to produce a delegate
+window of at most 200 blocks. The current compatibility profile replaces only
+the sponsored Meteor entry with a local executor pinned to Git commit
+`8c4ca0849244907551dbf7edbd65bd2db0189ccd` and SHA-256
+`30f015e149fff43c1134df1440cb0b676a19f00b87de27cca85194ea9a4eab4f`;
+the connector's other wallets remain available for the existing user-gas USDC
+fallback before any delegate prompt. Ledger's current 900-block delegate and
+other unqualified wallets use that fallback. Future sponsored wallets must
+provide immutable executor provenance and pass the same 200-block Bridge
+conformance checks.

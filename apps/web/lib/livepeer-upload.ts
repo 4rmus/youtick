@@ -102,9 +102,46 @@ export type SignedNearCreatorFeeQuote = {
     quote: NearCreatorFeeQuote;
     signature: string;
 };
+export type SponsoredUploadQuote = {
+    domain: 'youtick.sponsored-upload-quote';
+    version: '1';
+    network: string;
+    contract_id: string;
+    creator_id: string;
+    job_id: string;
+    request_sha256: string;
+    expected_source_bytes: string;
+    upload_fee_usdc: string;
+    sponsor_fee_usdc: string;
+    total_fee_usdc: string;
+    delegate_receiver_id: string;
+    delegate_method: 'ft_transfer_call';
+    delegate_gas: string;
+    delegate_deposit_yocto: '1';
+    billable_gas: string;
+    gas_price_yocto: string;
+    near_usd_micro: string;
+    rate_source: 'outlayer-price-oracle-wrap-near-v1';
+    rate_timestamp_ms: string;
+    quote_block_height: string;
+    max_delegate_block_height: string;
+    expires_at_ms: string;
+    quote_key_version: number;
+    quote_id: string;
+};
+export type SponsoredUploadQuoteSummary = {
+    uploadFeeUsdc: string;
+    sponsorFeeUsdc: string;
+    totalFeeUsdc: string;
+};
+type SignedSponsoredUploadQuote = {
+    quote: SponsoredUploadQuote;
+    signature: string;
+};
 type LivepeerJobSession = {
     keyPair: KeyPair;
     uploadKeyExpiresAtMs: string;
+    sponsoredDelegateBase64?: string;
 };
 
 export function selectCreatorFeeAsset(input: {
@@ -113,9 +150,11 @@ export function selectCreatorFeeAsset(input: {
     usdcFee: string;
     nearFeeYocto?: string;
     gasReserveYocto: string;
+    gasSponsoredUsdc?: boolean;
 }): { selected: CreatorFeeAsset | null; usable: CreatorFeeAsset[] } {
     const usdcUsable = BigInt(input.usdcBalance) >= BigInt(input.usdcFee)
-        && BigInt(input.nearBalanceYocto) >= BigInt(input.gasReserveYocto);
+        && (input.gasSponsoredUsdc
+            || BigInt(input.nearBalanceYocto) >= BigInt(input.gasReserveYocto));
     const nearUsable = input.nearFeeYocto !== undefined
         && BigInt(input.nearBalanceYocto) >= BigInt(input.nearFeeYocto) + BigInt(input.gasReserveYocto);
     const usable: CreatorFeeAsset[] = [
@@ -300,6 +339,8 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
     expectedSourceBytes: number;
     asset?: CreatorFeeAsset;
     nearQuote?: SignedNearCreatorFeeQuote;
+    allowSponsoredUsdc?: boolean;
+    onSponsoredQuote?: (quote: SponsoredUploadQuoteSummary) => void | Promise<void>;
 }): Promise<string> {
     requireFeature();
     const asset = input.asset ?? 'USDC';
@@ -406,7 +447,26 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
         );
     }
     try {
-        await wallet.signAndSendTransaction(transaction);
+        if (asset === 'USDC' && existingSession?.sponsoredDelegateBase64) {
+            await submitSponsoredUploadRelay(
+                input.accountId,
+                input.jobId,
+                existingSession.sponsoredDelegateBase64,
+            );
+        } else if (asset === 'USDC'
+            && FEATURE_FLAGS.enableSponsoredLivepeerUploads
+            && input.allowSponsoredUsdc !== false
+            && wallet.signDelegateActions) {
+            const sponsoredQuote = await requestSponsoredUploadQuote(request);
+            await input.onSponsoredQuote?.({
+                uploadFeeUsdc: sponsoredQuote.quote.upload_fee_usdc,
+                sponsorFeeUsdc: sponsoredQuote.quote.sponsor_fee_usdc,
+                totalFeeUsdc: sponsoredQuote.quote.total_fee_usdc,
+            });
+            await signAndRelaySponsoredUpload(wallet, request, sponsoredQuote);
+        } else {
+            await wallet.signAndSendTransaction(transaction);
+        }
         return publicKey;
     } catch (error) {
         const chainJob = await reconcilePaidJob(input.jobId).catch(() => undefined);
@@ -463,11 +523,203 @@ export async function requestNearCreatorFeeQuote(input: {
     return { quote, signature: value.signature as string };
 }
 
+async function requestSponsoredUploadQuote(
+    request: Record<string, string>,
+): Promise<SignedSponsoredUploadQuote> {
+    const response = await fetch(bridgeRoute('/v1/sponsored-upload-quotes'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request }),
+        cache: 'no-store',
+    });
+    const value = await readJson(response);
+    if (!response.ok) {
+        throw new Error(typeof value.error === 'string'
+            ? value.error
+            : `livepeer_control_http_${response.status}`);
+    }
+    return parseSponsoredUploadQuote(value, request);
+}
+
+async function signAndRelaySponsoredUpload(
+    wallet: WalletInstance,
+    request: Record<string, string>,
+    signedQuote: SignedSponsoredUploadQuote,
+): Promise<void> {
+    if (!wallet.signDelegateActions) throw new Error('sponsored_upload_wallet_unsupported');
+    const quote = signedQuote.quote;
+    const signed = await wallet.signDelegateActions({
+        blockHeightTtl: 200,
+        delegateActions: [{
+            receiverId: NEAR_CONFIG.usdcContractId,
+            actions: [actions.functionCall(
+                'ft_transfer_call',
+                {
+                    receiver_id: NEAR_CONFIG.marketContractId,
+                    amount: quote.total_fee_usdc,
+                    memo: 'YouTick creator upload fee',
+                    msg: JSON.stringify({
+                        action: 'create_paid_job',
+                        ...request,
+                        sponsor_quote: quote,
+                        sponsor_quote_signature: signedQuote.signature,
+                    }),
+                },
+                GAS_CONSTANTS.mediumGas,
+                1n,
+            )],
+        }],
+    });
+    if (!Array.isArray(signed.signedDelegateActions)
+        || signed.signedDelegateActions.length !== 1
+        || typeof signed.signedDelegateActions[0] !== 'string'
+        || signed.signedDelegateActions[0].length < 64) {
+        throw new Error('invalid_sponsored_upload_delegate');
+    }
+    persistSponsoredDelegate(
+        request.creator_id,
+        request.job_id,
+        signed.signedDelegateActions[0],
+    );
+    await submitSponsoredUploadRelay(
+        request.creator_id,
+        request.job_id,
+        signed.signedDelegateActions[0],
+    );
+}
+
+async function submitSponsoredUploadRelay(
+    accountId: string,
+    jobId: string,
+    signedDelegateBase64: string,
+): Promise<void> {
+    const response = await fetch(bridgeRoute('/v1/sponsored-upload-relays'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signed_delegate_base64: signedDelegateBase64 }),
+        cache: 'no-store',
+    });
+    const value = await readJson(response);
+    if (!response.ok) {
+        const code = typeof value.error === 'string'
+            ? value.error
+            : `livepeer_control_http_${response.status}`;
+        if (code === 'sponsor_quote_reprice_required'
+            || code === 'invalid_sponsored_upload_relay'
+            || code === 'sponsor_relay_failed') {
+            clearSponsoredDelegate(accountId, jobId);
+        }
+        throw new Error(code);
+    }
+    if (value.accepted !== true
+        || typeof value.relayed !== 'boolean'
+        || value.job_id !== jobId
+        || (value.tx_hash !== null && typeof value.tx_hash !== 'string')) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+}
+
+async function parseSponsoredUploadQuote(
+    value: Record<string, unknown>,
+    request: Record<string, string>,
+): Promise<SignedSponsoredUploadQuote> {
+    const responseKeys = ['public_key_version', 'quote', 'request', 'signature'];
+    const quoteKeys = [
+        'billable_gas', 'contract_id', 'creator_id', 'delegate_deposit_yocto',
+        'delegate_gas', 'delegate_method', 'delegate_receiver_id', 'domain',
+        'expected_source_bytes', 'expires_at_ms', 'gas_price_yocto', 'job_id',
+        'max_delegate_block_height', 'near_usd_micro', 'quote_block_height',
+        'quote_id', 'quote_key_version', 'rate_source', 'rate_timestamp_ms',
+        'request_sha256', 'sponsor_fee_usdc', 'total_fee_usdc', 'upload_fee_usdc',
+        'version', 'network',
+    ];
+    if (Object.keys(value).sort().join(',') !== responseKeys.sort().join(',')
+        || !value.request || typeof value.request !== 'object' || Array.isArray(value.request)
+        || JSON.stringify(value.request) !== JSON.stringify(request)
+        || !value.quote || typeof value.quote !== 'object' || Array.isArray(value.quote)
+        || typeof value.signature !== 'string'
+        || !isEd25519Signature(value.signature)) {
+        throw new Error('invalid_sponsored_upload_quote');
+    }
+    const quote = value.quote as Record<string, unknown>;
+    const integers = [
+        'expected_source_bytes', 'upload_fee_usdc', 'sponsor_fee_usdc',
+        'total_fee_usdc', 'delegate_gas', 'delegate_deposit_yocto', 'billable_gas',
+        'gas_price_yocto', 'near_usd_micro', 'rate_timestamp_ms', 'quote_block_height',
+        'max_delegate_block_height', 'expires_at_ms',
+    ];
+    if (Object.keys(quote).sort().join(',') !== quoteKeys.sort().join(',')
+        || integers.some((field) => (
+            typeof quote[field] !== 'string' || !/^[1-9][0-9]*$/.test(quote[field] as string)
+        ))
+        || quote.domain !== 'youtick.sponsored-upload-quote'
+        || quote.version !== '1'
+        || quote.network !== NEAR_NETWORK
+        || quote.contract_id !== NEAR_CONFIG.marketContractId
+        || quote.creator_id !== request.creator_id
+        || quote.job_id !== request.job_id
+        || quote.expected_source_bytes !== request.expected_source_bytes
+        || quote.delegate_receiver_id !== NEAR_CONFIG.usdcContractId
+        || quote.delegate_method !== 'ft_transfer_call'
+        || quote.delegate_gas !== GAS_CONSTANTS.mediumGas.toString()
+        || quote.delegate_deposit_yocto !== '1'
+        || quote.billable_gas !== '150000000000000'
+        || quote.rate_source !== 'outlayer-price-oracle-wrap-near-v1'
+        || !Number.isInteger(quote.quote_key_version)
+        || quote.quote_key_version !== value.public_key_version
+        || typeof quote.request_sha256 !== 'string'
+        || !/^[0-9a-f]{64}$/.test(quote.request_sha256)
+        || typeof quote.quote_id !== 'string'
+        || !/^[0-9a-f]{64}$/.test(quote.quote_id)) {
+        throw new Error('invalid_sponsored_upload_quote');
+    }
+    const requestSha256 = await sha256Hex(JSON.stringify(request));
+    const uploadFee = BigInt(livepeerUploadFeeUsdc(Number(request.expected_source_bytes)));
+    const sponsorFee = (
+        BigInt(quote.billable_gas as string)
+        * BigInt(quote.gas_price_yocto as string)
+        * BigInt(quote.near_usd_micro as string)
+        + 10n ** 24n - 1n
+    ) / (10n ** 24n);
+    const now = BigInt(Date.now());
+    const rateTimestamp = BigInt(quote.rate_timestamp_ms as string);
+    const expiresAt = BigInt(quote.expires_at_ms as string);
+    if (quote.request_sha256 !== requestSha256
+        || BigInt(quote.upload_fee_usdc as string) !== uploadFee
+        || BigInt(quote.sponsor_fee_usdc as string) !== sponsorFee
+        || BigInt(quote.total_fee_usdc as string) !== uploadFee + sponsorFee
+        || rateTimestamp > now
+        || now - rateTimestamp > 60_000n
+        || expiresAt <= now
+        || expiresAt <= rateTimestamp
+        || expiresAt - rateTimestamp > 120_000n
+        || BigInt(quote.max_delegate_block_height as string)
+            - BigInt(quote.quote_block_height as string) !== 200n) {
+        throw new Error('invalid_sponsored_upload_quote');
+    }
+    const canonicalMessage = [
+        'domain', 'version', 'network', 'contract_id', 'creator_id', 'job_id',
+        'request_sha256', 'expected_source_bytes', 'upload_fee_usdc',
+        'sponsor_fee_usdc', 'total_fee_usdc', 'delegate_receiver_id',
+        'delegate_method', 'delegate_gas', 'delegate_deposit_yocto',
+        'billable_gas', 'gas_price_yocto', 'near_usd_micro', 'rate_source',
+        'rate_timestamp_ms', 'quote_block_height', 'max_delegate_block_height',
+        'expires_at_ms', 'quote_key_version',
+    ]
+        .map((field) => String(quote[field]))
+        .join('\n');
+    if (quote.quote_id !== await sha256Hex(canonicalMessage)) {
+        throw new Error('invalid_sponsored_upload_quote');
+    }
+    return { quote: quote as unknown as SponsoredUploadQuote, signature: value.signature };
+}
+
 export async function prepareCreatorFeePaymentOptions(input: {
     accountId: string;
     jobId: string;
     expectedSourceBytes: number;
     gasReserveYocto: string;
+    gasSponsoredUsdc?: boolean;
 }): Promise<{
     selected: CreatorFeeAsset | null;
     usable: CreatorFeeAsset[];
@@ -487,6 +739,7 @@ export async function prepareCreatorFeePaymentOptions(input: {
         usdcFee,
         nearFeeYocto: nearQuote?.quote.fee_near_yocto,
         gasReserveYocto: input.gasReserveYocto,
+        gasSponsoredUsdc: input.gasSponsoredUsdc,
     });
     return { ...selection, usdcFee, nearQuote };
 }
@@ -974,6 +1227,39 @@ function persistLivepeerJobSessionKey(
     }
 }
 
+function persistSponsoredDelegate(accountId: string, jobId: string, value: string): void {
+    if (typeof window === 'undefined'
+        || value.length < 64
+        || value.length % 4 !== 0
+        || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+        throw new Error('invalid_sponsored_upload_delegate');
+    }
+    const storageKey = livepeerJobSessionStorageKey(accountId, jobId);
+    const raw = sessionStorage.getItem(storageKey);
+    if (!raw) throw new Error('livepeer_session_key_missing');
+    try {
+        const session = JSON.parse(raw) as Record<string, unknown>;
+        session.sponsoredDelegateBase64 = value;
+        sessionStorage.setItem(storageKey, JSON.stringify(session));
+    } catch {
+        throw new Error('livepeer_session_storage_unavailable');
+    }
+}
+
+function clearSponsoredDelegate(accountId: string, jobId: string): void {
+    if (typeof window === 'undefined') return;
+    const storageKey = livepeerJobSessionStorageKey(accountId, jobId);
+    const raw = sessionStorage.getItem(storageKey);
+    if (!raw) return;
+    try {
+        const session = JSON.parse(raw) as Record<string, unknown>;
+        delete session.sponsoredDelegateBase64;
+        sessionStorage.setItem(storageKey, JSON.stringify(session));
+    } catch {
+        sessionStorage.removeItem(storageKey);
+    }
+}
+
 function loadLivepeerJobSessionKey(accountId: string, jobId: string): LivepeerJobSession | null {
     if (typeof window === 'undefined') return null;
     const storageKey = livepeerJobSessionStorageKey(accountId, jobId);
@@ -984,19 +1270,28 @@ function loadLivepeerJobSessionKey(accountId: string, jobId: string): LivepeerJo
             secretKey?: string;
             publicKey?: string;
             uploadKeyExpiresAtMs?: string;
+            sponsoredDelegateBase64?: string;
         };
         if (typeof value.secretKey !== 'string'
             || typeof value.publicKey !== 'string'
             || typeof value.uploadKeyExpiresAtMs !== 'string'
             || !/^[1-9][0-9]{0,15}$/.test(value.uploadKeyExpiresAtMs)
-            || BigInt(value.uploadKeyExpiresAtMs) <= BigInt(Date.now())) {
+            || BigInt(value.uploadKeyExpiresAtMs) <= BigInt(Date.now())
+            || (value.sponsoredDelegateBase64 !== undefined
+                && (value.sponsoredDelegateBase64.length < 64
+                    || value.sponsoredDelegateBase64.length % 4 !== 0
+                    || !/^[A-Za-z0-9+/]+={0,2}$/.test(value.sponsoredDelegateBase64)))) {
             throw new Error('invalid_session_key');
         }
         const keyPair = KeyPair.fromString(value.secretKey as KeyPairString);
         if (keyPair.getPublicKey().toString() !== value.publicKey) {
             throw new Error('invalid_session_key');
         }
-        return { keyPair, uploadKeyExpiresAtMs: value.uploadKeyExpiresAtMs };
+        return {
+            keyPair,
+            uploadKeyExpiresAtMs: value.uploadKeyExpiresAtMs,
+            sponsoredDelegateBase64: value.sponsoredDelegateBase64,
+        };
     } catch {
         try {
             sessionStorage.removeItem(storageKey);

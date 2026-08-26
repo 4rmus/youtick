@@ -1,11 +1,16 @@
 import { base58Decode } from './base58';
 import {
     KeyPairSigner,
+    SCHEMA,
     actions,
     baseDecode,
     baseEncode,
     createTransaction,
+    encodeDelegateAction,
+    encodeSignedDelegate,
+    type SignedDelegate,
 } from 'near-api-js';
+import { deserialize } from 'borsh';
 import { verifyMessage as verifyNep413Message } from 'near-api-js/nep413';
 import type { CreateUploadResult, MediaSourceType } from './media-provider';
 import { MEDIA_SOURCE_FORMATS } from './media-provider';
@@ -52,6 +57,8 @@ export interface Env {
     LIVEPEER_PLAYBACK_V2_ENABLED?: string;
     LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED?: string;
     LIVEPEER_NEAR_CREATOR_FEE_ENABLED?: string;
+    LIVEPEER_SPONSORED_UPLOADS_ENABLED?: string;
+    LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED?: string;
     LIVEPEER_API_KEY?: string;
     LIVEPEER_PROJECT_ID?: string;
     LIVEPEER_API_TOKEN_NAME?: string;
@@ -82,6 +89,9 @@ export interface Env {
     NEAR_OPERATOR_ACCOUNT_ID?: string;
     NEAR_OPERATOR_PRIVATE_KEY?: string;
     NEAR_OPERATOR_KEY_EPOCH?: string;
+    NEAR_SPONSOR_RELAYER_ACCOUNT_ID?: string;
+    NEAR_SPONSOR_RELAYER_PRIVATE_KEY?: string;
+    NEAR_SPONSOR_RELAYER_KEY_EPOCH?: string;
     CREATOR_FEE_QUOTE_PRIVATE_KEY?: string;
     CREATOR_FEE_QUOTE_KEY_VERSION?: string;
     MULTI_ASSET_PAYMENTS_MODE?: string;
@@ -200,6 +210,67 @@ type CreatorFeeQuoteRequest = {
     job_id: string;
     expected_source_bytes: string;
 };
+type SponsoredPaidJobRequest = {
+    creator_id: string;
+    job_id: string;
+    title: string;
+    price_usdc: string;
+    expected_source_bytes: string;
+    profile_id: 'paid-media-livepeer-v1';
+    profile_config_sha256: string;
+    upload_public_key: string;
+    upload_key_expires_at_ms: string;
+};
+type SponsoredUploadQuote = {
+    domain: 'youtick.sponsored-upload-quote';
+    version: '1';
+    network: 'testnet' | 'mainnet';
+    contract_id: string;
+    creator_id: string;
+    job_id: string;
+    request_sha256: string;
+    expected_source_bytes: string;
+    upload_fee_usdc: string;
+    sponsor_fee_usdc: string;
+    total_fee_usdc: string;
+    delegate_receiver_id: string;
+    delegate_method: 'ft_transfer_call';
+    delegate_gas: string;
+    delegate_deposit_yocto: '1';
+    billable_gas: string;
+    gas_price_yocto: string;
+    near_usd_micro: string;
+    rate_source: string;
+    rate_timestamp_ms: string;
+    quote_block_height: string;
+    max_delegate_block_height: string;
+    expires_at_ms: string;
+    quote_key_version: number;
+    quote_id: string;
+};
+type ParsedSponsoredDelegate = {
+    signedDelegate: SignedDelegate;
+    signedDelegateBase64: string;
+    signedDelegateSha256: string;
+    publicKey: string;
+    nonce: bigint;
+    maxBlockHeight: bigint;
+    request: SponsoredPaidJobRequest;
+    quote: SponsoredUploadQuote;
+};
+type SponsorRelayRecord = {
+    schema: 'youtick.sponsor-relay.v1';
+    state: 'PENDING' | 'RESERVED' | 'SIGNED' | 'BROADCAST';
+    jobId: string;
+    creator: string;
+    payloadSha256: string;
+    signedDelegateBase64: string;
+    createdAtMs: number;
+    nonce?: string;
+    blockHash?: string;
+    signedTxBase64?: string;
+    txHash?: string;
+};
 type UploadPreflightRequest = {
     creator_id: string;
     job_id: string;
@@ -216,6 +287,12 @@ type OnChainJob = {
     status?: unknown;
     upload_public_key?: unknown;
     upload_key_expires_at_ms?: unknown;
+    title?: unknown;
+    price_usdc?: unknown;
+    fee_asset?: unknown;
+    fee_amount?: unknown;
+    fee_usd_micro?: unknown;
+    fee_quote_hash?: unknown;
 };
 type JobState = 'AUTHORIZED' | 'LEASED' | 'PROVIDER_CREATE_PENDING'
     | 'CREATE_PENDING' | 'CREATE_AMBIGUOUS' | 'UPLOAD_READY'
@@ -430,6 +507,13 @@ const CREATOR_FEE_QUOTE_LIFETIME_MS = 120_000;
 const CREATOR_FEE_RATE_LIMIT = 5;
 const CREATOR_FEE_RATE_WINDOW_MS = 60_000;
 const YOCTO_NEAR = 10n ** 24n;
+const SPONSORED_UPLOAD_DELEGATE_GAS = 100_000_000_000_000n;
+const SPONSORED_UPLOAD_BILLABLE_GAS = 150_000_000_000_000n;
+const SPONSORED_UPLOAD_MAX_BLOCK_WINDOW = 200n;
+const TESTNET_USDC_CONTRACT_ID = '3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af';
+const MAINNET_USDC_CONTRACT_ID = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
+const SPONSOR_RELAY_KEY_PREFIX = 'sponsor-relay:';
+const SPONSOR_RELAYER_LAST_NONCE_KEY = 'sponsor-relayer:last-nonce';
 const LIVEPEER_TUS_CHUNK_BYTES = 32 * 1024 * 1024;
 const MAX_PUBLICATION_COVER_BYTES = 2 * 1024 * 1024;
 const PUBLICATION_COVER_CACHE_SECONDS = 24 * 60 * 60;
@@ -530,6 +614,8 @@ const SAFE_ERROR_CODES = new Set([
     'invalid_outbox',
     'invalid_playback_request',
     'invalid_playback_v2_request',
+    'invalid_sponsored_upload_quote_request',
+    'invalid_sponsored_upload_relay',
     'invalid_upload_preflight',
     'invalid_upload_intent',
     'invalid_webhook',
@@ -574,6 +660,13 @@ const SAFE_ERROR_CODES = new Set([
     'provider_create_pending',
     'reservation_conflict',
     'runtime_not_configured',
+    'sponsor_balance_insufficient',
+    'sponsor_job_conflict',
+    'sponsor_quote_reprice_required',
+    'sponsor_relay_conflict',
+    'sponsor_relay_failed',
+    'sponsor_relay_mutations_disabled',
+    'sponsor_relay_pending',
     'upload_archive_conflict',
     'upload_archive_unavailable',
     'upload_cancel_denied',
@@ -595,6 +688,15 @@ const bridgeWorker = {
                     && env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED === 'true',
                 operatorMutationEnabled: env.LIVEPEER_BRIDGE_ENABLED === 'true'
                     && env.LIVEPEER_OPERATOR_MUTATIONS_ENABLED === 'true',
+                sponsoredUploadQuoteReady: env.LIVEPEER_BRIDGE_ENABLED === 'true'
+                    && env.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true'
+                    && Boolean(env.LIVEPEER_CONTROL)
+                    && validSponsoredUploadQuoteConfig(env),
+                sponsoredUploadRelayReady: env.LIVEPEER_BRIDGE_ENABLED === 'true'
+                    && env.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true'
+                    && env.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED === 'true'
+                    && Boolean(env.LIVEPEER_CONTROL)
+                    && validSponsoredUploadRelayConfig(env),
                 newUploadReady: env.LIVEPEER_BRIDGE_ENABLED === 'true'
                     && env.LIVEPEER_NEW_UPLOADS_ENABLED === 'true'
                     && env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED === 'true'
@@ -657,7 +759,7 @@ const bridgeWorker = {
         }
 
         if (request.method === 'OPTIONS'
-            && ['/v1/upload-preflight', '/v1/upload-intents', '/v1/upload-heartbeats', '/v1/playback-tokens', '/v2/playback-tokens', '/v1/creator-fee-quotes/near']
+            && ['/v1/upload-preflight', '/v1/upload-intents', '/v1/upload-heartbeats', '/v1/playback-tokens', '/v2/playback-tokens', '/v1/creator-fee-quotes/near', '/v1/sponsored-upload-quotes', '/v1/sponsored-upload-relays']
                 .includes(url.pathname)) {
             const origin = request.headers.get('Origin') || '';
             if (!allowedOrigins(env).has(origin)) return json({ error: 'origin_denied' }, 403);
@@ -789,6 +891,35 @@ const bridgeWorker = {
             return forwardCreatorFeeQuote(request, env);
         }
 
+        if (request.method === 'POST' && url.pathname === '/v1/sponsored-upload-quotes') {
+            const origin = request.headers.get('Origin') || '';
+            const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
+            if (env.LIVEPEER_BRIDGE_ENABLED !== 'true'
+                || env.LIVEPEER_SPONSORED_UPLOADS_ENABLED !== 'true') {
+                return withCors(json({ error: 'control_plane_disabled' }, 503), corsOrigin);
+            }
+            if (!env.LIVEPEER_CONTROL || !validSponsoredUploadQuoteConfig(env)) {
+                return withCors(json({ error: 'runtime_not_configured' }, 503), corsOrigin);
+            }
+            return forwardSponsoredUploadQuote(request, env);
+        }
+
+        if (request.method === 'POST' && url.pathname === '/v1/sponsored-upload-relays') {
+            const origin = request.headers.get('Origin') || '';
+            const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
+            if (env.LIVEPEER_BRIDGE_ENABLED !== 'true'
+                || env.LIVEPEER_SPONSORED_UPLOADS_ENABLED !== 'true') {
+                return withCors(json({ error: 'control_plane_disabled' }, 503), corsOrigin);
+            }
+            if (env.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED !== 'true') {
+                return withCors(json({ error: 'sponsor_relay_mutations_disabled' }, 503), corsOrigin);
+            }
+            if (!env.LIVEPEER_CONTROL || !validSponsoredUploadRelayConfig(env)) {
+                return withCors(json({ error: 'runtime_not_configured' }, 503), corsOrigin);
+            }
+            return forwardSponsoredUploadRelay(request, env);
+        }
+
         return json({ error: 'not_found', endpoints: ['/__health'] }, 404);
     },
 };
@@ -890,6 +1021,7 @@ export class LivepeerControl {
     async alarm(): Promise<void> {
         if (await expirePaymentRateLimit(this.state)) return;
         if (await expireCreatorFeeQuoteRateLimit(this.state)) return;
+        if (await advanceSponsorRelayAlarm(this.state, this.env)) return;
         if (await this.state.storage.get<AdmissionRecord>(ADMISSION_KEY)) {
             await maintainAdmissionLifecycle(this.state);
             return;
@@ -972,6 +1104,14 @@ export class LivepeerControl {
             }
             if (request.method === 'POST' && url.pathname === '/internal/creator-fee-quote') {
                 return await issueCreatorFeeQuote(this.state, this.env, request);
+            }
+            if (request.method === 'POST' && url.pathname === '/internal/sponsored-upload-quote') {
+                return await issueSponsoredUploadQuote(this.state, this.env, request);
+            }
+            if (request.method === 'POST' && url.pathname === '/internal/sponsored-upload-relay') {
+                const run = this.operatorTail.then(() => relaySponsoredUpload(this.state, this.env, request));
+                this.operatorTail = run.then(() => undefined, () => undefined);
+                return await run;
             }
             if (request.method === 'POST' && url.pathname === '/internal/payment-rate-limit') {
                 return await paymentRateLimit(this.state, request);
@@ -2887,6 +3027,861 @@ export async function forwardCreatorFeeQuote(request: Request, env: Env): Promis
     }
 }
 
+export async function forwardSponsoredUploadQuote(request: Request, env: Env): Promise<Response> {
+    const origin = request.headers.get('Origin') || '';
+    const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
+    try {
+        if (!allowedOrigins(env).has(origin)) throw new Error('origin_denied');
+        if (!env.LIVEPEER_CONTROL || !validSponsoredUploadQuoteConfig(env)) {
+            throw new Error('runtime_not_configured');
+        }
+        const input = parseSponsoredUploadQuoteRequest(await readJsonObject(request.clone()));
+        await preflightSponsoredUpload(env, input.request);
+        const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
+            `creator-fee-quote:${env.NEAR_NETWORK}:${env.MARKET_CONTRACT_ID}:${input.request.creator_id}`,
+        ));
+        return withCors(await object.fetch(new Request('https://object/internal/sponsored-upload-quote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(input),
+        })), corsOrigin);
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('sponsored_upload_quote_failed', { code }));
+        return withCors(json({ error: code }, errorStatus(code)), corsOrigin);
+    }
+}
+
+async function issueSponsoredUploadQuote(
+    state: DurableObjectState,
+    env: Env,
+    request: Request,
+): Promise<Response> {
+    try {
+        const input = parseSponsoredUploadQuoteRequest(await readJsonObject(request));
+        await enforceCreatorFeeQuoteRateLimit(state);
+        const now = Date.now();
+        const [rate, block] = await Promise.all([
+            readOutlayerNearUsd(env, now),
+            readFinalBlock(env),
+        ]);
+        const gasPriceYocto = await readGasPrice(env, block.hash);
+        const sourceBytes = BigInt(input.request.expected_source_bytes);
+        const byteFeeUsdMicro = (sourceBytes * 3n + 9_999n) / 10_000n;
+        const uploadFeeUsdc = byteFeeUsdMicro < MIN_CREATOR_UPLOAD_FEE_USD_MICROS
+            ? MIN_CREATOR_UPLOAD_FEE_USD_MICROS
+            : byteFeeUsdMicro;
+        const sponsorFeeUsdc = (
+            SPONSORED_UPLOAD_BILLABLE_GAS * gasPriceYocto * rate.nearUsdMicro
+            + YOCTO_NEAR - 1n
+        ) / YOCTO_NEAR;
+        const totalFeeUsdc = uploadFeeUsdc + sponsorFeeUsdc;
+        const quoteKeyVersion = Number(env.CREATOR_FEE_QUOTE_KEY_VERSION);
+        const quoteWithoutId = {
+            domain: 'youtick.sponsored-upload-quote' as const,
+            version: '1' as const,
+            network: env.NEAR_NETWORK as 'testnet' | 'mainnet',
+            contract_id: env.MARKET_CONTRACT_ID!,
+            creator_id: input.request.creator_id,
+            job_id: input.request.job_id,
+            request_sha256: await sha256Hex(paidJobRequestJson(input.request)),
+            expected_source_bytes: input.request.expected_source_bytes,
+            upload_fee_usdc: uploadFeeUsdc.toString(),
+            sponsor_fee_usdc: sponsorFeeUsdc.toString(),
+            total_fee_usdc: totalFeeUsdc.toString(),
+            delegate_receiver_id: usdcContractId(env),
+            delegate_method: 'ft_transfer_call' as const,
+            delegate_gas: SPONSORED_UPLOAD_DELEGATE_GAS.toString(),
+            delegate_deposit_yocto: '1' as const,
+            billable_gas: SPONSORED_UPLOAD_BILLABLE_GAS.toString(),
+            gas_price_yocto: gasPriceYocto.toString(),
+            near_usd_micro: rate.nearUsdMicro.toString(),
+            rate_source: CREATOR_FEE_RATE_SOURCE,
+            rate_timestamp_ms: String(rate.timestampMs),
+            quote_block_height: String(block.height),
+            max_delegate_block_height: String(BigInt(block.height) + SPONSORED_UPLOAD_MAX_BLOCK_WINDOW),
+            expires_at_ms: String(rate.timestampMs + CREATOR_FEE_QUOTE_LIFETIME_MS),
+            quote_key_version: quoteKeyVersion,
+        };
+        const canonicalMessage = canonicalSponsoredUploadQuoteMessage(quoteWithoutId);
+        const quoteId = await sha256Hex(canonicalMessage);
+        const privateKey = await importCreatorFeeQuotePrivateKey(env);
+        const signature = new Uint8Array(await crypto.subtle.sign(
+            'Ed25519',
+            privateKey,
+            new TextEncoder().encode(canonicalMessage),
+        ));
+        return json({
+            request: input.request,
+            quote: { ...quoteWithoutId, quote_id: quoteId },
+            signature: bytesToBase64(signature),
+            public_key_version: quoteKeyVersion,
+        });
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('sponsored_upload_quote_issue_failed', { code }));
+        return json({ error: code }, errorStatus(code));
+    }
+}
+
+function parseSponsoredUploadQuoteRequest(value: JsonObject): { request: SponsoredPaidJobRequest } {
+    requireExactKeys(value, ['request'], 'invalid_sponsored_upload_quote_request');
+    return { request: parseSponsoredPaidJobRequest(requireObject(
+        value.request,
+        'invalid_sponsored_upload_quote_request',
+    )) };
+}
+
+function parseSponsoredPaidJobRequest(
+    value: JsonObject,
+    requireFutureExpiry = true,
+): SponsoredPaidJobRequest {
+    requireExactKeys(value, [
+        'creator_id',
+        'job_id',
+        'title',
+        'price_usdc',
+        'expected_source_bytes',
+        'profile_id',
+        'profile_config_sha256',
+        'upload_public_key',
+        'upload_key_expires_at_ms',
+    ], 'invalid_sponsored_upload_quote_request');
+    if (typeof value.creator_id !== 'string'
+        || !ACCOUNT_ID_PATTERN.test(value.creator_id)
+        || typeof value.job_id !== 'string'
+        || !JOB_ID_PATTERN.test(value.job_id)
+        || typeof value.title !== 'string'
+        || value.title.trim().length < 1
+        || new TextEncoder().encode(value.title).length > 200
+        || typeof value.price_usdc !== 'string'
+        || !/^[1-9][0-9]{0,19}$/.test(value.price_usdc)
+        || BigInt(value.price_usdc) < 2_000_000n
+        || typeof value.expected_source_bytes !== 'string'
+        || !/^[1-9][0-9]{0,19}$/.test(value.expected_source_bytes)
+        || BigInt(value.expected_source_bytes) > MAX_SOURCE_BYTES
+        || value.profile_id !== 'paid-media-livepeer-v1'
+        || typeof value.profile_config_sha256 !== 'string'
+        || value.profile_config_sha256 !== PROFILE_CONFIG_SHA256
+        || typeof value.upload_public_key !== 'string'
+        || !SESSION_KEY_PATTERN.test(value.upload_public_key)
+        || typeof value.upload_key_expires_at_ms !== 'string'
+        || !/^[1-9][0-9]{12,15}$/.test(value.upload_key_expires_at_ms)
+        || (requireFutureExpiry && BigInt(value.upload_key_expires_at_ms) <= BigInt(Date.now()))) {
+        throw new Error('invalid_sponsored_upload_quote_request');
+    }
+    return {
+        creator_id: value.creator_id,
+        job_id: value.job_id,
+        title: value.title,
+        price_usdc: value.price_usdc,
+        expected_source_bytes: value.expected_source_bytes,
+        profile_id: value.profile_id,
+        profile_config_sha256: value.profile_config_sha256,
+        upload_public_key: value.upload_public_key,
+        upload_key_expires_at_ms: value.upload_key_expires_at_ms,
+    };
+}
+
+async function preflightSponsoredUpload(env: Env, request: SponsoredPaidJobRequest): Promise<void> {
+    if (!env.LIVEPEER_CONTROL) throw new Error('runtime_not_configured');
+    const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(admissionObjectName(
+        env.NEAR_NETWORK!,
+        env.MARKET_CONTRACT_ID!,
+    )));
+    const response = await object.fetch(new Request('https://object/internal/admission/preflight', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            jobId: request.job_id,
+            generation: 1,
+            creator: request.creator_id,
+            expectedSourceBytes: request.expected_source_bytes,
+        }),
+    }));
+    if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: unknown };
+        throw new Error(body.error === 'admission_denied' ? 'admission_denied' : 'admission_closed');
+    }
+}
+
+export async function forwardSponsoredUploadRelay(request: Request, env: Env): Promise<Response> {
+    const origin = request.headers.get('Origin') || '';
+    const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
+    try {
+        if (!allowedOrigins(env).has(origin)) throw new Error('origin_denied');
+        const object = await sponsorRelayerControlObject(env);
+        return withCors(await object.fetch(new Request('https://object/internal/sponsored-upload-relay', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: await request.text(),
+        })), corsOrigin);
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('sponsored_upload_relay_failed', { code }));
+        return withCors(json({ error: code }, errorStatus(code)), corsOrigin);
+    }
+}
+
+async function sponsorRelayerControlObject(env: Env): Promise<DurableObjectStub> {
+    if (!env.LIVEPEER_CONTROL || !validSponsoredUploadRelayConfig(env)) {
+        throw new Error('runtime_not_configured');
+    }
+    const signer = KeyPairSigner.fromSecretKey(
+        env.NEAR_SPONSOR_RELAYER_PRIVATE_KEY as `ed25519:${string}`,
+    );
+    const publicKey = (await signer.getPublicKey()).toString();
+    return env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName([
+        'sponsor-relayer',
+        env.NEAR_NETWORK,
+        publicKey,
+        env.NEAR_SPONSOR_RELAYER_KEY_EPOCH,
+    ].join(':')));
+}
+
+async function parseSponsoredUploadRelayRequest(
+    request: Request,
+    env: Env,
+): Promise<ParsedSponsoredDelegate> {
+    const value = await readJsonObject(request);
+    requireExactKeys(value, ['signed_delegate_base64'], 'invalid_sponsored_upload_relay');
+    if (typeof value.signed_delegate_base64 !== 'string'
+        || value.signed_delegate_base64.length < 64
+        || value.signed_delegate_base64.length > MAX_CONTROL_BODY_BYTES
+        || value.signed_delegate_base64.length % 4 !== 0
+        || !/^[A-Za-z0-9+/]+={0,2}$/.test(value.signed_delegate_base64)) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    let encoded: Uint8Array;
+    let signedDelegate: SignedDelegate;
+    try {
+        encoded = base64Decode(value.signed_delegate_base64);
+        signedDelegate = deserialize(SCHEMA.SignedDelegate, encoded) as unknown as SignedDelegate;
+        if (!constantTimeEqual(encodeSignedDelegate(signedDelegate), encoded)) {
+            throw new Error('non_canonical');
+        }
+    } catch {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    const signed = requireObject(signedDelegate, 'invalid_sponsored_upload_relay');
+    requireExactKeys(signed, ['delegateAction', 'signature'], 'invalid_sponsored_upload_relay');
+    const delegate = requireObject(signed.delegateAction, 'invalid_sponsored_upload_relay');
+    requireExactKeys(delegate, [
+        'senderId', 'receiverId', 'actions', 'nonce', 'maxBlockHeight', 'publicKey',
+    ], 'invalid_sponsored_upload_relay');
+    if (typeof delegate.senderId !== 'string'
+        || !ACCOUNT_ID_PATTERN.test(delegate.senderId)
+        || delegate.receiverId !== usdcContractId(env)
+        || !Array.isArray(delegate.actions)
+        || delegate.actions.length !== 1
+        || typeof delegate.nonce !== 'bigint'
+        || delegate.nonce < 1n
+        || typeof delegate.maxBlockHeight !== 'bigint'
+        || delegate.maxBlockHeight < 1n) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    const publicKey = requireObject(delegate.publicKey, 'invalid_sponsored_upload_relay');
+    requireExactKeys(publicKey, ['ed25519Key'], 'invalid_sponsored_upload_relay');
+    const publicKeyValue = requireObject(publicKey.ed25519Key, 'invalid_sponsored_upload_relay');
+    requireExactKeys(publicKeyValue, ['data'], 'invalid_sponsored_upload_relay');
+    const publicKeyBytes = parseBorshBytes(publicKeyValue.data, 32);
+    const signature = requireObject(signed.signature, 'invalid_sponsored_upload_relay');
+    requireExactKeys(signature, ['ed25519Signature'], 'invalid_sponsored_upload_relay');
+    const signatureValue = requireObject(signature.ed25519Signature, 'invalid_sponsored_upload_relay');
+    requireExactKeys(signatureValue, ['data'], 'invalid_sponsored_upload_relay');
+    const signatureBytes = parseBorshBytes(signatureValue.data, 64);
+    const action = requireObject(delegate.actions[0], 'invalid_sponsored_upload_relay');
+    requireExactKeys(action, ['functionCall'], 'invalid_sponsored_upload_relay');
+    const functionCall = requireObject(action.functionCall, 'invalid_sponsored_upload_relay');
+    requireExactKeys(functionCall, [
+        'methodName', 'args', 'gas', 'deposit',
+    ], 'invalid_sponsored_upload_relay');
+    if (functionCall.methodName !== 'ft_transfer_call'
+        || functionCall.gas !== SPONSORED_UPLOAD_DELEGATE_GAS
+        || functionCall.deposit !== 1n) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    let ftArgs: JsonObject;
+    try {
+        ftArgs = requireObject(JSON.parse(new TextDecoder().decode(
+            parseBorshBytes(functionCall.args),
+        )), 'invalid_sponsored_upload_relay');
+    } catch {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    requireExactKeys(ftArgs, [
+        'receiver_id', 'amount', 'memo', 'msg',
+    ], 'invalid_sponsored_upload_relay');
+    if (ftArgs.receiver_id !== env.MARKET_CONTRACT_ID
+        || typeof ftArgs.amount !== 'string'
+        || ftArgs.memo !== 'YouTick creator upload fee'
+        || typeof ftArgs.msg !== 'string') {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    let message: JsonObject;
+    try {
+        message = requireObject(JSON.parse(ftArgs.msg), 'invalid_sponsored_upload_relay');
+    } catch {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    requireExactKeys(message, [
+        'action',
+        'job_id',
+        'title',
+        'price_usdc',
+        'expected_source_bytes',
+        'profile_id',
+        'profile_config_sha256',
+        'upload_public_key',
+        'upload_key_expires_at_ms',
+        'sponsor_quote',
+        'sponsor_quote_signature',
+    ], 'invalid_sponsored_upload_relay');
+    if (message.action !== 'create_paid_job'
+        || typeof message.sponsor_quote_signature !== 'string') {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    const requestValue: JsonObject = {
+        creator_id: delegate.senderId,
+        job_id: message.job_id,
+        title: message.title,
+        price_usdc: message.price_usdc,
+        expected_source_bytes: message.expected_source_bytes,
+        profile_id: message.profile_id,
+        profile_config_sha256: message.profile_config_sha256,
+        upload_public_key: message.upload_public_key,
+        upload_key_expires_at_ms: message.upload_key_expires_at_ms,
+    };
+    const paidJobRequest = parseSponsoredPaidJobRequest(requestValue, false);
+    const quote = parseSponsoredUploadQuote(requireObject(
+        message.sponsor_quote,
+        'invalid_sponsored_upload_relay',
+    ));
+    await verifySponsoredUploadQuote(
+        env,
+        paidJobRequest,
+        quote,
+        message.sponsor_quote_signature,
+    );
+    if (ftArgs.amount !== quote.total_fee_usdc
+        || delegate.maxBlockHeight > BigInt(quote.max_delegate_block_height)) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    const delegateHash = new Uint8Array(await crypto.subtle.digest(
+        'SHA-256',
+        encodeDelegateAction(delegate as never),
+    ));
+    const verificationKey = await crypto.subtle.importKey(
+        'raw',
+        publicKeyBytes,
+        'Ed25519',
+        false,
+        ['verify'],
+    );
+    if (!await crypto.subtle.verify('Ed25519', verificationKey, signatureBytes, delegateHash)) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    return {
+        signedDelegate,
+        signedDelegateBase64: value.signed_delegate_base64,
+        signedDelegateSha256: await sha256BytesHex(encoded),
+        publicKey: `ed25519:${baseEncode(publicKeyBytes)}`,
+        nonce: delegate.nonce,
+        maxBlockHeight: delegate.maxBlockHeight,
+        request: paidJobRequest,
+        quote,
+    };
+}
+
+function parseBorshBytes(value: unknown, exactLength?: number): Uint8Array {
+    if (!Array.isArray(value)
+        || value.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)
+        || (exactLength !== undefined && value.length !== exactLength)) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    return Uint8Array.from(value as number[]);
+}
+
+function parseSponsoredUploadQuote(value: JsonObject): SponsoredUploadQuote {
+    const fields = [
+        'domain', 'version', 'network', 'contract_id', 'creator_id', 'job_id',
+        'request_sha256', 'expected_source_bytes', 'upload_fee_usdc', 'sponsor_fee_usdc',
+        'total_fee_usdc', 'delegate_receiver_id', 'delegate_method', 'delegate_gas',
+        'delegate_deposit_yocto', 'billable_gas', 'gas_price_yocto', 'near_usd_micro',
+        'rate_source', 'rate_timestamp_ms', 'quote_block_height', 'max_delegate_block_height',
+        'expires_at_ms', 'quote_key_version', 'quote_id',
+    ];
+    requireExactKeys(value, fields, 'invalid_sponsored_upload_relay');
+    const decimalFields = [
+        'expected_source_bytes', 'upload_fee_usdc', 'sponsor_fee_usdc', 'total_fee_usdc',
+        'delegate_gas', 'delegate_deposit_yocto', 'billable_gas', 'gas_price_yocto',
+        'near_usd_micro', 'rate_timestamp_ms', 'quote_block_height',
+        'max_delegate_block_height', 'expires_at_ms',
+    ];
+    if (value.domain !== 'youtick.sponsored-upload-quote'
+        || value.version !== '1'
+        || !['testnet', 'mainnet'].includes(String(value.network))
+        || typeof value.contract_id !== 'string'
+        || !ACCOUNT_ID_PATTERN.test(value.contract_id)
+        || typeof value.creator_id !== 'string'
+        || !ACCOUNT_ID_PATTERN.test(value.creator_id)
+        || typeof value.job_id !== 'string'
+        || !JOB_ID_PATTERN.test(value.job_id)
+        || typeof value.request_sha256 !== 'string'
+        || !SHA256_PATTERN.test(value.request_sha256)
+        || typeof value.delegate_receiver_id !== 'string'
+        || !ACCOUNT_ID_PATTERN.test(value.delegate_receiver_id)
+        || value.delegate_method !== 'ft_transfer_call'
+        || typeof value.rate_source !== 'string'
+        || value.rate_source.length < 1
+        || /[\r\n]/.test(value.rate_source)
+        || !Number.isSafeInteger(value.quote_key_version)
+        || Number(value.quote_key_version) < 1
+        || typeof value.quote_id !== 'string'
+        || !SHA256_PATTERN.test(value.quote_id)
+        || decimalFields.some((field) => (
+            typeof value[field] !== 'string' || !/^[1-9][0-9]{0,38}$/.test(value[field] as string)
+        ))) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    return value as unknown as SponsoredUploadQuote;
+}
+
+async function verifySponsoredUploadQuote(
+    env: Env,
+    request: SponsoredPaidJobRequest,
+    quote: SponsoredUploadQuote,
+    signatureBase64: string,
+): Promise<void> {
+    const sourceBytes = BigInt(request.expected_source_bytes);
+    const byteFee = (sourceBytes * 3n + 9_999n) / 10_000n;
+    const uploadFee = byteFee < MIN_CREATOR_UPLOAD_FEE_USD_MICROS
+        ? MIN_CREATOR_UPLOAD_FEE_USD_MICROS
+        : byteFee;
+    const sponsorFee = (
+        BigInt(quote.billable_gas) * BigInt(quote.gas_price_yocto) * BigInt(quote.near_usd_micro)
+        + YOCTO_NEAR - 1n
+    ) / YOCTO_NEAR;
+    if (quote.network !== env.NEAR_NETWORK
+        || quote.contract_id !== env.MARKET_CONTRACT_ID
+        || quote.creator_id !== request.creator_id
+        || quote.job_id !== request.job_id
+        || quote.request_sha256 !== await sha256Hex(paidJobRequestJson(request))
+        || quote.expected_source_bytes !== request.expected_source_bytes
+        || BigInt(quote.upload_fee_usdc) !== uploadFee
+        || BigInt(quote.sponsor_fee_usdc) !== sponsorFee
+        || BigInt(quote.total_fee_usdc) !== uploadFee + sponsorFee
+        || quote.delegate_receiver_id !== usdcContractId(env)
+        || quote.delegate_gas !== SPONSORED_UPLOAD_DELEGATE_GAS.toString()
+        || quote.delegate_deposit_yocto !== '1'
+        || quote.billable_gas !== SPONSORED_UPLOAD_BILLABLE_GAS.toString()
+        || quote.rate_source !== CREATOR_FEE_RATE_SOURCE
+        || quote.quote_key_version !== Number(env.CREATOR_FEE_QUOTE_KEY_VERSION)
+        || BigInt(quote.expires_at_ms) <= BigInt(quote.rate_timestamp_ms)
+        || BigInt(quote.expires_at_ms) - BigInt(quote.rate_timestamp_ms) > BigInt(CREATOR_FEE_QUOTE_LIFETIME_MS)
+        || BigInt(quote.quote_block_height) >= BigInt(quote.max_delegate_block_height)
+        || BigInt(quote.max_delegate_block_height) - BigInt(quote.quote_block_height)
+            > SPONSORED_UPLOAD_MAX_BLOCK_WINDOW) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    const canonicalMessage = canonicalSponsoredUploadQuoteMessage(quote);
+    if (quote.quote_id !== await sha256Hex(canonicalMessage)) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    let providedSignature: Uint8Array;
+    try {
+        providedSignature = base64Decode(signatureBase64);
+    } catch {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    const privateKey = await importCreatorFeeQuotePrivateKey(env);
+    const expectedSignature = new Uint8Array(await crypto.subtle.sign(
+        'Ed25519',
+        privateKey,
+        new TextEncoder().encode(canonicalMessage),
+    ));
+    if (!constantTimeEqual(providedSignature, expectedSignature)) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+}
+
+function sponsoredQuoteIsFresh(input: ParsedSponsoredDelegate): boolean {
+    const now = BigInt(Date.now());
+    const rateTimestamp = BigInt(input.quote.rate_timestamp_ms);
+    return BigInt(input.request.upload_key_expires_at_ms) > now
+        && rateTimestamp <= now
+        && now - rateTimestamp <= BigInt(CREATOR_FEE_MAX_SOURCE_AGE_MS)
+        && BigInt(input.quote.expires_at_ms) > now;
+}
+
+async function relaySponsoredUpload(
+    state: DurableObjectState,
+    env: Env,
+    request: Request,
+): Promise<Response> {
+    const input = await parseSponsoredUploadRelayRequest(request, env);
+    const existingJob = await readSponsoredMediaJob(env, input.request.job_id);
+    if (existingJob) {
+        requireExactSponsoredJob(existingJob, input);
+        await state.storage.delete(`${SPONSOR_RELAY_KEY_PREFIX}${input.request.job_id}`);
+        return json({
+            accepted: true,
+            relayed: true,
+            job_id: input.request.job_id,
+            tx_hash: null,
+        });
+    }
+
+    const key = `${SPONSOR_RELAY_KEY_PREFIX}${input.request.job_id}`;
+    let storedRecord = await state.storage.get<SponsorRelayRecord>(key);
+    if (storedRecord
+        && (storedRecord.payloadSha256 !== input.signedDelegateSha256
+            || storedRecord.creator !== input.request.creator_id)) {
+        throw new Error('sponsor_relay_conflict');
+    }
+    if (storedRecord?.state === 'BROADCAST' && storedRecord.txHash) {
+        const observed = await queryTransactionForAccount(
+            env,
+            storedRecord.txHash,
+            env.NEAR_SPONSOR_RELAYER_ACCOUNT_ID!,
+        );
+        const job = await readSponsoredMediaJob(env, input.request.job_id);
+        if (job) {
+            requireExactSponsoredJob(job, input);
+            await state.storage.delete(key);
+            return json({
+                accepted: true,
+                relayed: true,
+                job_id: input.request.job_id,
+                tx_hash: storedRecord.txHash,
+            });
+        }
+        if (observed === 'failed' || observed === 'sent') {
+            await releaseSponsoredAdmission(env, input.request);
+            await state.storage.delete(key);
+            throw new Error('sponsor_relay_failed');
+        }
+        if (observed === 'unknown') {
+            await state.storage.setAlarm(Date.now() + 30_000);
+            return json({
+                accepted: true,
+                relayed: false,
+                job_id: input.request.job_id,
+                tx_hash: storedRecord.txHash,
+            }, 202);
+        }
+        storedRecord = clearSponsorRelayTransaction(storedRecord);
+        await state.storage.put(key, storedRecord);
+    }
+    if (!sponsoredQuoteIsFresh(input)) {
+        if (storedRecord) {
+            await releaseSponsoredAdmission(env, input.request);
+            await state.storage.delete(key);
+        }
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+
+    const [block, creatorAccessKey, relayerAccessKey, balance] = await Promise.all([
+        readFinalBlock(env),
+        readCreatorAccessKey(env, input.request.creator_id, input.publicKey),
+        readSponsorRelayerAccessKey(env),
+        readUsdcBalance(env, input.request.creator_id),
+    ]);
+    if (input.nonce !== creatorAccessKey.nonce + 1n
+        || input.maxBlockHeight <= BigInt(block.height)
+        || input.maxBlockHeight > BigInt(input.quote.max_delegate_block_height)) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    requireCreatorDelegatePermission(creatorAccessKey.permission, env);
+    if (balance < BigInt(input.quote.total_fee_usdc)) {
+        throw new Error('sponsor_balance_insufficient');
+    }
+    const currentGasPrice = await readGasPrice(env, block.hash);
+    const currentSponsorFee = (
+        SPONSORED_UPLOAD_BILLABLE_GAS * currentGasPrice * BigInt(input.quote.near_usd_micro)
+        + YOCTO_NEAR - 1n
+    ) / YOCTO_NEAR;
+    if (currentSponsorFee > BigInt(input.quote.sponsor_fee_usdc)) {
+        throw new Error('sponsor_quote_reprice_required');
+    }
+
+    await reserveSponsoredAdmission(env, input.request);
+    let record = await state.storage.transaction(async (transaction) => {
+        const existing = await transaction.get<SponsorRelayRecord>(key);
+        if (existing) {
+            if (existing.payloadSha256 !== input.signedDelegateSha256
+                || existing.creator !== input.request.creator_id) {
+                throw new Error('sponsor_relay_conflict');
+            }
+            return existing;
+        }
+        await assertDurableObjectRecordCapacity(transaction, [
+            key,
+            SPONSOR_RELAYER_LAST_NONCE_KEY,
+        ], 'operator');
+        const created: SponsorRelayRecord = {
+            schema: 'youtick.sponsor-relay.v1',
+            state: 'PENDING',
+            jobId: input.request.job_id,
+            creator: input.request.creator_id,
+            payloadSha256: input.signedDelegateSha256,
+            signedDelegateBase64: input.signedDelegateBase64,
+            createdAtMs: Date.now(),
+        };
+        await transaction.put(key, created);
+        return created;
+    });
+
+    const signer = KeyPairSigner.fromSecretKey(
+        env.NEAR_SPONSOR_RELAYER_PRIVATE_KEY as `ed25519:${string}`,
+    );
+    const relayerPublicKey = await signer.getPublicKey();
+    if (!record.signedTxBase64) {
+        if (!record.nonce || !record.blockHash) {
+            record = await state.storage.transaction(async (transaction) => {
+                const current = await transaction.get<SponsorRelayRecord>(key);
+                if (!current) throw new Error('sponsor_relay_pending');
+                if (current.nonce && current.blockHash) return current;
+                const lastNonce = BigInt(
+                    await transaction.get<string>(SPONSOR_RELAYER_LAST_NONCE_KEY) || '0',
+                );
+                const nonce = (lastNonce > relayerAccessKey.nonce
+                    ? lastNonce
+                    : relayerAccessKey.nonce) + 1n;
+                const reserved = {
+                    ...current,
+                    state: 'RESERVED' as const,
+                    nonce: String(nonce),
+                    blockHash: relayerAccessKey.blockHash,
+                };
+                await transaction.put(SPONSOR_RELAYER_LAST_NONCE_KEY, String(nonce));
+                await transaction.put(key, reserved);
+                return reserved;
+            });
+        }
+        const transaction = createTransaction(
+            env.NEAR_SPONSOR_RELAYER_ACCOUNT_ID!,
+            relayerPublicKey,
+            input.request.creator_id,
+            BigInt(record.nonce!),
+            [actions.signedDelegate(input.signedDelegate)],
+            baseDecode(record.blockHash!),
+        );
+        const signed = await signer.signTransaction(transaction);
+        record = {
+            ...record,
+            state: 'SIGNED',
+            signedTxBase64: bytesToBase64(signed.signedTransaction.encode()),
+            txHash: baseEncode(signed.txHash),
+        };
+        await state.storage.put(key, record);
+    }
+
+    let broadcast: 'sent' | 'invalid_nonce' | 'failed' | 'unknown';
+    try {
+        broadcast = await sendTransaction(env, record.signedTxBase64!);
+    } catch {
+        broadcast = 'unknown';
+    }
+    record = { ...record, state: 'BROADCAST' };
+    await state.storage.put(key, record);
+    const job = await readSponsoredMediaJob(env, input.request.job_id);
+    if (job) {
+        requireExactSponsoredJob(job, input);
+        await state.storage.delete(key);
+        return json({ accepted: true, relayed: true, job_id: input.request.job_id, tx_hash: record.txHash || null });
+    }
+    if (broadcast === 'failed' || broadcast === 'sent') {
+        await releaseSponsoredAdmission(env, input.request);
+        await state.storage.delete(key);
+        throw new Error('sponsor_relay_failed');
+    }
+    if (broadcast === 'invalid_nonce') {
+        await state.storage.put(key, clearSponsorRelayTransaction(record));
+    }
+    await state.storage.setAlarm(Date.now() + 30_000);
+    return json({ accepted: true, relayed: false, job_id: input.request.job_id, tx_hash: record.txHash || null }, 202);
+}
+
+async function advanceSponsorRelayAlarm(state: DurableObjectState, env: Env): Promise<boolean> {
+    const records = await state.storage.list<SponsorRelayRecord>({
+        prefix: SPONSOR_RELAY_KEY_PREFIX,
+        limit: 1,
+    });
+    const record = records.values().next().value as SponsorRelayRecord | undefined;
+    if (!record) return false;
+    if (env.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED !== 'true') return true;
+    try {
+        const response = await relaySponsoredUpload(state, env, new Request(
+            'https://object/internal/sponsored-upload-relay',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ signed_delegate_base64: record.signedDelegateBase64 }),
+            },
+        ));
+        if (response.status === 202) await state.storage.setAlarm(Date.now() + 30_000);
+    } catch (error) {
+        console.error(formatLog('sponsor_relay_alarm_failed', { code: safeErrorCode(error) }));
+        await state.storage.setAlarm(Date.now() + 60_000);
+    }
+    return true;
+}
+
+function clearSponsorRelayTransaction(record: SponsorRelayRecord): SponsorRelayRecord {
+    const next = { ...record, state: 'PENDING' as const };
+    delete next.nonce;
+    delete next.blockHash;
+    delete next.signedTxBase64;
+    delete next.txHash;
+    return next;
+}
+
+async function readSponsoredMediaJob(env: Env, jobId: string): Promise<OnChainJob | null> {
+    try {
+        return (await readFinalMediaJob(env, jobId)).job;
+    } catch (error) {
+        if (error instanceof Error && error.message === 'near_job_not_found') return null;
+        throw error;
+    }
+}
+
+function requireExactSponsoredJob(job: OnChainJob, input: ParsedSponsoredDelegate): void {
+    if (job.job_id !== input.request.job_id
+        || job.creator_id !== input.request.creator_id
+        || job.title !== input.request.title
+        || job.price_usdc !== input.request.price_usdc
+        || job.expected_source_bytes !== input.request.expected_source_bytes
+        || job.profile_id !== input.request.profile_id
+        || job.profile_config_sha256 !== input.request.profile_config_sha256
+        || job.upload_public_key !== input.request.upload_public_key
+        || job.upload_key_expires_at_ms !== input.request.upload_key_expires_at_ms
+        || job.status !== 'Authorized'
+        || job.fee_asset !== 'USDC'
+        || job.fee_amount !== input.quote.total_fee_usdc
+        || job.fee_usd_micro !== input.quote.total_fee_usdc
+        || job.fee_quote_hash !== input.quote.quote_id) {
+        throw new Error('sponsor_job_conflict');
+    }
+}
+
+async function readCreatorAccessKey(
+    env: Env,
+    accountId: string,
+    publicKey: string,
+): Promise<{ nonce: bigint; permission: unknown }> {
+    const payload = await nearRpcRaw(env, 'query', {
+        request_type: 'view_access_key',
+        finality: 'final',
+        account_id: accountId,
+        public_key: publicKey,
+    });
+    const result = requireObject(payload.result, 'invalid_sponsored_upload_relay');
+    if (typeof result.nonce !== 'number'
+        || !Number.isSafeInteger(result.nonce)
+        || result.nonce < 0
+        || result.permission === undefined) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+    return { nonce: BigInt(result.nonce), permission: result.permission };
+}
+
+function requireCreatorDelegatePermission(permission: unknown, env: Env): void {
+    if (permission === 'FullAccess') return;
+    const root = requireObject(permission, 'invalid_sponsored_upload_relay');
+    requireExactKeys(root, ['FunctionCall'], 'invalid_sponsored_upload_relay');
+    const functionCall = requireObject(root.FunctionCall, 'invalid_sponsored_upload_relay');
+    const methods = functionCall.method_names;
+    if (functionCall.receiver_id !== usdcContractId(env)
+        || !Array.isArray(methods)
+        || !methods.includes('ft_transfer_call')
+        || methods.some((method) => typeof method !== 'string')) {
+        throw new Error('invalid_sponsored_upload_relay');
+    }
+}
+
+async function readSponsorRelayerAccessKey(
+    env: Env,
+): Promise<{ nonce: bigint; blockHash: string }> {
+    const signer = KeyPairSigner.fromSecretKey(
+        env.NEAR_SPONSOR_RELAYER_PRIVATE_KEY as `ed25519:${string}`,
+    );
+    const publicKey = (await signer.getPublicKey()).toString();
+    const payload = await nearRpcRaw(env, 'query', {
+        request_type: 'view_access_key',
+        finality: 'final',
+        account_id: env.NEAR_SPONSOR_RELAYER_ACCOUNT_ID,
+        public_key: publicKey,
+    });
+    const result = requireObject(payload.result, 'runtime_not_configured');
+    if (result.permission !== 'FullAccess'
+        || typeof result.nonce !== 'number'
+        || !Number.isSafeInteger(result.nonce)
+        || result.nonce < 0
+        || typeof result.block_hash !== 'string') {
+        throw new Error('runtime_not_configured');
+    }
+    return { nonce: BigInt(result.nonce), blockHash: result.block_hash };
+}
+
+async function readUsdcBalance(env: Env, accountId: string): Promise<bigint> {
+    const payload = await nearRpcRaw(env, 'query', {
+        request_type: 'call_function',
+        finality: 'final',
+        account_id: usdcContractId(env),
+        method_name: 'ft_balance_of',
+        args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify({ account_id: accountId }))),
+    });
+    const result = requireObject(payload.result, 'near_finalize_pending');
+    if (!Array.isArray(result.result)) throw new Error('near_finalize_pending');
+    let balance: unknown;
+    try {
+        balance = JSON.parse(new TextDecoder().decode(Uint8Array.from(result.result as number[])));
+    } catch {
+        throw new Error('near_finalize_pending');
+    }
+    if (typeof balance !== 'string' || !/^[0-9]+$/.test(balance)) {
+        throw new Error('near_finalize_pending');
+    }
+    return BigInt(balance);
+}
+
+async function reserveSponsoredAdmission(env: Env, request: SponsoredPaidJobRequest): Promise<void> {
+    if (!env.LIVEPEER_CONTROL) throw new Error('runtime_not_configured');
+    const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(admissionObjectName(
+        env.NEAR_NETWORK!,
+        env.MARKET_CONTRACT_ID!,
+    )));
+    const response = await object.fetch(new Request('https://object/internal/admission/reserve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            jobId: request.job_id,
+            generation: 1,
+            creator: request.creator_id,
+            expectedSourceBytes: request.expected_source_bytes,
+        }),
+    }));
+    if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: unknown };
+        throw new Error(body.error === 'admission_denied' ? 'admission_denied' : 'admission_closed');
+    }
+}
+
+async function releaseSponsoredAdmission(env: Env, request: SponsoredPaidJobRequest): Promise<void> {
+    if (!env.LIVEPEER_CONTROL) return;
+    const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(admissionObjectName(
+        env.NEAR_NETWORK!,
+        env.MARKET_CONTRACT_ID!,
+    )));
+    const response = await object.fetch(new Request('https://object/internal/admission/mark', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: request.job_id, generation: 1, state: 'CANCELLED' }),
+    }));
+    if (!response.ok) throw new Error('admission_closed');
+}
+
 async function issueCreatorFeeQuote(
     state: DurableObjectState,
     env: Env,
@@ -3091,6 +4086,77 @@ function canonicalCreatorFeeQuoteMessage(quote: Record<string, string | number>)
         quote.expires_at_ms,
         quote.quote_key_version,
     ].join('\n');
+}
+
+function canonicalSponsoredUploadQuoteMessage(quote: Omit<SponsoredUploadQuote, 'quote_id'>): string {
+    return [
+        quote.domain,
+        quote.version,
+        quote.network,
+        quote.contract_id,
+        quote.creator_id,
+        quote.job_id,
+        quote.request_sha256,
+        quote.expected_source_bytes,
+        quote.upload_fee_usdc,
+        quote.sponsor_fee_usdc,
+        quote.total_fee_usdc,
+        quote.delegate_receiver_id,
+        quote.delegate_method,
+        quote.delegate_gas,
+        quote.delegate_deposit_yocto,
+        quote.billable_gas,
+        quote.gas_price_yocto,
+        quote.near_usd_micro,
+        quote.rate_source,
+        quote.rate_timestamp_ms,
+        quote.quote_block_height,
+        quote.max_delegate_block_height,
+        quote.expires_at_ms,
+        quote.quote_key_version,
+    ].join('\n');
+}
+
+function paidJobRequestJson(request: SponsoredPaidJobRequest): string {
+    return JSON.stringify({
+        creator_id: request.creator_id,
+        job_id: request.job_id,
+        title: request.title,
+        price_usdc: request.price_usdc,
+        expected_source_bytes: request.expected_source_bytes,
+        profile_id: request.profile_id,
+        profile_config_sha256: request.profile_config_sha256,
+        upload_public_key: request.upload_public_key,
+        upload_key_expires_at_ms: request.upload_key_expires_at_ms,
+    });
+}
+
+async function readFinalBlock(env: Env): Promise<{ hash: string; height: number }> {
+    const payload = await nearRpcRaw(env, 'block', { finality: 'final' });
+    const result = requireObject(payload.result, 'near_finalize_pending');
+    const header = requireObject(result.header, 'near_finalize_pending');
+    if (typeof header.hash !== 'string'
+        || typeof header.height !== 'number'
+        || !Number.isSafeInteger(header.height)
+        || header.height < 1) {
+        throw new Error('near_finalize_pending');
+    }
+    return { hash: header.hash, height: header.height };
+}
+
+async function readGasPrice(env: Env, blockHash: string): Promise<bigint> {
+    const payload = await nearRpcRaw(env, 'gas_price', [blockHash]);
+    const result = requireObject(payload.result, 'near_finalize_pending');
+    if (typeof result.gas_price !== 'string' || !/^[1-9][0-9]{0,38}$/.test(result.gas_price)) {
+        throw new Error('near_finalize_pending');
+    }
+    return BigInt(result.gas_price);
+}
+
+function usdcContractId(env: Env): string {
+    if (env.NEAR_NETWORK === 'testnet') return TESTNET_USDC_CONTRACT_ID;
+    if (env.NEAR_NETWORK === 'mainnet') return MAINNET_USDC_CONTRACT_ID;
+    throw new Error('runtime_not_configured');
 }
 
 async function importCreatorFeeQuotePrivateKey(env: Env): Promise<CryptoKey> {
@@ -5239,9 +6305,17 @@ async function sendTransaction(env: Env, signedTxBase64: string): Promise<'sent'
 }
 
 async function queryTransaction(env: Env, txHash: string): Promise<'sent' | 'invalid_nonce' | 'failed' | 'unknown'> {
+    return queryTransactionForAccount(env, txHash, env.NEAR_OPERATOR_ACCOUNT_ID!);
+}
+
+async function queryTransactionForAccount(
+    env: Env,
+    txHash: string,
+    senderAccountId: string,
+): Promise<'sent' | 'invalid_nonce' | 'failed' | 'unknown'> {
     const payload = await nearRpcRaw(env, 'tx', {
         tx_hash: txHash,
-        sender_account_id: env.NEAR_OPERATOR_ACCOUNT_ID,
+        sender_account_id: senderAccountId,
         wait_until: 'FINAL',
     });
     if (payload.error) return classifyNearError(payload.error);
@@ -5325,12 +6399,12 @@ async function nearRpc(env: Env, params: JsonObject): Promise<JsonObject> {
     return payload;
 }
 
-async function nearRpcRaw(env: Env, method: string, params: JsonObject): Promise<JsonObject> {
+async function nearRpcRaw(env: Env, method: string, params: unknown): Promise<JsonObject> {
     let response: Response;
     try {
         response = await dependencyFetch(
             'near_rpc',
-            method === 'query' ? 'operator_query' : 'operator_broadcast',
+            method === 'send_tx' ? 'operator_broadcast' : 'operator_query',
             env.NEAR_RPC_URL!,
             {
                 method: 'POST',
@@ -5524,14 +6598,42 @@ function validPlaybackV2Config(env: Env): boolean {
 }
 
 function validCreatorFeeQuoteConfig(env: Env): boolean {
-    return env.LIVEPEER_NEAR_CREATOR_FEE_ENABLED === 'true'
-        && ['testnet', 'mainnet'].includes(env.NEAR_NETWORK || '')
+    return env.LIVEPEER_NEAR_CREATOR_FEE_ENABLED === 'true' && validQuoteSigningConfig(env);
+}
+
+function validQuoteSigningConfig(env: Env): boolean {
+    return ['testnet', 'mainnet'].includes(env.NEAR_NETWORK || '')
         && isHttpsUrl(env.NEAR_RPC_URL)
         && ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '')
         && typeof env.CREATOR_FEE_QUOTE_PRIVATE_KEY === 'string'
         && env.CREATOR_FEE_QUOTE_PRIVATE_KEY.length >= 64
         && /^[1-9][0-9]{0,9}$/.test(env.CREATOR_FEE_QUOTE_KEY_VERSION || '')
         && Number(env.CREATOR_FEE_QUOTE_KEY_VERSION) <= 0xffff_ffff;
+}
+
+function validSponsoredUploadQuoteConfig(env: Env): boolean {
+    return env.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true'
+        && validQuoteSigningConfig(env)
+        && validAdmissionConfig(env);
+}
+
+function validSponsoredUploadRelayConfig(env: Env): boolean {
+    const accountId = env.NEAR_SPONSOR_RELAYER_ACCOUNT_ID || '';
+    const structurallyValid = validSponsoredUploadQuoteConfig(env)
+        && ACCOUNT_ID_PATTERN.test(accountId)
+        && accountId !== env.MARKET_CONTRACT_ID
+        && accountId !== env.ACCESS_CONTRACT_ID
+        && accountId !== env.NEAR_OPERATOR_ACCOUNT_ID
+        && typeof env.NEAR_SPONSOR_RELAYER_PRIVATE_KEY === 'string'
+        && /^ed25519:[1-9A-HJ-NP-Za-km-z]{80,100}$/.test(env.NEAR_SPONSOR_RELAYER_PRIVATE_KEY)
+        && /^[1-9][0-9]{0,9}$/.test(env.NEAR_SPONSOR_RELAYER_KEY_EPOCH || '');
+    if (!structurallyValid) return false;
+    try {
+        KeyPairSigner.fromSecretKey(env.NEAR_SPONSOR_RELAYER_PRIVATE_KEY as `ed25519:${string}`);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function validOperatorConfig(env: Env): boolean {
@@ -5685,7 +6787,11 @@ function errorStatus(code: string): number {
         || code === 'provider_state_invalid'
         || code === 'device_nonce_replayed'
         || code === 'provider_create_pending'
-        || code === 'upload_cancel_denied') return 409;
+        || code === 'upload_cancel_denied'
+        || code === 'sponsor_balance_insufficient'
+        || code === 'sponsor_job_conflict'
+        || code === 'sponsor_quote_reprice_required'
+        || code === 'sponsor_relay_failed') return 409;
     if (code.startsWith('near_')
         || code === 'admission_closed'
         || code === 'runtime_not_configured'
@@ -5698,6 +6804,8 @@ function errorStatus(code: string): number {
         || code === 'durable_object_record_limit'
         || code === 'provider_mutations_disabled'
         || code === 'operator_mutations_disabled'
+        || code === 'sponsor_relay_mutations_disabled'
+        || code === 'sponsor_relay_pending'
         || code === 'provider_admission_closed'
         || code === 'provider_create_ambiguous') return 503;
     return 400;

@@ -13,7 +13,8 @@
     "lint": "eslint",
     "test": "vitest",
     "test:livepeer-canary": "node --test scripts/livepeer-hls-browser-canary.test.mjs",
-    "test:multi-creator-upload-canary": "vitest run --config vitest.canary.config.ts"
+    "test:multi-creator-upload-canary": "vitest run --config vitest.canary.config.ts",
+    "test:wallet-provenance": "node scripts/verify-pinned-wallet-executors.mjs"
   },
   "dependencies": {
     "@hot-labs/near-connect": "0.11.4",

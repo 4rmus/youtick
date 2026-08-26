@@ -3,7 +3,7 @@ use near_sdk::test_utils::{get_logs, VMContextBuilder};
 use near_sdk::{testing_env, AccountId, PromiseOrValue};
 use youtick_nft::{
     Contract, CreatorFeeQuote, FeeAsset, LivepeerPublicationSubmission, MarketInitConfig,
-    PaidJobRequest, PublicationAvailability,
+    PaidJobRequest, PublicationAvailability, SponsoredUploadQuote,
 };
 
 const PROFILE: &str = "paid-media-livepeer-v1";
@@ -14,14 +14,20 @@ const FINGERPRINT: &str = "ddddddddddddddddddddddddddddddddddddddddddddddddddddd
 const TESTNET_USDC: &str = "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af";
 const UPLOAD_KEY: &str = "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF";
 const QUOTE_PUBLIC_KEY: [u8; 32] = [
-    190, 134, 102, 159, 174, 34, 185, 4, 77, 225, 53, 223, 157, 124, 111, 157, 253, 86, 13, 10,
-    163, 191, 61, 230, 214, 73, 135, 124, 225, 40, 72, 154,
+    131, 153, 135, 167, 32, 33, 42, 35, 105, 154, 11, 233, 173, 110, 122, 105, 21, 78, 215, 22, 6,
+    51, 169, 198, 133, 42, 43, 121, 232, 229, 231, 190,
 ];
 const QUOTE_SIGNATURE: [u8; 64] = [
-    190, 102, 134, 7, 142, 44, 121, 3, 207, 108, 162, 236, 83, 50, 57, 23, 128, 228, 10, 240, 43,
-    4, 189, 176, 191, 98, 171, 10, 73, 103, 174, 80, 254, 98, 228, 201, 117, 26, 120, 142, 124,
-    138, 249, 202, 35, 246, 50, 187, 113, 9, 217, 252, 53, 90, 218, 147, 9, 187, 33, 172, 12, 39,
-    71, 10,
+    222, 32, 143, 92, 255, 124, 221, 225, 225, 188, 211, 209, 118, 93, 124, 247, 136, 45, 144, 248,
+    252, 88, 196, 208, 30, 90, 56, 68, 143, 252, 195, 129, 208, 218, 173, 240, 174, 0, 178, 130,
+    52, 49, 117, 100, 27, 26, 86, 201, 218, 132, 203, 154, 223, 0, 144, 34, 203, 78, 176, 228, 226,
+    219, 173, 2,
+];
+const SPONSOR_QUOTE_SIGNATURE: [u8; 64] = [
+    170, 193, 101, 147, 170, 173, 129, 252, 181, 224, 212, 157, 39, 224, 241, 167, 144, 222, 117,
+    195, 190, 226, 196, 71, 65, 153, 186, 182, 202, 177, 29, 242, 87, 43, 36, 227, 138, 134, 196,
+    202, 35, 212, 249, 26, 139, 71, 123, 7, 127, 123, 100, 209, 96, 195, 97, 254, 210, 181, 25,
+    235, 25, 163, 65, 14,
 ];
 
 fn account(value: &str) -> AccountId {
@@ -33,6 +39,7 @@ fn context(predecessor: &str) -> VMContextBuilder {
     builder.current_account_id(account("market.testnet"));
     builder.predecessor_account_id(account(predecessor));
     builder.block_timestamp(1_785_589_300_000_000_000);
+    builder.block_height(1_000);
     builder
 }
 
@@ -82,6 +89,76 @@ fn near_quote() -> CreatorFeeQuote {
         quote_key_version: 1,
         quote_id: "f2486e711ff88fe95aee073dce768a658212ad447d1e0c8aa5098c80099e4423".to_string(),
     }
+}
+
+fn sponsored_request() -> PaidJobRequest {
+    PaidJobRequest {
+        creator_id: account("creator.testnet"),
+        job_id: "job-sponsored".to_string(),
+        title: "Paid video".to_string(),
+        price_usdc: U128(2_000_000),
+        expected_source_bytes: U128(1_000_000_000),
+        profile_id: PROFILE.to_string(),
+        profile_config_sha256: PROFILE_HASH.to_string(),
+        upload_public_key: UPLOAD_KEY.to_string(),
+        upload_key_expires_at_ms: U64(1_785_589_900_000),
+    }
+}
+
+fn sponsored_quote() -> SponsoredUploadQuote {
+    SponsoredUploadQuote {
+        domain: "youtick.sponsored-upload-quote".to_string(),
+        version: "1".to_string(),
+        network: "testnet".to_string(),
+        contract_id: account("market.testnet"),
+        creator_id: account("creator.testnet"),
+        job_id: "job-sponsored".to_string(),
+        request_sha256: "dabd59b56d4a2696d0c10af16bf430d74e2895c59de5db03894312b7a88b48d6"
+            .to_string(),
+        expected_source_bytes: U128(1_000_000_000),
+        upload_fee_usdc: U128(500_000),
+        sponsor_fee_usdc: U128(75_000),
+        total_fee_usdc: U128(575_000),
+        delegate_receiver_id: account(TESTNET_USDC),
+        delegate_method: "ft_transfer_call".to_string(),
+        delegate_gas: U64(100_000_000_000_000),
+        delegate_deposit_yocto: U128(1),
+        billable_gas: U64(150_000_000_000_000),
+        gas_price_yocto: U128(100_000_000),
+        near_usd_micro: U128(5_000_000),
+        rate_source: "approved-source-v1".to_string(),
+        rate_timestamp_ms: U64(1_785_589_300_000),
+        quote_block_height: U64(1_000),
+        max_delegate_block_height: U64(1_200),
+        expires_at_ms: U64(1_785_589_420_000),
+        quote_key_version: 1,
+        quote_id: "e8218b9af5811ae85b58855191888cf797f630260d03e51bad3f68fd6fe5056b".to_string(),
+    }
+}
+
+fn sponsored_message(request: &PaidJobRequest, quote: SponsoredUploadQuote) -> String {
+    sponsored_message_with_signature(request, quote, &SPONSOR_QUOTE_SIGNATURE)
+}
+
+fn sponsored_message_with_signature(
+    request: &PaidJobRequest,
+    quote: SponsoredUploadQuote,
+    signature: &[u8],
+) -> String {
+    near_sdk::serde_json::json!({
+        "action": "create_paid_job",
+        "job_id": request.job_id,
+        "title": request.title,
+        "price_usdc": request.price_usdc,
+        "expected_source_bytes": request.expected_source_bytes,
+        "profile_id": request.profile_id,
+        "profile_config_sha256": request.profile_config_sha256,
+        "upload_public_key": request.upload_public_key,
+        "upload_key_expires_at_ms": request.upload_key_expires_at_ms,
+        "sponsor_quote": quote,
+        "sponsor_quote_signature": Base64VecU8(signature.to_vec()),
+    })
+    .to_string()
 }
 
 #[test]
@@ -134,6 +211,88 @@ fn wrong_or_stale_near_quote_fails_closed() {
         contract.create_paid_job_near(near_request(), quote, Base64VecU8(QUOTE_SIGNATURE.to_vec()));
     });
     assert_eq!(contract.get_platform_near_balance(), U128(0));
+}
+
+#[test]
+fn sponsored_usdc_quote_charges_one_total_and_refunds_exact_replay() {
+    let mut contract = contract();
+    let request = sponsored_request();
+    let message = sponsored_message(&request, sponsored_quote());
+    testing_env!(context(TESTNET_USDC).build());
+
+    let created =
+        contract.ft_on_transfer(account("creator.testnet"), U128(575_000), message.clone());
+    assert!(matches!(created, PromiseOrValue::Value(U128(0))));
+    assert_eq!(contract.get_platform_balance(), U128(575_000));
+    let job = contract.get_media_job("job-sponsored".to_string()).unwrap();
+    assert_eq!(job.fee_asset, FeeAsset::Usdc);
+    assert_eq!(job.fee_amount, U128(575_000));
+    assert_eq!(job.fee_usd_micro, U128(575_000));
+    assert_eq!(
+        job.fee_quote_hash.as_deref(),
+        Some("e8218b9af5811ae85b58855191888cf797f630260d03e51bad3f68fd6fe5056b")
+    );
+
+    let replay = contract.ft_on_transfer(account("creator.testnet"), U128(575_000), message);
+    assert!(matches!(replay, PromiseOrValue::Value(U128(575_000))));
+    assert_eq!(contract.get_platform_balance(), U128(575_000));
+    assert_eq!(
+        contract.get_media_job("job-sponsored".to_string()).unwrap(),
+        job
+    );
+}
+
+#[test]
+fn sponsored_usdc_quote_rejects_amount_request_and_expiry_drift() {
+    let request = sponsored_request();
+
+    let mut wrong_amount = contract();
+    testing_env!(context(TESTNET_USDC).build());
+    must_fail(|| {
+        wrong_amount.ft_on_transfer(
+            account("creator.testnet"),
+            U128(574_999),
+            sponsored_message(&request, sponsored_quote()),
+        );
+    });
+    assert_eq!(wrong_amount.get_platform_balance(), U128(0));
+
+    let mut wrong_request = contract();
+    let mut changed_request = request.clone();
+    changed_request.title = "Changed video".to_string();
+    testing_env!(context(TESTNET_USDC).build());
+    must_fail(|| {
+        wrong_request.ft_on_transfer(
+            account("creator.testnet"),
+            U128(575_000),
+            sponsored_message(&changed_request, sponsored_quote()),
+        );
+    });
+    assert_eq!(wrong_request.get_platform_balance(), U128(0));
+
+    let mut wrong_signature = contract();
+    testing_env!(context(TESTNET_USDC).build());
+    must_fail(|| {
+        wrong_signature.ft_on_transfer(
+            account("creator.testnet"),
+            U128(575_000),
+            sponsored_message_with_signature(&request, sponsored_quote(), &[0; 64]),
+        );
+    });
+    assert_eq!(wrong_signature.get_platform_balance(), U128(0));
+
+    let mut expired = contract();
+    let mut expired_context = context(TESTNET_USDC);
+    expired_context.block_timestamp(1_785_589_430_000_000_000);
+    testing_env!(expired_context.build());
+    must_fail(|| {
+        expired.ft_on_transfer(
+            account("creator.testnet"),
+            U128(575_000),
+            sponsored_message(&request, sponsored_quote()),
+        );
+    });
+    assert_eq!(expired.get_platform_balance(), U128(0));
 }
 
 fn create_job(contract: &mut Contract, job_id: &str, creator: &str) {

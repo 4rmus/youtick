@@ -35,6 +35,17 @@ All tracked defaults are false. The native-NEAR creator-fee gate is independentl
 disabled. Installing, testing or dry-running this package does not deploy or
 activate it.
 
+Sponsored creator upload is independently gated by
+`LIVEPEER_SPONSORED_UPLOADS_ENABLED=false`; NEAR sign/broadcast additionally
+requires `LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED=false` to be enabled.
+`POST /v1/sponsored-upload-quotes` reuses the creator allowlist, admission
+budget, quote key and NEAR/USD oracle. `POST /v1/sponsored-upload-relays`
+accepts one canonical Ed25519 SignedDelegate for the exact Circle-USDC
+`ft_transfer_call`, persists only ambiguous outer-transaction state in the
+existing Durable Object class and reconciles against the final market job.
+The dedicated relayer account ID/key epoch are public configuration; its
+private key is a Worker secret and must not reuse the market or operator role.
+
 `POST /v2/playback-tokens` verifies an eight-hour maximum wallet-authorized
 device certificate, a session-key-signed request, final publication state,
 entitlement and Livepeer JWT playback policy, then returns a playback-ID-bound
@@ -202,8 +213,8 @@ explicit cleanup plan.
 ## Configuration
 
 Public bindings and placeholders are in `wrangler.toml`. Put API, webhook,
-operator, JWT, NEAR operator and quote-signing private values in Worker secrets,
-never in that file or `.dev.vars` committed to git.
+operator, JWT, NEAR operator, sponsor-relayer and quote-signing private values
+in Worker secrets, never in that file or `.dev.vars` committed to git.
 
 Set the 1Click partner credential only as a secret:
 

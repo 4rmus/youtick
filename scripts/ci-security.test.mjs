@@ -48,6 +48,16 @@ test('normal-WASM contract SBOM artifacts stay mandatory', async () => {
     assert.match(audit, /retention-days: 30/);
 });
 
+test('web CI verifies the immutable sponsored-wallet executor', async () => {
+    const source = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    const web = source.slice(source.indexOf('  web:'), source.indexOf('  livepeer-bridge:'));
+
+    assert.match(web, /npm run test:wallet-provenance/);
+    assert.match(web, /npm run lint/);
+    assert.match(web, /npm test -- --run/);
+    assert.match(web, /npm run build/);
+});
+
 test('required CI Gate waits for the reusable CodeQL workflow', async () => {
     const [ci, codeql] = await Promise.all([
         readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
