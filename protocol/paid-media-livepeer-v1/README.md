@@ -1,6 +1,6 @@
 # Paid media Livepeer v1 protocol
 
-Status: `PR_6_LOCAL_CODE / WEB_JOB_KEY_LIFECYCLE_LOCAL / WEB_UI_WIRING_LOCAL / PRODUCT_P0_LOCKED / BOUNDED_CHROME_EDGE_CANARY_PASS / D6_PARTIAL / RUNTIME_DISABLED`
+Status: `PR_6_LOCAL_CODE / SPONSORED_UPLOAD_QUOTE_LOCAL / WEB_JOB_KEY_LIFECYCLE_LOCAL / WEB_UI_WIRING_LOCAL / PRODUCT_P0_LOCKED / BOUNDED_CHROME_EDGE_CANARY_PASS / D6_PARTIAL / RUNTIME_DISABLED`
 
 This directory locks the messages shared by the future web, bridge Worker and
 NEAR contracts. A dedicated testnet contract exists for bounded allowance
@@ -20,6 +20,8 @@ evidence; no Worker, web, staging or production runtime is enabled.
   PATCH at a time; only the final PATCH may be smaller;
 - creator upload fee: `max(500_000, ceil(source_bytes / 1_000_000_000 * 300_000))`
   micro-USDC, charged once when a new job is created;
+- sponsored upload delegate gas: fixed `100_000_000_000_000` gas with exactly
+  one yoctoNEAR attached; billable gas ceiling: fixed `150_000_000_000_000`;
 - ticket minimum: `2_000_000` micro-USDC; larger integer micro-USDC values are
   allowed and the existing 98/2 creator/platform split is unchanged;
 - initial browser claim: desktop Chrome and desktop Edge only;
@@ -69,6 +71,22 @@ the resulting job-bound quote only when the returned price is non-null and the
 oracle's recency window is at most 60 seconds. Pyth Core on NEAR and
 client/CEX/alternate API fallbacks are not settlement sources; empty or stale
 oracle data disables only the native NEAR rail.
+
+Sponsored USDC upload uses quote domain `youtick.sponsored-upload-quote` and
+version `1`. The paid-job request is serialized without whitespace in this
+fixed field order: creator, job, title, ticket price, source bytes, profile,
+profile hash, upload public key and upload-key expiry. Its SHA-256 is bound into
+the signed quote. The quote also binds the exact USDC receiver and
+`ft_transfer_call`, 100 Tgas, one yoctoNEAR, the 150 Tgas billing ceiling,
+gas price, NEAR/USD rate, a maximum 200-block delegate window and two-minute
+economic expiry.
+
+The contract recomputes the byte fee and sponsor fee using checked integer
+arithmetic, requires `total_fee_usdc = upload_fee_usdc + sponsor_fee_usdc`, and
+accepts that total as one USDC transfer. It stores the total in the existing
+USDC fee fields and the quote ID in `fee_quote_hash`; no Market state field or
+event type is added. Omitting both sponsor fields preserves the existing USDC
+path. This protocol slice does not implement or enable the Bridge relayer.
 
 The bridge operator uses a separate finite-allowance FunctionCall key for the
 exact market and only `finalize_livepeer_publication` and

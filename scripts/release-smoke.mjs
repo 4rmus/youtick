@@ -22,6 +22,8 @@ const DISABLED_BRIDGE_MUTATIONS = [
     { path: '/v1/playback-tokens', cors: true },
     { path: '/v2/playback-tokens', cors: true },
     { path: '/v1/creator-fee-quotes/near', cors: true },
+    { path: '/v1/sponsored-upload-quotes', cors: true },
+    { path: '/v1/sponsored-upload-relays', cors: true },
 ];
 
 export function canonicalJson(value) {
@@ -159,12 +161,16 @@ async function bridgeHealth(
             expectStatus(health.response, 200, 'bridge_health');
         }
         const healthJson = expectJson(health.response, health.body, 'bridge_health');
+        const sponsoredUploadsClosed = healthJson.sponsoredUploadQuoteReady === false
+            && healthJson.sponsoredUploadRelayReady === false;
         const enabled = healthJson.stage === 'ENABLED'
             && healthJson.providerMutationEnabled === true
-            && healthJson.newUploadReady === true;
+            && healthJson.newUploadReady === true
+            && sponsoredUploadsClosed;
         const disabled = healthJson.stage === 'DISABLED'
             && healthJson.providerMutationEnabled === false
-            && healthJson.newUploadReady === false;
+            && healthJson.newUploadReady === false
+            && sponsoredUploadsClosed;
         if (expectedBridgeEnabled === null ? !enabled && !disabled : expectedBridgeEnabled ? !enabled : !disabled) {
             throw new Error(expectedBridgeEnabled === null
                 ? 'release_smoke_bridge_policy_invalid'

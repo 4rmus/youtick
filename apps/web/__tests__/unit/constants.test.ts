@@ -11,6 +11,7 @@ const KEYS = [
     'NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2',
     'NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2',
     'NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE',
+    'NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS',
 ] as const;
 
 function clearEnv() { for (const key of KEYS) delete process.env[key]; }
@@ -48,6 +49,7 @@ describe('Livepeer-only configuration', () => {
             enablePlaybackAuthorizerV2: false,
             enablePlaybackShadowV2: false,
             enableLivepeerNearCreatorFee: false,
+            enableSponsoredLivepeerUploads: false,
             enableDerivedReadModel: false,
         });
         expect(MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes).toBe(32 * 1024 * 1024);

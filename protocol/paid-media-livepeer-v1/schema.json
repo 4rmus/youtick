@@ -11,6 +11,7 @@
     "operator",
     "upload_intent",
     "creator_fee_quote",
+    "sponsored_upload_quote",
     "finalize_publication",
     "playback_token_request"
   ],
@@ -112,6 +113,9 @@
     },
     "creator_fee_quote": {
       "$ref": "#/$defs/creator_fee_quote"
+    },
+    "sponsored_upload_quote": {
+      "$ref": "#/$defs/sponsored_upload_quote"
     },
     "finalize_publication": {
       "$ref": "#/$defs/finalize_publication"
@@ -333,6 +337,68 @@
             "fee_near_yocto": { "type": "string", "pattern": "^[1-9][0-9]{0,38}$" },
             "rate_source": { "$ref": "#/$defs/plain_string" },
             "rate_timestamp_ms": { "$ref": "#/$defs/decimal_u64" },
+            "expires_at_ms": { "$ref": "#/$defs/decimal_u64" },
+            "quote_key_version": { "type": "integer", "minimum": 1 },
+            "quote_id": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "canonical_message": { "type": "string", "minLength": 1 },
+        "quote_id": { "$ref": "#/$defs/sha256" },
+        "signature_base64": { "type": "string", "minLength": 86 },
+        "public_key_base64": { "type": "string", "minLength": 43 }
+      }
+    },
+    "paid_job_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["creator_id", "job_id", "title", "price_usdc", "expected_source_bytes", "profile_id", "profile_config_sha256", "upload_public_key", "upload_key_expires_at_ms"],
+      "properties": {
+        "creator_id": { "$ref": "#/$defs/account_id" },
+        "job_id": { "$ref": "#/$defs/job_id" },
+        "title": { "type": "string", "minLength": 1 },
+        "price_usdc": { "$ref": "#/$defs/decimal_u64" },
+        "expected_source_bytes": { "$ref": "#/$defs/decimal_u64" },
+        "profile_id": { "const": "paid-media-livepeer-v1" },
+        "profile_config_sha256": { "$ref": "#/$defs/sha256" },
+        "upload_public_key": { "$ref": "#/$defs/plain_string" },
+        "upload_key_expires_at_ms": { "$ref": "#/$defs/decimal_u64" }
+      }
+    },
+    "sponsored_upload_quote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paid_job_request", "request_json", "request_sha256", "quote", "canonical_message", "quote_id", "signature_base64", "public_key_base64"],
+      "properties": {
+        "paid_job_request": { "$ref": "#/$defs/paid_job_request" },
+        "request_json": { "type": "string", "minLength": 1 },
+        "request_sha256": { "$ref": "#/$defs/sha256" },
+        "quote": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["domain", "version", "network", "contract_id", "creator_id", "job_id", "request_sha256", "expected_source_bytes", "upload_fee_usdc", "sponsor_fee_usdc", "total_fee_usdc", "delegate_receiver_id", "delegate_method", "delegate_gas", "delegate_deposit_yocto", "billable_gas", "gas_price_yocto", "near_usd_micro", "rate_source", "rate_timestamp_ms", "quote_block_height", "max_delegate_block_height", "expires_at_ms", "quote_key_version", "quote_id"],
+          "properties": {
+            "domain": { "const": "youtick.sponsored-upload-quote" },
+            "version": { "const": "1" },
+            "network": { "enum": ["testnet", "mainnet"] },
+            "contract_id": { "$ref": "#/$defs/account_id" },
+            "creator_id": { "$ref": "#/$defs/account_id" },
+            "job_id": { "$ref": "#/$defs/job_id" },
+            "request_sha256": { "$ref": "#/$defs/sha256" },
+            "expected_source_bytes": { "$ref": "#/$defs/decimal_u64" },
+            "upload_fee_usdc": { "$ref": "#/$defs/decimal_u64" },
+            "sponsor_fee_usdc": { "$ref": "#/$defs/decimal_u64" },
+            "total_fee_usdc": { "$ref": "#/$defs/decimal_u64" },
+            "delegate_receiver_id": { "$ref": "#/$defs/account_id" },
+            "delegate_method": { "const": "ft_transfer_call" },
+            "delegate_gas": { "const": "100000000000000" },
+            "delegate_deposit_yocto": { "const": "1" },
+            "billable_gas": { "const": "150000000000000" },
+            "gas_price_yocto": { "$ref": "#/$defs/decimal_u64" },
+            "near_usd_micro": { "$ref": "#/$defs/decimal_u64" },
+            "rate_source": { "$ref": "#/$defs/plain_string" },
+            "rate_timestamp_ms": { "$ref": "#/$defs/decimal_u64" },
+            "quote_block_height": { "$ref": "#/$defs/decimal_u64" },
+            "max_delegate_block_height": { "$ref": "#/$defs/decimal_u64" },
             "expires_at_ms": { "$ref": "#/$defs/decimal_u64" },
             "quote_key_version": { "type": "integer", "minimum": 1 },
             "quote_id": { "$ref": "#/$defs/sha256" }

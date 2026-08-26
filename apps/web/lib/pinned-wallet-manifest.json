@@ -1,0 +1,46 @@
+{
+  "schema": "youtick.pinned-wallet-manifest.v1",
+  "executorSha256": "30f015e149fff43c1134df1440cb0b676a19f00b87de27cca85194ea9a4eab4f",
+  "manifest": {
+    "version": "1.1.0-youtick.1",
+    "wallets": [
+      {
+        "id": "meteor-wallet",
+        "name": "Meteor Wallet",
+        "icon": "https://raw.githubusercontent.com/Meteor-Wallet/meteor_wallet_sdk/8c4ca0849244907551dbf7edbd65bd2db0189ccd/assets/meteor-logo-svg.svg",
+        "description": "Meteor Wallet",
+        "website": "https://meteorwallet.app/",
+        "version": "1.1.0",
+        "executor": "https://raw.githubusercontent.com/Meteor-Wallet/meteor_wallet_sdk/8c4ca0849244907551dbf7edbd65bd2db0189ccd/storage/meteor-near-connect-latest.js",
+        "type": "sandbox",
+        "features": {
+          "signMessage": true,
+          "signInWithoutAddKey": true,
+          "signInAndSignMessage": true,
+          "signAndSendTransaction": true,
+          "signAndSendTransactions": true,
+          "signInWithFunctionCallKey": true,
+          "signDelegateActions": true,
+          "mainnet": true,
+          "testnet": true
+        },
+        "platform": {
+          "web": "https://wallet.meteorwallet.app",
+          "chrome": "https://chromewebstore.google.com/detail/meteor-wallet/pcndjhkinnkaohffealmlmhaepkpmgkb"
+        },
+        "permissions": {
+          "storage": true,
+          "allowsOpen": [
+            "https://chromewebstore.google.com",
+            "https://wallet.meteorwallet.app",
+            "https://meteorwallet.app"
+          ],
+          "external": [
+            "meteorCom",
+            "meteorComV2"
+          ]
+        }
+      }
+    ]
+  }
+}

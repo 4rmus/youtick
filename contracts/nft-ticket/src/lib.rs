@@ -18,6 +18,10 @@ const FT_TRANSFER_GAS: Gas = Gas::from_tgas(20);
 const WITHDRAW_CALLBACK_GAS: Gas = Gas::from_tgas(10);
 const QUOTE_MAX_SOURCE_AGE_MS: u64 = 60_000;
 const QUOTE_MAX_LIFETIME_MS: u64 = 120_000;
+const SPONSORED_UPLOAD_DELEGATE_GAS: u64 = 100_000_000_000_000;
+const SPONSORED_UPLOAD_BILLABLE_GAS: u64 = 150_000_000_000_000;
+const SPONSORED_UPLOAD_DEPOSIT_YOCTO: u128 = 1;
+const SPONSORED_UPLOAD_MAX_BLOCK_WINDOW: u64 = 200;
 const MARKET_STATE_VERSION: u32 = 2;
 // Kept outside Contract so an emergency purchase control does not change the
 // deployed Market v2 Borsh layout or require a state migration.
@@ -192,6 +196,8 @@ struct TransferMessage {
     profile_config_sha256: Option<String>,
     upload_public_key: Option<String>,
     upload_key_expires_at_ms: Option<U64>,
+    sponsor_quote: Option<SponsoredUploadQuote>,
+    sponsor_quote_signature: Option<Base64VecU8>,
 }
 
 #[near(serializers = [json])]
@@ -223,6 +229,36 @@ pub struct CreatorFeeQuote {
     pub fee_near_yocto: U128,
     pub rate_source: String,
     pub rate_timestamp_ms: U64,
+    pub expires_at_ms: U64,
+    pub quote_key_version: u32,
+    pub quote_id: String,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SponsoredUploadQuote {
+    pub domain: String,
+    pub version: String,
+    pub network: String,
+    pub contract_id: AccountId,
+    pub creator_id: AccountId,
+    pub job_id: String,
+    pub request_sha256: String,
+    pub expected_source_bytes: U128,
+    pub upload_fee_usdc: U128,
+    pub sponsor_fee_usdc: U128,
+    pub total_fee_usdc: U128,
+    pub delegate_receiver_id: AccountId,
+    pub delegate_method: String,
+    pub delegate_gas: U64,
+    pub delegate_deposit_yocto: U128,
+    pub billable_gas: U64,
+    pub gas_price_yocto: U128,
+    pub near_usd_micro: U128,
+    pub rate_source: String,
+    pub rate_timestamp_ms: U64,
+    pub quote_block_height: U64,
+    pub max_delegate_block_height: U64,
     pub expires_at_ms: U64,
     pub quote_key_version: u32,
     pub quote_id: String,
@@ -465,44 +501,34 @@ impl Contract {
     }
 
     pub fn create_paid_job(&mut self, request: PaidJobRequest) -> MediaJob {
-        let PaidJobRequest {
-            creator_id,
-            job_id,
-            title,
-            price_usdc,
-            expected_source_bytes,
-            profile_id,
-            profile_config_sha256,
-            upload_public_key,
-            upload_key_expires_at_ms,
-        } = request;
+        let fee_usd_micro = upload_fee_usdc(request.expected_source_bytes.0);
+        self.create_usdc_paid_job(request, fee_usd_micro, None)
+    }
+
+    fn create_usdc_paid_job(
+        &mut self,
+        request: PaidJobRequest,
+        fee_usd_micro: u128,
+        fee_quote_hash: Option<String>,
+    ) -> MediaJob {
         require!(
             env::predecessor_account_id() == self.usdc_contract_id(),
             "Paid jobs must be created through USDC ft_transfer_call"
         );
-        assert_identifier("job_id", &job_id);
-        assert_title(&title);
-        assert_source_bytes(expected_source_bytes.0);
-        assert_profile(&profile_id, &profile_config_sha256);
-        assert_upload_key(&upload_public_key, upload_key_expires_at_ms.0);
+        assert_paid_job_request(&request);
         require!(
-            price_usdc.0 >= MIN_TICKET_PRICE_USDC,
-            "USDC ticket price must be at least 2.000000"
-        );
-        require!(
-            self.media_jobs.get(&job_id).is_none(),
+            self.media_jobs.get(&request.job_id).is_none(),
             "Media job already exists"
         );
 
-        let fee_usd_micro = upload_fee_usdc(expected_source_bytes.0);
         let job = MediaJob {
-            job_id: job_id.clone(),
-            creator_id,
-            profile_id,
-            profile_config_sha256,
-            title,
-            price_usdc,
-            expected_source_bytes,
+            job_id: request.job_id.clone(),
+            creator_id: request.creator_id,
+            profile_id: request.profile_id,
+            profile_config_sha256: request.profile_config_sha256,
+            title: request.title,
+            price_usdc: request.price_usdc,
+            expected_source_bytes: request.expected_source_bytes,
             generation: 1,
             status: MediaJobStatus::Authorized,
             created_at_ms: env::block_timestamp_ms(),
@@ -510,11 +536,11 @@ impl Contract {
             fee_asset: FeeAsset::Usdc,
             fee_amount: U128(fee_usd_micro),
             fee_usd_micro: U128(fee_usd_micro),
-            upload_public_key,
-            upload_key_expires_at_ms,
-            fee_quote_hash: None,
+            upload_public_key: request.upload_public_key,
+            upload_key_expires_at_ms: request.upload_key_expires_at_ms,
+            fee_quote_hash,
         };
-        self.media_jobs.insert(&job_id, &job);
+        self.media_jobs.insert(&job.job_id, &job);
         emit_media_job_authorized(&job);
         job
     }
@@ -916,7 +942,6 @@ impl Contract {
                 .expected_source_bytes
                 .expect("expected_source_bytes is required");
             let expected_fee = upload_fee_usdc(expected_source_bytes.0);
-            require!(amount.0 == expected_fee, "Incorrect creator upload fee");
             let job_id = message.job_id.expect("job_id is required");
             let title = message.title.expect("title is required");
             let price_usdc = message.price_usdc.expect("price_usdc is required");
@@ -930,34 +955,44 @@ impl Contract {
             let upload_key_expires_at_ms = message
                 .upload_key_expires_at_ms
                 .expect("upload_key_expires_at_ms is required");
+            let request = PaidJobRequest {
+                creator_id: sender_id.clone(),
+                job_id: job_id.clone(),
+                title: title.clone(),
+                price_usdc,
+                expected_source_bytes,
+                profile_id: profile_id.clone(),
+                profile_config_sha256: profile_config_sha256.clone(),
+                upload_public_key: upload_public_key.clone(),
+                upload_key_expires_at_ms,
+            };
+            let quote = match (message.sponsor_quote, message.sponsor_quote_signature) {
+                (None, None) => None,
+                (Some(quote), Some(signature)) => {
+                    self.verify_sponsored_upload_quote(&request, &quote, &signature.0);
+                    Some(quote)
+                }
+                _ => env::panic_str("Incomplete sponsored upload quote"),
+            };
+            let (expected_fee, quote_hash) = quote.as_ref().map_or((expected_fee, None), |quote| {
+                (quote.total_fee_usdc.0, Some(quote.quote_id.clone()))
+            });
+            require!(amount.0 == expected_fee, "Incorrect creator upload fee");
 
             if let Some(existing) = self.media_jobs.get(&job_id) {
                 require!(
-                    existing.creator_id == sender_id
-                        && existing.title == title
-                        && existing.price_usdc == price_usdc
-                        && existing.expected_source_bytes == expected_source_bytes
-                        && existing.profile_id == profile_id
-                        && existing.profile_config_sha256 == profile_config_sha256
-                        && existing.upload_public_key == upload_public_key
-                        && existing.upload_key_expires_at_ms == upload_key_expires_at_ms
-                        && existing.fee_asset == FeeAsset::Usdc,
+                    usdc_job_matches_request(
+                        &existing,
+                        &request,
+                        expected_fee,
+                        quote_hash.as_deref()
+                    ),
                     "Conflicting paid job replay"
                 );
                 return PromiseOrValue::Value(amount);
             }
 
-            self.create_paid_job(PaidJobRequest {
-                creator_id: sender_id,
-                job_id,
-                title,
-                price_usdc,
-                expected_source_bytes,
-                profile_id,
-                profile_config_sha256,
-                upload_public_key,
-                upload_key_expires_at_ms,
-            });
+            self.create_usdc_paid_job(request, expected_fee, quote_hash);
             self.platform_balance = self
                 .platform_balance
                 .checked_add(amount.0)
@@ -1394,8 +1429,112 @@ impl Contract {
             "Quote NEAR fee mismatch"
         );
         let message = canonical_quote_message(quote);
+        self.verify_quote_signature(&message, &quote.quote_id, signature);
+    }
+
+    fn verify_sponsored_upload_quote(
+        &self,
+        request: &PaidJobRequest,
+        quote: &SponsoredUploadQuote,
+        signature: &[u8],
+    ) {
+        assert_paid_job_request(request);
+        let now_ms = env::block_timestamp_ms();
+        let block_height = env::block_height();
         require!(
-            quote.quote_id == hex_sha256(message.as_bytes()),
+            quote.domain == "youtick.sponsored-upload-quote",
+            "Invalid quote domain"
+        );
+        require!(quote.version == "1", "Invalid quote version");
+        require!(quote.network == self.network_id(), "Quote network mismatch");
+        require!(
+            quote.contract_id == env::current_account_id(),
+            "Quote contract mismatch"
+        );
+        require!(
+            quote.creator_id == request.creator_id && quote.job_id == request.job_id,
+            "Quote job mismatch"
+        );
+        require!(
+            quote.request_sha256 == paid_job_request_sha256(request),
+            "Quote request mismatch"
+        );
+        require!(
+            quote.expected_source_bytes == request.expected_source_bytes,
+            "Quote byte count mismatch"
+        );
+        require!(
+            quote.delegate_receiver_id == self.usdc_contract_id()
+                && quote.delegate_method == "ft_transfer_call"
+                && quote.delegate_gas.0 == SPONSORED_UPLOAD_DELEGATE_GAS
+                && quote.delegate_deposit_yocto.0 == SPONSORED_UPLOAD_DEPOSIT_YOCTO
+                && quote.billable_gas.0 == SPONSORED_UPLOAD_BILLABLE_GAS,
+            "Invalid sponsored delegate policy"
+        );
+        require!(
+            quote.quote_block_height.0 <= block_height
+                && quote.quote_block_height.0 < quote.max_delegate_block_height.0
+                && quote
+                    .max_delegate_block_height
+                    .0
+                    .checked_sub(quote.quote_block_height.0)
+                    .is_some_and(|window| window <= SPONSORED_UPLOAD_MAX_BLOCK_WINDOW),
+            "Expired delegate block window"
+        );
+        require!(
+            quote.rate_timestamp_ms.0 <= now_ms
+                && now_ms - quote.rate_timestamp_ms.0 <= QUOTE_MAX_SOURCE_AGE_MS,
+            "Stale quote rate"
+        );
+        require!(
+            quote.expires_at_ms.0 > now_ms
+                && quote.expires_at_ms.0 - quote.rate_timestamp_ms.0 <= QUOTE_MAX_LIFETIME_MS,
+            "Expired quote"
+        );
+        require!(
+            !quote.rate_source.is_empty()
+                && !quote.rate_source.contains('\r')
+                && !quote.rate_source.contains('\n'),
+            "Invalid rate source"
+        );
+        require!(
+            quote.quote_key_version == self.quote_key_version,
+            "Quote key version mismatch"
+        );
+        let upload_fee_usdc = upload_fee_usdc(request.expected_source_bytes.0);
+        require!(
+            quote.upload_fee_usdc.0 == upload_fee_usdc,
+            "Quote upload fee mismatch"
+        );
+        require!(
+            quote.gas_price_yocto.0 > 0 && quote.near_usd_micro.0 > 0,
+            "Invalid sponsor rate"
+        );
+        let sponsor_fee_usdc = div_ceil(
+            u128::from(quote.billable_gas.0)
+                .checked_mul(quote.gas_price_yocto.0)
+                .and_then(|value| value.checked_mul(quote.near_usd_micro.0))
+                .expect("Sponsor fee overflow"),
+            10u128.pow(24),
+        );
+        require!(
+            quote.sponsor_fee_usdc.0 == sponsor_fee_usdc,
+            "Quote sponsor fee mismatch"
+        );
+        let total_fee_usdc = upload_fee_usdc
+            .checked_add(sponsor_fee_usdc)
+            .expect("Sponsored total fee overflow");
+        require!(
+            quote.total_fee_usdc.0 == total_fee_usdc,
+            "Quote total fee mismatch"
+        );
+        let message = canonical_sponsored_upload_quote_message(quote);
+        self.verify_quote_signature(&message, &quote.quote_id, signature);
+    }
+
+    fn verify_quote_signature(&self, message: &str, quote_id: &str, signature: &[u8]) {
+        require!(
+            quote_id == hex_sha256(message.as_bytes()),
             "Quote ID mismatch"
         );
         let signature: [u8; 64] = signature
@@ -1642,6 +1781,42 @@ fn canonical_quote_message(quote: &CreatorFeeQuote) -> String {
     .join("\n")
 }
 
+fn canonical_sponsored_upload_quote_message(quote: &SponsoredUploadQuote) -> String {
+    [
+        quote.domain.clone(),
+        quote.version.clone(),
+        quote.network.clone(),
+        quote.contract_id.to_string(),
+        quote.creator_id.to_string(),
+        quote.job_id.clone(),
+        quote.request_sha256.clone(),
+        quote.expected_source_bytes.0.to_string(),
+        quote.upload_fee_usdc.0.to_string(),
+        quote.sponsor_fee_usdc.0.to_string(),
+        quote.total_fee_usdc.0.to_string(),
+        quote.delegate_receiver_id.to_string(),
+        quote.delegate_method.clone(),
+        quote.delegate_gas.0.to_string(),
+        quote.delegate_deposit_yocto.0.to_string(),
+        quote.billable_gas.0.to_string(),
+        quote.gas_price_yocto.0.to_string(),
+        quote.near_usd_micro.0.to_string(),
+        quote.rate_source.clone(),
+        quote.rate_timestamp_ms.0.to_string(),
+        quote.quote_block_height.0.to_string(),
+        quote.max_delegate_block_height.0.to_string(),
+        quote.expires_at_ms.0.to_string(),
+        quote.quote_key_version.to_string(),
+    ]
+    .join("\n")
+}
+
+fn paid_job_request_sha256(request: &PaidJobRequest) -> String {
+    hex_sha256(
+        &near_sdk::serde_json::to_vec(request).expect("Failed to serialize paid job request"),
+    )
+}
+
 fn hex_sha256(value: &[u8]) -> String {
     env::sha256(value)
         .into_iter()
@@ -1662,6 +1837,26 @@ fn job_matches_request(job: &MediaJob, request: &PaidJobRequest, quote: &Creator
         && job.fee_amount == quote.fee_near_yocto
         && job.fee_usd_micro == quote.fee_usd_micro
         && job.fee_quote_hash.as_deref() == Some(quote.quote_id.as_str())
+}
+
+fn usdc_job_matches_request(
+    job: &MediaJob,
+    request: &PaidJobRequest,
+    fee_usd_micro: u128,
+    fee_quote_hash: Option<&str>,
+) -> bool {
+    job.creator_id == request.creator_id
+        && job.title == request.title
+        && job.price_usdc == request.price_usdc
+        && job.expected_source_bytes == request.expected_source_bytes
+        && job.profile_id == request.profile_id
+        && job.profile_config_sha256 == request.profile_config_sha256
+        && job.upload_public_key == request.upload_public_key
+        && job.upload_key_expires_at_ms == request.upload_key_expires_at_ms
+        && job.fee_asset == FeeAsset::Usdc
+        && job.fee_amount.0 == fee_usd_micro
+        && job.fee_usd_micro.0 == fee_usd_micro
+        && job.fee_quote_hash.as_deref() == fee_quote_hash
 }
 
 fn emit_media_job_authorized(job: &MediaJob) {

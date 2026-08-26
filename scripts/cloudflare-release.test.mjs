@@ -102,6 +102,7 @@ function makeConfig(target) {
             NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: `https://${expected.bridge.domain}`,
             NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: 'false',
             NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE: 'false',
+            NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS: 'false',
             NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2: 'false',
             NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2: 'false',
             NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: 'false',
@@ -129,6 +130,8 @@ function makeConfig(target) {
             LIVEPEER_JWT_PUBLIC_KEY: 'public-key',
             LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '',
             LIVEPEER_NEAR_CREATOR_FEE_ENABLED: 'false',
+            LIVEPEER_SPONSORED_UPLOADS_ENABLED: 'false',
+            LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'false',
             LIVEPEER_PAID_MEDIA_OPERATOR_ID: 'operator.testnet',
             LIVEPEER_PROJECT_ID: 'project-id',
             MARKET_CONTRACT_ID: 'market.testnet',
@@ -195,6 +198,8 @@ function makeRelease(t, target = 'preview') {
         'UPLOAD_JOB_ARCHIVE_ENABLED = "false"',
         'OPERATOR_OUTBOX_ARCHIVE_ENABLED = "false"',
         'LIVEPEER_NEAR_CREATOR_FEE_ENABLED = "false"',
+        'LIVEPEER_SPONSORED_UPLOADS_ENABLED = "false"',
+        'LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED = "false"',
         'MULTI_ASSET_PAYMENTS_MODE = "off"',
         'MULTI_ASSET_PAYMENT_ASSET_IDS = ""',
         '',
@@ -947,6 +952,8 @@ test('a proven first Bridge deployment applies its Durable Object migration befo
             assert.ok(bootstrap.includes('LIVEPEER_PROVIDER_MUTATIONS_ENABLED:false'));
             assert.ok(bootstrap.includes('LIVEPEER_OPERATOR_MUTATIONS_ENABLED:false'));
             assert.ok(bootstrap.includes('LIVEPEER_NEAR_CREATOR_FEE_ENABLED:false'));
+            assert.ok(bootstrap.includes('LIVEPEER_SPONSORED_UPLOADS_ENABLED:false'));
+            assert.ok(bootstrap.includes('LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED:false'));
             assert.ok(!bootstrap.includes('--domain'));
         });
     }
@@ -1100,6 +1107,8 @@ test('only structured error 10007 permits workers.dev bootstrap before safe doma
     assert.ok(bridgeDeploy.includes('LIVEPEER_PROVIDER_MUTATIONS_ENABLED:false'));
     assert.ok(bridgeDeploy.includes('LIVEPEER_OPERATOR_MUTATIONS_ENABLED:false'));
     assert.ok(bridgeDeploy.includes('LIVEPEER_NEAR_CREATOR_FEE_ENABLED:false'));
+    assert.ok(bridgeDeploy.includes('LIVEPEER_SPONSORED_UPLOADS_ENABLED:false'));
+    assert.ok(bridgeDeploy.includes('LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED:false'));
     assert.ok(bridgeDeploy.includes('--no-bundle'));
     assert.ok(!deploys.find((args) => args.includes(TARGETS.preview.web.worker)).includes('--no-bundle'));
     const secretCommands = calls(fake).filter((args) => (

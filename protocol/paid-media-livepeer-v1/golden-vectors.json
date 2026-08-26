@@ -39,8 +39,54 @@
     },
     "canonical_message": "youtick.creator-fee-quote\n1\ntestnet\nmarket.testnet\ncreator.testnet\njob-near\n1000000000\n500000\n5000000\n100000000000000000000000\napproved-source-v1\n1785589300000\n1785589420000\n1",
     "quote_id": "f2486e711ff88fe95aee073dce768a658212ad447d1e0c8aa5098c80099e4423",
-    "signature_base64": "vmaGB44seQPPbKLsUzI5F4DkCvArBL2wv2KrCklnrlD+YuTJdRp4jnyK+coj9jK7cQnZ/DVa2pMJuyGsDCdHCg==",
-    "public_key_base64": "voZmn64iuQRN4TXfnXxvnf1WDQqjvz3m1kmHfOEoSJo="
+    "signature_base64": "3iCPXP983eHhvNPRdl1894gtkPj8WMTQHlo4RI/8w4HQ2q3wrgCygjQxdWQbGlbJ2oTLmt8AkCLLTrDk4tutAg==",
+    "public_key_base64": "g5mHpyAhKiNpmgvprW56aRVO1xYGM6nGhSoreejl574="
+  },
+  "sponsored_upload_quote": {
+    "paid_job_request": {
+      "creator_id": "creator.testnet",
+      "job_id": "job-sponsored",
+      "title": "Paid video",
+      "price_usdc": "2000000",
+      "expected_source_bytes": "1000000000",
+      "profile_id": "paid-media-livepeer-v1",
+      "profile_config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "upload_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
+      "upload_key_expires_at_ms": "1785589900000"
+    },
+    "request_json": "{\"creator_id\":\"creator.testnet\",\"job_id\":\"job-sponsored\",\"title\":\"Paid video\",\"price_usdc\":\"2000000\",\"expected_source_bytes\":\"1000000000\",\"profile_id\":\"paid-media-livepeer-v1\",\"profile_config_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"upload_public_key\":\"ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF\",\"upload_key_expires_at_ms\":\"1785589900000\"}",
+    "request_sha256": "dabd59b56d4a2696d0c10af16bf430d74e2895c59de5db03894312b7a88b48d6",
+    "quote": {
+      "domain": "youtick.sponsored-upload-quote",
+      "version": "1",
+      "network": "testnet",
+      "contract_id": "market.testnet",
+      "creator_id": "creator.testnet",
+      "job_id": "job-sponsored",
+      "request_sha256": "dabd59b56d4a2696d0c10af16bf430d74e2895c59de5db03894312b7a88b48d6",
+      "expected_source_bytes": "1000000000",
+      "upload_fee_usdc": "500000",
+      "sponsor_fee_usdc": "75000",
+      "total_fee_usdc": "575000",
+      "delegate_receiver_id": "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af",
+      "delegate_method": "ft_transfer_call",
+      "delegate_gas": "100000000000000",
+      "delegate_deposit_yocto": "1",
+      "billable_gas": "150000000000000",
+      "gas_price_yocto": "100000000",
+      "near_usd_micro": "5000000",
+      "rate_source": "approved-source-v1",
+      "rate_timestamp_ms": "1785589300000",
+      "quote_block_height": "1000",
+      "max_delegate_block_height": "1200",
+      "expires_at_ms": "1785589420000",
+      "quote_key_version": 1,
+      "quote_id": "e8218b9af5811ae85b58855191888cf797f630260d03e51bad3f68fd6fe5056b"
+    },
+    "canonical_message": "youtick.sponsored-upload-quote\n1\ntestnet\nmarket.testnet\ncreator.testnet\njob-sponsored\ndabd59b56d4a2696d0c10af16bf430d74e2895c59de5db03894312b7a88b48d6\n1000000000\n500000\n75000\n575000\n3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af\nft_transfer_call\n100000000000000\n1\n150000000000000\n100000000\n5000000\napproved-source-v1\n1785589300000\n1000\n1200\n1785589420000\n1",
+    "quote_id": "e8218b9af5811ae85b58855191888cf797f630260d03e51bad3f68fd6fe5056b",
+    "signature_base64": "qsFlk6qtgfy14NSdJ+Dxp5DedcO+4sRHQZm6tsqxHfJXKyTjiobEyiPU+RqLR3sHf3tk0WDDYf7StRnrGaNBDg==",
+    "public_key_base64": "g5mHpyAhKiNpmgvprW56aRVO1xYGM6nGhSoreejl574="
   },
   "upload_intent": {
     "body": {

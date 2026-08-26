@@ -50,6 +50,7 @@ import {
     writeLivepeerUploadDraft,
     type CreatorFeeAsset,
     type SignedNearCreatorFeeQuote,
+    type SponsoredUploadQuoteSummary,
 } from '@/lib/livepeer-upload';
 
 const UPLOAD_STEPS = ['Payment options', 'Wallet approval', 'Upload', 'Processing', 'Published'] as const;
@@ -85,8 +86,10 @@ export function LivepeerPaidUploadForm() {
         usable: CreatorFeeAsset[];
         usdcFee: string;
         nearQuote?: SignedNearCreatorFeeQuote;
+        sponsoredUsdc: boolean;
     } | null>(null);
     const [paymentAsset, setPaymentAsset] = React.useState<CreatorFeeAsset | null>(null);
+    const [sponsorQuote, setSponsorQuote] = React.useState<SponsoredUploadQuoteSummary | null>(null);
     const fileSelectionVersion = React.useRef(0);
     const moveUploadStage = React.useCallback((next: UploadStage) => {
         setUploadStage((current) => transitionUploadStage(current, next));
@@ -133,6 +136,7 @@ export function LivepeerPaidUploadForm() {
         setUploadProgress(0);
         setPayment(null);
         setPaymentAsset(null);
+        setSponsorQuote(null);
     }, [accountId, moveUploadStage]);
 
     React.useEffect(() => {
@@ -159,6 +163,7 @@ export function LivepeerPaidUploadForm() {
         setUploadProgress(0);
         setPayment(null);
         setPaymentAsset(null);
+        setSponsorQuote(null);
         setJobId(null);
         if (typeof selected !== 'object' || !(selected instanceof File)) {
             setFile(null);
@@ -207,17 +212,22 @@ export function LivepeerPaidUploadForm() {
                 generation: 1,
                 expectedSourceBytes: file.size,
             });
+            const wallet = await getWallet();
+            const sponsoredUsdc = FEATURE_FLAGS.enableSponsoredLivepeerUploads
+                && typeof wallet.signDelegateActions === 'function';
             const options = await prepareCreatorFeePaymentOptions({
                 accountId,
                 jobId: activeJobId,
                 expectedSourceBytes: file.size,
                 gasReserveYocto: configuredCreatorFeeGasReserveYocto(),
+                gasSponsoredUsdc: sponsoredUsdc,
             });
             if (!options.selected && !multiAssetPaymentsEnabled) {
                 throw new Error('creator_fee_balance_or_gas_insufficient');
             }
-            setPayment(options);
+            setPayment({ ...options, sponsoredUsdc });
             setPaymentAsset(options.selected);
+            setSponsorQuote(null);
             moveUploadStage('payment_required');
             setStatus(null);
         } catch (reason) {
@@ -243,6 +253,7 @@ export function LivepeerPaidUploadForm() {
             if (paymentAsset === 'NEAR' && (!payment.nearQuote || BigInt(payment.nearQuote.quote.expires_at_ms) <= BigInt(Date.now()))) {
                 setPayment(null);
                 setPaymentAsset(null);
+                setSponsorQuote(null);
                 throw new Error('near_creator_fee_quote_expired');
             }
             const existingJob = await readLivepeerMediaJob(jobId);
@@ -299,6 +310,12 @@ export function LivepeerPaidUploadForm() {
                 expectedSourceBytes: file.size,
                 asset: paymentAsset,
                 nearQuote: payment.nearQuote,
+                allowSponsoredUsdc: payment.sponsoredUsdc && !matchingCheckout,
+                onSponsoredQuote: async (quote) => {
+                    setSponsorQuote(quote);
+                    setStatus(`Confirm the ${formatMicroUsdc(quote.totalFeeUsdc)} USDC total in your wallet.`);
+                    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+                },
             });
             setStatus('Waiting for the payment to finalize…');
             await waitForAuthorizedLivepeerJob(jobId, accountId, uploadPublicKey);
@@ -363,6 +380,7 @@ export function LivepeerPaidUploadForm() {
             setJobId(null);
             setPayment(null);
             setPaymentAsset(null);
+            setSponsorQuote(null);
             setFailedStep(null);
             setUploadProgress(0);
             moveUploadStage('draft');
@@ -437,6 +455,11 @@ export function LivepeerPaidUploadForm() {
                                 </label>
                             ))}
                             {FEATURE_FLAGS.enableLivepeerNearCreatorFee && !payment.nearQuote && <p className="text-xs text-zinc-400">NEAR payment is unavailable; USDC remains available.</p>}
+                            {sponsorQuote && (
+                                <p role="status" className="text-xs text-emerald-300">
+                                    Upload {formatMicroUsdc(sponsorQuote.uploadFeeUsdc)} + gas sponsor {formatMicroUsdc(sponsorQuote.sponsorFeeUsdc)} = {formatMicroUsdc(sponsorQuote.totalFeeUsdc)} USDC total
+                                </p>
+                            )}
                         </div>
                     )}
                     {accountId && jobId && file && !fileError && (
@@ -540,6 +563,12 @@ function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): st
     }
     if (code === 'payment_converted_usdc_not_ready') {
         return 'The converted USDC balance or NEAR gas reserve is no longer sufficient.';
+    }
+    if (code === 'sponsor_quote_reprice_required') {
+        return 'The NEAR gas price changed. Request a new sponsor quote and try again.';
+    }
+    if (code === 'sponsor_balance_insufficient') {
+        return 'Your USDC balance is below the quoted upload and gas-sponsor total.';
     }
     return code || 'Upload failed.';
 }
