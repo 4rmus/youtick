@@ -1,7 +1,9 @@
 # Architecture
 
-> Status: source implementation present; runtime gates disabled; not deployed by
-> this cleanup.
+> Current source, CI, Preview and Production snapshot:
+> [`current-state.md`](current-state.md). The detailed checkpoint journal in
+> [`transformation-progress.md`](transformation-progress.md) is append-only
+> history, not the active next-gate source.
 
 ```text
 Creator browser -- job/payment --> NEAR market
