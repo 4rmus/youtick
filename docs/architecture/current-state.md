@@ -1,7 +1,9 @@
 # Current state
 
-> Reconciled on 2026-08-27 against exact GitHub
-> [`main@f745bc0b624335cf82c9462da1ff3dc097e0bf9c`](https://github.com/4rmus/youtick/commit/f745bc0b624335cf82c9462da1ff3dc097e0bf9c).
+> Reconciled on 2026-08-27 against application source and Preview runtime
+> baseline [`f745bc0b624335cf82c9462da1ff3dc097e0bf9c`](https://github.com/4rmus/youtick/commit/f745bc0b624335cf82c9462da1ff3dc097e0bf9c),
+> which is also PR #145's base. Merging that docs-only PR advances `main`
+> without changing the application runtime.
 > This snapshot separates source, CI, Preview and Production evidence. It does
 > not authorize a deployment, feature activation or external mutation.
 
@@ -34,7 +36,7 @@ evidence classes. A passing source or CI result does not prove deployment.
 
 | Layer | Status | Evidence |
 |---|---|---|
-| Source | `PASS` | `main@f745bc0...` contains merged PRs #140-144. Sponsored uploads exist in source but remain default-off. |
+| Application source/runtime baseline | `PASS` | `f745bc0...`, the base of docs-only PR #145, contains merged PRs #140-144. Sponsored uploads exist in source but remain default-off. |
 | CI | `PASS` | [Run 33075562805](https://github.com/4rmus/youtick/actions/runs/33075562805) passed dependency audits, both CodeQL languages and CI Gate for exact `f745bc0...`; component jobs were path-filtered rather than rerun. |
 | Preview | `PASS_CLOSED` | [Deploy run 33076391705, attempt 2](https://github.com/4rmus/youtick/actions/runs/33076391705/attempts/2) promoted the exact-main closed packet and recorded deployment `6126728124` as successful. |
 | Production | `LEGACY_ONLY / NEW_STACK_CLOSED` | `youtick.net` still serves the unchanged `youtick-web4` origin. The modern app and Bridge Production endpoints are absent. |
@@ -95,7 +97,8 @@ the Production root body and headers were unchanged.
 
 `SPONSOR_FIXED_FEE_SOURCE_RECONCILIATION_DECISION_REQUIRED`
 
-After this snapshot becomes canonical on `main`, lock the smallest Bridge,
+After this snapshot becomes canonical on `main`, lock the smallest Web, Bridge,
 contract, protocol and test scope that replaces dynamic sponsor pricing with the
-fixed `0.10 USDC` product decision. Do not implement, commit, activate flags or
+fixed `0.10 USDC` product decision. Web scope must cover quote validation, the
+displayed total and their tests. Do not implement, commit, activate flags or
 deploy in that decision gate.
