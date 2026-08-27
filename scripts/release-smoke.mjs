@@ -161,8 +161,11 @@ async function bridgeHealth(
             expectStatus(health.response, 200, 'bridge_health');
         }
         const healthJson = expectJson(health.response, health.body, 'bridge_health');
-        const sponsoredUploadsClosed = healthJson.sponsoredUploadQuoteReady === false
-            && healthJson.sponsoredUploadRelayReady === false;
+        const sponsoredUploadsClosed = (healthJson.sponsoredUploadQuoteReady === false
+            && healthJson.sponsoredUploadRelayReady === false)
+            || (expectedBridgeEnabled === null
+                && healthJson.sponsoredUploadQuoteReady === undefined
+                && healthJson.sponsoredUploadRelayReady === undefined);
         const enabled = healthJson.stage === 'ENABLED'
             && healthJson.providerMutationEnabled === true
             && healthJson.newUploadReady === true
