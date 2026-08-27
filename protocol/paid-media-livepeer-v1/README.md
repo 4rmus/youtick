@@ -20,8 +20,9 @@ evidence; no Worker, web, staging or production runtime is enabled.
   PATCH at a time; only the final PATCH may be smaller;
 - creator upload fee: `max(500_000, ceil(source_bytes / 1_000_000_000 * 300_000))`
   micro-USDC, charged once when a new job is created;
+- sponsored upload fee: fixed `100_000` micro-USDC, added to the upload fee;
 - sponsored upload delegate gas: fixed `100_000_000_000_000` gas with exactly
-  one yoctoNEAR attached; billable gas ceiling: fixed `150_000_000_000_000`;
+  one yoctoNEAR attached;
 - ticket minimum: `2_000_000` micro-USDC; larger integer micro-USDC values are
   allowed and the existing 98/2 creator/platform split is unchanged;
 - initial browser claim: desktop Chrome and desktop Edge only;
@@ -77,16 +78,17 @@ version `1`. The paid-job request is serialized without whitespace in this
 fixed field order: creator, job, title, ticket price, source bytes, profile,
 profile hash, upload public key and upload-key expiry. Its SHA-256 is bound into
 the signed quote. The quote also binds the exact USDC receiver and
-`ft_transfer_call`, 100 Tgas, one yoctoNEAR, the 150 Tgas billing ceiling,
-gas price, NEAR/USD rate, a maximum 200-block delegate window and two-minute
-economic expiry.
+`ft_transfer_call`, 100 Tgas, one yoctoNEAR, issuance time, a maximum 200-block
+delegate window and two-minute expiry. Sponsor pricing does not read the gas
+price or NEAR/USD oracle; those remain specific to the native-NEAR rail.
 
-The contract recomputes the byte fee and sponsor fee using checked integer
-arithmetic, requires `total_fee_usdc = upload_fee_usdc + sponsor_fee_usdc`, and
+The contract recomputes the byte fee, requires an exact `100_000` micro-USDC
+sponsor fee and enforces `total_fee_usdc = upload_fee_usdc + 100_000`. It
 accepts that total as one USDC transfer. It stores the total in the existing
 USDC fee fields and the quote ID in `fee_quote_hash`; no Market state field or
 event type is added. Omitting both sponsor fields preserves the existing USDC
-path. This protocol slice does not implement or enable the Bridge relayer.
+path. The Bridge relayer source remains independently gated and disabled by
+default.
 
 The bridge operator uses a separate finite-allowance FunctionCall key for the
 exact market and only `finalize_livepeer_publication` and
@@ -287,6 +289,7 @@ node scripts/check-paid-media-livepeer-v1.mjs
 ```
 
 The check validates `golden-vectors.json` against `schema.json`, recomputes the
-canonical body hashes and signed messages, and verifies the creator fee quote.
+canonical body hashes and signed messages, and verifies the creator and sponsored
+fee quotes.
 
 Current architecture: [YouTick architecture](../../docs/architecture/README.md).

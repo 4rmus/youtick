@@ -50,6 +50,67 @@ const expectedNear = (BigInt(quoteVector.quote.fee_usd_micro) * 10n ** 24n + Big
   / BigInt(quoteVector.quote.near_usd_micro);
 assert(BigInt(quoteVector.quote.fee_near_yocto) === expectedNear, "creator quote NEAR conversion drift");
 
+const sponsorFields = [
+  "domain", "version", "network", "contract_id", "creator_id", "job_id",
+  "request_sha256", "expected_source_bytes", "upload_fee_usdc", "sponsor_fee_usdc",
+  "total_fee_usdc", "delegate_receiver_id", "delegate_method", "delegate_gas",
+  "delegate_deposit_yocto", "issued_at_ms", "quote_block_height",
+  "max_delegate_block_height", "expires_at_ms", "quote_key_version",
+];
+const sponsorRequestFields = [
+  "creator_id", "job_id", "title", "price_usdc", "expected_source_bytes",
+  "profile_id", "profile_config_sha256", "upload_public_key", "upload_key_expires_at_ms",
+];
+const sponsorVector = vectors.sponsored_upload_quote;
+assert(
+  JSON.stringify(Object.keys(sponsorVector.paid_job_request)) === JSON.stringify(sponsorRequestFields),
+  "sponsor request field order drift",
+);
+const sponsorRequestJson = JSON.stringify(Object.fromEntries(
+  sponsorRequestFields.map((field) => [field, sponsorVector.paid_job_request[field]]),
+));
+assert(sponsorVector.request_json === sponsorRequestJson, "sponsor request JSON drift");
+const sponsorRequestSha = createHash("sha256").update(sponsorRequestJson).digest("hex");
+assert(sponsorVector.request_sha256 === sponsorRequestSha, "sponsor request SHA-256 drift");
+assert(sponsorVector.quote.request_sha256 === sponsorRequestSha, "sponsor quote request binding drift");
+assert(sponsorVector.quote.creator_id === sponsorVector.paid_job_request.creator_id, "sponsor creator binding drift");
+assert(sponsorVector.quote.job_id === sponsorVector.paid_job_request.job_id, "sponsor job binding drift");
+assert(
+  sponsorVector.quote.expected_source_bytes === sponsorVector.paid_job_request.expected_source_bytes,
+  "sponsor source byte binding drift",
+);
+assert(
+  sponsorVector.quote.delegate_receiver_id === "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af",
+  "sponsor testnet USDC receiver drift",
+);
+const sponsorMessage = sponsorFields.map((field) => sponsorVector.quote[field]).join("\n");
+assert(sponsorVector.canonical_message === sponsorMessage, "sponsor quote canonical message drift");
+const sponsorQuoteId = createHash("sha256").update(sponsorMessage).digest("hex");
+assert(
+  sponsorVector.quote_id === sponsorQuoteId && sponsorVector.quote.quote_id === sponsorQuoteId,
+  "sponsor quote ID drift",
+);
+assert(sponsorVector.public_key_base64 === quoteVector.public_key_base64, "quote key mismatch");
+assert(
+  verify(null, Buffer.from(sponsorMessage), quoteKey, Buffer.from(sponsorVector.signature_base64, "base64")),
+  "sponsor quote signature drift",
+);
+const sponsorSourceBytes = BigInt(sponsorVector.quote.expected_source_bytes);
+const sponsorUploadFee = (sponsorSourceBytes * 300_000n + 1_000_000_000n - 1n) / 1_000_000_000n;
+const boundedSponsorUploadFee = sponsorUploadFee < 500_000n ? 500_000n : sponsorUploadFee;
+assert(BigInt(sponsorVector.quote.upload_fee_usdc) === boundedSponsorUploadFee, "sponsor upload fee drift");
+assert(sponsorVector.quote.sponsor_fee_usdc === "100000", "fixed sponsor fee drift");
+assert(
+  BigInt(sponsorVector.quote.total_fee_usdc) === boundedSponsorUploadFee + 100_000n,
+  "sponsor total fee drift",
+);
+const sponsorBlockWindow = BigInt(sponsorVector.quote.max_delegate_block_height)
+  - BigInt(sponsorVector.quote.quote_block_height);
+assert(sponsorBlockWindow > 0n && sponsorBlockWindow <= 200n, "sponsor block window drift");
+const sponsorLifetime = BigInt(sponsorVector.quote.expires_at_ms)
+  - BigInt(sponsorVector.quote.issued_at_ms);
+assert(sponsorLifetime > 0n && sponsorLifetime <= 120_000n, "sponsor quote lifetime drift");
+
 const upload = vectors.upload_intent.body;
 const publication = vectors.finalize_publication;
 const playback = vectors.playback_token_request.body;

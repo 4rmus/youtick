@@ -213,8 +213,17 @@ export function LivepeerPaidUploadForm() {
                 expectedSourceBytes: file.size,
             });
             const wallet = await getWallet();
+            const uploadFeeUsdc = livepeerUploadFeeUsdc(file.size);
+            const activeCheckout = loadActivePaymentCheckout(accountId);
+            const matchingCheckout = multiAssetPaymentsEnabled
+                && activeCheckout
+                && !['complete', 'refunded', 'failed'].includes(activeCheckout.state)
+                && activeCheckout.required_usdc_micro === uploadFeeUsdc
+                && activeCheckout.quote.purpose.type === 'upload'
+                && activeCheckout.quote.purpose.expected_source_bytes === String(file.size);
             const sponsoredUsdc = FEATURE_FLAGS.enableSponsoredLivepeerUploads
-                && typeof wallet.signDelegateActions === 'function';
+                && typeof wallet.signDelegateActions === 'function'
+                && !matchingCheckout;
             const options = await prepareCreatorFeePaymentOptions({
                 accountId,
                 jobId: activeJobId,
@@ -281,7 +290,9 @@ export function LivepeerPaidUploadForm() {
             const activeCheckout = paymentAsset === 'USDC'
                 ? loadActivePaymentCheckout(accountId)
                 : null;
-            const matchingCheckout = activeCheckout
+            const matchingCheckout = multiAssetPaymentsEnabled
+                && activeCheckout
+                && !['complete', 'refunded', 'failed'].includes(activeCheckout.state)
                 && activeCheckout.required_usdc_micro === payment.usdcFee
                 && activeCheckout.quote.purpose.type === 'upload'
                 && activeCheckout.quote.purpose.expected_source_bytes === String(file.size)
@@ -563,9 +574,6 @@ function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): st
     }
     if (code === 'payment_converted_usdc_not_ready') {
         return 'The converted USDC balance or NEAR gas reserve is no longer sufficient.';
-    }
-    if (code === 'sponsor_quote_reprice_required') {
-        return 'The NEAR gas price changed. Request a new sponsor quote and try again.';
     }
     if (code === 'sponsor_balance_insufficient') {
         return 'Your USDC balance is below the quoted upload and gas-sponsor total.';

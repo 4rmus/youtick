@@ -26,6 +26,7 @@ const LIVEPEER_SOURCE_FINGERPRINT_WINDOW_BYTES = 1024 * 1024;
 const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const MIN_CREATOR_UPLOAD_FEE_USDC = 500_000n;
+const SPONSORED_UPLOAD_FEE_USDC = 100_000n;
 
 const LIVEPEER_SOURCE_FORMATS = {
     mp4: { extension: 'mp4', mimeTypes: ['video/mp4'] },
@@ -118,11 +119,7 @@ export type SponsoredUploadQuote = {
     delegate_method: 'ft_transfer_call';
     delegate_gas: string;
     delegate_deposit_yocto: '1';
-    billable_gas: string;
-    gas_price_yocto: string;
-    near_usd_micro: string;
-    rate_source: 'outlayer-price-oracle-wrap-near-v1';
-    rate_timestamp_ms: string;
+    issued_at_ms: string;
     quote_block_height: string;
     max_delegate_block_height: string;
     expires_at_ms: string;
@@ -604,8 +601,7 @@ async function submitSponsoredUploadRelay(
         const code = typeof value.error === 'string'
             ? value.error
             : `livepeer_control_http_${response.status}`;
-        if (code === 'sponsor_quote_reprice_required'
-            || code === 'invalid_sponsored_upload_relay'
+        if (code === 'invalid_sponsored_upload_relay'
             || code === 'sponsor_relay_failed') {
             clearSponsoredDelegate(accountId, jobId);
         }
@@ -625,11 +621,10 @@ async function parseSponsoredUploadQuote(
 ): Promise<SignedSponsoredUploadQuote> {
     const responseKeys = ['public_key_version', 'quote', 'request', 'signature'];
     const quoteKeys = [
-        'billable_gas', 'contract_id', 'creator_id', 'delegate_deposit_yocto',
+        'contract_id', 'creator_id', 'delegate_deposit_yocto',
         'delegate_gas', 'delegate_method', 'delegate_receiver_id', 'domain',
-        'expected_source_bytes', 'expires_at_ms', 'gas_price_yocto', 'job_id',
-        'max_delegate_block_height', 'near_usd_micro', 'quote_block_height',
-        'quote_id', 'quote_key_version', 'rate_source', 'rate_timestamp_ms',
+        'expected_source_bytes', 'expires_at_ms', 'issued_at_ms', 'job_id',
+        'max_delegate_block_height', 'quote_block_height', 'quote_id', 'quote_key_version',
         'request_sha256', 'sponsor_fee_usdc', 'total_fee_usdc', 'upload_fee_usdc',
         'version', 'network',
     ];
@@ -644,8 +639,8 @@ async function parseSponsoredUploadQuote(
     const quote = value.quote as Record<string, unknown>;
     const integers = [
         'expected_source_bytes', 'upload_fee_usdc', 'sponsor_fee_usdc',
-        'total_fee_usdc', 'delegate_gas', 'delegate_deposit_yocto', 'billable_gas',
-        'gas_price_yocto', 'near_usd_micro', 'rate_timestamp_ms', 'quote_block_height',
+        'total_fee_usdc', 'delegate_gas', 'delegate_deposit_yocto', 'issued_at_ms',
+        'quote_block_height',
         'max_delegate_block_height', 'expires_at_ms',
     ];
     if (Object.keys(quote).sort().join(',') !== quoteKeys.sort().join(',')
@@ -663,8 +658,6 @@ async function parseSponsoredUploadQuote(
         || quote.delegate_method !== 'ft_transfer_call'
         || quote.delegate_gas !== GAS_CONSTANTS.mediumGas.toString()
         || quote.delegate_deposit_yocto !== '1'
-        || quote.billable_gas !== '150000000000000'
-        || quote.rate_source !== 'outlayer-price-oracle-wrap-near-v1'
         || !Number.isInteger(quote.quote_key_version)
         || quote.quote_key_version !== value.public_key_version
         || typeof quote.request_sha256 !== 'string'
@@ -675,24 +668,18 @@ async function parseSponsoredUploadQuote(
     }
     const requestSha256 = await sha256Hex(JSON.stringify(request));
     const uploadFee = BigInt(livepeerUploadFeeUsdc(Number(request.expected_source_bytes)));
-    const sponsorFee = (
-        BigInt(quote.billable_gas as string)
-        * BigInt(quote.gas_price_yocto as string)
-        * BigInt(quote.near_usd_micro as string)
-        + 10n ** 24n - 1n
-    ) / (10n ** 24n);
     const now = BigInt(Date.now());
-    const rateTimestamp = BigInt(quote.rate_timestamp_ms as string);
+    const issuedAt = BigInt(quote.issued_at_ms as string);
     const expiresAt = BigInt(quote.expires_at_ms as string);
     if (quote.request_sha256 !== requestSha256
         || BigInt(quote.upload_fee_usdc as string) !== uploadFee
-        || BigInt(quote.sponsor_fee_usdc as string) !== sponsorFee
-        || BigInt(quote.total_fee_usdc as string) !== uploadFee + sponsorFee
-        || rateTimestamp > now
-        || now - rateTimestamp > 60_000n
+        || BigInt(quote.sponsor_fee_usdc as string) !== SPONSORED_UPLOAD_FEE_USDC
+        || BigInt(quote.total_fee_usdc as string) !== uploadFee + SPONSORED_UPLOAD_FEE_USDC
+        || issuedAt > now
+        || now - issuedAt > 120_000n
         || expiresAt <= now
-        || expiresAt <= rateTimestamp
-        || expiresAt - rateTimestamp > 120_000n
+        || expiresAt <= issuedAt
+        || expiresAt - issuedAt > 120_000n
         || BigInt(quote.max_delegate_block_height as string)
             - BigInt(quote.quote_block_height as string) !== 200n) {
         throw new Error('invalid_sponsored_upload_quote');
@@ -702,8 +689,7 @@ async function parseSponsoredUploadQuote(
         'request_sha256', 'expected_source_bytes', 'upload_fee_usdc',
         'sponsor_fee_usdc', 'total_fee_usdc', 'delegate_receiver_id',
         'delegate_method', 'delegate_gas', 'delegate_deposit_yocto',
-        'billable_gas', 'gas_price_yocto', 'near_usd_micro', 'rate_source',
-        'rate_timestamp_ms', 'quote_block_height', 'max_delegate_block_height',
+        'issued_at_ms', 'quote_block_height', 'max_delegate_block_height',
         'expires_at_ms', 'quote_key_version',
     ]
         .map((field) => String(quote[field]))
@@ -730,13 +716,16 @@ export async function prepareCreatorFeePaymentOptions(input: {
         throw new Error('creator_fee_gas_reserve_not_configured');
     }
     const usdcFee = livepeerUploadFeeUsdc(input.expectedSourceBytes);
+    const requiredUsdcFee = input.gasSponsoredUsdc
+        ? (BigInt(usdcFee) + SPONSORED_UPLOAD_FEE_USDC).toString()
+        : usdcFee;
     const balances = await readCreatorFeeBalances(input.accountId);
     const nearQuote = FEATURE_FLAGS.enableLivepeerNearCreatorFee
         ? await requestNearCreatorFeeQuote(input).catch(() => undefined)
         : undefined;
     const selection = selectCreatorFeeAsset({
         ...balances,
-        usdcFee,
+        usdcFee: requiredUsdcFee,
         nearFeeYocto: nearQuote?.quote.fee_near_yocto,
         gasReserveYocto: input.gasReserveYocto,
         gasSponsoredUsdc: input.gasSponsoredUsdc,

@@ -123,6 +123,49 @@ async function sha256(value: string): Promise<string> {
     return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+async function sponsoredQuoteResponse(
+    request: Record<string, string>,
+    overrides: Partial<Record<string, string>> = {},
+): Promise<Response> {
+    const quoteWithoutId = {
+        domain: 'youtick.sponsored-upload-quote',
+        version: '1',
+        network: 'testnet',
+        contract_id: 'paid-media-livepeer-v1.testnet',
+        creator_id: request.creator_id,
+        job_id: request.job_id,
+        request_sha256: await sha256(JSON.stringify(request)),
+        expected_source_bytes: request.expected_source_bytes,
+        upload_fee_usdc: '500000',
+        sponsor_fee_usdc: '100000',
+        total_fee_usdc: '600000',
+        delegate_receiver_id: 'usdc.testnet',
+        delegate_method: 'ft_transfer_call',
+        delegate_gas: '100000000000000',
+        delegate_deposit_yocto: '1',
+        issued_at_ms: '1785589300000',
+        quote_block_height: '1000',
+        max_delegate_block_height: '1200',
+        expires_at_ms: '1785589420000',
+        quote_key_version: 1,
+        ...overrides,
+    };
+    const canonical = [
+        'domain', 'version', 'network', 'contract_id', 'creator_id', 'job_id',
+        'request_sha256', 'expected_source_bytes', 'upload_fee_usdc',
+        'sponsor_fee_usdc', 'total_fee_usdc', 'delegate_receiver_id',
+        'delegate_method', 'delegate_gas', 'delegate_deposit_yocto',
+        'issued_at_ms', 'quote_block_height', 'max_delegate_block_height',
+        'expires_at_ms', 'quote_key_version',
+    ].map((field) => String(quoteWithoutId[field as keyof typeof quoteWithoutId])).join('\n');
+    return Response.json({
+        request,
+        quote: { ...quoteWithoutId, quote_id: await sha256(canonical) },
+        signature: btoa('\0'.repeat(64)),
+        public_key_version: 1,
+    });
+}
+
 async function provisionJobSession(
     wallet: ReturnType<typeof createWallet>,
     jobId = 'job-001',
@@ -540,47 +583,7 @@ describe('Livepeer browser upload', () => {
             const { request } = JSON.parse(String(init?.body)) as {
                 request: Record<string, string>;
             };
-            const quoteWithoutId = {
-                domain: 'youtick.sponsored-upload-quote',
-                version: '1',
-                network: 'testnet',
-                contract_id: 'paid-media-livepeer-v1.testnet',
-                creator_id: request.creator_id,
-                job_id: request.job_id,
-                request_sha256: await sha256(JSON.stringify(request)),
-                expected_source_bytes: request.expected_source_bytes,
-                upload_fee_usdc: '500000',
-                sponsor_fee_usdc: '75000',
-                total_fee_usdc: '575000',
-                delegate_receiver_id: 'usdc.testnet',
-                delegate_method: 'ft_transfer_call',
-                delegate_gas: '100000000000000',
-                delegate_deposit_yocto: '1',
-                billable_gas: '150000000000000',
-                gas_price_yocto: '100000000',
-                near_usd_micro: '5000000',
-                rate_source: 'outlayer-price-oracle-wrap-near-v1',
-                rate_timestamp_ms: '1785589300000',
-                quote_block_height: '1000',
-                max_delegate_block_height: '1200',
-                expires_at_ms: '1785589420000',
-                quote_key_version: 1,
-            };
-            const canonical = [
-                'domain', 'version', 'network', 'contract_id', 'creator_id', 'job_id',
-                'request_sha256', 'expected_source_bytes', 'upload_fee_usdc',
-                'sponsor_fee_usdc', 'total_fee_usdc', 'delegate_receiver_id',
-                'delegate_method', 'delegate_gas', 'delegate_deposit_yocto',
-                'billable_gas', 'gas_price_yocto', 'near_usd_micro', 'rate_source',
-                'rate_timestamp_ms', 'quote_block_height', 'max_delegate_block_height',
-                'expires_at_ms', 'quote_key_version',
-            ].map((field) => String(quoteWithoutId[field as keyof typeof quoteWithoutId])).join('\n');
-            return Response.json({
-                request,
-                quote: { ...quoteWithoutId, quote_id: await sha256(canonical) },
-                signature: btoa('\0'.repeat(64)),
-                public_key_version: 1,
-            });
+            return sponsoredQuoteResponse(request);
         });
         vi.stubGlobal('fetch', fetchMock);
 
@@ -595,8 +598,8 @@ describe('Livepeer browser upload', () => {
 
         expect(onSponsoredQuote).toHaveBeenCalledWith({
             uploadFeeUsdc: '500000',
-            sponsorFeeUsdc: '75000',
-            totalFeeUsdc: '575000',
+            sponsorFeeUsdc: '100000',
+            totalFeeUsdc: '600000',
         });
         expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
         expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
@@ -616,14 +619,14 @@ describe('Livepeer browser upload', () => {
             deposit: 1n,
             args: {
                 receiver_id: 'paid-media-livepeer-v1.testnet',
-                amount: '575000',
+                amount: '600000',
                 msg: expect.any(String),
             },
         });
         expect(JSON.parse(action.args.msg)).toMatchObject({
             action: 'create_paid_job',
             job_id: 'job-sponsored',
-            sponsor_quote: { total_fee_usdc: '575000' },
+            sponsor_quote: { total_fee_usdc: '600000' },
             sponsor_quote_signature: btoa('\0'.repeat(64)),
         });
         expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -672,6 +675,30 @@ describe('Livepeer browser upload', () => {
         })).rejects.toThrow('invalid_sponsored_upload_quote');
         expect(wallet.signDelegateActions).not.toHaveBeenCalled();
         expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-fixed sponsor fee before opening the wallet', async () => {
+        featureFlags.enableSponsoredLivepeerUploads = true;
+        vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
+        const wallet = createSponsoredWallet();
+        vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+            const { request } = JSON.parse(String(init?.body)) as {
+                request: Record<string, string>;
+            };
+            return sponsoredQuoteResponse(request, {
+                sponsor_fee_usdc: '99999',
+                total_fee_usdc: '599999',
+            });
+        }));
+
+        await expect(authorizeLivepeerPaidJob(wallet as never, {
+            accountId: 'creator.testnet',
+            jobId: 'job-invalid-sponsor-fee',
+            title: 'Paid video',
+            priceUsdc: '2000001',
+            expectedSourceBytes: SOURCE_BYTES,
+        })).rejects.toThrow('invalid_sponsored_upload_quote');
+        expect(wallet.signDelegateActions).not.toHaveBeenCalled();
     });
 
     it('reuses the same job key with one transaction per retry', async () => {
@@ -790,6 +817,27 @@ describe('Livepeer browser upload', () => {
             usdcBalance: '300000', nearBalanceYocto: '0', usdcFee: '300000',
             gasReserveYocto: '100', gasSponsoredUsdc: true,
         })).toEqual({ selected: 'USDC', usable: ['USDC'] });
+    });
+
+    it('includes the fixed sponsor fee in the USDC balance preflight', async () => {
+        featureFlags.enableLivepeerNearCreatorFee = false;
+        near.query.mockResolvedValue({ amount: '0' });
+        near.viewContract.mockResolvedValueOnce('599999').mockResolvedValueOnce('600000');
+
+        await expect(prepareCreatorFeePaymentOptions({
+            accountId: 'creator.testnet',
+            jobId: 'job-sponsored-balance-low',
+            expectedSourceBytes: 1_000_000_000,
+            gasReserveYocto: '100',
+            gasSponsoredUsdc: true,
+        })).resolves.toMatchObject({ selected: null, usable: [], usdcFee: '500000' });
+        await expect(prepareCreatorFeePaymentOptions({
+            accountId: 'creator.testnet',
+            jobId: 'job-sponsored-balance-exact',
+            expectedSourceBytes: 1_000_000_000,
+            gasReserveYocto: '100',
+            gasSponsoredUsdc: true,
+        })).resolves.toMatchObject({ selected: 'USDC', usable: ['USDC'], usdcFee: '500000' });
     });
 
     it('uses the shared payment gas reserve when the legacy upload value is absent', () => {

@@ -686,7 +686,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(deniedRuntime.quoteState.values.size).toBe(0);
     });
 
-    it('issues one bounded quote and relays only the exact creator upload once', async () => {
+    it('issues one fixed sponsor quote and relays only the exact creator upload once', async () => {
         const now = vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
         const runtime = sponsoredRuntime({
             LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'true',
@@ -694,19 +694,19 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         const userSigner = KeyPairSigner.fromSecretKey(KeyPair.fromRandom('ed25519').toString());
         let jobCreated = false;
         let sendCount = 0;
-        let gasPrice = '100000000';
-        let usdcBalance = '575000';
-        let oracleTimestamp = '1785589239999000000';
+        let usdcBalance = '600000';
+        let blockTimestampNanosec = '1785589300000000000';
         let quoteBody!: Record<string, unknown>;
         const rpc = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
             const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
             const method = body.method;
             const params = body.params as Record<string, unknown>;
             if (method === 'block') {
-                return Response.json({ result: { header: { hash: BLOCK_HASH, height: 1_000 } } });
-            }
-            if (method === 'gas_price') {
-                return Response.json({ result: { gas_price: gasPrice } });
+                return Response.json({ result: { header: {
+                    hash: BLOCK_HASH,
+                    height: 1_000,
+                    timestamp_nanosec: blockTimestampNanosec,
+                } } });
             }
             if (method === 'send_tx') {
                 sendCount += 1;
@@ -730,10 +730,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
                 throw new Error(`unexpected_query:${String(params.request_type)}`);
             }
             if (params.account_id === 'price-oracle.testnet') {
-                return oracleRpcResponse(
-                    { multiplier: '500000000', decimals: 8 },
-                    oracleTimestamp,
-                );
+                throw new Error('unexpected_sponsor_oracle_read');
             }
             if (params.account_id === TESTNET_USDC && params.method_name === 'ft_balance_of') {
                 return Response.json({
@@ -763,23 +760,31 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         });
         vi.stubGlobal('fetch', rpc);
 
-        const staleQuote = await handler.fetch(sponsoredQuoteRequest(), runtime.env);
-        expect(staleQuote.status).toBe(503);
-        expect(await staleQuote.json()).toEqual({ error: 'rate_source_stale' });
+        blockTimestampNanosec = '1785589239999000000';
+        const staleBlock = await handler.fetch(sponsoredQuoteRequest(), runtime.env);
+        expect(staleBlock.status).toBe(503);
+        expect(await staleBlock.json()).toEqual({ error: 'near_finalize_pending' });
 
-        oracleTimestamp = '1785589300000000000';
+        blockTimestampNanosec = '1785589300000000000';
         const quoteResponse = await handler.fetch(sponsoredQuoteRequest(), runtime.env);
         expect(quoteResponse.status).toBe(200);
         quoteBody = await quoteResponse.json() as Record<string, unknown>;
+        expect(Object.keys(quoteBody.quote as Record<string, unknown>)).toEqual([
+            'domain', 'version', 'network', 'contract_id', 'creator_id', 'job_id',
+            'request_sha256', 'expected_source_bytes', 'upload_fee_usdc', 'sponsor_fee_usdc',
+            'total_fee_usdc', 'delegate_receiver_id', 'delegate_method', 'delegate_gas',
+            'delegate_deposit_yocto', 'issued_at_ms', 'quote_block_height',
+            'max_delegate_block_height', 'expires_at_ms', 'quote_key_version', 'quote_id',
+        ]);
         expect(quoteBody).toMatchObject({
             request: { creator_id: 'creator.testnet', job_id: 'job-sponsored' },
             quote: {
                 upload_fee_usdc: '500000',
-                sponsor_fee_usdc: '75000',
-                total_fee_usdc: '575000',
+                sponsor_fee_usdc: '100000',
+                total_fee_usdc: '600000',
                 delegate_receiver_id: TESTNET_USDC,
                 delegate_gas: '100000000000000',
-                billable_gas: '150000000000000',
+                issued_at_ms: '1785589300000',
                 quote_block_height: '1000',
                 max_delegate_block_height: '1200',
             },
@@ -791,7 +796,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             { receiverId: CONTRACT_ID },
             { innerReceiverId: 'other-market.testnet' },
             { methodName: 'ft_transfer' },
-            { amount: '574999' },
+            { amount: '599999' },
             { gas: 99_999_999_999_999n },
             { deposit: 0n },
             { jobId: 'job-other' },
@@ -810,22 +815,22 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(sendCount).toBe(0);
 
         const relayRequest = await signedSponsoredRelay(quoteBody, userSigner);
-        gasPrice = '100000001';
-        const reprice = await handler.fetch(relayRequest.clone(), runtime.env);
-        expect(reprice.status).toBe(409);
-        expect(await reprice.json()).toEqual({ error: 'sponsor_quote_reprice_required' });
+        now.mockReturnValue(1_785_589_420_001);
+        const expired = await handler.fetch(relayRequest.clone(), runtime.env);
+        expect(expired.status).toBe(400);
+        expect(await expired.json()).toEqual({ error: 'invalid_sponsored_upload_relay' });
         expect(sendCount).toBe(0);
         expect(runtime.admissionState.values.has('admission:v1')).toBe(false);
 
-        gasPrice = '100000000';
-        usdcBalance = '574999';
+        now.mockReturnValue(1_785_589_300_000);
+        usdcBalance = '599999';
         const insufficient = await handler.fetch(relayRequest.clone(), runtime.env);
         expect(insufficient.status).toBe(409);
         expect(await insufficient.json()).toEqual({ error: 'sponsor_balance_insufficient' });
         expect(sendCount).toBe(0);
         expect(runtime.admissionState.values.has('admission:v1')).toBe(false);
 
-        usdcBalance = '575000';
+        usdcBalance = '600000';
         const pending = await handler.fetch(relayRequest.clone(), runtime.env);
         expect(pending.status).toBe(202);
         expect(await pending.json()).toMatchObject({

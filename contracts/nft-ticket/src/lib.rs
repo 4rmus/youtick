@@ -19,7 +19,7 @@ const WITHDRAW_CALLBACK_GAS: Gas = Gas::from_tgas(10);
 const QUOTE_MAX_SOURCE_AGE_MS: u64 = 60_000;
 const QUOTE_MAX_LIFETIME_MS: u64 = 120_000;
 const SPONSORED_UPLOAD_DELEGATE_GAS: u64 = 100_000_000_000_000;
-const SPONSORED_UPLOAD_BILLABLE_GAS: u64 = 150_000_000_000_000;
+const SPONSORED_UPLOAD_FEE_USDC: u128 = 100_000;
 const SPONSORED_UPLOAD_DEPOSIT_YOCTO: u128 = 1;
 const SPONSORED_UPLOAD_MAX_BLOCK_WINDOW: u64 = 200;
 const MARKET_STATE_VERSION: u32 = 2;
@@ -252,11 +252,7 @@ pub struct SponsoredUploadQuote {
     pub delegate_method: String,
     pub delegate_gas: U64,
     pub delegate_deposit_yocto: U128,
-    pub billable_gas: U64,
-    pub gas_price_yocto: U128,
-    pub near_usd_micro: U128,
-    pub rate_source: String,
-    pub rate_timestamp_ms: U64,
+    pub issued_at_ms: U64,
     pub quote_block_height: U64,
     pub max_delegate_block_height: U64,
     pub expires_at_ms: U64,
@@ -1467,12 +1463,12 @@ impl Contract {
             quote.delegate_receiver_id == self.usdc_contract_id()
                 && quote.delegate_method == "ft_transfer_call"
                 && quote.delegate_gas.0 == SPONSORED_UPLOAD_DELEGATE_GAS
-                && quote.delegate_deposit_yocto.0 == SPONSORED_UPLOAD_DEPOSIT_YOCTO
-                && quote.billable_gas.0 == SPONSORED_UPLOAD_BILLABLE_GAS,
+                && quote.delegate_deposit_yocto.0 == SPONSORED_UPLOAD_DEPOSIT_YOCTO,
             "Invalid sponsored delegate policy"
         );
         require!(
             quote.quote_block_height.0 <= block_height
+                && block_height <= quote.max_delegate_block_height.0
                 && quote.quote_block_height.0 < quote.max_delegate_block_height.0
                 && quote
                     .max_delegate_block_height
@@ -1482,20 +1478,15 @@ impl Contract {
             "Expired delegate block window"
         );
         require!(
-            quote.rate_timestamp_ms.0 <= now_ms
-                && now_ms - quote.rate_timestamp_ms.0 <= QUOTE_MAX_SOURCE_AGE_MS,
-            "Stale quote rate"
+            quote.issued_at_ms.0 <= now_ms
+                && now_ms - quote.issued_at_ms.0 <= QUOTE_MAX_LIFETIME_MS,
+            "Stale sponsored quote"
         );
         require!(
             quote.expires_at_ms.0 > now_ms
-                && quote.expires_at_ms.0 - quote.rate_timestamp_ms.0 <= QUOTE_MAX_LIFETIME_MS,
+                && quote.expires_at_ms.0 > quote.issued_at_ms.0
+                && quote.expires_at_ms.0 - quote.issued_at_ms.0 <= QUOTE_MAX_LIFETIME_MS,
             "Expired quote"
-        );
-        require!(
-            !quote.rate_source.is_empty()
-                && !quote.rate_source.contains('\r')
-                && !quote.rate_source.contains('\n'),
-            "Invalid rate source"
         );
         require!(
             quote.quote_key_version == self.quote_key_version,
@@ -1507,22 +1498,11 @@ impl Contract {
             "Quote upload fee mismatch"
         );
         require!(
-            quote.gas_price_yocto.0 > 0 && quote.near_usd_micro.0 > 0,
-            "Invalid sponsor rate"
-        );
-        let sponsor_fee_usdc = div_ceil(
-            u128::from(quote.billable_gas.0)
-                .checked_mul(quote.gas_price_yocto.0)
-                .and_then(|value| value.checked_mul(quote.near_usd_micro.0))
-                .expect("Sponsor fee overflow"),
-            10u128.pow(24),
-        );
-        require!(
-            quote.sponsor_fee_usdc.0 == sponsor_fee_usdc,
+            quote.sponsor_fee_usdc.0 == SPONSORED_UPLOAD_FEE_USDC,
             "Quote sponsor fee mismatch"
         );
         let total_fee_usdc = upload_fee_usdc
-            .checked_add(sponsor_fee_usdc)
+            .checked_add(SPONSORED_UPLOAD_FEE_USDC)
             .expect("Sponsored total fee overflow");
         require!(
             quote.total_fee_usdc.0 == total_fee_usdc,
@@ -1798,11 +1778,7 @@ fn canonical_sponsored_upload_quote_message(quote: &SponsoredUploadQuote) -> Str
         quote.delegate_method.clone(),
         quote.delegate_gas.0.to_string(),
         quote.delegate_deposit_yocto.0.to_string(),
-        quote.billable_gas.0.to_string(),
-        quote.gas_price_yocto.0.to_string(),
-        quote.near_usd_micro.0.to_string(),
-        quote.rate_source.clone(),
-        quote.rate_timestamp_ms.0.to_string(),
+        quote.issued_at_ms.0.to_string(),
         quote.quote_block_height.0.to_string(),
         quote.max_delegate_block_height.0.to_string(),
         quote.expires_at_ms.0.to_string(),

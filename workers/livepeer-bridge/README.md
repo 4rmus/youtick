@@ -39,7 +39,8 @@ Sponsored creator upload is independently gated by
 `LIVEPEER_SPONSORED_UPLOADS_ENABLED=false`; NEAR sign/broadcast additionally
 requires `LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED=false` to be enabled.
 `POST /v1/sponsored-upload-quotes` reuses the creator allowlist, admission
-budget, quote key and NEAR/USD oracle. `POST /v1/sponsored-upload-relays`
+budget and quote key and adds a fixed `100000` micro-USDC sponsor fee.
+`POST /v1/sponsored-upload-relays`
 accepts one canonical Ed25519 SignedDelegate for the exact Circle-USDC
 `ft_transfer_call`, persists only ambiguous outer-transaction state in the
 existing Durable Object class and reconciles against the final market job.

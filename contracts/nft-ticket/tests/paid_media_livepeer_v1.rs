@@ -24,10 +24,10 @@ const QUOTE_SIGNATURE: [u8; 64] = [
     219, 173, 2,
 ];
 const SPONSOR_QUOTE_SIGNATURE: [u8; 64] = [
-    170, 193, 101, 147, 170, 173, 129, 252, 181, 224, 212, 157, 39, 224, 241, 167, 144, 222, 117,
-    195, 190, 226, 196, 71, 65, 153, 186, 182, 202, 177, 29, 242, 87, 43, 36, 227, 138, 134, 196,
-    202, 35, 212, 249, 26, 139, 71, 123, 7, 127, 123, 100, 209, 96, 195, 97, 254, 210, 181, 25,
-    235, 25, 163, 65, 14,
+    108, 80, 90, 146, 212, 98, 155, 107, 143, 224, 194, 98, 132, 33, 125, 125, 84, 221, 200, 9,
+    143, 80, 45, 86, 161, 59, 121, 7, 115, 186, 24, 170, 23, 32, 23, 233, 251, 216, 180, 93, 210,
+    191, 46, 217, 180, 9, 119, 121, 87, 249, 128, 223, 70, 53, 108, 209, 45, 134, 150, 125, 154,
+    33, 190, 2,
 ];
 
 fn account(value: &str) -> AccountId {
@@ -117,22 +117,18 @@ fn sponsored_quote() -> SponsoredUploadQuote {
             .to_string(),
         expected_source_bytes: U128(1_000_000_000),
         upload_fee_usdc: U128(500_000),
-        sponsor_fee_usdc: U128(75_000),
-        total_fee_usdc: U128(575_000),
+        sponsor_fee_usdc: U128(100_000),
+        total_fee_usdc: U128(600_000),
         delegate_receiver_id: account(TESTNET_USDC),
         delegate_method: "ft_transfer_call".to_string(),
         delegate_gas: U64(100_000_000_000_000),
         delegate_deposit_yocto: U128(1),
-        billable_gas: U64(150_000_000_000_000),
-        gas_price_yocto: U128(100_000_000),
-        near_usd_micro: U128(5_000_000),
-        rate_source: "approved-source-v1".to_string(),
-        rate_timestamp_ms: U64(1_785_589_300_000),
+        issued_at_ms: U64(1_785_589_300_000),
         quote_block_height: U64(1_000),
         max_delegate_block_height: U64(1_200),
         expires_at_ms: U64(1_785_589_420_000),
         quote_key_version: 1,
-        quote_id: "e8218b9af5811ae85b58855191888cf797f630260d03e51bad3f68fd6fe5056b".to_string(),
+        quote_id: "8681a029ccc506fc7cae9f9e3f6f9644d248f733d1f28a79be0b86f7a21e0f0c".to_string(),
     }
 }
 
@@ -221,21 +217,21 @@ fn sponsored_usdc_quote_charges_one_total_and_refunds_exact_replay() {
     testing_env!(context(TESTNET_USDC).build());
 
     let created =
-        contract.ft_on_transfer(account("creator.testnet"), U128(575_000), message.clone());
+        contract.ft_on_transfer(account("creator.testnet"), U128(600_000), message.clone());
     assert!(matches!(created, PromiseOrValue::Value(U128(0))));
-    assert_eq!(contract.get_platform_balance(), U128(575_000));
+    assert_eq!(contract.get_platform_balance(), U128(600_000));
     let job = contract.get_media_job("job-sponsored".to_string()).unwrap();
     assert_eq!(job.fee_asset, FeeAsset::Usdc);
-    assert_eq!(job.fee_amount, U128(575_000));
-    assert_eq!(job.fee_usd_micro, U128(575_000));
+    assert_eq!(job.fee_amount, U128(600_000));
+    assert_eq!(job.fee_usd_micro, U128(600_000));
     assert_eq!(
         job.fee_quote_hash.as_deref(),
-        Some("e8218b9af5811ae85b58855191888cf797f630260d03e51bad3f68fd6fe5056b")
+        Some("8681a029ccc506fc7cae9f9e3f6f9644d248f733d1f28a79be0b86f7a21e0f0c")
     );
 
-    let replay = contract.ft_on_transfer(account("creator.testnet"), U128(575_000), message);
-    assert!(matches!(replay, PromiseOrValue::Value(U128(575_000))));
-    assert_eq!(contract.get_platform_balance(), U128(575_000));
+    let replay = contract.ft_on_transfer(account("creator.testnet"), U128(600_000), message);
+    assert!(matches!(replay, PromiseOrValue::Value(U128(600_000))));
+    assert_eq!(contract.get_platform_balance(), U128(600_000));
     assert_eq!(
         contract.get_media_job("job-sponsored".to_string()).unwrap(),
         job
@@ -251,7 +247,7 @@ fn sponsored_usdc_quote_rejects_amount_request_and_expiry_drift() {
     must_fail(|| {
         wrong_amount.ft_on_transfer(
             account("creator.testnet"),
-            U128(574_999),
+            U128(599_999),
             sponsored_message(&request, sponsored_quote()),
         );
     });
@@ -264,7 +260,7 @@ fn sponsored_usdc_quote_rejects_amount_request_and_expiry_drift() {
     must_fail(|| {
         wrong_request.ft_on_transfer(
             account("creator.testnet"),
-            U128(575_000),
+            U128(600_000),
             sponsored_message(&changed_request, sponsored_quote()),
         );
     });
@@ -275,7 +271,7 @@ fn sponsored_usdc_quote_rejects_amount_request_and_expiry_drift() {
     must_fail(|| {
         wrong_signature.ft_on_transfer(
             account("creator.testnet"),
-            U128(575_000),
+            U128(600_000),
             sponsored_message_with_signature(&request, sponsored_quote(), &[0; 64]),
         );
     });
@@ -288,11 +284,66 @@ fn sponsored_usdc_quote_rejects_amount_request_and_expiry_drift() {
     must_fail(|| {
         expired.ft_on_transfer(
             account("creator.testnet"),
-            U128(575_000),
+            U128(600_000),
             sponsored_message(&request, sponsored_quote()),
         );
     });
     assert_eq!(expired.get_platform_balance(), U128(0));
+
+    let mut future_issue = contract();
+    let mut future_issue_context = context(TESTNET_USDC);
+    future_issue_context.block_timestamp(1_785_589_299_999_000_000);
+    testing_env!(future_issue_context.build());
+    must_fail(|| {
+        future_issue.ft_on_transfer(
+            account("creator.testnet"),
+            U128(600_000),
+            sponsored_message(&request, sponsored_quote()),
+        );
+    });
+    assert_eq!(future_issue.get_platform_balance(), U128(0));
+
+    let mut expired_block = contract();
+    let mut expired_block_context = context(TESTNET_USDC);
+    expired_block_context.block_height(1_201);
+    testing_env!(expired_block_context.build());
+    must_fail(|| {
+        expired_block.ft_on_transfer(
+            account("creator.testnet"),
+            U128(600_000),
+            sponsored_message(&request, sponsored_quote()),
+        );
+    });
+    assert_eq!(expired_block.get_platform_balance(), U128(0));
+
+    for sponsor_fee in [99_999, 100_001] {
+        let mut invalid_fee = contract();
+        let mut quote = sponsored_quote();
+        quote.sponsor_fee_usdc = U128(sponsor_fee);
+        quote.total_fee_usdc = U128(500_000 + sponsor_fee);
+        testing_env!(context(TESTNET_USDC).build());
+        must_fail(|| {
+            invalid_fee.ft_on_transfer(
+                account("creator.testnet"),
+                U128(500_000 + sponsor_fee),
+                sponsored_message(&request, quote),
+            );
+        });
+        assert_eq!(invalid_fee.get_platform_balance(), U128(0));
+    }
+
+    let mut invalid_total = contract();
+    let mut quote = sponsored_quote();
+    quote.total_fee_usdc = U128(599_999);
+    testing_env!(context(TESTNET_USDC).build());
+    must_fail(|| {
+        invalid_total.ft_on_transfer(
+            account("creator.testnet"),
+            U128(599_999),
+            sponsored_message(&request, quote),
+        );
+    });
+    assert_eq!(invalid_total.get_platform_balance(), U128(0));
 }
 
 fn create_job(contract: &mut Contract, job_id: &str, creator: &str) {
