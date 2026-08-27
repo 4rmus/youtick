@@ -214,7 +214,9 @@ fn sponsored_usdc_quote_charges_one_total_and_refunds_exact_replay() {
     let mut contract = contract();
     let request = sponsored_request();
     let message = sponsored_message(&request, sponsored_quote());
-    testing_env!(context(TESTNET_USDC).build());
+    let mut valid_context = context(TESTNET_USDC);
+    valid_context.block_height(1_200);
+    testing_env!(valid_context.build());
 
     let created =
         contract.ft_on_transfer(account("creator.testnet"), U128(600_000), message.clone());

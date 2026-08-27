@@ -733,6 +733,13 @@ export async function prepareCreatorFeePaymentOptions(input: {
     return { ...selection, usdcFee, nearQuote };
 }
 
+export function sponsoredUploadPaymentOptionsChanged(
+    preparedSponsoredUsdc: boolean,
+    hasMatchingCheckout: boolean,
+): boolean {
+    return preparedSponsoredUsdc && hasMatchingCheckout;
+}
+
 export function configuredCreatorFeeGasReserveYocto(): string {
     const value = process.env.NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO
         || process.env.NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO

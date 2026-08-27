@@ -45,6 +45,7 @@ import {
     prepareCreatorFeePaymentOptions,
     readLivepeerUploadDraft,
     requestLivepeerUploadIntent,
+    sponsoredUploadPaymentOptionsChanged,
     uploadLivepeerSource,
     validateLivepeerSourceFile,
     writeLivepeerUploadDraft,
@@ -298,6 +299,16 @@ export function LivepeerPaidUploadForm() {
                 && activeCheckout.quote.purpose.expected_source_bytes === String(file.size)
                 ? activeCheckout
                 : null;
+            if (sponsoredUploadPaymentOptionsChanged(
+                payment.sponsoredUsdc,
+                Boolean(matchingCheckout),
+            )) {
+                setPayment(null);
+                setPaymentAsset(null);
+                setSponsorQuote(null);
+                activeStep = 0;
+                throw new Error('creator_fee_payment_options_changed');
+            }
             if (matchingCheckout?.state === 'usdc_final') {
                 const ready = await verifyConvertedUsdcReady({
                     accountId,
@@ -574,6 +585,9 @@ function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): st
     }
     if (code === 'payment_converted_usdc_not_ready') {
         return 'The converted USDC balance or NEAR gas reserve is no longer sufficient.';
+    }
+    if (code === 'creator_fee_payment_options_changed') {
+        return 'Payment options changed. Check payment options again.';
     }
     if (code === 'sponsor_balance_insufficient') {
         return 'Your USDC balance is below the quoted upload and gas-sponsor total.';

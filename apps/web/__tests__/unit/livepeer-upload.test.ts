@@ -74,6 +74,7 @@ import {
     requestLivepeerUploadIntent,
     requestNearCreatorFeeQuote,
     readLivepeerUploadDraft,
+    sponsoredUploadPaymentOptionsChanged,
     uploadLivepeerSource,
     validateLivepeerSourceFile,
     writeLivepeerUploadDraft,
@@ -838,6 +839,12 @@ describe('Livepeer browser upload', () => {
             gasReserveYocto: '100',
             gasSponsoredUsdc: true,
         })).resolves.toMatchObject({ selected: 'USDC', usable: ['USDC'], usdcFee: '500000' });
+    });
+
+    it('requires a new preflight when a checkout appears after sponsor selection', () => {
+        expect(sponsoredUploadPaymentOptionsChanged(true, true)).toBe(true);
+        expect(sponsoredUploadPaymentOptionsChanged(true, false)).toBe(false);
+        expect(sponsoredUploadPaymentOptionsChanged(false, true)).toBe(false);
     });
 
     it('uses the shared payment gas reserve when the legacy upload value is absent', () => {
