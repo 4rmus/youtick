@@ -256,6 +256,10 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
 
 test('release smoke can exclude candidate-only mutations and still identifies their failures', async () => {
     const allowedOrigin = 'https://allowed.test';
+    let sponsorHealth = {
+        sponsoredUploadQuoteReady: false,
+        sponsoredUploadRelayReady: false,
+    };
     const fetchImpl = async (value, init = {}) => {
         const url = new URL(value);
         if (url.hostname === 'web.test') {
@@ -271,8 +275,7 @@ test('release smoke can exclude candidate-only mutations and still identifies th
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
                 newUploadReady: false,
-                sponsoredUploadQuoteReady: false,
-                sponsoredUploadRelayReady: false,
+                ...sponsorHealth,
                 versionId: 'bridge-version',
             });
         }
@@ -313,11 +316,24 @@ test('release smoke can exclude candidate-only mutations and still identifies th
         runReleaseSmoke(input),
         /release_smoke_bridge_mutation_status_404 path=\/v2\/playback-tokens/,
     );
+    sponsorHealth = {};
+    const legacy = await runReleaseSmoke({
+        ...input, expectedBridgeEnabled: null, includePlaybackV2: false,
+    });
+    assert.equal(legacy.bridge.stage, 'DISABLED');
+    await assert.rejects(
+        runReleaseSmoke({ ...input, expectedBridgeEnabled: false, includePlaybackV2: false }),
+        /release_smoke_bridge_not_disabled/,
+    );
 });
 
 test('enabled upload canary smoke requires exact ready policy without mutation probes', async () => {
     const allowedOrigin = 'https://allowed.test';
     let bridgePosts = 0;
+    let sponsorHealth = {
+        sponsoredUploadQuoteReady: false,
+        sponsoredUploadRelayReady: false,
+    };
     const input = {
         webUrl: 'https://web.test',
         bridgeUrl: 'https://bridge.test',
@@ -337,8 +353,7 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
                     stage: 'ENABLED',
                     providerMutationEnabled: true,
                     newUploadReady: true,
-                    sponsoredUploadQuoteReady: false,
-                    sponsoredUploadRelayReady: false,
+                    ...sponsorHealth,
                     versionId: 'bridge-enabled',
                 });
             }
@@ -365,6 +380,25 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
     assert.equal(result.bridge.stage, 'ENABLED');
     assert.deepEqual(result.bridge.mutation_statuses, {});
     assert.equal(inferred.bridge.stage, 'ENABLED');
+    sponsorHealth = {};
+    const legacy = await runReleaseSmoke({ ...input, expectedBridgeEnabled: null });
+    assert.equal(legacy.bridge.stage, 'ENABLED');
+    await assert.rejects(
+        runReleaseSmoke({ ...input, expectedBridgeEnabled: true }),
+        /release_smoke_bridge_not_enabled/,
+    );
+    for (sponsorHealth of [
+        { sponsoredUploadQuoteReady: false },
+        { sponsoredUploadRelayReady: false },
+        { sponsoredUploadQuoteReady: false, sponsoredUploadRelayReady: true },
+        { sponsoredUploadQuoteReady: true, sponsoredUploadRelayReady: false },
+        { sponsoredUploadQuoteReady: null, sponsoredUploadRelayReady: null },
+    ]) {
+        await assert.rejects(
+            runReleaseSmoke({ ...input, expectedBridgeEnabled: null }),
+            /release_smoke_bridge_policy_invalid/,
+        );
+    }
 });
 
 test('Bridge bootstrap propagation retry is bounded and status scoped', async (t) => {
