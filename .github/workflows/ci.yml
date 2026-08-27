@@ -101,7 +101,6 @@ jobs:
       web: ${{ steps.changes.outputs.web }}
       bridge: ${{ steps.changes.outputs.bridge }}
       contracts: ${{ steps.changes.outputs.contracts }}
-      protocol: ${{ steps.changes.outputs.protocol }}
       docs: ${{ steps.changes.outputs.docs }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -118,14 +117,12 @@ jobs:
           web=false
           bridge=false
           contracts=false
-          protocol=false
           docs=false
 
           set_all() {
             web=true
             bridge=true
             contracts=true
-            protocol=true
             docs=true
           }
 
@@ -147,7 +144,6 @@ jobs:
                   bridge=true
                   ;;
                 protocol/paid-media-livepeer-v1/*|scripts/check-paid-media-livepeer-v1.mjs)
-                  protocol=true
                   bridge=true
                   ;;
                 contracts/*|scripts/check-paid-media-livepeer-v1-abi.mjs)
@@ -159,7 +155,6 @@ jobs:
                 .nvmrc)
                   web=true
                   bridge=true
-                  protocol=true
                   docs=true
                   ;;
                 scripts/cloudflare-release.mjs|scripts/cloudflare-release.test.mjs|scripts/release-metadata.mjs|scripts/release-metadata.test.mjs|scripts/release-smoke.mjs|scripts/release-smoke.test.mjs)
@@ -183,7 +178,6 @@ jobs:
             echo "web=${web}"
             echo "bridge=${bridge}"
             echo "contracts=${contracts}"
-            echo "protocol=${protocol}"
             echo "docs=${docs}"
           } >> "${GITHUB_OUTPUT}"
 
@@ -238,6 +232,7 @@ jobs:
       - run: npm run test:provider-canary
       - run: npm run check
       - run: npx wrangler deploy --dry-run
+      - run: node ../../scripts/check-paid-media-livepeer-v1.mjs
 
   contracts:
     name: Contracts (${{ matrix.task }})
@@ -314,19 +309,6 @@ jobs:
         if: matrix.task == 'quality'
         run: node scripts/check-paid-media-livepeer-v1-abi.mjs
 
-  protocol:
-    name: Livepeer Protocol
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    needs: detect-changes
-    if: needs.detect-changes.outputs.protocol == 'true'
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version-file: .nvmrc
-      - run: node scripts/check-paid-media-livepeer-v1.mjs
-
   docs:
     name: Docs
     runs-on: ubuntu-latest
@@ -365,7 +347,6 @@ jobs:
       - web
       - livepeer-bridge
       - contracts
-      - protocol
       - docs
       - codeql
     if: always()
