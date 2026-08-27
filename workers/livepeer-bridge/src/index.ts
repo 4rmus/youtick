@@ -237,11 +237,7 @@ type SponsoredUploadQuote = {
     delegate_method: 'ft_transfer_call';
     delegate_gas: string;
     delegate_deposit_yocto: '1';
-    billable_gas: string;
-    gas_price_yocto: string;
-    near_usd_micro: string;
-    rate_source: string;
-    rate_timestamp_ms: string;
+    issued_at_ms: string;
     quote_block_height: string;
     max_delegate_block_height: string;
     expires_at_ms: string;
@@ -508,8 +504,9 @@ const CREATOR_FEE_RATE_LIMIT = 5;
 const CREATOR_FEE_RATE_WINDOW_MS = 60_000;
 const YOCTO_NEAR = 10n ** 24n;
 const SPONSORED_UPLOAD_DELEGATE_GAS = 100_000_000_000_000n;
-const SPONSORED_UPLOAD_BILLABLE_GAS = 150_000_000_000_000n;
+const SPONSORED_UPLOAD_FEE_USDC = 100_000n;
 const SPONSORED_UPLOAD_MAX_BLOCK_WINDOW = 200n;
+const SPONSORED_UPLOAD_FINAL_BLOCK_MAX_AGE_MS = 60_000;
 const TESTNET_USDC_CONTRACT_ID = '3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af';
 const MAINNET_USDC_CONTRACT_ID = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
 const SPONSOR_RELAY_KEY_PREFIX = 'sponsor-relay:';
@@ -662,7 +659,6 @@ const SAFE_ERROR_CODES = new Set([
     'runtime_not_configured',
     'sponsor_balance_insufficient',
     'sponsor_job_conflict',
-    'sponsor_quote_reprice_required',
     'sponsor_relay_conflict',
     'sponsor_relay_failed',
     'sponsor_relay_mutations_disabled',
@@ -3060,22 +3056,14 @@ async function issueSponsoredUploadQuote(
     try {
         const input = parseSponsoredUploadQuoteRequest(await readJsonObject(request));
         await enforceCreatorFeeQuoteRateLimit(state);
-        const now = Date.now();
-        const [rate, block] = await Promise.all([
-            readOutlayerNearUsd(env, now),
-            readFinalBlock(env),
-        ]);
-        const gasPriceYocto = await readGasPrice(env, block.hash);
+        const block = await readFinalBlock(env);
+        const now = block.timestampMs;
         const sourceBytes = BigInt(input.request.expected_source_bytes);
         const byteFeeUsdMicro = (sourceBytes * 3n + 9_999n) / 10_000n;
         const uploadFeeUsdc = byteFeeUsdMicro < MIN_CREATOR_UPLOAD_FEE_USD_MICROS
             ? MIN_CREATOR_UPLOAD_FEE_USD_MICROS
             : byteFeeUsdMicro;
-        const sponsorFeeUsdc = (
-            SPONSORED_UPLOAD_BILLABLE_GAS * gasPriceYocto * rate.nearUsdMicro
-            + YOCTO_NEAR - 1n
-        ) / YOCTO_NEAR;
-        const totalFeeUsdc = uploadFeeUsdc + sponsorFeeUsdc;
+        const totalFeeUsdc = uploadFeeUsdc + SPONSORED_UPLOAD_FEE_USDC;
         const quoteKeyVersion = Number(env.CREATOR_FEE_QUOTE_KEY_VERSION);
         const quoteWithoutId = {
             domain: 'youtick.sponsored-upload-quote' as const,
@@ -3087,20 +3075,16 @@ async function issueSponsoredUploadQuote(
             request_sha256: await sha256Hex(paidJobRequestJson(input.request)),
             expected_source_bytes: input.request.expected_source_bytes,
             upload_fee_usdc: uploadFeeUsdc.toString(),
-            sponsor_fee_usdc: sponsorFeeUsdc.toString(),
+            sponsor_fee_usdc: SPONSORED_UPLOAD_FEE_USDC.toString(),
             total_fee_usdc: totalFeeUsdc.toString(),
             delegate_receiver_id: usdcContractId(env),
             delegate_method: 'ft_transfer_call' as const,
             delegate_gas: SPONSORED_UPLOAD_DELEGATE_GAS.toString(),
             delegate_deposit_yocto: '1' as const,
-            billable_gas: SPONSORED_UPLOAD_BILLABLE_GAS.toString(),
-            gas_price_yocto: gasPriceYocto.toString(),
-            near_usd_micro: rate.nearUsdMicro.toString(),
-            rate_source: CREATOR_FEE_RATE_SOURCE,
-            rate_timestamp_ms: String(rate.timestampMs),
+            issued_at_ms: String(now),
             quote_block_height: String(block.height),
             max_delegate_block_height: String(BigInt(block.height) + SPONSORED_UPLOAD_MAX_BLOCK_WINDOW),
-            expires_at_ms: String(rate.timestampMs + CREATOR_FEE_QUOTE_LIFETIME_MS),
+            expires_at_ms: String(now + CREATOR_FEE_QUOTE_LIFETIME_MS),
             quote_key_version: quoteKeyVersion,
         };
         const canonicalMessage = canonicalSponsoredUploadQuoteMessage(quoteWithoutId);
@@ -3407,15 +3391,13 @@ function parseSponsoredUploadQuote(value: JsonObject): SponsoredUploadQuote {
         'domain', 'version', 'network', 'contract_id', 'creator_id', 'job_id',
         'request_sha256', 'expected_source_bytes', 'upload_fee_usdc', 'sponsor_fee_usdc',
         'total_fee_usdc', 'delegate_receiver_id', 'delegate_method', 'delegate_gas',
-        'delegate_deposit_yocto', 'billable_gas', 'gas_price_yocto', 'near_usd_micro',
-        'rate_source', 'rate_timestamp_ms', 'quote_block_height', 'max_delegate_block_height',
+        'delegate_deposit_yocto', 'issued_at_ms', 'quote_block_height', 'max_delegate_block_height',
         'expires_at_ms', 'quote_key_version', 'quote_id',
     ];
     requireExactKeys(value, fields, 'invalid_sponsored_upload_relay');
     const decimalFields = [
         'expected_source_bytes', 'upload_fee_usdc', 'sponsor_fee_usdc', 'total_fee_usdc',
-        'delegate_gas', 'delegate_deposit_yocto', 'billable_gas', 'gas_price_yocto',
-        'near_usd_micro', 'rate_timestamp_ms', 'quote_block_height',
+        'delegate_gas', 'delegate_deposit_yocto', 'issued_at_ms', 'quote_block_height',
         'max_delegate_block_height', 'expires_at_ms',
     ];
     if (value.domain !== 'youtick.sponsored-upload-quote'
@@ -3432,9 +3414,6 @@ function parseSponsoredUploadQuote(value: JsonObject): SponsoredUploadQuote {
         || typeof value.delegate_receiver_id !== 'string'
         || !ACCOUNT_ID_PATTERN.test(value.delegate_receiver_id)
         || value.delegate_method !== 'ft_transfer_call'
-        || typeof value.rate_source !== 'string'
-        || value.rate_source.length < 1
-        || /[\r\n]/.test(value.rate_source)
         || !Number.isSafeInteger(value.quote_key_version)
         || Number(value.quote_key_version) < 1
         || typeof value.quote_id !== 'string'
@@ -3458,10 +3437,8 @@ async function verifySponsoredUploadQuote(
     const uploadFee = byteFee < MIN_CREATOR_UPLOAD_FEE_USD_MICROS
         ? MIN_CREATOR_UPLOAD_FEE_USD_MICROS
         : byteFee;
-    const sponsorFee = (
-        BigInt(quote.billable_gas) * BigInt(quote.gas_price_yocto) * BigInt(quote.near_usd_micro)
-        + YOCTO_NEAR - 1n
-    ) / YOCTO_NEAR;
+    const issuedAt = BigInt(quote.issued_at_ms);
+    const expiresAt = BigInt(quote.expires_at_ms);
     if (quote.network !== env.NEAR_NETWORK
         || quote.contract_id !== env.MARKET_CONTRACT_ID
         || quote.creator_id !== request.creator_id
@@ -3469,16 +3446,14 @@ async function verifySponsoredUploadQuote(
         || quote.request_sha256 !== await sha256Hex(paidJobRequestJson(request))
         || quote.expected_source_bytes !== request.expected_source_bytes
         || BigInt(quote.upload_fee_usdc) !== uploadFee
-        || BigInt(quote.sponsor_fee_usdc) !== sponsorFee
-        || BigInt(quote.total_fee_usdc) !== uploadFee + sponsorFee
+        || BigInt(quote.sponsor_fee_usdc) !== SPONSORED_UPLOAD_FEE_USDC
+        || BigInt(quote.total_fee_usdc) !== uploadFee + SPONSORED_UPLOAD_FEE_USDC
         || quote.delegate_receiver_id !== usdcContractId(env)
         || quote.delegate_gas !== SPONSORED_UPLOAD_DELEGATE_GAS.toString()
         || quote.delegate_deposit_yocto !== '1'
-        || quote.billable_gas !== SPONSORED_UPLOAD_BILLABLE_GAS.toString()
-        || quote.rate_source !== CREATOR_FEE_RATE_SOURCE
         || quote.quote_key_version !== Number(env.CREATOR_FEE_QUOTE_KEY_VERSION)
-        || BigInt(quote.expires_at_ms) <= BigInt(quote.rate_timestamp_ms)
-        || BigInt(quote.expires_at_ms) - BigInt(quote.rate_timestamp_ms) > BigInt(CREATOR_FEE_QUOTE_LIFETIME_MS)
+        || expiresAt <= issuedAt
+        || expiresAt - issuedAt > BigInt(CREATOR_FEE_QUOTE_LIFETIME_MS)
         || BigInt(quote.quote_block_height) >= BigInt(quote.max_delegate_block_height)
         || BigInt(quote.max_delegate_block_height) - BigInt(quote.quote_block_height)
             > SPONSORED_UPLOAD_MAX_BLOCK_WINDOW) {
@@ -3507,11 +3482,14 @@ async function verifySponsoredUploadQuote(
 
 function sponsoredQuoteIsFresh(input: ParsedSponsoredDelegate): boolean {
     const now = BigInt(Date.now());
-    const rateTimestamp = BigInt(input.quote.rate_timestamp_ms);
+    const issuedAt = BigInt(input.quote.issued_at_ms);
+    const expiresAt = BigInt(input.quote.expires_at_ms);
     return BigInt(input.request.upload_key_expires_at_ms) > now
-        && rateTimestamp <= now
-        && now - rateTimestamp <= BigInt(CREATOR_FEE_MAX_SOURCE_AGE_MS)
-        && BigInt(input.quote.expires_at_ms) > now;
+        && issuedAt <= now
+        && now - issuedAt <= BigInt(CREATOR_FEE_QUOTE_LIFETIME_MS)
+        && expiresAt > now
+        && expiresAt > issuedAt
+        && expiresAt - issuedAt <= BigInt(CREATOR_FEE_QUOTE_LIFETIME_MS);
 }
 
 async function relaySponsoredUpload(
@@ -3596,15 +3574,6 @@ async function relaySponsoredUpload(
     if (balance < BigInt(input.quote.total_fee_usdc)) {
         throw new Error('sponsor_balance_insufficient');
     }
-    const currentGasPrice = await readGasPrice(env, block.hash);
-    const currentSponsorFee = (
-        SPONSORED_UPLOAD_BILLABLE_GAS * currentGasPrice * BigInt(input.quote.near_usd_micro)
-        + YOCTO_NEAR - 1n
-    ) / YOCTO_NEAR;
-    if (currentSponsorFee > BigInt(input.quote.sponsor_fee_usdc)) {
-        throw new Error('sponsor_quote_reprice_required');
-    }
-
     await reserveSponsoredAdmission(env, input.request);
     let record = await state.storage.transaction(async (transaction) => {
         const existing = await transaction.get<SponsorRelayRecord>(key);
@@ -4105,11 +4074,7 @@ function canonicalSponsoredUploadQuoteMessage(quote: Omit<SponsoredUploadQuote, 
         quote.delegate_method,
         quote.delegate_gas,
         quote.delegate_deposit_yocto,
-        quote.billable_gas,
-        quote.gas_price_yocto,
-        quote.near_usd_micro,
-        quote.rate_source,
-        quote.rate_timestamp_ms,
+        quote.issued_at_ms,
         quote.quote_block_height,
         quote.max_delegate_block_height,
         quote.expires_at_ms,
@@ -4131,26 +4096,27 @@ function paidJobRequestJson(request: SponsoredPaidJobRequest): string {
     });
 }
 
-async function readFinalBlock(env: Env): Promise<{ hash: string; height: number }> {
+async function readFinalBlock(env: Env): Promise<{ height: number; timestampMs: number }> {
     const payload = await nearRpcRaw(env, 'block', { finality: 'final' });
     const result = requireObject(payload.result, 'near_finalize_pending');
     const header = requireObject(result.header, 'near_finalize_pending');
-    if (typeof header.hash !== 'string'
-        || typeof header.height !== 'number'
+    if (typeof header.height !== 'number'
         || !Number.isSafeInteger(header.height)
-        || header.height < 1) {
+        || header.height < 1
+        || typeof header.timestamp_nanosec !== 'string'
+        || !/^[1-9][0-9]{0,29}$/.test(header.timestamp_nanosec)) {
         throw new Error('near_finalize_pending');
     }
-    return { hash: header.hash, height: header.height };
-}
-
-async function readGasPrice(env: Env, blockHash: string): Promise<bigint> {
-    const payload = await nearRpcRaw(env, 'gas_price', [blockHash]);
-    const result = requireObject(payload.result, 'near_finalize_pending');
-    if (typeof result.gas_price !== 'string' || !/^[1-9][0-9]{0,38}$/.test(result.gas_price)) {
+    const timestampMsBig = BigInt(header.timestamp_nanosec) / 1_000_000n;
+    if (timestampMsBig > BigInt(Number.MAX_SAFE_INTEGER)) {
         throw new Error('near_finalize_pending');
     }
-    return BigInt(result.gas_price);
+    const timestampMs = Number(timestampMsBig);
+    const now = Date.now();
+    if (timestampMs > now || now - timestampMs > SPONSORED_UPLOAD_FINAL_BLOCK_MAX_AGE_MS) {
+        throw new Error('near_finalize_pending');
+    }
+    return { height: header.height, timestampMs };
 }
 
 function usdcContractId(env: Env): string {
@@ -6790,7 +6756,6 @@ function errorStatus(code: string): number {
         || code === 'upload_cancel_denied'
         || code === 'sponsor_balance_insufficient'
         || code === 'sponsor_job_conflict'
-        || code === 'sponsor_quote_reprice_required'
         || code === 'sponsor_relay_failed') return 409;
     if (code.startsWith('near_')
         || code === 'admission_closed'
