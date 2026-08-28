@@ -511,6 +511,7 @@ impl Contract {
             env::predecessor_account_id() == self.usdc_contract_id(),
             "Paid jobs must be created through USDC ft_transfer_call"
         );
+        require!(!self.new_purchases_paused(), "New purchases are paused");
         assert_paid_job_request(&request);
         require!(
             self.media_jobs.get(&request.job_id).is_none(),
@@ -569,6 +570,7 @@ impl Contract {
             );
         }
 
+        require!(!self.new_purchases_paused(), "New purchases are paused");
         assert_paid_job_request(&request);
         let job = MediaJob {
             job_id: request.job_id.clone(),
@@ -988,6 +990,9 @@ impl Contract {
                 return PromiseOrValue::Value(amount);
             }
 
+            if self.new_purchases_paused() {
+                return PromiseOrValue::Value(amount);
+            }
             self.create_usdc_paid_job(request, expected_fee, quote_hash);
             self.platform_balance = self
                 .platform_balance

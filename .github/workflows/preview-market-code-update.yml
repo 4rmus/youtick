@@ -1,0 +1,237 @@
+name: Preview Market Code Update
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact current main SHA to deploy
+        required: true
+        type: string
+      ci_run_id:
+        description: Successful exact-main CI run ID
+        required: true
+        type: string
+      expected_wasm_sha256:
+        description: Reviewed Market WASM SHA-256 from the CI artifact
+        required: true
+        type: string
+      expected_state_sha256:
+        description: Fresh read-only raw Market state SHA-256
+        required: true
+        type: string
+      confirmation:
+        description: Type UPDATE_EXISTING_TESTNET_MARKET_CODE
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-preview
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  attestations: read
+  contents: read
+
+jobs:
+  authorize:
+    name: Authorize exact Market code update
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ci_run_attempt: ${{ steps.authorize.outputs.ci_run_attempt }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: main
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+      - id: authorize
+        name: Verify exact-main CI and retained artifact provenance
+        env:
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DEPLOY_PREVIEW_ENABLED: ${{ vars.DEPLOY_PREVIEW_ENABLED }}
+          EXPECTED_STATE_SHA256: ${{ inputs.expected_state_sha256 }}
+          EXPECTED_WASM_SHA256: ${{ inputs.expected_wasm_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED: ${{ vars.PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED }}
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "${REQUESTED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${CI_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${EXPECTED_WASM_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${EXPECTED_STATE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${CONFIRMATION}" == "UPDATE_EXISTING_TESTNET_MARKET_CODE" ]]
+          [[ "${DEPLOY_PREVIEW_ENABLED}" == "false" ]]
+          [[ "${PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED}" == "false" ]]
+
+          git fetch --no-tags origin main
+          [[ "$(git rev-parse HEAD)" == "${REQUESTED_SHA}" ]]
+          [[ "$(git rev-parse origin/main)" == "${REQUESTED_SHA}" ]]
+
+          run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}")"
+          jq -e \
+            --arg repo "${GITHUB_REPOSITORY}" \
+            --arg sha "${REQUESTED_SHA}" \
+            --argjson run_id "${CI_RUN_ID}" \
+            '.id == $run_id
+              and .conclusion == "success"
+              and .event == "push"
+              and .head_branch == "main"
+              and .head_sha == $sha
+              and .head_repository.full_name == $repo
+              and .path == ".github/workflows/ci.yml"' \
+            <<< "${run_json}" > /dev/null
+          run_attempt="$(jq -er '.run_attempt | tostring | select(test("^[1-9][0-9]*$"))' <<< "${run_json}")"
+
+          jobs_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/jobs?filter=latest&per_page=100")"
+          for job in \
+            "CI Gate" \
+            "Contracts (tests)" \
+            "Contracts (quality)" \
+            "Production WASM Dependency Audit" \
+            "CodeQL / CodeQL (rust)" \
+            "Retain exact Market runtime artifact"; do
+            jq -e --arg job "${job}" \
+              '[.jobs[] | select(.name == $job and .conclusion == "success")] | length == 1' \
+              <<< "${jobs_json}" > /dev/null
+          done
+
+          artifacts_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100")"
+          jq -e \
+            --arg name "market-contract-${REQUESTED_SHA}" \
+            --arg sha "${REQUESTED_SHA}" \
+            --argjson run_id "${CI_RUN_ID}" \
+            '[.artifacts[]
+              | select(.name == $name and .expired == false)
+              | select(.workflow_run.id == $run_id and .workflow_run.head_sha == $sha)]
+             | length == 1' \
+            <<< "${artifacts_json}" > /dev/null
+
+          gh run download "${CI_RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "market-contract-${REQUESTED_SHA}" \
+            --dir "${RUNNER_TEMP}/market-runtime"
+          node workers/livepeer-bridge/scripts/market-code-update.mjs verify-artifact \
+            --artifact-dir "${RUNNER_TEMP}/market-runtime" \
+            --sha "${REQUESTED_SHA}" \
+            --run-id "${CI_RUN_ID}" \
+            --run-attempt "${run_attempt}"
+          lockfile_sha="$(sha256sum contracts/nft-ticket/Cargo.lock | cut -d ' ' -f 1)"
+          jq -e --arg expected "${EXPECTED_WASM_SHA256}" \
+            --arg lockfile_sha "${lockfile_sha}" \
+            '.files.wasm.sha256 == $expected
+              and .toolchain.lockfile_sha256 == $lockfile_sha' \
+            "${RUNNER_TEMP}/market-runtime/manifest.json" > /dev/null
+          for subject in youtick_nft.wasm youtick_nft_abi.json manifest.json; do
+            gh attestation verify "${RUNNER_TEMP}/market-runtime/${subject}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/ci.yml" \
+              --source-digest "${REQUESTED_SHA}" > /dev/null
+          done
+
+          echo "ci_run_attempt=${run_attempt}" >> "${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: authorized-market-contract-${{ inputs.sha }}
+          path: ${{ runner.temp }}/market-runtime
+          retention-days: 1
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy existing Preview Market code
+    needs: authorize
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: Preview
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: main
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: workers/livepeer-bridge/package-lock.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: authorized-market-contract-${{ inputs.sha }}
+          path: ${{ runner.temp }}/market-runtime
+      - name: Recheck exact main after environment approval
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          [[ "$(git rev-parse HEAD)" == "${REQUESTED_SHA}" ]]
+          [[ "$(git rev-parse origin/main)" == "${REQUESTED_SHA}" ]]
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
+        working-directory: workers/livepeer-bridge
+      - name: Reverify authorized Market artifact
+        env:
+          CI_RUN_ATTEMPT: ${{ needs.authorize.outputs.ci_run_attempt }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: |
+          node workers/livepeer-bridge/scripts/market-code-update.mjs verify-artifact \
+            --artifact-dir "${RUNNER_TEMP}/market-runtime" \
+            --sha "${REQUESTED_SHA}" \
+            --run-id "${CI_RUN_ID}" \
+            --run-attempt "${CI_RUN_ATTEMPT}"
+      - name: Deploy one exact Market code action
+        env:
+          CI_RUN_ATTEMPT: ${{ needs.authorize.outputs.ci_run_attempt }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          DEPLOY_PREVIEW_ENABLED: ${{ vars.DEPLOY_PREVIEW_ENABLED }}
+          EXPECTED_STATE_SHA256: ${{ inputs.expected_state_sha256 }}
+          EXPECTED_WASM_SHA256: ${{ inputs.expected_wasm_sha256 }}
+          NEAR_RPC_URL: ${{ secrets.NEAR_RPC_URL }}
+          PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED: ${{ vars.PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED }}
+          PREVIEW_MARKET_DEPLOY_PRIVATE_KEY: ${{ secrets.PREVIEW_MARKET_DEPLOY_PRIVATE_KEY }}
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          [[ "$(git rev-parse HEAD)" == "${REQUESTED_SHA}" ]]
+          [[ "$(git rev-parse origin/main)" == "${REQUESTED_SHA}" ]]
+          [[ "${DEPLOY_PREVIEW_ENABLED}" == "false" ]]
+          [[ "${PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED}" == "false" ]]
+          bridge_health="$(curl \
+            --fail \
+            --silent \
+            --show-error \
+            --retry 0 \
+            https://bridge-preview.youtick.net/__health)"
+          jq -e \
+            '.stage == "DISABLED"
+              and .providerMutationEnabled == false
+              and .newUploadReady == false
+              and .sponsoredUploadQuoteReady == false
+              and .sponsoredUploadRelayReady == false' \
+            <<< "${bridge_health}" > /dev/null
+          node workers/livepeer-bridge/scripts/market-code-update.mjs deploy \
+            --artifact-dir "${RUNNER_TEMP}/market-runtime" \
+            --policy workers/livepeer-bridge/scripts/market-code-update-policy.json \
+            --sha "${REQUESTED_SHA}" \
+            --run-id "${CI_RUN_ID}" \
+            --run-attempt "${CI_RUN_ATTEMPT}" \
+            --expected-wasm-sha256 "${EXPECTED_WASM_SHA256}" \
+            --expected-state-sha256 "${EXPECTED_STATE_SHA256}" \
+            --output "${RUNNER_TEMP}/market-code-update.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: preview-market-code-update-${{ inputs.sha }}
+          path: ${{ runner.temp }}/market-code-update.json
+          retention-days: 30
+          if-no-files-found: ignore
