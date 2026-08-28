@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { KeyPair } from 'near-api-js';
 import {
     createMarketRuntimeArtifact,
     runMarketCodeUpdate,
@@ -216,6 +217,8 @@ async function runtimeFixture({
     const artifact = await artifactFixture();
     const policy = JSON.parse(await readFile(POLICY_PATH, 'utf8'));
     const wasm = await readFile(resolve(artifact.artifactDir, 'youtick_nft.wasm'));
+    const deployKey = KeyPair.fromRandom('ed25519');
+    policy.deploy_public_key = deployKey.getPublicKey().toString();
     policy.expected_current_code_hash = codeHash(expectedCurrentWasm);
     policy.expected_current_wasm_bytes = expectedCurrentWasm.length;
     const policyPath = resolve(artifact.root, 'policy.json');
@@ -264,9 +267,8 @@ async function runtimeFixture({
             runAttempt: RUN_ATTEMPT,
             expectedWasmSha256: artifact.manifest.files.wasm.sha256,
             expectedStateSha256: stateSha256,
-            privateKey: 'ed25519:test-private-key-never-used',
+            privateKey: deployKey.toString(),
             fetchImpl,
-            derivePublicKeyImpl: async () => policy.deploy_public_key,
             deployImpl,
             now: () => 1_785_600_000_000,
         },

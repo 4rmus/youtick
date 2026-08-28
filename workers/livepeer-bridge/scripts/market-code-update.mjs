@@ -564,7 +564,7 @@ async function derivePublicKey(privateKey) {
         throw new Error('invalid');
     }
     const { KeyPairSigner } = await import('near-api-js');
-    return KeyPairSigner.fromSecretKey(privateKey).getPublicKey().toString();
+    return (await KeyPairSigner.fromSecretKey(privateKey).getPublicKey()).toString();
 }
 
 async function deployContractCode({ rpcUrl, targetContractId, privateKey, wasmBytes }) {
