@@ -1,9 +1,10 @@
 # Current state
 
-> Reconciled on 2026-08-28 from exact GitHub `main`
+> Reconciled on 2026-08-28 from PR #147 base `main`
 > [`ca72a8029bb3ba56c50db14297499417a05a28ca`](https://github.com/4rmus/youtick/commit/ca72a8029bb3ba56c50db14297499417a05a28ca)
-> through the consolidated PR #147 changeset, and separately against the
-> currently served Preview runtime.
+> through the PR #147 candidate changeset, and separately against the currently
+> served Preview runtime. The final PR head, merge SHA and post-merge `main`
+> evidence are outside this snapshot.
 > This snapshot separates source, CI, Preview and Production evidence. It does
 > not authorize a deployment, feature activation or external mutation.
 
@@ -36,7 +37,7 @@ evidence classes. A passing source or CI result does not prove deployment.
 
 | Layer | Status | Evidence |
 |---|---|---|
-| Application source | `PASS_FIXED_FEE / SAFE_UPDATE_PROPOSED` | `ca72a802...` contains merged PRs #140-146. PR #146 reconciles one fixed `100_000` micro-USDC sponsor fee. The unmerged PR #147 changeset proposes reusing the existing testnet Market/Access pair, extending the existing pause to new creator jobs and adding a manual protected code-update lane; its exact PR-head CI has not run yet and sponsor flags remain default-off. |
+| Application source | `PASS_FIXED_FEE / SAFE_UPDATE_PROPOSED` | `ca72a802...` contains merged PRs #140-146. PR #146 reconciles one fixed `100_000` micro-USDC sponsor fee. The PR #147 candidate proposes reusing the existing testnet Market/Access pair, extending the existing pause to new creator jobs and adding a manual protected code-update lane. Required checks must pass on its final head before merge; retained deploy provenance remains a post-merge `push/main` CI responsibility and sponsor flags remain default-off. |
 | CI | `PASS` | [Run 33113271994](https://github.com/4rmus/youtick/actions/runs/33113271994) passed dependency audits, both CodeQL languages, Web, Bridge, contracts, protocol and CI Gate for exact `ca72a802...`. |
 | Preview | `PASS_CLOSED / EXACT_SOURCE_NOT_DEPLOYED` | [Deploy run 33076391705, attempt 2](https://github.com/4rmus/youtick/actions/runs/33076391705/attempts/2) promoted the then-current `f745bc0...` closed packet and recorded deployment `6126728124` as successful. Exact-main [run 33114081379](https://github.com/4rmus/youtick/actions/runs/33114081379) was fully skipped with `DEPLOY_PREVIEW_ENABLED=false`, so it built no release artifact and deployed nothing. |
 | Production | `LEGACY_ONLY / NEW_STACK_CLOSED` | `youtick.net` still serves the unchanged `youtick-web4` origin. The modern app and Bridge Production endpoints are absent. |
@@ -95,8 +96,10 @@ the Production root body and headers were unchanged.
 - The safe-update changeset preserves the current testnet Market and Access IDs
   and Borsh state. While the global pause is true, new plain-USDC, sponsored-USDC
   and native-NEAR creator jobs are closed; exact replay and recovery remain
-  available. CI retains exact Market WASM/ABI provenance, but the protected
-  workflow is manual and has not run.
+  available. PR CI verifies the exact Market WASM/ABI build but does not retain
+  a deploy artifact. Only post-merge same-repository `push/main` CI can retain
+  and attest that artifact; the protected update workflow is manual and has not
+  run.
 - The real two-creator payment, Bridge admission, concurrent TUS upload, provider
   and publication flow remains unproven.
 - UploadJob deletion remains blocked until its D1 archive commit is proven and
