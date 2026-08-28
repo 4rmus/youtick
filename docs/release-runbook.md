@@ -30,6 +30,32 @@ that deploys or migrates the old live contract set.
 5. Record contract IDs, Worker version, web version, timestamps and rollback
    targets.
 
+## Existing testnet Market code update
+
+The internal-testnet Market v2 account may receive a layout-preserving code
+update without an init call or migration. This is not a fresh deployment and
+does not authorize sponsor activation.
+
+1. Use only the exact current `main` SHA and its successful push CI run. The
+   Contracts quality job must produce the retained `market-contract-<sha>`
+   artifact containing only the Market WASM, ABI, manifest and checksums.
+2. Run the read-only `market-code-update.mjs snapshot` command and approve its
+   exact WASM and raw-state hashes. The target account, old code hash, roles,
+   pause state, Access binding and deploy public key are source-locked.
+3. Dispatch `Preview Market Code Update` with the exact SHA, CI run, WASM hash,
+   state hash and typed confirmation. The protected `Preview` reviewer gate and
+   the environment-scoped Market deploy key are mandatory.
+4. The workflow may send exactly one `DeployContract` action to the existing
+   Market account. It cannot call init/migrate, change keys, transfer funds,
+   update Access, configure secrets or deploy Cloudflare resources.
+5. Require the post-update code hash to match the retained artifact and the raw
+   contract state to remain byte-for-byte unchanged. Preserve the transaction
+   hash and redacted invariant evidence. Do not retry or automatically roll
+   back an ambiguous result; stop for read-only reconciliation.
+
+The previous Market WASM does not enforce creator-job pause semantics and is
+not an approved rollback target. Recovery is fix-forward under a separate gate.
+
 ## Multi-asset Preview and canary
 
 1. Enable `preview` on both web and Bridge for dry quotes only. NEAR Intents has

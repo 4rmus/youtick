@@ -1,9 +1,12 @@
 # YouTick paid media market contract
 
-Status: `LIVEPEER_V1 / MARKET_V2_CODE_ONLY / RUNTIME_DISABLED / NOT_DEPLOYED`
+Status: `LIVEPEER_V1 / MARKET_V2_CODE_ONLY / RUNTIME_DISABLED / CURRENT_SOURCE_NOT_DEPLOYED`
 
 This crate builds the paid-only Livepeer v1 market contract. It is intended for
-fresh contract IDs; no deployed public-alpha contract is migrated in place.
+fresh contract IDs in new environments; no deployed public-alpha contract is
+migrated in place. The existing isolated internal-testnet Market v2 pair is the
+only approved code-update target: its persistent layout is unchanged, and the
+guarded update performs no init call or state migration.
 
 The contract supports:
 
@@ -19,8 +22,9 @@ The contract supports:
 - bridge-only, idempotent Livepeer publication finalization;
 - versioned governance state with a separate guardian-only emergency freeze,
   admin-only unfreeze and an auditable pending bridge rotation;
-- a layout-preserving global new-purchase pause: guardian closes immediately,
-  admin alone reopens, and both transitions emit governance events;
+- a layout-preserving global new-purchase pause: guardian closes ticket sales
+  and new creator paid jobs immediately, admin alone reopens, exact job replays
+  and recovery remain available, and both transitions emit governance events;
 - globally unique asset hash and playback ID bindings;
 - mutable sale availability separated from immutable publication identity;
 - Circle USDC tickets at 2 USDC or more with a 98% creator / 2% platform split;
@@ -35,9 +39,11 @@ The ABI contains only the Livepeer job, publication, entitlement, governance,
 takedown and payment surfaces. Upload pause/resume, reconciliation and an exact same-job replay
 cannot charge the creator again; a conflicting replay fails. A new job is a new
 charge and no automatic provider-failure refund is implemented. The MediaJob
-Borsh layout has no migration entrypoint and Market v2 must use a fresh contract
-ID. The purchase pause uses a dedicated namespaced storage key and does not
-change that Borsh layout. The accepted technical-pilot governance has no multisig or timelock;
+Borsh layout has no migration entrypoint. New Market v2 deployments must use a
+fresh contract ID; the internal-testnet exception is a code-only update of the
+existing v2 account after exact raw-state and code-hash preflight. The purchase
+pause uses a dedicated namespaced storage key and does not change that Borsh
+layout. The accepted technical-pilot governance has no multisig or timelock;
 `propose_bridge` and `execute_bridge_rotation` are both admin-only. Multisig and
 timelock remain mandatory before mainnet general access.
 
@@ -63,5 +69,9 @@ cargo +1.86.0 test --test sandbox
 cargo +1.86.0 near build non-reproducible-wasm
 ```
 
-The contract remains code-only. Testnet, staging and production activation need
-the later plan gates and separate approval.
+The current source remains undeployed. Its existing-testnet code update is
+available only through the manual protected workflow after separate approval;
+staging, sponsor activation and Production remain later gates.
+The previous testnet WASM is not a safe rollback while the global pause is
+active because it does not apply that pause to creator paid-job paths. Recovery
+is forward-only with a separately reviewed artifact that retains these guards.

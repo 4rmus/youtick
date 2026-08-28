@@ -179,6 +179,13 @@ fn native_near_quote_creates_once_and_binds_upload_key() {
         contract.get_platform_near_balance(),
         U128(100_000_000_000_000_000_000_000)
     );
+    testing_env!(context("guardian.testnet").build());
+    contract.pause_new_purchases();
+    let mut replay_context = context("creator.testnet");
+    replay_context.attached_deposit(near_sdk::NearToken::from_yoctonear(
+        100_000_000_000_000_000_000_000,
+    ));
+    testing_env!(replay_context.build());
     assert!(matches!(
         contract.create_paid_job_near(
             near_request(),
@@ -231,8 +238,27 @@ fn sponsored_usdc_quote_charges_one_total_and_refunds_exact_replay() {
         Some("8681a029ccc506fc7cae9f9e3f6f9644d248f733d1f28a79be0b86f7a21e0f0c")
     );
 
-    let replay = contract.ft_on_transfer(account("creator.testnet"), U128(600_000), message);
+    let replay =
+        contract.ft_on_transfer(account("creator.testnet"), U128(600_000), message.clone());
     assert!(matches!(replay, PromiseOrValue::Value(U128(600_000))));
+    assert_eq!(contract.get_platform_balance(), U128(600_000));
+    assert_eq!(
+        contract.get_media_job("job-sponsored".to_string()).unwrap(),
+        job
+    );
+
+    let mut pause_context = context("guardian.testnet");
+    pause_context.block_height(1_200);
+    testing_env!(pause_context.build());
+    contract.pause_new_purchases();
+    let mut replay_context = context(TESTNET_USDC);
+    replay_context.block_height(1_200);
+    testing_env!(replay_context.build());
+    let paused_replay = contract.ft_on_transfer(account("creator.testnet"), U128(600_000), message);
+    assert!(matches!(
+        paused_replay,
+        PromiseOrValue::Value(U128(600_000))
+    ));
     assert_eq!(contract.get_platform_balance(), U128(600_000));
     assert_eq!(
         contract.get_media_job("job-sponsored".to_string()).unwrap(),
@@ -893,15 +919,6 @@ fn guardian_pauses_new_purchases_and_admin_alone_unpauses() {
     );
     assert!(!contract.has_entitlement(account("buyer.testnet"), "job-purchase-pause".to_string()));
 
-    let upload = create_job_with(
-        &mut contract,
-        "job-upload-while-purchases-paused",
-        "creator.testnet",
-        2_000_000,
-        1_000_000,
-    );
-    assert!(matches!(upload, PromiseOrValue::Value(U128(0))));
-
     testing_env!(context("guardian.testnet").build());
     must_fail(|| contract.unpause_new_purchases());
     let serialized_state_before_unpause = near_sdk::borsh::to_vec(&contract).unwrap();
@@ -927,6 +944,127 @@ fn guardian_pauses_new_purchases_and_admin_alone_unpauses() {
     );
     assert!(matches!(accepted, PromiseOrValue::Value(U128(0))));
     assert!(contract.has_entitlement(account("buyer.testnet"), "job-purchase-pause".to_string()));
+}
+
+#[test]
+fn purchase_pause_blocks_new_paid_jobs_and_preserves_exact_replays() {
+    let mut contract = contract();
+    assert!(matches!(
+        create_job_with(
+            &mut contract,
+            "job-existing-usdc",
+            "creator.testnet",
+            2_000_000,
+            1_000_000,
+        ),
+        PromiseOrValue::Value(U128(0))
+    ));
+
+    testing_env!(context("guardian.testnet").build());
+    contract.pause_new_purchases();
+    let platform_usdc_before = contract.get_platform_balance();
+
+    assert!(matches!(
+        create_job_with(
+            &mut contract,
+            "job-existing-usdc",
+            "creator.testnet",
+            2_000_000,
+            1_000_000,
+        ),
+        PromiseOrValue::Value(U128(500_000))
+    ));
+    assert_eq!(contract.get_platform_balance(), platform_usdc_before);
+    must_fail(|| {
+        create_job_with(
+            &mut contract,
+            "job-existing-usdc",
+            "creator.testnet",
+            2_000_001,
+            1_000_000,
+        );
+    });
+
+    assert!(matches!(
+        create_job_with(
+            &mut contract,
+            "job-paused-usdc",
+            "creator.testnet",
+            2_000_000,
+            1_000_000,
+        ),
+        PromiseOrValue::Value(U128(500_000))
+    ));
+    assert!(contract
+        .get_media_job("job-paused-usdc".to_string())
+        .is_none());
+
+    let sponsored_request = sponsored_request();
+    testing_env!(context(TESTNET_USDC).build());
+    assert!(matches!(
+        contract.ft_on_transfer(
+            account("creator.testnet"),
+            U128(600_000),
+            sponsored_message(&sponsored_request, sponsored_quote()),
+        ),
+        PromiseOrValue::Value(U128(600_000))
+    ));
+    assert!(contract
+        .get_media_job("job-sponsored".to_string())
+        .is_none());
+    assert_eq!(contract.get_platform_balance(), platform_usdc_before);
+    testing_env!(context(TESTNET_USDC).build());
+    must_fail(|| {
+        contract.ft_on_transfer(
+            account("creator.testnet"),
+            U128(599_999),
+            sponsored_message(&sponsored_request, sponsored_quote()),
+        );
+    });
+    assert_eq!(contract.get_platform_balance(), platform_usdc_before);
+
+    testing_env!(context(TESTNET_USDC).build());
+    must_fail(|| {
+        contract.create_paid_job(near_request());
+    });
+
+    testing_env!(context("admin.testnet").build());
+    contract.unpause_new_purchases();
+    assert!(matches!(
+        create_job_with(
+            &mut contract,
+            "job-after-unpause",
+            "creator.testnet",
+            2_000_000,
+            1_000_000,
+        ),
+        PromiseOrValue::Value(U128(0))
+    ));
+    assert!(contract
+        .get_media_job("job-after-unpause".to_string())
+        .is_some());
+}
+
+#[test]
+fn purchase_pause_blocks_a_new_native_paid_job() {
+    let mut contract = contract();
+    testing_env!(context("guardian.testnet").build());
+    contract.pause_new_purchases();
+
+    let mut near_context = context("creator.testnet");
+    near_context.attached_deposit(near_sdk::NearToken::from_yoctonear(
+        100_000_000_000_000_000_000_000,
+    ));
+    testing_env!(near_context.build());
+    must_fail(|| {
+        contract.create_paid_job_near(
+            near_request(),
+            near_quote(),
+            Base64VecU8(QUOTE_SIGNATURE.to_vec()),
+        );
+    });
+    assert!(contract.get_media_job("job-near".to_string()).is_none());
+    assert_eq!(contract.get_platform_near_balance(), U128(0));
 }
 
 #[test]

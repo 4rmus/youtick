@@ -1,0 +1,40 @@
+{
+  "schema": "youtick.testnet-market-code-update-policy.v1",
+  "network": "testnet",
+  "target_contract_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+  "access_contract_id": "lp-arch-access-v2-260809.youtick-dev-v3.testnet",
+  "bridge_operator_account_id": "lp-d6-bridge-5301d15.youtick-dev-v3.testnet",
+  "deploy_public_key": "ed25519:6uE7vxQkUF9Qg6FLp9jnztgeJ2fmafYsekCkpHDNgqzX",
+  "expected_current_code_hash": "FCXekKBpv9ianguMVUPyHapUNudXXTMszmMaDGyE8SY2",
+  "expected_current_wasm_bytes": 307173,
+  "max_deploy_cost_yocto": "100000000000000000000000",
+  "expected_governance": {
+    "state_version": 2,
+    "admin_account_id": "lp-arch-admin-260809.youtick-dev-v3.testnet",
+    "guardian_account_id": "lp-arch-guardian-260809.youtick-dev-v3.testnet",
+    "active_bridge_account_id": "lp-d6-bridge-5301d15.youtick-dev-v3.testnet",
+    "pending_bridge_account_id": null,
+    "bridge_frozen": false,
+    "new_purchases_paused": true,
+    "bridge_rotation_proposed_at_ms": null
+  },
+  "expected_quote_key_version": 1,
+  "expected_usdc_contract_id": "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af",
+  "expected_access_state": {
+    "state_version": 2,
+    "owner_id": "lp-arch-admin-260809.youtick-dev-v3.testnet",
+    "pending_owner_id": null,
+    "market_contract_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+    "paused": false,
+    "grant_issuance_enabled": true
+  },
+  "expected_bridge_key": {
+    "public_key": "ed25519:8EcEK3GG7RPPEzPTe39QwJMuXb2XMG4b1s4ginPcTkFg",
+    "allowance": "19666911666125800000000",
+    "receiver_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+    "method_names": [
+      "finalize_livepeer_publication",
+      "suspend_livepeer_sales"
+    ]
+  }
+}

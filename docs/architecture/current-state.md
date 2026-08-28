@@ -1,9 +1,10 @@
 # Current state
 
-> Reconciled on 2026-08-27 against application source and Preview runtime
-> baseline [`f745bc0b624335cf82c9462da1ff3dc097e0bf9c`](https://github.com/4rmus/youtick/commit/f745bc0b624335cf82c9462da1ff3dc097e0bf9c),
-> which is also PR #145's base. Merging that docs-only PR advances `main`
-> without changing the application runtime.
+> Reconciled on 2026-08-28 from PR #147 base `main`
+> [`ca72a8029bb3ba56c50db14297499417a05a28ca`](https://github.com/4rmus/youtick/commit/ca72a8029bb3ba56c50db14297499417a05a28ca)
+> through the PR #147 candidate changeset, and separately against the currently
+> served Preview runtime. The final PR head, merge SHA and post-merge `main`
+> evidence are outside this snapshot.
 > This snapshot separates source, CI, Preview and Production evidence. It does
 > not authorize a deployment, feature activation or external mutation.
 
@@ -36,9 +37,9 @@ evidence classes. A passing source or CI result does not prove deployment.
 
 | Layer | Status | Evidence |
 |---|---|---|
-| Application source/runtime baseline | `PASS` | `f745bc0...`, the base of docs-only PR #145, contains merged PRs #140-144. Sponsored uploads exist in source but remain default-off. |
-| CI | `PASS` | [Run 33075562805](https://github.com/4rmus/youtick/actions/runs/33075562805) passed dependency audits, both CodeQL languages and CI Gate for exact `f745bc0...`; component jobs were path-filtered rather than rerun. |
-| Preview | `PASS_CLOSED` | [Deploy run 33076391705, attempt 2](https://github.com/4rmus/youtick/actions/runs/33076391705/attempts/2) promoted the exact-main closed packet and recorded deployment `6126728124` as successful. |
+| Application source | `PASS_FIXED_FEE / SAFE_UPDATE_PROPOSED` | `ca72a802...` contains merged PRs #140-146. PR #146 reconciles one fixed `100_000` micro-USDC sponsor fee. The PR #147 candidate proposes reusing the existing testnet Market/Access pair, extending the existing pause to new creator jobs and adding a manual protected code-update lane. Required checks must pass on its final head before merge; retained deploy provenance remains a post-merge `push/main` CI responsibility and sponsor flags remain default-off. |
+| CI | `PASS` | [Run 33113271994](https://github.com/4rmus/youtick/actions/runs/33113271994) passed dependency audits, both CodeQL languages, Web, Bridge, contracts, protocol and CI Gate for exact `ca72a802...`. |
+| Preview | `PASS_CLOSED / EXACT_SOURCE_NOT_DEPLOYED` | [Deploy run 33076391705, attempt 2](https://github.com/4rmus/youtick/actions/runs/33076391705/attempts/2) promoted the then-current `f745bc0...` closed packet and recorded deployment `6126728124` as successful. Exact-main [run 33114081379](https://github.com/4rmus/youtick/actions/runs/33114081379) was fully skipped with `DEPLOY_PREVIEW_ENABLED=false`, so it built no release artifact and deployed nothing. |
 | Production | `LEGACY_ONLY / NEW_STACK_CLOSED` | `youtick.net` still serves the unchanged `youtick-web4` origin. The modern app and Bridge Production endpoints are absent. |
 
 The protected Preview release promoted these exact versions to 100% traffic:
@@ -47,10 +48,11 @@ The protected Preview release promoted these exact versions to 100% traffic:
 - Bridge: `8d4c26a0-309b-43e5-b35a-48cc9420ebf2`;
 - dark read model: `5a5948d1-a443-4e3b-8b06-5c4d48950b98`.
 
-Fresh Bridge health returned `stage=DISABLED`. New upload, provider/operator
-mutation, playback, Queue, both archive paths, sponsored quote and sponsor relay
-readiness were all `false`. The deploy and multi-creator canary repository
-variables were restored to `false`.
+Fresh Bridge health returned version `8d4c26a0-309b-43e5-b35a-48cc9420ebf2`
+and `stage=DISABLED`. New upload, provider/operator mutation, playback, Queue,
+both archive paths, sponsored quote and sponsor relay readiness were all
+`false`. `DEPLOY_PREVIEW_ENABLED` and
+`PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED` are both `false`.
 
 Preview publication reads remain independently enabled at
 `read-preview.youtick.net`. The newly deployed dark read model keeps its API,
@@ -67,6 +69,8 @@ the Production root body and headers were unchanged.
 | [#142](https://github.com/4rmus/youtick/pull/142) | `6d372f4...` | Allow the enabled canary packet to be redeployed | Previously served Preview baseline |
 | [#143](https://github.com/4rmus/youtick/pull/143) | `e8f75d8...` | Add NEAR-sponsored creator uploads | Present in the deployed Preview package; sponsor flags closed |
 | [#144](https://github.com/4rmus/youtick/pull/144) | `f745bc0...` | Accept the legacy Bridge health shape during baseline inference | Enabled the successful exact-main reclose |
+| [#145](https://github.com/4rmus/youtick/pull/145) | `dd0ebd3...` | Reconcile the current-state snapshot | Documentation only; Preview deploy skipped |
+| [#146](https://github.com/4rmus/youtick/pull/146) | `ca72a80...` | Fix the sponsor fee at `0.10 USDC` | Source and CI pass; exact source not Preview-deployed, sponsor flags closed |
 
 ## Phase summary
 
@@ -82,10 +86,20 @@ the Production root body and headers were unchanged.
 
 ## Decisions and blockers
 
-- The sponsor product decision is a fixed `0.10 USDC` added to the upload fee
-  and accrued in platform balance. Merged source currently calculates the sponsor
-  fee dynamically from gas price and a NEAR/USD rate. Sponsored upload activation
-  remains blocked until Bridge, contract, protocol and tests use one model.
+- The sponsor product decision is now reconciled in exact `main`: Web, Bridge,
+  contract, protocol and tests require a fixed `0.10 USDC` added to the upload
+  fee and accrued in platform balance. Exact-main CI passes.
+- This is `SOURCE` + `CI` evidence only. The current fixed-fee Market source is
+  recorded as `CODE_ONLY / RUNTIME_DISABLED / CURRENT_SOURCE_NOT_DEPLOYED`;
+  exact source was not deployed to Preview, sponsor quote/relay flags remain
+  false and no fixed-fee live payment is proven.
+- The safe-update changeset preserves the current testnet Market and Access IDs
+  and Borsh state. While the global pause is true, new plain-USDC, sponsored-USDC
+  and native-NEAR creator jobs are closed; exact replay and recovery remain
+  available. PR CI verifies the exact Market WASM/ABI build but does not retain
+  a deploy artifact. Only post-merge same-repository `push/main` CI can retain
+  and attest that artifact; the protected update workflow is manual and has not
+  run.
 - The real two-creator payment, Bridge admission, concurrent TUS upload, provider
   and publication flow remains unproven.
 - UploadJob deletion remains blocked until its D1 archive commit is proven and
@@ -95,10 +109,12 @@ the Production root body and headers were unchanged.
 
 ## Next product gate
 
-`SPONSOR_FIXED_FEE_SOURCE_RECONCILIATION_DECISION_REQUIRED`
+`SPONSOR_FIXED_FEE_EXISTING_TESTNET_MARKET_CODE_UPDATE_APPROVAL_REQUIRED`
 
-After this snapshot becomes canonical on `main`, lock the smallest Web, Bridge,
-contract, protocol and test scope that replaces dynamic sponsor pricing with the
-fixed `0.10 USDC` product decision. Web scope must cover quote validation, the
-displayed total and their tests. Do not implement, commit, activate flags or
-deploy in that decision gate.
+After this changeset is canonical on `main`, refresh the read-only Market state
+hash and explicitly approve only the existing testnet Market code update from
+the retained exact-main CI artifact. The update must preserve the paused raw
+state byte-for-byte and perform no init, migration, Access change, funding,
+secret/config/flag change, sponsor activation, payment, relay, provider,
+D1/Queue, Cloudflare or Production mutation. Closed Preview deployment and
+sponsor activation remain separate later gates.

@@ -32,7 +32,7 @@ async fn load_mock_ft_wasm() -> anyhow::Result<&'static Vec<u8>> {
         .await
 }
 
-async fn init() -> anyhow::Result<(Contract, Account, Account, Contract)> {
+async fn init() -> anyhow::Result<(Contract, Account, Account, Account, Contract)> {
     let worker = near_workspaces::sandbox().await?;
     let wasm = load_contract_wasm().await?;
     let mock_ft_wasm = load_mock_ft_wasm().await?;
@@ -87,12 +87,12 @@ async fn init() -> anyhow::Result<(Contract, Account, Account, Contract)> {
         .transact()
         .await?
         .into_result()?;
-    Ok((contract, bridge, creator, usdc))
+    Ok((contract, bridge, guardian, creator, usdc))
 }
 
 #[tokio::test]
 async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
-    let (contract, bridge, creator, usdc) = init().await?;
+    let (contract, bridge, guardian, creator, usdc) = init().await?;
     let storage_before: Option<serde_json::Value> = usdc
         .view("storage_balance_of")
         .args_json(json!({ "account_id": contract.id() }))
@@ -204,6 +204,54 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
         .json()?;
     assert_eq!(creator_after_replay, creator_after_create);
     assert_eq!(market_after_replay, market_after_create);
+
+    guardian
+        .call(contract.id(), "pause_new_purchases")
+        .transact()
+        .await?
+        .into_result()?;
+    creator
+        .call(usdc.id(), "ft_transfer_call")
+        .args_json(json!({
+            "receiver_id": contract.id(),
+            "amount": "500000",
+            "memo": "paid-media-livepeer-v1 paused",
+            "msg": json!({
+                "action": "create_paid_job",
+                "job_id": "job-paused",
+                "title": "Paused video",
+                "price_usdc": "2000000",
+                "expected_source_bytes": "1000000",
+                "profile_id": "paid-media-livepeer-v1",
+                "profile_config_sha256": PROFILE_HASH,
+                "upload_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
+                "upload_key_expires_at_ms": "9999999999999",
+            })
+            .to_string(),
+        }))
+        .deposit(NearToken::from_yoctonear(1))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?
+        .into_result()?;
+    let paused_job: Option<serde_json::Value> = contract
+        .view("get_media_job")
+        .args_json(json!({ "job_id": "job-paused" }))
+        .await?
+        .json()?;
+    assert!(paused_job.is_none());
+    let creator_after_pause: String = usdc
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": creator.id() }))
+        .await?
+        .json()?;
+    let market_after_pause: String = usdc
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": contract.id() }))
+        .await?
+        .json()?;
+    assert_eq!(creator_after_pause, creator_after_replay);
+    assert_eq!(market_after_pause, market_after_replay);
 
     let args = json!({
         "submission": {

@@ -6,6 +6,7 @@ const workflows = [
     'ci.yml',
     'codeql.yml',
     'deploy-preview.yml',
+    'preview-market-code-update.yml',
     'promote-production.yml',
 ];
 
@@ -46,6 +47,71 @@ test('normal-WASM contract SBOM artifacts stay mandatory', async () => {
     assert.match(audit, /generate-contract-spdx\.mjs/);
     assert.match(audit, /name: contract-sbom-\$\{\{ github\.sha \}\}/);
     assert.match(audit, /retention-days: 30/);
+});
+
+test('testnet Market code update stays exact-main, one-shot and protected', async () => {
+    const [ci, workflow, helper, policy] = await Promise.all([
+        readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
+        readFile(new URL('../.github/workflows/preview-market-code-update.yml', import.meta.url), 'utf8'),
+        readFile(new URL('../workers/livepeer-bridge/scripts/market-code-update.mjs', import.meta.url), 'utf8'),
+        readFile(new URL('../workers/livepeer-bridge/scripts/market-code-update-policy.json', import.meta.url), 'utf8'),
+    ]);
+    const triggers = workflow.slice(workflow.indexOf('on:'), workflow.indexOf('concurrency:'));
+
+    assert.match(triggers, /\n  workflow_dispatch:\n/);
+    assert.doesNotMatch(triggers, /\n  (?:pull_request|push|workflow_run|workflow_call|repository_dispatch|schedule):/);
+    assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
+    assert.match(workflow, /concurrency:\n  group: deploy-preview/);
+    assert.match(workflow, /name: Preview/);
+    assert.match(workflow, /UPDATE_EXISTING_TESTNET_MARKET_CODE/);
+    assert.match(workflow, /\.event == "push"/);
+    assert.match(workflow, /\.head_branch == "main"/);
+    assert.match(workflow, /\.head_sha == \$sha/);
+    assert.match(workflow, /market-contract-\$\{REQUESTED_SHA\}/);
+    assert.match(workflow, /sha256sum contracts\/nft-ticket\/Cargo\.lock/);
+    assert.match(workflow, /--signer-workflow "\$\{GITHUB_REPOSITORY\}\/\.github\/workflows\/ci\.yml"/);
+    assert.match(workflow, /--source-digest "\$\{REQUESTED_SHA\}"/);
+    assert.match(workflow, /PREVIEW_MARKET_DEPLOY_PRIVATE_KEY/);
+    assert.match(workflow, /NEAR_RPC_URL: \$\{\{ secrets\.NEAR_RPC_URL \}\}/);
+    assert.equal((workflow.match(/ref: main/g) ?? []).length, 2);
+    assert.match(workflow, /\.stage == "DISABLED"/);
+    assert.match(workflow, /\.providerMutationEnabled == false/);
+    assert.match(workflow, /\.newUploadReady == false/);
+    assert.match(workflow, /\.sponsoredUploadQuoteReady == false/);
+    assert.match(workflow, /\.sponsoredUploadRelayReady == false/);
+    assert.match(workflow, /if: always\(\)\n        with:\n          name: preview-market-code-update/);
+    assert.match(workflow, /if-no-files-found: ignore/);
+    assert.doesNotMatch(workflow, /PREVIEW_NEAR_OPERATOR_PRIVATE_KEY|SPONSOR_RELAYER|QUOTE_PRIVATE_KEY/);
+    assert.doesNotMatch(triggers, /account|target|rpc|method|init|migrate/i);
+
+    assert.match(ci, /name: market-runtime-candidate-\$\{\{ github\.sha \}\}/);
+    assert.match(ci, /name: market-contract-\$\{\{ github\.sha \}\}/);
+    assert.match(ci, /github\.event_name == 'push'/);
+    assert.match(ci, /github\.ref == 'refs\/heads\/main'/);
+    assert.match(ci, /Attest exact Market runtime provenance/);
+    assert.match(ci, /retention-days: 30/);
+    assert.match(ci.slice(ci.indexOf('  ci-gate:')), /\n      - market-runtime-artifact\n/);
+
+    assert.match(helper, /actions: \[actions\.deployContract\(wasmBytes\)\]/);
+    assert.match(helper, /receiverId: targetContractId/);
+    assert.match(helper, /retries: 0/);
+    assert.doesNotMatch(helper, /actions\.(?:functionCall|transfer|addKey|deleteKey|createAccount|deleteAccount)/);
+    assert.match(helper, /market_code_update_state_changed/);
+    assert.match(helper, /market_code_update_reconcile_required/);
+    assert.match(helper, /request_type: 'view_code'/);
+    assert.match(helper, /market_code_update_deploy_key_set_mismatch/);
+    assert.match(helper, /permission\.allowance === expected\.allowance/);
+    assert.match(helper, /market_code_update_reserve_insufficient/);
+    assert.match(helper, /status: 'POSTCHECK_FAILED'/);
+    assert.doesNotMatch(helper, /https:\/\/rpc\.testnet\.near\.org/);
+
+    const parsedPolicy = JSON.parse(policy);
+    assert.equal(parsedPolicy.target_contract_id, 'lp-arch-market-v2-260809.youtick-dev-v3.testnet');
+    assert.equal(parsedPolicy.expected_governance.new_purchases_paused, true);
+    assert.equal(parsedPolicy.expected_access_state.market_contract_id, parsedPolicy.target_contract_id);
+    assert.match(parsedPolicy.max_deploy_cost_yocto, /^[1-9][0-9]*$/);
+    assert.match(parsedPolicy.expected_bridge_key.allowance, /^[1-9][0-9]*$/);
+    assert.equal(Object.hasOwn(parsedPolicy, 'rpc_url'), false);
 });
 
 test('web CI verifies the immutable sponsored-wallet executor', async () => {

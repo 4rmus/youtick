@@ -258,6 +258,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@52699249a776424c51ebc9ee197baf0f9dbf0d8a # 1.86.0
         with:
           components: rustfmt, clippy
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: matrix.task == 'quality'
+        with:
+          node-version-file: .nvmrc
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
@@ -315,6 +319,74 @@ jobs:
       - name: Check exact ABI
         if: matrix.task == 'quality'
         run: node scripts/check-paid-media-livepeer-v1-abi.mjs
+      - name: Package exact Market runtime artifact
+        if: matrix.task == 'quality'
+        run: |
+          node workers/livepeer-bridge/scripts/market-code-update.mjs artifact \
+            --wasm contracts/nft-ticket/target/near/youtick_nft.wasm \
+            --abi contracts/nft-ticket/target/near/youtick_nft_abi.json \
+            --lockfile contracts/nft-ticket/Cargo.lock \
+            --output-dir "${RUNNER_TEMP}/market-runtime" \
+            --sha "${GITHUB_SHA}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}"
+      - name: Upload same-run Market runtime candidate
+        if: >-
+          matrix.task == 'quality' &&
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: market-runtime-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/market-runtime
+          retention-days: 1
+          if-no-files-found: error
+
+  market-runtime-artifact:
+    name: Retain exact Market runtime artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - detect-changes
+      - contracts
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.detect-changes.outputs.contracts == 'true' &&
+      needs.contracts.result == 'success'
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: market-runtime-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/market-runtime
+      - name: Verify same-run Market runtime candidate
+        run: |
+          node workers/livepeer-bridge/scripts/market-code-update.mjs verify-artifact \
+            --artifact-dir "${RUNNER_TEMP}/market-runtime" \
+            --sha "${GITHUB_SHA}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}"
+      - name: Attest exact Market runtime provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/market-runtime/SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: market-contract-${{ github.sha }}
+          path: ${{ runner.temp }}/market-runtime
+          retention-days: 30
+          if-no-files-found: error
 
   protocol:
     name: Livepeer Protocol
@@ -370,6 +442,7 @@ jobs:
       - protocol
       - docs
       - codeql
+      - market-runtime-artifact
     if: always()
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
