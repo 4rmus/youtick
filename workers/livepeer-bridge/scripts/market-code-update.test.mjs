@@ -63,6 +63,7 @@ test('market update sends once and preserves the exact state digest', async () =
     assert.equal(evidence.after_code_hash, fixture.manifest.files.wasm.code_hash);
     assert.equal(evidence.state_sha256, fixture.stateSha256);
     assert.equal(evidence.transaction_hash, TX_HASH);
+    assert.equal(evidence.broadcast_error_code, null);
     assert.equal(evidence.status, 'PASS');
     assert.equal(evidence.error_code, null);
     assert.ok(fixture.rpcRequests.filter(({ method }) => method === 'query').every(
@@ -137,7 +138,9 @@ test('market update never retries an ambiguous broadcast', async (t) => {
         await assert.rejects(runMarketCodeUpdate(fixture.input), (error) => {
             assert.match(error.message, /market_code_update_ambiguous/);
             assert.equal(error.evidence.status, 'AMBIGUOUS');
-            assert.equal(error.evidence.transaction_hash, null);
+            assert.equal(error.evidence.transaction_hash, TX_HASH);
+            assert.equal(error.evidence.broadcast_error_code, 'transaction_submit_failed');
+            assert.doesNotMatch(JSON.stringify(error.evidence), /private_provider_error/);
             return true;
         });
         assert.equal(fixture.deployCalls.length, 1);
@@ -149,10 +152,25 @@ test('market update never retries an ambiguous broadcast', async (t) => {
             assert.match(error.message, /market_code_update_reconcile_required/);
             assert.equal(error.evidence.status, 'RECONCILE_REQUIRED');
             assert.equal(error.evidence.after_code_hash, fixture.manifest.files.wasm.code_hash);
+            assert.equal(error.evidence.transaction_hash, TX_HASH);
+            assert.equal(error.evidence.broadcast_error_code, 'transaction_submit_failed');
             return true;
         });
         assert.equal(fixture.deployCalls.length, 1);
     });
+});
+
+test('real deploy path signs once before one-attempt RPC broadcast', async () => {
+    const source = await readFile(new URL('./market-code-update.mjs', import.meta.url), 'utf8');
+    const deploy = source.slice(
+        source.indexOf('async function deployContractCode'),
+        source.indexOf('async function query'),
+    );
+    assert.match(deploy, /new JsonRpcProvider\(\{ url: rpcUrl \}, \{ retries: 1 \}\)/);
+    assert.match(deploy, /createSignedTransaction/);
+    assert.match(deploy, /encodeTransaction\(signedTransaction\)/);
+    assert.match(deploy, /sendTransactionUntil\(signedTransaction, 'FINAL'\)/);
+    assert.doesNotMatch(deploy, /signAndSendTransaction/);
 });
 
 test('market update rejects post-deploy state drift', async () => {
@@ -248,7 +266,12 @@ async function runtimeFixture({
     const deployImpl = async (input) => {
         deployCalls.push(input);
         if (deployChangesCode) deployed = true;
-        if (deployError) throw new Error('private_provider_error');
+        if (deployError) {
+            const error = new Error('private_provider_error');
+            error.transactionHash = TX_HASH;
+            error.broadcastErrorCode = 'transaction_submit_failed';
+            throw error;
+        }
         return { transaction: { hash: TX_HASH } };
     };
     return {

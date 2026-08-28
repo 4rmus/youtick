@@ -234,7 +234,8 @@ export async function runMarketCodeUpdate({
             privateKey,
             wasmBytes: wasm,
         });
-    } catch {
+    } catch (error) {
+        const failure = broadcastFailure(error);
         const reconciled = await bestEffortRuntimeSnapshot(
             policy,
             validatedRpcUrl,
@@ -255,7 +256,10 @@ export async function runMarketCodeUpdate({
             policy,
             before,
             after: reconciled,
-            transaction: null,
+            transaction: failure.transactionHash
+                ? { transaction: { hash: failure.transactionHash } }
+                : null,
+            broadcastErrorCode: failure.code,
             now,
         });
     }
@@ -506,6 +510,28 @@ class MarketCodeUpdateError extends Error {
     }
 }
 
+class MarketCodeBroadcastError extends Error {
+    constructor(code, transactionHash = null) {
+        super('market_code_update_broadcast_failed');
+        this.broadcastErrorCode = code;
+        this.transactionHash = transactionHash;
+    }
+}
+
+function broadcastFailure(error) {
+    const allowed = [
+        'transaction_prepare_failed',
+        'transaction_submit_failed',
+        'transaction_execution_failed',
+    ];
+    return {
+        code: allowed.includes(error?.broadcastErrorCode)
+            ? error.broadcastErrorCode
+            : 'transaction_error_unclassified',
+        transactionHash: transactionHash({ transaction: { hash: error?.transactionHash } }),
+    };
+}
+
 function evidenceError(code, input) {
     return new MarketCodeUpdateError(code, updateEvidence({
         ...input,
@@ -516,6 +542,7 @@ function evidenceError(code, input) {
 function updateEvidence({
     status,
     errorCode = null,
+    broadcastErrorCode = null,
     sourceSha,
     runId,
     runAttempt,
@@ -530,6 +557,7 @@ function updateEvidence({
         schema: EVIDENCE_SCHEMA,
         status,
         error_code: errorCode,
+        broadcast_error_code: broadcastErrorCode,
         source_sha: sourceSha,
         ci_run_id: String(runId),
         ci_run_attempt: String(runAttempt),
@@ -568,17 +596,41 @@ async function derivePublicKey(privateKey) {
 }
 
 async function deployContractCode({ rpcUrl, targetContractId, privateKey, wasmBytes }) {
-    const { Account, JsonRpcProvider, KeyPairSigner, actions } = await import('near-api-js');
-    const provider = new JsonRpcProvider({ url: rpcUrl });
+    const {
+        Account,
+        JsonRpcProvider,
+        KeyPairSigner,
+        actions,
+        encodeTransaction,
+    } = await import('near-api-js');
+    const provider = new JsonRpcProvider({ url: rpcUrl }, { retries: 1 });
     const signer = KeyPairSigner.fromSecretKey(privateKey);
     const account = new Account(targetContractId, provider, signer);
-    return account.signAndSendTransaction({
-        receiverId: targetContractId,
-        actions: [actions.deployContract(wasmBytes)],
-        waitUntil: 'FINAL',
-        throwOnFailure: true,
-        retries: 0,
-    });
+    let signedTransaction;
+    try {
+        signedTransaction = await account.createSignedTransaction({
+            receiverId: targetContractId,
+            actions: [actions.deployContract(wasmBytes)],
+        });
+    } catch {
+        throw new MarketCodeBroadcastError('transaction_prepare_failed');
+    }
+    const signedTransactionHash = base58Encode(Buffer.from(
+        sha256(encodeTransaction(signedTransaction)),
+        'hex',
+    ));
+    let transaction;
+    try {
+        transaction = await provider.sendTransactionUntil(signedTransaction, 'FINAL');
+    } catch {
+        throw new MarketCodeBroadcastError('transaction_submit_failed', signedTransactionHash);
+    }
+    if (typeof transaction?.status === 'object'
+        && transaction.status !== null
+        && Object.hasOwn(transaction.status, 'Failure')) {
+        throw new MarketCodeBroadcastError('transaction_execution_failed', signedTransactionHash);
+    }
+    return transaction;
 }
 
 async function query(rpcUrl, params, fetchImpl, blockId) {
