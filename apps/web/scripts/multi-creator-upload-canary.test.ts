@@ -14,15 +14,22 @@ import { File as NodeFile } from 'node:buffer';
 import { expect, test } from 'vitest';
 
 const LIVE_ACK = 'two-nonrefundable-usdc-payments-and-two-uploads';
+const SPONSORED_LIVE_ACK = 'one-sponsored-usdc-payment-upload-and-publication';
 const MARKET_ID = 'lp-arch-market-v2-260809.youtick-dev-v3.testnet';
 const ACCESS_ID = 'lp-arch-access-v2-260809.youtick-dev-v3.testnet';
 const APP_ORIGIN = 'https://preview.youtick.net';
 const BRIDGE_ORIGIN = 'https://bridge-preview.youtick.net';
 const STARTING_USDC = '20000000';
 const FEE_USDC = '500000';
+const SPONSOR_FEE_USDC = '100000';
+const SPONSORED_TOTAL_FEE_USDC = '600000';
 const RECOVERY_FILE = join(
   homedir(),
   '.near-credentials/testnet/.youtick-phase3-multi-creator-recovery.json',
+);
+const SPONSORED_RECOVERY_FILE = join(
+  homedir(),
+  '.near-credentials/testnet/.youtick-sponsored-upload-recovery.json',
 );
 
 const LOCKED_INPUTS = [
@@ -60,6 +67,16 @@ type CanarySteps = {
   requestIntent(participant: Participant): Promise<Intent>;
   upload(participant: Participant, intent: unknown): Promise<void>;
   readUsdcBalance(participant: Participant): Promise<string>;
+};
+
+type SponsoredCanarySteps = {
+  preflight(): Promise<{ usdcBalance: string; platformBalance: string; publicationCount: number }>;
+  authorize(): Promise<string>;
+  waitForJob(uploadPublicKey: string): Promise<void>;
+  requestIntent(): Promise<Intent>;
+  upload(intent: unknown): Promise<void>;
+  waitForPublication(): Promise<void>;
+  readAfter(): Promise<{ usdcBalance: string; platformBalance: string; publicationCount: number }>;
 };
 
 async function settledValues<T>(promises: Array<Promise<T>>, errorCode: string): Promise<T[]> {
@@ -125,6 +142,40 @@ async function runExactTwo(participants: Participant[], steps: CanarySteps) {
   } as const;
 }
 
+async function runSponsoredOne(participant: Participant, steps: SponsoredCanarySteps) {
+  if (participant.feeUsdc !== FEE_USDC) throw new Error('sponsored_canary_scope_invalid');
+  const before = await steps.preflight();
+  if (BigInt(before.usdcBalance) < BigInt(SPONSORED_TOTAL_FEE_USDC)) {
+    throw new Error('sponsored_canary_balance_insufficient');
+  }
+  const uploadPublicKey = await steps.authorize();
+  await steps.waitForJob(uploadPublicKey);
+  const intent = await steps.requestIntent();
+  if (intent.created !== true) throw new Error('sponsored_canary_intent_invalid');
+  await steps.upload(intent.value);
+  await steps.waitForPublication();
+  const after = await steps.readAfter();
+  if (BigInt(before.usdcBalance) - BigInt(after.usdcBalance)
+      !== BigInt(SPONSORED_TOTAL_FEE_USDC)
+    || BigInt(after.platformBalance) - BigInt(before.platformBalance)
+      !== BigInt(SPONSORED_TOTAL_FEE_USDC)
+    || after.publicationCount !== before.publicationCount + 1) {
+    throw new Error('sponsored_canary_settlement_invalid');
+  }
+  return {
+    schema: 'youtick.sponsored-upload-canary.v1',
+    status: 'PASS',
+    creators: 1,
+    payments: 1,
+    upload_fee_usdc: FEE_USDC,
+    sponsor_fee_usdc: SPONSOR_FEE_USDC,
+    total_fee_usdc: SPONSORED_TOTAL_FEE_USDC,
+    uploads: 1,
+    publications: 1,
+    endpoint_fingerprint: intent.endpointFingerprint,
+  } as const;
+}
+
 test('requires two distinct creators and starts both uploads before either completes', async () => {
   const participants = LOCKED_INPUTS.map((input, index) => ({
     accountId: input.accountId,
@@ -157,6 +208,32 @@ test('requires two distinct creators and starts both uploads before either compl
   expect(new Set(receipt.endpoint_fingerprints).size).toBe(2);
 });
 
+test('sponsored canary requires one payment, upload and publication with exact settlement', async () => {
+  const calls: string[] = [];
+  const receipt = await runSponsoredOne({
+    accountId: 'creator.testnet', jobId: 'sponsored-job', sourceBytes: 341028, feeUsdc: FEE_USDC,
+  }, {
+    preflight: async () => {
+      calls.push('preflight');
+      return { usdcBalance: STARTING_USDC, platformBalance: '540000', publicationCount: 1 };
+    },
+    authorize: async () => { calls.push('authorize'); return 'ed25519:upload'; },
+    waitForJob: async () => { calls.push('job'); },
+    requestIntent: async () => {
+      calls.push('intent');
+      return { created: true, endpointFingerprint: sha256('endpoint'), value: 'intent' };
+    },
+    upload: async () => { calls.push('upload'); },
+    waitForPublication: async () => { calls.push('publication'); },
+    readAfter: async () => {
+      calls.push('after');
+      return { usdcBalance: '19400000', platformBalance: '1140000', publicationCount: 2 };
+    },
+  });
+  expect(calls).toEqual(['preflight', 'authorize', 'job', 'intent', 'upload', 'publication', 'after']);
+  expect(receipt).toMatchObject({ status: 'PASS', payments: 1, uploads: 1, publications: 1 });
+});
+
 test.skipIf(process.env.YOUTICK_PHASE3_CANARY_ACK !== LIVE_ACK)(
   'runs the exact local two-creator Preview canary',
   async () => {
@@ -174,11 +251,16 @@ test.skipIf(process.env.YOUTICK_PHASE3_CANARY_ACK !== LIVE_ACK)(
 
     const recovery = new RecoveryStorage(RECOVERY_FILE);
     Object.defineProperty(globalThis, 'sessionStorage', { value: recovery, configurable: true });
+    Object.defineProperty(globalThis, 'localStorage', { value: recovery, configurable: true });
     Object.defineProperty(globalThis, 'window', {
-      value: { location: { origin: APP_ORIGIN }, sessionStorage: recovery, crypto: globalThis.crypto },
+      value: {
+        location: { origin: APP_ORIGIN },
+        sessionStorage: recovery,
+        localStorage: recovery,
+        crypto: globalThis.crypto,
+      },
       configurable: true,
     });
-
     const near = await import('near-api-js');
     const upload = await import('@/lib/livepeer-upload');
     const publication = await import('@/lib/livepeer-publication');
@@ -222,6 +304,7 @@ test.skipIf(process.env.YOUTICK_PHASE3_CANARY_ACK !== LIVE_ACK)(
       sourceBytes: input.sourceBytes,
       feeUsdc: FEE_USDC,
     }));
+    const restoreFetch = installBridgeOriginFetch();
 
     try {
       const receipt = await runExactTwo(participants, {
@@ -297,6 +380,174 @@ test.skipIf(process.env.YOUTICK_PHASE3_CANARY_ACK !== LIVE_ACK)(
       }));
     } catch {
       throw new Error(`multi_creator_canary_failed_recovery_retained=${existsSync(RECOVERY_FILE)}`);
+    } finally {
+      restoreFetch();
+    }
+  },
+  20 * 60 * 1000,
+);
+
+test.skipIf(process.env.YOUTICK_SPONSORED_CANARY_ACK !== SPONSORED_LIVE_ACK)(
+  'runs one exact sponsored Preview payment, upload and publication canary',
+  async () => {
+    if (process.env.CI) throw new Error('sponsored_canary_local_only');
+    const expectedBridgeVersion = requiredUuid('YOUTICK_EXPECTED_BRIDGE_VERSION');
+    const relayerAccountId = requiredTestnetAccount('YOUTICK_SPONSOR_RELAYER_ACCOUNT_ID');
+    const input = LOCKED_INPUTS[0];
+    const media = loadLockedMedia(input);
+    await requireEnabledBridge(expectedBridgeVersion, true);
+
+    process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
+    process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID = MARKET_ID;
+    process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = ACCESS_ID;
+    process.env.NEXT_PUBLIC_APP_URL = APP_ORIGIN;
+    process.env.NEXT_PUBLIC_LIVEPEER_BRIDGE_URL = BRIDGE_ORIGIN;
+    process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = 'true';
+    process.env.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS = 'true';
+
+    const recovery = new RecoveryStorage(SPONSORED_RECOVERY_FILE);
+    Object.defineProperty(globalThis, 'sessionStorage', { value: recovery, configurable: true });
+    Object.defineProperty(globalThis, 'localStorage', { value: recovery, configurable: true });
+    Object.defineProperty(globalThis, 'window', {
+      value: {
+        location: { origin: APP_ORIGIN },
+        sessionStorage: recovery,
+        localStorage: recovery,
+        crypto: globalThis.crypto,
+      },
+      configurable: true,
+    });
+    const near = await import('near-api-js');
+    const upload = await import('@/lib/livepeer-upload');
+    const publication = await import('@/lib/livepeer-publication');
+    const { getSplitTransactionProvider } = await import('@/lib/rpc-failover');
+    const provider = getSplitTransactionProvider();
+    const credentialPath = join(
+      homedir(),
+      `.near-credentials/testnet/${input.accountId}.json`,
+    );
+    const keyPair = loadCredential(credentialPath, input.accountId, near.KeyPair);
+    await requireFinalFullAccessKey(provider, input.accountId, keyPair.getPublicKey().toString());
+    const signer = new near.KeyPairSigner(keyPair);
+    const account = new near.Account(input.accountId, provider, signer);
+    const source = upload.validateLivepeerSourceFile(media.file);
+    if (!source.ok || source.sourceType !== 'mp4'
+      || upload.livepeerUploadFeeUsdc(media.file.size) !== FEE_USDC) {
+      throw new Error('sponsored_canary_media_policy_invalid');
+    }
+    const jobId = upload.createLivepeerJobId();
+    const fingerprint = await upload.fingerprintLivepeerSource(media.file);
+    const wallet = {
+      signAndSendTransaction: async () => {
+        throw new Error('sponsored_canary_normal_transaction_forbidden');
+      },
+      signDelegateActions: async ({ delegateActions, blockHeightTtl = 200 }: {
+        delegateActions: Array<{ receiverId: string; actions: unknown[] }>;
+        blockHeightTtl?: number;
+      }) => ({
+        signedDelegateActions: await Promise.all(delegateActions.map(async (delegate) => {
+          const signed = await account.createSignedMetaTransaction({
+            receiverId: delegate.receiverId,
+            actions: delegate.actions as never,
+            blockHeightTtl,
+          });
+          return near.base64Encode(near.encodeSignedDelegate(signed.signedDelegate));
+        })),
+      }),
+    };
+    const participant = {
+      accountId: input.accountId,
+      jobId,
+      sourceBytes: input.sourceBytes,
+      feeUsdc: FEE_USDC,
+    };
+    const restoreFetch = installBridgeOriginFetch();
+
+    try {
+      const receipt = await runSponsoredOne(participant, {
+        preflight: async () => {
+          if (await publication.readLivepeerMediaJob(jobId) !== null) {
+            throw new Error('sponsored_canary_job_exists');
+          }
+          const governance = await readFinalView(provider, MARKET_ID, 'get_governance_state');
+          if (!governance || typeof governance !== 'object'
+            || (governance as { new_purchases_paused?: unknown }).new_purchases_paused !== false) {
+            throw new Error('sponsored_canary_market_paused');
+          }
+          const relayer = await provider.query({
+            request_type: 'view_account', finality: 'final', account_id: relayerAccountId,
+          }) as { amount?: unknown };
+          if (typeof relayer.amount !== 'string' || BigInt(relayer.amount) <= 0n) {
+            throw new Error('sponsored_canary_relayer_unfunded');
+          }
+          await upload.preflightLivepeerUpload({
+            accountId: input.accountId,
+            jobId,
+            generation: 1,
+            expectedSourceBytes: input.sourceBytes,
+          });
+          const balances = await upload.readCreatorFeeBalances(input.accountId);
+          return {
+            usdcBalance: balances.usdcBalance,
+            platformBalance: String(await readFinalView(provider, MARKET_ID, 'get_platform_balance')),
+            publicationCount: await publication.readLivepeerPublicationsCount(),
+          };
+        },
+        authorize: () => upload.authorizeLivepeerPaidJob(wallet as never, {
+          accountId: input.accountId,
+          jobId,
+          title: 'Sponsored upload canary',
+          priceUsdc: '2000000',
+          expectedSourceBytes: input.sourceBytes,
+          asset: 'USDC',
+          allowSponsoredUsdc: true,
+        }),
+        waitForJob: (uploadPublicKey) => publication.waitForAuthorizedLivepeerJob(
+          jobId, input.accountId, uploadPublicKey,
+        ),
+        requestIntent: async () => {
+          const intent = await upload.requestLivepeerUploadIntent({
+            accountId: input.accountId,
+            jobId,
+            generation: 1,
+            expectedSourceBytes: input.sourceBytes,
+            sourceFingerprintSha256: fingerprint,
+            sourceType: 'mp4',
+          });
+          return {
+            created: intent.created,
+            endpointFingerprint: sha256(intent.tus_endpoint),
+            value: intent,
+          };
+        },
+        upload: (intent) => upload.uploadLivepeerSource(media.file, intent as never, {
+          heartbeat: () => upload.heartbeatLivepeerUploadLease({
+            accountId: input.accountId,
+            intent: intent as never,
+          }),
+        }),
+        waitForPublication: () => waitForPublication(publication, jobId, input.accountId),
+        readAfter: async () => ({
+          usdcBalance: (await upload.readCreatorFeeBalances(input.accountId)).usdcBalance,
+          platformBalance: String(await readFinalView(provider, MARKET_ID, 'get_platform_balance')),
+          publicationCount: await publication.readLivepeerPublicationsCount(),
+        }),
+      });
+      upload.clearLivepeerJobSessionKey(input.accountId, jobId);
+      if (recovery.length !== 0 || existsSync(SPONSORED_RECOVERY_FILE)) {
+        throw new Error('sponsored_canary_recovery_cleanup_failed');
+      }
+      console.log(JSON.stringify({
+        ...receipt,
+        creator_fingerprint: sha256(input.accountId),
+        relayer_fingerprint: sha256(relayerAccountId),
+        job_fingerprint: sha256(jobId),
+        media_sha256: input.sourceSha256,
+      }));
+    } catch {
+      throw new Error(`sponsored_canary_failed_recovery_retained=${existsSync(SPONSORED_RECOVERY_FILE)}`);
+    } finally {
+      restoreFetch();
     }
   },
   20 * 60 * 1000,
@@ -355,7 +606,7 @@ async function requireFinalFullAccessKey(
   }
 }
 
-async function requireEnabledBridge(expectedVersion: string) {
+async function requireEnabledBridge(expectedVersion: string, sponsored = false) {
   let response: Response;
   let value: Record<string, unknown>;
   try {
@@ -371,7 +622,9 @@ async function requireEnabledBridge(expectedVersion: string) {
     || value.versionId !== expectedVersion
     || value.stage !== 'ENABLED'
     || value.providerMutationEnabled !== true
-    || value.newUploadReady !== true) {
+    || value.newUploadReady !== true
+    || (sponsored && (value.sponsoredUploadQuoteReady !== true
+      || value.sponsoredUploadRelayReady !== true))) {
     throw new Error('multi_creator_canary_bridge_not_ready');
   }
 }
@@ -382,6 +635,67 @@ function requiredUuid(name: string): string {
     throw new Error('multi_creator_canary_expected_version_invalid');
   }
   return value;
+}
+
+function requiredTestnetAccount(name: string): string {
+  const value = process.env[name];
+  if (!value || !/^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(value)) {
+    throw new Error('sponsored_canary_relayer_account_invalid');
+  }
+  return value;
+}
+
+function installBridgeOriginFetch(): () => void {
+  const original = globalThis.fetch;
+  globalThis.fetch = (input, init = {}) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (new URL(url).origin !== BRIDGE_ORIGIN) return original(input, init);
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+    headers.set('Origin', APP_ORIGIN);
+    return original(input, { ...init, headers });
+  };
+  return () => { globalThis.fetch = original; };
+}
+
+async function readFinalView(
+  provider: { query(input: Record<string, unknown>): Promise<unknown> },
+  accountId: string,
+  methodName: string,
+): Promise<unknown> {
+  const value = await provider.query({
+    request_type: 'call_function',
+    finality: 'final',
+    account_id: accountId,
+    method_name: methodName,
+    args_base64: 'e30=',
+  }) as { result?: unknown };
+  if (!Array.isArray(value.result)) throw new Error('sponsored_canary_view_invalid');
+  try {
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(value.result)));
+  } catch {
+    throw new Error('sponsored_canary_view_invalid');
+  }
+}
+
+async function waitForPublication(
+  publication: typeof import('@/lib/livepeer-publication'),
+  jobId: string,
+  accountId: string,
+): Promise<void> {
+  const deadline = Date.now() + 18 * 60 * 1000;
+  while (Date.now() < deadline) {
+    try {
+      const progress = await publication.readLivepeerUploadProgress(jobId);
+      if (progress.job.status === 'Published'
+        && progress.publication?.creator_id === accountId
+        && progress.publication.availability === 'ACTIVE') return;
+    } catch {
+      // Provider finalization and final chain state can lag during the canary.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+  }
+  throw new Error('sponsored_canary_publication_pending');
 }
 
 function sha256(value: string | Uint8Array): string {

@@ -71,6 +71,8 @@ const BRIDGE_KEYS = Object.freeze([
   "LIVEPEER_JWT_ISSUER",
   "NEAR_OPERATOR_ACCOUNT_ID",
   "NEAR_OPERATOR_KEY_EPOCH",
+  "NEAR_SPONSOR_RELAYER_ACCOUNT_ID",
+  "NEAR_SPONSOR_RELAYER_KEY_EPOCH",
   "CREATOR_FEE_QUOTE_KEY_VERSION",
   "LIVEPEER_BRIDGE_ENABLED",
   "LIVEPEER_NEW_UPLOADS_ENABLED",
@@ -97,11 +99,12 @@ const OPTIONAL_KEYS = new Set([
   "LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS",
   "LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS",
   "MULTI_ASSET_PAYMENT_ASSET_IDS",
+  "NEAR_SPONSOR_RELAYER_ACCOUNT_ID",
+  "NEAR_SPONSOR_RELAYER_KEY_EPOCH",
 ]);
 
 const FALSE_FLAGS = Object.freeze([
   "NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE",
-  "NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS",
   "NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2",
   "NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2",
   "LIVEPEER_PLAYBACK_ISSUANCE_ENABLED",
@@ -111,8 +114,6 @@ const FALSE_FLAGS = Object.freeze([
   "LIVEPEER_OPERATOR_MUTATIONS_ENABLED",
   "UPLOAD_JOB_ARCHIVE_ENABLED",
   "LIVEPEER_NEAR_CREATOR_FEE_ENABLED",
-  "LIVEPEER_SPONSORED_UPLOADS_ENABLED",
-  "LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED",
 ]);
 
 const RELEASE_FILES = Object.freeze({
@@ -262,12 +263,42 @@ function buildConfig(environment) {
         || uploadCanaryFlags.every((value) => value === "true"))) {
     fail("PREVIEW multi-creator upload canary flags must be all false or all true");
   }
+  const sponsorCanaryFlags = [
+    web.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS,
+    bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED,
+    bridge.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED,
+  ];
+  if (environment === "production" && sponsorCanaryFlags.some((value) => value !== "false")) {
+    fail("PRODUCTION sponsor canary flags must be exactly false");
+  }
+  if (environment === "preview"
+      && !(sponsorCanaryFlags.every((value) => value === "false")
+        || sponsorCanaryFlags.every((value) => value === "true"))) {
+    fail("PREVIEW sponsor canary flags must be all false or all true");
+  }
+  if (environment === "preview" && sponsorCanaryFlags[0] === "true") {
+    if (!uploadCanaryFlags.every((value) => value === "true")) {
+      fail("PREVIEW sponsor canary requires upload canary flags");
+    }
+    const relayer = bridge.NEAR_SPONSOR_RELAYER_ACCOUNT_ID;
+    if (!/^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(relayer)
+        || [bridge.MARKET_CONTRACT_ID, bridge.ACCESS_CONTRACT_ID, bridge.NEAR_OPERATOR_ACCOUNT_ID]
+          .includes(relayer)) {
+      fail("PREVIEW sponsor canary requires a separate testnet relayer account");
+    }
+    if (!DECIMAL_RE.test(bridge.NEAR_SPONSOR_RELAYER_KEY_EPOCH)) {
+      fail("PREVIEW sponsor canary requires a positive relayer key epoch");
+    }
+  }
   if (environment === "preview" && uploadCanaryFlags[0] === "true") {
     const creators = bridge.LIVEPEER_CREATOR_ALLOWLIST.split(",");
-    if (creators.length !== 2
-        || new Set(creators).size !== 2
+    const expectedCreators = sponsorCanaryFlags[0] === "true" ? 1 : 2;
+    if (creators.length !== expectedCreators
+        || new Set(creators).size !== expectedCreators
         || creators.some((creator) => !/^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(creator))) {
-      fail("PREVIEW multi-creator upload canary requires exactly two distinct testnet creators");
+      fail(expectedCreators === 1
+        ? "PREVIEW sponsored upload canary requires exactly one testnet creator"
+        : "PREVIEW multi-creator upload canary requires exactly two distinct testnet creators");
     }
     if (bridge.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS !== "20000000") {
       fail("PREVIEW multi-creator upload canary monthly budget must be exactly 20000000");
@@ -390,6 +421,10 @@ function buildConfig(environment) {
   }
   for (const key of ["NEAR_OPERATOR_KEY_EPOCH", "CREATOR_FEE_QUOTE_KEY_VERSION"]) {
     if (!DECIMAL_RE.test(bridge[key])) fail(`${key} must be a positive integer`);
+  }
+  if (bridge.NEAR_SPONSOR_RELAYER_KEY_EPOCH
+      && !DECIMAL_RE.test(bridge.NEAR_SPONSOR_RELAYER_KEY_EPOCH)) {
+    fail("NEAR_SPONSOR_RELAYER_KEY_EPOCH must be a positive integer");
   }
 
   return {

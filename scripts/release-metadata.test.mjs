@@ -55,6 +55,8 @@ function publicEnv(environment) {
     LIVEPEER_JWT_ISSUER: webOrigin,
     NEAR_OPERATOR_ACCOUNT_ID: "bridge.testnet",
     NEAR_OPERATOR_KEY_EPOCH: "1",
+    NEAR_SPONSOR_RELAYER_ACCOUNT_ID: "",
+    NEAR_SPONSOR_RELAYER_KEY_EPOCH: "",
     CREATOR_FEE_QUOTE_KEY_VERSION: "1",
     LIVEPEER_BRIDGE_ENABLED: "false",
     LIVEPEER_NEW_UPLOADS_ENABLED: "false",
@@ -162,6 +164,11 @@ test("workflows keep cumulative Preview release provenance", () => {
     preview,
     /LIVEPEER_JWT_PRIVATE_KEY: \$\{\{ secrets\.PREVIEW_LIVEPEER_JWT_PRIVATE_KEY \}\}/,
   );
+  assert.match(preview, /PREVIEW_SPONSORED_UPLOAD_CANARY_ENABLED/);
+  assert.match(preview, /PREVIEW_CREATOR_FEE_QUOTE_PRIVATE_KEY/);
+  assert.match(preview, /PREVIEW_NEAR_SPONSOR_RELAYER_PRIVATE_KEY/);
+  assert.match(preview, /PREVIEW_NEAR_SPONSOR_RELAYER_ACCOUNT_ID/);
+  assert.match(preview, /PREVIEW_NEAR_SPONSOR_RELAYER_KEY_EPOCH/);
   assert.match(
     preview,
     /PREVIEW_OPERATOR_OUTBOX_ARCHIVE_ENABLED: \$\{\{ vars\.PREVIEW_OPERATOR_OUTBOX_ARCHIVE_ENABLED \}\}/,
@@ -174,17 +181,17 @@ test("workflows keep cumulative Preview release provenance", () => {
   ]) {
     assert.match(
       preview,
-      new RegExp(`${name}: \\\$\\{\\{ vars\\.PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED \\\\|\\\\| 'false' \\\$\\}\\}`),
+      new RegExp(`${name}: .*PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED.*PREVIEW_SPONSORED_UPLOAD_CANARY_ENABLED`),
     );
   }
   assert.doesNotMatch(promote, /PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED/);
   assert.match(preview, /PRODUCTION_OPERATOR_OUTBOX_ARCHIVE_ENABLED: "false"/);
-  for (const workflow of [preview, promote]) {
-    assert.match(workflow, /NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS: "false"/);
-    assert.match(workflow, /LIVEPEER_SPONSORED_UPLOADS_ENABLED: "false"/);
-    assert.match(workflow, /LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: "false"/);
-    assert.doesNotMatch(workflow, /NEAR_SPONSOR_RELAYER_PRIVATE_KEY/);
-  }
+  for (const name of [
+    "PRODUCTION_NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS",
+    "PRODUCTION_LIVEPEER_SPONSORED_UPLOADS_ENABLED",
+    "PRODUCTION_LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED",
+  ]) assert.match(preview, new RegExp(`${name}: "false"`));
+  assert.doesNotMatch(promote, /SPONSORED_UPLOAD_CANARY|NEAR_SPONSOR_RELAYER_PRIVATE_KEY/);
   assert.doesNotMatch(preview, /cp workers\/livepeer-bridge\/wrangler\.toml/);
 });
 
@@ -326,9 +333,34 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
         env,
       );
       assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /exactly false/);
+      assert.match(result.stderr, /sponsor canary flags must be all false or all true/);
     });
   }
+
+  await t.test("complete Preview sponsored upload canary packet", () => {
+    const output = join(tmpdir(), "preview-sponsored-upload-config.json");
+    const env = publicEnv("preview");
+    env.PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = "true";
+    env.PREVIEW_LIVEPEER_BRIDGE_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_NEW_UPLOADS_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "true";
+    env.PREVIEW_NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS = "true";
+    env.PREVIEW_LIVEPEER_SPONSORED_UPLOADS_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED = "true";
+    env.PREVIEW_NEAR_SPONSOR_RELAYER_ACCOUNT_ID = "sponsor-relayer.testnet";
+    env.PREVIEW_NEAR_SPONSOR_RELAYER_KEY_EPOCH = "1";
+    env.PREVIEW_LIVEPEER_CREATOR_ALLOWLIST = "creator-one.testnet";
+    env.PREVIEW_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS = "20000000";
+    env.PREVIEW_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS = "2000000";
+    const result = run(["config", "--environment", "preview", "--output", output], env);
+    assertSuccess(result);
+    const config = JSON.parse(readFileSync(output, "utf8"));
+    assert.equal(config.web.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS, "true");
+    assert.equal(config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED, "true");
+    assert.equal(config.bridge.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED, "true");
+    assert.equal(config.bridge.NEAR_SPONSOR_RELAYER_ACCOUNT_ID, "sponsor-relayer.testnet");
+    assert.equal(config.bridge.NEAR_SPONSOR_RELAYER_KEY_EPOCH, "1");
+  });
 
   await t.test("Preview derived read model at its exact origin", () => {
     const env = publicEnv("preview");

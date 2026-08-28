@@ -120,11 +120,12 @@ const BRIDGE_PUBLIC_KEYS = Object.freeze([
     'NEAR_NETWORK',
     'NEAR_OPERATOR_ACCOUNT_ID',
     'NEAR_OPERATOR_KEY_EPOCH',
+    'NEAR_SPONSOR_RELAYER_ACCOUNT_ID',
+    'NEAR_SPONSOR_RELAYER_KEY_EPOCH',
 ]);
 
 const FALSE_FLAGS = Object.freeze([
     ['web', 'NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE'],
-    ['web', 'NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS'],
     ['web', 'NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2'],
     ['web', 'NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2'],
     ['bridge', 'LIVEPEER_PLAYBACK_ISSUANCE_ENABLED'],
@@ -134,8 +135,6 @@ const FALSE_FLAGS = Object.freeze([
     ['bridge', 'LIVEPEER_OPERATOR_MUTATIONS_ENABLED'],
     ['bridge', 'UPLOAD_JOB_ARCHIVE_ENABLED'],
     ['bridge', 'LIVEPEER_NEAR_CREATOR_FEE_ENABLED'],
-    ['bridge', 'LIVEPEER_SPONSORED_UPLOADS_ENABLED'],
-    ['bridge', 'LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED'],
 ]);
 
 const BRIDGE_ARTIFACT_WRANGLER = [
@@ -418,10 +417,34 @@ async function readRelease(artifactDir, target, sha) {
             || uploadCanaryFlags.every((value) => value === 'true'))) {
         fail('preview_multi_creator_upload_canary_flags_invalid');
     }
+    const sponsorCanaryFlags = [
+        config.web?.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS,
+        config.bridge?.LIVEPEER_SPONSORED_UPLOADS_ENABLED,
+        config.bridge?.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED,
+    ];
+    if (target === 'production' && sponsorCanaryFlags.some((value) => value !== 'false')) {
+        fail('production_sponsor_canary_flags_not_false');
+    }
+    if (target === 'preview'
+        && !(sponsorCanaryFlags.every((value) => value === 'false')
+            || sponsorCanaryFlags.every((value) => value === 'true'))) {
+        fail('preview_sponsor_canary_flags_invalid');
+    }
+    if (target === 'preview' && sponsorCanaryFlags[0] === 'true') {
+        const relayer = config.bridge?.NEAR_SPONSOR_RELAYER_ACCOUNT_ID;
+        if (!uploadCanaryFlags.every((value) => value === 'true')
+            || !/^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(relayer || '')
+            || [config.bridge?.MARKET_CONTRACT_ID, config.bridge?.ACCESS_CONTRACT_ID,
+                config.bridge?.NEAR_OPERATOR_ACCOUNT_ID].includes(relayer)
+            || !/^[1-9][0-9]*$/.test(config.bridge?.NEAR_SPONSOR_RELAYER_KEY_EPOCH || '')) {
+            fail('preview_sponsor_canary_config_invalid');
+        }
+    }
     if (target === 'preview' && uploadCanaryFlags[0] === 'true') {
         const creators = config.bridge?.LIVEPEER_CREATOR_ALLOWLIST?.split(',') ?? [];
-        if (creators.length !== 2
-            || new Set(creators).size !== 2
+        const expectedCreators = sponsorCanaryFlags[0] === 'true' ? 1 : 2;
+        if (creators.length !== expectedCreators
+            || new Set(creators).size !== expectedCreators
             || creators.some((creator) => !/^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(creator))) {
             fail('preview_multi_creator_upload_canary_creators_invalid');
         }
@@ -724,6 +747,8 @@ async function makeWranglerRunner(binary, tempRoot, { echo, label }) {
         delete childEnvironment.LIVEPEER_JWT_PRIVATE_KEY;
         delete childEnvironment.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN;
         delete childEnvironment.NEAR_OPERATOR_PRIVATE_KEY;
+        delete childEnvironment.CREATOR_FEE_QUOTE_PRIVATE_KEY;
+        delete childEnvironment.NEAR_SPONSOR_RELAYER_PRIVATE_KEY;
         const result = await runProcess(binary, args, {
             cwd,
             echo,
@@ -1314,6 +1339,8 @@ export async function deployRelease({
     livepeerJwtPrivateKey: livepeerJwtPrivateKeyValue = process.env.LIVEPEER_JWT_PRIVATE_KEY,
     paidMediaOperatorToken: paidMediaOperatorTokenValue = process.env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN,
     nearOperatorPrivateKey: nearOperatorPrivateKeyValue = process.env.NEAR_OPERATOR_PRIVATE_KEY,
+    creatorFeeQuotePrivateKey: creatorFeeQuotePrivateKeyValue = process.env.CREATOR_FEE_QUOTE_PRIVATE_KEY,
+    nearSponsorRelayerPrivateKey: nearSponsorRelayerPrivateKeyValue = process.env.NEAR_SPONSOR_RELAYER_PRIVATE_KEY,
     sleepFn = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
 } = {}) {
     if (!Object.hasOwn(TARGETS, target)) fail('target_invalid');
@@ -1325,6 +1352,7 @@ export async function deployRelease({
     const repoRoot = await realpath(resolve(repoValue));
     const release = await readRelease(artifactDir, target, sha);
     const oneClickApiKey = validateOneClickApiKey(oneClickApiKeyValue, true);
+    const sponsorCanary = release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true';
     const previewSecrets = target === 'preview' ? {
         LIVEPEER_API_KEY: validatePreviewSecret(livepeerApiKeyValue, 'livepeer_api_key'),
         LIVEPEER_WEBHOOK_SECRET: validatePreviewSecret(
@@ -1345,6 +1373,18 @@ export async function deployRelease({
             'near_operator_private_key',
             /^ed25519:[1-9A-HJ-NP-Za-km-z]{80,100}$/,
         ),
+        ...(sponsorCanary ? {
+            CREATOR_FEE_QUOTE_PRIVATE_KEY: validatePreviewSecret(
+                creatorFeeQuotePrivateKeyValue,
+                'creator_fee_quote_private_key',
+                /^(?=.{64,}$)[A-Za-z0-9+/]+={0,2}$/,
+            ),
+            NEAR_SPONSOR_RELAYER_PRIVATE_KEY: validatePreviewSecret(
+                nearSponsorRelayerPrivateKeyValue,
+                'near_sponsor_relayer_private_key',
+                /^ed25519:[1-9A-HJ-NP-Za-km-z]{80,100}$/,
+            ),
+        } : {}),
     } : {};
 
     const tempRoot = await mkdtemp(join(tmpdir(), 'youtick-cloudflare-release-'));
@@ -1486,6 +1526,7 @@ export async function deployRelease({
                 bridgeUrl: candidateBridgeUrl,
                 expectedBridgeVersion: prepared.bridge.previous,
                 expectedBridgeEnabled: null,
+                expectedSponsoredUploadReady: null,
                 bridgeBootstrap: prepared.bridge.bootstrap,
                 includePlaybackV2: false,
             }));
@@ -1495,6 +1536,8 @@ export async function deployRelease({
                 overrideVersion: prepared.bridge.candidate,
                 expectedBridgeVersion: prepared.bridge.candidate,
                 expectedBridgeEnabled: release.config.bridge.LIVEPEER_BRIDGE_ENABLED === 'true',
+                expectedSponsoredUploadReady:
+                    release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
             }));
 
             promotionStarted = true;
@@ -1560,6 +1603,8 @@ export async function deployRelease({
                 smokeInput(target, `https://${TARGETS[target].web.domain}`, {
                     expectedBridgeVersion: prepared.bridge.candidate,
                     expectedBridgeEnabled: release.config.bridge.LIVEPEER_BRIDGE_ENABLED === 'true',
+                    expectedSponsoredUploadReady:
+                        release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
                 }),
                 sleepFn,
             );
