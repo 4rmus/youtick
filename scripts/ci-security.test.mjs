@@ -86,6 +86,12 @@ test('testnet Market code update stays exact-main, one-shot and protected', asyn
 
     assert.match(ci, /name: market-runtime-candidate-\$\{\{ github\.sha \}\}/);
     assert.match(ci, /name: market-contract-\$\{\{ github\.sha \}\}/);
+    assert.match(ci, /workers\/livepeer-bridge\/scripts\/market-code-update\*\)\n\s+bridge=true\n\s+contracts=true\n\s+;;/);
+    assert.ok(
+        ci.indexOf('workers/livepeer-bridge/scripts/market-code-update*)')
+            < ci.indexOf('workers/livepeer-bridge/*)'),
+        'Market update paths must precede the general Bridge path rule',
+    );
     assert.match(ci, /github\.event_name == 'push'/);
     assert.match(ci, /github\.ref == 'refs\/heads\/main'/);
     assert.match(ci, /Attest exact Market runtime provenance/);

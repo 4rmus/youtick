@@ -143,6 +143,10 @@ jobs:
                 apps/web/*)
                   web=true
                   ;;
+                workers/livepeer-bridge/scripts/market-code-update*)
+                  bridge=true
+                  contracts=true
+                  ;;
                 workers/livepeer-bridge/*)
                   bridge=true
                   ;;
