@@ -142,7 +142,8 @@ async function request(baseUrl, path, init, headers, fetchImpl) {
 }
 
 async function bridgeHealth(
-    bridgeUrl, headers, expectedVersion, expectedBridgeEnabled, bridgeBootstrap, fetchImpl, sleepFn,
+    bridgeUrl, headers, expectedVersion, expectedBridgeEnabled, expectedSponsoredUploadReady,
+    bridgeBootstrap, fetchImpl, sleepFn,
 ) {
     const delays = bridgeBootstrap
         ? BOOTSTRAP_HEALTH_RETRY_DELAYS_MS
@@ -161,19 +162,26 @@ async function bridgeHealth(
             expectStatus(health.response, 200, 'bridge_health');
         }
         const healthJson = expectJson(health.response, health.body, 'bridge_health');
-        const sponsoredUploadsClosed = (healthJson.sponsoredUploadQuoteReady === false
-            && healthJson.sponsoredUploadRelayReady === false)
-            || (expectedBridgeEnabled === null
-                && healthJson.sponsoredUploadQuoteReady === undefined
-                && healthJson.sponsoredUploadRelayReady === undefined);
+        const sponsoredUploadsReady = healthJson.sponsoredUploadQuoteReady === true
+            && healthJson.sponsoredUploadRelayReady === true;
+        const sponsoredUploadsClosed = healthJson.sponsoredUploadQuoteReady === false
+            && healthJson.sponsoredUploadRelayReady === false;
+        const sponsoredUploadsLegacyClosed = expectedSponsoredUploadReady === null
+            && healthJson.sponsoredUploadQuoteReady === undefined
+            && healthJson.sponsoredUploadRelayReady === undefined;
+        const sponsoredUploadsMatch = expectedSponsoredUploadReady === true
+            ? sponsoredUploadsReady
+            : expectedSponsoredUploadReady === false
+                ? sponsoredUploadsClosed
+                : sponsoredUploadsClosed || sponsoredUploadsLegacyClosed;
         const enabled = healthJson.stage === 'ENABLED'
             && healthJson.providerMutationEnabled === true
             && healthJson.newUploadReady === true
-            && sponsoredUploadsClosed;
+            && sponsoredUploadsMatch;
         const disabled = healthJson.stage === 'DISABLED'
             && healthJson.providerMutationEnabled === false
             && healthJson.newUploadReady === false
-            && sponsoredUploadsClosed;
+            && sponsoredUploadsMatch;
         if (expectedBridgeEnabled === null ? !enabled && !disabled : expectedBridgeEnabled ? !enabled : !disabled) {
             throw new Error(expectedBridgeEnabled === null
                 ? 'release_smoke_bridge_policy_invalid'
@@ -239,6 +247,7 @@ export async function runReleaseSmoke({
     overrideVersion,
     expectedBridgeVersion,
     expectedBridgeEnabled = false,
+    expectedSponsoredUploadReady = expectedBridgeEnabled === null ? null : false,
     bridgeBootstrap = false,
     includePlaybackV2 = true,
     fetchImpl = fetch,
@@ -261,6 +270,12 @@ export async function runReleaseSmoke({
     if (expectedBridgeEnabled !== null && typeof expectedBridgeEnabled !== 'boolean') {
         throw new Error('release_smoke_bridge_policy_invalid');
     }
+    if ((expectedSponsoredUploadReady !== null
+        && typeof expectedSponsoredUploadReady !== 'boolean')
+        || (expectedSponsoredUploadReady === null && expectedBridgeEnabled !== null)
+        || (expectedSponsoredUploadReady === true && expectedBridgeEnabled !== true)) {
+        throw new Error('release_smoke_bridge_policy_invalid');
+    }
     if (typeof bridgeBootstrap !== 'boolean' || (bridgeBootstrap && !expectedVersion)) {
         throw new Error('release_smoke_bridge_bootstrap_invalid');
     }
@@ -280,7 +295,7 @@ export async function runReleaseSmoke({
 
     const healthJson = await bridgeHealth(
         bridgeUrl, headers, expectedVersion, expectedBridgeEnabled,
-        bridgeBootstrap, fetchImpl, sleepFn,
+        expectedSponsoredUploadReady, bridgeBootstrap, fetchImpl, sleepFn,
     );
 
     const mutationStatuses = {};

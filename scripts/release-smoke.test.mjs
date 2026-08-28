@@ -380,6 +380,28 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
     assert.equal(result.bridge.stage, 'ENABLED');
     assert.deepEqual(result.bridge.mutation_statuses, {});
     assert.equal(inferred.bridge.stage, 'ENABLED');
+    sponsorHealth = {
+        sponsoredUploadQuoteReady: true,
+        sponsoredUploadRelayReady: true,
+    };
+    const sponsored = await runReleaseSmoke({
+        ...input,
+        expectedBridgeEnabled: true,
+        expectedSponsoredUploadReady: true,
+    });
+    assert.equal(sponsored.bridge.stage, 'ENABLED');
+    await assert.rejects(
+        runReleaseSmoke({ ...input, expectedBridgeEnabled: true }),
+        /release_smoke_bridge_not_enabled/,
+    );
+    await assert.rejects(
+        runReleaseSmoke({
+            ...input,
+            expectedBridgeEnabled: false,
+            expectedSponsoredUploadReady: true,
+        }),
+        /release_smoke_bridge_policy_invalid/,
+    );
     sponsorHealth = {};
     const legacy = await runReleaseSmoke({ ...input, expectedBridgeEnabled: null });
     assert.equal(legacy.bridge.stage, 'ENABLED');
@@ -392,6 +414,7 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
         { sponsoredUploadRelayReady: false },
         { sponsoredUploadQuoteReady: false, sponsoredUploadRelayReady: true },
         { sponsoredUploadQuoteReady: true, sponsoredUploadRelayReady: false },
+        { sponsoredUploadQuoteReady: true, sponsoredUploadRelayReady: true },
         { sponsoredUploadQuoteReady: null, sponsoredUploadRelayReady: null },
     ]) {
         await assert.rejects(

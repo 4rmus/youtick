@@ -221,6 +221,7 @@ jobs:
       - run: npm run lint
       - run: npm test -- --run
       - run: npm run test:livepeer-canary
+      - run: npm run test:multi-creator-upload-canary
       - run: npm run build
 
   livepeer-bridge:

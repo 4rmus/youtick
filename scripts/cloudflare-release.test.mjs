@@ -35,12 +35,16 @@ const LIVEPEER_WEBHOOK_SECRET = 'a'.repeat(64);
 const LIVEPEER_JWT_PRIVATE_KEY = 'b'.repeat(128);
 const LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN = 'c'.repeat(64);
 const NEAR_OPERATOR_PRIVATE_KEY = `ed25519:${'1'.repeat(88)}`;
+const CREATOR_FEE_QUOTE_PRIVATE_KEY = 'd'.repeat(88);
+const NEAR_SPONSOR_RELAYER_PRIVATE_KEY = `ed25519:${'2'.repeat(88)}`;
 const PREVIEW_SECRET_INPUTS = {
     livepeerApiKey: LIVEPEER_API_KEY,
     livepeerWebhookSecret: LIVEPEER_WEBHOOK_SECRET,
     livepeerJwtPrivateKey: LIVEPEER_JWT_PRIVATE_KEY,
     paidMediaOperatorToken: LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN,
     nearOperatorPrivateKey: NEAR_OPERATOR_PRIVATE_KEY,
+    creatorFeeQuotePrivateKey: CREATOR_FEE_QUOTE_PRIVATE_KEY,
+    nearSponsorRelayerPrivateKey: NEAR_SPONSOR_RELAYER_PRIVATE_KEY,
 };
 const TARGETS = {
     preview: {
@@ -138,6 +142,8 @@ function makeConfig(target) {
             NEAR_NETWORK: 'testnet',
             NEAR_OPERATOR_ACCOUNT_ID: 'bridge.testnet',
             NEAR_OPERATOR_KEY_EPOCH: '1',
+            NEAR_SPONSOR_RELAYER_ACCOUNT_ID: '',
+            NEAR_SPONSOR_RELAYER_KEY_EPOCH: '',
             MULTI_ASSET_PAYMENTS_MODE: 'off',
             MULTI_ASSET_PAYMENT_ASSET_IDS: '',
         },
@@ -328,6 +334,9 @@ if (secretsIndex >= 0) {
       'NEAR_OPERATOR_PRIVATE_KEY',
     ]
     : [];
+  if (process.env.FAKE_PREVIEW_SPONSOR_CREDENTIALS === 'true') {
+    previewKeys.push('CREATOR_FEE_QUOTE_PRIVATE_KEY', 'NEAR_SPONSOR_RELAYER_PRIVATE_KEY');
+  }
   const expectedKeys = [
     'NEAR_RPC_URL',
     ...(process.env.FAKE_ONECLICK_API_KEY_SCRYPT ? ['ONECLICK_API_KEY'] : []),
@@ -344,11 +353,18 @@ if (secretsIndex >= 0) {
           || parsed.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN
             !== process.env.FAKE_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN
           || parsed.NEAR_OPERATOR_PRIVATE_KEY !== process.env.FAKE_NEAR_OPERATOR_PRIVATE_KEY))
+      || (process.env.FAKE_PREVIEW_SPONSOR_CREDENTIALS === 'true'
+        && (parsed.CREATOR_FEE_QUOTE_PRIVATE_KEY
+          !== process.env.FAKE_CREATOR_FEE_QUOTE_PRIVATE_KEY
+          || parsed.NEAR_SPONSOR_RELAYER_PRIVATE_KEY
+            !== process.env.FAKE_NEAR_SPONSOR_RELAYER_PRIVATE_KEY))
       || process.env.NEAR_RPC_URL || process.env.ONECLICK_API_KEY
       || process.env.LIVEPEER_API_KEY || process.env.LIVEPEER_WEBHOOK_SECRET
       || process.env.LIVEPEER_JWT_PRIVATE_KEY
       || process.env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN
-      || process.env.NEAR_OPERATOR_PRIVATE_KEY) {
+      || process.env.NEAR_OPERATOR_PRIVATE_KEY
+      || process.env.CREATOR_FEE_QUOTE_PRIVATE_KEY
+      || process.env.NEAR_SPONSOR_RELAYER_PRIVATE_KEY) {
     throw new Error('invalid fake Wrangler secret contract');
   }
   fs.appendFileSync(process.env.FAKE_WRANGLER_SECRET_LOG, JSON.stringify({
@@ -600,7 +616,7 @@ function makeFakeWrangler(release, state) {
 async function withFakeEnvironment(
     fake,
     callback,
-    { oneClickApiKey = null, previewCredentials = false } = {},
+    { oneClickApiKey = null, previewCredentials = false, sponsorCredentials = false } = {},
 ) {
     const previousState = process.env.FAKE_WRANGLER_STATE;
     const previousLog = process.env.FAKE_WRANGLER_LOG;
@@ -615,6 +631,8 @@ async function withFakeEnvironment(
     const previousLivepeerJwtPrivateKey = process.env.LIVEPEER_JWT_PRIVATE_KEY;
     const previousPaidMediaOperatorToken = process.env.LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN;
     const previousNearOperatorPrivateKey = process.env.NEAR_OPERATOR_PRIVATE_KEY;
+    const previousCreatorFeeQuotePrivateKey = process.env.CREATOR_FEE_QUOTE_PRIVATE_KEY;
+    const previousNearSponsorRelayerPrivateKey = process.env.NEAR_SPONSOR_RELAYER_PRIVATE_KEY;
     process.env.FAKE_WRANGLER_STATE = fake.statePath;
     process.env.FAKE_WRANGLER_LOG = fake.logPath;
     process.env.FAKE_WRANGLER_SECRET_LOG = fake.secretLogPath;
@@ -645,6 +663,15 @@ async function withFakeEnvironment(
     } else {
         delete process.env.FAKE_PREVIEW_CREDENTIALS;
     }
+    if (sponsorCredentials) {
+        process.env.FAKE_PREVIEW_SPONSOR_CREDENTIALS = 'true';
+        process.env.FAKE_CREATOR_FEE_QUOTE_PRIVATE_KEY = CREATOR_FEE_QUOTE_PRIVATE_KEY;
+        process.env.FAKE_NEAR_SPONSOR_RELAYER_PRIVATE_KEY = NEAR_SPONSOR_RELAYER_PRIVATE_KEY;
+        process.env.CREATOR_FEE_QUOTE_PRIVATE_KEY = CREATOR_FEE_QUOTE_PRIVATE_KEY;
+        process.env.NEAR_SPONSOR_RELAYER_PRIVATE_KEY = NEAR_SPONSOR_RELAYER_PRIVATE_KEY;
+    } else {
+        delete process.env.FAKE_PREVIEW_SPONSOR_CREDENTIALS;
+    }
     try {
         return await callback();
     } finally {
@@ -669,6 +696,9 @@ async function withFakeEnvironment(
         delete process.env.FAKE_LIVEPEER_JWT_PRIVATE_KEY;
         delete process.env.FAKE_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN;
         delete process.env.FAKE_NEAR_OPERATOR_PRIVATE_KEY;
+        delete process.env.FAKE_PREVIEW_SPONSOR_CREDENTIALS;
+        delete process.env.FAKE_CREATOR_FEE_QUOTE_PRIVATE_KEY;
+        delete process.env.FAKE_NEAR_SPONSOR_RELAYER_PRIVATE_KEY;
         if (previousLivepeerApiKey === undefined) delete process.env.LIVEPEER_API_KEY;
         else process.env.LIVEPEER_API_KEY = previousLivepeerApiKey;
         if (previousLivepeerWebhookSecret === undefined) delete process.env.LIVEPEER_WEBHOOK_SECRET;
@@ -682,6 +712,12 @@ async function withFakeEnvironment(
         }
         if (previousNearOperatorPrivateKey === undefined) delete process.env.NEAR_OPERATOR_PRIVATE_KEY;
         else process.env.NEAR_OPERATOR_PRIVATE_KEY = previousNearOperatorPrivateKey;
+        if (previousCreatorFeeQuotePrivateKey === undefined) {
+            delete process.env.CREATOR_FEE_QUOTE_PRIVATE_KEY;
+        } else process.env.CREATOR_FEE_QUOTE_PRIVATE_KEY = previousCreatorFeeQuotePrivateKey;
+        if (previousNearSponsorRelayerPrivateKey === undefined) {
+            delete process.env.NEAR_SPONSOR_RELAYER_PRIVATE_KEY;
+        } else process.env.NEAR_SPONSOR_RELAYER_PRIVATE_KEY = previousNearSponsorRelayerPrivateKey;
     }
 }
 
@@ -707,6 +743,12 @@ function deployFixture(
             ? LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN
             : undefined,
         nearOperatorPrivateKey = target === 'preview' ? NEAR_OPERATOR_PRIVATE_KEY : undefined,
+        creatorFeeQuotePrivateKey = target === 'preview'
+            ? CREATOR_FEE_QUOTE_PRIVATE_KEY
+            : undefined,
+        nearSponsorRelayerPrivateKey = target === 'preview'
+            ? NEAR_SPONSOR_RELAYER_PRIVATE_KEY
+            : undefined,
         sleepFn,
     } = {},
 ) {
@@ -731,8 +773,16 @@ function deployFixture(
         livepeerJwtPrivateKey,
         paidMediaOperatorToken,
         nearOperatorPrivateKey,
+        creatorFeeQuotePrivateKey,
+        nearSponsorRelayerPrivateKey,
         sleepFn,
-    }), { oneClickApiKey, previewCredentials: target === 'preview' });
+    }), {
+        oneClickApiKey,
+        previewCredentials: target === 'preview',
+        sponsorCredentials: target === 'preview'
+            && JSON.parse(readFileSync(release.configPath, 'utf8'))
+                .bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
+    });
 }
 
 test('Bridge artifact writer emits the exact disabled release config once', async (t) => {
@@ -1352,10 +1402,13 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
             return { ok: true };
         });
 
-        assert.deepEqual(smokeInputs.map(({ expectedBridgeEnabled }) => expectedBridgeEnabled), [
-            null,
-            true,
-            true,
+        assert.deepEqual(smokeInputs.map((input) => ({
+            bridge: input.expectedBridgeEnabled,
+            sponsored: input.expectedSponsoredUploadReady,
+        })), [
+            { bridge: null, sponsored: null },
+            { bridge: true, sponsored: false },
+            { bridge: true, sponsored: false },
         ]);
 
         const bridgeCommands = calls(fake).filter((args) => (
@@ -1368,6 +1421,63 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
             && args.includes('LIVEPEER_NEW_UPLOADS_ENABLED:true')
             && args.includes('LIVEPEER_PROVIDER_MUTATIONS_ENABLED:true')
         )));
+    });
+
+    await t.test('accepts the complete Preview sponsored upload canary packet', async (subtest) => {
+        const release = makeRelease(subtest);
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.web.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = 'true';
+        config.web.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS = 'true';
+        config.bridge.LIVEPEER_BRIDGE_ENABLED = 'true';
+        config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED = 'true';
+        config.bridge.LIVEPEER_PROVIDER_MUTATIONS_ENABLED = 'true';
+        config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED = 'true';
+        config.bridge.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED = 'true';
+        config.bridge.NEAR_SPONSOR_RELAYER_ACCOUNT_ID = 'sponsor-relayer.testnet';
+        config.bridge.NEAR_SPONSOR_RELAYER_KEY_EPOCH = '1';
+        config.bridge.LIVEPEER_CREATOR_ALLOWLIST = 'creator-one.testnet';
+        config.bridge.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS = '20000000';
+        config.bridge.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS = '2000000';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.preview = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        for (const [overrides, error] of [
+            [{ creatorFeeQuotePrivateKey: null }, /creator_fee_quote_private_key_invalid/],
+            [{ creatorFeeQuotePrivateKey: 'd'.repeat(16) }, /creator_fee_quote_private_key_invalid/],
+            [{ nearSponsorRelayerPrivateKey: null }, /near_sponsor_relayer_private_key_invalid/],
+        ]) {
+            const denied = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+            await assert.rejects(deployFixture(release, denied, undefined, overrides), error);
+            assert.deepEqual(denied.apiCalls, []);
+            assert.deepEqual(calls(denied), []);
+        }
+        const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+        const smokeInputs = [];
+
+        await deployFixture(release, fake, async (input) => {
+            smokeInputs.push(input);
+            return { ok: true };
+        });
+
+        assert.deepEqual(smokeInputs.map((input) => input.expectedSponsoredUploadReady), [
+            null,
+            true,
+            true,
+        ]);
+
+        const bridgeCommands = calls(fake).filter((args) => (
+            args.includes(TARGETS.preview.bridge.worker)
+            && (args[0] === 'deploy' || (args[0] === 'versions' && args[1] === 'upload'))
+        ));
+        assert.ok(bridgeCommands.every((args) => (
+            args.includes('LIVEPEER_SPONSORED_UPLOADS_ENABLED:true')
+            && args.includes('LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED:true')
+            && args.includes('NEAR_SPONSOR_RELAYER_ACCOUNT_ID:sponsor-relayer.testnet')
+            && args.includes('NEAR_SPONSOR_RELAYER_KEY_EPOCH:1')
+        )));
+        assert.ok(secretCalls(fake).filter(({ worker }) => worker === TARGETS.preview.bridge.worker)
+            .every(({ keys }) => keys.includes('CREATOR_FEE_QUOTE_PRIVATE_KEY')
+                && keys.includes('NEAR_SPONSOR_RELAYER_PRIVATE_KEY')));
     });
 
     await t.test('accepts the Preview publication read origin', async (subtest) => {
