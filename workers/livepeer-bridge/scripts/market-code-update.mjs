@@ -260,6 +260,7 @@ export async function runMarketCodeUpdate({
                 ? { transaction: { hash: failure.transactionHash } }
                 : null,
             broadcastErrorCode: failure.code,
+            providerErrorCode: failure.providerErrorCode,
             now,
         });
     }
@@ -511,10 +512,11 @@ class MarketCodeUpdateError extends Error {
 }
 
 class MarketCodeBroadcastError extends Error {
-    constructor(code, transactionHash = null) {
+    constructor(code, transactionHash = null, providerErrorCode = 'rpc_error') {
         super('market_code_update_broadcast_failed');
         this.broadcastErrorCode = code;
         this.transactionHash = transactionHash;
+        this.providerErrorCode = providerErrorCode;
     }
 }
 
@@ -524,10 +526,26 @@ function broadcastFailure(error) {
         'transaction_submit_failed',
         'transaction_execution_failed',
     ];
+    const providerAllowed = [
+        'rpc_http_408',
+        'rpc_http_429',
+        'rpc_http_500',
+        'rpc_http_502',
+        'rpc_http_503',
+        'rpc_invalid_nonce',
+        'rpc_invalid_request',
+        'rpc_method_not_found',
+        'rpc_timeout',
+        'rpc_transport_error',
+        'transaction_execution_failed',
+    ];
     return {
         code: allowed.includes(error?.broadcastErrorCode)
             ? error.broadcastErrorCode
             : 'transaction_error_unclassified',
+        providerErrorCode: providerAllowed.includes(error?.providerErrorCode)
+            ? error.providerErrorCode
+            : 'rpc_error',
         transactionHash: transactionHash({ transaction: { hash: error?.transactionHash } }),
     };
 }
@@ -543,6 +561,7 @@ function updateEvidence({
     status,
     errorCode = null,
     broadcastErrorCode = null,
+    providerErrorCode = null,
     sourceSha,
     runId,
     runAttempt,
@@ -558,6 +577,7 @@ function updateEvidence({
         status,
         error_code: errorCode,
         broadcast_error_code: broadcastErrorCode,
+        provider_error_code: providerErrorCode,
         source_sha: sourceSha,
         ci_run_id: String(runId),
         ci_run_attempt: String(runAttempt),
@@ -612,8 +632,12 @@ async function deployContractCode({ rpcUrl, targetContractId, privateKey, wasmBy
             receiverId: targetContractId,
             actions: [actions.deployContract(wasmBytes)],
         });
-    } catch {
-        throw new MarketCodeBroadcastError('transaction_prepare_failed');
+    } catch (error) {
+        throw new MarketCodeBroadcastError(
+            'transaction_prepare_failed',
+            null,
+            safeProviderErrorCode(error),
+        );
     }
     const signedTransactionHash = base58Encode(Buffer.from(
         sha256(encodeTransaction(signedTransaction)),
@@ -622,15 +646,40 @@ async function deployContractCode({ rpcUrl, targetContractId, privateKey, wasmBy
     let transaction;
     try {
         transaction = await provider.sendTransactionUntil(signedTransaction, 'FINAL');
-    } catch {
-        throw new MarketCodeBroadcastError('transaction_submit_failed', signedTransactionHash);
+    } catch (error) {
+        throw new MarketCodeBroadcastError(
+            'transaction_submit_failed',
+            signedTransactionHash,
+            safeProviderErrorCode(error),
+        );
     }
     if (typeof transaction?.status === 'object'
         && transaction.status !== null
         && Object.hasOwn(transaction.status, 'Failure')) {
-        throw new MarketCodeBroadcastError('transaction_execution_failed', signedTransactionHash);
+        throw new MarketCodeBroadcastError(
+            'transaction_execution_failed',
+            signedTransactionHash,
+            'transaction_execution_failed',
+        );
     }
     return transaction;
+}
+
+function safeProviderErrorCode(error) {
+    const status = Number(error?.cause);
+    if ([408, 429, 500, 502, 503].includes(status)) return `rpc_http_${status}`;
+    const kinds = [error?.name, error?.constructor?.name, error?.type]
+        .filter((value) => typeof value === 'string');
+    if (kinds.some((value) => value.includes('Nonce'))) return 'rpc_invalid_nonce';
+    if (kinds.some((value) => /Invalid|Validation|Expired|SizeExceeded|Signature/.test(value))) {
+        return 'rpc_invalid_request';
+    }
+    if (kinds.some((value) => value.includes('MethodNotFound'))) return 'rpc_method_not_found';
+    if (kinds.some((value) => value.includes('Timeout'))) return 'rpc_timeout';
+    if (kinds.some((value) => value === 'TypeError' || value === 'FetchError')) {
+        return 'rpc_transport_error';
+    }
+    return 'rpc_error';
 }
 
 async function query(rpcUrl, params, fetchImpl, blockId) {

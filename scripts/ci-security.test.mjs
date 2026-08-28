@@ -106,6 +106,13 @@ test('testnet Market code update stays exact-main, one-shot and protected', asyn
     assert.match(helper, /sendTransactionUntil\(signedTransaction, 'FINAL'\)/);
     assert.doesNotMatch(helper, /signAndSendTransaction/);
     assert.match(helper, /broadcast_error_code/);
+    assert.match(helper, /provider_error_code/);
+    const providerClassifier = helper.slice(
+        helper.indexOf('function safeProviderErrorCode'),
+        helper.indexOf('async function query'),
+    );
+    assert.match(providerClassifier, /rpc_http_/);
+    assert.doesNotMatch(providerClassifier, /\.message/);
     assert.doesNotMatch(helper, /actions\.(?:functionCall|transfer|addKey|deleteKey|createAccount|deleteAccount)/);
     assert.match(helper, /market_code_update_state_changed/);
     assert.match(helper, /market_code_update_reconcile_required/);

@@ -64,6 +64,7 @@ test('market update sends once and preserves the exact state digest', async () =
     assert.equal(evidence.state_sha256, fixture.stateSha256);
     assert.equal(evidence.transaction_hash, TX_HASH);
     assert.equal(evidence.broadcast_error_code, null);
+    assert.equal(evidence.provider_error_code, null);
     assert.equal(evidence.status, 'PASS');
     assert.equal(evidence.error_code, null);
     assert.ok(fixture.rpcRequests.filter(({ method }) => method === 'query').every(
@@ -140,6 +141,7 @@ test('market update never retries an ambiguous broadcast', async (t) => {
             assert.equal(error.evidence.status, 'AMBIGUOUS');
             assert.equal(error.evidence.transaction_hash, TX_HASH);
             assert.equal(error.evidence.broadcast_error_code, 'transaction_submit_failed');
+            assert.equal(error.evidence.provider_error_code, 'rpc_http_429');
             assert.doesNotMatch(JSON.stringify(error.evidence), /private_provider_error/);
             return true;
         });
@@ -154,9 +156,23 @@ test('market update never retries an ambiguous broadcast', async (t) => {
             assert.equal(error.evidence.after_code_hash, fixture.manifest.files.wasm.code_hash);
             assert.equal(error.evidence.transaction_hash, TX_HASH);
             assert.equal(error.evidence.broadcast_error_code, 'transaction_submit_failed');
+            assert.equal(error.evidence.provider_error_code, 'rpc_http_429');
             return true;
         });
         assert.equal(fixture.deployCalls.length, 1);
+    });
+
+    await t.test('unknown provider details stay redacted', async () => {
+        const fixture = await runtimeFixture({
+            deployError: true,
+            deployChangesCode: false,
+            deployProviderErrorCode: 'private_provider_error',
+        });
+        await assert.rejects(runMarketCodeUpdate(fixture.input), (error) => {
+            assert.equal(error.evidence.provider_error_code, 'rpc_error');
+            assert.doesNotMatch(JSON.stringify(error.evidence), /private_provider_error/);
+            return true;
+        });
     });
 });
 
@@ -170,6 +186,7 @@ test('real deploy path signs once before one-attempt RPC broadcast', async () =>
     assert.match(deploy, /createSignedTransaction/);
     assert.match(deploy, /encodeTransaction\(signedTransaction\)/);
     assert.match(deploy, /sendTransactionUntil\(signedTransaction, 'FINAL'\)/);
+    assert.match(deploy, /safeProviderErrorCode/);
     assert.doesNotMatch(deploy, /signAndSendTransaction/);
 });
 
@@ -231,6 +248,7 @@ async function runtimeFixture({
     extraFullAccessKey = false,
     bridgeAllowance,
     reserveHeadroomYocto = '200000000000000000000000',
+    deployProviderErrorCode = 'rpc_http_429',
 } = {}) {
     const artifact = await artifactFixture();
     const policy = JSON.parse(await readFile(POLICY_PATH, 'utf8'));
@@ -270,6 +288,7 @@ async function runtimeFixture({
             const error = new Error('private_provider_error');
             error.transactionHash = TX_HASH;
             error.broadcastErrorCode = 'transaction_submit_failed';
+            error.providerErrorCode = deployProviderErrorCode;
             throw error;
         }
         return { transaction: { hash: TX_HASH } };
