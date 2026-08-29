@@ -802,7 +802,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             { jobId: 'job-other' },
             { quoteSignature: base64Encode(new Uint8Array(64)) },
             { nonce: 12n },
-            { maxBlockHeight: 1_201n },
+            { maxBlockHeight: 1_401n },
         ];
         for (const overrides of rejectedDelegates) {
             const rejected = await handler.fetch(
@@ -814,7 +814,9 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         }
         expect(sendCount).toBe(0);
 
-        const relayRequest = await signedSponsoredRelay(quoteBody, userSigner);
+        const relayRequest = await signedSponsoredRelay(quoteBody, userSigner, {
+            maxBlockHeight: 1_400n,
+        });
         now.mockReturnValue(1_785_589_420_001);
         const expired = await handler.fetch(relayRequest.clone(), runtime.env);
         expect(expired.status).toBe(400);
