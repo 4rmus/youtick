@@ -645,6 +645,39 @@ describe('Livepeer browser upload', () => {
         expect(fetchMock).toHaveBeenCalledTimes(3);
     });
 
+    it('propagates only allowlisted sponsor relay rejection reasons', async () => {
+        featureFlags.enableSponsoredLivepeerUploads = true;
+        vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
+        const wallet = createSponsoredWallet();
+        let reason = 'access_key';
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            if (String(input).endsWith('/v1/sponsored-upload-relays')) {
+                return Response.json({ error: 'invalid_sponsored_upload_relay', reason }, { status: 400 });
+            }
+            const { request } = JSON.parse(String(init?.body)) as {
+                request: Record<string, string>;
+            };
+            return sponsoredQuoteResponse(request);
+        }));
+
+        await expect(authorizeLivepeerPaidJob(wallet as never, {
+            accountId: 'creator.testnet',
+            jobId: 'job-sponsored-rejected',
+            title: 'Paid video',
+            priceUsdc: '2000001',
+            expectedSourceBytes: SOURCE_BYTES,
+        })).rejects.toThrow('invalid_sponsored_upload_relay:access_key');
+
+        reason = 'secret_payload';
+        await expect(authorizeLivepeerPaidJob(wallet as never, {
+            accountId: 'creator.testnet',
+            jobId: 'job-sponsored-redacted',
+            title: 'Paid video',
+            priceUsdc: '2000001',
+            expectedSourceBytes: SOURCE_BYTES,
+        })).rejects.toThrow(/^invalid_sponsored_upload_relay$/);
+    });
+
     it('falls back to the existing USDC transaction when delegate signing is unavailable', async () => {
         featureFlags.enableSponsoredLivepeerUploads = true;
         const wallet = createWallet();

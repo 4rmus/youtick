@@ -508,6 +508,15 @@ const SPONSORED_UPLOAD_FEE_USDC = 100_000n;
 const SPONSORED_UPLOAD_MAX_BLOCK_WINDOW = 200n;
 const SPONSORED_UPLOAD_SIGNING_HEADROOM_BLOCKS = 200n;
 const SPONSORED_UPLOAD_FINAL_BLOCK_MAX_AGE_MS = 60_000;
+const SPONSORED_RELAY_REJECTION_CODES = Object.freeze({
+    delegate_decode: 'invalid_sponsored_upload_relay_delegate_decode',
+    delegate_shape: 'invalid_sponsored_upload_relay_delegate_shape',
+    quote_validation: 'invalid_sponsored_upload_relay_quote_validation',
+    signature_validation: 'invalid_sponsored_upload_relay_signature_validation',
+    freshness: 'invalid_sponsored_upload_relay_freshness',
+    access_key: 'invalid_sponsored_upload_relay_access_key',
+});
+type SponsoredRelayRejectionReason = keyof typeof SPONSORED_RELAY_REJECTION_CODES;
 const TESTNET_USDC_CONTRACT_ID = '3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af';
 const MAINNET_USDC_CONTRACT_ID = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
 const SPONSOR_RELAY_KEY_PREFIX = 'sponsor-relay:';
@@ -1128,9 +1137,13 @@ export class LivepeerControl {
             }
             return json({ error: 'not_found' }, 404);
         } catch (error) {
+            const reason = sponsoredRelayRejectionReason(error);
             const code = safeErrorCode(error);
             console.error(formatLog('livepeer_control_request_failed', { code }));
-            return json({ error: code }, errorStatus(code));
+            return json({
+                error: code,
+                ...(reason ? { reason } : {}),
+            }, errorStatus(code));
         }
     }
 
@@ -3229,13 +3242,17 @@ async function parseSponsoredUploadRelayRequest(
     env: Env,
 ): Promise<ParsedSponsoredDelegate> {
     const value = await readJsonObject(request);
-    requireExactKeys(value, ['signed_delegate_base64'], 'invalid_sponsored_upload_relay');
+    requireExactKeys(
+        value,
+        ['signed_delegate_base64'],
+        SPONSORED_RELAY_REJECTION_CODES.delegate_decode,
+    );
     if (typeof value.signed_delegate_base64 !== 'string'
         || value.signed_delegate_base64.length < 64
         || value.signed_delegate_base64.length > MAX_CONTROL_BODY_BYTES
         || value.signed_delegate_base64.length % 4 !== 0
         || !/^[A-Za-z0-9+/]+={0,2}$/.test(value.signed_delegate_base64)) {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.delegate_decode);
     }
     let encoded: Uint8Array;
     let signedDelegate: SignedDelegate;
@@ -3246,14 +3263,15 @@ async function parseSponsoredUploadRelayRequest(
             throw new Error('non_canonical');
         }
     } catch {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.delegate_decode);
     }
-    const signed = requireObject(signedDelegate, 'invalid_sponsored_upload_relay');
-    requireExactKeys(signed, ['delegateAction', 'signature'], 'invalid_sponsored_upload_relay');
-    const delegate = requireObject(signed.delegateAction, 'invalid_sponsored_upload_relay');
+    const shapeCode = SPONSORED_RELAY_REJECTION_CODES.delegate_shape;
+    const signed = requireObject(signedDelegate, shapeCode);
+    requireExactKeys(signed, ['delegateAction', 'signature'], shapeCode);
+    const delegate = requireObject(signed.delegateAction, shapeCode);
     requireExactKeys(delegate, [
         'senderId', 'receiverId', 'actions', 'nonce', 'maxBlockHeight', 'publicKey',
-    ], 'invalid_sponsored_upload_relay');
+    ], shapeCode);
     if (typeof delegate.senderId !== 'string'
         || !ACCOUNT_ID_PATTERN.test(delegate.senderId)
         || delegate.receiverId !== usdcContractId(env)
@@ -3263,51 +3281,51 @@ async function parseSponsoredUploadRelayRequest(
         || delegate.nonce < 1n
         || typeof delegate.maxBlockHeight !== 'bigint'
         || delegate.maxBlockHeight < 1n) {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(shapeCode);
     }
-    const publicKey = requireObject(delegate.publicKey, 'invalid_sponsored_upload_relay');
-    requireExactKeys(publicKey, ['ed25519Key'], 'invalid_sponsored_upload_relay');
-    const publicKeyValue = requireObject(publicKey.ed25519Key, 'invalid_sponsored_upload_relay');
-    requireExactKeys(publicKeyValue, ['data'], 'invalid_sponsored_upload_relay');
+    const publicKey = requireObject(delegate.publicKey, shapeCode);
+    requireExactKeys(publicKey, ['ed25519Key'], shapeCode);
+    const publicKeyValue = requireObject(publicKey.ed25519Key, shapeCode);
+    requireExactKeys(publicKeyValue, ['data'], shapeCode);
     const publicKeyBytes = parseBorshBytes(publicKeyValue.data, 32);
-    const signature = requireObject(signed.signature, 'invalid_sponsored_upload_relay');
-    requireExactKeys(signature, ['ed25519Signature'], 'invalid_sponsored_upload_relay');
-    const signatureValue = requireObject(signature.ed25519Signature, 'invalid_sponsored_upload_relay');
-    requireExactKeys(signatureValue, ['data'], 'invalid_sponsored_upload_relay');
+    const signature = requireObject(signed.signature, shapeCode);
+    requireExactKeys(signature, ['ed25519Signature'], shapeCode);
+    const signatureValue = requireObject(signature.ed25519Signature, shapeCode);
+    requireExactKeys(signatureValue, ['data'], shapeCode);
     const signatureBytes = parseBorshBytes(signatureValue.data, 64);
-    const action = requireObject(delegate.actions[0], 'invalid_sponsored_upload_relay');
-    requireExactKeys(action, ['functionCall'], 'invalid_sponsored_upload_relay');
-    const functionCall = requireObject(action.functionCall, 'invalid_sponsored_upload_relay');
+    const action = requireObject(delegate.actions[0], shapeCode);
+    requireExactKeys(action, ['functionCall'], shapeCode);
+    const functionCall = requireObject(action.functionCall, shapeCode);
     requireExactKeys(functionCall, [
         'methodName', 'args', 'gas', 'deposit',
-    ], 'invalid_sponsored_upload_relay');
+    ], shapeCode);
     if (functionCall.methodName !== 'ft_transfer_call'
         || functionCall.gas !== SPONSORED_UPLOAD_DELEGATE_GAS
         || functionCall.deposit !== 1n) {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(shapeCode);
     }
     let ftArgs: JsonObject;
     try {
         ftArgs = requireObject(JSON.parse(new TextDecoder().decode(
             parseBorshBytes(functionCall.args),
-        )), 'invalid_sponsored_upload_relay');
+        )), shapeCode);
     } catch {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(shapeCode);
     }
     requireExactKeys(ftArgs, [
         'receiver_id', 'amount', 'memo', 'msg',
-    ], 'invalid_sponsored_upload_relay');
+    ], shapeCode);
     if (ftArgs.receiver_id !== env.MARKET_CONTRACT_ID
         || typeof ftArgs.amount !== 'string'
         || ftArgs.memo !== 'YouTick creator upload fee'
         || typeof ftArgs.msg !== 'string') {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(shapeCode);
     }
     let message: JsonObject;
     try {
-        message = requireObject(JSON.parse(ftArgs.msg), 'invalid_sponsored_upload_relay');
+        message = requireObject(JSON.parse(ftArgs.msg), shapeCode);
     } catch {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(shapeCode);
     }
     requireExactKeys(message, [
         'action',
@@ -3321,10 +3339,10 @@ async function parseSponsoredUploadRelayRequest(
         'upload_key_expires_at_ms',
         'sponsor_quote',
         'sponsor_quote_signature',
-    ], 'invalid_sponsored_upload_relay');
+    ], shapeCode);
     if (message.action !== 'create_paid_job'
         || typeof message.sponsor_quote_signature !== 'string') {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(shapeCode);
     }
     const requestValue: JsonObject = {
         creator_id: delegate.senderId,
@@ -3337,10 +3355,16 @@ async function parseSponsoredUploadRelayRequest(
         upload_public_key: message.upload_public_key,
         upload_key_expires_at_ms: message.upload_key_expires_at_ms,
     };
-    const paidJobRequest = parseSponsoredPaidJobRequest(requestValue, false);
+    let paidJobRequest: SponsoredPaidJobRequest;
+    try {
+        paidJobRequest = parseSponsoredPaidJobRequest(requestValue, false);
+    } catch {
+        throw new Error(shapeCode);
+    }
+    const quoteCode = SPONSORED_RELAY_REJECTION_CODES.quote_validation;
     const quote = parseSponsoredUploadQuote(requireObject(
         message.sponsor_quote,
-        'invalid_sponsored_upload_relay',
+        quoteCode,
     ));
     await verifySponsoredUploadQuote(
         env,
@@ -3351,7 +3375,7 @@ async function parseSponsoredUploadRelayRequest(
     if (ftArgs.amount !== quote.total_fee_usdc
         || delegate.maxBlockHeight > BigInt(quote.max_delegate_block_height)
             + SPONSORED_UPLOAD_SIGNING_HEADROOM_BLOCKS) {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(quoteCode);
     }
     const delegateHash = new Uint8Array(await crypto.subtle.digest(
         'SHA-256',
@@ -3365,7 +3389,7 @@ async function parseSponsoredUploadRelayRequest(
         ['verify'],
     );
     if (!await crypto.subtle.verify('Ed25519', verificationKey, signatureBytes, delegateHash)) {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.signature_validation);
     }
     return {
         signedDelegate,
@@ -3383,7 +3407,7 @@ function parseBorshBytes(value: unknown, exactLength?: number): Uint8Array {
     if (!Array.isArray(value)
         || value.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)
         || (exactLength !== undefined && value.length !== exactLength)) {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.delegate_shape);
     }
     return Uint8Array.from(value as number[]);
 }
@@ -3396,7 +3420,7 @@ function parseSponsoredUploadQuote(value: JsonObject): SponsoredUploadQuote {
         'delegate_deposit_yocto', 'issued_at_ms', 'quote_block_height', 'max_delegate_block_height',
         'expires_at_ms', 'quote_key_version', 'quote_id',
     ];
-    requireExactKeys(value, fields, 'invalid_sponsored_upload_relay');
+    requireExactKeys(value, fields, SPONSORED_RELAY_REJECTION_CODES.quote_validation);
     const decimalFields = [
         'expected_source_bytes', 'upload_fee_usdc', 'sponsor_fee_usdc', 'total_fee_usdc',
         'delegate_gas', 'delegate_deposit_yocto', 'issued_at_ms', 'quote_block_height',
@@ -3423,7 +3447,7 @@ function parseSponsoredUploadQuote(value: JsonObject): SponsoredUploadQuote {
         || decimalFields.some((field) => (
             typeof value[field] !== 'string' || !/^[1-9][0-9]{0,38}$/.test(value[field] as string)
         ))) {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.quote_validation);
     }
     return value as unknown as SponsoredUploadQuote;
 }
@@ -3459,17 +3483,17 @@ async function verifySponsoredUploadQuote(
         || BigInt(quote.quote_block_height) >= BigInt(quote.max_delegate_block_height)
         || BigInt(quote.max_delegate_block_height) - BigInt(quote.quote_block_height)
             > SPONSORED_UPLOAD_MAX_BLOCK_WINDOW) {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.quote_validation);
     }
     const canonicalMessage = canonicalSponsoredUploadQuoteMessage(quote);
     if (quote.quote_id !== await sha256Hex(canonicalMessage)) {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.quote_validation);
     }
     let providedSignature: Uint8Array;
     try {
         providedSignature = base64Decode(signatureBase64);
     } catch {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.quote_validation);
     }
     const privateKey = await importCreatorFeeQuotePrivateKey(env);
     const expectedSignature = new Uint8Array(await crypto.subtle.sign(
@@ -3478,7 +3502,7 @@ async function verifySponsoredUploadQuote(
         new TextEncoder().encode(canonicalMessage),
     ));
     if (!constantTimeEqual(providedSignature, expectedSignature)) {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.quote_validation);
     }
 }
 
@@ -3558,7 +3582,7 @@ async function relaySponsoredUpload(
             await releaseSponsoredAdmission(env, input.request);
             await state.storage.delete(key);
         }
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.freshness);
     }
 
     const [block, creatorAccessKey, relayerAccessKey, balance] = await Promise.all([
@@ -3571,7 +3595,7 @@ async function relaySponsoredUpload(
         || input.maxBlockHeight <= BigInt(block.height)
         || input.maxBlockHeight > BigInt(input.quote.max_delegate_block_height)
             + SPONSORED_UPLOAD_SIGNING_HEADROOM_BLOCKS) {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.access_key);
     }
     requireCreatorDelegatePermission(creatorAccessKey.permission, env);
     if (balance < BigInt(input.quote.total_fee_usdc)) {
@@ -3748,27 +3772,29 @@ async function readCreatorAccessKey(
         account_id: accountId,
         public_key: publicKey,
     });
-    const result = requireObject(payload.result, 'invalid_sponsored_upload_relay');
+    const accessCode = SPONSORED_RELAY_REJECTION_CODES.access_key;
+    const result = requireObject(payload.result, accessCode);
     if (typeof result.nonce !== 'number'
         || !Number.isSafeInteger(result.nonce)
         || result.nonce < 0
         || result.permission === undefined) {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(accessCode);
     }
     return { nonce: BigInt(result.nonce), permission: result.permission };
 }
 
 function requireCreatorDelegatePermission(permission: unknown, env: Env): void {
     if (permission === 'FullAccess') return;
-    const root = requireObject(permission, 'invalid_sponsored_upload_relay');
-    requireExactKeys(root, ['FunctionCall'], 'invalid_sponsored_upload_relay');
-    const functionCall = requireObject(root.FunctionCall, 'invalid_sponsored_upload_relay');
+    const accessCode = SPONSORED_RELAY_REJECTION_CODES.access_key;
+    const root = requireObject(permission, accessCode);
+    requireExactKeys(root, ['FunctionCall'], accessCode);
+    const functionCall = requireObject(root.FunctionCall, accessCode);
     const methods = functionCall.method_names;
     if (functionCall.receiver_id !== usdcContractId(env)
         || !Array.isArray(methods)
         || !methods.includes('ft_transfer_call')
         || methods.some((method) => typeof method !== 'string')) {
-        throw new Error('invalid_sponsored_upload_relay');
+        throw new Error(accessCode);
     }
 }
 
@@ -6780,9 +6806,16 @@ function errorStatus(code: string): number {
 }
 
 function safeErrorCode(error: unknown): string {
+    if (sponsoredRelayRejectionReason(error)) return 'invalid_sponsored_upload_relay';
     return error instanceof Error && SAFE_ERROR_CODES.has(error.message)
         ? error.message
         : 'internal_error';
+}
+
+function sponsoredRelayRejectionReason(error: unknown): SponsoredRelayRejectionReason | undefined {
+    if (!(error instanceof Error)) return undefined;
+    return (Object.keys(SPONSORED_RELAY_REJECTION_CODES) as SponsoredRelayRejectionReason[])
+        .find((reason) => SPONSORED_RELAY_REJECTION_CODES[reason] === error.message);
 }
 
 function json(body: JsonObject, status = 200): Response {
