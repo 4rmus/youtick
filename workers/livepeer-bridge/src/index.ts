@@ -506,6 +506,7 @@ const YOCTO_NEAR = 10n ** 24n;
 const SPONSORED_UPLOAD_DELEGATE_GAS = 100_000_000_000_000n;
 const SPONSORED_UPLOAD_FEE_USDC = 100_000n;
 const SPONSORED_UPLOAD_MAX_BLOCK_WINDOW = 200n;
+const SPONSORED_UPLOAD_SIGNING_HEADROOM_BLOCKS = 200n;
 const SPONSORED_UPLOAD_FINAL_BLOCK_MAX_AGE_MS = 60_000;
 const TESTNET_USDC_CONTRACT_ID = '3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af';
 const MAINNET_USDC_CONTRACT_ID = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
@@ -3348,7 +3349,8 @@ async function parseSponsoredUploadRelayRequest(
         message.sponsor_quote_signature,
     );
     if (ftArgs.amount !== quote.total_fee_usdc
-        || delegate.maxBlockHeight > BigInt(quote.max_delegate_block_height)) {
+        || delegate.maxBlockHeight > BigInt(quote.max_delegate_block_height)
+            + SPONSORED_UPLOAD_SIGNING_HEADROOM_BLOCKS) {
         throw new Error('invalid_sponsored_upload_relay');
     }
     const delegateHash = new Uint8Array(await crypto.subtle.digest(
@@ -3567,7 +3569,8 @@ async function relaySponsoredUpload(
     ]);
     if (input.nonce !== creatorAccessKey.nonce + 1n
         || input.maxBlockHeight <= BigInt(block.height)
-        || input.maxBlockHeight > BigInt(input.quote.max_delegate_block_height)) {
+        || input.maxBlockHeight > BigInt(input.quote.max_delegate_block_height)
+            + SPONSORED_UPLOAD_SIGNING_HEADROOM_BLOCKS) {
         throw new Error('invalid_sponsored_upload_relay');
     }
     requireCreatorDelegatePermission(creatorAccessKey.permission, env);
