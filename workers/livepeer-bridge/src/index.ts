@@ -3329,6 +3329,7 @@ async function parseSponsoredUploadRelayRequest(
     }
     requireExactKeys(message, [
         'action',
+        'creator_id',
         'job_id',
         'title',
         'price_usdc',
@@ -3341,11 +3342,12 @@ async function parseSponsoredUploadRelayRequest(
         'sponsor_quote_signature',
     ], shapeCode);
     if (message.action !== 'create_paid_job'
+        || message.creator_id !== delegate.senderId
         || typeof message.sponsor_quote_signature !== 'string') {
         throw new Error(shapeCode);
     }
     const requestValue: JsonObject = {
-        creator_id: delegate.senderId,
+        creator_id: message.creator_id,
         job_id: message.job_id,
         title: message.title,
         price_usdc: message.price_usdc,

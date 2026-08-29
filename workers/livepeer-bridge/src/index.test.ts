@@ -203,6 +203,7 @@ async function signedSponsoredRelay(
         deposit?: bigint;
         jobId?: string;
         quoteSignature?: string;
+        creatorId?: string;
         nonce?: bigint;
         maxBlockHeight?: bigint;
         accountBlockHeight?: number;
@@ -212,6 +213,7 @@ async function signedSponsoredRelay(
     const request = quoteResponse.request as Record<string, unknown>;
     const message = JSON.stringify({
         action: 'create_paid_job',
+        creator_id: overrides?.creatorId ?? request.creator_id,
         job_id: overrides?.jobId ?? request.job_id,
         title: request.title,
         price_usdc: request.price_usdc,
@@ -814,6 +816,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             [{ amount: '599999' }, 'quote_validation'],
             [{ gas: 99_999_999_999_999n }, 'delegate_shape'],
             [{ deposit: 0n }, 'delegate_shape'],
+            [{ creatorId: 'other.testnet' }, 'delegate_shape'],
             [{ jobId: 'job-other' }, 'quote_validation'],
             [{ quoteSignature: base64Encode(new Uint8Array(64)) }, 'quote_validation'],
             [{ nonce: 12n }, 'access_key'],
