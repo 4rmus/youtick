@@ -27,6 +27,14 @@ const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const MIN_CREATOR_UPLOAD_FEE_USDC = 500_000n;
 const SPONSORED_UPLOAD_FEE_USDC = 100_000n;
+const SPONSORED_RELAY_REJECTION_REASONS = new Set([
+    'delegate_decode',
+    'delegate_shape',
+    'quote_validation',
+    'signature_validation',
+    'freshness',
+    'access_key',
+]);
 
 const LIVEPEER_SOURCE_FORMATS = {
     mp4: { extension: 'mp4', mimeTypes: ['video/mp4'] },
@@ -605,7 +613,12 @@ async function submitSponsoredUploadRelay(
             || code === 'sponsor_relay_failed') {
             clearSponsoredDelegate(accountId, jobId);
         }
-        throw new Error(code);
+        const reason = code === 'invalid_sponsored_upload_relay'
+            && typeof value.reason === 'string'
+            && SPONSORED_RELAY_REJECTION_REASONS.has(value.reason)
+            ? value.reason
+            : '';
+        throw new Error(reason ? `${code}:${reason}` : code);
     }
     if (value.accepted !== true
         || typeof value.relayed !== 'boolean'

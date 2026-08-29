@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+    Account,
     KeyPair,
     KeyPairSigner,
     actions,
@@ -204,6 +205,7 @@ async function signedSponsoredRelay(
         quoteSignature?: string;
         nonce?: bigint;
         maxBlockHeight?: bigint;
+        accountBlockHeight?: number;
     },
 ): Promise<Request> {
     const quote = quoteResponse.quote as Record<string, unknown>;
@@ -221,20 +223,30 @@ async function signedSponsoredRelay(
         sponsor_quote: quote,
         sponsor_quote_signature: overrides?.quoteSignature ?? quoteResponse.signature,
     });
+    const actionsToSign = [actions.functionCall(overrides?.methodName ?? 'ft_transfer_call', {
+        receiver_id: overrides?.innerReceiverId ?? CONTRACT_ID,
+        amount: overrides?.amount ?? String(quote.total_fee_usdc),
+        memo: 'YouTick creator upload fee',
+        msg: message,
+    }, overrides?.gas ?? 100_000_000_000_000n, overrides?.deposit ?? 1n)];
     const delegate = buildDelegateAction({
         senderId: String(request.creator_id),
         receiverId: overrides?.receiverId ?? TESTNET_USDC,
-        actions: [actions.functionCall(overrides?.methodName ?? 'ft_transfer_call', {
-            receiver_id: overrides?.innerReceiverId ?? CONTRACT_ID,
-            amount: overrides?.amount ?? String(quote.total_fee_usdc),
-            memo: 'YouTick creator upload fee',
-            msg: message,
-        }, overrides?.gas ?? 100_000_000_000_000n, overrides?.deposit ?? 1n)],
+        actions: actionsToSign,
         nonce: overrides?.nonce ?? 11n,
         maxBlockHeight: overrides?.maxBlockHeight ?? BigInt(String(quote.max_delegate_block_height)),
         publicKey: await signer.getPublicKey(),
     });
-    const signed = await signer.signDelegateAction(delegate);
+    const signed = overrides?.accountBlockHeight === undefined
+        ? await signer.signDelegateAction(delegate)
+        : await new Account(String(request.creator_id), {
+            viewAccessKey: async () => ({ nonce: 10, permission: 'FullAccess' }),
+            viewBlock: async () => ({ header: { height: overrides.accountBlockHeight } }),
+        } as never, signer).createSignedMetaTransaction({
+            receiverId: overrides.receiverId ?? TESTNET_USDC,
+            actions: actionsToSign,
+            blockHeightTtl: 200,
+        });
     return new Request('https://bridge.youtick.net/v1/sponsored-upload-relays', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
@@ -792,35 +804,44 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         });
         expect(runtime.admissionState.values.has('admission:v1')).toBe(false);
 
-        const rejectedDelegates = [
-            { receiverId: CONTRACT_ID },
-            { innerReceiverId: 'other-market.testnet' },
-            { methodName: 'ft_transfer' },
-            { amount: '599999' },
-            { gas: 99_999_999_999_999n },
-            { deposit: 0n },
-            { jobId: 'job-other' },
-            { quoteSignature: base64Encode(new Uint8Array(64)) },
-            { nonce: 12n },
-            { maxBlockHeight: 1_401n },
+        const rejectedDelegates: Array<[
+            NonNullable<Parameters<typeof signedSponsoredRelay>[2]>,
+            string,
+        ]> = [
+            [{ receiverId: CONTRACT_ID }, 'delegate_shape'],
+            [{ innerReceiverId: 'other-market.testnet' }, 'delegate_shape'],
+            [{ methodName: 'ft_transfer' }, 'delegate_shape'],
+            [{ amount: '599999' }, 'quote_validation'],
+            [{ gas: 99_999_999_999_999n }, 'delegate_shape'],
+            [{ deposit: 0n }, 'delegate_shape'],
+            [{ jobId: 'job-other' }, 'quote_validation'],
+            [{ quoteSignature: base64Encode(new Uint8Array(64)) }, 'quote_validation'],
+            [{ nonce: 12n }, 'access_key'],
+            [{ maxBlockHeight: 1_401n }, 'quote_validation'],
         ];
-        for (const overrides of rejectedDelegates) {
+        for (const [overrides, reason] of rejectedDelegates) {
             const rejected = await handler.fetch(
                 await signedSponsoredRelay(quoteBody, userSigner, overrides),
                 runtime.env,
             );
             expect(rejected.status).toBe(400);
-            expect(await rejected.json()).toEqual({ error: 'invalid_sponsored_upload_relay' });
+            expect(await rejected.json()).toMatchObject({
+                error: 'invalid_sponsored_upload_relay',
+                reason,
+            });
         }
         expect(sendCount).toBe(0);
 
         const relayRequest = await signedSponsoredRelay(quoteBody, userSigner, {
-            maxBlockHeight: 1_400n,
+            accountBlockHeight: 1_200,
         });
         now.mockReturnValue(1_785_589_420_001);
         const expired = await handler.fetch(relayRequest.clone(), runtime.env);
         expect(expired.status).toBe(400);
-        expect(await expired.json()).toEqual({ error: 'invalid_sponsored_upload_relay' });
+        expect(await expired.json()).toEqual({
+            error: 'invalid_sponsored_upload_relay',
+            reason: 'freshness',
+        });
         expect(sendCount).toBe(0);
         expect(runtime.admissionState.values.has('admission:v1')).toBe(false);
 

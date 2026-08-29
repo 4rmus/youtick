@@ -15,6 +15,7 @@ import { expect, test } from 'vitest';
 
 const LIVE_ACK = 'two-nonrefundable-usdc-payments-and-two-uploads';
 const SPONSORED_LIVE_ACK = 'one-sponsored-usdc-payment-upload-and-publication';
+const SPONSORED_RELAY_FAILURE_PATTERN = /^invalid_sponsored_upload_relay:(delegate_decode|delegate_shape|quote_validation|signature_validation|freshness|access_key)$/;
 const MARKET_ID = 'lp-arch-market-v2-260809.youtick-dev-v3.testnet';
 const ACCESS_ID = 'lp-arch-access-v2-260809.youtick-dev-v3.testnet';
 const APP_ORIGIN = 'https://preview.youtick.net';
@@ -232,6 +233,13 @@ test('sponsored canary requires one payment, upload and publication with exact s
   });
   expect(calls).toEqual(['preflight', 'authorize', 'job', 'intent', 'upload', 'publication', 'after']);
   expect(receipt).toMatchObject({ status: 'PASS', payments: 1, uploads: 1, publications: 1 });
+});
+
+test('reports only allowlisted sponsored relay rejection stages', () => {
+  expect(sponsoredCanaryFailureCode(new Error(
+    'invalid_sponsored_upload_relay:access_key',
+  ))).toBe('invalid_sponsored_upload_relay:access_key');
+  expect(sponsoredCanaryFailureCode(new Error('secret_payload'))).toBe('unknown');
 });
 
 test.skipIf(process.env.YOUTICK_PHASE3_CANARY_ACK !== LIVE_ACK)(
@@ -544,8 +552,11 @@ test.skipIf(process.env.YOUTICK_SPONSORED_CANARY_ACK !== SPONSORED_LIVE_ACK)(
         job_fingerprint: sha256(jobId),
         media_sha256: input.sourceSha256,
       }));
-    } catch {
-      throw new Error(`sponsored_canary_failed_recovery_retained=${existsSync(SPONSORED_RECOVERY_FILE)}`);
+    } catch (error) {
+      throw new Error(
+        `sponsored_canary_failed_code=${sponsoredCanaryFailureCode(error)}`
+        + `_recovery_retained=${existsSync(SPONSORED_RECOVERY_FILE)}`,
+      );
     } finally {
       restoreFetch();
     }
@@ -700,6 +711,11 @@ async function waitForPublication(
 
 function sha256(value: string | Uint8Array): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function sponsoredCanaryFailureCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  return SPONSORED_RELAY_FAILURE_PATTERN.test(message) ? message : 'unknown';
 }
 
 class RecoveryStorage implements Storage {
