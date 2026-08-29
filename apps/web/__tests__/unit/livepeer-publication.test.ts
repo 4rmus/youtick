@@ -146,6 +146,10 @@ describe('Livepeer publication UI boundary', () => {
         vi.useFakeTimers();
         state.viewContract
             .mockRejectedValueOnce(new Error('finality_lag'))
+            .mockRejectedValueOnce(new Error('finality_lag'))
+            .mockRejectedValueOnce(new Error('finality_lag'))
+            .mockRejectedValueOnce(new Error('finality_lag'))
+            .mockRejectedValueOnce(new Error('finality_lag'))
             .mockResolvedValueOnce({
                 job_id: 'job-001',
                 creator_id: 'creator.testnet',
@@ -158,10 +162,10 @@ describe('Livepeer publication UI boundary', () => {
             'creator.testnet',
             'ed25519:11111111111111111111111111111111',
         );
-        await vi.advanceTimersByTimeAsync(1_000);
+        await vi.advanceTimersByTimeAsync(31_000);
 
         await expect(pending).resolves.toBeUndefined();
-        expect(state.viewContract).toHaveBeenCalledTimes(2);
+        expect(state.viewContract).toHaveBeenCalledTimes(6);
         vi.useRealTimers();
     });
 
