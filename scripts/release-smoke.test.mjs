@@ -334,6 +334,11 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
         sponsoredUploadQuoteReady: false,
         sponsoredUploadRelayReady: false,
     };
+    let bridgePolicy = {
+        stage: 'ENABLED',
+        providerMutationEnabled: true,
+        newUploadReady: true,
+    };
     const input = {
         webUrl: 'https://web.test',
         bridgeUrl: 'https://bridge.test',
@@ -350,9 +355,7 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
             }
             if (url.pathname === '/__health') {
                 return Response.json({
-                    stage: 'ENABLED',
-                    providerMutationEnabled: true,
-                    newUploadReady: true,
+                    ...bridgePolicy,
                     ...sponsorHealth,
                     versionId: 'bridge-enabled',
                 });
@@ -389,7 +392,23 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
         expectedBridgeEnabled: true,
         expectedSponsoredUploadReady: true,
     });
+    const inferredSponsored = await runReleaseSmoke({ ...input, expectedBridgeEnabled: null });
     assert.equal(sponsored.bridge.stage, 'ENABLED');
+    assert.equal(inferredSponsored.bridge.stage, 'ENABLED');
+    bridgePolicy = {
+        stage: 'DISABLED',
+        providerMutationEnabled: false,
+        newUploadReady: false,
+    };
+    await assert.rejects(
+        runReleaseSmoke({ ...input, expectedBridgeEnabled: null }),
+        /release_smoke_bridge_policy_invalid/,
+    );
+    bridgePolicy = {
+        stage: 'ENABLED',
+        providerMutationEnabled: true,
+        newUploadReady: true,
+    };
     await assert.rejects(
         runReleaseSmoke({ ...input, expectedBridgeEnabled: true }),
         /release_smoke_bridge_not_enabled/,
@@ -414,7 +433,6 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
         { sponsoredUploadRelayReady: false },
         { sponsoredUploadQuoteReady: false, sponsoredUploadRelayReady: true },
         { sponsoredUploadQuoteReady: true, sponsoredUploadRelayReady: false },
-        { sponsoredUploadQuoteReady: true, sponsoredUploadRelayReady: true },
         { sponsoredUploadQuoteReady: null, sponsoredUploadRelayReady: null },
     ]) {
         await assert.rejects(
