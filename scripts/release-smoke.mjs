@@ -173,7 +173,7 @@ async function bridgeHealth(
             ? sponsoredUploadsReady
             : expectedSponsoredUploadReady === false
                 ? sponsoredUploadsClosed
-                : sponsoredUploadsClosed || sponsoredUploadsLegacyClosed;
+                : sponsoredUploadsReady || sponsoredUploadsClosed || sponsoredUploadsLegacyClosed;
         const enabled = healthJson.stage === 'ENABLED'
             && healthJson.providerMutationEnabled === true
             && healthJson.newUploadReady === true
@@ -181,6 +181,7 @@ async function bridgeHealth(
         const disabled = healthJson.stage === 'DISABLED'
             && healthJson.providerMutationEnabled === false
             && healthJson.newUploadReady === false
+            && !sponsoredUploadsReady
             && sponsoredUploadsMatch;
         if (expectedBridgeEnabled === null ? !enabled && !disabled : expectedBridgeEnabled ? !enabled : !disabled) {
             throw new Error(expectedBridgeEnabled === null
