@@ -57,7 +57,7 @@ export async function waitForAuthorizedLivepeerJob(
     accountId: string,
     uploadPublicKey: string,
 ): Promise<void> {
-    for (const delay of [0, 1_000, 2_000, 4_000, 8_000]) {
+    for (const delay of [0, 1_000, 2_000, 4_000, 8_000, 16_000]) {
         if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
         try {
             const job = await readLivepeerMediaJob(jobId);

@@ -3,18 +3,21 @@ import {
   chmodSync,
   existsSync,
   lstatSync,
+  mkdtempSync,
   readFileSync,
   renameSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { File as NodeFile } from 'node:buffer';
 import { expect, test } from 'vitest';
 
 const LIVE_ACK = 'two-nonrefundable-usdc-payments-and-two-uploads';
 const SPONSORED_LIVE_ACK = 'one-sponsored-usdc-payment-upload-and-publication';
+const SPONSORED_RECOVERY_LIVE_ACK = 'resume-one-paid-job-without-a-second-payment';
 const SPONSORED_RELAY_FAILURE_PATTERN = /^invalid_sponsored_upload_relay:(delegate_decode|delegate_shape|quote_validation|signature_validation|freshness|access_key)$/;
 const MARKET_ID = 'lp-arch-market-v2-260809.youtick-dev-v3.testnet';
 const ACCESS_ID = 'lp-arch-access-v2-260809.youtick-dev-v3.testnet';
@@ -143,34 +146,43 @@ async function runExactTwo(participants: Participant[], steps: CanarySteps) {
   } as const;
 }
 
-async function runSponsoredOne(participant: Participant, steps: SponsoredCanarySteps) {
+async function runSponsoredOne(
+  participant: Participant,
+  steps: SponsoredCanarySteps,
+  mode: 'new' | 'recovery' = 'new',
+) {
   if (participant.feeUsdc !== FEE_USDC) throw new Error('sponsored_canary_scope_invalid');
   const before = await steps.preflight();
-  if (BigInt(before.usdcBalance) < BigInt(SPONSORED_TOTAL_FEE_USDC)) {
+  if (mode === 'new' && BigInt(before.usdcBalance) < BigInt(SPONSORED_TOTAL_FEE_USDC)) {
     throw new Error('sponsored_canary_balance_insufficient');
   }
   const uploadPublicKey = await steps.authorize();
   await steps.waitForJob(uploadPublicKey);
   const intent = await steps.requestIntent();
-  if (intent.created !== true) throw new Error('sponsored_canary_intent_invalid');
+  if (mode === 'new' && intent.created !== true) throw new Error('sponsored_canary_intent_invalid');
   await steps.upload(intent.value);
   await steps.waitForPublication();
   const after = await steps.readAfter();
+  const expectedPaymentDelta = mode === 'new' ? BigInt(SPONSORED_TOTAL_FEE_USDC) : 0n;
   if (BigInt(before.usdcBalance) - BigInt(after.usdcBalance)
-      !== BigInt(SPONSORED_TOTAL_FEE_USDC)
+      !== expectedPaymentDelta
     || BigInt(after.platformBalance) - BigInt(before.platformBalance)
-      !== BigInt(SPONSORED_TOTAL_FEE_USDC)
+      !== expectedPaymentDelta
     || after.publicationCount !== before.publicationCount + 1) {
     throw new Error('sponsored_canary_settlement_invalid');
   }
   return {
-    schema: 'youtick.sponsored-upload-canary.v1',
+    schema: mode === 'new'
+      ? 'youtick.sponsored-upload-canary.v1'
+      : 'youtick.sponsored-upload-recovery-canary.v1',
     status: 'PASS',
     creators: 1,
-    payments: 1,
+    payments: mode === 'new' ? 1 : 0,
+    recovered_payments: mode === 'recovery' ? 1 : 0,
     upload_fee_usdc: FEE_USDC,
     sponsor_fee_usdc: SPONSOR_FEE_USDC,
     total_fee_usdc: SPONSORED_TOTAL_FEE_USDC,
+    new_bridge_resources: intent.created ? 1 : 0,
     uploads: 1,
     publications: 1,
     endpoint_fingerprint: intent.endpointFingerprint,
@@ -233,6 +245,55 @@ test('sponsored canary requires one payment, upload and publication with exact s
   });
   expect(calls).toEqual(['preflight', 'authorize', 'job', 'intent', 'upload', 'publication', 'after']);
   expect(receipt).toMatchObject({ status: 'PASS', payments: 1, uploads: 1, publications: 1 });
+});
+
+test('sponsored recovery publishes the paid job without a second payment', async () => {
+  const receipt = await runSponsoredOne({
+    accountId: 'creator.testnet', jobId: 'sponsored-job', sourceBytes: 341028, feeUsdc: FEE_USDC,
+  }, {
+    preflight: async () => ({
+      usdcBalance: '19400000', platformBalance: '1140000', publicationCount: 1,
+    }),
+    authorize: async () => 'ed25519:upload',
+    waitForJob: async () => undefined,
+    requestIntent: async () => ({
+      created: false, endpointFingerprint: sha256('endpoint'), value: 'intent',
+    }),
+    upload: async () => undefined,
+    waitForPublication: async () => undefined,
+    readAfter: async () => ({
+      usdcBalance: '19400000', platformBalance: '1140000', publicationCount: 2,
+    }),
+  }, 'recovery');
+
+  expect(receipt).toMatchObject({
+    status: 'PASS', payments: 0, recovered_payments: 1, uploads: 1, publications: 1,
+    new_bridge_resources: 0,
+  });
+});
+
+test('loads one exact sponsored recovery session without exposing its keys', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'youtick-sponsored-recovery-'));
+  const filePath = join(directory, 'recovery.json');
+  const accountId = 'creator.testnet';
+  const jobId = 'job-recovery';
+  const publicKey = 'ed25519:11111111111111111111111111111111';
+  try {
+    writeFileSync(filePath, JSON.stringify({
+      [`youtick:livepeer-job-session:${accountId}:${jobId}`]: JSON.stringify({
+        secretKey: 'ed25519:secret',
+        publicKey,
+        uploadKeyExpiresAtMs: String(Date.now() + 60_000),
+        sponsoredDelegateBase64: 'A'.repeat(64),
+      }),
+    }), { mode: 0o600 });
+
+    const recovery = new RecoveryStorage(filePath, true);
+
+    expect(sponsoredRecoverySession(recovery, accountId)).toEqual({ jobId, publicKey });
+  } finally {
+    rmSync(directory, { recursive: true });
+  }
 });
 
 test('reports only allowlisted sponsored relay rejection stages', () => {
@@ -395,12 +456,22 @@ test.skipIf(process.env.YOUTICK_PHASE3_CANARY_ACK !== LIVE_ACK)(
   20 * 60 * 1000,
 );
 
-test.skipIf(process.env.YOUTICK_SPONSORED_CANARY_ACK !== SPONSORED_LIVE_ACK)(
-  'runs one exact sponsored Preview payment, upload and publication canary',
+test.skipIf(
+  process.env.YOUTICK_SPONSORED_CANARY_ACK !== SPONSORED_LIVE_ACK
+  && process.env.YOUTICK_SPONSORED_RECOVERY_ACK !== SPONSORED_RECOVERY_LIVE_ACK,
+)(
+  'runs one exact sponsored Preview payment or paid-job recovery canary',
   async () => {
     if (process.env.CI) throw new Error('sponsored_canary_local_only');
+    const recoveryMode = process.env.YOUTICK_SPONSORED_RECOVERY_ACK
+      === SPONSORED_RECOVERY_LIVE_ACK;
+    if (recoveryMode && process.env.YOUTICK_SPONSORED_CANARY_ACK === SPONSORED_LIVE_ACK) {
+      throw new Error('sponsored_canary_scope_invalid');
+    }
     const expectedBridgeVersion = requiredUuid('YOUTICK_EXPECTED_BRIDGE_VERSION');
-    const relayerAccountId = requiredTestnetAccount('YOUTICK_SPONSOR_RELAYER_ACCOUNT_ID');
+    const relayerAccountId = recoveryMode
+      ? null
+      : requiredTestnetAccount('YOUTICK_SPONSOR_RELAYER_ACCOUNT_ID');
     const input = LOCKED_INPUTS[0];
     const media = loadLockedMedia(input);
     await requireEnabledBridge(expectedBridgeVersion, true);
@@ -413,7 +484,10 @@ test.skipIf(process.env.YOUTICK_SPONSORED_CANARY_ACK !== SPONSORED_LIVE_ACK)(
     process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = 'true';
     process.env.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS = 'true';
 
-    const recovery = new RecoveryStorage(SPONSORED_RECOVERY_FILE);
+    const recovery = new RecoveryStorage(SPONSORED_RECOVERY_FILE, recoveryMode);
+    const recovered = recoveryMode
+      ? sponsoredRecoverySession(recovery, input.accountId)
+      : null;
     Object.defineProperty(globalThis, 'sessionStorage', { value: recovery, configurable: true });
     Object.defineProperty(globalThis, 'localStorage', { value: recovery, configurable: true });
     Object.defineProperty(globalThis, 'window', {
@@ -430,20 +504,22 @@ test.skipIf(process.env.YOUTICK_SPONSORED_CANARY_ACK !== SPONSORED_LIVE_ACK)(
     const publication = await import('@/lib/livepeer-publication');
     const { getSplitTransactionProvider } = await import('@/lib/rpc-failover');
     const provider = getSplitTransactionProvider();
-    const credentialPath = join(
-      homedir(),
-      `.near-credentials/testnet/${input.accountId}.json`,
-    );
-    const keyPair = loadCredential(credentialPath, input.accountId, near.KeyPair);
-    await requireFinalFullAccessKey(provider, input.accountId, keyPair.getPublicKey().toString());
-    const signer = new near.KeyPairSigner(keyPair);
-    const account = new near.Account(input.accountId, provider, signer);
+    let account: import('near-api-js').Account | null = null;
+    if (!recoveryMode) {
+      const credentialPath = join(
+        homedir(),
+        `.near-credentials/testnet/${input.accountId}.json`,
+      );
+      const keyPair = loadCredential(credentialPath, input.accountId, near.KeyPair);
+      await requireFinalFullAccessKey(provider, input.accountId, keyPair.getPublicKey().toString());
+      account = new near.Account(input.accountId, provider, new near.KeyPairSigner(keyPair));
+    }
     const source = upload.validateLivepeerSourceFile(media.file);
     if (!source.ok || source.sourceType !== 'mp4'
       || upload.livepeerUploadFeeUsdc(media.file.size) !== FEE_USDC) {
       throw new Error('sponsored_canary_media_policy_invalid');
     }
-    const jobId = upload.createLivepeerJobId();
+    const jobId = recovered?.jobId ?? upload.createLivepeerJobId();
     const fingerprint = await upload.fingerprintLivepeerSource(media.file);
     const wallet = {
       signAndSendTransaction: async () => {
@@ -454,6 +530,7 @@ test.skipIf(process.env.YOUTICK_SPONSORED_CANARY_ACK !== SPONSORED_LIVE_ACK)(
         blockHeightTtl?: number;
       }) => ({
         signedDelegateActions: await Promise.all(delegateActions.map(async (delegate) => {
+          if (!account) throw new Error('sponsored_recovery_payment_forbidden');
           const signed = await account.createSignedMetaTransaction({
             receiverId: delegate.receiverId,
             actions: delegate.actions as never,
@@ -474,19 +551,32 @@ test.skipIf(process.env.YOUTICK_SPONSORED_CANARY_ACK !== SPONSORED_LIVE_ACK)(
     try {
       const receipt = await runSponsoredOne(participant, {
         preflight: async () => {
-          if (await publication.readLivepeerMediaJob(jobId) !== null) {
+          const job = await publication.readLivepeerMediaJob(jobId);
+          if (recoveryMode) {
+            if (!job
+              || job.status !== 'Authorized'
+              || job.creator_id !== input.accountId
+              || job.upload_public_key !== recovered?.publicKey) {
+              throw new Error('sponsored_recovery_job_invalid');
+            }
+          } else if (job !== null) {
             throw new Error('sponsored_canary_job_exists');
           }
           const governance = await readFinalView(provider, MARKET_ID, 'get_governance_state');
           if (!governance || typeof governance !== 'object'
-            || (governance as { new_purchases_paused?: unknown }).new_purchases_paused !== false) {
-            throw new Error('sponsored_canary_market_paused');
+            || (governance as { new_purchases_paused?: unknown }).new_purchases_paused
+              !== recoveryMode) {
+            throw new Error(recoveryMode
+              ? 'sponsored_recovery_market_open'
+              : 'sponsored_canary_market_paused');
           }
-          const relayer = await provider.query({
-            request_type: 'view_account', finality: 'final', account_id: relayerAccountId,
-          }) as { amount?: unknown };
-          if (typeof relayer.amount !== 'string' || BigInt(relayer.amount) <= 0n) {
-            throw new Error('sponsored_canary_relayer_unfunded');
+          if (relayerAccountId) {
+            const relayer = await provider.query({
+              request_type: 'view_account', finality: 'final', account_id: relayerAccountId,
+            }) as { amount?: unknown };
+            if (typeof relayer.amount !== 'string' || BigInt(relayer.amount) <= 0n) {
+              throw new Error('sponsored_canary_relayer_unfunded');
+            }
           }
           await upload.preflightLivepeerUpload({
             accountId: input.accountId,
@@ -501,15 +591,17 @@ test.skipIf(process.env.YOUTICK_SPONSORED_CANARY_ACK !== SPONSORED_LIVE_ACK)(
             publicationCount: await publication.readLivepeerPublicationsCount(),
           };
         },
-        authorize: () => upload.authorizeLivepeerPaidJob(wallet as never, {
-          accountId: input.accountId,
-          jobId,
-          title: 'Sponsored upload canary',
-          priceUsdc: '2000000',
-          expectedSourceBytes: input.sourceBytes,
-          asset: 'USDC',
-          allowSponsoredUsdc: true,
-        }),
+        authorize: () => recoveryMode
+          ? Promise.resolve(recovered!.publicKey)
+          : upload.authorizeLivepeerPaidJob(wallet as never, {
+            accountId: input.accountId,
+            jobId,
+            title: 'Sponsored upload canary',
+            priceUsdc: '2000000',
+            expectedSourceBytes: input.sourceBytes,
+            asset: 'USDC',
+            allowSponsoredUsdc: true,
+          }),
         waitForJob: (uploadPublicKey) => publication.waitForAuthorizedLivepeerJob(
           jobId, input.accountId, uploadPublicKey,
         ),
@@ -540,7 +632,7 @@ test.skipIf(process.env.YOUTICK_SPONSORED_CANARY_ACK !== SPONSORED_LIVE_ACK)(
           platformBalance: String(await readFinalView(provider, MARKET_ID, 'get_platform_balance')),
           publicationCount: await publication.readLivepeerPublicationsCount(),
         }),
-      });
+      }, recoveryMode ? 'recovery' : 'new');
       upload.clearLivepeerJobSessionKey(input.accountId, jobId);
       if (recovery.length !== 0 || existsSync(SPONSORED_RECOVERY_FILE)) {
         throw new Error('sponsored_canary_recovery_cleanup_failed');
@@ -548,7 +640,7 @@ test.skipIf(process.env.YOUTICK_SPONSORED_CANARY_ACK !== SPONSORED_LIVE_ACK)(
       console.log(JSON.stringify({
         ...receipt,
         creator_fingerprint: sha256(input.accountId),
-        relayer_fingerprint: sha256(relayerAccountId),
+        ...(relayerAccountId ? { relayer_fingerprint: sha256(relayerAccountId) } : {}),
         job_fingerprint: sha256(jobId),
         media_sha256: input.sourceSha256,
       }));
@@ -718,11 +810,54 @@ function sponsoredCanaryFailureCode(error: unknown): string {
   return SPONSORED_RELAY_FAILURE_PATTERN.test(message) ? message : 'unknown';
 }
 
+function sponsoredRecoverySession(storage: Storage, accountId: string) {
+  const prefix = `youtick:livepeer-job-session:${accountId}:`;
+  const keys = Array.from({ length: storage.length }, (_, index) => storage.key(index))
+    .filter((key): key is string => typeof key === 'string' && key.startsWith(prefix));
+  if (keys.length !== 1) throw new Error('sponsored_recovery_session_invalid');
+  const jobId = keys[0].slice(prefix.length);
+  let session: Record<string, unknown>;
+  try {
+    session = JSON.parse(storage.getItem(keys[0]) || 'null') as Record<string, unknown>;
+  } catch {
+    throw new Error('sponsored_recovery_session_invalid');
+  }
+  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(jobId)
+    || !session || typeof session !== 'object'
+    || typeof session.secretKey !== 'string'
+    || typeof session.publicKey !== 'string'
+    || !session.publicKey.startsWith('ed25519:')
+    || typeof session.uploadKeyExpiresAtMs !== 'string'
+    || !/^[1-9][0-9]{0,15}$/.test(session.uploadKeyExpiresAtMs)
+    || BigInt(session.uploadKeyExpiresAtMs) <= BigInt(Date.now())
+    || typeof session.sponsoredDelegateBase64 !== 'string') {
+    throw new Error('sponsored_recovery_session_invalid');
+  }
+  return { jobId, publicKey: session.publicKey };
+}
+
 class RecoveryStorage implements Storage {
   readonly #values = new Map<string, string>();
 
-  constructor(readonly filePath: string) {
-    if (existsSync(filePath)) throw new Error('multi_creator_canary_recovery_pending');
+  constructor(readonly filePath: string, loadExisting = false) {
+    if (!loadExisting) {
+      if (existsSync(filePath)) throw new Error('multi_creator_canary_recovery_pending');
+      return;
+    }
+    let values: Record<string, unknown>;
+    try {
+      const stat = lstatSync(filePath);
+      values = JSON.parse(readFileSync(filePath, 'utf8')) as Record<string, unknown>;
+      if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
+        || !values || typeof values !== 'object' || Array.isArray(values)
+        || Object.keys(values).length < 1
+        || Object.values(values).some((value) => typeof value !== 'string')) {
+        throw new Error('invalid');
+      }
+    } catch {
+      throw new Error('sponsored_recovery_file_invalid');
+    }
+    Object.entries(values).forEach(([key, value]) => this.#values.set(key, value as string));
   }
 
   get length() { return this.#values.size; }
