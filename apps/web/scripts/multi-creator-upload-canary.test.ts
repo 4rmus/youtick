@@ -460,21 +460,22 @@ test('requires exact acknowledgement before refreshing an expired recovery key',
   }
 });
 
-test('locks the recovery key replacement to the Market method with zero deposit', () => {
-  expect(recoveryKeyReplacementRequest({
-    jobId: 'job-recovery',
-    newPublicKey: 'ed25519:new-public',
-    expiresAtMs: '1800086400000',
-  })).toEqual({
+test('locks the final recovery key replacement transaction', () => {
+  expect(recoveryKeyReplacementTransaction({
+    jobId: 'job-recovery', newPublicKey: 'ed25519:new-public', expiresAtMs: '1800086400000',
+  }, (methodName, args, gas, deposit) => ({ methodName, args, gas, deposit }))).toEqual({
     receiverId: MARKET_ID,
-    methodName: 'replace_upload_key',
-    args: {
-      job_id: 'job-recovery',
-      new_public_key: 'ed25519:new-public',
-      expires_at_ms: '1800086400000',
-    },
-    gas: 100_000_000_000_000n,
-    deposit: 0n,
+    waitUntil: 'FINAL',
+    actions: [{
+      methodName: 'replace_upload_key',
+      args: {
+        job_id: 'job-recovery',
+        new_public_key: 'ed25519:new-public',
+        expires_at_ms: '1800086400000',
+      },
+      gas: 100_000_000_000_000n,
+      deposit: 0n,
+    }],
   });
 });
 
@@ -914,16 +915,9 @@ test.skipIf(
                     new near.KeyPairSigner(keyPair),
                   );
                 }
-                const request = recoveryKeyReplacementRequest(replacement);
-                await recoveryAccount.signAndSendTransaction({
-                  receiverId: request.receiverId,
-                  actions: [near.actions.functionCall(
-                    request.methodName,
-                    request.args,
-                    request.gas,
-                    request.deposit,
-                  )],
-                });
+                await recoveryAccount.signAndSendTransaction(
+                  recoveryKeyReplacementTransaction(replacement, near.actions.functionCall),
+                );
               },
             });
             return recovered.publicKey;
@@ -1186,22 +1180,25 @@ function sponsoredRecoverySession(
   };
 }
 
-function recoveryKeyReplacementRequest(input: {
+function recoveryKeyReplacementTransaction<T>(input: {
   jobId: string;
   newPublicKey: string;
   expiresAtMs: string;
-}) {
+}, functionCall: (
+  methodName: string,
+  args: Record<string, string>,
+  gas: bigint,
+  deposit: bigint,
+) => T) {
   return {
     receiverId: MARKET_ID,
-    methodName: 'replace_upload_key',
-    args: {
+    waitUntil: 'FINAL' as const,
+    actions: [functionCall('replace_upload_key', {
       job_id: input.jobId,
       new_public_key: input.newPublicKey,
       expires_at_ms: input.expiresAtMs,
-    },
-    gas: RECOVERY_KEY_REPLACEMENT_GAS,
-    deposit: 0n,
-  } as const;
+    }, RECOVERY_KEY_REPLACEMENT_GAS, 0n)],
+  };
 }
 
 async function refreshSponsoredRecoverySession({
