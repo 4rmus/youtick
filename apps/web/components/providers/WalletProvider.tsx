@@ -7,11 +7,7 @@ import { clearDeviceSession } from '@/lib/device-session';
 import { NEAR_NETWORK } from '@/lib/constants';
 import { getRpcEndpoints } from '@/lib/rpc-failover';
 import {
-    buildSignlessAccessKeyRequest,
     clearSignlessAccessKey,
-    createSignlessAccessKey,
-    persistSignlessAccessKey,
-    reconcileSignlessAccessKey,
     revokeBrowserAuthority,
 } from '@/lib/signless-access-key';
 import type { WalletInstance } from '@/lib/types';
@@ -202,19 +198,8 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         const connector = connectorRef.current;
         if (!connector) return;
         try {
-            const supportsSignless = connector.availableWallets.some(
-                (wallet) => wallet.manifest.features?.signInWithFunctionCallKey,
-            );
-            const keyPair = supportsSignless ? createSignlessAccessKey() : null;
-            const wallet = await connector.connect(
-                keyPair ? { addFunctionCallKey: buildSignlessAccessKeyRequest(keyPair) } : undefined,
-            );
+            const wallet = await connector.connect();
             const accounts = await wallet.getAccounts({ network: NEAR_NETWORK });
-            const id = accounts[0]?.accountId;
-            if (keyPair && id) {
-                await persistSignlessAccessKey(id, keyPair);
-                void reconcileSignlessAccessKey(id, keyPair).catch(() => {});
-            }
             applyWallet(wallet, accounts);
             setError(null);
         } catch (reason) {

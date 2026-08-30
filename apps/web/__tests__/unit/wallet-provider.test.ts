@@ -5,6 +5,7 @@ const walletTestState = vi.hoisted(() => ({
     cleanup: undefined as void | (() => void),
     connectorOptions: undefined as undefined | Record<string, unknown>,
     connectorWallets: [] as Array<{ manifest: Record<string, unknown> }>,
+    connect: vi.fn(),
     registeredWallets: [] as Array<Record<string, unknown>>,
     stateSetters: [] as ReturnType<typeof vi.fn>[],
 }));
@@ -28,7 +29,7 @@ vi.mock('react', async (importOriginal) => {
 
 vi.mock('@hot-labs/near-connect', () => ({
     NearConnector: class {
-        availableWallets = [];
+        availableWallets = [{ manifest: { features: { signInWithFunctionCallKey: true } } }];
         wallets: Array<{ manifest: Record<string, unknown> }> = [
             { manifest: { id: 'other-wallet' } },
             { manifest: { id: 'meteor-wallet', executor: 'https://moving.example/meteor.js' } },
@@ -45,6 +46,11 @@ vi.mock('@hot-labs/near-connect', () => ({
             walletTestState.registeredWallets.push(manifest);
             this.wallets.push({ manifest });
         }
+        connect(input?: unknown) {
+            return input === undefined
+                ? walletTestState.connect()
+                : walletTestState.connect(input);
+        }
         getConnectedWallet() { return new Promise(() => {}); }
         on() {}
         removeAllListeners() {}
@@ -60,6 +66,7 @@ describe('WalletProvider CSP initialization', () => {
         walletTestState.cleanup = undefined;
         walletTestState.connectorOptions = undefined;
         walletTestState.connectorWallets = [];
+        walletTestState.connect.mockReset();
         walletTestState.registeredWallets = [];
         walletTestState.stateSetters = [];
         vi.useRealTimers();
@@ -88,6 +95,24 @@ describe('WalletProvider CSP initialization', () => {
 
         expect(layout).toContain("(await headers()).get('x-nonce')");
         expect(layout).toContain('<WalletProvider cspNonce={cspNonce}>');
+    });
+
+    it('connects without requesting a sign-in access key', async () => {
+        vi.useFakeTimers();
+        const getAccounts = vi.fn().mockResolvedValue([{ accountId: 'creator.testnet' }]);
+        walletTestState.connect.mockResolvedValue({
+            manifest: PINNED_WALLET_MANIFEST.wallets[0],
+            getAccounts,
+        });
+        const provider = WalletProvider({ children: null }) as unknown as {
+            props: { value: { connect: () => Promise<void> } };
+        };
+
+        await provider.props.value.connect();
+
+        expect(walletTestState.connect).toHaveBeenCalledWith();
+        expect(getAccounts).toHaveBeenCalledWith({ network: 'testnet' });
+        await vi.advanceTimersByTimeAsync(5_000);
     });
 
     it('exposes delegate signing only when the connected wallet advertises it', async () => {
