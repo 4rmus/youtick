@@ -107,21 +107,6 @@ export async function revokeBrowserAuthority(
     }
 }
 
-export function buildSignlessAccessKeyRequest(keyPair: KeyPair) {
-    return {
-        contractId: NEAR_CONFIG.accessContractId,
-        publicKey: keyPair.getPublicKey().toString(),
-        allowMethods: {
-            anyMethod: false as const,
-            methodNames: [...SIGNLESS_ACCESS_KEY_METHODS],
-        },
-        gasAllowance: {
-            kind: 'limited' as const,
-            amount: SIGNLESS_ACCESS_KEY_ALLOWANCE_YOCTO.toString(),
-        },
-    };
-}
-
 export interface SignlessKeyProvision {
     transaction: { receiverId: string; actions: unknown[] };
     /** Persist the key locally. Call BEFORE sending: redirect wallets navigate
@@ -330,32 +315,4 @@ export async function signAndSendWithSignlessProvision(
         return wallet.signAndSendTransaction(transactions[0]);
     }
     return wallet.signAndSendTransactions({ transactions });
-}
-
-/**
- * Post-connect check: some wallets silently ignore the addFunctionCallKey
- * sign-in request. If the key never lands on-chain, drop the locally persisted
- * secret so purchase/playback flows re-provision it instead of failing into a
- * wallet prompt on every grant.
- */
-export async function reconcileSignlessAccessKey(
-    accountId: string,
-    keyPair: KeyPair,
-    attempts = 5,
-    delayMs = 2_000,
-): Promise<void> {
-    const publicKey = keyPair.getPublicKey().toString();
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-        const state = await getSignlessKeyOnChainState(accountId, publicKey);
-        if (state === 'usable' || state === 'unknown') {
-            return;
-        }
-        if (state === 'invalid') break;
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-
-    const current = await getSignlessAccessKey(accountId);
-    if (current && current.getPublicKey().toString() === publicKey) {
-        await clearSignlessAccessKey(accountId);
-    }
 }
