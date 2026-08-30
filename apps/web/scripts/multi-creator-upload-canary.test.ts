@@ -19,6 +19,7 @@ const LIVE_ACK = 'two-nonrefundable-usdc-payments-and-two-uploads';
 const SPONSORED_LIVE_ACK = 'one-sponsored-usdc-payment-upload-and-publication';
 const SPONSORED_RECOVERY_LIVE_ACK = 'resume-one-paid-job-without-a-second-payment';
 const SPONSORED_RELAY_FAILURE_PATTERN = /^invalid_sponsored_upload_relay:(delegate_decode|delegate_shape|quote_validation|signature_validation|freshness|access_key)$/;
+const SPONSORED_RECOVERY_FAILURE_PATTERN = /^sponsored_recovery_failed:(preflight|job|intent|upload|publication|settlement)$/;
 const MARKET_ID = 'lp-arch-market-v2-260809.youtick-dev-v3.testnet';
 const ACCESS_ID = 'lp-arch-access-v2-260809.youtick-dev-v3.testnet';
 const APP_ORIGIN = 'https://preview.youtick.net';
@@ -152,25 +153,35 @@ async function runSponsoredOne(
   mode: 'new' | 'recovery' = 'new',
 ) {
   if (participant.feeUsdc !== FEE_USDC) throw new Error('sponsored_canary_scope_invalid');
-  const before = await steps.preflight();
-  if (mode === 'new' && BigInt(before.usdcBalance) < BigInt(SPONSORED_TOTAL_FEE_USDC)) {
-    throw new Error('sponsored_canary_balance_insufficient');
-  }
-  const uploadPublicKey = await steps.authorize();
-  await steps.waitForJob(uploadPublicKey);
-  const intent = await steps.requestIntent();
-  if (mode === 'new' && intent.created !== true) throw new Error('sponsored_canary_intent_invalid');
-  await steps.upload(intent.value);
-  await steps.waitForPublication();
-  const after = await steps.readAfter();
-  const expectedPaymentDelta = mode === 'new' ? BigInt(SPONSORED_TOTAL_FEE_USDC) : 0n;
-  if (BigInt(before.usdcBalance) - BigInt(after.usdcBalance)
-      !== expectedPaymentDelta
-    || BigInt(after.platformBalance) - BigInt(before.platformBalance)
-      !== expectedPaymentDelta
-    || after.publicationCount !== before.publicationCount + 1) {
-    throw new Error('sponsored_canary_settlement_invalid');
-  }
+  const before = await sponsoredCanaryStep(mode, 'preflight', async () => {
+    const value = await steps.preflight();
+    if (mode === 'new' && BigInt(value.usdcBalance) < BigInt(SPONSORED_TOTAL_FEE_USDC)) {
+      throw new Error('sponsored_canary_balance_insufficient');
+    }
+    return value;
+  });
+  const uploadPublicKey = await sponsoredCanaryStep(mode, 'job', steps.authorize);
+  await sponsoredCanaryStep(mode, 'job', () => steps.waitForJob(uploadPublicKey));
+  const intent = await sponsoredCanaryStep(mode, 'intent', async () => {
+    const value = await steps.requestIntent();
+    if (mode === 'new' && value.created !== true) {
+      throw new Error('sponsored_canary_intent_invalid');
+    }
+    return value;
+  });
+  await sponsoredCanaryStep(mode, 'upload', () => steps.upload(intent.value));
+  await sponsoredCanaryStep(mode, 'publication', steps.waitForPublication);
+  await sponsoredCanaryStep(mode, 'settlement', async () => {
+    const after = await steps.readAfter();
+    const expectedPaymentDelta = mode === 'new' ? BigInt(SPONSORED_TOTAL_FEE_USDC) : 0n;
+    if (BigInt(before.usdcBalance) - BigInt(after.usdcBalance)
+        !== expectedPaymentDelta
+      || BigInt(after.platformBalance) - BigInt(before.platformBalance)
+        !== expectedPaymentDelta
+      || after.publicationCount !== before.publicationCount + 1) {
+      throw new Error('sponsored_canary_settlement_invalid');
+    }
+  });
   return {
     schema: mode === 'new'
       ? 'youtick.sponsored-upload-canary.v1'
@@ -187,6 +198,19 @@ async function runSponsoredOne(
     publications: 1,
     endpoint_fingerprint: intent.endpointFingerprint,
   } as const;
+}
+
+async function sponsoredCanaryStep<T>(
+  mode: 'new' | 'recovery',
+  stage: 'preflight' | 'job' | 'intent' | 'upload' | 'publication' | 'settlement',
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (mode === 'recovery') throw new Error(`sponsored_recovery_failed:${stage}`);
+    throw error;
+  }
 }
 
 test('requires two distinct creators and starts both uploads before either completes', async () => {
@@ -272,6 +296,41 @@ test('sponsored recovery publishes the paid job without a second payment', async
   });
 });
 
+test('reports the exact allowlisted sponsored recovery failure phase', async () => {
+  const participant = {
+    accountId: 'creator.testnet', jobId: 'sponsored-job', sourceBytes: 341028, feeUsdc: FEE_USDC,
+  };
+  const steps: SponsoredCanarySteps = {
+    preflight: async () => ({
+      usdcBalance: '19400000', platformBalance: '1140000', publicationCount: 1,
+    }),
+    authorize: async () => 'ed25519:upload',
+    waitForJob: async () => undefined,
+    requestIntent: async () => ({
+      created: false, endpointFingerprint: sha256('endpoint'), value: 'intent',
+    }),
+    upload: async () => undefined,
+    waitForPublication: async () => undefined,
+    readAfter: async () => ({
+      usdcBalance: '19400000', platformBalance: '1140000', publicationCount: 2,
+    }),
+  };
+  const fail = async () => { throw new Error('secret_payload'); };
+  const cases: Array<[string, Partial<SponsoredCanarySteps>]> = [
+    ['preflight', { preflight: fail }],
+    ['job', { authorize: fail }],
+    ['intent', { requestIntent: fail }],
+    ['upload', { upload: fail }],
+    ['publication', { waitForPublication: fail }],
+    ['settlement', { readAfter: fail }],
+  ];
+
+  for (const [stage, override] of cases) {
+    await expect(runSponsoredOne(participant, { ...steps, ...override }, 'recovery'))
+      .rejects.toThrow(`sponsored_recovery_failed:${stage}`);
+  }
+});
+
 test('loads one exact sponsored recovery session without exposing its keys', () => {
   const directory = mkdtempSync(join(tmpdir(), 'youtick-sponsored-recovery-'));
   const filePath = join(directory, 'recovery.json');
@@ -300,6 +359,13 @@ test('reports only allowlisted sponsored relay rejection stages', () => {
   expect(sponsoredCanaryFailureCode(new Error(
     'invalid_sponsored_upload_relay:access_key',
   ))).toBe('invalid_sponsored_upload_relay:access_key');
+  for (const stage of ['preflight', 'job', 'intent', 'upload', 'publication', 'settlement']) {
+    const code = `sponsored_recovery_failed:${stage}`;
+    expect(sponsoredCanaryFailureCode(new Error(code))).toBe(code);
+  }
+  expect(sponsoredCanaryFailureCode(new Error(
+    'sponsored_recovery_failed:secret_payload',
+  ))).toBe('unknown');
   expect(sponsoredCanaryFailureCode(new Error('secret_payload'))).toBe('unknown');
 });
 
@@ -807,7 +873,10 @@ function sha256(value: string | Uint8Array): string {
 
 function sponsoredCanaryFailureCode(error: unknown): string {
   const message = error instanceof Error ? error.message : '';
-  return SPONSORED_RELAY_FAILURE_PATTERN.test(message) ? message : 'unknown';
+  return SPONSORED_RELAY_FAILURE_PATTERN.test(message)
+    || SPONSORED_RECOVERY_FAILURE_PATTERN.test(message)
+    ? message
+    : 'unknown';
 }
 
 function sponsoredRecoverySession(storage: Storage, accountId: string) {
