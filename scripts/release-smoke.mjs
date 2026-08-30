@@ -174,15 +174,24 @@ async function bridgeHealth(
             : expectedSponsoredUploadReady === false
                 ? sponsoredUploadsClosed
                 : sponsoredUploadsReady || sponsoredUploadsClosed || sponsoredUploadsLegacyClosed;
+        const operatorMutationMatch = expectedSponsoredUploadReady === true
+            ? healthJson.operatorMutationEnabled === true
+            : expectedSponsoredUploadReady === false
+                ? healthJson.operatorMutationEnabled === false
+                : healthJson.operatorMutationEnabled === undefined
+                    || healthJson.operatorMutationEnabled === false
+                    || (healthJson.operatorMutationEnabled === true && sponsoredUploadsReady);
         const enabled = healthJson.stage === 'ENABLED'
             && healthJson.providerMutationEnabled === true
             && healthJson.newUploadReady === true
-            && sponsoredUploadsMatch;
+            && sponsoredUploadsMatch
+            && operatorMutationMatch;
         const disabled = healthJson.stage === 'DISABLED'
             && healthJson.providerMutationEnabled === false
             && healthJson.newUploadReady === false
             && !sponsoredUploadsReady
-            && sponsoredUploadsMatch;
+            && sponsoredUploadsMatch
+            && operatorMutationMatch;
         if (expectedBridgeEnabled === null ? !enabled && !disabled : expectedBridgeEnabled ? !enabled : !disabled) {
             throw new Error(expectedBridgeEnabled === null
                 ? 'release_smoke_bridge_policy_invalid'

@@ -12,14 +12,18 @@ import {
 } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
-import { File as NodeFile } from 'node:buffer';
+import { Buffer, File as NodeFile } from 'node:buffer';
 import { expect, test } from 'vitest';
 
 const LIVE_ACK = 'two-nonrefundable-usdc-payments-and-two-uploads';
 const SPONSORED_LIVE_ACK = 'one-sponsored-usdc-payment-upload-and-publication';
 const SPONSORED_RECOVERY_LIVE_ACK = 'resume-one-paid-job-without-a-second-payment';
+const SPONSORED_RECOVERY_KEY_REFRESH_ACK = 'replace-one-upload-key-without-payment';
 const SPONSORED_RELAY_FAILURE_PATTERN = /^invalid_sponsored_upload_relay:(delegate_decode|delegate_shape|quote_validation|signature_validation|freshness|access_key)$/;
-const SPONSORED_RECOVERY_FAILURE_PATTERN = /^sponsored_recovery_failed:(preflight|job|intent|upload|publication|settlement)$/;
+const SPONSORED_RECOVERY_FAILURE_PATTERN = /^sponsored_recovery_failed:(key_refresh|preflight|job|intent|upload|publication|settlement)$/;
+const RECOVERY_KEY_MIN_TTL_MS = 30 * 60 * 1000;
+const RECOVERY_KEY_TTL_MS = 24 * 60 * 60 * 1000;
+const RECOVERY_KEY_REPLACEMENT_GAS = 100_000_000_000_000n;
 const MARKET_ID = 'lp-arch-market-v2-260809.youtick-dev-v3.testnet';
 const ACCESS_ID = 'lp-arch-access-v2-260809.youtick-dev-v3.testnet';
 const APP_ORIGIN = 'https://preview.youtick.net';
@@ -83,6 +87,26 @@ type SponsoredCanarySteps = {
   waitForPublication(): Promise<void>;
   readAfter(): Promise<{ usdcBalance: string; platformBalance: string; publicationCount: number }>;
 };
+
+type SponsoredRecoverySession = {
+  storageKey: string;
+  jobId: string;
+  secretKey: string;
+  publicKey: string;
+  uploadKeyExpiresAtMs: string;
+  refreshRequired: boolean;
+};
+
+type RecoveryJob = {
+  job_id?: unknown;
+  generation?: unknown;
+  status?: unknown;
+  creator_id?: unknown;
+  fee_asset?: unknown;
+  expected_source_bytes?: unknown;
+  upload_public_key?: unknown;
+  upload_key_expires_at_ms?: unknown;
+} | null;
 
 async function settledValues<T>(promises: Array<Promise<T>>, errorCode: string): Promise<T[]> {
   const results = await Promise.allSettled(promises);
@@ -208,7 +232,11 @@ async function sponsoredCanaryStep<T>(
   try {
     return await run();
   } catch (error) {
-    if (mode === 'recovery') throw new Error(`sponsored_recovery_failed:${stage}`);
+    if (mode === 'recovery') {
+      const message = error instanceof Error ? error.message : '';
+      if (SPONSORED_RECOVERY_FAILURE_PATTERN.test(message)) throw error;
+      throw new Error(`sponsored_recovery_failed:${stage}`);
+    }
     throw error;
   }
 }
@@ -329,29 +357,193 @@ test('reports the exact allowlisted sponsored recovery failure phase', async () 
     await expect(runSponsoredOne(participant, { ...steps, ...override }, 'recovery'))
       .rejects.toThrow(`sponsored_recovery_failed:${stage}`);
   }
+  await expect(runSponsoredOne(participant, {
+    ...steps,
+    authorize: async () => { throw new Error('sponsored_recovery_failed:key_refresh'); },
+  }, 'recovery')).rejects.toThrow('sponsored_recovery_failed:key_refresh');
 });
 
-test('loads one exact sponsored recovery session without exposing its keys', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'youtick-sponsored-recovery-'));
-  const filePath = join(directory, 'recovery.json');
-  const accountId = 'creator.testnet';
-  const jobId = 'job-recovery';
-  const publicKey = 'ed25519:11111111111111111111111111111111';
+test('loads the exact thirty-minute recovery boundary without exposing keys', () => {
+  const fixture = makeRecoveryFixture(RECOVERY_KEY_MIN_TTL_MS, true);
   try {
-    writeFileSync(filePath, JSON.stringify({
-      [`youtick:livepeer-job-session:${accountId}:${jobId}`]: JSON.stringify({
-        secretKey: 'ed25519:secret',
-        publicKey,
-        uploadKeyExpiresAtMs: String(Date.now() + 60_000),
-        sponsoredDelegateBase64: 'A'.repeat(64),
-      }),
-    }), { mode: 0o600 });
-
-    const recovery = new RecoveryStorage(filePath, true);
-
-    expect(sponsoredRecoverySession(recovery, accountId)).toEqual({ jobId, publicKey });
+    expect(fixture.session).toMatchObject({
+      jobId: fixture.jobId,
+      publicKey: 'ed25519:fixture-public',
+      refreshRequired: false,
+    });
   } finally {
-    rmSync(directory, { recursive: true });
+    fixture.cleanup();
+  }
+});
+
+test('refreshes one exact Authorized job key and persists only after final confirmation', async () => {
+  const fixture = makeRecoveryFixture(-1, true);
+  try {
+    const refreshed = {
+      ...fixture.session,
+      secretKey: 'ed25519:new-secret',
+      publicKey: 'ed25519:new-public',
+      uploadKeyExpiresAtMs: String(fixture.nowMs + RECOVERY_KEY_TTL_MS),
+      refreshRequired: false,
+    };
+    const reads = [
+      recoveryJob(fixture.session, fixture.accountId, 341028),
+      recoveryJob(refreshed, fixture.accountId, 341028),
+    ];
+    const replacements: Array<Record<string, string>> = [];
+
+    await expect(refreshSponsoredRecoverySession({
+      storage: fixture.storage,
+      session: fixture.session,
+      accountId: fixture.accountId,
+      expectedSourceBytes: 341028,
+      refreshAck: SPONSORED_RECOVERY_KEY_REFRESH_ACK,
+      nowMs: fixture.nowMs,
+      createKey: () => ({ secretKey: refreshed.secretKey, publicKey: refreshed.publicKey }),
+      readJob: async () => reads.shift() ?? null,
+      replaceKey: async (input) => { replacements.push(input); },
+    })).resolves.toMatchObject({ publicKey: refreshed.publicKey, refreshRequired: false });
+    expect(replacements).toHaveLength(1);
+    expect(sponsoredRecoverySession(fixture.storage, fixture.accountId, fixture.nowMs))
+      .toMatchObject({ publicKey: refreshed.publicKey, refreshRequired: false });
+    expect(JSON.parse(fixture.storage.getItem(fixture.storageKey) || 'null'))
+      .not.toHaveProperty('sponsoredDelegateBase64');
+    expect(lstatSync(fixture.filePath).mode & 0o777).toBe(0o600);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('does not retry or overwrite recovery data when key replacement is unconfirmed', async () => {
+  const fixture = makeRecoveryFixture(-1);
+  try {
+    let replaceCalls = 0;
+    let readCalls = 0;
+    await expect(refreshSponsoredRecoverySession({
+      storage: fixture.storage,
+      session: fixture.session,
+      accountId: fixture.accountId,
+      expectedSourceBytes: 341028,
+      refreshAck: SPONSORED_RECOVERY_KEY_REFRESH_ACK,
+      nowMs: fixture.nowMs,
+      createKey: () => ({ secretKey: 'ed25519:new-secret', publicKey: 'ed25519:new-public' }),
+      readJob: async () => {
+        readCalls += 1;
+        return recoveryJob(fixture.session, fixture.accountId, 341028);
+      },
+      replaceKey: async () => { replaceCalls += 1; throw new Error('ambiguous'); },
+    })).rejects.toThrow('sponsored_recovery_key_refresh_unconfirmed');
+    expect({ replaceCalls, readCalls }).toEqual({ replaceCalls: 1, readCalls: 2 });
+    expect(readFileSync(fixture.filePath, 'utf8')).toBe(fixture.original);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('requires exact acknowledgement before refreshing an expired recovery key', async () => {
+  const fixture = makeRecoveryFixture(-1);
+  try {
+    let calls = 0;
+    await expect(refreshSponsoredRecoverySession({
+      storage: fixture.storage,
+      session: fixture.session,
+      accountId: fixture.accountId,
+      expectedSourceBytes: 341028,
+      nowMs: fixture.nowMs,
+      createKey: () => { calls += 1; return { secretKey: '', publicKey: '' }; },
+      readJob: async () => { calls += 1; return null; },
+      replaceKey: async () => { calls += 1; },
+    })).rejects.toThrow('sponsored_recovery_key_refresh_ack_required');
+    expect(calls).toBe(0);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('locks the final recovery key replacement transaction', () => {
+  expect(recoveryKeyReplacementTransaction({
+    jobId: 'job-recovery', newPublicKey: 'ed25519:new-public', expiresAtMs: '1800086400000',
+  }, (methodName, args, gas, deposit) => ({ methodName, args, gas, deposit }))).toEqual({
+    receiverId: MARKET_ID,
+    waitUntil: 'FINAL',
+    actions: [{
+      methodName: 'replace_upload_key',
+      args: {
+        job_id: 'job-recovery',
+        new_public_key: 'ed25519:new-public',
+        expires_at_ms: '1800086400000',
+      },
+      gas: 100_000_000_000_000n,
+      deposit: 0n,
+    }],
+  });
+});
+
+test.each([
+  ['job id', { job_id: 'other-job' }],
+  ['generation', { generation: 2 }],
+  ['status', { status: 'Published' }],
+  ['creator', { creator_id: 'other.testnet' }],
+  ['asset', { fee_asset: 'NEAR' }],
+  ['source bytes', { expected_source_bytes: '1' }],
+  ['public key', { upload_public_key: 'ed25519:other-public' }],
+  ['expiry', { upload_key_expires_at_ms: '1' }],
+])('rejects a mismatched recovery %s before key creation', async (_label, override) => {
+  const nowMs = 1_800_000_000_000;
+  const accountId = 'creator.testnet';
+  const session: SponsoredRecoverySession = {
+    storageKey: 'youtick:livepeer-job-session:creator.testnet:job-recovery',
+    jobId: 'job-recovery',
+    secretKey: 'ed25519:expired-secret',
+    publicKey: 'ed25519:expired-public',
+    uploadKeyExpiresAtMs: String(nowMs - 1),
+    refreshRequired: true,
+  };
+  let sideEffects = 0;
+
+  await expect(refreshSponsoredRecoverySession({
+    storage: {} as Storage,
+    session,
+    accountId,
+    expectedSourceBytes: 341028,
+    refreshAck: SPONSORED_RECOVERY_KEY_REFRESH_ACK,
+    nowMs,
+    createKey: () => { sideEffects += 1; return { secretKey: '', publicKey: '' }; },
+    readJob: async () => ({ ...recoveryJob(session, accountId, 341028), ...override }),
+    replaceKey: async () => { sideEffects += 1; },
+  })).rejects.toThrow('sponsored_recovery_key_refresh_job_invalid');
+  expect(sideEffects).toBe(0);
+});
+
+test('accepts one ambiguous replacement only when the final job has the new key', async () => {
+  const fixture = makeRecoveryFixture(-1);
+  try {
+    const refreshed = {
+      ...fixture.session,
+      secretKey: 'ed25519:new-secret',
+      publicKey: 'ed25519:new-public',
+      uploadKeyExpiresAtMs: String(fixture.nowMs + RECOVERY_KEY_TTL_MS),
+      refreshRequired: false,
+    };
+    const reads = [
+      recoveryJob(fixture.session, fixture.accountId, 341028),
+      recoveryJob(refreshed, fixture.accountId, 341028),
+    ];
+    let replaceCalls = 0;
+    await expect(refreshSponsoredRecoverySession({
+      storage: fixture.storage,
+      session: fixture.session,
+      accountId: fixture.accountId,
+      expectedSourceBytes: 341028,
+      refreshAck: SPONSORED_RECOVERY_KEY_REFRESH_ACK,
+      nowMs: fixture.nowMs,
+      createKey: () => ({ secretKey: refreshed.secretKey, publicKey: refreshed.publicKey }),
+      readJob: async () => reads.shift() ?? null,
+      replaceKey: async () => { replaceCalls += 1; throw new Error('ambiguous'); },
+    })).resolves.toMatchObject({ publicKey: refreshed.publicKey, refreshRequired: false });
+    expect(replaceCalls).toBe(1);
+  } finally {
+    fixture.cleanup();
   }
 });
 
@@ -359,7 +551,7 @@ test('reports only allowlisted sponsored relay rejection stages', () => {
   expect(sponsoredCanaryFailureCode(new Error(
     'invalid_sponsored_upload_relay:access_key',
   ))).toBe('invalid_sponsored_upload_relay:access_key');
-  for (const stage of ['preflight', 'job', 'intent', 'upload', 'publication', 'settlement']) {
+  for (const stage of ['key_refresh', 'preflight', 'job', 'intent', 'upload', 'publication', 'settlement']) {
     const code = `sponsored_recovery_failed:${stage}`;
     expect(sponsoredCanaryFailureCode(new Error(code))).toBe(code);
   }
@@ -551,7 +743,7 @@ test.skipIf(
     process.env.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS = 'true';
 
     const recovery = new RecoveryStorage(SPONSORED_RECOVERY_FILE, recoveryMode);
-    const recovered = recoveryMode
+    let recovered = recoveryMode
       ? sponsoredRecoverySession(recovery, input.accountId)
       : null;
     Object.defineProperty(globalThis, 'sessionStorage', { value: recovery, configurable: true });
@@ -570,7 +762,21 @@ test.skipIf(
     const publication = await import('@/lib/livepeer-publication');
     const { getSplitTransactionProvider } = await import('@/lib/rpc-failover');
     const provider = getSplitTransactionProvider();
-    let account: import('near-api-js').Account | null = null;
+    if (recovered) {
+      try {
+        const recoveryKeyPair = near.KeyPair.fromString(recovered.secretKey as never);
+        if (recoveryKeyPair.getPublicKey().toString() !== recovered.publicKey) throw new Error();
+      } catch {
+        throw new Error('sponsored_recovery_failed:key_refresh');
+      }
+      if (recovered.refreshRequired
+        && process.env.YOUTICK_SPONSORED_RECOVERY_KEY_REFRESH_ACK
+          !== SPONSORED_RECOVERY_KEY_REFRESH_ACK) {
+        throw new Error('sponsored_recovery_failed:key_refresh');
+      }
+    }
+    let paymentAccount: import('near-api-js').Account | null = null;
+    let recoveryAccount: import('near-api-js').Account | null = null;
     if (!recoveryMode) {
       const credentialPath = join(
         homedir(),
@@ -578,7 +784,7 @@ test.skipIf(
       );
       const keyPair = loadCredential(credentialPath, input.accountId, near.KeyPair);
       await requireFinalFullAccessKey(provider, input.accountId, keyPair.getPublicKey().toString());
-      account = new near.Account(input.accountId, provider, new near.KeyPairSigner(keyPair));
+      paymentAccount = new near.Account(input.accountId, provider, new near.KeyPairSigner(keyPair));
     }
     const source = upload.validateLivepeerSourceFile(media.file);
     if (!source.ok || source.sourceType !== 'mp4'
@@ -586,6 +792,12 @@ test.skipIf(
       throw new Error('sponsored_canary_media_policy_invalid');
     }
     const jobId = recovered?.jobId ?? upload.createLivepeerJobId();
+    const readRecoveryJob = async () => readFinalView(
+      provider,
+      MARKET_ID,
+      'get_media_job',
+      { job_id: jobId },
+    ) as Promise<RecoveryJob>;
     const fingerprint = await upload.fingerprintLivepeerSource(media.file);
     const wallet = {
       signAndSendTransaction: async () => {
@@ -596,8 +808,8 @@ test.skipIf(
         blockHeightTtl?: number;
       }) => ({
         signedDelegateActions: await Promise.all(delegateActions.map(async (delegate) => {
-          if (!account) throw new Error('sponsored_recovery_payment_forbidden');
-          const signed = await account.createSignedMetaTransaction({
+          if (recoveryMode || !paymentAccount) throw new Error('sponsored_recovery_payment_forbidden');
+          const signed = await paymentAccount.createSignedMetaTransaction({
             receiverId: delegate.receiverId,
             actions: delegate.actions as never,
             blockHeightTtl,
@@ -617,12 +829,11 @@ test.skipIf(
     try {
       const receipt = await runSponsoredOne(participant, {
         preflight: async () => {
-          const job = await publication.readLivepeerMediaJob(jobId);
+          const job = recoveryMode
+            ? await readRecoveryJob()
+            : await publication.readLivepeerMediaJob(jobId);
           if (recoveryMode) {
-            if (!job
-              || job.status !== 'Authorized'
-              || job.creator_id !== input.accountId
-              || job.upload_public_key !== recovered?.publicKey) {
+            if (!recovered || !exactRecoveryJob(job, recovered, input.accountId, input.sourceBytes)) {
               throw new Error('sponsored_recovery_job_invalid');
             }
           } else if (job !== null) {
@@ -657,17 +868,63 @@ test.skipIf(
             publicationCount: await publication.readLivepeerPublicationsCount(),
           };
         },
-        authorize: () => recoveryMode
-          ? Promise.resolve(recovered!.publicKey)
-          : upload.authorizeLivepeerPaidJob(wallet as never, {
-            accountId: input.accountId,
-            jobId,
-            title: 'Sponsored upload canary',
-            priceUsdc: '2000000',
-            expectedSourceBytes: input.sourceBytes,
-            asset: 'USDC',
-            allowSponsoredUsdc: true,
-          }),
+        authorize: async () => {
+          if (!recoveryMode) {
+            return upload.authorizeLivepeerPaidJob(wallet as never, {
+              accountId: input.accountId,
+              jobId,
+              title: 'Sponsored upload canary',
+              priceUsdc: '2000000',
+              expectedSourceBytes: input.sourceBytes,
+              asset: 'USDC',
+              allowSponsoredUsdc: true,
+            });
+          }
+          if (!recovered) throw new Error('sponsored_recovery_failed:key_refresh');
+          try {
+            recovered = await refreshSponsoredRecoverySession({
+              storage: recovery,
+              session: recovered,
+              accountId: input.accountId,
+              expectedSourceBytes: input.sourceBytes,
+              refreshAck: process.env.YOUTICK_SPONSORED_RECOVERY_KEY_REFRESH_ACK,
+              nowMs: Date.now(),
+              createKey: () => {
+                const keyPair = near.KeyPair.fromRandom('ed25519');
+                return {
+                  secretKey: keyPair.toString(),
+                  publicKey: keyPair.getPublicKey().toString(),
+                };
+              },
+              readJob: readRecoveryJob,
+              replaceKey: async (replacement) => {
+                if (!recoveryAccount) {
+                  const credentialPath = join(
+                    homedir(),
+                    `.near-credentials/testnet/${input.accountId}.json`,
+                  );
+                  const keyPair = loadCredential(credentialPath, input.accountId, near.KeyPair);
+                  await requireFinalFullAccessKey(
+                    provider,
+                    input.accountId,
+                    keyPair.getPublicKey().toString(),
+                  );
+                  recoveryAccount = new near.Account(
+                    input.accountId,
+                    provider,
+                    new near.KeyPairSigner(keyPair),
+                  );
+                }
+                await recoveryAccount.signAndSendTransaction(
+                  recoveryKeyReplacementTransaction(replacement, near.actions.functionCall),
+                );
+              },
+            });
+            return recovered.publicKey;
+          } catch {
+            throw new Error('sponsored_recovery_failed:key_refresh');
+          }
+        },
         waitForJob: (uploadPublicKey) => publication.waitForAuthorizedLivepeerJob(
           jobId, input.accountId, uploadPublicKey,
         ),
@@ -793,7 +1050,8 @@ async function requireEnabledBridge(expectedVersion: string, sponsored = false) 
     || value.providerMutationEnabled !== true
     || value.newUploadReady !== true
     || (sponsored && (value.sponsoredUploadQuoteReady !== true
-      || value.sponsoredUploadRelayReady !== true))) {
+      || value.sponsoredUploadRelayReady !== true
+      || value.operatorMutationEnabled !== true))) {
     throw new Error('multi_creator_canary_bridge_not_ready');
   }
 }
@@ -831,13 +1089,14 @@ async function readFinalView(
   provider: { query(input: Record<string, unknown>): Promise<unknown> },
   accountId: string,
   methodName: string,
+  args: Record<string, unknown> = {},
 ): Promise<unknown> {
   const value = await provider.query({
     request_type: 'call_function',
     finality: 'final',
     account_id: accountId,
     method_name: methodName,
-    args_base64: 'e30=',
+    args_base64: Buffer.from(JSON.stringify(args)).toString('base64'),
   }) as { result?: unknown };
   if (!Array.isArray(value.result)) throw new Error('sponsored_canary_view_invalid');
   try {
@@ -879,7 +1138,11 @@ function sponsoredCanaryFailureCode(error: unknown): string {
     : 'unknown';
 }
 
-function sponsoredRecoverySession(storage: Storage, accountId: string) {
+function sponsoredRecoverySession(
+  storage: Storage,
+  accountId: string,
+  nowMs = Date.now(),
+): SponsoredRecoverySession {
   const prefix = `youtick:livepeer-job-session:${accountId}:`;
   const keys = Array.from({ length: storage.length }, (_, index) => storage.key(index))
     .filter((key): key is string => typeof key === 'string' && key.startsWith(prefix));
@@ -894,15 +1157,171 @@ function sponsoredRecoverySession(storage: Storage, accountId: string) {
   if (!/^[A-Za-z0-9._:-]{1,128}$/.test(jobId)
     || !session || typeof session !== 'object'
     || typeof session.secretKey !== 'string'
+    || !session.secretKey.startsWith('ed25519:')
     || typeof session.publicKey !== 'string'
     || !session.publicKey.startsWith('ed25519:')
     || typeof session.uploadKeyExpiresAtMs !== 'string'
     || !/^[1-9][0-9]{0,15}$/.test(session.uploadKeyExpiresAtMs)
-    || BigInt(session.uploadKeyExpiresAtMs) <= BigInt(Date.now())
-    || typeof session.sponsoredDelegateBase64 !== 'string') {
+    || (session.sponsoredDelegateBase64 !== undefined
+      && (typeof session.sponsoredDelegateBase64 !== 'string'
+        || session.sponsoredDelegateBase64.length < 64
+        || session.sponsoredDelegateBase64.length % 4 !== 0
+        || !/^[A-Za-z0-9+/]+={0,2}$/.test(session.sponsoredDelegateBase64)))) {
     throw new Error('sponsored_recovery_session_invalid');
   }
-  return { jobId, publicKey: session.publicKey };
+  const expiresAtMs = Number(session.uploadKeyExpiresAtMs);
+  return {
+    storageKey: keys[0],
+    jobId,
+    secretKey: session.secretKey,
+    publicKey: session.publicKey,
+    uploadKeyExpiresAtMs: session.uploadKeyExpiresAtMs,
+    refreshRequired: expiresAtMs - nowMs < RECOVERY_KEY_MIN_TTL_MS,
+  };
+}
+
+function recoveryKeyReplacementTransaction<T>(input: {
+  jobId: string;
+  newPublicKey: string;
+  expiresAtMs: string;
+}, functionCall: (
+  methodName: string,
+  args: Record<string, string>,
+  gas: bigint,
+  deposit: bigint,
+) => T) {
+  return {
+    receiverId: MARKET_ID,
+    waitUntil: 'FINAL' as const,
+    actions: [functionCall('replace_upload_key', {
+      job_id: input.jobId,
+      new_public_key: input.newPublicKey,
+      expires_at_ms: input.expiresAtMs,
+    }, RECOVERY_KEY_REPLACEMENT_GAS, 0n)],
+  };
+}
+
+async function refreshSponsoredRecoverySession({
+  storage,
+  session,
+  accountId,
+  expectedSourceBytes,
+  refreshAck,
+  nowMs,
+  createKey,
+  readJob,
+  replaceKey,
+}: {
+  storage: Storage;
+  session: SponsoredRecoverySession;
+  accountId: string;
+  expectedSourceBytes: number;
+  refreshAck?: string;
+  nowMs: number;
+  createKey(): { secretKey: string; publicKey: string };
+  readJob(): Promise<RecoveryJob>;
+  replaceKey(input: { jobId: string; newPublicKey: string; expiresAtMs: string }): Promise<void>;
+}): Promise<SponsoredRecoverySession> {
+  if (!session.refreshRequired) return session;
+  if (refreshAck !== SPONSORED_RECOVERY_KEY_REFRESH_ACK) {
+    throw new Error('sponsored_recovery_key_refresh_ack_required');
+  }
+  const before = await readJob();
+  if (!exactRecoveryJob(before, session, accountId, expectedSourceBytes)) {
+    throw new Error('sponsored_recovery_key_refresh_job_invalid');
+  }
+  const key = createKey();
+  if (!key.secretKey.startsWith('ed25519:') || !key.publicKey.startsWith('ed25519:')) {
+    throw new Error('sponsored_recovery_key_refresh_key_invalid');
+  }
+  const expiresAtMs = String(nowMs + RECOVERY_KEY_TTL_MS);
+  try {
+    await replaceKey({ jobId: session.jobId, newPublicKey: key.publicKey, expiresAtMs });
+  } catch {
+    // Reconcile the exact final job once; never retry the transaction.
+  }
+  const after = await readJob();
+  const refreshed = {
+    ...session,
+    secretKey: key.secretKey,
+    publicKey: key.publicKey,
+    uploadKeyExpiresAtMs: expiresAtMs,
+    refreshRequired: false,
+  };
+  if (!exactRecoveryJob(after, refreshed, accountId, expectedSourceBytes)) {
+    throw new Error('sponsored_recovery_key_refresh_unconfirmed');
+  }
+  storage.setItem(session.storageKey, JSON.stringify({
+    secretKey: key.secretKey,
+    publicKey: key.publicKey,
+    uploadKeyExpiresAtMs: expiresAtMs,
+  }));
+  return refreshed;
+}
+
+function exactRecoveryJob(
+  job: RecoveryJob,
+  session: SponsoredRecoverySession,
+  accountId: string,
+  expectedSourceBytes: number,
+): job is NonNullable<RecoveryJob> {
+  return Boolean(job
+    && job.job_id === session.jobId
+    && job.generation === 1
+    && job.status === 'Authorized'
+    && job.creator_id === accountId
+    && job.fee_asset === 'USDC'
+    && String(job.expected_source_bytes) === String(expectedSourceBytes)
+    && job.upload_public_key === session.publicKey
+    && String(job.upload_key_expires_at_ms) === session.uploadKeyExpiresAtMs);
+}
+
+function recoveryJob(
+  session: SponsoredRecoverySession,
+  accountId: string,
+  expectedSourceBytes: number,
+): NonNullable<RecoveryJob> {
+  return {
+    job_id: session.jobId,
+    generation: 1,
+    status: 'Authorized',
+    creator_id: accountId,
+    fee_asset: 'USDC',
+    expected_source_bytes: String(expectedSourceBytes),
+    upload_public_key: session.publicKey,
+    upload_key_expires_at_ms: session.uploadKeyExpiresAtMs,
+  };
+}
+
+function makeRecoveryFixture(expiresInMs: number, includeDelegate = false) {
+  const nowMs = 1_800_000_000_000;
+  const directory = mkdtempSync(join(tmpdir(), 'youtick-sponsored-recovery-'));
+  const filePath = join(directory, 'recovery.json');
+  const accountId = 'creator.testnet';
+  const jobId = 'job-recovery';
+  const storageKey = `youtick:livepeer-job-session:${accountId}:${jobId}`;
+  const original = JSON.stringify({
+    [storageKey]: JSON.stringify({
+      secretKey: 'ed25519:fixture-secret',
+      publicKey: 'ed25519:fixture-public',
+      uploadKeyExpiresAtMs: String(nowMs + expiresInMs),
+      ...(includeDelegate ? { sponsoredDelegateBase64: 'A'.repeat(64) } : {}),
+    }),
+  });
+  writeFileSync(filePath, original, { mode: 0o600 });
+  const storage = new RecoveryStorage(filePath, true);
+  return {
+    nowMs,
+    directory,
+    filePath,
+    accountId,
+    jobId,
+    storageKey,
+    original,
+    storage,
+    session: sponsoredRecoverySession(storage, accountId, nowMs),
+    cleanup: () => rmSync(directory, { recursive: true }),
+  };
 }
 
 class RecoveryStorage implements Storage {

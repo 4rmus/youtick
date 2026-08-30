@@ -344,6 +344,7 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
     env.PREVIEW_LIVEPEER_BRIDGE_ENABLED = "true";
     env.PREVIEW_LIVEPEER_NEW_UPLOADS_ENABLED = "true";
     env.PREVIEW_LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "true";
     env.PREVIEW_NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS = "true";
     env.PREVIEW_LIVEPEER_SPONSORED_UPLOADS_ENABLED = "true";
     env.PREVIEW_LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED = "true";
@@ -358,6 +359,7 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
     assert.equal(config.web.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS, "true");
     assert.equal(config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED, "true");
     assert.equal(config.bridge.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED, "true");
+    assert.equal(config.bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED, "true");
     assert.equal(config.bridge.NEAR_SPONSOR_RELAYER_ACCOUNT_ID, "sponsor-relayer.testnet");
     assert.equal(config.bridge.NEAR_SPONSOR_RELAYER_KEY_EPOCH, "1");
   });
@@ -544,7 +546,18 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
       env,
     );
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /exactly false/);
+    assert.match(result.stderr, /sponsor canary flags must be all false or all true/);
+  });
+
+  await t.test("true Production operator-mutation flag", () => {
+    const env = publicEnv("production");
+    env.PRODUCTION_LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "true";
+    const result = run(
+      ["config", "--environment", "production", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /PRODUCTION sponsor canary flags must be exactly false/);
   });
 
   await t.test("true Preview operator archive flag", () => {

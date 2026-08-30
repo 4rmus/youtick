@@ -1381,6 +1381,19 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
         }), /preview_multi_creator_upload_canary_flags_invalid/);
     });
 
+    await t.test('rejects a standalone Preview operator mutation flag', async (subtest) => {
+        const release = makeRelease(subtest);
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED = 'true';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.preview = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        await assert.rejects(deployRelease({
+            target: 'preview', sha: SHA, artifactDir: release.artifactDir, receiptOutput: release.receipt,
+            nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY, ...PREVIEW_SECRET_INPUTS,
+        }), /preview_sponsor_canary_flags_invalid/);
+    });
+
     await t.test('accepts the complete Preview multi-creator upload canary packet', async (subtest) => {
         const release = makeRelease(subtest);
         const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
@@ -1420,6 +1433,7 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
             args.includes('LIVEPEER_BRIDGE_ENABLED:true')
             && args.includes('LIVEPEER_NEW_UPLOADS_ENABLED:true')
             && args.includes('LIVEPEER_PROVIDER_MUTATIONS_ENABLED:true')
+            && args.includes('LIVEPEER_OPERATOR_MUTATIONS_ENABLED:false')
         )));
     });
 
@@ -1431,6 +1445,7 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
         config.bridge.LIVEPEER_BRIDGE_ENABLED = 'true';
         config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED = 'true';
         config.bridge.LIVEPEER_PROVIDER_MUTATIONS_ENABLED = 'true';
+        config.bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED = 'true';
         config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED = 'true';
         config.bridge.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED = 'true';
         config.bridge.NEAR_SPONSOR_RELAYER_ACCOUNT_ID = 'sponsor-relayer.testnet';
@@ -1472,6 +1487,7 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
         assert.ok(bridgeCommands.every((args) => (
             args.includes('LIVEPEER_SPONSORED_UPLOADS_ENABLED:true')
             && args.includes('LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED:true')
+            && args.includes('LIVEPEER_OPERATOR_MUTATIONS_ENABLED:true')
             && args.includes('NEAR_SPONSOR_RELAYER_ACCOUNT_ID:sponsor-relayer.testnet')
             && args.includes('NEAR_SPONSOR_RELAYER_KEY_EPOCH:1')
         )));
@@ -1525,6 +1541,20 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
             receiptOutput: release.receipt, nearRpcUrl: NEAR_RPC_URL,
             oneClickApiKey: ONECLICK_API_KEY,
         }), /operator_outbox_archive_enabled_not_false/);
+    });
+
+    await t.test('rejects the Production operator mutation flag', async (subtest) => {
+        const release = makeRelease(subtest, 'production');
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED = 'true';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.production = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        await assert.rejects(deployRelease({
+            target: 'production', sha: SHA, artifactDir: release.artifactDir,
+            receiptOutput: release.receipt, nearRpcUrl: NEAR_RPC_URL,
+            oneClickApiKey: ONECLICK_API_KEY,
+        }), /production_sponsor_canary_flags_not_false/);
     });
 
     await t.test('rejects another Preview read origin', async (subtest) => {
