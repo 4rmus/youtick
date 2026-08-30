@@ -142,6 +142,19 @@ test('web CI verifies the immutable sponsored-wallet executor', async () => {
     assert.match(web, /npm run build/);
 });
 
+test('Preview operator mutations follow only the sponsored canary gate', async () => {
+    const source = await readFile(
+        new URL('../.github/workflows/deploy-preview.yml', import.meta.url),
+        'utf8',
+    );
+
+    assert.match(
+        source,
+        /PREVIEW_LIVEPEER_OPERATOR_MUTATIONS_ENABLED: \$\{\{ vars\.PREVIEW_SPONSORED_UPLOAD_CANARY_ENABLED == 'true' && 'true' \|\| 'false' \}\}/,
+    );
+    assert.match(source, /PRODUCTION_LIVEPEER_OPERATOR_MUTATIONS_ENABLED: "false"/);
+});
+
 test('required CI Gate waits for the reusable CodeQL workflow', async () => {
     const [ci, codeql] = await Promise.all([
         readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
