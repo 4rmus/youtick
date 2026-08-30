@@ -132,7 +132,6 @@ const FALSE_FLAGS = Object.freeze([
     ['bridge', 'LIVEPEER_PLAYBACK_V2_ENABLED'],
     ['bridge', 'LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED'],
     ['bridge', 'LIVEPEER_WEBHOOK_QUEUE_ENABLED'],
-    ['bridge', 'LIVEPEER_OPERATOR_MUTATIONS_ENABLED'],
     ['bridge', 'UPLOAD_JOB_ARCHIVE_ENABLED'],
     ['bridge', 'LIVEPEER_NEAR_CREATOR_FEE_ENABLED'],
 ]);
@@ -421,6 +420,7 @@ async function readRelease(artifactDir, target, sha) {
         config.web?.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS,
         config.bridge?.LIVEPEER_SPONSORED_UPLOADS_ENABLED,
         config.bridge?.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED,
+        config.bridge?.LIVEPEER_OPERATOR_MUTATIONS_ENABLED,
     ];
     if (target === 'production' && sponsorCanaryFlags.some((value) => value !== 'false')) {
         fail('production_sponsor_canary_flags_not_false');

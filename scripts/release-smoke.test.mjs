@@ -166,6 +166,7 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
                 newUploadReady: false,
+                operatorMutationEnabled: false,
                 sponsoredUploadQuoteReady: false,
                 sponsoredUploadRelayReady: false,
                 versionId: 'version-123',
@@ -257,6 +258,7 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
 test('release smoke can exclude candidate-only mutations and still identifies their failures', async () => {
     const allowedOrigin = 'https://allowed.test';
     let sponsorHealth = {
+        operatorMutationEnabled: false,
         sponsoredUploadQuoteReady: false,
         sponsoredUploadRelayReady: false,
     };
@@ -316,6 +318,23 @@ test('release smoke can exclude candidate-only mutations and still identifies th
         runReleaseSmoke(input),
         /release_smoke_bridge_mutation_status_404 path=\/v2\/playback-tokens/,
     );
+    sponsorHealth = {
+        operatorMutationEnabled: true,
+        sponsoredUploadQuoteReady: false,
+        sponsoredUploadRelayReady: false,
+    };
+    await assert.rejects(
+        runReleaseSmoke({ ...input, expectedBridgeEnabled: null, includePlaybackV2: false }),
+        /release_smoke_bridge_policy_invalid/,
+    );
+    sponsorHealth = {
+        sponsoredUploadQuoteReady: false,
+        sponsoredUploadRelayReady: false,
+    };
+    await assert.rejects(
+        runReleaseSmoke({ ...input, includePlaybackV2: false }),
+        /release_smoke_bridge_not_disabled/,
+    );
     sponsorHealth = {};
     const legacy = await runReleaseSmoke({
         ...input, expectedBridgeEnabled: null, includePlaybackV2: false,
@@ -331,6 +350,7 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
     const allowedOrigin = 'https://allowed.test';
     let bridgePosts = 0;
     let sponsorHealth = {
+        operatorMutationEnabled: false,
         sponsoredUploadQuoteReady: false,
         sponsoredUploadRelayReady: false,
     };
@@ -384,6 +404,33 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
     assert.deepEqual(result.bridge.mutation_statuses, {});
     assert.equal(inferred.bridge.stage, 'ENABLED');
     sponsorHealth = {
+        operatorMutationEnabled: true,
+        sponsoredUploadQuoteReady: false,
+        sponsoredUploadRelayReady: false,
+    };
+    await assert.rejects(
+        runReleaseSmoke({ ...input, expectedBridgeEnabled: true }),
+        /release_smoke_bridge_not_enabled/,
+    );
+    await assert.rejects(
+        runReleaseSmoke({ ...input, expectedBridgeEnabled: null }),
+        /release_smoke_bridge_policy_invalid/,
+    );
+    sponsorHealth = {
+        operatorMutationEnabled: false,
+        sponsoredUploadQuoteReady: true,
+        sponsoredUploadRelayReady: true,
+    };
+    await assert.rejects(
+        runReleaseSmoke({
+            ...input,
+            expectedBridgeEnabled: true,
+            expectedSponsoredUploadReady: true,
+        }),
+        /release_smoke_bridge_not_enabled/,
+    );
+    sponsorHealth = {
+        operatorMutationEnabled: true,
         sponsoredUploadQuoteReady: true,
         sponsoredUploadRelayReady: true,
     };
@@ -460,6 +507,7 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
                 newUploadReady: false,
+                operatorMutationEnabled: false,
                 sponsoredUploadQuoteReady: false,
                 sponsoredUploadRelayReady: false,
                 versionId: 'bridge-old',
@@ -475,6 +523,7 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
             body: {
                 stage: 'ENABLED', providerMutationEnabled: true,
                 newUploadReady: true,
+                operatorMutationEnabled: false,
                 sponsoredUploadQuoteReady: false,
                 sponsoredUploadRelayReady: false,
                 versionId: 'bridge-bootstrap',
@@ -491,6 +540,7 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
             body: {
                 stage: 'DISABLED', providerMutationEnabled: false,
                 newUploadReady: false,
+                operatorMutationEnabled: false,
                 sponsoredUploadQuoteReady: false,
                 sponsoredUploadRelayReady: false,
                 versionId: 'bridge-bootstrap',
@@ -555,6 +605,7 @@ test('release smoke bounds and diagnoses override version propagation', async ()
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
                 newUploadReady: false,
+                operatorMutationEnabled: false,
                 sponsoredUploadQuoteReady: false,
                 sponsoredUploadRelayReady: false,
                 versionId: 'bridge-old',

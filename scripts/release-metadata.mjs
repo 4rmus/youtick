@@ -111,7 +111,6 @@ const FALSE_FLAGS = Object.freeze([
   "LIVEPEER_PLAYBACK_V2_ENABLED",
   "LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED",
   "LIVEPEER_WEBHOOK_QUEUE_ENABLED",
-  "LIVEPEER_OPERATOR_MUTATIONS_ENABLED",
   "UPLOAD_JOB_ARCHIVE_ENABLED",
   "LIVEPEER_NEAR_CREATOR_FEE_ENABLED",
 ]);
@@ -267,6 +266,7 @@ function buildConfig(environment) {
     web.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS,
     bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED,
     bridge.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED,
+    bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED,
   ];
   if (environment === "production" && sponsorCanaryFlags.some((value) => value !== "false")) {
     fail("PRODUCTION sponsor canary flags must be exactly false");
