@@ -126,6 +126,7 @@ function makeConfig(target) {
             LIVEPEER_WEBHOOK_QUEUE_ENABLED: 'false',
             LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'false',
             LIVEPEER_OPERATOR_MUTATIONS_ENABLED: 'false',
+            LIVEPEER_OPERATOR_JOB_ID: '',
             UPLOAD_JOB_ARCHIVE_ENABLED: 'false',
             OPERATOR_OUTBOX_ARCHIVE_ENABLED: 'false',
             LIVEPEER_CREATOR_ALLOWLIST: '',
@@ -201,6 +202,7 @@ function makeRelease(t, target = 'preview') {
         'LIVEPEER_WEBHOOK_QUEUE_ENABLED = "false"',
         'LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "false"',
         'LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "false"',
+        'LIVEPEER_OPERATOR_JOB_ID = ""',
         'UPLOAD_JOB_ARCHIVE_ENABLED = "false"',
         'OPERATOR_OUTBOX_ARCHIVE_ENABLED = "false"',
         'LIVEPEER_NEAR_CREATOR_FEE_ENABLED = "false"',
@@ -801,6 +803,7 @@ test('Bridge artifact writer emits the exact disabled release config once', asyn
     assert.match(text, /LIVEPEER_WEBHOOK_QUEUE_ENABLED = "false"/);
     assert.match(text, /LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "false"/);
     assert.match(text, /LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "false"/);
+    assert.match(text, /LIVEPEER_OPERATOR_JOB_ID = ""/);
     assert.match(text, /MULTI_ASSET_PAYMENT_ASSET_IDS = ""/);
     assert.doesNotMatch(text, /NEAR_RPC_URL|ALLOWED_ORIGINS|MARKET_CONTRACT_ID/);
     assert.doesNotMatch(text, /queues\.producers|queues\.consumers|LIVEPEER_EVENTS|MARKET_READ_MODEL/);
@@ -1456,6 +1459,17 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
         writeFileSync(release.configPath, canonicalJson(config));
         release.manifest.configs.preview = record(release.configPath);
         writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        const missingScope = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+        await assert.rejects(
+            deployFixture(release, missingScope),
+            /preview_operator_job_invalid/,
+        );
+        assert.deepEqual(missingScope.apiCalls, []);
+        assert.deepEqual(calls(missingScope), []);
+        config.bridge.LIVEPEER_OPERATOR_JOB_ID = 'job-recovery';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.preview = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
         for (const [overrides, error] of [
             [{ creatorFeeQuotePrivateKey: null }, /creator_fee_quote_private_key_invalid/],
             [{ creatorFeeQuotePrivateKey: 'd'.repeat(16) }, /creator_fee_quote_private_key_invalid/],
@@ -1488,6 +1502,7 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
             args.includes('LIVEPEER_SPONSORED_UPLOADS_ENABLED:true')
             && args.includes('LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED:true')
             && args.includes('LIVEPEER_OPERATOR_MUTATIONS_ENABLED:true')
+            && args.includes('LIVEPEER_OPERATOR_JOB_ID:job-recovery')
             && args.includes('NEAR_SPONSOR_RELAYER_ACCOUNT_ID:sponsor-relayer.testnet')
             && args.includes('NEAR_SPONSOR_RELAYER_KEY_EPOCH:1')
         )));
@@ -1555,6 +1570,20 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
             receiptOutput: release.receipt, nearRpcUrl: NEAR_RPC_URL,
             oneClickApiKey: ONECLICK_API_KEY,
         }), /production_sponsor_canary_flags_not_false/);
+    });
+
+    await t.test('rejects a Production operator job', async (subtest) => {
+        const release = makeRelease(subtest, 'production');
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.bridge.LIVEPEER_OPERATOR_JOB_ID = 'job-recovery';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.production = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        await assert.rejects(deployRelease({
+            target: 'production', sha: SHA, artifactDir: release.artifactDir,
+            receiptOutput: release.receipt, nearRpcUrl: NEAR_RPC_URL,
+            oneClickApiKey: ONECLICK_API_KEY,
+        }), /operator_job_not_empty/);
     });
 
     await t.test('rejects another Preview read origin', async (subtest) => {

@@ -66,6 +66,7 @@ function publicEnv(environment) {
     LIVEPEER_WEBHOOK_QUEUE_ENABLED: "false",
     LIVEPEER_PROVIDER_MUTATIONS_ENABLED: "false",
     LIVEPEER_OPERATOR_MUTATIONS_ENABLED: "false",
+    LIVEPEER_OPERATOR_JOB_ID: "",
     UPLOAD_JOB_ARCHIVE_ENABLED: "false",
     OPERATOR_OUTBOX_ARCHIVE_ENABLED: "false",
     LIVEPEER_NEAR_CREATOR_FEE_ENABLED: "false",
@@ -170,6 +171,10 @@ test("workflows keep cumulative Preview release provenance", () => {
     /LIVEPEER_JWT_PRIVATE_KEY: \$\{\{ secrets\.PREVIEW_LIVEPEER_JWT_PRIVATE_KEY \}\}/,
   );
   assert.match(preview, /PREVIEW_SPONSORED_UPLOAD_CANARY_ENABLED/);
+  assert.match(
+    preview,
+    /PREVIEW_LIVEPEER_OPERATOR_JOB_ID: \$\{\{ vars\.PREVIEW_SPONSORED_UPLOAD_CANARY_ENABLED == 'true' && vars\.PREVIEW_LIVEPEER_OPERATOR_JOB_ID \|\| '' \}\}/,
+  );
   assert.match(preview, /PREVIEW_CREATOR_FEE_QUOTE_PRIVATE_KEY/);
   assert.match(preview, /PREVIEW_NEAR_SPONSOR_RELAYER_PRIVATE_KEY/);
   assert.match(preview, /PREVIEW_NEAR_SPONSOR_RELAYER_ACCOUNT_ID/);
@@ -191,6 +196,7 @@ test("workflows keep cumulative Preview release provenance", () => {
   }
   assert.doesNotMatch(promote, /PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED/);
   assert.match(preview, /PRODUCTION_OPERATOR_OUTBOX_ARCHIVE_ENABLED: "false"/);
+  assert.match(preview, /PRODUCTION_LIVEPEER_OPERATOR_JOB_ID: ""/);
   for (const name of [
     "PRODUCTION_NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS",
     "PRODUCTION_LIVEPEER_SPONSORED_UPLOADS_ENABLED",
@@ -235,6 +241,7 @@ test("config emits only canonical public values", () => {
   assert.equal(config.bridge.LIVEPEER_WEBHOOK_QUEUE_ENABLED, "false");
   assert.equal(config.bridge.LIVEPEER_PROVIDER_MUTATIONS_ENABLED, "false");
   assert.equal(config.bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED, "false");
+  assert.equal(config.bridge.LIVEPEER_OPERATOR_JOB_ID, "");
   assert.equal(config.bridge.UPLOAD_JOB_ARCHIVE_ENABLED, "false");
   assert.equal(config.bridge.OPERATOR_OUTBOX_ARCHIVE_ENABLED, "false");
   assert.equal(config.web.NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE, "off");
@@ -358,15 +365,33 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
     env.PREVIEW_LIVEPEER_CREATOR_ALLOWLIST = "creator-one.testnet";
     env.PREVIEW_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS = "20000000";
     env.PREVIEW_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS = "2000000";
-    const result = run(["config", "--environment", "preview", "--output", output], env);
+    let result = run(["config", "--environment", "preview", "--output", output], env);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /exact operator job/);
+    env.PREVIEW_LIVEPEER_OPERATOR_JOB_ID = "job-recovery";
+    result = run(["config", "--environment", "preview", "--output", output], env);
     assertSuccess(result);
     const config = JSON.parse(readFileSync(output, "utf8"));
     assert.equal(config.web.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS, "true");
     assert.equal(config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED, "true");
     assert.equal(config.bridge.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED, "true");
     assert.equal(config.bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED, "true");
+    assert.equal(config.bridge.LIVEPEER_OPERATOR_JOB_ID, "job-recovery");
     assert.equal(config.bridge.NEAR_SPONSOR_RELAYER_ACCOUNT_ID, "sponsor-relayer.testnet");
     assert.equal(config.bridge.NEAR_SPONSOR_RELAYER_KEY_EPOCH, "1");
+  });
+
+  await t.test("operator job outside sponsored Preview", () => {
+    for (const environment of ["preview", "production"]) {
+      const env = publicEnv(environment);
+      env[`${environment.toUpperCase()}_LIVEPEER_OPERATOR_JOB_ID`] = "job-recovery";
+      const result = run(
+        ["config", "--environment", environment, "--output", join(tmpdir(), "unused-config.json")],
+        env,
+      );
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /must be empty outside sponsored Preview/);
+    }
   });
 
   await t.test("Preview derived read model at its exact origin", () => {

@@ -71,6 +71,7 @@ function createEnv(overrides?: Partial<Env>): Env {
         LIVEPEER_NEW_UPLOADS_ENABLED: 'true',
         LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'true',
         LIVEPEER_OPERATOR_MUTATIONS_ENABLED: 'true',
+        LIVEPEER_OPERATOR_JOB_ID: 'job-001',
         LIVEPEER_API_KEY: API_KEY,
         LIVEPEER_PROJECT_ID: PROJECT_ID,
         LIVEPEER_API_TOKEN_NAME: TOKEN_NAME,
@@ -428,6 +429,26 @@ async function sha256(value: string): Promise<string> {
 
 describe('Livepeer bridge PR-4 finalize flow', () => {
     beforeEach(() => vi.restoreAllMocks());
+
+    it('reports operator mutations ready only with an exact job scope', async () => {
+        const ready = await handler.fetch(
+            new Request('https://bridge.youtick.net/__health'),
+            createEnv(),
+        );
+        const missing = await handler.fetch(
+            new Request('https://bridge.youtick.net/__health'),
+            createEnv({ LIVEPEER_OPERATOR_JOB_ID: '' }),
+        );
+
+        expect(await ready.json()).toMatchObject({
+            operatorMutationEnabled: true,
+            operatorJobFingerprint: await sha256('job-001'),
+        });
+        expect(await missing.json()).toMatchObject({
+            operatorMutationEnabled: false,
+            operatorJobFingerprint: null,
+        });
+    });
 
     it('verifies the exact raw webhook body and safely ignores unknown events', async () => {
         const objectFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true }));
@@ -1085,6 +1106,37 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(testState.values.get('reconcile:v1')).toMatchObject({ status: 'PROVIDER_UNKNOWN' });
     });
 
+    it('keeps a scope-mismatched finalization dormant without another alarm', async () => {
+        const now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const testState = createState();
+        const ready = {
+            ...(await publishedJob()),
+            state: 'FINALIZE_RETRY',
+            finalizeRetry: {
+                attempts: 1,
+                lastHttpStatus: 503,
+                nextAttemptAtMs: now,
+            },
+        };
+        testState.values.set('job:v1', ready);
+        const operatorFetch = vi.fn(async () => Response.json({ accepted: true, finalized: true }));
+        const control = new LivepeerControl(testState.state, createEnv({
+            LIVEPEER_OPERATOR_JOB_ID: 'job-001',
+            LIVEPEER_CREATOR_ALLOWLIST: 'target-creator.testnet',
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                get: vi.fn(() => ({ fetch: operatorFetch })),
+            } as unknown as DurableObjectNamespace,
+        }));
+
+        await control.alarm();
+
+        expect(operatorFetch).not.toHaveBeenCalled();
+        expect(testState.alarms).toEqual([]);
+        expect(testState.values.get('job:v1')).toEqual(ready);
+    });
+
     it('persists FINALIZE_RETRY on a failed outbox call and resumes the same publication', async () => {
         let now = 1_785_600_000_000;
         vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -1647,6 +1699,55 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(confirmed).not.toHaveProperty('signedTxBase64');
     });
 
+    it.each([
+        {
+            label: 'job id',
+            submission: publication('other-job'),
+            overrides: { LIVEPEER_OPERATOR_JOB_ID: 'target-job' },
+        },
+        {
+            label: 'generation',
+            submission: { ...publication(), generation: 2 },
+            overrides: {},
+        },
+        {
+            label: 'creator allowlist',
+            submission: publication(),
+            overrides: { LIVEPEER_CREATOR_ALLOWLIST: 'other.testnet' },
+        },
+    ])('rejects a mismatched finalize $label before creating an operator outbox', async ({
+        submission,
+        overrides,
+    }) => {
+        const testState = createState();
+        const rpc = operatorRpc();
+        const control = new LivepeerControl(testState.state, createEnv(overrides));
+        vi.stubGlobal('fetch', rpc);
+
+        const denied = await control.fetch(await finalizeRequest(submission));
+
+        expect(denied.status).toBe(403);
+        expect(await denied.json()).toEqual({ error: 'operator_unauthorized' });
+        expect(rpc).not.toHaveBeenCalled();
+        expect([...testState.values]).toEqual([]);
+    });
+
+    it('rejects another sales suspension before creating an operator outbox', async () => {
+        const testState = createState();
+        const rpc = operatorRpc();
+        const control = new LivepeerControl(testState.state, createEnv({
+            LIVEPEER_OPERATOR_JOB_ID: 'target-job',
+        }));
+        vi.stubGlobal('fetch', rpc);
+
+        const denied = await control.fetch(await suspendSalesRequest('other-job'));
+
+        expect(denied.status).toBe(403);
+        expect(await denied.json()).toEqual({ error: 'operator_unauthorized' });
+        expect(rpc).not.toHaveBeenCalled();
+        expect([...testState.values]).toEqual([]);
+    });
+
     it('blocks operator broadcast while keeping the outbox recoverable', async () => {
         const testState = createState();
         const env = createEnv({ LIVEPEER_OPERATOR_MUTATIONS_ENABLED: 'false' });
@@ -1863,7 +1964,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(await response.json()).toEqual({ error: 'runtime_not_configured' });
     });
 
-    it('serializes two jobs onto distinct nonces and confirms the exact chain tuples', async () => {
+    it('uses distinct nonces as the exact operator scope advances between jobs', async () => {
         const testState = createState();
         const env = createEnv();
         const control = new LivepeerControl(testState.state, env);
@@ -1885,10 +1986,9 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
                 : null,
         }));
 
-        const [first, second] = await Promise.all([
-            control.fetch(await finalizeRequest(publication('job-001'))),
-            control.fetch(await finalizeRequest(publication('job-002'))),
-        ]);
+        const first = await control.fetch(await finalizeRequest(publication('job-001')));
+        env.LIVEPEER_OPERATOR_JOB_ID = 'job-002';
+        const second = await control.fetch(await finalizeRequest(publication('job-002')));
         expect(first.status).toBe(200);
         expect(second.status).toBe(200);
         expect(sent).toHaveLength(2);

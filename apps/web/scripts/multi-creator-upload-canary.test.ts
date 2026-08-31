@@ -23,6 +23,7 @@ const SPONSORED_RELAY_FAILURE_PATTERN = /^invalid_sponsored_upload_relay:(delega
 const SPONSORED_RECOVERY_FAILURE_PATTERN = /^sponsored_recovery_failed:(key_refresh|preflight|job|intent|upload|publication|settlement)$/;
 const RECOVERY_KEY_MIN_TTL_MS = 30 * 60 * 1000;
 const RECOVERY_KEY_TTL_MS = 24 * 60 * 60 * 1000;
+const RECOVERY_KEY_RECONCILIATION_DELAYS_MS = [0, 1000, 2000, 4000, 8000];
 const RECOVERY_KEY_REPLACEMENT_GAS = 100_000_000_000_000n;
 const MARKET_ID = 'lp-arch-market-v2-260809.youtick-dev-v3.testnet';
 const ACCESS_ID = 'lp-arch-access-v2-260809.youtick-dev-v3.testnet';
@@ -376,7 +377,30 @@ test('loads the exact thirty-minute recovery boundary without exposing keys', ()
   }
 });
 
-test('refreshes one exact Authorized job key and persists only after final confirmation', async () => {
+test('rejects a sponsored Bridge scoped to another valid job', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    versionId: '11111111-1111-4111-8111-111111111111',
+    stage: 'ENABLED',
+    providerMutationEnabled: true,
+    newUploadReady: true,
+    sponsoredUploadQuoteReady: true,
+    sponsoredUploadRelayReady: true,
+    operatorMutationEnabled: true,
+    operatorJobFingerprint: sha256('other-job'),
+  });
+  try {
+    await expect(requireEnabledBridge(
+      '11111111-1111-4111-8111-111111111111',
+      true,
+      'job-recovery',
+    )).rejects.toThrow('multi_creator_canary_bridge_not_ready');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('persists a FINAL key replacement without trusting a stale follow-up view', async () => {
   const fixture = makeRecoveryFixture(-1, true);
   try {
     const refreshed = {
@@ -386,11 +410,8 @@ test('refreshes one exact Authorized job key and persists only after final confi
       uploadKeyExpiresAtMs: String(fixture.nowMs + RECOVERY_KEY_TTL_MS),
       refreshRequired: false,
     };
-    const reads = [
-      recoveryJob(fixture.session, fixture.accountId, 341028),
-      recoveryJob(refreshed, fixture.accountId, 341028),
-    ];
     const replacements: Array<Record<string, string>> = [];
+    let readCalls = 0;
 
     await expect(refreshSponsoredRecoverySession({
       storage: fixture.storage,
@@ -400,10 +421,14 @@ test('refreshes one exact Authorized job key and persists only after final confi
       refreshAck: SPONSORED_RECOVERY_KEY_REFRESH_ACK,
       nowMs: fixture.nowMs,
       createKey: () => ({ secretKey: refreshed.secretKey, publicKey: refreshed.publicKey }),
-      readJob: async () => reads.shift() ?? null,
+      readJob: async () => {
+        readCalls += 1;
+        return recoveryJob(fixture.session, fixture.accountId, 341028);
+      },
       replaceKey: async (input) => { replacements.push(input); },
     })).resolves.toMatchObject({ publicKey: refreshed.publicKey, refreshRequired: false });
     expect(replacements).toHaveLength(1);
+    expect(readCalls).toBe(1);
     expect(sponsoredRecoverySession(fixture.storage, fixture.accountId, fixture.nowMs))
       .toMatchObject({ publicKey: refreshed.publicKey, refreshRequired: false });
     expect(JSON.parse(fixture.storage.getItem(fixture.storageKey) || 'null'))
@@ -432,8 +457,12 @@ test('does not retry or overwrite recovery data when key replacement is unconfir
         return recoveryJob(fixture.session, fixture.accountId, 341028);
       },
       replaceKey: async () => { replaceCalls += 1; throw new Error('ambiguous'); },
+      wait: async () => undefined,
     })).rejects.toThrow('sponsored_recovery_key_refresh_unconfirmed');
-    expect({ replaceCalls, readCalls }).toEqual({ replaceCalls: 1, readCalls: 2 });
+    expect({ replaceCalls, readCalls }).toEqual({
+      replaceCalls: 1,
+      readCalls: 1 + RECOVERY_KEY_RECONCILIATION_DELAYS_MS.length,
+    });
     expect(readFileSync(fixture.filePath, 'utf8')).toBe(fixture.original);
   } finally {
     fixture.cleanup();
@@ -466,6 +495,7 @@ test('locks the final recovery key replacement transaction', () => {
   }, (methodName, args, gas, deposit) => ({ methodName, args, gas, deposit }))).toEqual({
     receiverId: MARKET_ID,
     waitUntil: 'FINAL',
+    retries: 0,
     actions: [{
       methodName: 'replace_upload_key',
       args: {
@@ -525,11 +555,8 @@ test('accepts one ambiguous replacement only when the final job has the new key'
       uploadKeyExpiresAtMs: String(fixture.nowMs + RECOVERY_KEY_TTL_MS),
       refreshRequired: false,
     };
-    const reads = [
-      recoveryJob(fixture.session, fixture.accountId, 341028),
-      recoveryJob(refreshed, fixture.accountId, 341028),
-    ];
     let replaceCalls = 0;
+    let readCalls = 0;
     await expect(refreshSponsoredRecoverySession({
       storage: fixture.storage,
       session: fixture.session,
@@ -538,10 +565,17 @@ test('accepts one ambiguous replacement only when the final job has the new key'
       refreshAck: SPONSORED_RECOVERY_KEY_REFRESH_ACK,
       nowMs: fixture.nowMs,
       createKey: () => ({ secretKey: refreshed.secretKey, publicKey: refreshed.publicKey }),
-      readJob: async () => reads.shift() ?? null,
+      readJob: async () => {
+        readCalls += 1;
+        if (readCalls === 1) return recoveryJob(fixture.session, fixture.accountId, 341028);
+        if (readCalls === 2) throw new Error('transient');
+        return recoveryJob(refreshed, fixture.accountId, 341028);
+      },
       replaceKey: async () => { replaceCalls += 1; throw new Error('ambiguous'); },
+      wait: async () => undefined,
     })).resolves.toMatchObject({ publicKey: refreshed.publicKey, refreshRequired: false });
     expect(replaceCalls).toBe(1);
+    expect(readCalls).toBe(3);
   } finally {
     fixture.cleanup();
   }
@@ -732,7 +766,12 @@ test.skipIf(
       : requiredTestnetAccount('YOUTICK_SPONSOR_RELAYER_ACCOUNT_ID');
     const input = LOCKED_INPUTS[0];
     const media = loadLockedMedia(input);
-    await requireEnabledBridge(expectedBridgeVersion, true);
+    const recovery = new RecoveryStorage(SPONSORED_RECOVERY_FILE, recoveryMode);
+    let recovered = recoveryMode
+      ? sponsoredRecoverySession(recovery, input.accountId)
+      : null;
+    const jobId = recovered?.jobId ?? requiredJobId('YOUTICK_SPONSORED_JOB_ID');
+    await requireEnabledBridge(expectedBridgeVersion, true, jobId);
 
     process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
     process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID = MARKET_ID;
@@ -742,10 +781,6 @@ test.skipIf(
     process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = 'true';
     process.env.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS = 'true';
 
-    const recovery = new RecoveryStorage(SPONSORED_RECOVERY_FILE, recoveryMode);
-    let recovered = recoveryMode
-      ? sponsoredRecoverySession(recovery, input.accountId)
-      : null;
     Object.defineProperty(globalThis, 'sessionStorage', { value: recovery, configurable: true });
     Object.defineProperty(globalThis, 'localStorage', { value: recovery, configurable: true });
     Object.defineProperty(globalThis, 'window', {
@@ -791,7 +826,6 @@ test.skipIf(
       || upload.livepeerUploadFeeUsdc(media.file.size) !== FEE_USDC) {
       throw new Error('sponsored_canary_media_policy_invalid');
     }
-    const jobId = recovered?.jobId ?? upload.createLivepeerJobId();
     const readRecoveryJob = async () => readFinalView(
       provider,
       MARKET_ID,
@@ -1032,7 +1066,11 @@ async function requireFinalFullAccessKey(
   }
 }
 
-async function requireEnabledBridge(expectedVersion: string, sponsored = false) {
+async function requireEnabledBridge(
+  expectedVersion: string,
+  sponsored = false,
+  expectedOperatorJobId?: string,
+) {
   let response: Response;
   let value: Record<string, unknown>;
   try {
@@ -1051,7 +1089,8 @@ async function requireEnabledBridge(expectedVersion: string, sponsored = false) 
     || value.newUploadReady !== true
     || (sponsored && (value.sponsoredUploadQuoteReady !== true
       || value.sponsoredUploadRelayReady !== true
-      || value.operatorMutationEnabled !== true))) {
+      || value.operatorMutationEnabled !== true
+      || value.operatorJobFingerprint !== sha256(expectedOperatorJobId || '')))) {
     throw new Error('multi_creator_canary_bridge_not_ready');
   }
 }
@@ -1060,6 +1099,14 @@ function requiredUuid(name: string): string {
   const value = process.env[name];
   if (!value || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
     throw new Error('multi_creator_canary_expected_version_invalid');
+  }
+  return value;
+}
+
+function requiredJobId(name: string): string {
+  const value = process.env[name];
+  if (!value || !/^[A-Za-z0-9._:-]{1,128}$/.test(value)) {
+    throw new Error('sponsored_canary_job_invalid');
   }
   return value;
 }
@@ -1193,6 +1240,7 @@ function recoveryKeyReplacementTransaction<T>(input: {
   return {
     receiverId: MARKET_ID,
     waitUntil: 'FINAL' as const,
+    retries: 0,
     actions: [functionCall('replace_upload_key', {
       job_id: input.jobId,
       new_public_key: input.newPublicKey,
@@ -1211,6 +1259,7 @@ async function refreshSponsoredRecoverySession({
   createKey,
   readJob,
   replaceKey,
+  wait = (delayMs) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)),
 }: {
   storage: Storage;
   session: SponsoredRecoverySession;
@@ -1221,6 +1270,7 @@ async function refreshSponsoredRecoverySession({
   createKey(): { secretKey: string; publicKey: string };
   readJob(): Promise<RecoveryJob>;
   replaceKey(input: { jobId: string; newPublicKey: string; expiresAtMs: string }): Promise<void>;
+  wait?(delayMs: number): Promise<void>;
 }): Promise<SponsoredRecoverySession> {
   if (!session.refreshRequired) return session;
   if (refreshAck !== SPONSORED_RECOVERY_KEY_REFRESH_ACK) {
@@ -1235,12 +1285,6 @@ async function refreshSponsoredRecoverySession({
     throw new Error('sponsored_recovery_key_refresh_key_invalid');
   }
   const expiresAtMs = String(nowMs + RECOVERY_KEY_TTL_MS);
-  try {
-    await replaceKey({ jobId: session.jobId, newPublicKey: key.publicKey, expiresAtMs });
-  } catch {
-    // Reconcile the exact final job once; never retry the transaction.
-  }
-  const after = await readJob();
   const refreshed = {
     ...session,
     secretKey: key.secretKey,
@@ -1248,8 +1292,25 @@ async function refreshSponsoredRecoverySession({
     uploadKeyExpiresAtMs: expiresAtMs,
     refreshRequired: false,
   };
-  if (!exactRecoveryJob(after, refreshed, accountId, expectedSourceBytes)) {
-    throw new Error('sponsored_recovery_key_refresh_unconfirmed');
+  try {
+    await replaceKey({ jobId: session.jobId, newPublicKey: key.publicKey, expiresAtMs });
+  } catch {
+    // Reconcile bounded final reads; never retry the transaction.
+    let confirmed = false;
+    for (const delayMs of RECOVERY_KEY_RECONCILIATION_DELAYS_MS) {
+      if (delayMs > 0) await wait(delayMs);
+      try {
+        if (exactRecoveryJob(await readJob(), refreshed, accountId, expectedSourceBytes)) {
+          confirmed = true;
+          break;
+        }
+      } catch {
+        // A later bounded final read may observe the confirmed replacement.
+      }
+    }
+    if (!confirmed) {
+      throw new Error('sponsored_recovery_key_refresh_unconfirmed');
+    }
   }
   storage.setItem(session.storageKey, JSON.stringify({
     secretKey: key.secretKey,
