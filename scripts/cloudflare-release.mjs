@@ -25,6 +25,7 @@ const WRANGLER_VERSION = '4.90.0';
 const GIT_SHA_RE = /^[a-f0-9]{40}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const VERSION_RE = /^[A-Za-z0-9-]+$/;
+const JOB_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const RPC_PLACEHOLDER_RE = /<[^>]+>|placeholder|replace|change[-_\s]?me|todo|dummy|generic|example/i;
 const GENERIC_NEAR_RPC_HOSTS = new Set(['rpc.mainnet.near.org', 'rpc.testnet.near.org']);
@@ -102,6 +103,7 @@ const BRIDGE_PUBLIC_KEYS = Object.freeze([
     'LIVEPEER_WEBHOOK_QUEUE_ENABLED',
     'LIVEPEER_PROVIDER_MUTATIONS_ENABLED',
     'LIVEPEER_OPERATOR_MUTATIONS_ENABLED',
+    'LIVEPEER_OPERATOR_JOB_ID',
     'UPLOAD_JOB_ARCHIVE_ENABLED',
     'OPERATOR_OUTBOX_ARCHIVE_ENABLED',
     'LIVEPEER_CREATOR_ALLOWLIST',
@@ -151,6 +153,7 @@ const BRIDGE_ARTIFACT_WRANGLER = [
     'LIVEPEER_WEBHOOK_QUEUE_ENABLED = "false"',
     'LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "false"',
     'LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "false"',
+    'LIVEPEER_OPERATOR_JOB_ID = ""',
     'UPLOAD_JOB_ARCHIVE_ENABLED = "false"',
     'OPERATOR_OUTBOX_ARCHIVE_ENABLED = "false"',
     'LIVEPEER_NEAR_CREATOR_FEE_ENABLED = "false"',
@@ -439,6 +442,11 @@ async function readRelease(artifactDir, target, sha) {
             || !/^[1-9][0-9]*$/.test(config.bridge?.NEAR_SPONSOR_RELAYER_KEY_EPOCH || '')) {
             fail('preview_sponsor_canary_config_invalid');
         }
+        if (!JOB_ID_RE.test(config.bridge?.LIVEPEER_OPERATOR_JOB_ID || '')) {
+            fail('preview_operator_job_invalid');
+        }
+    } else if (config.bridge?.LIVEPEER_OPERATOR_JOB_ID !== '') {
+        fail('operator_job_not_empty');
     }
     if (target === 'preview' && uploadCanaryFlags[0] === 'true') {
         const creators = config.bridge?.LIVEPEER_CREATOR_ALLOWLIST?.split(',') ?? [];
@@ -581,6 +589,7 @@ async function writeSanitizedConfigs(extracted, target) {
         'LIVEPEER_WEBHOOK_QUEUE_ENABLED = "false"',
         'LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "false"',
         'LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "false"',
+        'LIVEPEER_OPERATOR_JOB_ID = ""',
         'UPLOAD_JOB_ARCHIVE_ENABLED = "false"',
         'OPERATOR_OUTBOX_ARCHIVE_ENABLED = "false"',
         'LIVEPEER_NEAR_CREATOR_FEE_ENABLED = "false"',

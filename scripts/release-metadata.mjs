@@ -8,6 +8,7 @@ import process from "node:process";
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const GIT_SHA_RE = /^[a-f0-9]{40}$/;
 const DECIMAL_RE = /^[1-9][0-9]*$/;
+const JOB_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 const PLACEHOLDER_RE = /<[^>]+>|(^|[-_\s])(placeholder|replace|change[-_\s]?me|todo|dummy)($|[-_\s])/i;
 const GENERIC_VALUE_RE = /^(?:example|sample|test)(?:[._:-].*)?$/i;
 const MAINNET_USDC_CONTRACT_ID = "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
@@ -82,6 +83,7 @@ const BRIDGE_KEYS = Object.freeze([
   "LIVEPEER_WEBHOOK_QUEUE_ENABLED",
   "LIVEPEER_PROVIDER_MUTATIONS_ENABLED",
   "LIVEPEER_OPERATOR_MUTATIONS_ENABLED",
+  "LIVEPEER_OPERATOR_JOB_ID",
   "UPLOAD_JOB_ARCHIVE_ENABLED",
   "OPERATOR_OUTBOX_ARCHIVE_ENABLED",
   "LIVEPEER_NEAR_CREATOR_FEE_ENABLED",
@@ -101,6 +103,7 @@ const OPTIONAL_KEYS = new Set([
   "MULTI_ASSET_PAYMENT_ASSET_IDS",
   "NEAR_SPONSOR_RELAYER_ACCOUNT_ID",
   "NEAR_SPONSOR_RELAYER_KEY_EPOCH",
+  "LIVEPEER_OPERATOR_JOB_ID",
 ]);
 
 const FALSE_FLAGS = Object.freeze([
@@ -289,6 +292,11 @@ function buildConfig(environment) {
     if (!DECIMAL_RE.test(bridge.NEAR_SPONSOR_RELAYER_KEY_EPOCH)) {
       fail("PREVIEW sponsor canary requires a positive relayer key epoch");
     }
+    if (!JOB_ID_RE.test(bridge.LIVEPEER_OPERATOR_JOB_ID)) {
+      fail("PREVIEW sponsor canary requires an exact operator job");
+    }
+  } else if (bridge.LIVEPEER_OPERATOR_JOB_ID !== "") {
+    fail("LIVEPEER_OPERATOR_JOB_ID must be empty outside sponsored Preview");
   }
   if (environment === "preview" && uploadCanaryFlags[0] === "true") {
     const creators = bridge.LIVEPEER_CREATOR_ALLOWLIST.split(",");

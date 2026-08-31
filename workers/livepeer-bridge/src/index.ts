@@ -54,6 +54,7 @@ export interface Env {
     LIVEPEER_PLAYBACK_ISSUANCE_ENABLED?: string;
     LIVEPEER_PROVIDER_MUTATIONS_ENABLED?: string;
     LIVEPEER_OPERATOR_MUTATIONS_ENABLED?: string;
+    LIVEPEER_OPERATOR_JOB_ID?: string;
     LIVEPEER_PLAYBACK_V2_ENABLED?: string;
     LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED?: string;
     LIVEPEER_NEAR_CREATOR_FEE_ENABLED?: string;
@@ -693,7 +694,12 @@ const bridgeWorker = {
                 providerMutationEnabled: env.LIVEPEER_BRIDGE_ENABLED === 'true'
                     && env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED === 'true',
                 operatorMutationEnabled: env.LIVEPEER_BRIDGE_ENABLED === 'true'
-                    && env.LIVEPEER_OPERATOR_MUTATIONS_ENABLED === 'true',
+                    && env.LIVEPEER_OPERATOR_MUTATIONS_ENABLED === 'true'
+                    && JOB_ID_PATTERN.test(env.LIVEPEER_OPERATOR_JOB_ID || '')
+                    && creatorAllowlist(env).size === 1,
+                operatorJobFingerprint: JOB_ID_PATTERN.test(env.LIVEPEER_OPERATOR_JOB_ID || '')
+                    ? await sha256Hex(env.LIVEPEER_OPERATOR_JOB_ID!)
+                    : null,
                 sponsoredUploadQuoteReady: env.LIVEPEER_BRIDGE_ENABLED === 'true'
                     && env.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true'
                     && Boolean(env.LIVEPEER_CONTROL)
@@ -1987,6 +1993,11 @@ async function advanceFinalization(
     env: Env,
     job: JobRecord,
 ): Promise<Response> {
+    if (env.LIVEPEER_OPERATOR_JOB_ID !== job.jobId
+        || job.generation !== 1
+        || !creatorAllowlist(env).has(job.creator)) {
+        return json({ accepted: true, ignored: true }, 202);
+    }
     const response = await forwardFinalize(env, job.publication!);
     if (!response.ok) {
         const attempts = Math.min(
@@ -2811,7 +2822,11 @@ async function persistDriftReconcile(
     if (PROVIDER_INVENTORY_DRIFT_CODES.has(code)) {
         await tryAutoCloseAdmission(env, job);
     }
-    if (confirmed && !salesSuspensionQueuedAtMs) {
+    if (confirmed
+        && !salesSuspensionQueuedAtMs
+        && env.LIVEPEER_OPERATOR_JOB_ID === job.jobId
+        && job.generation === 1
+        && creatorAllowlist(env).has(job.creator)) {
         await enqueueSalesSuspension(state, job, code);
         salesSuspensionQueuedAtMs = now;
     }
@@ -2904,6 +2919,9 @@ async function tryProcessSalesSuspension(
     env: Env,
     job: JobRecord,
 ): Promise<void> {
+    if (env.LIVEPEER_OPERATOR_JOB_ID !== job.jobId
+        || job.generation !== 1
+        || !creatorAllowlist(env).has(job.creator)) return;
     const key = `outbox:${job.jobId}:suspend-sales`;
     const record = await state.storage.get<OutboxRecord>(key);
     if (!record || record.state === 'CONFIRMED') return;
@@ -6095,6 +6113,11 @@ async function processFinalizeOutbox(
     env: Env,
     input: FinalizeInput,
 ): Promise<Response> {
+    if (env.LIVEPEER_OPERATOR_JOB_ID !== input.submission.job_id
+        || input.submission.generation !== 1
+        || !creatorAllowlist(env).has(input.submission.creator_id)) {
+        throw new Error('operator_unauthorized');
+    }
     const result = await processOperatorOutbox(
         state,
         env,
@@ -6111,6 +6134,9 @@ async function processSuspendSalesOutbox(
     env: Env,
     input: SuspendSalesInput,
 ): Promise<Response> {
+    if (env.LIVEPEER_OPERATOR_JOB_ID !== input.publicationId) {
+        throw new Error('operator_unauthorized');
+    }
     const result = await processOperatorOutbox(
         state,
         env,
