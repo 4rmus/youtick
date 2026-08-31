@@ -230,6 +230,10 @@ jobs:
           if [[ "${PREVIEW_LIVEPEER_BRIDGE_ENABLED}" == "true" ]]; then
             deploy=true
             echo "Preview Livepeer canary enabled; building current main ${SHA}."
+          elif [[ "${baseline}" == "${SHA}" ]] \
+            && [[ "${PREVIEW_OPERATOR_OUTBOX_ARCHIVE_ENABLED}" == "false" ]]; then
+            deploy=true
+            echo "Explicit closed Preview redeploy requested for current main ${SHA}."
           elif [[ -z "${baseline}" ]]; then
             deploy=true
             echo "No trusted Preview baseline found; building current main ${SHA}."
