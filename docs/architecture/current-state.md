@@ -1,12 +1,10 @@
 # Current state
 
-> Reconciled on 2026-08-28 from PR #147 base `main`
-> [`ca72a8029bb3ba56c50db14297499417a05a28ca`](https://github.com/4rmus/youtick/commit/ca72a8029bb3ba56c50db14297499417a05a28ca)
-> through the PR #147 candidate changeset, and separately against the currently
-> served Preview runtime. The final PR head, merge SHA and post-merge `main`
-> evidence are outside this snapshot.
-> This snapshot separates source, CI, Preview and Production evidence. It does
-> not authorize a deployment, feature activation or external mutation.
+> Reconciled on 2026-09-01 against exact `main`
+> [`338432ef545c36dbd08fb4535721f3c22d51fa24`](https://github.com/4rmus/youtick/commit/338432ef545c36dbd08fb4535721f3c22d51fa24),
+> exact-main CI, protected Preview receipts and fresh finality reads.
+> This snapshot separates source, CI, Preview, provider and Production evidence.
+> It does not authorize a deployment, feature activation or external mutation.
 
 This is the short operational snapshot. The phased target remains the external
 architecture plan, while [`transformation-progress.md`](transformation-progress.md)
@@ -25,52 +23,55 @@ retains the append-only checkpoint history through Checkpoint 186. Dated
 Use this order when facts disagree:
 
 1. exact GitHub `main`;
-2. fresh environment evidence;
+2. fresh environment and finality evidence;
 3. this dated snapshot;
 4. the append-only checkpoint history;
 5. the target phase plan and older design documents.
 
-`LOCAL_STATIC`, `LOCAL_TEST`, `CI`, `PREVIEW` and `PRODUCTION` are independent
-evidence classes. A passing source or CI result does not prove deployment.
+`LOCAL_STATIC`, `LOCAL_TEST`, `CI`, `PROVIDER`, `PREVIEW`, `PRODUCTION`,
+`EXTERNAL_NOT_RUN` and `UNPROVEN` are independent evidence classes. A passing
+source or CI result does not prove deployment, and a Preview result does not
+prove Production or mainnet behavior.
 
 ## Current evidence
 
-| Layer | Status | Evidence |
+| Subject | Class | Status | Evidence |
+|---|---|---|---|
+| Application source | `LOCAL_STATIC` | `PASS` | Exact `main` is `338432ef...` with tree `e36736bb...`. PRs #161-168 contain the bounded sponsor recovery, same-SHA reclose, exact-job safety, one-time second-key exception, Node upload adapters, playback-v2 Preview gate and playback-only baseline fix. All release flags remain default-off. |
+| CI | `CI` | `PASS` | [PR run 33502837658](https://github.com/4rmus/youtick/actions/runs/33502837658) passed for PR #168 and [main run 33503963314](https://github.com/4rmus/youtick/actions/runs/33503963314) passed for exact `338432ef...`. |
+| Sponsored paid-job recovery | `PREVIEW / PROVIDER` | `PASS_BOUNDED` | Exact source `6a623454...` used [Deploy Preview run 33490967180](https://github.com/4rmus/youtick/actions/runs/33490967180): attempt 2 opened only the sponsor recovery packet and attempt 3 reclosed it. One canary run completed the existing job `Authorized -> Published`, added exactly one publication, created no payment/job/key, left creator and platform balances unchanged and deleted the recovery file only after success. Provider creation was bounded to `0 or 1`; an independent provider inventory count is `UNPROVEN`. |
+| Buyer purchase | `PREVIEW` | `PASS_TESTNET` | Buyer `lp-buyer-260803191501.youtick-dev-v3.testnet` bought publication `lp-85ef5b7e-c6a0-4e9b-8f58-a5f41ba1fbdd` once for exact `2,000,000` micro-USDC. Buyer changed `16,999,997 -> 14,999,997`, Market USDC `1,740,000 -> 3,740,000`, creator liability `0 -> 1,960,000` and platform liability `1,740,000 -> 1,780,000`. One entitlement and one purchase event were observed. |
+| Playback v2 | `PREVIEW` | `PASS` | [Deploy Preview run 33496089969, attempt 2](https://github.com/4rmus/youtick/actions/runs/33496089969/attempts/2) opened the playback-only packet at `e4f0abc7...`. One wallet `signMessage` authorized four short-lived v2 token checks; Chrome and Edge initial/refreshed playback showed video frames. Anonymous, malformed, wrong-key, wrong-subject and expired tokens were denied. Buyer chain nonce stayed unchanged and browser persistent storage stayed empty. |
+| Market safety | `PREVIEW` | `PASS_PAUSED` | Admin unpaused once in transaction [`DaxfNZq...`](https://testnet.nearblocks.io/txns/DaxfNZqXD7zkTJHw6Jq54ELoLYnJorksyhAFuYkEY8oU), buyer purchased once in [`965uDnno...`](https://testnet.nearblocks.io/txns/965uDnnoT1rDPU6GWV7deZHZdBK5dMVrVq7JLN2PLnmH), and guardian paused in [`DWaUE7L...`](https://testnet.nearblocks.io/txns/DWaUE7Lfq3Mvsc3KdhrogRZUgDeVri3tnmeVqSFsMaz8). Fresh finality reads still show `new_purchases_paused=true`, the publication active at `2,000,000`, entitlement true and all final balances unchanged. |
+| Final Preview | `PREVIEW` | `PASS_CLOSED` | [Deploy Preview run 33504692680, attempt 2](https://github.com/4rmus/youtick/actions/runs/33504692680/attempts/2) reclosed exact `338432ef...`. Bridge health is `stage=DISABLED`; upload, provider/operator mutation, sponsor quote/relay, playback, Queue and archive readiness are all false. Deploy, playback, sponsor and multi-creator repository gates are false. |
+| Production | `PRODUCTION / UNPROVEN` | `LEGACY_ONLY / NEW_STACK_CLOSED` | The protected releases did not deploy Production. `youtick.net` retained body SHA-256 `a62de757f70aea8d5cb752b12ac50c30435ac8a6e7661cb817562b206c95e065` and the `youtick-web4` origin. Production feature variables remain false. `bridge.youtick.net` did not resolve, so direct Production Bridge health is `UNPROVEN`. |
+
+## Exact Preview receipts
+
+| Window | Source and run | Serving result |
 |---|---|---|
-| Application source | `PASS_FIXED_FEE / SAFE_UPDATE_PROPOSED` | `ca72a802...` contains merged PRs #140-146. PR #146 reconciles one fixed `100_000` micro-USDC sponsor fee. The PR #147 candidate proposes reusing the existing testnet Market/Access pair, extending the existing pause to new creator jobs and adding a manual protected code-update lane. Required checks must pass on its final head before merge; retained deploy provenance remains a post-merge `push/main` CI responsibility and sponsor flags remain default-off. |
-| CI | `PASS` | [Run 33113271994](https://github.com/4rmus/youtick/actions/runs/33113271994) passed dependency audits, both CodeQL languages, Web, Bridge, contracts, protocol and CI Gate for exact `ca72a802...`. |
-| Preview | `PASS_CLOSED / EXACT_SOURCE_NOT_DEPLOYED` | [Deploy run 33076391705, attempt 2](https://github.com/4rmus/youtick/actions/runs/33076391705/attempts/2) promoted the then-current `f745bc0...` closed packet and recorded deployment `6126728124` as successful. Exact-main [run 33114081379](https://github.com/4rmus/youtick/actions/runs/33114081379) was fully skipped with `DEPLOY_PREVIEW_ENABLED=false`, so it built no release artifact and deployed nothing. |
-| Production | `LEGACY_ONLY / NEW_STACK_CLOSED` | `youtick.net` still serves the unchanged `youtick-web4` origin. The modern app and Bridge Production endpoints are absent. |
+| Sponsor recovery reclose | `6a623454...`; [run 33490967180, attempt 3](https://github.com/4rmus/youtick/actions/runs/33490967180/attempts/3) | Web `7b262579-7474-49c2-9137-97ab96af7fd3`; Bridge `cb7fedea-e9e4-40dc-b25b-e62fda762e44`; read model `298f092d-f3ef-45c3-a75d-4842bf950527`; `DISABLED`. |
+| Playback-only open | `e4f0abc7...`; [run 33496089969, attempt 2](https://github.com/4rmus/youtick/actions/runs/33496089969/attempts/2) | Web `8ce0587c-6a67-468f-8956-8d7d9b4042a2`; Bridge `ddcd1452-e7d6-4539-92c2-7ec010c61ee7`; read model `8f740285-4fe0-417c-8c00-1e7daee7fedd`; playback-only `ENABLED`. |
+| Final closed Preview | `338432ef...`; [run 33504692680, attempt 2](https://github.com/4rmus/youtick/actions/runs/33504692680/attempts/2) | Web `f685d745-b074-4632-8552-cf1cc23e96dd`; Bridge `9e2d1391-5c41-4dde-883d-5af08c7c0647`; read model `2df41f19-864a-422c-ae8c-400be3993c8d`; `DISABLED`. |
 
-The protected Preview release promoted these exact versions to 100% traffic:
-
-- Web: `530ffca0-ff75-465d-8260-be2dab0c1384`;
-- Bridge: `8d4c26a0-309b-43e5-b35a-48cc9420ebf2`;
-- dark read model: `5a5948d1-a443-4e3b-8b06-5c4d48950b98`.
-
-Fresh Bridge health returned version `8d4c26a0-309b-43e5-b35a-48cc9420ebf2`
-and `stage=DISABLED`. New upload, provider/operator mutation, playback, Queue,
-both archive paths, sponsored quote and sponsor relay readiness were all
-`false`. `DEPLOY_PREVIEW_ENABLED` and
-`PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED` are both `false`.
-
-Preview publication reads remain independently enabled at
-`read-preview.youtick.net`. The newly deployed dark read model keeps its API,
-ingestion, backfill and continuation flags disabled, so this is not
-continuous-ingestion or D1 write proof. The protected release also proved that
-the Production root body and headers were unchanged.
+The first playback reclose attempt, [run 33496089969 attempt 3](https://github.com/4rmus/youtick/actions/runs/33496089969/attempts/3),
+failed at `release_smoke_bridge_policy_invalid`. It left the closed candidate at
+0% and did not change traffic. PR #168 fixed only the playback-only legacy
+baseline inference; the later exact-main receipt and fresh health close that
+incident without treating the failed run as deployment evidence.
 
 ## Recent source sequence
 
 | PR | Main commit | Purpose | Runtime meaning |
 |---|---|---|---|
-| [#140](https://github.com/4rmus/youtick/pull/140) | `64626c6...` | Record the Phase 3 runner closure | Documentation only |
-| [#141](https://github.com/4rmus/youtick/pull/141) | `7bdc88c...` | Recover guarded Preview candidates | Release safety source |
-| [#142](https://github.com/4rmus/youtick/pull/142) | `6d372f4...` | Allow the enabled canary packet to be redeployed | Previously served Preview baseline |
-| [#143](https://github.com/4rmus/youtick/pull/143) | `e8f75d8...` | Add NEAR-sponsored creator uploads | Present in the deployed Preview package; sponsor flags closed |
-| [#144](https://github.com/4rmus/youtick/pull/144) | `f745bc0...` | Accept the legacy Bridge health shape during baseline inference | Enabled the successful exact-main reclose |
-| [#145](https://github.com/4rmus/youtick/pull/145) | `dd0ebd3...` | Reconcile the current-state snapshot | Documentation only; Preview deploy skipped |
-| [#146](https://github.com/4rmus/youtick/pull/146) | `ca72a80...` | Fix the sponsor fee at `0.10 USDC` | Source and CI pass; exact source not Preview-deployed, sponsor flags closed |
+| [#161](https://github.com/4rmus/youtick/pull/161) | `5b61f0f...` | Align sponsor recovery release policy | Source safety; default-off |
+| [#162](https://github.com/4rmus/youtick/pull/162) | `5a26be3...` | Allow protected same-SHA Preview reclose | Release safety |
+| [#163](https://github.com/4rmus/youtick/pull/163) | `20be6e5...` | Scope recovery to the exact job | Source safety |
+| [#164](https://github.com/4rmus/youtick/pull/164) | `af14bd4...` | Add bounded second-key exception | One approved testnet exception completed |
+| [#165](https://github.com/4rmus/youtick/pull/165) | `2b82bb6...` | Use Node `Buffer` at the TUS boundary | Recovery adapter fix |
+| [#166](https://github.com/4rmus/youtick/pull/166) | `6a62345...` | Keep `File` for fingerprint and `Buffer` for TUS | Recovery runtime completed |
+| [#167](https://github.com/4rmus/youtick/pull/167) | `e4f0abc...` | Add default-off playback-v2 Preview gate | Buyer pilot completed |
+| [#168](https://github.com/4rmus/youtick/pull/168) | `338432e...` | Recognize playback-only stable baseline during reclose | Final Preview reclose completed |
 
 ## Phase summary
 
@@ -78,43 +79,24 @@ the Production root body and headers were unchanged.
 |---|---|---|
 | 0 | Boundaries and activation freeze | Mostly complete for the pilot; independent threat review and named owners remain open. |
 | 1 | Wallet, contract and governance security | Strong local/testnet/CI evidence; mainnet governance and independent review remain open. |
-| 2 | Stateless playback and bounded state | Strong Preview/testnet evidence; retention cleanup and Production proof remain incomplete. |
-| 3 | Resumable concurrent upload | Active phase. Source runner exists, but the full two-creator payment-to-publication E2E is unproven. |
-| 4 | Events, read model and finance | Bounded testnet/Preview evidence exists; continuous ingestion and mainnet accounting remain closed. |
+| 2 | Stateless playback and bounded state | Single-buyer v2 playback is proven on Preview/testnet; retention cleanup and Production proof remain incomplete. |
+| 3 | Resumable concurrent upload | Active. One existing paid job was recovered and published, but the full two-creator payment-to-publication concurrency flow remains a separate, optional gate and is not proven by this pilot. |
+| 4 | Events, read model and finance | One exact purchase and split are proven on testnet; continuous ingestion and mainnet accounting remain closed. |
 | 5 | Scale, cost and operations | Partial; delivered alerts, load evidence and billed-cost reconciliation remain external. |
 | 6 | Audit, resilience and mainnet | Not ready; external audit, drills, governance and gradual Production activation remain blocked. |
 
 ## Decisions and blockers
 
-- The sponsor product decision is now reconciled in exact `main`: Web, Bridge,
-  contract, protocol and tests require a fixed `0.10 USDC` added to the upload
-  fee and accrued in platform balance. Exact-main CI passes.
-- This is `SOURCE` + `CI` evidence only. The current fixed-fee Market source is
-  recorded as `CODE_ONLY / RUNTIME_DISABLED / CURRENT_SOURCE_NOT_DEPLOYED`;
-  exact source was not deployed to Preview, sponsor quote/relay flags remain
-  false and no fixed-fee live payment is proven.
-- The safe-update changeset preserves the current testnet Market and Access IDs
-  and Borsh state. While the global pause is true, new plain-USDC, sponsored-USDC
-  and native-NEAR creator jobs are closed; exact replay and recovery remain
-  available. PR CI verifies the exact Market WASM/ABI build but does not retain
-  a deploy artifact. Only post-merge same-repository `push/main` CI can retain
-  and attest that artifact; the protected update workflow is manual and has not
-  run.
-- The real two-creator payment, Bridge admission, concurrent TUS upload, provider
-  and publication flow remains unproven.
-- UploadJob deletion remains blocked until its D1 archive commit is proven and
-  legacy playback no longer depends on the job.
-- Full read-model rebuild and four-hour RTO remain deliberately deferred beyond v1.
-- Production/mainnet capability remains unproven.
-
-## Next product gate
-
-`SPONSOR_FIXED_FEE_EXISTING_TESTNET_MARKET_CODE_UPDATE_APPROVAL_REQUIRED`
-
-After this changeset is canonical on `main`, refresh the read-only Market state
-hash and explicitly approve only the existing testnet Market code update from
-the retained exact-main CI artifact. The update must preserve the paused raw
-state byte-for-byte and perform no init, migration, Access change, funding,
-secret/config/flag change, sponsor activation, payment, relay, provider,
-D1/Queue, Cloudflare or Production mutation. Closed Preview deployment and
-sponsor activation remain separate later gates.
+- The bounded V1 testnet slice now proves one sponsored paid-job recovery, one
+  two-USDC purchase, permanent entitlement and v2 playback without persistent
+  token writes.
+- All Preview mutation and canary gates are default-off and currently false.
+  Market purchases are paused and final Preview health is fully closed.
+- Two-creator concurrency is not implied by the single creator/buyer pilot. It
+  remains a separate optional Phase 3 gate.
+- Provider inventory cardinality, continuous read-model ingestion, UploadJob
+  deletion, 90-day cleanup, full rebuild/RTO, Production/mainnet behavior and
+  independent audit remain unproven or deliberately deferred.
+- No automatic product or runtime gate is open. `WORKSPACE_CONSOLIDATION` is
+  the next planned item, but it is destructive maintenance and requires its
+  own explicit approval.
