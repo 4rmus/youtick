@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
-import { Buffer, File as NodeFile } from 'node:buffer';
+import { Buffer } from 'node:buffer';
 import { expect, test } from 'vitest';
 
 const LIVE_ACK = 'two-nonrefundable-usdc-payments-and-two-uploads';
@@ -327,6 +327,18 @@ test('sponsored recovery publishes the paid job without a second payment', async
     status: 'PASS', payments: 0, recovered_payments: 1, uploads: 1, publications: 1,
     new_bridge_resources: 0,
   });
+});
+
+test('uses a Buffer with File metadata for the Node TUS client', async () => {
+  const file = nodeTusFile(Buffer.from('video'), 'video.mp4', 123);
+  const { defaultOptions } = await import('tus-js-client');
+
+  expect(Buffer.isBuffer(file)).toBe(true);
+  expect(file).toMatchObject({
+    name: 'video.mp4', type: 'video/mp4', lastModified: 123, size: 5,
+  });
+  await expect(defaultOptions.fileReader.openFile(file, 32 * 1024 * 1024))
+    .resolves.toMatchObject({ size: 5 });
 });
 
 test('reports the exact allowlisted sponsored recovery failure phase', async () => {
@@ -1235,11 +1247,14 @@ function loadLockedMedia(input: (typeof LOCKED_INPUTS)[number]) {
   const bytes = readFileSync(filePath);
   if (sha256(bytes) !== input.sourceSha256) throw new Error('multi_creator_canary_media_invalid');
   return {
-    file: new NodeFile([bytes], basename(filePath), {
-      type: 'video/mp4',
-      lastModified: Math.trunc(stat.mtimeMs),
-    }) as unknown as File,
+    file: nodeTusFile(bytes, basename(filePath), Math.trunc(stat.mtimeMs)),
   };
+}
+
+function nodeTusFile(bytes: Buffer, name: string, lastModified: number): File {
+  return Object.assign(bytes, {
+    name, type: 'video/mp4', lastModified, size: bytes.length,
+  }) as unknown as File;
 }
 
 function loadCredential(
