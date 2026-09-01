@@ -550,12 +550,25 @@ test('enabled playback canary smoke separates playback from upload readiness', a
     };
 
     const result = await runReleaseSmoke(input);
+    const inferred = await runReleaseSmoke({
+        ...input,
+        expectedBridgeEnabled: null,
+        expectedUploadReady: null,
+        expectedPlaybackReady: null,
+    });
     assert.equal(result.bridge.stage, 'ENABLED');
+    assert.equal(inferred.bridge.stage, 'ENABLED');
     bridgePolicy.newUploadReady = true;
     await assert.rejects(runReleaseSmoke(input), /release_smoke_bridge_not_enabled/);
     bridgePolicy.newUploadReady = false;
     bridgePolicy.playbackV2Ready = false;
     await assert.rejects(runReleaseSmoke(input), /release_smoke_bridge_not_enabled/);
+    await assert.rejects(runReleaseSmoke({
+        ...input,
+        expectedBridgeEnabled: null,
+        expectedUploadReady: null,
+        expectedPlaybackReady: null,
+    }), /release_smoke_bridge_policy_invalid/);
     await assert.rejects(runReleaseSmoke({
         ...input, expectedUploadReady: true, expectedPlaybackReady: true,
     }), /release_smoke_bridge_policy_invalid/);
