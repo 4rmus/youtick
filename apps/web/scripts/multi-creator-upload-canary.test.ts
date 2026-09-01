@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
-import { Buffer } from 'node:buffer';
+import { Buffer, File as NodeFile } from 'node:buffer';
 import { expect, test } from 'vitest';
 
 const LIVE_ACK = 'two-nonrefundable-usdc-payments-and-two-uploads';
@@ -329,15 +329,17 @@ test('sponsored recovery publishes the paid job without a second payment', async
   });
 });
 
-test('uses a Buffer with File metadata for the Node TUS client', async () => {
-  const file = nodeTusFile(Buffer.from('video'), 'video.mp4', 123);
+test('keeps File fingerprinting and Node TUS input compatible', async () => {
+  const media = nodeCanaryMedia(Buffer.from('video'), 'video.mp4', 123);
   const { defaultOptions } = await import('tus-js-client');
 
-  expect(Buffer.isBuffer(file)).toBe(true);
-  expect(file).toMatchObject({
+  expect(media.file).toBeInstanceOf(NodeFile);
+  await expect(media.file.slice(0, 5).arrayBuffer()).resolves.toBeInstanceOf(ArrayBuffer);
+  expect(Buffer.isBuffer(media.tusFile)).toBe(true);
+  expect(media.tusFile).toMatchObject({
     name: 'video.mp4', type: 'video/mp4', lastModified: 123, size: 5,
   });
-  await expect(defaultOptions.fileReader.openFile(file, 32 * 1024 * 1024))
+  await expect(defaultOptions.fileReader.openFile(media.tusFile, 32 * 1024 * 1024))
     .resolves.toMatchObject({ size: 5 });
 });
 
@@ -757,6 +759,7 @@ test.skipIf(process.env.YOUTICK_PHASE3_CANARY_ACK !== LIVE_ACK)(
       return {
         input,
         file,
+        tusFile: media[index].tusFile,
         fingerprint: await upload.fingerprintLivepeerSource(file),
         jobId: upload.createLivepeerJobId(),
         wallet: {
@@ -828,7 +831,7 @@ test.skipIf(process.env.YOUTICK_PHASE3_CANARY_ACK !== LIVE_ACK)(
         },
         upload: async (participant, intent) => {
           const value = byAccount.get(participant.accountId)!;
-          await upload.uploadLivepeerSource(value.file, intent as never, {
+          await upload.uploadLivepeerSource(value.tusFile, intent as never, {
             heartbeat: () => upload.heartbeatLivepeerUploadLease({
               accountId: participant.accountId,
               intent: intent as never,
@@ -1201,7 +1204,7 @@ test.skipIf(
             value: intent,
           };
         },
-        upload: (intent) => upload.uploadLivepeerSource(media.file, intent as never, {
+        upload: (intent) => upload.uploadLivepeerSource(media.tusFile, intent as never, {
           heartbeat: () => upload.heartbeatLivepeerUploadLease({
             accountId: input.accountId,
             intent: intent as never,
@@ -1246,15 +1249,17 @@ function loadLockedMedia(input: (typeof LOCKED_INPUTS)[number]) {
   }
   const bytes = readFileSync(filePath);
   if (sha256(bytes) !== input.sourceSha256) throw new Error('multi_creator_canary_media_invalid');
-  return {
-    file: nodeTusFile(bytes, basename(filePath), Math.trunc(stat.mtimeMs)),
-  };
+  return nodeCanaryMedia(bytes, basename(filePath), Math.trunc(stat.mtimeMs));
 }
 
-function nodeTusFile(bytes: Buffer, name: string, lastModified: number): File {
-  return Object.assign(bytes, {
-    name, type: 'video/mp4', lastModified, size: bytes.length,
-  }) as unknown as File;
+function nodeCanaryMedia(bytes: Buffer, name: string, lastModified: number) {
+  const type = 'video/mp4';
+  return {
+    file: new NodeFile([bytes], name, { type, lastModified }) as unknown as File,
+    tusFile: Object.assign(Buffer.from(bytes), {
+      name, type, lastModified, size: bytes.length,
+    }) as unknown as File,
+  };
 }
 
 function loadCredential(
