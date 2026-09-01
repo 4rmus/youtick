@@ -108,10 +108,7 @@ const OPTIONAL_KEYS = new Set([
 
 const FALSE_FLAGS = Object.freeze([
   "NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE",
-  "NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2",
   "NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2",
-  "LIVEPEER_PLAYBACK_ISSUANCE_ENABLED",
-  "LIVEPEER_PLAYBACK_V2_ENABLED",
   "LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED",
   "LIVEPEER_WEBHOOK_QUEUE_ENABLED",
   "UPLOAD_JOB_ARCHIVE_ENABLED",
@@ -251,19 +248,32 @@ function buildConfig(environment) {
     const value = web[flag] ?? bridge[flag];
     if (value !== "false") fail(`${environment.toUpperCase()}_${flag} must be exactly false`);
   }
-  const uploadCanaryFlags = [
+  const baseCanaryFlags = [
     web.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1,
     bridge.LIVEPEER_BRIDGE_ENABLED,
+  ];
+  const uploadCanaryFlags = [
     bridge.LIVEPEER_NEW_UPLOADS_ENABLED,
     bridge.LIVEPEER_PROVIDER_MUTATIONS_ENABLED,
   ];
-  if (environment === "production" && uploadCanaryFlags.some((value) => value !== "false")) {
-    fail("PRODUCTION multi-creator upload canary flags must be exactly false");
+  const playbackCanaryFlags = [
+    web.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2,
+    bridge.LIVEPEER_PLAYBACK_ISSUANCE_ENABLED,
+    bridge.LIVEPEER_PLAYBACK_V2_ENABLED,
+  ];
+  const closedCanary = [...baseCanaryFlags, ...uploadCanaryFlags, ...playbackCanaryFlags]
+    .every((value) => value === "false");
+  const uploadCanary = baseCanaryFlags.every((value) => value === "true")
+    && uploadCanaryFlags.every((value) => value === "true")
+    && playbackCanaryFlags.every((value) => value === "false");
+  const playbackCanary = baseCanaryFlags.every((value) => value === "true")
+    && uploadCanaryFlags.every((value) => value === "false")
+    && playbackCanaryFlags.every((value) => value === "true");
+  if (environment === "production" && !closedCanary) {
+    fail("PRODUCTION Livepeer canary flags must be exactly false");
   }
-  if (environment === "preview"
-      && !(uploadCanaryFlags.every((value) => value === "false")
-        || uploadCanaryFlags.every((value) => value === "true"))) {
-    fail("PREVIEW multi-creator upload canary flags must be all false or all true");
+  if (environment === "preview" && !closedCanary && !uploadCanary && !playbackCanary) {
+    fail("PREVIEW Livepeer canary flags must form a closed, upload-only, or playback-only packet");
   }
   const sponsorCanaryFlags = [
     web.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS,
@@ -280,7 +290,7 @@ function buildConfig(environment) {
     fail("PREVIEW sponsor canary flags must be all false or all true");
   }
   if (environment === "preview" && sponsorCanaryFlags[0] === "true") {
-    if (!uploadCanaryFlags.every((value) => value === "true")) {
+    if (!uploadCanary) {
       fail("PREVIEW sponsor canary requires upload canary flags");
     }
     const relayer = bridge.NEAR_SPONSOR_RELAYER_ACCOUNT_ID;
@@ -298,7 +308,7 @@ function buildConfig(environment) {
   } else if (bridge.LIVEPEER_OPERATOR_JOB_ID !== "") {
     fail("LIVEPEER_OPERATOR_JOB_ID must be empty outside sponsored Preview");
   }
-  if (environment === "preview" && uploadCanaryFlags[0] === "true") {
+  if (environment === "preview" && uploadCanary) {
     const creators = bridge.LIVEPEER_CREATOR_ALLOWLIST.split(",");
     const expectedCreators = sponsorCanaryFlags[0] === "true" ? 1 : 2;
     if (creators.length !== expectedCreators

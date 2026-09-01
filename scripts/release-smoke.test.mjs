@@ -166,6 +166,9 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
                 newUploadReady: false,
+                playbackReady: false,
+                playbackV2Ready: false,
+                playbackShadowV2Ready: false,
                 operatorMutationEnabled: false,
                 sponsoredUploadQuoteReady: false,
                 sponsoredUploadRelayReady: false,
@@ -277,6 +280,9 @@ test('release smoke can exclude candidate-only mutations and still identifies th
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
                 newUploadReady: false,
+                playbackReady: false,
+                playbackV2Ready: false,
+                playbackShadowV2Ready: false,
                 ...sponsorHealth,
                 versionId: 'bridge-version',
             });
@@ -358,6 +364,9 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
         stage: 'ENABLED',
         providerMutationEnabled: true,
         newUploadReady: true,
+        playbackReady: false,
+        playbackV2Ready: false,
+        playbackShadowV2Ready: false,
     };
     const input = {
         webUrl: 'https://web.test',
@@ -446,6 +455,9 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
         stage: 'DISABLED',
         providerMutationEnabled: false,
         newUploadReady: false,
+        playbackReady: false,
+        playbackV2Ready: false,
+        playbackShadowV2Ready: false,
     };
     await assert.rejects(
         runReleaseSmoke({ ...input, expectedBridgeEnabled: null }),
@@ -455,6 +467,9 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
         stage: 'ENABLED',
         providerMutationEnabled: true,
         newUploadReady: true,
+        playbackReady: false,
+        playbackV2Ready: false,
+        playbackShadowV2Ready: false,
     };
     await assert.rejects(
         runReleaseSmoke({ ...input, expectedBridgeEnabled: true }),
@@ -489,6 +504,63 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
     }
 });
 
+test('enabled playback canary smoke separates playback from upload readiness', async () => {
+    const allowedOrigin = 'https://allowed.test';
+    const bridgePolicy = {
+        stage: 'ENABLED',
+        providerMutationEnabled: false,
+        newUploadReady: false,
+        playbackReady: true,
+        playbackV2Ready: true,
+        playbackShadowV2Ready: false,
+        operatorMutationEnabled: false,
+        sponsoredUploadQuoteReady: false,
+        sponsoredUploadRelayReady: false,
+        versionId: 'bridge-playback',
+    };
+    const input = {
+        webUrl: 'https://web.test',
+        bridgeUrl: 'https://bridge.test',
+        allowedOrigin,
+        deniedOrigin: 'https://denied.test',
+        fetchImpl: async (value, init = {}) => {
+            const url = new URL(value);
+            if (url.hostname === 'web.test') {
+                return url.pathname === '/api/near-rpc'
+                    ? Response.json({ jsonrpc: '2.0', result: { chain_id: 'testnet' } })
+                    : new Response('<!doctype html><main>ok</main>', {
+                        headers: { 'Content-Type': 'text/html' },
+                    });
+            }
+            if (url.pathname === '/__health') return Response.json(bridgePolicy);
+            if (init.method === 'OPTIONS' && url.pathname === '/v1/upload-intents') {
+                return init.headers.get('Origin') === allowedOrigin
+                    ? new Response(null, {
+                        status: 204,
+                        headers: { 'Access-Control-Allow-Origin': allowedOrigin },
+                    })
+                    : Response.json({ error: 'origin_denied' }, { status: 403 });
+            }
+            throw new Error('unexpected fixture request');
+        },
+        browserRunner: async () => ({ channel: 'fixture', routes: ['/', '/tr'] }),
+        expectedBridgeEnabled: true,
+        expectedUploadReady: false,
+        expectedPlaybackReady: true,
+    };
+
+    const result = await runReleaseSmoke(input);
+    assert.equal(result.bridge.stage, 'ENABLED');
+    bridgePolicy.newUploadReady = true;
+    await assert.rejects(runReleaseSmoke(input), /release_smoke_bridge_not_enabled/);
+    bridgePolicy.newUploadReady = false;
+    bridgePolicy.playbackV2Ready = false;
+    await assert.rejects(runReleaseSmoke(input), /release_smoke_bridge_not_enabled/);
+    await assert.rejects(runReleaseSmoke({
+        ...input, expectedUploadReady: true, expectedPlaybackReady: true,
+    }), /release_smoke_bridge_policy_invalid/);
+});
+
 test('Bridge bootstrap propagation retry is bounded and status scoped', async (t) => {
     const retryDelays = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
     for (const fixture of [
@@ -507,6 +579,9 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
                 newUploadReady: false,
+                playbackReady: false,
+                playbackV2Ready: false,
+                playbackShadowV2Ready: false,
                 operatorMutationEnabled: false,
                 sponsoredUploadQuoteReady: false,
                 sponsoredUploadRelayReady: false,
@@ -523,6 +598,8 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
             body: {
                 stage: 'ENABLED', providerMutationEnabled: true,
                 newUploadReady: true,
+                playbackReady: false, playbackV2Ready: false,
+                playbackShadowV2Ready: false,
                 operatorMutationEnabled: false,
                 sponsoredUploadQuoteReady: false,
                 sponsoredUploadRelayReady: false,
@@ -540,6 +617,8 @@ test('Bridge bootstrap propagation retry is bounded and status scoped', async (t
             body: {
                 stage: 'DISABLED', providerMutationEnabled: false,
                 newUploadReady: false,
+                playbackReady: false, playbackV2Ready: false,
+                playbackShadowV2Ready: false,
                 operatorMutationEnabled: false,
                 sponsoredUploadQuoteReady: false,
                 sponsoredUploadRelayReady: false,
@@ -605,6 +684,9 @@ test('release smoke bounds and diagnoses override version propagation', async ()
                 stage: 'DISABLED',
                 providerMutationEnabled: false,
                 newUploadReady: false,
+                playbackReady: false,
+                playbackV2Ready: false,
+                playbackShadowV2Ready: false,
                 operatorMutationEnabled: false,
                 sponsoredUploadQuoteReady: false,
                 sponsoredUploadRelayReady: false,
