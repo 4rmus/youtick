@@ -171,6 +171,7 @@ test("workflows keep cumulative Preview release provenance", () => {
     /LIVEPEER_JWT_PRIVATE_KEY: \$\{\{ secrets\.PREVIEW_LIVEPEER_JWT_PRIVATE_KEY \}\}/,
   );
   assert.match(preview, /PREVIEW_SPONSORED_UPLOAD_CANARY_ENABLED/);
+  assert.match(preview, /PREVIEW_PLAYBACK_V2_CANARY_ENABLED/);
   assert.match(
     preview,
     /PREVIEW_LIVEPEER_OPERATOR_JOB_ID: \$\{\{ vars\.PREVIEW_SPONSORED_UPLOAD_CANARY_ENABLED == 'true' && vars\.PREVIEW_LIVEPEER_OPERATOR_JOB_ID \|\| '' \}\}/,
@@ -186,6 +187,13 @@ test("workflows keep cumulative Preview release provenance", () => {
   for (const name of [
     "PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1",
     "PREVIEW_LIVEPEER_BRIDGE_ENABLED",
+  ]) {
+    assert.match(
+      preview,
+      new RegExp(`${name}: .*PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED.*PREVIEW_SPONSORED_UPLOAD_CANARY_ENABLED.*PREVIEW_PLAYBACK_V2_CANARY_ENABLED`),
+    );
+  }
+  for (const name of [
     "PREVIEW_LIVEPEER_NEW_UPLOADS_ENABLED",
     "PREVIEW_LIVEPEER_PROVIDER_MUTATIONS_ENABLED",
   ]) {
@@ -194,7 +202,13 @@ test("workflows keep cumulative Preview release provenance", () => {
       new RegExp(`${name}: .*PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED.*PREVIEW_SPONSORED_UPLOAD_CANARY_ENABLED`),
     );
   }
+  for (const name of [
+    "PREVIEW_NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2",
+    "PREVIEW_LIVEPEER_PLAYBACK_ISSUANCE_ENABLED",
+    "PREVIEW_LIVEPEER_PLAYBACK_V2_ENABLED",
+  ]) assert.match(preview, new RegExp(`${name}: .*PREVIEW_PLAYBACK_V2_CANARY_ENABLED`));
   assert.doesNotMatch(promote, /PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED/);
+  assert.doesNotMatch(promote, /PREVIEW_PLAYBACK_V2_CANARY_ENABLED/);
   assert.match(preview, /PRODUCTION_OPERATOR_OUTBOX_ARCHIVE_ENABLED: "false"/);
   assert.match(preview, /PRODUCTION_LIVEPEER_OPERATOR_JOB_ID: ""/);
   for (const name of [
@@ -449,13 +463,11 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
       env,
     );
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /must be all false or all true/);
+    assert.match(result.stderr, /closed, upload-only, or playback-only packet/);
   });
 
   for (const flag of [
-    "NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2",
     "NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2",
-    "LIVEPEER_PLAYBACK_V2_ENABLED",
     "LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED",
     "LIVEPEER_WEBHOOK_QUEUE_ENABLED",
   ]) {
@@ -471,7 +483,7 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
     });
   }
 
-  await t.test("true playback-issuance flag", () => {
+  await t.test("partial Preview playback canary packet", () => {
     const env = publicEnv("preview");
     env.PREVIEW_LIVEPEER_PLAYBACK_ISSUANCE_ENABLED = "true";
     const result = run(
@@ -479,7 +491,57 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
       env,
     );
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /exactly false/);
+    assert.match(result.stderr, /closed, upload-only, or playback-only packet/);
+  });
+
+  await t.test("complete Preview playback canary packet", () => {
+    const output = join(tmpdir(), "preview-playback-v2-config.json");
+    const env = publicEnv("preview");
+    env.PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = "true";
+    env.PREVIEW_NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2 = "true";
+    env.PREVIEW_LIVEPEER_BRIDGE_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_PLAYBACK_ISSUANCE_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_PLAYBACK_V2_ENABLED = "true";
+    const result = run(["config", "--environment", "preview", "--output", output], env);
+    assertSuccess(result);
+    const config = JSON.parse(readFileSync(output, "utf8"));
+    assert.equal(config.web.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2, "true");
+    assert.equal(config.bridge.LIVEPEER_PLAYBACK_ISSUANCE_ENABLED, "true");
+    assert.equal(config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED, "true");
+    assert.equal(config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED, "false");
+    assert.equal(config.bridge.LIVEPEER_PROVIDER_MUTATIONS_ENABLED, "false");
+  });
+
+  await t.test("Preview playback canary rejects upload mutations", () => {
+    const env = publicEnv("preview");
+    env.PREVIEW_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = "true";
+    env.PREVIEW_NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2 = "true";
+    env.PREVIEW_LIVEPEER_BRIDGE_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_NEW_UPLOADS_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_PLAYBACK_ISSUANCE_ENABLED = "true";
+    env.PREVIEW_LIVEPEER_PLAYBACK_V2_ENABLED = "true";
+    const result = run(
+      ["config", "--environment", "preview", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /closed, upload-only, or playback-only packet/);
+  });
+
+  await t.test("Production playback canary packet", () => {
+    const env = publicEnv("production");
+    env.PRODUCTION_NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = "true";
+    env.PRODUCTION_NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2 = "true";
+    env.PRODUCTION_LIVEPEER_BRIDGE_ENABLED = "true";
+    env.PRODUCTION_LIVEPEER_PLAYBACK_ISSUANCE_ENABLED = "true";
+    env.PRODUCTION_LIVEPEER_PLAYBACK_V2_ENABLED = "true";
+    const result = run(
+      ["config", "--environment", "production", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /PRODUCTION Livepeer canary flags must be exactly false/);
   });
 
   await t.test("partial Preview provider-mutation flag", () => {
@@ -490,7 +552,7 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
       env,
     );
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /must be all false or all true/);
+    assert.match(result.stderr, /closed, upload-only, or playback-only packet/);
   });
 
   await t.test("complete Preview multi-creator upload canary packet", () => {

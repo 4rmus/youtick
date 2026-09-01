@@ -128,10 +128,7 @@ const BRIDGE_PUBLIC_KEYS = Object.freeze([
 
 const FALSE_FLAGS = Object.freeze([
     ['web', 'NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE'],
-    ['web', 'NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2'],
     ['web', 'NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2'],
-    ['bridge', 'LIVEPEER_PLAYBACK_ISSUANCE_ENABLED'],
-    ['bridge', 'LIVEPEER_PLAYBACK_V2_ENABLED'],
     ['bridge', 'LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED'],
     ['bridge', 'LIVEPEER_WEBHOOK_QUEUE_ENABLED'],
     ['bridge', 'UPLOAD_JOB_ARCHIVE_ENABLED'],
@@ -405,19 +402,32 @@ async function readRelease(artifactDir, target, sha) {
     for (const [section, flag] of FALSE_FLAGS) {
         if (config[section]?.[flag] !== 'false') fail(`${flag.toLowerCase()}_not_false`);
     }
-    const uploadCanaryFlags = [
+    const baseCanaryFlags = [
         config.web?.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1,
         config.bridge?.LIVEPEER_BRIDGE_ENABLED,
+    ];
+    const uploadCanaryFlags = [
         config.bridge?.LIVEPEER_NEW_UPLOADS_ENABLED,
         config.bridge?.LIVEPEER_PROVIDER_MUTATIONS_ENABLED,
     ];
-    if (target === 'production' && uploadCanaryFlags.some((value) => value !== 'false')) {
-        fail('production_multi_creator_upload_canary_flags_not_false');
+    const playbackCanaryFlags = [
+        config.web?.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2,
+        config.bridge?.LIVEPEER_PLAYBACK_ISSUANCE_ENABLED,
+        config.bridge?.LIVEPEER_PLAYBACK_V2_ENABLED,
+    ];
+    const closedCanary = [...baseCanaryFlags, ...uploadCanaryFlags, ...playbackCanaryFlags]
+        .every((value) => value === 'false');
+    const uploadCanary = baseCanaryFlags.every((value) => value === 'true')
+        && uploadCanaryFlags.every((value) => value === 'true')
+        && playbackCanaryFlags.every((value) => value === 'false');
+    const playbackCanary = baseCanaryFlags.every((value) => value === 'true')
+        && uploadCanaryFlags.every((value) => value === 'false')
+        && playbackCanaryFlags.every((value) => value === 'true');
+    if (target === 'production' && !closedCanary) {
+        fail('production_livepeer_canary_flags_not_false');
     }
-    if (target === 'preview'
-        && !(uploadCanaryFlags.every((value) => value === 'false')
-            || uploadCanaryFlags.every((value) => value === 'true'))) {
-        fail('preview_multi_creator_upload_canary_flags_invalid');
+    if (target === 'preview' && !closedCanary && !uploadCanary && !playbackCanary) {
+        fail('preview_livepeer_canary_flags_invalid');
     }
     const sponsorCanaryFlags = [
         config.web?.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS,
@@ -435,7 +445,7 @@ async function readRelease(artifactDir, target, sha) {
     }
     if (target === 'preview' && sponsorCanaryFlags[0] === 'true') {
         const relayer = config.bridge?.NEAR_SPONSOR_RELAYER_ACCOUNT_ID;
-        if (!uploadCanaryFlags.every((value) => value === 'true')
+        if (!uploadCanary
             || !/^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(relayer || '')
             || [config.bridge?.MARKET_CONTRACT_ID, config.bridge?.ACCESS_CONTRACT_ID,
                 config.bridge?.NEAR_OPERATOR_ACCOUNT_ID].includes(relayer)
@@ -448,7 +458,7 @@ async function readRelease(artifactDir, target, sha) {
     } else if (config.bridge?.LIVEPEER_OPERATOR_JOB_ID !== '') {
         fail('operator_job_not_empty');
     }
-    if (target === 'preview' && uploadCanaryFlags[0] === 'true') {
+    if (target === 'preview' && uploadCanary) {
         const creators = config.bridge?.LIVEPEER_CREATOR_ALLOWLIST?.split(',') ?? [];
         const expectedCreators = sponsorCanaryFlags[0] === 'true' ? 1 : 2;
         if (creators.length !== expectedCreators
@@ -1545,6 +1555,10 @@ export async function deployRelease({
                 overrideVersion: prepared.bridge.candidate,
                 expectedBridgeVersion: prepared.bridge.candidate,
                 expectedBridgeEnabled: release.config.bridge.LIVEPEER_BRIDGE_ENABLED === 'true',
+                expectedUploadReady:
+                    release.config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED === 'true',
+                expectedPlaybackReady:
+                    release.config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED === 'true',
                 expectedSponsoredUploadReady:
                     release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
             }));
@@ -1612,6 +1626,10 @@ export async function deployRelease({
                 smokeInput(target, `https://${TARGETS[target].web.domain}`, {
                     expectedBridgeVersion: prepared.bridge.candidate,
                     expectedBridgeEnabled: release.config.bridge.LIVEPEER_BRIDGE_ENABLED === 'true',
+                    expectedUploadReady:
+                        release.config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED === 'true',
+                    expectedPlaybackReady:
+                        release.config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED === 'true',
                     expectedSponsoredUploadReady:
                         release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
                 }),

@@ -142,8 +142,8 @@ async function request(baseUrl, path, init, headers, fetchImpl) {
 }
 
 async function bridgeHealth(
-    bridgeUrl, headers, expectedVersion, expectedBridgeEnabled, expectedSponsoredUploadReady,
-    bridgeBootstrap, fetchImpl, sleepFn,
+    bridgeUrl, headers, expectedVersion, expectedBridgeEnabled, expectedUploadReady,
+    expectedPlaybackReady, expectedSponsoredUploadReady, bridgeBootstrap, fetchImpl, sleepFn,
 ) {
     const delays = bridgeBootstrap
         ? BOOTSTRAP_HEALTH_RETRY_DELAYS_MS
@@ -181,18 +181,28 @@ async function bridgeHealth(
                 : healthJson.operatorMutationEnabled === undefined
                     || healthJson.operatorMutationEnabled === false
                     || (healthJson.operatorMutationEnabled === true && sponsoredUploadsReady);
-        const enabled = healthJson.stage === 'ENABLED'
+        const inferredEnabled = healthJson.stage === 'ENABLED'
             && healthJson.providerMutationEnabled === true
             && healthJson.newUploadReady === true
             && sponsoredUploadsMatch
             && operatorMutationMatch;
-        const disabled = healthJson.stage === 'DISABLED'
+        const inferredDisabled = healthJson.stage === 'DISABLED'
             && healthJson.providerMutationEnabled === false
             && healthJson.newUploadReady === false
             && !sponsoredUploadsReady
             && sponsoredUploadsMatch
             && operatorMutationMatch;
-        if (expectedBridgeEnabled === null ? !enabled && !disabled : expectedBridgeEnabled ? !enabled : !disabled) {
+        const explicitPolicyMatch = healthJson.stage === (expectedBridgeEnabled ? 'ENABLED' : 'DISABLED')
+            && healthJson.providerMutationEnabled === expectedUploadReady
+            && healthJson.newUploadReady === expectedUploadReady
+            && healthJson.playbackReady === expectedPlaybackReady
+            && healthJson.playbackV2Ready === expectedPlaybackReady
+            && healthJson.playbackShadowV2Ready === false
+            && sponsoredUploadsMatch
+            && operatorMutationMatch;
+        if (expectedBridgeEnabled === null
+            ? !inferredEnabled && !inferredDisabled
+            : !explicitPolicyMatch) {
             throw new Error(expectedBridgeEnabled === null
                 ? 'release_smoke_bridge_policy_invalid'
                 : expectedBridgeEnabled
@@ -257,6 +267,8 @@ export async function runReleaseSmoke({
     overrideVersion,
     expectedBridgeVersion,
     expectedBridgeEnabled = false,
+    expectedUploadReady = expectedBridgeEnabled === null ? null : expectedBridgeEnabled,
+    expectedPlaybackReady = expectedBridgeEnabled === null ? null : false,
     expectedSponsoredUploadReady = expectedBridgeEnabled === null ? null : false,
     bridgeBootstrap = false,
     includePlaybackV2 = true,
@@ -278,6 +290,15 @@ export async function runReleaseSmoke({
     }
     const expectedVersion = expectedBridgeVersion ?? overrideVersion;
     if (expectedBridgeEnabled !== null && typeof expectedBridgeEnabled !== 'boolean') {
+        throw new Error('release_smoke_bridge_policy_invalid');
+    }
+    if ((expectedUploadReady !== null && typeof expectedUploadReady !== 'boolean')
+        || (expectedPlaybackReady !== null && typeof expectedPlaybackReady !== 'boolean')
+        || ((expectedUploadReady === null || expectedPlaybackReady === null)
+            && expectedBridgeEnabled !== null)
+        || (expectedUploadReady === true && expectedBridgeEnabled !== true)
+        || (expectedPlaybackReady === true && expectedBridgeEnabled !== true)
+        || (expectedUploadReady === true && expectedPlaybackReady === true)) {
         throw new Error('release_smoke_bridge_policy_invalid');
     }
     if ((expectedSponsoredUploadReady !== null
@@ -304,8 +325,8 @@ export async function runReleaseSmoke({
     const browser = await browserRunner({ webUrl, headers });
 
     const healthJson = await bridgeHealth(
-        bridgeUrl, headers, expectedVersion, expectedBridgeEnabled,
-        expectedSponsoredUploadReady, bridgeBootstrap, fetchImpl, sleepFn,
+        bridgeUrl, headers, expectedVersion, expectedBridgeEnabled, expectedUploadReady,
+        expectedPlaybackReady, expectedSponsoredUploadReady, bridgeBootstrap, fetchImpl, sleepFn,
     );
 
     const mutationStatuses = {};

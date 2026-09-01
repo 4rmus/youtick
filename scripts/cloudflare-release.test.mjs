@@ -1381,7 +1381,7 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
         await assert.rejects(deployRelease({
             target: 'preview', sha: SHA, artifactDir: release.artifactDir, receiptOutput: release.receipt,
             nearRpcUrl: NEAR_RPC_URL, oneClickApiKey: ONECLICK_API_KEY, ...PREVIEW_SECRET_INPUTS,
-        }), /preview_multi_creator_upload_canary_flags_invalid/);
+        }), /preview_livepeer_canary_flags_invalid/);
     });
 
     await t.test('rejects a standalone Preview operator mutation flag', async (subtest) => {
@@ -1438,6 +1438,65 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
             && args.includes('LIVEPEER_PROVIDER_MUTATIONS_ENABLED:true')
             && args.includes('LIVEPEER_OPERATOR_MUTATIONS_ENABLED:false')
         )));
+    });
+
+    await t.test('accepts the complete Preview playback-only canary packet', async (subtest) => {
+        const release = makeRelease(subtest);
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.web.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = 'true';
+        config.web.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2 = 'true';
+        config.bridge.LIVEPEER_BRIDGE_ENABLED = 'true';
+        config.bridge.LIVEPEER_PLAYBACK_ISSUANCE_ENABLED = 'true';
+        config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED = 'true';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.preview = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+        const smokeInputs = [];
+
+        await deployFixture(release, fake, async (input) => {
+            smokeInputs.push(input);
+            return { ok: true };
+        });
+
+        assert.deepEqual(smokeInputs.map((input) => ({
+            bridge: input.expectedBridgeEnabled,
+            upload: input.expectedUploadReady,
+            playback: input.expectedPlaybackReady,
+        })), [
+            { bridge: null, upload: undefined, playback: undefined },
+            { bridge: true, upload: false, playback: true },
+            { bridge: true, upload: false, playback: true },
+        ]);
+        const bridgeCommands = calls(fake).filter((args) => (
+            args.includes(TARGETS.preview.bridge.worker)
+            && (args[0] === 'deploy' || (args[0] === 'versions' && args[1] === 'upload'))
+        ));
+        assert.equal(bridgeCommands.length, 2);
+        assert.ok(bridgeCommands.every((args) => (
+            args.includes('LIVEPEER_BRIDGE_ENABLED:true')
+            && args.includes('LIVEPEER_NEW_UPLOADS_ENABLED:false')
+            && args.includes('LIVEPEER_PROVIDER_MUTATIONS_ENABLED:false')
+            && args.includes('LIVEPEER_PLAYBACK_ISSUANCE_ENABLED:true')
+            && args.includes('LIVEPEER_PLAYBACK_V2_ENABLED:true')
+        )));
+    });
+
+    await t.test('rejects a Production playback canary packet', async (subtest) => {
+        const release = makeRelease(subtest, 'production');
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.web.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = 'true';
+        config.web.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2 = 'true';
+        config.bridge.LIVEPEER_BRIDGE_ENABLED = 'true';
+        config.bridge.LIVEPEER_PLAYBACK_ISSUANCE_ENABLED = 'true';
+        config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED = 'true';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.production = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        await assert.rejects(deployRelease({
+            target: 'production', sha: SHA, artifactDir: release.artifactDir,
+            receiptOutput: release.receipt, nearRpcUrl: NEAR_RPC_URL,
+        }), /production_livepeer_canary_flags_not_false/);
     });
 
     await t.test('accepts the complete Preview sponsored upload canary packet', async (subtest) => {
