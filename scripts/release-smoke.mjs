@@ -181,9 +181,15 @@ async function bridgeHealth(
                 : healthJson.operatorMutationEnabled === undefined
                     || healthJson.operatorMutationEnabled === false
                     || (healthJson.operatorMutationEnabled === true && sponsoredUploadsReady);
+        const inferredUploadReady = healthJson.providerMutationEnabled === true
+            && healthJson.newUploadReady === true;
+        const inferredPlaybackReady = healthJson.providerMutationEnabled === false
+            && healthJson.newUploadReady === false
+            && healthJson.playbackReady === true
+            && healthJson.playbackV2Ready === true
+            && healthJson.playbackShadowV2Ready === false;
         const inferredEnabled = healthJson.stage === 'ENABLED'
-            && healthJson.providerMutationEnabled === true
-            && healthJson.newUploadReady === true
+            && (inferredUploadReady || inferredPlaybackReady)
             && sponsoredUploadsMatch
             && operatorMutationMatch;
         const inferredDisabled = healthJson.stage === 'DISABLED'
