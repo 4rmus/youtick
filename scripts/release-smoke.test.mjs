@@ -153,6 +153,7 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
     const deniedOrigin = 'https://denied.example';
     const delays = [];
     let healthRequests = 0;
+    let admissionReopenRequests = 0;
     const bridge = await serve((request, response) => {
         seen.push(`bridge:${request.method}:${request.url}`);
         assert.equal(request.headers['cloudflare-workers-version-overrides'], override);
@@ -178,6 +179,11 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
         }
         if (request.method === 'POST' && mutationCors.has(request.url)) {
             assert.equal(request.headers.origin, allowedOrigin);
+            if (request.url === '/v1/operations/admission-reopen'
+                && admissionReopenRequests++ === 0) {
+                json(response, 403, { error: 'forbidden' });
+                return;
+            }
             json(response, 503, { error: 'control_plane_disabled' }, mutationCors.get(request.url)
                 ? { 'Access-Control-Allow-Origin': allowedOrigin }
                 : {});
@@ -243,6 +249,7 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
             'bridge:GET:/__health',
             'bridge:POST:/v1/livepeer-webhooks',
             'bridge:POST:/v1/operations/admission-reopen',
+            'bridge:POST:/v1/operations/admission-reopen',
             'bridge:POST:/v1/upload-intents',
             'bridge:POST:/v1/playback-tokens',
             'bridge:POST:/v2/playback-tokens',
@@ -252,7 +259,7 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
             'bridge:OPTIONS:/v1/upload-intents',
             'bridge:OPTIONS:/v1/upload-intents',
         ]);
-        assert.deepEqual(delays, [1_000]);
+        assert.deepEqual(delays, [1_000, 1_000]);
     } finally {
         await Promise.all([web.close(), bridge.close()]);
     }
@@ -260,6 +267,10 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
 
 test('release smoke can exclude candidate-only mutations and still identifies their failures', async () => {
     const allowedOrigin = 'https://allowed.test';
+    const mutationDelays = [];
+    let admissionReopenRequests = 0;
+    let admissionReopenError = 'control_plane_disabled';
+    let admissionReopenStatus = 503;
     let sponsorHealth = {
         operatorMutationEnabled: false,
         sponsoredUploadQuoteReady: false,
@@ -295,6 +306,13 @@ test('release smoke can exclude candidate-only mutations and still identifies th
                 })
                 : Response.json({ error: 'origin_denied' }, { status: 403 });
         }
+        if (init.method === 'POST' && url.pathname === '/v1/operations/admission-reopen') {
+            admissionReopenRequests += 1;
+            return Response.json(
+                { error: admissionReopenError },
+                { status: admissionReopenStatus },
+            );
+        }
         const cors = [
             '/v1/upload-intents',
             '/v1/playback-tokens',
@@ -324,6 +342,49 @@ test('release smoke can exclude candidate-only mutations and still identifies th
         runReleaseSmoke(input),
         /release_smoke_bridge_mutation_status_404 path=\/v2\/playback-tokens/,
     );
+    admissionReopenStatus = 403;
+    admissionReopenRequests = 0;
+    await assert.rejects(runReleaseSmoke({
+        ...input,
+        includePlaybackV2: false,
+        overrideWorker: 'bridge-worker',
+        overrideVersion: 'bridge-version',
+        sleepFn: async (milliseconds) => mutationDelays.push(milliseconds),
+    }), /release_smoke_bridge_mutation_status_403 path=\/v1\/operations\/admission-reopen/);
+    assert.equal(admissionReopenRequests, 6);
+    assert.deepEqual(mutationDelays, [1_000, 2_000, 4_000, 8_000, 15_000]);
+    admissionReopenRequests = 0;
+    mutationDelays.length = 0;
+    await assert.rejects(
+        runReleaseSmoke({ ...input, includePlaybackV2: false }),
+        /release_smoke_bridge_mutation_status_403 path=\/v1\/operations\/admission-reopen/,
+    );
+    assert.equal(admissionReopenRequests, 1);
+    assert.deepEqual(mutationDelays, []);
+    admissionReopenStatus = 404;
+    admissionReopenRequests = 0;
+    await assert.rejects(runReleaseSmoke({
+        ...input,
+        includePlaybackV2: false,
+        overrideWorker: 'bridge-worker',
+        overrideVersion: 'bridge-version',
+        sleepFn: async (milliseconds) => mutationDelays.push(milliseconds),
+    }), /release_smoke_bridge_mutation_status_404 path=\/v1\/operations\/admission-reopen/);
+    assert.equal(admissionReopenRequests, 1);
+    assert.deepEqual(mutationDelays, []);
+    admissionReopenStatus = 503;
+    admissionReopenError = 'operator_unauthorized';
+    admissionReopenRequests = 0;
+    await assert.rejects(runReleaseSmoke({
+        ...input,
+        includePlaybackV2: false,
+        overrideWorker: 'bridge-worker',
+        overrideVersion: 'bridge-version',
+        sleepFn: async (milliseconds) => mutationDelays.push(milliseconds),
+    }), /release_smoke_bridge_mutation_contract_invalid/);
+    assert.equal(admissionReopenRequests, 1);
+    assert.deepEqual(mutationDelays, []);
+    admissionReopenError = 'control_plane_disabled';
     sponsorHealth = {
         operatorMutationEnabled: true,
         sponsoredUploadQuoteReady: false,

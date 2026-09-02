@@ -336,17 +336,29 @@ export async function runReleaseSmoke({
     );
 
     const mutationStatuses = {};
+    const mutationRetryDelays = overrideVersion
+        && expectedBridgeEnabled === false
+        && healthJson.versionId === overrideVersion
+        ? VERSION_IDENTITY_RETRY_DELAYS_MS.slice(1)
+        : [];
+    let mutationRetry = 0;
     for (const mutation of healthJson.stage === 'ENABLED' ? [] : DISABLED_BRIDGE_MUTATIONS) {
         if (!includePlaybackV2 && mutation.path === '/v2/playback-tokens') continue;
-        const result = await request(bridgeUrl, mutation.path, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Origin: allowedOrigin },
-            body: '{}',
-        }, headers, fetchImpl);
-        if (result.response.status !== 503) {
-            throw new Error(
-                `release_smoke_bridge_mutation_status_${result.response.status} path=${mutation.path}`,
-            );
+        let result;
+        while (true) {
+            result = await request(bridgeUrl, mutation.path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Origin: allowedOrigin },
+                body: '{}',
+            }, headers, fetchImpl);
+            if (result.response.status === 503) break;
+            if (result.response.status !== 403 || mutationRetry >= mutationRetryDelays.length) {
+                throw new Error(
+                    `release_smoke_bridge_mutation_status_${result.response.status} path=${mutation.path}`,
+                );
+            }
+            await sleepFn(mutationRetryDelays[mutationRetry]);
+            mutationRetry += 1;
         }
         const resultJson = expectJson(result.response, result.body, 'bridge_mutation');
         const corsOrigin = result.response.headers.get('access-control-allow-origin');
