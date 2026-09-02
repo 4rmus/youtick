@@ -1,5 +1,5 @@
 import { actions } from 'near-api-js';
-import { APP_CONFIG, GAS_CONSTANTS, NEAR_CONFIG } from '@/lib/constants';
+import { APP_CONFIG, FEATURE_FLAGS, GAS_CONSTANTS, NEAR_CONFIG } from '@/lib/constants';
 import { getProvider, viewContract } from '@/lib/near';
 import { signAndSendWithSignlessProvision } from '@/lib/signless-access-key';
 import type { WalletInstance } from '@/lib/types';
@@ -169,6 +169,21 @@ export async function buyLivepeerTicket(
     publication: LivepeerPublication,
 ): Promise<unknown> {
     if (publication.availability !== 'ACTIVE') throw new Error('livepeer_sales_closed');
+    const governance = await viewContract<unknown>(
+        getProvider(),
+        NEAR_CONFIG.marketContractId,
+        'get_governance_state',
+        {},
+    );
+    const purchasesPaused = governance && typeof governance === 'object'
+        ? (governance as { new_purchases_paused?: unknown }).new_purchases_paused
+        : undefined;
+    if (typeof purchasesPaused !== 'boolean') {
+        throw new Error('invalid_livepeer_governance_state');
+    }
+    if (purchasesPaused) {
+        throw new Error('livepeer_sales_closed');
+    }
     const transaction = {
         receiverId: NEAR_CONFIG.usdcContractId,
         actions: [actions.functionCall(
@@ -186,6 +201,9 @@ export async function buyLivepeerTicket(
             1n,
         )],
     };
+    if (FEATURE_FLAGS.enablePlaybackAuthorizerV2) {
+        return wallet.signAndSendTransaction(transaction);
+    }
     return signAndSendWithSignlessProvision(wallet, accountId, [transaction]);
 }
 
