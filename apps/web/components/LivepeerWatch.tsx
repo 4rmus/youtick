@@ -11,6 +11,7 @@ import { PageShell } from '@/components/PageShell';
 import { ScreenState } from '@/components/ScreenState';
 import { LivepeerPlayer } from '@/components/LivepeerPlayer';
 import { MultiAssetPaymentPanel } from '@/components/MultiAssetPaymentPanel';
+import { FEATURE_FLAGS } from '@/lib/constants';
 import {
     buyLivepeerTicket,
     formatUsdc,
@@ -226,7 +227,9 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
                                         {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                         Pay {formatUsdc(publication.price_usdc)} USDC · 1 payment approval
                                     </Button>
-                                    <p className="mt-2 text-xs text-zinc-400">Your wallet may request one-time playback-key setup if it was not prepared when you connected.</p>
+                                    {!FEATURE_FLAGS.enablePlaybackAuthorizerV2 && (
+                                        <p className="mt-2 text-xs text-zinc-400">Your wallet may request one-time playback-key setup if it was not prepared when you connected.</p>
+                                    )}
                                 </>
                             )}
                             {error && <p role="alert" className="mt-4 text-sm text-red-400">{error}</p>}

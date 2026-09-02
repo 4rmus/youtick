@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
     buyTicket: vi.fn(),
+    featureFlags: { enablePlaybackAuthorizerV2: false },
     getWallet: vi.fn(),
     hasEntitlement: vi.fn(),
     invalidateQueries: vi.fn(),
@@ -14,6 +15,8 @@ const state = vi.hoisted(() => ({
     updateCheckout: vi.fn(),
     verifyUsdc: vi.fn(),
 }));
+
+vi.mock('@/lib/constants', () => ({ FEATURE_FLAGS: state.featureFlags }));
 
 vi.mock('@tanstack/react-query', () => ({
     useQuery: ({ queryKey }: { queryKey: string[] }) => (queryKey[0] === 'livepeerPublication'
@@ -91,6 +94,7 @@ describe('Livepeer ticket payment recovery', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         vi.clearAllMocks();
+        state.featureFlags.enablePlaybackAuthorizerV2 = false;
         state.onPurchase = null;
         state.getWallet.mockResolvedValue({});
         state.readPublication.mockResolvedValue(PUBLICATION);
@@ -146,5 +150,18 @@ describe('Livepeer ticket payment recovery', () => {
             },
             'usdc_final',
         );
+    });
+
+    it.each([
+        ['legacy playback', false, true],
+        ['playback v2', true, false],
+    ])('%s handles legacy key guidance', (_label, enableV2, expected) => {
+        state.featureFlags.enablePlaybackAuthorizerV2 = enableV2;
+
+        const markup = renderToStaticMarkup(React.createElement(LivepeerWatch, {
+            jobId: PUBLICATION.publication_id,
+        }));
+
+        expect(markup.includes('one-time playback-key setup')).toBe(expected);
     });
 });
