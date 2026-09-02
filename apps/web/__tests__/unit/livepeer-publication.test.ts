@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
+    featureFlags: { enablePlaybackAuthorizerV2: false },
     viewContract: vi.fn(),
     send: vi.fn(),
 }));
 
 vi.mock('@/lib/constants', () => ({
     APP_CONFIG: { livepeerBridgeUrl: 'https://bridge.youtick.net' },
+    FEATURE_FLAGS: state.featureFlags,
     GAS_CONSTANTS: { mediumGas: 100_000_000_000_000n },
     NEAR_CONFIG: {
         marketContractId: 'paid-media-livepeer-v1.testnet',
@@ -52,6 +54,7 @@ const PUBLICATION = {
 describe('Livepeer publication UI boundary', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        state.featureFlags.enablePlaybackAuthorizerV2 = false;
     });
 
     it('reads only a publication bound to the requested job', async () => {
@@ -77,11 +80,18 @@ describe('Livepeer publication UI boundary', () => {
     });
 
     it('buys the exact publication with NEAR-native USDC and provisions playback access', async () => {
+        state.viewContract.mockResolvedValueOnce({ new_purchases_paused: false });
         state.send.mockResolvedValueOnce({});
         const wallet = { signAndSendTransaction: vi.fn(), signAndSendTransactions: vi.fn() };
 
         await buyLivepeerTicket(wallet as never, 'buyer.testnet', PUBLICATION);
 
+        expect(state.viewContract).toHaveBeenCalledWith(
+            { id: 'provider' },
+            'paid-media-livepeer-v1.testnet',
+            'get_governance_state',
+            {},
+        );
         const [, accountId, transactions] = state.send.mock.calls[0];
         expect(accountId).toBe('buyer.testnet');
         expect(transactions).toHaveLength(1);
@@ -103,6 +113,63 @@ describe('Livepeer publication UI boundary', () => {
             availability: 'SALES_SUSPENDED',
         })).rejects.toThrow('livepeer_sales_closed');
         expect(state.send).toHaveBeenCalledOnce();
+    });
+
+    it('sends one USDC transaction without provisioning a legacy key for playback v2', async () => {
+        state.featureFlags.enablePlaybackAuthorizerV2 = true;
+        state.viewContract.mockResolvedValueOnce({ new_purchases_paused: false });
+        const wallet = {
+            signAndSendTransaction: vi.fn().mockResolvedValue({}),
+            signAndSendTransactions: vi.fn(),
+        };
+
+        await buyLivepeerTicket(wallet, 'buyer.testnet', PUBLICATION);
+
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce();
+        expect(wallet.signAndSendTransaction.mock.calls[0][0]).toMatchObject({
+            receiverId: 'usdc.testnet',
+            actions: [{
+                methodName: 'ft_transfer_call',
+                args: {
+                    receiver_id: 'paid-media-livepeer-v1.testnet',
+                    amount: '2000001',
+                },
+            }],
+        });
+        expect(wallet.signAndSendTransaction.mock.calls[0][0].actions).toHaveLength(1);
+        expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
+        expect(state.send).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['paused', { new_purchases_paused: true }, 'livepeer_sales_closed'],
+        ['invalid', { new_purchases_paused: 'false' }, 'invalid_livepeer_governance_state'],
+    ])('does not send a wallet transaction when Market state is %s', async (
+        _label,
+        governance,
+        expectedError,
+    ) => {
+        state.viewContract.mockResolvedValueOnce(governance);
+        const wallet = { signAndSendTransaction: vi.fn(), signAndSendTransactions: vi.fn() };
+
+        await expect(buyLivepeerTicket(wallet, 'buyer.testnet', PUBLICATION))
+            .rejects.toThrow(expectedError);
+
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+        expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
+        expect(state.send).not.toHaveBeenCalled();
+    });
+
+    it('does not send a wallet transaction when Market state cannot be read', async () => {
+        state.viewContract.mockRejectedValueOnce(new Error('RPC unavailable'));
+        const wallet = { signAndSendTransaction: vi.fn(), signAndSendTransactions: vi.fn() };
+
+        await expect(buyLivepeerTicket(wallet, 'buyer.testnet', PUBLICATION))
+            .rejects.toThrow('RPC unavailable');
+
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+        expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
+        expect(state.send).not.toHaveBeenCalled();
     });
 
     it('checks entitlement against the v1 market and job ID', async () => {
