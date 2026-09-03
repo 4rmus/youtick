@@ -1159,6 +1159,9 @@ test('only structured error 10007 permits workers.dev bootstrap before safe doma
         { expected: 'bridge-new', override: 'bridge-new', bootstrap: undefined, playbackV2: undefined },
         { expected: 'bridge-new', override: undefined, bootstrap: undefined, playbackV2: undefined },
     ]);
+    assert.deepEqual(smokeInputs.map((input) => input.includeProviderAssetDelete), [
+        false, undefined, undefined,
+    ]);
     assert.equal(receipt.web.previousVersionId, 'web-bootstrap');
     assert.equal(receipt.bridge.previousVersionId, 'bridge-bootstrap');
 

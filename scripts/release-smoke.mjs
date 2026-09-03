@@ -286,6 +286,7 @@ export async function runReleaseSmoke({
     expectedPublicBetaRateLimitReady = null,
     bridgeBootstrap = false,
     includePlaybackV2 = true,
+    includeProviderAssetDelete = true,
     fetchImpl = fetch,
     browserRunner = runChromeSmoke,
     sleepFn = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
@@ -356,6 +357,8 @@ export async function runReleaseSmoke({
     let mutationRetry = 0;
     for (const mutation of healthJson.stage === 'ENABLED' ? [] : DISABLED_BRIDGE_MUTATIONS) {
         if (!includePlaybackV2 && mutation.path === '/v2/playback-tokens') continue;
+        if (!includeProviderAssetDelete
+            && mutation.path === '/v1/operations/provider-assets/delete') continue;
         let result;
         while (true) {
             result = await request(bridgeUrl, mutation.path, {

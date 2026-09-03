@@ -273,6 +273,7 @@ test('release smoke can exclude candidate-only mutations and still identifies th
     let admissionReopenRequests = 0;
     let admissionReopenError = 'control_plane_disabled';
     let admissionReopenStatus = 503;
+    let providerDeleteStatus = 503;
     let sponsorHealth = {
         operatorMutationEnabled: false,
         sponsoredUploadQuoteReady: false,
@@ -315,6 +316,12 @@ test('release smoke can exclude candidate-only mutations and still identifies th
                 { status: admissionReopenStatus },
             );
         }
+        if (init.method === 'POST' && url.pathname === '/v1/operations/provider-assets/delete') {
+            return Response.json(
+                { error: 'control_plane_disabled' },
+                { status: providerDeleteStatus },
+            );
+        }
         const cors = [
             '/v1/upload-intents',
             '/v1/playback-tokens',
@@ -338,12 +345,26 @@ test('release smoke can exclude candidate-only mutations and still identifies th
         browserRunner: async () => ({ channel: 'fixture', routes: ['/', '/tr'] }),
     };
 
-    const previous = await runReleaseSmoke({ ...input, includePlaybackV2: false });
+    const previous = await runReleaseSmoke({
+        ...input,
+        includePlaybackV2: false,
+        includeProviderAssetDelete: false,
+    });
     assert.equal('/v2/playback-tokens' in previous.bridge.mutation_statuses, false);
+    assert.equal(
+        '/v1/operations/provider-assets/delete' in previous.bridge.mutation_statuses,
+        false,
+    );
     await assert.rejects(
         runReleaseSmoke(input),
         /release_smoke_bridge_mutation_status_404 path=\/v2\/playback-tokens/,
     );
+    providerDeleteStatus = 404;
+    await assert.rejects(
+        runReleaseSmoke({ ...input, includePlaybackV2: false }),
+        /release_smoke_bridge_mutation_status_404 path=\/v1\/operations\/provider-assets\/delete/,
+    );
+    providerDeleteStatus = 503;
     admissionReopenStatus = 403;
     admissionReopenRequests = 0;
     await assert.rejects(runReleaseSmoke({

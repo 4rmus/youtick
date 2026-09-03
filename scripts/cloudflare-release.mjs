@@ -1602,6 +1602,7 @@ export async function deployRelease({
                 expectedSponsoredUploadReady: null,
                 bridgeBootstrap: prepared.bridge.bootstrap,
                 includePlaybackV2: false,
+                includeProviderAssetDelete: false,
             }));
             await smokeFn(smokeInput(target, candidateWebUrl, {
                 bridgeUrl: candidateBridgeUrl,
