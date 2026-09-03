@@ -174,7 +174,7 @@ test("workflows keep cumulative Preview release provenance", () => {
   assert.match(preview, /PREVIEW_PLAYBACK_V2_CANARY_ENABLED/);
   assert.match(
     preview,
-    /PREVIEW_LIVEPEER_OPERATOR_JOB_ID: \$\{\{ vars\.PREVIEW_SPONSORED_UPLOAD_CANARY_ENABLED == 'true' && vars\.PREVIEW_LIVEPEER_OPERATOR_JOB_ID \|\| '' \}\}/,
+    /PREVIEW_LIVEPEER_OPERATOR_JOB_ID: .*PREVIEW_SPONSORED_UPLOAD_CANARY_ENABLED.*PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED.*PREVIEW_PLAYBACK_V2_CANARY_ENABLED/,
   );
   assert.match(preview, /PREVIEW_CREATOR_FEE_QUOTE_PRIVATE_KEY/);
   assert.match(preview, /PREVIEW_NEAR_SPONSOR_RELAYER_PRIVATE_KEY/);
@@ -395,6 +395,44 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
     assert.equal(config.bridge.NEAR_SPONSOR_RELAYER_KEY_EPOCH, "1");
   });
 
+  await t.test("combined Preview public beta accepts two creators or wildcard", () => {
+    const output = join(tmpdir(), "preview-public-beta-config.json");
+    const env = publicEnv("preview");
+    for (const flag of [
+      "NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1",
+      "NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS",
+      "NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2",
+      "LIVEPEER_BRIDGE_ENABLED",
+      "LIVEPEER_NEW_UPLOADS_ENABLED",
+      "LIVEPEER_PLAYBACK_ISSUANCE_ENABLED",
+      "LIVEPEER_PLAYBACK_V2_ENABLED",
+      "LIVEPEER_PROVIDER_MUTATIONS_ENABLED",
+      "LIVEPEER_OPERATOR_MUTATIONS_ENABLED",
+      "LIVEPEER_SPONSORED_UPLOADS_ENABLED",
+      "LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED",
+    ]) env[`PREVIEW_${flag}`] = "true";
+    env.PREVIEW_NEAR_SPONSOR_RELAYER_ACCOUNT_ID = "sponsor-relayer.testnet";
+    env.PREVIEW_NEAR_SPONSOR_RELAYER_KEY_EPOCH = "1";
+    env.PREVIEW_LIVEPEER_CREATOR_ALLOWLIST = "creator-one.testnet,creator-two.testnet";
+    env.PREVIEW_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS = "20000000";
+    env.PREVIEW_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS = "2000000";
+
+    assertSuccess(run(["config", "--environment", "preview", "--output", output], env));
+    let config = JSON.parse(readFileSync(output, "utf8"));
+    assert.equal(config.bridge.LIVEPEER_OPERATOR_JOB_ID, "");
+    assert.equal(config.bridge.LIVEPEER_CREATOR_ALLOWLIST, "creator-one.testnet,creator-two.testnet");
+
+    env.PREVIEW_LIVEPEER_CREATOR_ALLOWLIST = "*";
+    assertSuccess(run(["config", "--environment", "preview", "--output", output], env));
+    config = JSON.parse(readFileSync(output, "utf8"));
+    assert.equal(config.bridge.LIVEPEER_CREATOR_ALLOWLIST, "*");
+
+    env.PREVIEW_LIVEPEER_OPERATOR_JOB_ID = "job-recovery";
+    const invalid = run(["config", "--environment", "preview", "--output", output], env);
+    assert.notEqual(invalid.status, 0);
+    assert.match(invalid.stderr, /empty operator job/);
+  });
+
   await t.test("operator job outside sponsored Preview", () => {
     for (const environment of ["preview", "production"]) {
       const env = publicEnv(environment);
@@ -406,6 +444,17 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, /must be empty outside sponsored Preview/);
     }
+  });
+
+  await t.test("Production wildcard creator allowlist", () => {
+    const env = publicEnv("production");
+    env.PRODUCTION_LIVEPEER_CREATOR_ALLOWLIST = "*";
+    const result = run(
+      ["config", "--environment", "production", "--output", join(tmpdir(), "unused-config.json")],
+      env,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /restricted to the Preview public beta/);
   });
 
   await t.test("Preview derived read model at its exact origin", () => {
@@ -463,7 +512,7 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
       env,
     );
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /closed, upload-only, or playback-only packet/);
+    assert.match(result.stderr, /closed, canary, or combined public-beta packet/);
   });
 
   for (const flag of [
@@ -491,7 +540,7 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
       env,
     );
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /closed, upload-only, or playback-only packet/);
+    assert.match(result.stderr, /closed, canary, or combined public-beta packet/);
   });
 
   await t.test("complete Preview playback canary packet", () => {
@@ -526,7 +575,7 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
       env,
     );
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /closed, upload-only, or playback-only packet/);
+    assert.match(result.stderr, /distinct testnet creators/);
   });
 
   await t.test("Production playback canary packet", () => {
@@ -552,7 +601,7 @@ test("config rejects placeholders and enforces release flag policy", async (t) =
       env,
     );
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /closed, upload-only, or playback-only packet/);
+    assert.match(result.stderr, /closed, canary, or combined public-beta packet/);
   });
 
   await t.test("complete Preview multi-creator upload canary packet", () => {

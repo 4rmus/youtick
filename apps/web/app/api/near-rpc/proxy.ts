@@ -184,13 +184,40 @@ function consumeRate(key: string, limit: number, now: number): boolean {
     return true;
 }
 
-function checkRateLimit(request: Request, payload: JsonRpcPayload, mode: RpcMode): boolean {
+async function checkRateLimit(
+    request: Request,
+    payload: JsonRpcPayload,
+    mode: RpcMode,
+): Promise<'ok' | 'limited' | 'unavailable'> {
     const now = Date.now();
     const limit = mode === 'read' ? READ_RATE_LIMIT : BROADCAST_RATE_LIMIT;
-    if (!consumeRate(`${mode}:ip:${clientIp(request)}`, limit, now)) return false;
-
+    const keys = [`${mode}:ip:${clientIp(request)}`];
     const accountId = payloadAccount(payload);
-    return !accountId || consumeRate(`${mode}:account:${accountId}`, limit, now);
+    if (accountId) keys.push(`${mode}:account:${accountId}`);
+
+    if (process.env.NODE_ENV !== 'test') {
+        let limiter: { limit(input: { key: string }): Promise<{ success: boolean }> } | undefined;
+        try {
+            const context = await getCloudflareContext({ async: true });
+            const env = context.env as Record<string, unknown>;
+            limiter = env[mode === 'read'
+                ? 'NEAR_RPC_READ_RATE_LIMITER'
+                : 'NEAR_RPC_BROADCAST_RATE_LIMITER'] as typeof limiter;
+        } catch {
+            return 'unavailable';
+        }
+        if (!limiter) return 'unavailable';
+        try {
+            for (const key of keys) {
+                if (!(await limiter.limit({ key })).success) return 'limited';
+            }
+        } catch {
+            return 'unavailable';
+        }
+        return 'ok';
+    }
+
+    return keys.every((key) => consumeRate(key, limit, now)) ? 'ok' : 'limited';
 }
 
 function isCircuitOpen(label: string, now: number): boolean {
@@ -299,7 +326,11 @@ export async function handleNearRpcRequest(request: Request, mode: RpcMode): Pro
 
     const payload = parsePayload(bodyBytes, mode);
     if (!payload) return errorResponse(400, 'Unsupported JSON-RPC request');
-    if (!checkRateLimit(request, payload, mode)) {
+    const rateLimit = await checkRateLimit(request, payload, mode);
+    if (rateLimit === 'unavailable') {
+        return errorResponse(503, 'NEAR RPC rate limit unavailable');
+    }
+    if (rateLimit === 'limited') {
         return errorResponse(429, 'NEAR RPC rate limit exceeded', { 'Retry-After': '60' });
     }
 
@@ -338,3 +369,4 @@ export async function handleNearRpcRequest(request: Request, mode: RpcMode): Pro
 
     return errorResponse(Date.now() >= deadline ? 504 : 502, 'NEAR RPC unavailable');
 }
+import { getCloudflareContext } from '@opennextjs/cloudflare';

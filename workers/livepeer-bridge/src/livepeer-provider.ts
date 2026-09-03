@@ -55,6 +55,10 @@ export class LivepeerProvider implements MediaProvider {
         if (!this.options.readyVerificationEnabled) throw new Error('runtime_not_configured');
         return verifyLivepeerReadyAsset(this, input, this.options);
     }
+
+    deleteAsset(assetId: string): Promise<'deleted' | 'missing'> {
+        return this.transport.deleteAsset(assetId);
+    }
 }
 
 export class LivepeerTransport {
@@ -132,6 +136,28 @@ export class LivepeerTransport {
 
     async readAsset(assetId: string): Promise<ProviderAsset> {
         return normalizeLivepeerAsset(await this.readDocument('asset', assetId));
+    }
+
+    async deleteAsset(assetId: string): Promise<'deleted' | 'missing'> {
+        if (!validApiKey(this.apiKey)) throw new Error('runtime_not_configured');
+        let response: Response;
+        try {
+            response = await dependencyFetch(
+                'livepeer_api',
+                'asset_delete',
+                `${API_BASE}/asset/${encodeURIComponent(assetId)}`,
+                {
+                    method: 'DELETE',
+                    headers: { Authorization: `Bearer ${this.apiKey}` },
+                    signal: AbortSignal.timeout(10_000),
+                },
+            );
+        } catch {
+            throw new Error('provider_delete_ambiguous');
+        }
+        if (response.status === 204) return 'deleted';
+        if (response.status === 404) return 'missing';
+        throw new Error('provider_delete_ambiguous');
     }
 
     async readTusOffset(uploadUrl: string): Promise<TusState> {

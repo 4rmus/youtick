@@ -162,6 +162,11 @@ const BRIDGE_ARTIFACT_WRANGLER = [
     '[version_metadata]',
     'binding = "CF_VERSION_METADATA"',
     '',
+    '[[ratelimits]]',
+    'name = "PUBLIC_BETA_RATE_LIMITER"',
+    'namespace_id = "3001"',
+    'simple = { limit = 30, period = 60 }',
+    '',
     '[[durable_objects.bindings]]',
     'name = "LIVEPEER_CONTROL"',
     'class_name = "LivepeerControl"',
@@ -334,10 +339,14 @@ function forbiddenTargetString(value) {
     });
 }
 
-function scanForbiddenTargets(value) {
-    if (typeof value === 'string' && forbiddenTargetString(value)) fail('forbidden_target');
-    if (Array.isArray(value)) value.forEach(scanForbiddenTargets);
-    else if (value && typeof value === 'object') Object.values(value).forEach(scanForbiddenTargets);
+function scanForbiddenTargets(value, key = '') {
+    if (typeof value === 'string'
+        && !(key === 'LIVEPEER_CREATOR_ALLOWLIST' && value === '*')
+        && forbiddenTargetString(value)) fail('forbidden_target');
+    if (Array.isArray(value)) value.forEach((entry) => scanForbiddenTargets(entry));
+    else if (value && typeof value === 'object') {
+        Object.entries(value).forEach(([childKey, entry]) => scanForbiddenTargets(entry, childKey));
+    }
 }
 
 function assertExactKeys(value, keys, label) {
@@ -423,10 +432,12 @@ async function readRelease(artifactDir, target, sha) {
     const playbackCanary = baseCanaryFlags.every((value) => value === 'true')
         && uploadCanaryFlags.every((value) => value === 'false')
         && playbackCanaryFlags.every((value) => value === 'true');
+    const combinedBeta = [...baseCanaryFlags, ...uploadCanaryFlags, ...playbackCanaryFlags]
+        .every((value) => value === 'true');
     if (target === 'production' && !closedCanary) {
         fail('production_livepeer_canary_flags_not_false');
     }
-    if (target === 'preview' && !closedCanary && !uploadCanary && !playbackCanary) {
+    if (target === 'preview' && !closedCanary && !uploadCanary && !playbackCanary && !combinedBeta) {
         fail('preview_livepeer_canary_flags_invalid');
     }
     const sponsorCanaryFlags = [
@@ -445,25 +456,33 @@ async function readRelease(artifactDir, target, sha) {
     }
     if (target === 'preview' && sponsorCanaryFlags[0] === 'true') {
         const relayer = config.bridge?.NEAR_SPONSOR_RELAYER_ACCOUNT_ID;
-        if (!uploadCanary
+        if ((!uploadCanary && !combinedBeta)
             || !/^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(relayer || '')
             || [config.bridge?.MARKET_CONTRACT_ID, config.bridge?.ACCESS_CONTRACT_ID,
                 config.bridge?.NEAR_OPERATOR_ACCOUNT_ID].includes(relayer)
             || !/^[1-9][0-9]*$/.test(config.bridge?.NEAR_SPONSOR_RELAYER_KEY_EPOCH || '')) {
             fail('preview_sponsor_canary_config_invalid');
         }
-        if (!JOB_ID_RE.test(config.bridge?.LIVEPEER_OPERATOR_JOB_ID || '')) {
+        if (!combinedBeta && !JOB_ID_RE.test(config.bridge?.LIVEPEER_OPERATOR_JOB_ID || '')) {
             fail('preview_operator_job_invalid');
+        }
+        if (combinedBeta && config.bridge?.LIVEPEER_OPERATOR_JOB_ID !== '') {
+            fail('preview_public_beta_operator_job_not_empty');
         }
     } else if (config.bridge?.LIVEPEER_OPERATOR_JOB_ID !== '') {
         fail('operator_job_not_empty');
     }
-    if (target === 'preview' && uploadCanary) {
+    if (target === 'preview' && (uploadCanary || combinedBeta)) {
         const creators = config.bridge?.LIVEPEER_CREATOR_ALLOWLIST?.split(',') ?? [];
+        const publicCreators = combinedBeta
+            && (config.bridge?.LIVEPEER_CREATOR_ALLOWLIST === '*'
+                || (creators.length === 2
+                    && new Set(creators).size === 2
+                    && creators.every((creator) => /^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(creator))));
         const expectedCreators = sponsorCanaryFlags[0] === 'true' ? 1 : 2;
-        if (creators.length !== expectedCreators
+        if (!publicCreators && (creators.length !== expectedCreators
             || new Set(creators).size !== expectedCreators
-            || creators.some((creator) => !/^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(creator))) {
+            || creators.some((creator) => !/^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(creator)))) {
             fail('preview_multi_creator_upload_canary_creators_invalid');
         }
         if (config.bridge?.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS !== '20000000') {
@@ -473,12 +492,20 @@ async function readRelease(artifactDir, target, sha) {
             fail('preview_multi_creator_upload_canary_job_reservation_invalid');
         }
     }
+    if ((config.bridge?.LIVEPEER_CREATOR_ALLOWLIST || '').includes('*')
+        && !(target === 'preview' && combinedBeta
+            && config.bridge?.LIVEPEER_CREATOR_ALLOWLIST === '*')) {
+        fail('creator_allowlist_wildcard_invalid');
+    }
     const operatorArchive = config.bridge?.OPERATOR_OUTBOX_ARCHIVE_ENABLED;
     if (target === 'production' && operatorArchive !== 'false') {
         fail('operator_outbox_archive_enabled_not_false');
     }
     if (target === 'preview' && !['false', 'true'].includes(operatorArchive)) {
         fail('operator_outbox_archive_enabled_invalid');
+    }
+    if (combinedBeta && operatorArchive !== 'false') {
+        fail('preview_public_beta_operator_archive_enabled');
     }
     const derivedReadModel = config.web?.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL;
     if (target === 'production' && derivedReadModel !== 'false') {
@@ -491,11 +518,17 @@ async function readRelease(artifactDir, target, sha) {
         && config.web?.NEXT_PUBLIC_MARKET_READ_MODEL_URL !== PREVIEW_READ_MODEL_ORIGIN) {
         fail('next_public_market_read_model_url_invalid');
     }
+    if (combinedBeta && derivedReadModel !== 'false') {
+        fail('preview_public_beta_derived_read_model_enabled');
+    }
     const paymentMode = config.web?.NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE;
     if (paymentMode !== config.bridge?.MULTI_ASSET_PAYMENTS_MODE
         || !['off', 'preview'].includes(paymentMode)
         || (target === 'production' && paymentMode !== 'off')) {
         fail('multi_asset_payments_mode_invalid');
+    }
+    if (combinedBeta && paymentMode !== 'off') {
+        fail('preview_public_beta_multi_asset_payments_enabled');
     }
     assertExactKeys(config.bridge, BRIDGE_PUBLIC_KEYS, 'bridge_public_config');
     for (const [key, value] of Object.entries(config.bridge)) {
@@ -531,10 +564,18 @@ async function validateWebWrangler(configPath, extractedRoot, target) {
         env: {
             preview: {
                 name: TARGETS.preview.web.worker,
+                ratelimits: [
+                    { name: 'NEAR_RPC_READ_RATE_LIMITER', namespace_id: '1001', simple: { limit: 60, period: 60 } },
+                    { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '1002', simple: { limit: 10, period: 60 } },
+                ],
                 routes: [{ pattern: TARGETS.preview.web.domain, custom_domain: true }],
             },
             production: {
                 name: TARGETS.production.web.worker,
+                ratelimits: [
+                    { name: 'NEAR_RPC_READ_RATE_LIMITER', namespace_id: '2001', simple: { limit: 60, period: 60 } },
+                    { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '2002', simple: { limit: 10, period: 60 } },
+                ],
                 routes: [{ pattern: TARGETS.production.web.domain, custom_domain: true }],
             },
         },
@@ -573,6 +614,13 @@ async function writeSanitizedConfigs(extracted, target) {
     const webBootstrap = join(extracted.web, 'wrangler.bootstrap.json');
     const bridgeBootstrap = join(extracted.bridge, 'wrangler.bootstrap.toml');
     const bridgeCandidate = join(extracted.bridge, 'wrangler.candidate.toml');
+    const webRateLimits = target === 'preview' ? [
+        { name: 'NEAR_RPC_READ_RATE_LIMITER', namespace_id: '1001', simple: { limit: 60, period: 60 } },
+        { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '1002', simple: { limit: 10, period: 60 } },
+    ] : [
+        { name: 'NEAR_RPC_READ_RATE_LIMITER', namespace_id: '2001', simple: { limit: 60, period: 60 } },
+        { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '2002', simple: { limit: 10, period: 60 } },
+    ];
     await writeFile(webBootstrap, canonicalJson({
         name: expected.web.worker,
         main: '.open-next/worker.js',
@@ -581,6 +629,7 @@ async function writeSanitizedConfigs(extracted, target) {
         assets: { directory: '.open-next/assets', binding: 'ASSETS' },
         workers_dev: true,
         preview_urls: true,
+        ratelimits: webRateLimits,
     }), { mode: 0o600 });
     await writeFile(bridgeBootstrap, [
         `name = "${expected.bridge.worker}"`,
@@ -608,6 +657,11 @@ async function writeSanitizedConfigs(extracted, target) {
         '',
         '[version_metadata]',
         'binding = "CF_VERSION_METADATA"',
+        '',
+        '[[ratelimits]]',
+        'name = "PUBLIC_BETA_RATE_LIMITER"',
+        'namespace_id = "3001"',
+        'simple = { limit = 30, period = 60 }',
         '',
         '[[durable_objects.bindings]]',
         'name = "LIVEPEER_CONTROL"',
@@ -1561,6 +1615,10 @@ export async function deployRelease({
                     release.config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED === 'true',
                 expectedSponsoredUploadReady:
                     release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
+                expectedPublicBetaRateLimitReady:
+                    release.config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED === 'true'
+                    && release.config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED === 'true'
+                    && release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
             }));
 
             promotionStarted = true;
@@ -1632,6 +1690,10 @@ export async function deployRelease({
                         release.config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED === 'true',
                     expectedSponsoredUploadReady:
                         release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
+                    expectedPublicBetaRateLimitReady:
+                        release.config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED === 'true'
+                        && release.config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED === 'true'
+                        && release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
                 }),
                 sleepFn,
             );

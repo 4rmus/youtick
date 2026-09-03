@@ -178,10 +178,18 @@ function makeRelease(t, target = 'preview') {
         env: {
             preview: {
                 name: TARGETS.preview.web.worker,
+                ratelimits: [
+                    { name: 'NEAR_RPC_READ_RATE_LIMITER', namespace_id: '1001', simple: { limit: 60, period: 60 } },
+                    { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '1002', simple: { limit: 10, period: 60 } },
+                ],
                 routes: [{ pattern: TARGETS.preview.web.domain, custom_domain: true }],
             },
             production: {
                 name: TARGETS.production.web.worker,
+                ratelimits: [
+                    { name: 'NEAR_RPC_READ_RATE_LIMITER', namespace_id: '2001', simple: { limit: 60, period: 60 } },
+                    { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '2002', simple: { limit: 10, period: 60 } },
+                ],
                 routes: [{ pattern: TARGETS.production.web.domain, custom_domain: true }],
             },
         },
@@ -213,6 +221,11 @@ function makeRelease(t, target = 'preview') {
         '',
         '[version_metadata]',
         'binding = "CF_VERSION_METADATA"',
+        '',
+        '[[ratelimits]]',
+        'name = "PUBLIC_BETA_RATE_LIMITER"',
+        'namespace_id = "3001"',
+        'simple = { limit = 30, period = 60 }',
         '',
         '[[durable_objects.bindings]]',
         'name = "LIVEPEER_CONTROL"',
@@ -804,6 +817,7 @@ test('Bridge artifact writer emits the exact disabled release config once', asyn
     assert.match(text, /LIVEPEER_PROVIDER_MUTATIONS_ENABLED = "false"/);
     assert.match(text, /LIVEPEER_OPERATOR_MUTATIONS_ENABLED = "false"/);
     assert.match(text, /LIVEPEER_OPERATOR_JOB_ID = ""/);
+    assert.match(text, /name = "PUBLIC_BETA_RATE_LIMITER"[\s\S]*limit = 30, period = 60/);
     assert.match(text, /MULTI_ASSET_PAYMENT_ASSET_IDS = ""/);
     assert.doesNotMatch(text, /NEAR_RPC_URL|ALLOWED_ORIGINS|MARKET_CONTRACT_ID/);
     assert.doesNotMatch(text, /queues\.producers|queues\.consumers|LIVEPEER_EVENTS|MARKET_READ_MODEL/);
@@ -1570,6 +1584,56 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
                 && keys.includes('NEAR_SPONSOR_RELAYER_PRIVATE_KEY')));
     });
 
+    await t.test('accepts the combined Preview public-beta packet', async (subtest) => {
+        const release = makeRelease(subtest);
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.web.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = 'true';
+        config.web.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS = 'true';
+        config.web.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2 = 'true';
+        config.bridge.LIVEPEER_BRIDGE_ENABLED = 'true';
+        config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED = 'true';
+        config.bridge.LIVEPEER_PLAYBACK_ISSUANCE_ENABLED = 'true';
+        config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED = 'true';
+        config.bridge.LIVEPEER_PROVIDER_MUTATIONS_ENABLED = 'true';
+        config.bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED = 'true';
+        config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED = 'true';
+        config.bridge.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED = 'true';
+        config.bridge.NEAR_SPONSOR_RELAYER_ACCOUNT_ID = 'sponsor-relayer.testnet';
+        config.bridge.NEAR_SPONSOR_RELAYER_KEY_EPOCH = '1';
+        config.bridge.LIVEPEER_CREATOR_ALLOWLIST = '*';
+        config.bridge.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS = '20000000';
+        config.bridge.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS = '2000000';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.preview = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+        const smokeInputs = [];
+
+        await deployFixture(release, fake, async (input) => {
+            smokeInputs.push(input);
+            return { ok: true };
+        });
+
+        assert.deepEqual(smokeInputs.slice(1).map((input) => ({
+            upload: input.expectedUploadReady,
+            playback: input.expectedPlaybackReady,
+            sponsored: input.expectedSponsoredUploadReady,
+        })), [
+            { upload: true, playback: true, sponsored: true },
+            { upload: true, playback: true, sponsored: true },
+        ]);
+        const bridgeCommands = calls(fake).filter((args) => (
+            args.includes(TARGETS.preview.bridge.worker)
+            && (args[0] === 'deploy' || (args[0] === 'versions' && args[1] === 'upload'))
+        ));
+        assert.ok(bridgeCommands.every((args) => (
+            args.includes('LIVEPEER_CREATOR_ALLOWLIST:*')
+            && args.includes('LIVEPEER_OPERATOR_JOB_ID:')
+            && args.includes('LIVEPEER_PLAYBACK_V2_ENABLED:true')
+            && args.includes('LIVEPEER_SPONSORED_UPLOADS_ENABLED:true')
+        )));
+    });
+
     await t.test('accepts the Preview publication read origin', async (subtest) => {
         const release = makeRelease(subtest);
         const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
@@ -1643,6 +1707,19 @@ test('target allowlist and guarded release flags are fail closed', async (t) => 
             receiptOutput: release.receipt, nearRpcUrl: NEAR_RPC_URL,
             oneClickApiKey: ONECLICK_API_KEY,
         }), /operator_job_not_empty/);
+    });
+
+    await t.test('rejects a Production wildcard creator allowlist', async (subtest) => {
+        const release = makeRelease(subtest, 'production');
+        const config = JSON.parse(readFileSync(release.configPath, 'utf8'));
+        config.bridge.LIVEPEER_CREATOR_ALLOWLIST = '*';
+        writeFileSync(release.configPath, canonicalJson(config));
+        release.manifest.configs.production = record(release.configPath);
+        writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+        await assert.rejects(deployRelease({
+            target: 'production', sha: SHA, artifactDir: release.artifactDir,
+            receiptOutput: release.receipt, nearRpcUrl: NEAR_RPC_URL,
+        }), /creator_allowlist_wildcard_invalid/);
     });
 
     await t.test('rejects another Preview read origin', async (subtest) => {

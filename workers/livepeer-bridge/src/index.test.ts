@@ -16,6 +16,7 @@ import handler, {
     operatorObjectName,
     type Env,
 } from './index';
+import { LivepeerTransport } from './livepeer-provider';
 
 const ORIGIN = 'https://app.youtick.net';
 const RPC_URL = 'https://rpc.testnet.near.org';
@@ -121,6 +122,24 @@ function createEnv(overrides?: Partial<Env>): Env {
         } as unknown as DurableObjectNamespace,
         ...overrides,
     };
+}
+
+function publicBetaEnv(overrides?: Partial<Env>): Env {
+    return createEnv({
+        LIVEPEER_BRIDGE_ENABLED: 'true',
+        LIVEPEER_NEW_UPLOADS_ENABLED: 'true',
+        LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: 'true',
+        LIVEPEER_PLAYBACK_V2_ENABLED: 'true',
+        LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'true',
+        LIVEPEER_OPERATOR_MUTATIONS_ENABLED: 'true',
+        LIVEPEER_OPERATOR_JOB_ID: '',
+        LIVEPEER_SPONSORED_UPLOADS_ENABLED: 'true',
+        LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'true',
+        LIVEPEER_CREATOR_ALLOWLIST: '*',
+        LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '20000000',
+        LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '2000000',
+        ...overrides,
+    });
 }
 
 function createArchiveDatabase(): {
@@ -698,6 +717,204 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(denied.status).toBe(503);
         expect(await denied.json()).toEqual({ error: 'admission_closed' });
         expect(deniedRuntime.quoteState.values.size).toBe(0);
+    });
+
+    it('requires the native limiter for the combined public-beta packet', async () => {
+        const missing = publicBetaEnv();
+        const health = await handler.fetch(new Request('https://bridge.youtick.net/__health'), missing);
+        expect(await health.json()).toMatchObject({
+            operatorMutationEnabled: true,
+            publicBetaRateLimitReady: false,
+        });
+        const unavailable = await handler.fetch(uploadPreflightRequest(), missing);
+        expect(unavailable.status).toBe(503);
+        expect(await unavailable.json()).toEqual({ error: 'runtime_not_configured' });
+
+        const limit = vi.fn().mockResolvedValue({ success: false });
+        const limitedEnv = publicBetaEnv({
+            PUBLIC_BETA_RATE_LIMITER: { limit } as RateLimit,
+        });
+        const readyHealth = await handler.fetch(
+            new Request('https://bridge.youtick.net/__health'),
+            limitedEnv,
+        );
+        expect(await readyHealth.json()).toMatchObject({ publicBetaRateLimitReady: true });
+        const limited = await handler.fetch(uploadPreflightRequest(), limitedEnv);
+        expect(limited.status).toBe(429);
+        expect(limit).toHaveBeenCalledOnce();
+
+        const failed = await handler.fetch(uploadPreflightRequest(), publicBetaEnv({
+            PUBLIC_BETA_RATE_LIMITER: {
+                limit: vi.fn().mockRejectedValue(new Error('binding unavailable')),
+            } as RateLimit,
+        }));
+        expect(failed.status).toBe(503);
+
+        const successLimit = vi.fn().mockResolvedValue({ success: true });
+        const accepted = await handler.fetch(uploadPreflightRequest(), publicBetaEnv({
+            PUBLIC_BETA_RATE_LIMITER: { limit: successLimit } as RateLimit,
+        }));
+        expect(accepted.status).toBe(200);
+        expect(successLimit).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects a public-beta upload before provider create without the final chain marker', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
+        const request = await controlRequest({ body: { expected_source_bytes: '1000000000' } });
+        const job = {
+            job_id: 'job-001',
+            creator_id: 'creator.testnet',
+            title: 'Paid video',
+            price_usdc: '2000000',
+            expected_source_bytes: '1000000000',
+            profile_id: vectors.upload_intent.body.profile_id,
+            profile_config_sha256: vectors.upload_intent.body.profile_config_sha256,
+            generation: 1,
+            status: 'Authorized',
+            upload_public_key: requestPublicKey,
+            upload_key_expires_at_ms: '1785589900000',
+            fee_quote_hash: 'a'.repeat(64),
+        };
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body)) as { params: { method_name: string } };
+            const value = body.params.method_name === 'get_media_job'
+                ? job
+                : body.params.method_name === 'get_public_testnet_beta_job'
+                    ? null
+                    : {
+                        version: 1,
+                        started_at_ms: '1785589200000',
+                        upload_closes_at_ms: '1786712500000',
+                        ends_at_ms: '1786798900000',
+                        closed_at_ms: null,
+                        total_job_count: 1,
+                    };
+            return Response.json({ result: {
+                block_hash: BLOCK_HASH,
+                result: [...new TextEncoder().encode(JSON.stringify(value))],
+            } });
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        const response = await new LivepeerControl(createState().state, publicBetaEnv()).fetch(request);
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ error: 'on_chain_job_mismatch' });
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/asset/request-upload')))
+            .toBe(false);
+    });
+
+    it('deletes an exact provider asset once and treats only DELETE 204 or 404 as success', async () => {
+        const transport = new LivepeerTransport(API_KEY);
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(new Response(null, { status: 204 }))
+            .mockResolvedValueOnce(new Response(null, { status: 404 }))
+            .mockResolvedValueOnce(new Response(null, { status: 503 }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        await expect(transport.deleteAsset('asset-123')).resolves.toBe('deleted');
+        await expect(transport.deleteAsset('asset-456')).resolves.toBe('missing');
+        await expect(transport.deleteAsset('asset-789')).rejects.toThrow('provider_delete_ambiguous');
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(fetchMock.mock.calls.every(([, init]) => init?.method === 'DELETE')).toBe(true);
+    });
+
+    it('deletes only the exact takedown asset and never repeats the provider call', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
+        const testState = createState();
+        testState.values.set('job:v1', {
+            schema: 'youtick.livepeer-control-job.v2',
+            state: 'ONCHAIN_PUBLISHED',
+            network: 'testnet',
+            contractId: CONTRACT_ID,
+            jobId: 'job-delete',
+            generation: 1,
+            creator: 'creator.testnet',
+            expectedSourceBytes: '1000',
+            sourceType: 'mp4',
+            profileId: 'paid-media-livepeer-v1',
+            profileConfigSha256: vectors.upload_intent.body.profile_config_sha256,
+            createdAtMs: 1_785_589_000_000,
+            apiTokenName: 'paid-media-test',
+            assetId: 'asset-123',
+            playbackId: 'playback-123',
+            projectId: 'project-123',
+        });
+        const assetHash = await sha256Hex('asset-123');
+        const projectHash = await sha256Hex('project-123');
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url === RPC_URL) {
+                const rpc = JSON.parse(String(init?.body)) as { params: { method_name: string } };
+                const value = rpc.params.method_name === 'get_media_job'
+                    ? { fee_quote_hash: 'a'.repeat(64) }
+                    : rpc.params.method_name === 'get_public_testnet_beta_job'
+                        ? {
+                            creator_id: 'creator.testnet',
+                            generation: 1,
+                            request_sha256: 'b'.repeat(64),
+                            sponsor_quote_id: 'a'.repeat(64),
+                            admitted_at_ms: '1785589000000',
+                            deadline_at_ms: '1785675400000',
+                        }
+                        : {
+                            publication_id: 'job-delete',
+                            availability: 'TAKEDOWN',
+                            asset_id_hash: assetHash,
+                            playback_id: 'playback-123',
+                            project_id_hash: projectHash,
+                        };
+                return Response.json({ result: {
+                    block_hash: BLOCK_HASH,
+                    result: [...new TextEncoder().encode(JSON.stringify(value))],
+                } });
+            }
+            if (url.endsWith('/asset/asset-123') && init?.method !== 'DELETE') {
+                return Response.json({
+                    id: 'asset-123',
+                    playbackId: 'playback-123',
+                    projectId: 'project-123',
+                    creatorId: { type: 'unverified', value: 'job-delete:1' },
+                    createdByTokenName: 'paid-media-test',
+                    name: 'youtick-job-delete-g1',
+                    playbackPolicy: { type: 'jwt' },
+                    status: { phase: 'ready', updatedAt: 1_785_589_200_000 },
+                    size: 1000,
+                    downloadUrl: '',
+                });
+            }
+            if (url.endsWith('/asset/asset-123') && init?.method === 'DELETE') {
+                return new Response(null, { status: 204 });
+            }
+            throw new Error(`unexpected_fetch:${url}`);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        const control = new LivepeerControl(testState.state, publicBetaEnv({
+            LIVEPEER_PROJECT_ID: 'project-123',
+        }));
+        const request = () => new Request('https://object/internal/provider-asset-delete', {
+            method: 'POST',
+            body: JSON.stringify({ jobId: 'job-delete', generation: 1, assetId: 'asset-123' }),
+        });
+
+        expect(await (await control.fetch(request())).json()).toMatchObject({
+            deleted: true,
+            duplicate: false,
+            outcome: 'DELETED',
+        });
+        expect(await (await control.fetch(request())).json()).toMatchObject({
+            deleted: true,
+            duplicate: true,
+            outcome: 'DELETED',
+        });
+        expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(1);
+        const stored = testState.values.get('job:v1') as Record<string, unknown>;
+        testState.values.set('job:v1', {
+            ...stored,
+            providerDelete: { assetIdSha256: assetHash, outcome: 'AMBIGUOUS', attemptedAtMs: Date.now() },
+        });
+        const ambiguousReplay = await control.fetch(request());
+        expect(ambiguousReplay.status).toBe(409);
+        expect(await ambiguousReplay.json()).toEqual({ error: 'provider_delete_ambiguous' });
+        expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(1);
     });
 
     it('issues one fixed sponsor quote and relays only the exact creator upload once', async () => {

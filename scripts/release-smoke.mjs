@@ -18,6 +18,7 @@ const STABLE_HEADERS = [
 const DISABLED_BRIDGE_MUTATIONS = [
     { path: '/v1/livepeer-webhooks', cors: false },
     { path: '/v1/operations/admission-reopen', cors: false },
+    { path: '/v1/operations/provider-assets/delete', cors: false },
     { path: '/v1/upload-intents', cors: true },
     { path: '/v1/playback-tokens', cors: true },
     { path: '/v2/playback-tokens', cors: true },
@@ -143,7 +144,8 @@ async function request(baseUrl, path, init, headers, fetchImpl) {
 
 async function bridgeHealth(
     bridgeUrl, headers, expectedVersion, expectedBridgeEnabled, expectedUploadReady,
-    expectedPlaybackReady, expectedSponsoredUploadReady, bridgeBootstrap, fetchImpl, sleepFn,
+    expectedPlaybackReady, expectedSponsoredUploadReady, expectedPublicBetaRateLimitReady,
+    bridgeBootstrap, fetchImpl, sleepFn,
 ) {
     const delays = bridgeBootstrap
         ? BOOTSTRAP_HEALTH_RETRY_DELAYS_MS
@@ -181,6 +183,8 @@ async function bridgeHealth(
                 : healthJson.operatorMutationEnabled === undefined
                     || healthJson.operatorMutationEnabled === false
                     || (healthJson.operatorMutationEnabled === true && sponsoredUploadsReady);
+        const publicBetaRateLimitMatch = expectedPublicBetaRateLimitReady === null
+            || healthJson.publicBetaRateLimitReady === expectedPublicBetaRateLimitReady;
         const inferredUploadReady = healthJson.providerMutationEnabled === true
             && healthJson.newUploadReady === true;
         const inferredPlaybackReady = healthJson.providerMutationEnabled === false
@@ -191,13 +195,15 @@ async function bridgeHealth(
         const inferredEnabled = healthJson.stage === 'ENABLED'
             && (inferredUploadReady || inferredPlaybackReady)
             && sponsoredUploadsMatch
-            && operatorMutationMatch;
+            && operatorMutationMatch
+            && publicBetaRateLimitMatch;
         const inferredDisabled = healthJson.stage === 'DISABLED'
             && healthJson.providerMutationEnabled === false
             && healthJson.newUploadReady === false
             && !sponsoredUploadsReady
             && sponsoredUploadsMatch
-            && operatorMutationMatch;
+            && operatorMutationMatch
+            && publicBetaRateLimitMatch;
         const explicitPolicyMatch = healthJson.stage === (expectedBridgeEnabled ? 'ENABLED' : 'DISABLED')
             && healthJson.providerMutationEnabled === expectedUploadReady
             && healthJson.newUploadReady === expectedUploadReady
@@ -205,7 +211,8 @@ async function bridgeHealth(
             && healthJson.playbackV2Ready === expectedPlaybackReady
             && healthJson.playbackShadowV2Ready === false
             && sponsoredUploadsMatch
-            && operatorMutationMatch;
+            && operatorMutationMatch
+            && publicBetaRateLimitMatch;
         if (expectedBridgeEnabled === null
             ? !inferredEnabled && !inferredDisabled
             : !explicitPolicyMatch) {
@@ -276,6 +283,7 @@ export async function runReleaseSmoke({
     expectedUploadReady = expectedBridgeEnabled === null ? null : expectedBridgeEnabled,
     expectedPlaybackReady = expectedBridgeEnabled === null ? null : false,
     expectedSponsoredUploadReady = expectedBridgeEnabled === null ? null : false,
+    expectedPublicBetaRateLimitReady = null,
     bridgeBootstrap = false,
     includePlaybackV2 = true,
     fetchImpl = fetch,
@@ -303,14 +311,17 @@ export async function runReleaseSmoke({
         || ((expectedUploadReady === null || expectedPlaybackReady === null)
             && expectedBridgeEnabled !== null)
         || (expectedUploadReady === true && expectedBridgeEnabled !== true)
-        || (expectedPlaybackReady === true && expectedBridgeEnabled !== true)
-        || (expectedUploadReady === true && expectedPlaybackReady === true)) {
+        || (expectedPlaybackReady === true && expectedBridgeEnabled !== true)) {
         throw new Error('release_smoke_bridge_policy_invalid');
     }
     if ((expectedSponsoredUploadReady !== null
         && typeof expectedSponsoredUploadReady !== 'boolean')
         || (expectedSponsoredUploadReady === null && expectedBridgeEnabled !== null)
         || (expectedSponsoredUploadReady === true && expectedBridgeEnabled !== true)) {
+        throw new Error('release_smoke_bridge_policy_invalid');
+    }
+    if (expectedPublicBetaRateLimitReady !== null
+        && typeof expectedPublicBetaRateLimitReady !== 'boolean') {
         throw new Error('release_smoke_bridge_policy_invalid');
     }
     if (typeof bridgeBootstrap !== 'boolean' || (bridgeBootstrap && !expectedVersion)) {
@@ -332,7 +343,8 @@ export async function runReleaseSmoke({
 
     const healthJson = await bridgeHealth(
         bridgeUrl, headers, expectedVersion, expectedBridgeEnabled, expectedUploadReady,
-        expectedPlaybackReady, expectedSponsoredUploadReady, bridgeBootstrap, fetchImpl, sleepFn,
+        expectedPlaybackReady, expectedSponsoredUploadReady, expectedPublicBetaRateLimitReady,
+        bridgeBootstrap, fetchImpl, sleepFn,
     );
 
     const mutationStatuses = {};

@@ -269,11 +269,13 @@ function buildConfig(environment) {
   const playbackCanary = baseCanaryFlags.every((value) => value === "true")
     && uploadCanaryFlags.every((value) => value === "false")
     && playbackCanaryFlags.every((value) => value === "true");
+  const combinedBeta = [...baseCanaryFlags, ...uploadCanaryFlags, ...playbackCanaryFlags]
+    .every((value) => value === "true");
   if (environment === "production" && !closedCanary) {
     fail("PRODUCTION Livepeer canary flags must be exactly false");
   }
-  if (environment === "preview" && !closedCanary && !uploadCanary && !playbackCanary) {
-    fail("PREVIEW Livepeer canary flags must form a closed, upload-only, or playback-only packet");
+  if (environment === "preview" && !closedCanary && !uploadCanary && !playbackCanary && !combinedBeta) {
+    fail("PREVIEW Livepeer flags must form a closed, canary, or combined public-beta packet");
   }
   const sponsorCanaryFlags = [
     web.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS,
@@ -290,7 +292,7 @@ function buildConfig(environment) {
     fail("PREVIEW sponsor canary flags must be all false or all true");
   }
   if (environment === "preview" && sponsorCanaryFlags[0] === "true") {
-    if (!uploadCanary) {
+    if (!uploadCanary && !combinedBeta) {
       fail("PREVIEW sponsor canary requires upload canary flags");
     }
     const relayer = bridge.NEAR_SPONSOR_RELAYER_ACCOUNT_ID;
@@ -302,18 +304,26 @@ function buildConfig(environment) {
     if (!DECIMAL_RE.test(bridge.NEAR_SPONSOR_RELAYER_KEY_EPOCH)) {
       fail("PREVIEW sponsor canary requires a positive relayer key epoch");
     }
-    if (!JOB_ID_RE.test(bridge.LIVEPEER_OPERATOR_JOB_ID)) {
+    if (!combinedBeta && !JOB_ID_RE.test(bridge.LIVEPEER_OPERATOR_JOB_ID)) {
       fail("PREVIEW sponsor canary requires an exact operator job");
+    }
+    if (combinedBeta && bridge.LIVEPEER_OPERATOR_JOB_ID !== "") {
+      fail("PREVIEW public beta requires an empty operator job");
     }
   } else if (bridge.LIVEPEER_OPERATOR_JOB_ID !== "") {
     fail("LIVEPEER_OPERATOR_JOB_ID must be empty outside sponsored Preview");
   }
-  if (environment === "preview" && uploadCanary) {
+  if (environment === "preview" && (uploadCanary || combinedBeta)) {
     const creators = bridge.LIVEPEER_CREATOR_ALLOWLIST.split(",");
+    const publicCreators = combinedBeta
+      && (bridge.LIVEPEER_CREATOR_ALLOWLIST === "*"
+        || (creators.length === 2
+          && new Set(creators).size === 2
+          && creators.every((creator) => /^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(creator))));
     const expectedCreators = sponsorCanaryFlags[0] === "true" ? 1 : 2;
-    if (creators.length !== expectedCreators
+    if (!publicCreators && (creators.length !== expectedCreators
         || new Set(creators).size !== expectedCreators
-        || creators.some((creator) => !/^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(creator))) {
+        || creators.some((creator) => !/^[a-z0-9][a-z0-9._-]{0,62}\.testnet$/.test(creator)))) {
       fail(expectedCreators === 1
         ? "PREVIEW sponsored upload canary requires exactly one testnet creator"
         : "PREVIEW multi-creator upload canary requires exactly two distinct testnet creators");
@@ -325,12 +335,20 @@ function buildConfig(environment) {
       fail("PREVIEW multi-creator upload canary job reservation must be exactly 2000000");
     }
   }
+  if (bridge.LIVEPEER_CREATOR_ALLOWLIST.includes("*")
+      && !(environment === "preview" && combinedBeta
+        && bridge.LIVEPEER_CREATOR_ALLOWLIST === "*")) {
+    fail("Wildcard creator allowlist is restricted to the Preview public beta");
+  }
   const operatorArchive = bridge.OPERATOR_OUTBOX_ARCHIVE_ENABLED;
   if (environment === "production" && operatorArchive !== "false") {
     fail("PRODUCTION_OPERATOR_OUTBOX_ARCHIVE_ENABLED must be exactly false");
   }
   if (environment === "preview" && !["false", "true"].includes(operatorArchive)) {
     fail("PREVIEW_OPERATOR_OUTBOX_ARCHIVE_ENABLED must be exactly false or true");
+  }
+  if (combinedBeta && operatorArchive !== "false") {
+    fail("PREVIEW public beta requires operator archive disabled");
   }
   const derivedReadModel = web.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL;
   if (environment === "production" && derivedReadModel !== "false") {
@@ -348,6 +366,9 @@ function buildConfig(environment) {
       fail(`NEXT_PUBLIC_MARKET_READ_MODEL_URL must be exactly ${PREVIEW_READ_MODEL_ORIGIN}`);
     }
   }
+  if (combinedBeta && derivedReadModel !== "false") {
+    fail("PREVIEW public beta requires the canonical NEAR read path");
+  }
   const paymentMode = web.NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE;
   if (paymentMode !== bridge.MULTI_ASSET_PAYMENTS_MODE) {
     fail("web and Bridge multi-asset payment modes must match");
@@ -355,6 +376,9 @@ function buildConfig(environment) {
   const allowedPaymentModes = environment === "preview" ? ["off", "preview"] : ["off"];
   if (!allowedPaymentModes.includes(paymentMode)) {
     fail(`${environment.toUpperCase()} multi-asset payment mode is not allowed`);
+  }
+  if (combinedBeta && paymentMode !== "off") {
+    fail("PREVIEW public beta requires multi-asset payments disabled");
   }
   const paymentAssetIds = bridge.MULTI_ASSET_PAYMENT_ASSET_IDS
     .split(",")

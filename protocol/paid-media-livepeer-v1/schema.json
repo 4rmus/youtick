@@ -9,6 +9,7 @@
     "profile_id",
     "limits",
     "operator",
+    "public_testnet_beta",
     "upload_intent",
     "creator_fee_quote",
     "sponsored_upload_quote",
@@ -79,6 +80,34 @@
         "full_access": {
           "const": false
         }
+      }
+    },
+    "public_testnet_beta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_source_bytes",
+        "max_jobs",
+        "jobs_per_creator_utc_day",
+        "upload_days",
+        "total_days",
+        "job_ttl_ms",
+        "start_runway_bytes",
+        "emergency_runway_bytes",
+        "sponsor_quote_required",
+        "native_near_upload_enabled"
+      ],
+      "properties": {
+        "max_source_bytes": { "const": "1000000000" },
+        "max_jobs": { "const": 10 },
+        "jobs_per_creator_utc_day": { "const": 1 },
+        "upload_days": { "const": 13 },
+        "total_days": { "const": 14 },
+        "job_ttl_ms": { "const": "86400000" },
+        "start_runway_bytes": { "const": "100000" },
+        "emergency_runway_bytes": { "const": "25000" },
+        "sponsor_quote_required": { "const": true },
+        "native_near_upload_enabled": { "const": false }
       }
     },
     "upload_intent": {

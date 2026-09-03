@@ -122,6 +122,7 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
     const mutationCors = new Map([
         ['/v1/livepeer-webhooks', false],
         ['/v1/operations/admission-reopen', false],
+        ['/v1/operations/provider-assets/delete', false],
         ['/v1/upload-intents', true],
         ['/v1/playback-tokens', true],
         ['/v2/playback-tokens', true],
@@ -250,6 +251,7 @@ test('release smoke retries workers.dev propagation and proves disabled Bridge c
             'bridge:POST:/v1/livepeer-webhooks',
             'bridge:POST:/v1/operations/admission-reopen',
             'bridge:POST:/v1/operations/admission-reopen',
+            'bridge:POST:/v1/operations/provider-assets/delete',
             'bridge:POST:/v1/upload-intents',
             'bridge:POST:/v1/playback-tokens',
             'bridge:POST:/v2/playback-tokens',
@@ -513,6 +515,34 @@ test('enabled upload canary smoke requires exact ready policy without mutation p
     assert.equal(sponsored.bridge.stage, 'ENABLED');
     assert.equal(inferredSponsored.bridge.stage, 'ENABLED');
     bridgePolicy = {
+        ...bridgePolicy,
+        playbackReady: true,
+        playbackV2Ready: true,
+    };
+    sponsorHealth = {
+        ...sponsorHealth,
+        publicBetaRateLimitReady: true,
+    };
+    const publicBeta = await runReleaseSmoke({
+        ...input,
+        expectedBridgeEnabled: true,
+        expectedUploadReady: true,
+        expectedPlaybackReady: true,
+        expectedSponsoredUploadReady: true,
+        expectedPublicBetaRateLimitReady: true,
+    });
+    assert.equal(publicBeta.bridge.stage, 'ENABLED');
+    sponsorHealth.publicBetaRateLimitReady = false;
+    await assert.rejects(runReleaseSmoke({
+        ...input,
+        expectedBridgeEnabled: true,
+        expectedUploadReady: true,
+        expectedPlaybackReady: true,
+        expectedSponsoredUploadReady: true,
+        expectedPublicBetaRateLimitReady: true,
+    }), /release_smoke_bridge_not_enabled/);
+    sponsorHealth.publicBetaRateLimitReady = true;
+    bridgePolicy = {
         stage: 'DISABLED',
         providerMutationEnabled: false,
         newUploadReady: false,
@@ -632,7 +662,7 @@ test('enabled playback canary smoke separates playback from upload readiness', a
     }), /release_smoke_bridge_policy_invalid/);
     await assert.rejects(runReleaseSmoke({
         ...input, expectedUploadReady: true, expectedPlaybackReady: true,
-    }), /release_smoke_bridge_policy_invalid/);
+    }), /release_smoke_bridge_not_enabled/);
 });
 
 test('Bridge bootstrap propagation retry is bounded and status scoped', async (t) => {

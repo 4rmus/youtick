@@ -31,6 +31,13 @@ evidence; no Worker, web, staging or production runtime is enabled.
 - operator key: finite-allowance FunctionCall key for the exact receiver;
   FullAccess is forbidden.
 
+The one-time public testnet beta overlays the existing protocol without changing
+the Market Borsh layout: sponsored USDC is mandatory, source size is at most
+1,000,000,000 bytes, each creator gets one job per UTC day, the global cap is
+10 jobs, upload admission lasts 13 days, the beta ends after 14 days and each
+job has an absolute 24-hour deadline. Raw versioned records enforce those
+limits with 100,000-byte opening and 25,000-byte emergency runway floors.
+
 The size constant is an admission and contract value. Browser, bridge and
 contract reject `20_000_000_001` before provider mutation. One exact decimal
 `20_000_000_000`-byte provider upload remains a production canary; a +1-byte

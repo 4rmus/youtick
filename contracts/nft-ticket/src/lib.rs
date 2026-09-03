@@ -1,3 +1,4 @@
+use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
@@ -26,6 +27,16 @@ const MARKET_STATE_VERSION: u32 = 2;
 // Kept outside Contract so an emergency purchase control does not change the
 // deployed Market v2 Borsh layout or require a state migration.
 const NEW_PURCHASES_PAUSED_KEY: &[u8] = b"youtick:market:control:new-purchases-paused:v1";
+const PUBLIC_TESTNET_BETA_STATE_KEY: &[u8] = b"youtick:market:public-testnet-beta:state:v1";
+const PUBLIC_TESTNET_BETA_JOB_PREFIX: &[u8] = b"youtick:market:public-testnet-beta:job:v1:";
+const PUBLIC_TESTNET_BETA_DAY_PREFIX: &[u8] = b"youtick:market:public-testnet-beta:day:v1:";
+const PUBLIC_TESTNET_BETA_MAX_SOURCE_BYTES: u128 = 1_000_000_000;
+const PUBLIC_TESTNET_BETA_MAX_JOBS: u32 = 10;
+const PUBLIC_TESTNET_BETA_UPLOAD_MS: u64 = 13 * 24 * 60 * 60 * 1_000;
+const PUBLIC_TESTNET_BETA_TOTAL_MS: u64 = 14 * 24 * 60 * 60 * 1_000;
+const PUBLIC_TESTNET_BETA_JOB_TTL_MS: u64 = 24 * 60 * 60 * 1_000;
+const PUBLIC_TESTNET_BETA_START_RUNWAY_BYTES: u128 = 100_000;
+const PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES: u128 = 25_000;
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -168,6 +179,28 @@ pub struct StorageReserveStatus {
     pub reserve_headroom_yocto: U128,
     pub reserve_runway_bytes: U128,
     pub reserve_covered: bool,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicTestnetBetaState {
+    pub version: u32,
+    pub started_at_ms: U64,
+    pub upload_closes_at_ms: U64,
+    pub ends_at_ms: U64,
+    pub closed_at_ms: Option<U64>,
+    pub total_job_count: u32,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicTestnetBetaJob {
+    pub creator_id: AccountId,
+    pub generation: u64,
+    pub request_sha256: String,
+    pub sponsor_quote_id: String,
+    pub admitted_at_ms: U64,
+    pub deadline_at_ms: U64,
 }
 
 #[near(serializers = [json])]
@@ -437,6 +470,66 @@ impl Contract {
         );
     }
 
+    pub fn start_public_testnet_beta(&mut self) -> PublicTestnetBetaState {
+        self.assert_admin();
+        require!(
+            self.network_id() == "testnet",
+            "Public beta is testnet only"
+        );
+        require!(self.new_purchases_paused(), "New purchases must be paused");
+        require!(
+            self.public_testnet_beta_state().is_none(),
+            "Public beta already started"
+        );
+        self.assert_runway(PUBLIC_TESTNET_BETA_START_RUNWAY_BYTES);
+        let started_at_ms = env::block_timestamp_ms();
+        let state = PublicTestnetBetaState {
+            version: 1,
+            started_at_ms: U64(started_at_ms),
+            upload_closes_at_ms: U64(started_at_ms
+                .checked_add(PUBLIC_TESTNET_BETA_UPLOAD_MS)
+                .expect("Public beta upload close overflow")),
+            ends_at_ms: U64(started_at_ms
+                .checked_add(PUBLIC_TESTNET_BETA_TOTAL_MS)
+                .expect("Public beta end overflow")),
+            closed_at_ms: None,
+            total_job_count: 0,
+        };
+        write_raw(PUBLIC_TESTNET_BETA_STATE_KEY, &state);
+        emit_governance_event(
+            "public_testnet_beta_started",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "started_at_ms": state.started_at_ms,
+                "upload_closes_at_ms": state.upload_closes_at_ms,
+                "ends_at_ms": state.ends_at_ms,
+            }),
+        );
+        state
+    }
+
+    pub fn close_public_testnet_beta(&mut self) -> PublicTestnetBetaState {
+        self.assert_guardian();
+        let mut state = self
+            .public_testnet_beta_state()
+            .expect("Public beta has not started");
+        if state.closed_at_ms.is_some() {
+            return state;
+        }
+        state.closed_at_ms = Some(U64(env::block_timestamp_ms()));
+        write_raw(PUBLIC_TESTNET_BETA_STATE_KEY, &state);
+        env::storage_write(NEW_PURCHASES_PAUSED_KEY, &[1]);
+        emit_governance_event(
+            "public_testnet_beta_closed",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "closed_at_ms": state.closed_at_ms,
+                "total_job_count": state.total_job_count,
+            }),
+        );
+        state
+    }
+
     pub fn propose_bridge(&mut self, next_bridge_account_id: AccountId) {
         self.assert_admin();
         self.assert_valid_bridge_account(&next_bridge_account_id);
@@ -497,6 +590,10 @@ impl Contract {
     }
 
     pub fn create_paid_job(&mut self, request: PaidJobRequest) -> MediaJob {
+        require!(
+            self.public_testnet_beta_state().is_none(),
+            "Public beta requires a sponsored upload quote"
+        );
         let fee_usd_micro = upload_fee_usdc(request.expected_source_bytes.0);
         self.create_usdc_paid_job(request, fee_usd_micro, None)
     }
@@ -549,6 +646,10 @@ impl Contract {
         quote: CreatorFeeQuote,
         quote_signature: Base64VecU8,
     ) -> PromiseOrValue<MediaJob> {
+        require!(
+            self.public_testnet_beta_state().is_none(),
+            "Native NEAR upload is disabled for public beta"
+        );
         require!(
             env::predecessor_account_id() == request.creator_id,
             "Creator mismatch"
@@ -616,6 +717,12 @@ impl Contract {
             "Published media jobs cannot replace upload keys"
         );
         assert_upload_key(&new_public_key, expires_at_ms.0);
+        if let Some(marker) = self.public_testnet_beta_job(&job_id) {
+            require!(
+                expires_at_ms.0 <= marker.deadline_at_ms.0,
+                "Upload key exceeds public beta job deadline"
+            );
+        }
         job.upload_public_key = new_public_key;
         job.upload_key_expires_at_ms = expires_at_ms;
         self.media_jobs.insert(&job_id, &job);
@@ -672,6 +779,10 @@ impl Contract {
         profile_config_sha256: String,
     ) -> MediaJob {
         let mut job = self.media_jobs.get(&job_id).expect("Media job not found");
+        require!(
+            self.public_testnet_beta_job(&job_id).is_none(),
+            "Public beta jobs cannot restart"
+        );
         require!(
             env::predecessor_account_id() == job.creator_id,
             "Only the creator can restart a media job"
@@ -742,6 +853,18 @@ impl Contract {
             return existing;
         }
 
+        if self.public_testnet_beta_state().is_some() {
+            require!(
+                self.active_public_testnet_beta().is_some(),
+                "Public beta is not active"
+            );
+            let marker = self.require_public_testnet_beta_job(&job);
+            require!(
+                env::block_timestamp_ms() <= marker.deadline_at_ms.0,
+                "Public beta job deadline expired"
+            );
+        }
+
         self.bind_identity(
             &self.asset_bindings,
             &submission.asset_id_hash,
@@ -790,6 +913,9 @@ impl Contract {
             .insert(&submission.asset_id_hash, &submission.job_id);
         self.playback_bindings
             .insert(&submission.playback_id, &submission.job_id);
+        if self.public_testnet_beta_state().is_some() {
+            self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+        }
         emit_market_event(
             "publication_finalized",
             &format!(
@@ -818,6 +944,13 @@ impl Contract {
             .publications
             .get(&publication_id)
             .expect("Publication not found");
+        if self.active_public_testnet_beta().is_some() {
+            let job = self
+                .media_jobs
+                .get(&publication_id)
+                .expect("Media job not found");
+            self.require_public_testnet_beta_job(&job);
+        }
         require!(
             publication.availability != PublicationAvailability::Takedown,
             "Takedown publication cannot change through sales suspension"
@@ -972,6 +1105,13 @@ impl Contract {
                 }
                 _ => env::panic_str("Incomplete sponsored upload quote"),
             };
+            let public_beta = self.public_testnet_beta_state();
+            if public_beta.is_some() && self.active_public_testnet_beta().is_none() {
+                return PromiseOrValue::Value(amount);
+            }
+            if public_beta.is_some() && quote.is_none() {
+                return PromiseOrValue::Value(amount);
+            }
             let (expected_fee, quote_hash) = quote.as_ref().map_or((expected_fee, None), |quote| {
                 (quote.total_fee_usdc.0, Some(quote.quote_id.clone()))
             });
@@ -987,17 +1127,31 @@ impl Contract {
                     ),
                     "Conflicting paid job replay"
                 );
+                if public_beta.is_some() {
+                    self.require_public_testnet_beta_job(&existing);
+                }
                 return PromiseOrValue::Value(amount);
             }
 
             if self.new_purchases_paused() {
                 return PromiseOrValue::Value(amount);
             }
+            if public_beta.is_some() {
+                self.admit_public_testnet_beta_job(
+                    &request,
+                    quote
+                        .as_ref()
+                        .expect("Public beta sponsor quote is required"),
+                );
+            }
             self.create_usdc_paid_job(request, expected_fee, quote_hash);
             self.platform_balance = self
                 .platform_balance
                 .checked_add(amount.0)
                 .expect("Platform balance overflow");
+            if public_beta.is_some() {
+                self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+            }
             return PromiseOrValue::Value(U128(0));
         }
 
@@ -1006,6 +1160,10 @@ impl Contract {
             "Unsupported transfer action"
         );
         if self.new_purchases_paused() {
+            return PromiseOrValue::Value(amount);
+        }
+        if self.public_testnet_beta_state().is_some() && self.active_public_testnet_beta().is_none()
+        {
             return PromiseOrValue::Value(amount);
         }
         let publication_id = message.publication_id.expect("publication_id is required");
@@ -1037,6 +1195,9 @@ impl Contract {
             .checked_add(platform_amount)
             .expect("Platform balance overflow");
         self.entitlements.insert(&entitlement_key, &true);
+        if self.public_testnet_beta_state().is_some() {
+            self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+        }
         emit_market_event(
             "entitlement_purchased",
             &format!("entitlement:{sender_id}:{publication_id}"),
@@ -1322,6 +1483,19 @@ impl Contract {
         self.storage_reserve_status()
     }
 
+    pub fn get_public_testnet_beta_state(&self) -> Option<PublicTestnetBetaState> {
+        self.public_testnet_beta_state()
+    }
+
+    pub fn get_public_testnet_beta_job(&self, job_id: String) -> Option<PublicTestnetBetaJob> {
+        read_raw(&public_testnet_beta_job_key(&job_id))
+    }
+
+    pub fn has_public_testnet_beta_job_today(&self, creator_id: AccountId) -> bool {
+        let day = env::block_timestamp_ms() / (24 * 60 * 60 * 1_000);
+        env::storage_has_key(&public_testnet_beta_day_key(&creator_id, day))
+    }
+
     pub fn get_governance_state(&self) -> GovernanceState {
         GovernanceState {
             state_version: self.state_version,
@@ -1341,6 +1515,104 @@ impl Contract {
 }
 
 impl Contract {
+    fn public_testnet_beta_state(&self) -> Option<PublicTestnetBetaState> {
+        read_raw(PUBLIC_TESTNET_BETA_STATE_KEY)
+    }
+
+    fn active_public_testnet_beta(&self) -> Option<PublicTestnetBetaState> {
+        let state = self.public_testnet_beta_state()?;
+        (state.closed_at_ms.is_none() && env::block_timestamp_ms() < state.ends_at_ms.0)
+            .then_some(state)
+    }
+
+    fn assert_runway(&self, minimum_bytes: u128) {
+        require!(
+            self.storage_reserve_status().reserve_runway_bytes.0 >= minimum_bytes,
+            format!("Storage runway must remain at least {minimum_bytes} bytes")
+        );
+    }
+
+    fn public_testnet_beta_job(&self, job_id: &str) -> Option<PublicTestnetBetaJob> {
+        read_raw(&public_testnet_beta_job_key(job_id))
+    }
+
+    fn admit_public_testnet_beta_job(
+        &self,
+        request: &PaidJobRequest,
+        quote: &SponsoredUploadQuote,
+    ) -> PublicTestnetBetaJob {
+        let mut state = self
+            .active_public_testnet_beta()
+            .expect("Public beta is not active");
+        let now_ms = env::block_timestamp_ms();
+        require!(
+            now_ms < state.upload_closes_at_ms.0,
+            "Public beta upload admission is closed"
+        );
+        require!(
+            request.expected_source_bytes.0 <= PUBLIC_TESTNET_BETA_MAX_SOURCE_BYTES,
+            "Public beta source exceeds 1,000,000,000 bytes"
+        );
+        require!(
+            state.total_job_count < PUBLIC_TESTNET_BETA_MAX_JOBS,
+            "Public beta job limit reached"
+        );
+        let day = now_ms / (24 * 60 * 60 * 1_000);
+        let day_key = public_testnet_beta_day_key(&request.creator_id, day);
+        require!(
+            !env::storage_has_key(&day_key),
+            "Creator already has a public beta job today"
+        );
+        let job_key = public_testnet_beta_job_key(&request.job_id);
+        require!(
+            !env::storage_has_key(&job_key),
+            "Public beta job already exists"
+        );
+        let deadline_at_ms = now_ms
+            .checked_add(PUBLIC_TESTNET_BETA_JOB_TTL_MS)
+            .expect("Public beta job deadline overflow")
+            .min(state.ends_at_ms.0);
+        require!(
+            request.upload_key_expires_at_ms.0 <= deadline_at_ms,
+            "Upload key exceeds public beta job deadline"
+        );
+        let marker = PublicTestnetBetaJob {
+            creator_id: request.creator_id.clone(),
+            generation: 1,
+            request_sha256: paid_job_request_sha256(request),
+            sponsor_quote_id: quote.quote_id.clone(),
+            admitted_at_ms: U64(now_ms),
+            deadline_at_ms: U64(deadline_at_ms),
+        };
+        state.total_job_count = state
+            .total_job_count
+            .checked_add(1)
+            .expect("Public beta job count overflow");
+        write_raw(&job_key, &marker);
+        env::storage_write(&day_key, request.job_id.as_bytes());
+        write_raw(PUBLIC_TESTNET_BETA_STATE_KEY, &state);
+        marker
+    }
+
+    fn require_public_testnet_beta_job(&self, job: &MediaJob) -> PublicTestnetBetaJob {
+        let marker = self
+            .public_testnet_beta_job(&job.job_id)
+            .expect("Public beta job marker not found");
+        require!(
+            marker.creator_id == job.creator_id,
+            "Public beta creator mismatch"
+        );
+        require!(
+            marker.generation == job.generation,
+            "Public beta generation mismatch"
+        );
+        require!(
+            job.fee_quote_hash.as_deref() == Some(marker.sponsor_quote_id.as_str()),
+            "Public beta sponsor quote mismatch"
+        );
+        marker
+    }
+
     fn new_purchases_paused(&self) -> bool {
         env::storage_read(NEW_PURCHASES_PAUSED_KEY).as_deref() == Some(&[1])
     }
@@ -1666,6 +1938,29 @@ fn entitlement_key(account_id: &AccountId, publication_id: &str) -> String {
     format!("{account_id}:{publication_id}")
 }
 
+fn public_testnet_beta_job_key(job_id: &str) -> Vec<u8> {
+    [PUBLIC_TESTNET_BETA_JOB_PREFIX, job_id.as_bytes()].concat()
+}
+
+fn public_testnet_beta_day_key(creator_id: &AccountId, day: u64) -> Vec<u8> {
+    [
+        PUBLIC_TESTNET_BETA_DAY_PREFIX,
+        format!("{creator_id}:{day}").as_bytes(),
+    ]
+    .concat()
+}
+
+fn read_raw<T: BorshDeserialize>(key: &[u8]) -> Option<T> {
+    env::storage_read(key).map(|value| T::try_from_slice(&value).expect("Invalid raw state"))
+}
+
+fn write_raw<T: BorshSerialize>(key: &[u8], value: &T) {
+    env::storage_write(
+        key,
+        &near_sdk::borsh::to_vec(value).expect("Failed to serialize raw state"),
+    );
+}
+
 fn assert_identifier(label: &str, value: &str) {
     require!(
         !value.is_empty()
@@ -1958,6 +2253,46 @@ mod tests {
         })
     }
 
+    fn public_beta_request(index: u32, creator: &str, source_bytes: u128) -> PaidJobRequest {
+        PaidJobRequest {
+            creator_id: account(creator),
+            job_id: format!("public-job-{index}"),
+            title: "Public beta".to_string(),
+            price_usdc: U128(MIN_TICKET_PRICE_USDC),
+            expected_source_bytes: U128(source_bytes),
+            profile_id: PROFILE.to_string(),
+            profile_config_sha256: "a".repeat(64),
+            upload_public_key: "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF".to_string(),
+            upload_key_expires_at_ms: U64(1_785_675_700_000),
+        }
+    }
+
+    fn public_beta_quote(request: &PaidJobRequest) -> SponsoredUploadQuote {
+        SponsoredUploadQuote {
+            domain: "youtick.sponsored-upload-quote".to_string(),
+            version: "1".to_string(),
+            network: "testnet".to_string(),
+            contract_id: account("market.testnet"),
+            creator_id: request.creator_id.clone(),
+            job_id: request.job_id.clone(),
+            request_sha256: paid_job_request_sha256(request),
+            expected_source_bytes: request.expected_source_bytes,
+            upload_fee_usdc: U128(MIN_UPLOAD_FEE_USDC),
+            sponsor_fee_usdc: U128(SPONSORED_UPLOAD_FEE_USDC),
+            total_fee_usdc: U128(MIN_UPLOAD_FEE_USDC + SPONSORED_UPLOAD_FEE_USDC),
+            delegate_receiver_id: account(TESTNET_USDC),
+            delegate_method: "ft_transfer_call".to_string(),
+            delegate_gas: U64(SPONSORED_UPLOAD_DELEGATE_GAS),
+            delegate_deposit_yocto: U128(1),
+            issued_at_ms: U64(1_785_589_300_000),
+            quote_block_height: U64(1),
+            max_delegate_block_height: U64(2),
+            expires_at_ms: U64(1_785_589_420_000),
+            quote_key_version: 1,
+            quote_id: format!("{:064x}", request.job_id.len()),
+        }
+    }
+
     #[test]
     fn selects_circle_usdc_from_network() {
         let contract = contract();
@@ -1966,6 +2301,98 @@ mod tests {
         builder.current_account_id(account("market.near"));
         testing_env!(builder.build());
         assert_eq!(contract.get_usdc_contract_id(), account(MAINNET_USDC));
+    }
+
+    #[test]
+    fn public_beta_enforces_size_daily_global_and_absolute_deadline() {
+        let contract = contract();
+        write_raw(
+            PUBLIC_TESTNET_BETA_STATE_KEY,
+            &PublicTestnetBetaState {
+                version: 1,
+                started_at_ms: U64(1_785_589_300_000),
+                upload_closes_at_ms: U64(1_786_712_500_000),
+                ends_at_ms: U64(1_786_798_900_000),
+                closed_at_ms: None,
+                total_job_count: 0,
+            },
+        );
+
+        let oversized = public_beta_request(99, "oversized.testnet", 1_000_000_001);
+        assert!(std::panic::catch_unwind(|| {
+            contract.admit_public_testnet_beta_job(&oversized, &public_beta_quote(&oversized));
+        })
+        .is_err());
+
+        let first = public_beta_request(0, "creator-0.testnet", 1_000_000_000);
+        contract.admit_public_testnet_beta_job(&first, &public_beta_quote(&first));
+        let same_day = public_beta_request(12, "creator-0.testnet", 1);
+        assert!(std::panic::catch_unwind(|| {
+            contract.admit_public_testnet_beta_job(&same_day, &public_beta_quote(&same_day));
+        })
+        .is_err());
+
+        for index in 1..PUBLIC_TESTNET_BETA_MAX_JOBS {
+            let creator = format!("creator-{index}.testnet");
+            let request = public_beta_request(index, &creator, 1_000_000_000);
+            let marker =
+                contract.admit_public_testnet_beta_job(&request, &public_beta_quote(&request));
+            assert_eq!(marker.deadline_at_ms, U64(1_785_675_700_000));
+        }
+        assert_eq!(
+            contract
+                .public_testnet_beta_state()
+                .unwrap()
+                .total_job_count,
+            PUBLIC_TESTNET_BETA_MAX_JOBS
+        );
+
+        let over_limit = public_beta_request(11, "creator-11.testnet", 1);
+        assert!(std::panic::catch_unwind(|| {
+            contract.admit_public_testnet_beta_job(&over_limit, &public_beta_quote(&over_limit));
+        })
+        .is_err());
+
+        let mut closed_context = context("market.testnet");
+        closed_context.block_timestamp(1_786_712_500_000_000_000);
+        testing_env!(closed_context.build());
+        let after_upload_close = public_beta_request(13, "creator-13.testnet", 1);
+        assert!(std::panic::catch_unwind(|| {
+            contract.admit_public_testnet_beta_job(
+                &after_upload_close,
+                &public_beta_quote(&after_upload_close),
+            );
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn public_beta_start_requires_exact_storage_runway() {
+        let mut contract = contract();
+        env::storage_write(NEW_PURCHASES_PAUSED_KEY, &[1]);
+        let storage_usage = env::storage_usage();
+        let byte_cost = env::storage_byte_cost().as_yoctonear();
+        let mut low = context("admin.testnet");
+        low.storage_usage(storage_usage);
+        low.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve
+                + (u128::from(storage_usage) + PUBLIC_TESTNET_BETA_START_RUNWAY_BYTES - 1)
+                    * byte_cost,
+        ));
+        testing_env!(low.build());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.start_public_testnet_beta();
+        }))
+        .is_err());
+
+        let mut exact = context("admin.testnet");
+        exact.storage_usage(storage_usage);
+        exact.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve
+                + (u128::from(storage_usage) + PUBLIC_TESTNET_BETA_START_RUNWAY_BYTES) * byte_cost,
+        ));
+        testing_env!(exact.build());
+        assert_eq!(contract.start_public_testnet_beta().total_job_count, 0);
     }
 
     #[test]
@@ -2088,7 +2515,7 @@ mod tests {
     fn storage_reserve_status_matches_the_withdrawal_guard() {
         let contract = contract();
         let storage_usage = 10;
-        let runway_bytes = 25u128;
+        let runway_bytes = PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES;
         let storage_byte_cost = env::storage_byte_cost().as_yoctonear();
         let mut covered = context("market.testnet");
         covered.storage_usage(storage_usage);
@@ -2114,6 +2541,19 @@ mod tests {
         );
         assert_eq!(status.reserve_runway_bytes, U128(runway_bytes));
         assert!(status.reserve_covered);
+        contract.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+
+        let mut below_beta_floor = context("market.testnet");
+        below_beta_floor.storage_usage(storage_usage);
+        below_beta_floor.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve
+                + (u128::from(storage_usage) + runway_bytes - 1) * storage_byte_cost,
+        ));
+        testing_env!(below_beta_floor.build());
+        assert!(std::panic::catch_unwind(|| {
+            contract.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+        })
+        .is_err());
 
         let mut uncovered = context("market.testnet");
         uncovered.storage_usage(storage_usage);

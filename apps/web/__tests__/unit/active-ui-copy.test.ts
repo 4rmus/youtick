@@ -11,6 +11,7 @@ const ACTIVE_UI_FILES = [
     'components/RuntimeClosed.tsx',
     'components/LivepeerPlayer.tsx',
     'components/LivepeerWatch.tsx',
+    'components/PublicTestnetBetaBanner.tsx',
     'components/discover/DiscoverView.tsx',
     'components/landing/LandingPage.tsx',
     'components/landing/landing-copy.ts',
@@ -36,5 +37,20 @@ describe('active UI copy', () => {
         ].map((parts) => parts.join(''));
 
         for (const term of retiredTerms) expect(source).not.toContain(term);
+    });
+
+    it('keeps the public testnet warning, limits, noindex and abuse route visible', async () => {
+        const [banner, terms, layout, robots] = await Promise.all([
+            readFile('components/PublicTestnetBetaBanner.tsx', 'utf8'),
+            readFile('app/terms/page.tsx', 'utf8'),
+            readFile('app/layout.tsx', 'utf8'),
+            readFile('app/robots.ts', 'utf8'),
+        ]);
+        for (const value of ['Testnet Beta', 'no real value', '1 GB/file', '1 upload/UTC day',
+            '10 uploads total', '0.10 test USDC', '24-hour']) expect(banner).toContain(value);
+        expect(terms).toContain('abuse@youtick.net');
+        expect(terms).toContain('non-refundable');
+        expect(layout).toContain('index: false');
+        expect(robots).toContain("disallow: '/'");
     });
 });

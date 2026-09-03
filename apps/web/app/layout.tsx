@@ -6,6 +6,8 @@ import './globals.css';
 import { Navbar } from '@/components/Navbar';
 import { QueryProvider } from '@/components/providers/QueryProvider';
 import { WalletProvider } from '@/components/providers/WalletProvider';
+import { PublicTestnetBetaBanner } from '@/components/PublicTestnetBetaBanner';
+import { FEATURE_FLAGS } from '@/lib/constants';
 
 const geist = Geist({ subsets: ['latin'], variable: '--font-geist-sans' });
 
@@ -13,6 +15,7 @@ export const metadata: Metadata = {
     title: { default: 'YouTick', template: '%s | YouTick' },
     description: 'Ticketed digital screenings for independent film and music.',
     metadataBase: new URL('https://youtick.net'),
+    robots: FEATURE_FLAGS.publicTestnetBeta ? { index: false, follow: false } : undefined,
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -22,6 +25,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <html lang="en" data-scroll-behavior="smooth">
             <body className={`${geist.variable} min-h-screen bg-black text-white antialiased`}>
                 <QueryProvider>
+                    {FEATURE_FLAGS.publicTestnetBeta && <PublicTestnetBetaBanner />}
                     <WalletProvider cspNonce={cspNonce}>
                         <Navbar />
                         <main>{children}</main>
